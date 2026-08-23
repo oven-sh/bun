@@ -3716,7 +3716,7 @@ pub use bun_alloc::secure_zero;
 // for `for arg in argv()`.
 static ARGV_STORAGE: Once<Vec<ZBox>> = Once::new();
 static ARGV_VIEW: Once<Vec<&'static ZStr>> = Once::new();
-static ARGV: RacyCell<&'static [&'static ZStr]> = RacyCell::new(&[]);
+static ARGV: crate::RwLock<&'static [&'static ZStr]> = crate::RwLock::new(&[]);
 static ARGV_INIT: std::sync::Once = std::sync::Once::new();
 
 /// Raw `(argc, argv)` as passed to `main` by the C runtime. Captured by
@@ -3817,16 +3817,13 @@ fn argv_view_init() {
         set_bun_options_argc(view.len() - original_len);
     }
     let view: &'static [&'static ZStr] = ARGV_VIEW.get_or_init(move || view);
-    // SAFETY: single-threaded lazy init guarded by Once.
-    unsafe { ARGV.write(view) };
+    *ARGV.write() = view;
 }
 
 #[inline]
 fn argv_view() -> &'static [&'static ZStr] {
     ARGV_INIT.call_once(argv_view_init);
-    // SAFETY: ARGV is a Copy fat-pointer; only mutated via `set_argv` during
-    // single-threaded startup or by the Once above.
-    unsafe { ARGV.read() }
+    *ARGV.read()
 }
 
 #[derive(Clone, Copy)]
@@ -4075,18 +4072,12 @@ pub fn append_options_env<A: OptionsEnvArg>(env: &[u8], args: &mut Vec<A>) {
     }
 }
 
-/// Swap the global argv view. Call sites are single-threaded
-/// startup (CLI parsing in the `--compile` path), so this writes the static
-/// without synchronization.
-///
-/// # Safety
-/// Caller must ensure no concurrent reads of `argv()` are in flight.
+/// Swap the global argv view (CLI parsing in the `--compile` path).
 #[inline]
-pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
+pub fn set_argv(v: &'static [&'static ZStr]) {
     // Prevent the lazy OS-argv init from later clobbering a manually-set view.
     ARGV_INIT.call_once(|| {});
-    // SAFETY: see fn doc — single-threaded startup.
-    unsafe { ARGV.write(v) };
+    *ARGV.write() = v;
 }
 
 /// Park an owned argv `Vec` in process-static storage and return the

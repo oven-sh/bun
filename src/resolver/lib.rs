@@ -1361,7 +1361,7 @@ pub mod fs {
         /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
         /// realpath.
         pub(crate) fn kind(
-            &mut self,
+            &self,
             dir_: &[u8],
             base: &[u8],
             existing_fd: Fd,
@@ -1549,7 +1549,7 @@ pub mod fs {
     impl crate::fs_full::EntryKindResolver for RealFS {
         #[inline(always)]
         fn resolve_kind(
-            &mut self,
+            &self,
             dir: &[u8],
             base: &[u8],
             existing_fd: bun_sys::Fd,
@@ -1809,7 +1809,7 @@ pub mod fs {
 // owns this impl. See PORTING.md §Dispatch.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod dir_entry_accessor {
-    use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS, Implementation};
+    use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS};
     use bun_core::ZStr;
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
     use bun_paths::{PathBuffer, Platform, resolve_path};
@@ -1915,10 +1915,7 @@ pub mod dir_entry_accessor {
                 let entry = bun_ptr::BackRef::<Entry>::from(
                     core::ptr::NonNull::new(*val).expect("EntryStore slot"),
                 );
-                let fs: *mut Implementation = &raw mut FS::instance().fs;
-                // SAFETY: fs points at the process-global RealFS; the lazy-stat
-                // rewrite inside `kind()` is serialized on the per-entry mutex.
-                let kind = unsafe { entry.kind(fs, true) };
+                let kind = entry.kind(&FS::get().fs, true);
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,

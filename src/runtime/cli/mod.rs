@@ -427,19 +427,17 @@ pub(crate) static Bun__Node__RedirectWarnings: std::sync::OnceLock<Box<[u8]>> =
 pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>>> =
     std::sync::OnceLock::new();
 
-/// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
-/// during single-threaded process startup (before `Command::start`, hence
-/// before any `cli_arena()` / `cli_dupe` caller), then read freely — same
-/// "init once in `start()`" shape as `cli::LOG_`.
+/// Backing storage for [`cli_arena`]. Initialized in [`Cli::start`] during
+/// single-threaded process startup (before `Command::start`, hence before any
+/// `cli_arena()` / `cli_dupe` caller), then read freely.
 ///
-/// `RacyCell<MaybeUninit<…>>`, **not** `std::sync::LazyLock`: `LazyLock`'s init
-/// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
-/// fat-LTO parks them tens of MB away from the startup symbol cluster.
-/// `cli_arena()` is on the hot `bun <file>` / `bun run <script>` path (via
-/// `cli_dupe` / `cli_dupe_z` / `runner_arena`), so a `LazyLock` there faults a
-/// fresh cold page on every `bun` invocation; a plain cell is the correct shape.
-static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+/// `bun_core::Once` (one inlined Acquire load once initialized), **not**
+/// `std::sync::LazyLock`: `LazyLock`'s init thunk and the `std::sync::Once`
+/// poison/slow path it forces are `#[cold]`, and fat-LTO parks them tens of MB
+/// away from the startup symbol cluster. `cli_arena()` is on the hot
+/// `bun <file>` / `bun run <script>` path (via `cli_dupe` / `cli_dupe_z` /
+/// `runner_arena`).
+static CLI_ARENA: bun_core::Once<bun_alloc::Arena> = bun_core::Once::new();
 
 /// Process-lifetime arena for one-shot CLI commands; allocations live until
 /// exit.
@@ -452,11 +450,7 @@ static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
 /// worker/watcher threads.
 #[inline]
 fn cli_arena() -> &'static bun_alloc::Arena {
-    // SAFETY: `CLI_ARENA` is written exactly once in `Cli::start` during
-    // single-threaded startup, before `Command::start` runs and therefore
-    // before any caller of `cli_arena()` / `cli_dupe` / `cli_dupe_z` exists.
-    // Read-only for the rest of the process lifetime.
-    unsafe { (*CLI_ARENA.get()).assume_init_ref() }
+    CLI_ARENA.get_or_init(bun_alloc::Arena::new)
 }
 
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
@@ -473,14 +467,12 @@ pub(crate) fn cli_dupe(s: &[u8]) -> &'static [u8] {
 /// caller already owns a large buffer (e.g. tarball, request body) so
 /// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
 fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
-    static ADOPTED: bun_threading::Guarded<Vec<Box<[u8]>>> =
+    // The table keeps the process-lifetime buffers reachable (leak checkers).
+    static ADOPTED: bun_threading::Guarded<Vec<&'static [u8]>> =
         bun_threading::Guarded::new(Vec::new());
-    let (ptr, len) = (b.as_ptr(), b.len());
-    ADOPTED.lock().push(b);
-    // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
-    // `Box<[u8]>` pointee address is stable across `Vec` reallocs (only the
-    // `Box` pointer-value moves), so the returned slice stays valid `'static`.
-    unsafe { core::slice::from_raw_parts(ptr, len) }
+    let adopted: &'static [u8] = Box::leak(b);
+    ADOPTED.lock().push(adopted);
+    adopted
 }
 
 /// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and
@@ -511,14 +503,13 @@ pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
 impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader {
     const IS_LOADER: bool = true;
-    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
+    fn resolve_value(input: &'static [u8]) -> crate::Result<Self> {
         arguments::loader_resolver(input)
     }
 }
 impl colon_list_type::ColonListValue for &'static [u8] {
-    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
-        // SAFETY: argv slices are process-lifetime; see ColonListType::keys note.
-        Ok(unsafe { bun_ptr::detach_lifetime(input) })
+    fn resolve_value(input: &'static [u8]) -> crate::Result<Self> {
+        Ok(input)
     }
 }
 
@@ -533,10 +524,6 @@ pub mod cli {
     use super::*;
 
     pub use bun_options_types::compile_target::CompileTarget;
-
-    // Process-global, init in start().
-    pub(crate) static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
-        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     /// `#[inline(never)]`: this is the first Rust call after `main()` (see
     /// `src/runtime/bin_entry/mod.rs`) and the head of the `bun <file>` / `bun run`
@@ -553,27 +540,29 @@ pub mod cli {
         // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
-        // SAFETY: single-threaded process startup
-        unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
-        // Init the process-lifetime CLI arena here (not via `LazyLock` on first
-        // use) — see `super::CLI_ARENA`. The write happens before any worker
-        // thread is spawned and before `Command::start` (the first
-        // `cli_arena()` caller), so a plain `RacyCell` is sound.
-        // SAFETY: single-threaded process startup; `mimalloc` is already init.
-        unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
+        // The process-lifetime CLI log; `create_context_data` takes over this
+        // unique borrow (`ContextData::set_log`).
+        let log: &'static mut bun_ast::Log = Box::leak(Box::new(bun_ast::Log::init()));
+        // Init the process-lifetime CLI arena here (not lazily on first use) —
+        // see `super::CLI_ARENA`. Happens before any worker thread is spawned
+        // and before `Command::start` (the first `cli_arena()` caller).
+        let _ = super::CLI_ARENA.get_or_init(bun_alloc::Arena::new);
 
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
-        // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
-        let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
             // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
             // message. The bake production path returns `error.BuildFailed`
-            // with the actual parse/link errors sitting in `ctx.log` (== this
-            // `log`); without this print, users see only the opaque error name.
-            let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                bun_core::Output::error_writer(),
-            ));
+            // with the actual parse/link errors sitting in `ctx.log`; without
+            // this print, users see only the opaque error name. (Nothing logs
+            // before the context exists.)
+            if let Some(ctx) = bun_options_types::context::try_get() {
+                let _ = ctx
+                    .log_ref()
+                    .print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        bun_core::Output::error_writer(),
+                    ));
+            }
             bun_crash_handler::handle_root_error(err);
         }
     }
@@ -795,19 +784,13 @@ pub mod command {
     pub use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
     pub use bun_options_types::context::{Context, ContextData, HotReload, TestOptions};
 
-    // Process-lifetime
-    // storage, written exactly once in `create_context_data` during
-    // single-threaded startup. The pointer to it is published via
-    // `bun_options_types::context::set_global` (single source of truth).
-    static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
-        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
-
-    /// Process-global CLI context handle.
+    /// Read-only handle to the process-global CLI context.
+    ///
+    /// # Panics
+    /// Before `create_context_data` has published it.
     #[inline]
-    pub fn get() -> Context<'static> {
-        // SAFETY: only called after `create_context_data` published the ctx
-        // during single-threaded startup; callers treat the result as read-mostly.
-        unsafe { &mut *bun_options_types::context::global_ptr() }
+    pub fn get() -> &'static ContextData {
+        bun_options_types::context::try_get().expect("CLI context not initialized")
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1081,26 +1064,10 @@ pub mod command {
         Tag::AutoCommand
     }
 
-    /// Initialize the process-global `CONTEXT_DATA` and publish it via
-    /// `Context::set_global`. Shared by `create_context_data` and the
-    /// standalone-graph fast path in `start()`.
-    fn write_context_no_parse(log: &mut bun_ast::Log) -> &'static mut ContextData {
-        // SAFETY: single-threaded CLI startup; first and only write to
-        // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
-        // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
-        // address is sound for the process lifetime.
-        //
-        // One `ContextData::default()` is constructed and written in place,
-        // then the two non-default fields are patched on the live storage —
-        // avoids the second `Default` temporary (and its drop) that the
-        // `..Default::default()` struct-update form would build on the stack.
-        unsafe {
-            let ctx = (*CONTEXT_DATA.get()).write(ContextData::default());
-            ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);
-            ctx.start_time = bun_core::start_time();
-            bun_options_types::context::set_global(ctx);
-            ctx
-        }
+    /// Allocate and publish the process-lifetime `ContextData`. Shared by
+    /// `create_context_data` and the standalone-graph fast path in `start()`.
+    fn write_context_no_parse(log: &'static mut bun_ast::Log) -> &'static mut ContextData {
+        bun_options_types::context::init_global(log, bun_core::start_time())
     }
 
     /// `ContextData.create` — populates the global ctx and runs `Arguments::parse`.
@@ -1121,7 +1088,7 @@ pub mod command {
     #[inline(never)]
     pub(crate) fn create_context_data(
         cmd: Tag,
-        log: &mut bun_ast::Log,
+        log: &'static mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
         bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
@@ -1164,7 +1131,7 @@ pub mod command {
     /// / `exec_auto_or_run` adjacent), instead of fat-LTO inlining it into
     /// `Cli::start` and re-scattering the per-tag tail calls.
     #[inline(never)]
-    pub(crate) fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
+    pub(crate) fn start(log: &'static mut bun_ast::Log) -> crate::Result<()> {
         // WebView host subprocess entry. Must be before StandaloneModuleGraph,
         // before JSC init, before anything that touches a JS engine. The child
         // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
@@ -1191,9 +1158,11 @@ pub mod command {
 
         // bun build --compile entry point
         if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
-            if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
-                // Never taken for a plain `bun` binary; ~2 KB of argv-splice
-                // and ctx-setup code lives behind this cold call.
+            if bun_standalone_graph::Graph::from_executable()?.is_some() {
+                // `from_executable` installed the graph as the process-global
+                // instance. Never taken for a plain `bun` binary; ~2 KB of
+                // argv-splice and ctx-setup code lives behind this cold call.
+                let graph = bun_standalone_graph::Graph::get_ref().expect("set by from_executable");
                 return boot_standalone(graph, log);
             }
         }
@@ -1334,12 +1303,9 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn boot_standalone(
-        graph: *mut bun_standalone_graph::Graph,
-        log: &mut bun_ast::Log,
+        graph: &'static bun_standalone_graph::Graph,
+        log: &'static mut bun_ast::Log,
     ) -> CmdResult {
-        // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
-        // backing storage is process-static (owned by the executable image).
-        let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
@@ -1370,17 +1336,13 @@ pub mod command {
                 // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                 // This prevents user arguments like --version/--help from being intercepted
                 // by Bun's argument parser (they should be passed through to user code).
-                // SAFETY: single-threaded startup; `full_argv` is process-static.
-                unsafe {
-                    bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
-                }
+                bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
 
                 // Handle actual options to parse.
                 let result = init(Tag::AutoCommand, log)?;
 
                 // Restore full argv so passthrough calculation works correctly
-                // SAFETY: single-threaded startup.
-                unsafe { bun::set_argv(full_argv) };
+                bun::set_argv(full_argv);
 
                 break 'brk result;
             }
@@ -1403,7 +1365,7 @@ pub mod command {
             .map(|a| a.to_vec().into_boxed_slice())
             .collect();
 
-        let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
+        let entry_name = graph.entry_point_name().to_vec().into_boxed_slice();
         super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
         Ok(())
     }
@@ -1411,7 +1373,7 @@ pub mod command {
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
-    fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_auto_or_run(tag: Tag, log: &'static mut bun_ast::Log) -> CmdResult {
         // The AutoCommand arm swallows
         // `error.MissingEntryPoint` from `Command.init` and prints help;
         // every other tag (including RunCommand) propagates the error.
@@ -1520,14 +1482,14 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_run_as_node(log: &'static mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::RunAsNodeCommand, log)?;
         run_command::RunCommand::exec_as_if_node(ctx)
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_bunx(log: &'static mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::BunxCommand, log)?;
         let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
             0
@@ -1540,7 +1502,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_repl(log: &'static mut bun_ast::Log) -> CmdResult {
         // Inits with RunCommand (repl reuses run params).
         let ctx = init(Tag::RunCommand, log)?;
         super::repl_command::ReplCommand::exec(ctx)
@@ -1548,7 +1510,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_build(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_build(log: &'static mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::BuildCommand, log)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
         Ok(())
@@ -1556,7 +1518,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_audit(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_audit(log: &'static mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::AuditCommand, log)?;
         super::audit_command::AuditCommand::exec(ctx)?;
         Ok(())
@@ -1564,7 +1526,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_exec(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_exec(log: &'static mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::ExecCommand, log)?;
         if ctx.positionals.len() > 1 {
             super::exec_command::ExecCommand::exec(ctx)?;
@@ -1576,7 +1538,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_fuzzilli(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_fuzzilli(log: &'static mut bun_ast::Log) -> CmdResult {
         if bun_core::Environment::ENABLE_FUZZILLI {
             let ctx = init(Tag::FuzzilliCommand, log)?;
             return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
@@ -1591,7 +1553,7 @@ pub mod command {
             $(
                 #[cold]
                 #[inline(never)]
-                fn $name(log: &mut bun_ast::Log) -> CmdResult {
+                fn $name(log: &'static mut bun_ast::Log) -> CmdResult {
                     let ctx = init(Tag::$tag, log)?;
                     $($path)+(ctx)
                 }
@@ -1653,7 +1615,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_getcompletes(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_getcompletes(log: &'static mut bun_ast::Log) -> crate::Result<()> {
         use super::add_completions;
         use super::run_command::{Filter, RunCommand};
         use super::shell_completions::ShellCompletions;
@@ -1766,7 +1728,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_create(log: &'static mut bun_ast::Log) -> crate::Result<()> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_core::ZStr;
@@ -1854,7 +1816,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             Global::exit(1);
         }
 
-        let create_command_info = CreateCommand::extract_info(&ctx)?;
+        let create_command_info = CreateCommand::extract_info(ctx)?;
         let template = create_command_info.template;
         let example_tag = create_command_info.example_tag;
 
@@ -1884,7 +1846,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             return BunxCommand::exec(ctx, &bunx_args);
         }
 
-        CreateCommand::exec(&ctx, example_tag, template)
+        CreateCommand::exec(ctx, example_tag, template)
     }
 
     /// `bun ./bun.lockb` — print lockfile as yarn.lock (or its hash with `--hash`).
@@ -1915,15 +1877,12 @@ To create a project with the official Next.js scaffolding tool, run\n\
         }
 
         let entry = ctx.args.entry_points[0].clone();
-        // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
-        // `create_context_data` and no other `&mut Log` borrow is live for the
-        // duration of this `Printer::print` call.
-        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn).map_err(Into::into)
+        Printer::print(ctx.log_mut(), &entry, PrinterFormat::Yarn).map_err(Into::into)
     }
 
     #[cold]
     #[inline(never)]
-    fn bun_info(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_info(log: &'static mut bun_ast::Log) -> crate::Result<()> {
         use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
         use bun_install::{PackageManager, Subcommand};
 

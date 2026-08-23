@@ -10,12 +10,7 @@ impl PmWhyCommand {
         pm: &mut PackageManager,
         positionals: &[&[u8]],
     ) -> Result<(), crate::Error> {
-        // Note: `bun pm` dispatch threads the context here as `&Command::Context`,
-        // but `WhyCommand::exec_from_pm` needs `&mut Command::Context` to reach
-        // `ctx.log`. Reacquire the process-global handle (same pointee,
-        // single-threaded CLI startup) rather than unsafely reborrowing `_ctx`.
-        let ctx = command::get();
-        WhyCommand::exec_from_pm(ctx, pm, positionals)?;
+        WhyCommand::exec_from_pm(pm, positionals)?;
         Ok(())
     }
 }

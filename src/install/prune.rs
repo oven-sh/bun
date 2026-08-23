@@ -17,7 +17,8 @@ use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, PackageIndexEntry, reachable, tree};
 use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_manager::Options::{Enable, LogLevel};
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
+#[allow(unused_imports)]
+use crate::package_manager::root_package_json_path;
 use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::{Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
@@ -446,7 +447,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
 
     let log = manager.log_mut();
     // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let path: &[u8] = crate::package_manager::root_package_json_path().as_bytes();
     let (source, json) = match manager
         .workspace_package_json_cache
         .get_with_path(log, path, Default::default())

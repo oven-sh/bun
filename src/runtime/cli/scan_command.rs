@@ -1,8 +1,8 @@
 use crate::Command;
 use crate::cli::package_manager_command::PackageManagerCommand;
 use bun_core::{Global, Output};
+use bun_install::PackageManager;
 use bun_install::package_manager::security_scanner;
-use bun_install::{Lockfile, PackageManager};
 
 pub(crate) struct ScanCommand;
 
@@ -37,18 +37,7 @@ impl ScanCommand {
         // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
         {
             let log_level = manager.options.log_level;
-            let pm_ptr: *mut PackageManager = manager;
-            // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
-            let log: &mut bun_ast::Log = unsafe { &mut *(*pm_ptr).log };
-            // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
-            // no other live `&mut Lockfile` exists at this point.
-            let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
-            let load_result = lockfile.load_from_cwd::<true>(
-                // SAFETY: see comment above — `load_from_cwd` accesses `manager`
-                // fields disjoint from `lockfile`.
-                Some(unsafe { &mut *pm_ptr }),
-                log,
-            );
+            let load_result = manager.load_lockfile_from_cwd::<true>();
             PackageManagerCommand::handle_load_lockfile_errors_for(&load_result, log_level, "scan");
         }
 

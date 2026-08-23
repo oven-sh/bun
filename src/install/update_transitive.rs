@@ -14,7 +14,8 @@ use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, PackageIndexEntry};
 use crate::npm::PackageManifest;
 use crate::package_manager::Options::LogLevel;
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
+#[allow(unused_imports)]
+use crate::package_manager::root_package_json_path;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::package_manager_real::{PackageUpdateInfo, enqueue_dependency_with_main};
 use crate::update_scope::UpdateScope;
@@ -720,7 +721,7 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     let keys: Vec<Box<[u8]>> = {
         let log = manager.log_mut();
         // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-        let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+        let path: &[u8] = crate::package_manager::root_package_json_path().as_bytes();
         let opts = GetJsonOptions {
             init_reset_store: false,
             ..Default::default()

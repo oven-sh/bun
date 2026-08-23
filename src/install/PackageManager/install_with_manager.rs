@@ -89,7 +89,7 @@ pub fn install_with_manager(
         lockfile::LoadResult::NotFound
     };
 
-    update_lockfile_if_needed(manager, &load_result)?;
+    update_lockfile_if_needed(manager, load_result.packages_need_update())?;
 
     // Snapshot the loaded-from-lockfile package count so
     // `Lockfile::get_package_id` can tell loaded pins apart from packages

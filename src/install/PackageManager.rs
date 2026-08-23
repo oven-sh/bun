@@ -718,6 +718,13 @@ impl PackageManager {
         Some(unsafe { p.as_mut() })
     }
 
+    /// `activate()` the scripts progress node, if one is installed.
+    pub fn activate_scripts_node(&mut self) {
+        if let Some(node) = self.scripts_node_mut() {
+            node.activate();
+        }
+    }
+
     /// The global singleton accessor. Associated-fn spelling that forwards to
     /// the free [`get`] so callers can write `PackageManager::get()`.
     ///
@@ -811,7 +818,12 @@ mod holder {
 static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
-pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCell::new(ZStr::EMPTY);
+static ROOT_PACKAGE_JSON_PATH: bun_core::RwLock<&'static ZStr> = bun_core::RwLock::new(ZStr::EMPTY);
+
+/// The root `package.json` path recorded by `PackageManager::init` (empty before).
+pub fn root_package_json_path() -> &'static ZStr {
+    *ROOT_PACKAGE_JSON_PATH.read()
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
@@ -841,6 +853,30 @@ impl PackageManager {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;
             (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
+        }
+    }
+
+    /// [`Lockfile::load_from_bytes`] on `self.lockfile` with `self` as the manager.
+    pub fn load_lockfile_from_bytes(&mut self, bytes: Vec<u8>) -> lockfile::LoadResult<'_> {
+        let pm: *mut PackageManager = self;
+        // SAFETY: as in `load_lockfile_from_cwd` — `self.lockfile` is a separate
+        // boxed allocation and `load_from_bytes` never re-projects `pm.lockfile`.
+        unsafe {
+            let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
+            let log: *mut bun_ast::Log = (*pm).log;
+            (*lf).load_from_bytes(Some(&mut *pm), bytes, &mut *log)
+        }
+    }
+
+    /// [`migration::detect_and_load_other_lockfile`] into `self.lockfile`.
+    pub fn migrate_other_lockfile(&mut self, dir: Fd) -> lockfile::LoadResult<'_> {
+        let pm: *mut PackageManager = self;
+        // SAFETY: as in `load_lockfile_from_cwd` — `self.lockfile` is a separate
+        // boxed allocation and the migrators never re-project `pm.lockfile`.
+        unsafe {
+            let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
+            let log: *mut bun_ast::Log = (*pm).log;
+            crate::migration::detect_and_load_other_lockfile(&mut *lf, dir, &mut *pm, &mut *log)
         }
     }
 
@@ -1717,13 +1753,10 @@ pub fn init(
                     let json_source =
                         bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
                     initialize_store();
-                    // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
-                    // duration of `init()` (set by `Command::create()` before any install
-                    // entry point runs).
-                    let parsed =
-                        crate::bun_json::ParsedJson::parse_package_json(&json_source, unsafe {
-                            &mut *ctx.log
-                        })?;
+                    let parsed = crate::bun_json::ParsedJson::parse_package_json(
+                        &json_source,
+                        ctx.log_mut(),
+                    )?;
                     let json = parsed.root;
                     if subcommand == Subcommand::Pm {
                         if let Some(name) = json.get(b"name").and_then(|e| {
@@ -1874,7 +1907,7 @@ pub fn init(
             bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
         };
         root_buf[plen] = 0;
-        ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
+        *ROOT_PACKAGE_JSON_PATH.write() = ZStr::from_raw(root_buf.as_ptr(), plen);
     }
 
     // Returns the resolver's BSSMap-owned
@@ -2042,7 +2075,7 @@ pub fn init(
         );
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(patch_task_fifo, PatchTaskFifo::init());
-        wr!(log, ctx.log);
+        wr!(log, ctx.log_ptr());
         wr!(root_dir, entries_option);
         wr!(ast_arena, bun_alloc::Arena::new());
         // reborrow `&mut *env` so the local stays usable for
@@ -2175,8 +2208,7 @@ pub fn init(
         // bytes by every resolver-side caller. On Windows `get_fd_path` yields `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
-        // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
-        let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
+        let raw: &[u8] = root_package_json_path().as_ref();
         let mut buf = PathBuffer::uninit();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
@@ -2235,9 +2267,7 @@ pub fn init(
         }
 
         manager.options.load(
-            // SAFETY: ctx.log is the process-lifetime CLI log set by
-            // create_context_data(); single-threaded init region.
-            unsafe { &mut *ctx.log },
+            manager.log_mut(),
             env,
             Some(cli),
             ctx.install.as_deref(),

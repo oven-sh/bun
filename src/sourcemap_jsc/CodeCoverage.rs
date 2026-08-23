@@ -667,16 +667,27 @@ fn thread_map_opt() -> Option<NonNull<ByteRangeMappingHashMap>> {
 }
 
 impl ByteRangeMapping {
-    /// Read-only accessor
-    /// for the per-thread `ByteRangeMappingHashMap`. Returns `None` if no
+    /// Run `f` on this thread's `ByteRangeMappingHashMap`; `None` if no
     /// coverage data was recorded on this thread.
     ///
-    /// The pointer borrows the thread-local `Box`, which is pinned for the
-    /// thread's lifetime and never re-entered while the caller holds it
-    /// (single-threaded CLI report path). Callers reborrow per-access —
-    /// PORTING.md §Global mutable state.
-    pub fn map() -> Option<NonNull<ByteRangeMappingHashMap>> {
-        thread_map_opt()
+    /// The map is moved out of the thread-local slot for the duration of `f`,
+    /// so a re-entrant lookup (`ByteRangeMapping__find`) sees no map instead of
+    /// aliasing the `&mut`. The entries themselves stay at their heap addresses.
+    pub fn with_map<R>(f: impl FnOnce(&mut ByteRangeMappingHashMap) -> R) -> Option<R> {
+        // SAFETY: thread-local; the exclusive borrow of the slot ends before `f` runs.
+        let mut map = MAP.with(|cell| unsafe { (*cell.get()).take() })?;
+        let result = f(&mut map);
+        MAP.with(|cell| {
+            // SAFETY: thread-local; no borrow of the slot is live here.
+            let slot = unsafe { &mut *cell.get() };
+            debug_assert!(slot.is_none(), "coverage map re-created during with_map");
+            if let Some(reentrant) = slot.take() {
+                // Pointers into it may have been handed to C++; never free it.
+                let _ = Box::leak(reentrant);
+            }
+            *slot = Some(map);
+        });
+        Some(result)
     }
 
     pub(crate) fn generate_report_from_blocks(

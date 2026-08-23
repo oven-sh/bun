@@ -1158,7 +1158,9 @@ pub fn save_lockfile(
         this.progress.refresh();
     }
 
-    let wrote = this.lockfile.save_to_disk(load_result, &this.options);
+    let wrote = this
+        .lockfile
+        .save_to_disk(load_result.meta(), &this.options);
 
     // delete binary lockfile if saving text lockfile
     if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
@@ -1205,14 +1207,14 @@ pub fn save_lockfile(
     Ok(wrote)
 }
 
+/// `packages_need_update` is [`LoadResult::packages_need_update`] of the load
+/// that produced `manager.lockfile`.
 pub fn update_lockfile_if_needed(
     manager: &mut PackageManager,
-    // The caller continues using
-    // `load_result` after this call, so take it by shared reference.
-    load_result: &LoadResult,
+    packages_need_update: bool,
 ) -> Result<(), Error> {
-    if let LoadResult::Ok(ok) = load_result {
-        if ok.serializer_result.packages_need_update {
+    {
+        if packages_need_update {
             let mut slice = manager.lockfile.packages.slice();
             for meta in slice.items_meta_mut() {
                 // these are possibly updated later, but need to make sure non are zero

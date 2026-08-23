@@ -1502,9 +1502,6 @@ impl FrameworkRouter {
         // program lifetime. Resolver mutex serializes mutation. We hold a raw pointer (no borrow)
         // so `r.read_dir_info_ignore_error(&mut self)` below does not conflict.
         let fs_ref = unsafe { &*fs };
-        // SAFETY: `fs` is the non-null process-global FileSystem singleton (see above);
-        // `addr_of_mut!` only computes a field address without forming a reference.
-        let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
         {
             // Note: `entries.data` is backed by `std::collections::HashMap`,
@@ -1540,10 +1537,7 @@ impl FrameworkRouter {
                 let file = unsafe { &*file_ptr };
                 let base = file.base();
                 // Note: reshaped for borrowck — fetch type fields fresh each iteration.
-                // SAFETY: `Entry::kind` mutates only the entry's lazily-cached kind; `file_ptr`
-                // is the unique live reference to this entry during the scan, and `fs_impl`
-                // points at the process-global FS implementation.
-                match unsafe { (*file_ptr).kind(&raw mut *fs_impl, false) } {
+                match file.kind(&fs_ref.fs, false) {
                     bun_resolver::fs::EntryKind::Dir => {
                         let t = &self.types[t_index.get() as usize];
                         if t.ignore_underscores && base.starts_with(b"_") {

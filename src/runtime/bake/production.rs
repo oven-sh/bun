@@ -105,7 +105,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     let vm_ptr = VirtualMachine::init_bake(jsc::virtual_machine::Options {
         // arena: arena — dropped per §Allocators (global mimalloc)
-        log: NonNull::new(ctx.log),
+        log: NonNull::new(ctx.log_ptr()),
         args: ctx.args.clone(),
         smol: ctx.runtime_options.smol,
         ..Default::default()

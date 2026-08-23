@@ -1,7 +1,6 @@
 use crate::api::bun::process as bun_process;
 use crate::api::bun::process::SignalCodeExt as _;
 use crate::api::bun::process::sync as spawn_sync;
-use crate::cli::Command;
 use crate::cli::create_command::ExampleTag;
 use bun_ast::Source as LoggerSource;
 use bun_bundler::ResolvedExports;
@@ -20,7 +19,6 @@ use bun_sys::{self, Fd};
 
 // Generate project files based on the entry point and dependencies
 pub(crate) fn generate(
-    _ctx: &Command::Context,
     _example: ExampleTag,
     entry_point: &[u8],
     result: &mut DependenciesScannerResult,

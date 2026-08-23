@@ -323,6 +323,23 @@ impl JSGlobalObject {
         JSGlobalObject__setTimeZone(self, time_zone)
     }
 
+    /// Install the `node:module` globals (`require`, `module`, `__dirname`, ...) for `-e`/`-p`.
+    pub fn expose_node_module_globals(&self) {
+        crate::cpp::Bun__ExposeNodeModuleGlobals(self)
+    }
+
+    /// Install the `gc()` global (`--expose-gc`).
+    pub fn add_gc(&self) {
+        crate::cpp::JSC__JSGlobalObject__addGc(self)
+    }
+
+    /// Install the REPL's `require`, `module`, `__filename`, `__dirname`
+    /// relative to `cwd`.
+    pub fn repl_setup_global_require(&self, cwd: &[u8]) -> JsResult<()> {
+        // SAFETY: `(as_ptr, len)` of a live slice; the callee copies the bytes.
+        unsafe { crate::cpp::Bun__REPL__setupGlobalRequire(self, cwd.as_ptr(), cwd.len()) }
+    }
+
     #[inline]
     pub fn to_js_value(&self) -> JSValue {
         // JSValue is #[repr(transparent)] over the encoded pointer-width word; a

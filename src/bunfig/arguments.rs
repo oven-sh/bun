@@ -65,7 +65,7 @@ fn load_bunfig(
     // `Bunfig::parse(.., ctx)` reborrow.
     // Route through the raw `*mut Log` (process-lifetime, set in
     // `create_context_data()`); the guard restores `level` on unwind/return.
-    let log_ptr: *mut bun_ast::Log = ctx.log;
+    let log_ptr: *mut bun_ast::Log = ctx.log_ptr();
     debug_assert!(!log_ptr.is_null());
     // SAFETY: `ctx.log` is the process-global Log written once during
     // single-threaded CLI startup; no other `&mut` to it is live here.
@@ -122,9 +122,7 @@ pub fn load_config_path(
 }
 
 #[cold]
-fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
-    // SAFETY: process-global Log; see `load_bunfig` note.
-    let log = unsafe { &mut *log };
+fn report_bunfig_load_failure(log: &mut bun_ast::Log, err: crate::Error) -> ! {
     if log.has_any() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         Output::print_error("\n");
@@ -157,7 +155,7 @@ pub fn load_config(
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    report_bunfig_load_failure(ctx.log, err);
+                    report_bunfig_load_failure(ctx.log_mut(), err);
                 }
             }
         }
@@ -227,7 +225,7 @@ pub fn load_config(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        report_bunfig_load_failure(ctx.log, err);
+        report_bunfig_load_failure(ctx.log_mut(), err);
     }
     Ok(())
 }

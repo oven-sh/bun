@@ -797,7 +797,7 @@ impl RunCommand {
         let args = ctx.args.clone();
         this_transpiler.write(bun_transpiler::Transpiler::init(
             install_runner_arena(),
-            ctx.log,
+            ctx.log_ptr(),
             args,
             env,
         )?);

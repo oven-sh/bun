@@ -576,9 +576,9 @@ impl<'a> RouteLoader<'a> {
             // `Entry.kind` derefs it to lazily stat when `need_stat` is
             // true, so null would be a latent crash / silent route-drop
             // once the stub forwards it.
-            // SAFETY: no other live borrow of `*entry_ptr` here;
-            // `resolver.fs_impl()` points at the process-global RealFS.
-            let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
+            // SAFETY: EntryStore-owned, valid for process lifetime; no other
+            // live borrow of `*entry_ptr` here.
+            let kind = unsafe { &*entry_ptr }.kind(resolver.fs_impl(), false);
             // SAFETY: shared read-only borrow for the match arms; the only
             // subsequent mutation is via `Route::parse` which takes the raw
             // pointer and reborrows internally.
@@ -932,7 +932,7 @@ impl Route {
 
                 // SAFETY: sole mutation; `base_`/`extname` (which may borrow
                 // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(Interned::from_static(abs_path_str));
+                unsafe { &*entry }.set_abs_path(Interned::from_static(abs_path_str));
             }
 
             #[cfg(windows)]
@@ -1132,7 +1132,7 @@ pub trait ResolverLike {
     fn fs(&self) -> &'static FileSystem;
     /// The resolver's `Implementation` field, passed to
     /// `Entry.kind` for lazy stat.
-    fn fs_impl(&self) -> *mut Fs::Implementation;
+    fn fs_impl(&self) -> &Fs::Implementation;
     /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
     /// borrow ends before the recursive `load()` re-borrows it.
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;

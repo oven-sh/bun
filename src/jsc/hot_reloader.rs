@@ -1179,7 +1179,7 @@ where
                                                     core::sync::atomic::Ordering::Release,
                                                 );
                                             }
-                                            path_string = ent.abs_path;
+                                            path_string = ent.abs_path();
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {

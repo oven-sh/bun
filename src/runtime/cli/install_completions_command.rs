@@ -578,13 +578,10 @@ impl InstallCompletionsCommand {
                                 zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
                                     .copy_from_slice(b"/.zshrc");
                                 zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                                // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                                let filepath = unsafe {
-                                    bun_core::ZStr::from_raw(
-                                        zshrc_filepath.as_ptr(),
-                                        zdot_dir.len() + b"/.zshrc".len(),
-                                    )
-                                };
+                                let filepath = bun_core::ZStr::from_buf(
+                                    &zshrc_filepath[..],
+                                    zdot_dir.len() + b"/.zshrc".len(),
+                                );
                                 match bun_sys::open_file_absolute_z(
                                     filepath,
                                     bun_sys::OpenFlags::READ_WRITE,
@@ -601,13 +598,10 @@ impl InstallCompletionsCommand {
                                 zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
                                     .copy_from_slice(b"/.zshrc");
                                 zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                                // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                                let filepath = unsafe {
-                                    bun_core::ZStr::from_raw(
-                                        zshrc_filepath.as_ptr(),
-                                        zdot_dir.len() + b"/.zshrc".len(),
-                                    )
-                                };
+                                let filepath = bun_core::ZStr::from_buf(
+                                    &zshrc_filepath[..],
+                                    zdot_dir.len() + b"/.zshrc".len(),
+                                );
                                 match bun_sys::open_file_absolute_z(
                                     filepath,
                                     bun_sys::OpenFlags::READ_WRITE,
@@ -624,13 +618,10 @@ impl InstallCompletionsCommand {
                                 zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshenv".len()]
                                     .copy_from_slice(b"/.zshenv");
                                 zshrc_filepath[zdot_dir.len() + b"/.zshenv".len()] = 0;
-                                // SAFETY: NUL written at zdot_dir.len() + "/.zshenv".len() above
-                                let filepath = unsafe {
-                                    bun_core::ZStr::from_raw(
-                                        zshrc_filepath.as_ptr(),
-                                        zdot_dir.len() + b"/.zshenv".len(),
-                                    )
-                                };
+                                let filepath = bun_core::ZStr::from_buf(
+                                    &zshrc_filepath[..],
+                                    zdot_dir.len() + b"/.zshenv".len(),
+                                );
                                 match bun_sys::open_file_absolute_z(
                                     filepath,
                                     bun_sys::OpenFlags::READ_WRITE,

@@ -164,6 +164,11 @@ impl StandaloneModuleGraph {
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
 
+    /// The entry point module's path in the embedded filesystem.
+    pub fn entry_point_name(&self) -> &[u8] {
+        self.files.values()[self.entry_point_id as usize].name
+    }
+
     // by normalized file path
     pub fn find(&mut self, name: &[u8]) -> Option<&mut File> {
         if !is_bun_standalone_file_path(name) {

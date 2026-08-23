@@ -427,27 +427,14 @@ impl BunxCommand {
                 #[cfg(windows)]
                 {
                     use bun_sys::windows as win;
-                    let mut io_status_block: win::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-                    let mut info: win::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
-                    // SAFETY: FFI call with valid out-params
-                    let rc = unsafe {
-                        win::ntdll::NtQueryInformationFile(
-                            target_package_json_fd.native(),
-                            &mut io_status_block,
-                            (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
-                            u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>())
-                                .expect("int cast"),
-                            win::FILE_INFORMATION_CLASS::FileBasicInformation,
-                        )
-                    };
-                    match rc {
-                        win::NTSTATUS::SUCCESS => {
+                    match win::query_file_basic_information(target_package_json_fd.native()) {
+                        Ok(info) => {
                             let time = win::from_sys_time(info.LastWriteTime);
                             let now = bun_core::time::nano_timestamp();
                             break 'is_stale now - time > Self::NANOSECONDS_CACHE_VALID;
                         }
                         // treat failures to stat as stale
-                        _ => break 'is_stale true,
+                        Err(_) => break 'is_stale true,
                     }
                 }
                 #[cfg(not(windows))]
@@ -675,13 +662,9 @@ impl BunxCommand {
         let opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
-        // SAFETY: CLI dispatch is single-threaded and `ctx_log` is consumed by
-        // `UpdateRequest::parse` immediately below; it is not held across any
-        // call that may itself reborrow the same `Log`.
-        let ctx_log = unsafe { ctx.log_mut() };
         let update_requests = UpdateRequest::parse(
             None,
-            ctx_log,
+            ctx.log_mut(),
             &[opts.package_name],
             &mut requests_buf,
             bun_install::Subcommand::Add,
@@ -745,7 +728,7 @@ impl BunxCommand {
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
         let mut original_path: Vec<u8> = Vec::new();
 
-        let root_dir_info = Run::configure_env_for_run(
+        let (this_transpiler, root_dir_info) = Run::configure_env_for_run(
             ctx,
             &mut this_transpiler_slot,
             None,
@@ -754,9 +737,6 @@ impl BunxCommand {
                 store_root_fd: true,
             },
         )?;
-        // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
-        // initialized via `MaybeUninit::write`.
-        let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
 
         let force_using_bun = ctx.debug.run_in_bun;
         Run::configure_path_for_run(
@@ -945,8 +925,7 @@ impl BunxCommand {
         //
         // If this format changes, please update cache clearing code in package_manager_command.rs
         #[cfg(unix)]
-        // SAFETY: getuid() is always safe to call (no preconditions, never fails)
-        let uid = unsafe { libc::getuid() };
+        let uid = bun_sys::c::getuid();
         #[cfg(windows)]
         let uid = bun_sys::windows::user_unique_id();
 
@@ -970,8 +949,7 @@ impl BunxCommand {
         };
 
         env_loader.map.put(b"PATH", &path)?;
-        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let fs = unsafe { &mut *this_transpiler.fs };
+        let fs = bun_resolver::fs::FileSystem::get();
         let uid_digits = bun_core::fmt::digit_count(uid);
         let bunx_cache_dir: &[u8] =
             &path[0..temp_dir.len() + b"/bunx--".len() + package_fmt.len() + uid_digits];
@@ -997,9 +975,7 @@ impl BunxCommand {
             )
             .map_err(|_| crate::Error::PathTooLong)?;
             let written = buf_total - cursor.len();
-            // Re-slice from the buffer so the borrow on `cursor` ends here.
-            // SAFETY: `written` bytes were just initialized above
-            unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
+            &absolute_in_cache_dir_buf[..written]
         };
 
         if !Self::is_trusted_cache_root(bunx_cache_dir, temp_dir.len(), uid) {
@@ -1093,29 +1069,16 @@ impl BunxCommand {
                                 // The fd is closed explicitly below before
                                 // any `break 'is_stale` (no early-return between open & close).
 
-                                let mut io_status_block: win::IO_STATUS_BLOCK =
-                                    bun_core::ffi::zeroed();
-                                let mut info: win::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
-                                // SAFETY: FFI call with valid out-params
-                                let rc = unsafe {
-                                    win::ntdll::NtQueryInformationFile(
-                                        fd.native(),
-                                        &mut io_status_block,
-                                        (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
-                                        u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>())
-                                            .expect("int cast"),
-                                        win::FILE_INFORMATION_CLASS::FileBasicInformation,
-                                    )
-                                };
+                                let rc = win::query_file_basic_information(fd.native());
                                 fd.close();
                                 match rc {
-                                    win::NTSTATUS::SUCCESS => {
+                                    Ok(info) => {
                                         let time = win::from_sys_time(info.LastWriteTime);
                                         let now = bun_core::time::nano_timestamp();
                                         break 'is_stale now - time > Self::NANOSECONDS_CACHE_VALID;
                                     }
                                     // treat failures to stat as stale
-                                    _ => break 'is_stale true,
+                                    Err(_) => break 'is_stale true,
                                 }
                             }
                             #[cfg(not(windows))]
@@ -1188,13 +1151,7 @@ impl BunxCommand {
                                     )
                                     .expect("unreachable");
                                     let written = buf_total - cursor.len();
-                                    // SAFETY: `written` bytes initialized above
-                                    unsafe {
-                                        core::slice::from_raw_parts(
-                                            absolute_in_cache_dir_buf.as_ptr(),
-                                            written,
-                                        )
-                                    }
+                                    &absolute_in_cache_dir_buf[..written]
                                 };
 
                                 // Only use the system-installed version if there is no version specified.
@@ -1375,25 +1332,13 @@ impl BunxCommand {
 
             #[cfg(windows)]
             windows: proc_sync::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // `this_transpiler.env` is the process-lifetime loader
-                        // singleton populated during transpiler init.
-                        //
-                        // Aliasing: do NOT call `this_transpiler.env_mut()` here —
-                        // `env_loader` (line 594) is still live and is used again below at the
-                        // post-install `Run::run_binary` calls. A second `env_mut()` would
-                        // `unsafe { &mut *self.env }` from the raw field, popping `env_loader`'s
-                        // Unique tag under Stacked Borrows (UB on later use). Instead reborrow
-                        // *through* `env_loader` so the new `&mut` is a child of its tag; the
-                        // child is consumed by `init_global` (converted to `NonNull`) before
-                        // `env_loader` is touched again.
-                        // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
-                        // stacked reborrow, not a sibling alias.
-                        Some(unsafe { &mut *(env_loader as *mut _) }),
-                        None,
-                    ),
-                ),
+                // Reborrow *through* `env_loader` (still used below) rather than
+                // a second `this_transpiler.env_mut()`.
+                loop_: bun_event_loop::MiniEventLoop::GlobalMiniEventLoop::init(
+                    Some(bun_ptr::BackRef::new_mut(&mut *env_loader)),
+                    None,
+                )
+                .handle(),
                 ..Default::default()
             },
             ..Default::default()
@@ -1469,8 +1414,7 @@ impl BunxCommand {
             )
             .expect("unreachable");
             let written = buf_total - cursor.len();
-            // SAFETY: `written` bytes initialized above
-            unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
+            &absolute_in_cache_dir_buf[..written]
         };
 
         // Similar to "npx":
@@ -1534,10 +1478,7 @@ impl BunxCommand {
                         )
                         .expect("unreachable");
                         let written = buf_total - cursor.len();
-                        // SAFETY: `written` bytes initialized above
-                        unsafe {
-                            core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written)
-                        }
+                        &absolute_in_cache_dir_buf[..written]
                     };
 
                     if let Some(destination) = bun_which::which(

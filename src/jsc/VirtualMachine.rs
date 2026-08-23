@@ -312,8 +312,7 @@ pub struct VirtualMachine {
     /// so observers can read name/message/stack without re-running the
     /// formatter. Installed by `bun test --reporter=junit` around
     /// `run_error_handler`.
-    pub on_print_error_zig_exception: Option<fn(*mut c_void, &ZigException)>,
-    pub on_print_error_zig_exception_ctx: *mut c_void,
+    pub on_print_error_zig_exception: Option<Box<dyn Fn(&ZigException)>>,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
 
@@ -926,6 +925,14 @@ impl VirtualMachine {
         unsafe { &mut *self.event_loop }
     }
 
+    /// [`EventLoop::tick_immediate_tasks`] on this VM's active event loop.
+    pub fn tick_immediate_tasks(&mut self) {
+        let this: *mut Self = self;
+        // SAFETY: `event_loop` is this VM's own loop (see `event_loop_mut`) and
+        // `this` is the live VM that owns it.
+        unsafe { (*(*this).event_loop).tick_immediate_tasks(this) }
+    }
+
     /// Safe `&EventLoop` accessor — shared variant of [`Self::event_loop_mut`].
     /// Prefer when only reading event-loop fields (queue lengths, pending
     /// refs) to avoid minting an unnecessary `&mut`.
@@ -1510,6 +1517,41 @@ impl VirtualMachine {
         unsafe { t.result.assume_init() }
     }
 
+    /// [`run_with_api_lock`](Self::run_with_api_lock) with `self` lent to `f`.
+    pub fn run_with_api_lock_mut<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        use core::mem::{ManuallyDrop, MaybeUninit};
+
+        struct Trampoline<'a, F, R> {
+            vm: &'a mut VirtualMachine,
+            f: ManuallyDrop<F>,
+            result: MaybeUninit<R>,
+        }
+
+        extern "C" fn call<F: FnOnce(&mut VirtualMachine) -> R, R>(ctx: *mut c_void) {
+            // SAFETY: `ctx` is `&mut Trampoline<F, R>` on the caller's stack;
+            // `JSC__VM__holdAPILock` invokes us exactly once with that pointer.
+            let t = unsafe { bun_ptr::callback_ctx::<Trampoline<'_, F, R>>(ctx) };
+            // SAFETY: single-shot — `f` is taken exactly once.
+            let f = unsafe { ManuallyDrop::take(&mut t.f) };
+            t.result.write(f(t.vm));
+        }
+
+        // The JSC `VM` is its own allocation (an `opaque_ffi!` ZST handle), so
+        // the lock receiver does not borrow from `*self`.
+        let jsc_vm = VM::opaque_ref(self.jsc_vm);
+        let mut t = Trampoline::<'_, F, R> {
+            vm: self,
+            f: ManuallyDrop::new(f),
+            result: MaybeUninit::uninit(),
+        };
+        JSC__VM__holdAPILock(jsc_vm, (&raw mut t).cast(), call::<F, R>);
+        // SAFETY: `call` wrote `t.result` exactly once above.
+        unsafe { t.result.assume_init() }
+    }
+
     #[cold]
     pub fn run_error_handler(
         &mut self,
@@ -1616,6 +1658,47 @@ impl VirtualMachine {
 
     pub fn is_watcher_enabled(&self) -> bool {
         !self.bun_watcher.is_null()
+    }
+
+    /// Start `--watch` (`reload_immediately`) or `--hot` reloading for the
+    /// main-thread VM. That VM is never freed (`global_exit` ends the process),
+    /// so it outlives the leaked reloader and its watcher thread.
+    ///
+    /// # Panics
+    /// If `self` is not the main-thread VM.
+    pub fn enable_hot_module_reloading(
+        &mut self,
+        reload_immediately: bool,
+        entry_path: Option<&'static [u8]>,
+    ) {
+        let this: *mut Self = self;
+        assert!(
+            Self::get_main_thread_vm() == Some(this),
+            "hot module reloading is only available on the main-thread VM"
+        );
+        // SAFETY: `this` is the main-thread VM (asserted): allocated once in
+        // `init`, never freed, so it outlives the reloader.
+        unsafe {
+            if reload_immediately {
+                crate::hot_reloader::WatchReloader::enable_hot_module_reloading(this, entry_path)
+            } else {
+                crate::hot_reloader::HotReloader::enable_hot_module_reloading(this, entry_path)
+            }
+        }
+    }
+
+    /// `ImportWatcher::add_file_by_path_slow` on the watcher installed by
+    /// [`enable_hot_module_reloading`]; `None` if no watcher is installed.
+    ///
+    /// [`enable_hot_module_reloading`]: Self::enable_hot_module_reloading
+    pub fn watcher_add_file_by_path_slow(&self, file_path: &[u8]) -> Option<bool> {
+        let watcher = self.bun_watcher_ptr();
+        if watcher.is_null() {
+            return None;
+        }
+        // SAFETY: leaked by `install_bun_watcher` for the VM's lifetime; the
+        // reborrow spans one internally mutex-guarded op (see `bun_watcher_ptr`).
+        Some(unsafe { (*watcher).add_file_by_path_slow(file_path) })
     }
 
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
@@ -6131,8 +6214,8 @@ impl VirtualMachine {
             if let Some(debugger) = self.debugger.as_deref_mut() {
                 debugger.lifecycle_reporter_agent.report_error(exception);
             }
-            if let Some(cb) = self.on_print_error_zig_exception {
-                cb(self.on_print_error_zig_exception_ctx, exception);
+            if let Some(cb) = &self.on_print_error_zig_exception {
+                cb(exception);
             }
         }
 

@@ -27,7 +27,7 @@ pub struct Scanner<'a> {
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
-    pub(crate) fs: *mut FileSystem,
+    pub(crate) fs: &'static FileSystem,
     pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) has_iterated: bool,
@@ -58,16 +58,12 @@ pub enum ScanError {
 }
 bun_core::oom_from_alloc!(ScanError);
 
-/// Newtype around `*mut Scanner` so it can satisfy [`DirEntryIterator`]
-/// (whose `next` takes `&self`) while still allowing mutable calls.
-#[repr(transparent)]
-struct ScannerDirIter<'a>(*mut Scanner<'a>);
-impl<'a> DirEntryIterator for ScannerDirIter<'a> {
+/// Lends the `Scanner` to [`DirEntryIterator`] (whose `next` takes `&self`)
+/// for the duration of one `read_directory_with_iterator` call.
+struct ScannerDirIter<'s, 'a>(core::cell::RefCell<&'s mut Scanner<'a>>);
+impl DirEntryIterator for ScannerDirIter<'_, '_> {
     fn next(&self, entry: &mut fs::Entry, _fd: Fd) {
-        // SAFETY: `self.0` is `&mut Scanner` for the duration of
-        // `read_directory_with_iterator`; no other live `&mut` alias exists
-        // while the resolver walks entries.
-        unsafe { (*self.0).next(entry) }
+        self.0.borrow_mut().next(entry)
     }
 }
 
@@ -83,7 +79,7 @@ impl<'a> Scanner<'a> {
             path_ignore_patterns: &[],
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
-            fs: transpiler.fs,
+            fs: FileSystem::get(),
             test_files: results,
             open_dir_buf: PathBuffer::uninit(),
             has_iterated: false,
@@ -94,20 +90,17 @@ impl<'a> Scanner<'a> {
 
     #[inline]
     pub(crate) fn fs(&self) -> &'static FileSystem {
-        // SAFETY: process-singleton; no `&mut` to it is live outside the iterator callback.
-        unsafe { &*self.fs }
+        self.fs
     }
 
     #[inline]
     fn top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
-        unsafe { (*self.fs).top_level_dir }
+        self.fs.top_level_dir
     }
 
     #[inline]
     fn filename_store(&self) -> &'static fs::FilenameStore {
-        // SAFETY: same as `top_level_dir`.
-        unsafe { (*self.fs).filename_store }
+        self.fs.filename_store
     }
 
     #[inline]
@@ -174,17 +167,16 @@ impl<'a> Scanner<'a> {
                 // base name so test-file discovery order is deterministic —
                 // regression/issue/26851 relies on `a_*.test` running before
                 // `b_*.test` under `--bail`.
-                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-                index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
-                    an.cmp(bn)
-                });
-                for entry_ptr in entry_ptrs {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr });
+                let sorted: Vec<&fs::Entry> = {
+                    let _entries_lock = self.fs.fs.entries_mutex.lock_guard();
+                    let mut v: Vec<&fs::Entry> = entries.entries().collect();
+                    index_sort::sort_slice_by(&mut v, |a, b| {
+                        a.base_lowercase().cmp(b.base_lowercase())
+                    });
+                    v
+                };
+                for entry in sorted {
+                    self.next(entry);
                 }
             }
         }
@@ -228,10 +220,9 @@ impl<'a> Scanner<'a> {
         name: &[u8],
         handle: Option<Fd>,
     ) -> crate::Result<&'static mut EntriesOption> {
-        let fs_ptr = self.fs;
-        let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
-        // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
-        unsafe { &mut (*fs_ptr).fs }
+        let iter = ScannerDirIter(core::cell::RefCell::new(self));
+        FileSystem::instance()
+            .fs
             .read_directory_with_iterator(name, handle, 0, false, iter)
             .map_err(Into::into)
     }
@@ -328,13 +319,10 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub(crate) fn next(&mut self, entry: &mut fs::Entry) {
+    pub(crate) fn next(&mut self, entry: &fs::Entry) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
-        // SAFETY: `self.fs` is the process singleton.
-        let real_fs = unsafe { &raw mut (*self.fs).fs };
-        // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
-        match unsafe { entry.kind(real_fs, false) } {
+        match entry.kind(&self.fs().fs, false) {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;
@@ -372,15 +360,13 @@ impl<'a> Scanner<'a> {
 
                 self.dirs_to_scan.push_back(ScanEntry {
                     relative_dir: self.current_dir.clone(),
-                    // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
-                    // no Drop. Upstream type lacks Clone/Copy, so bitwise-copy here.
-                    name: unsafe { core::ptr::read(&raw const entry.base_) },
+                    name: entry.base_,
                     dir_path: entry.dir,
                 });
             }
             fs::EntryKind::File => {
                 // already seen it!
-                if !entry.abs_path.is_empty() {
+                if !entry.abs_path().is_empty() {
                     return;
                 }
 
@@ -416,8 +402,8 @@ impl<'a> Scanner<'a> {
                     Ok(s) => s,
                     Err(_) => bun_core::out_of_memory(),
                 };
-                entry.abs_path = Interned::from_static(stored);
-                self.test_files.push(entry.abs_path);
+                entry.set_abs_path(Interned::from_static(stored));
+                self.test_files.push(entry.abs_path());
             }
         }
     }

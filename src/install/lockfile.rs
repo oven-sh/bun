@@ -369,40 +369,63 @@ pub enum LoadResult<'a> {
     Ok(LoadResultOk<'a>),
 }
 
-impl<'a> LoadResult<'a> {
-    pub(crate) fn loaded_from_text_lockfile(&self) -> bool {
+/// The lockfile-independent facts of a [`LoadResult`] (where it came from and in
+/// which format), for callers that must release the `&mut Lockfile` it holds
+/// before saving.
+#[derive(Clone, Copy)]
+pub enum LoadMeta {
+    NotFound,
+    Err {
+        format: LockfileFormat,
+    },
+    Ok {
+        format: LockfileFormat,
+        migrated: Migrated,
+    },
+}
+
+impl LoadMeta {
+    pub(crate) fn loaded_from_text_lockfile(self) -> bool {
         match self {
-            LoadResult::NotFound => false,
-            LoadResult::Err(err) => err.format == LockfileFormat::Text,
-            LoadResult::Ok(ok) => ok.format == LockfileFormat::Text,
+            LoadMeta::NotFound => false,
+            LoadMeta::Err { format } | LoadMeta::Ok { format, .. } => {
+                format == LockfileFormat::Text
+            }
         }
     }
 
-    pub(crate) fn loaded_from_binary_lockfile(&self) -> bool {
+    pub(crate) fn loaded_from_binary_lockfile(self) -> bool {
         match self {
-            LoadResult::NotFound => false,
-            LoadResult::Err(err) => err.format == LockfileFormat::Binary,
-            LoadResult::Ok(ok) => ok.format == LockfileFormat::Binary,
+            LoadMeta::NotFound => false,
+            LoadMeta::Err { format } | LoadMeta::Ok { format, .. } => {
+                format == LockfileFormat::Binary
+            }
         }
     }
 
-    pub(crate) fn migrated_from_npm(&self) -> bool {
-        match self {
-            LoadResult::Ok(ok) => ok.migrated == Migrated::Npm,
-            _ => false,
-        }
+    pub(crate) fn migrated_from_npm(self) -> bool {
+        matches!(
+            self,
+            LoadMeta::Ok {
+                migrated: Migrated::Npm,
+                ..
+            }
+        )
     }
 
-    pub(crate) fn migrated_from_pnpm(&self) -> bool {
-        match self {
-            LoadResult::Ok(ok) => ok.migrated == Migrated::Pnpm,
-            _ => false,
-        }
+    pub(crate) fn migrated_from_pnpm(self) -> bool {
+        matches!(
+            self,
+            LoadMeta::Ok {
+                migrated: Migrated::Pnpm,
+                ..
+            }
+        )
     }
 
-    pub(crate) fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
+    pub(crate) fn save_format(self, options: &PackageManagerOptions) -> LockfileFormat {
         match self {
-            LoadResult::NotFound => {
+            LoadMeta::NotFound => {
                 // saving a lockfile for a new project. default to text lockfile
                 // unless saveTextLockfile is false in bunfig
                 let save_text_lockfile = options.save_text_lockfile.unwrap_or(true);
@@ -412,34 +435,68 @@ impl<'a> LoadResult<'a> {
                     LockfileFormat::Binary
                 }
             }
-            LoadResult::Err(err) => {
+            LoadMeta::Err { format } => {
                 // an error occurred, but we still loaded from an existing lockfile
                 if let Some(save_text_lockfile) = options.save_text_lockfile {
                     if save_text_lockfile {
                         return LockfileFormat::Text;
                     }
                 }
-                err.format
+                format
             }
-            LoadResult::Ok(ok) => {
+            LoadMeta::Ok { format, migrated } => {
                 // loaded from an existing lockfile
                 if let Some(save_text_lockfile) = options.save_text_lockfile {
                     if save_text_lockfile {
                         return LockfileFormat::Text;
                     }
 
-                    if ok.migrated != Migrated::None {
+                    if migrated != Migrated::None {
                         return LockfileFormat::Binary;
                     }
                 }
 
-                if ok.migrated != Migrated::None {
+                if migrated != Migrated::None {
                     return LockfileFormat::Text;
                 }
 
-                ok.format
+                format
             }
         }
+    }
+}
+
+impl<'a> LoadResult<'a> {
+    pub fn meta(&self) -> LoadMeta {
+        match self {
+            LoadResult::NotFound => LoadMeta::NotFound,
+            LoadResult::Err(err) => LoadMeta::Err { format: err.format },
+            LoadResult::Ok(ok) => LoadMeta::Ok {
+                format: ok.format,
+                migrated: ok.migrated,
+            },
+        }
+    }
+
+    /// Whether the serializer flagged the loaded packages for a metadata refresh.
+    pub fn packages_need_update(&self) -> bool {
+        matches!(self, LoadResult::Ok(ok) if ok.serializer_result.packages_need_update)
+    }
+
+    pub(crate) fn loaded_from_text_lockfile(&self) -> bool {
+        self.meta().loaded_from_text_lockfile()
+    }
+
+    pub(crate) fn loaded_from_binary_lockfile(&self) -> bool {
+        self.meta().loaded_from_binary_lockfile()
+    }
+
+    pub(crate) fn migrated_from_npm(&self) -> bool {
+        self.meta().migrated_from_npm()
+    }
+
+    pub(crate) fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
+        self.meta().save_format(options)
     }
 
     /// configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
@@ -624,20 +681,13 @@ impl Lockfile {
         {
             if let (LoadResult::Ok(ok), Some(manager)) = (&mut result, manager) {
                 let mut writer_buf: Vec<u8> = Vec::new();
-                // `save_from_binary` reads only `loaded_from_binary_lockfile()`
-                // from its `load_result` parameter. `result` itself cannot be
-                // passed while `ok.lockfile` is mutably borrowed, so hand it
-                // a stand-in that answers
-                // `format == Binary` the same way the real `Ok` result does.
-                let binary_origin = LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ParseFile,
-                    value: crate::Error::DebugTextLockfileRoundTrip,
-                    lockfile_path: zstr!("bun.lockb"),
+                // Answers `loaded_from_binary_lockfile()` like the real `Ok` result.
+                let load = LoadMeta::Err {
                     format: LockfileFormat::Binary,
-                });
+                };
                 if let Err(e) = TextLockfile::Stringifier::save_from_binary(
                     &mut *ok.lockfile,
-                    &binary_origin,
+                    load,
                     &manager.options,
                     &mut writer_buf,
                 ) {
@@ -1831,12 +1881,8 @@ impl Lockfile {
     }
 
     /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.
-    pub fn save_to_disk(
-        &mut self,
-        load_result: &LoadResult<'_>,
-        options: &PackageManagerOptions,
-    ) -> bool {
-        let save_format = load_result.save_format(options);
+    pub fn save_to_disk(&mut self, load: LoadMeta, options: &PackageManagerOptions) -> bool {
+        let save_format = load.save_format(options);
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {
                 bun_core::pretty_errorln!(
@@ -1854,7 +1900,7 @@ impl Lockfile {
 
                 if let Err(_e) = TextLockfile::Stringifier::save_from_binary(
                     self,
-                    load_result,
+                    load,
                     options,
                     &mut writer_buf,
                 ) {

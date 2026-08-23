@@ -368,6 +368,27 @@ pub extern "C" fn message_with_type_and_level(
     }
 }
 
+/// [`message_with_type_and_level`] on this VM's console for a Rust slice of values.
+pub fn print_values(
+    message_type: MessageType,
+    level: MessageLevel,
+    global: &JSGlobalObject,
+    vals: &[JSValue],
+) {
+    // SAFETY: `vals` is a live slice, so `(as_ptr, len)` is the pointer/length
+    // pair the callee reads; a null `ctype` selects the VM's console.
+    unsafe {
+        message_with_type_and_level(
+            core::ptr::null_mut(),
+            message_type,
+            level,
+            global,
+            vals.as_ptr(),
+            vals.len(),
+        )
+    }
+}
+
 fn message_with_type_and_level_(
     _ctype: *mut ConsoleObject,
     message_type: MessageType,

@@ -1206,8 +1206,13 @@ impl Drop for DevServer {
 
 impl DevServer {
     fn init_server_runtime(&mut self) {
-        let runtime = BunString::static_(
-            crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server).code,
+        // Zero-copy external StringImpl over the embedded runtime; JSC keeps it
+        // for the SourceProvider's lifetime.
+        let runtime = BunString::create_static_external(
+            crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server)
+                .code
+                .as_bytes(),
+            true,
         );
 
         // `self.global()` returns `&'static`, decoupled from `&self` — it's

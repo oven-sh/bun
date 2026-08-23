@@ -464,6 +464,32 @@ describe("fs.watch", () => {
     });
   });
 
+  // node validates options.signal in getOptions() before creating the watcher;
+  // the strings below are node v26.3.0's output for the same calls (null
+  // included: only undefined means "no signal").
+  test("a signal option that is not an AbortSignal throws node's ERR_INVALID_ARG_TYPE", () => {
+    const filepath = path.join(testDir, "abort.txt");
+    const invalid = (received: string) =>
+      `TypeError ERR_INVALID_ARG_TYPE: The "options.signal" property must be an instance of AbortSignal. Received ${received}`;
+    const outcome = (signal: unknown) => {
+      try {
+        fs.watch(filepath, { signal } as any).close();
+        return "watcher created";
+      } catch (e: any) {
+        return `${e.constructor.name} ${e.code}: ${e.message}`;
+      }
+    };
+    expect([1, null, "", {}, new AbortController()].map(outcome)).toEqual([
+      invalid("type number (1)"),
+      invalid("null"),
+      invalid("type string ('')"),
+      invalid("an instance of Object"),
+      invalid("an instance of AbortController"),
+    ]);
+    expect(outcome(undefined)).toBe("watcher created");
+    expect(outcome(new AbortController().signal)).toBe("watcher created");
+  });
+
   test("an abort with no 'error' listener only closes; an 'error' listener that throws is an uncaught exception", async () => {
     await using proc = Bun.spawn({
       cmd: [

@@ -418,6 +418,99 @@ it("teardown waits for every concurrent in-flight write", async () => {
   expect(fh.fd).toBe(-1);
 });
 
+// node's getOptions() runs validateAbortSignal(options.signal, "options.signal")
+// for readFile, writeFile and appendFile: anything other than undefined that is
+// not a signal is an ERR_INVALID_ARG_TYPE, including null and "".
+// Every expected string below is node v26.3.0's output for the same call.
+describe("options.signal validation matches node", () => {
+  const invalid = received =>
+    `TypeError ERR_INVALID_ARG_TYPE: The "options.signal" property must be an instance of AbortSignal. Received ${received}`;
+
+  function outcome(fn) {
+    try {
+      const result = fn();
+      if (typeof result?.then === "function") {
+        return result.then(
+          () => "resolved",
+          e => `${e.constructor.name} ${e.code}: ${e.message}`,
+        );
+      }
+      return "resolved";
+    } catch (e) {
+      return `${e.constructor.name} ${e.code}: ${e.message}`;
+    }
+  }
+
+  test("readFileSync reports every non-signal value like node", async () => {
+    await using dir = tempDir("fs-signal-values", { "f.txt": "hello" });
+    const file = join(dir, "f.txt");
+    const values = [1, 0, null, "", "abc", true, false, {}, [], new AbortController()];
+    expect(values.map(signal => outcome(() => fs.readFileSync(file, { signal })))).toEqual([
+      invalid("type number (1)"),
+      invalid("type number (0)"),
+      invalid("null"),
+      invalid("type string ('')"),
+      invalid("type string ('abc')"),
+      invalid("type boolean (true)"),
+      invalid("type boolean (false)"),
+      invalid("an instance of Object"),
+      invalid("an instance of Array"),
+      invalid("an instance of AbortController"),
+    ]);
+    // Only undefined means "no signal".
+    expect(fs.readFileSync(file, { signal: undefined, encoding: "utf8" })).toBe("hello");
+    expect(fs.readFileSync(file, { signal: new AbortController().signal, encoding: "utf8" })).toBe("hello");
+  });
+
+  test("every readFile, writeFile and appendFile entry point rejects an invalid signal the same way", async () => {
+    await using dir = tempDir("fs-signal-entry-points", { "in.txt": "hello" });
+    const input = join(dir, "in.txt");
+    const output = join(dir, "out.txt");
+    const bad = { signal: null };
+    const noop = () => {};
+    const fh = await fsPromises.open(input, "r+");
+    let results;
+    try {
+      results = {
+        readFileSync: outcome(() => fs.readFileSync(input, bad)),
+        readFile: outcome(() => fs.readFile(input, bad, noop)),
+        "promises.readFile": await outcome(() => fsPromises.readFile(input, bad)),
+        "promises.readFile(handle)": await outcome(() => fsPromises.readFile(fh, bad)),
+        "handle.readFile": await outcome(() => fh.readFile(bad)),
+        writeFileSync: outcome(() => fs.writeFileSync(output, "x", bad)),
+        writeFile: outcome(() => fs.writeFile(output, "x", bad, noop)),
+        "promises.writeFile": await outcome(() => fsPromises.writeFile(output, "x", bad)),
+        "promises.writeFile(handle)": await outcome(() => fsPromises.writeFile(fh, "x", bad)),
+        appendFileSync: outcome(() => fs.appendFileSync(output, "x", bad)),
+        appendFile: outcome(() => fs.appendFile(output, "x", bad, noop)),
+        "promises.appendFile": await outcome(() => fsPromises.appendFile(output, "x", bad)),
+        "promises.appendFile(handle)": await outcome(() => fsPromises.appendFile(fh, "x", bad)),
+      };
+    } finally {
+      await fh.close();
+    }
+    const rejectedNull = invalid("null");
+    expect(results).toEqual({
+      readFileSync: rejectedNull,
+      readFile: rejectedNull,
+      "promises.readFile": rejectedNull,
+      "promises.readFile(handle)": rejectedNull,
+      "handle.readFile": rejectedNull,
+      writeFileSync: rejectedNull,
+      writeFile: rejectedNull,
+      "promises.writeFile": rejectedNull,
+      "promises.writeFile(handle)": rejectedNull,
+      appendFileSync: rejectedNull,
+      appendFile: rejectedNull,
+      "promises.appendFile": rejectedNull,
+      "promises.appendFile(handle)": rejectedNull,
+    });
+    // The option is validated before any I/O happens.
+    expect(fs.existsSync(output)).toBe(false);
+    expect(fs.readFileSync(input, "utf8")).toBe("hello");
+  });
+});
+
 // node rejects abortable fs APIs with an AbortError (an Error whose code is the
 // string "ABORT_ERR", whose message has no trailing period, and whose cause is
 // signal.reason), never with the raw DOMException held in signal.reason (whose

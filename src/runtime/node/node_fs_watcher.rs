@@ -14,7 +14,7 @@ use bun_io::KeepAlive;
 use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
-    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
+    self as jsc, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
     VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
 };
@@ -24,6 +24,7 @@ use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
 use crate::node::types::{Encoding, PathLikeExt};
+use crate::node::util::validators;
 use crate::webcore::encoding as Encoder;
 
 bun_output::declare_scope!(fs_watch, hidden);
@@ -637,7 +638,7 @@ pub struct Arguments<'a> {
     pub path: PathLike,
     pub(crate) listener: JSValue,
     pub global_this: &'a JSGlobalObject,
-    pub(crate) signal: Option<&'a AbortSignal>,
+    pub(crate) signal: Option<AbortSignalRef>,
     pub(crate) persistent: bool,
     pub(crate) recursive: bool,
     pub(crate) encoding: Encoding,
@@ -657,7 +658,7 @@ impl<'a> Arguments<'a> {
         // drops `path` automatically.
 
         let mut listener: JSValue = JSValue::ZERO;
-        let mut signal: Option<&AbortSignal> = None;
+        let mut signal: Option<AbortSignalRef> = None;
         let mut persistent: bool = true;
         let mut recursive: bool = false;
         let mut encoding: Encoding = Encoding::Utf8;
@@ -697,22 +698,12 @@ impl<'a> Arguments<'a> {
                     recursive = recursive_.to_boolean();
                 }
 
-                // abort signal
-                if let Some(signal_) = options_or_callable.get_truthy(ctx, "signal")? {
-                    if let Some(signal_obj) = AbortSignal::from_js(signal_) {
-                        // Keep it alive
-                        signal_.ensure_still_alive();
-                        // `signal_obj` is the live C++ AbortSignal owned by
-                        // `signal_` (kept reachable for the duration of the call
-                        // by `ensure_still_alive`). `AbortSignal` is an
-                        // `opaque_ffi!` ZST handle; `opaque_ref` is the
-                        // centralised deref proof.
-                        signal = Some(AbortSignal::opaque_ref(signal_obj));
-                    } else {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
-                            "signal is not of type AbortSignal"
-                        )));
-                    }
+                if let Some(signal_) = options_or_callable.get(ctx, "signal")? {
+                    signal = Some(validators::validate_abort_signal(
+                        ctx,
+                        signal_,
+                        "options.signal",
+                    )?);
                 }
 
                 // listener
@@ -1168,13 +1159,7 @@ impl FSWatcher {
                 ..Default::default()
             }),
             mutex: Mutex::default(),
-            // SAFETY: `args.signal` is a live borrow of the JS AbortSignal (kept
-            // reachable by the caller's frame); `ref_()` bumps the C++ intrusive
-            // refcount and `adopt` takes ownership of that +1.
-            signal: JsCell::new(
-                args.signal
-                    .map(|s| unsafe { AbortSignalRef::adopt(s.ref_()) }),
-            ),
+            signal: JsCell::new(args.signal.clone()),
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),
             global_this: GlobalRef::from(args.global_this),
@@ -1194,7 +1179,7 @@ impl FSWatcher {
 
         ctx_ref
             .path_watcher
-            .set(if args.signal.is_none_or(|s| !s.aborted()) {
+            .set(if args.signal.as_deref().is_none_or(|s| !s.aborted()) {
                 // The two backends take different arities (the Windows
                 // backend dropped the callback parameters — only one valid
                 // value each), so the call is cfg-split.

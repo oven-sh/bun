@@ -30,8 +30,8 @@ pub struct Expansion {
     /// via `push_current_out`.
     pub(crate) current_out: Vec<u8>,
     /// Byte offsets in `current_out` written by literal metacharacter atoms
-    /// (`Asterisk`/`DoubleAsterisk`/`BraceBegin`/`Comma`/`BraceEnd`). Only
-    /// these positions may act as pattern syntax in `do_brace_expand` or
+    /// (`Asterisk`/`DoubleAsterisk`/`GlobText`/`BraceBegin`/`Comma`/`BraceEnd`).
+    /// Only these positions may act as pattern syntax in `do_brace_expand` or
     /// `transition_to_glob_state`; metacharacter bytes from any other source
     /// (JS interpolation, quoted text, `$var`, command substitution) are data
     /// and must not change the expansion structure or broaden the glob.
@@ -278,8 +278,9 @@ impl Expansion {
         // metacharacters. Bytes from Text/Var/cmd-subst expansion — notably JS
         // `${...}` interpolations — are data: backslash-escape them so the
         // brace lexer cannot be steered into emitting extra argv words.
-        // (`meta_offsets` also records literal `*`/`**` positions for the glob
-        // path; those are inert here since `*` is not in the escape set.)
+        // (`meta_offsets` also records literal `*`/`**`/GlobText positions for
+        // the glob path; those are inert here since neither `*` nor anything the
+        // lexer admits into a class is in the escape set.)
         let mut escaped: Vec<u8> = Vec::with_capacity(me.current_out.len());
         let mut next_meta = 0usize;
         for (i, &b) in me.current_out.iter().enumerate() {
@@ -499,6 +500,11 @@ impl Expansion {
                 meta_offsets.push(out.len() as u32);
                 meta_offsets.push(out.len() as u32 + 1);
                 out.extend_from_slice(b"**");
+            }
+            ast::SimpleAtom::GlobText(txt) => {
+                let start = out.len() as u32;
+                meta_offsets.extend(start..start + txt.len() as u32);
+                out.extend_from_slice(txt);
             }
             ast::SimpleAtom::BraceBegin => {
                 meta_offsets.push(out.len() as u32);

@@ -74,6 +74,8 @@ public:
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
+    // `Module._extensions` handler to invoke at deferred synthetic-module eval time.
+    mutable JSC::WriteBarrier<Unknown> m_pendingCustomExtension;
 
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
@@ -177,6 +179,11 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 {
     return createCommonJSModule(globalObject, specifierValue, source, false);
 }
+
+std::optional<JSC::SourceCode> createCommonJSModuleForCustomExtension(
+    Zig::GlobalObject* globalObject,
+    JSC::JSString* specifierValue,
+    JSC::JSValue extension);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

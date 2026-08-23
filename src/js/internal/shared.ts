@@ -167,13 +167,13 @@ function guardCallback(callback) {
       try {
         switch (arguments.length) {
           case 0:
-            return callback();
+            return callback.$call(undefined);
           case 1:
-            return callback(a);
+            return callback.$call(undefined, a);
           case 2:
-            return callback(a, b);
+            return callback.$call(undefined, a, b);
           case 3:
-            return callback(a, b, c);
+            return callback.$call(undefined, a, b, c);
           default:
             return callback.$apply(undefined, arguments);
         }

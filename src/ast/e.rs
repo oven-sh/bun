@@ -1685,6 +1685,24 @@ pub struct EString {
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
 
+/// Result of [`EString::flattened`]: the node itself when it is not a rope, else
+/// a local copy whose `data` is the flattened rope.
+pub enum Flattened<'a> {
+    Borrowed(&'a EString),
+    Owned(EString),
+}
+
+impl core::ops::Deref for Flattened<'_> {
+    type Target = EString;
+    #[inline]
+    fn deref(&self) -> &EString {
+        match self {
+            Flattened::Borrowed(s) => s,
+            Flattened::Owned(s) => s,
+        }
+    }
+}
+
 impl Default for EString {
     fn default() -> Self {
         Self {
@@ -1884,14 +1902,16 @@ impl EString {
         self.next = None;
     }
 
-    /// Copy with the rope flattened into `bump`; `self` is only read (the printer runs in parallel).
-    pub fn flattened(&self, bump: &Bump) -> EString {
-        let mut copy = self.shallow_clone();
-        if copy.next.is_some() && copy.is_utf8() {
-            copy.data = Str::new(self.flatten_rope(bump));
-            copy.next = None;
+    /// `self` when it is not a rope, else a copy with the rope flattened into
+    /// `bump`. Never writes to `self`: the printer runs in parallel on shared nodes.
+    pub fn flattened(&self, bump: &Bump) -> Flattened<'_> {
+        if self.next.is_none() || !self.is_utf8() {
+            return Flattened::Borrowed(self);
         }
-        copy
+        let mut copy = self.shallow_clone();
+        copy.data = Str::new(self.flatten_rope(bump));
+        copy.next = None;
+        Flattened::Owned(copy)
     }
 
     /// The rope's bytes, concatenated into a fresh `bump` slice.

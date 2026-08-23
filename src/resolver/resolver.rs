@@ -244,7 +244,7 @@ impl FdZero for ::bun_sys::Fd {
 
 use self::bun_paths as ResolvePath;
 use ::bun_ast::import_record as ast;
-use ::bun_core::{FeatureFlags, Generation};
+use ::bun_core::{FeatureFlags, Generation, StackCheck};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
 use bun_dotenv::env_loader as DotEnv;
@@ -2679,6 +2679,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            stack_check: StackCheck::init(),
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
@@ -2736,6 +2737,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            stack_check: StackCheck::init(),
                                         }
                                         .resolve(
                                             b"/",
@@ -3174,6 +3176,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            stack_check: StackCheck::init(),
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
@@ -3213,6 +3216,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            stack_check: StackCheck::init(),
                                         }
                                         .resolve(
                                             b"/",
@@ -5010,6 +5014,7 @@ impl<'a> Resolver<'a> {
             },
             debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,
+            stack_check: StackCheck::init(),
         }
         .resolve_imports(import_path, &imports_map.root);
         let _ = module_type;

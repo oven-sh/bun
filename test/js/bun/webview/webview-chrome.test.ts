@@ -563,9 +563,7 @@ test("WebView.closeAll is a static function", () => {
 
 it("chrome: closeAll() kills the subprocess and pending promises reject", async () => {
   // Subprocess-isolated — closeAll() SIGKILLs the one shared Chrome, which
-  // would break subsequent tests in this file. ensureSpawned respawns on
-  // the next WebView construction, but only after EVFILT_PROC has cleared
-  // the Zig instance global — race prone in-process.
+  // would break subsequent tests in this file.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -575,12 +573,9 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
         await view.navigate("data:text/html,<body>test</body>");
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
-        // SIGKILL → socket EOF or EVFILT_PROC (whichever the event loop sees
-        // first) → rejectAllAndMarkDead on next tick. Both race outcomes
-        // reject; the message differs ("closed the pipe" vs "killed by signal").
         await p.then(
           () => { throw new Error("should have rejected"); },
-          e => { if (!/closed the pipe|signal|killed/i.test(e.message)) throw e; },
+          e => { if (e.message !== "WebView closed by WebView.closeAll()") throw e; },
         );
         console.log("rejected");
       `,
@@ -596,8 +591,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
 it("chrome: a new WebView respawns Chrome after the previous one died", async () => {
   // Subprocess-isolated like the closeAll() test above. The dead Chrome's
   // remaining close/exit notifications drain after the respawn and must not
-  // be taken for the new one. Construction fails until the old process has
-  // been reaped (see the comment on the closeAll() test), hence the retry.
+  // be taken for the new one.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -609,16 +603,7 @@ it("chrome: a new WebView respawns Chrome after the previous one died", async ()
         const pending = first.evaluate("new Promise(() => {})");
         Bun.WebView.closeAll();
         await pending.catch(() => {});
-        let second;
-        for (;;) {
-          try {
-            second = new Bun.WebView({ backend, width: 200, height: 200 });
-            break;
-          } catch (e) {
-            if (!/Failed to spawn Chrome/.test(e.message)) throw e;
-            await Bun.sleep(1);
-          }
-        }
+        const second = new Bun.WebView({ backend, width: 200, height: 200 });
         await second.navigate("data:text/html,<body>second</body>");
         console.log(await second.evaluate("document.body.textContent"));
         second.close();
@@ -680,18 +665,7 @@ it("chrome: views orphaned by a Chrome death are closed, even after a new view r
           blank: probe(() => blank.navigate("data:text/html,<body>blank</body>")),
         };
 
-        // Construction fails until the dead Chrome has been reaped (see the
-        // respawn test above), hence the retry.
-        let fresh;
-        for (;;) {
-          try {
-            fresh = open();
-            break;
-          } catch (e) {
-            if (!/Failed to spawn Chrome/.test(e.message)) throw e;
-            await Bun.sleep(1);
-          }
-        }
+        const fresh = open();
         await fresh.navigate("data:text/html,<body>fresh</body>");
         const freshBody = await fresh.evaluate("document.body.textContent");
 
@@ -718,8 +692,7 @@ it("chrome: views orphaned by a Chrome death are closed, even after a new view r
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout, stderr).toEndWith("}\n");
   expect(JSON.parse(stdout)).toEqual({
-    // Pipe EOF and the exit notification race; the wording follows the winner.
-    death: expect.stringMatching(/^Chrome (killed by signal \d+|process closed the pipe|exited)$/),
+    death: "WebView closed by WebView.closeAll()",
     whileDead: {
       busy: "ERR_INVALID_STATE",
       idle: "ERR_INVALID_STATE",

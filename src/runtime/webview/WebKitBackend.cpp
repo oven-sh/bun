@@ -464,6 +464,8 @@ void HostClient::rejectAllAndMarkDead(const WTF::String& reason)
     // against EOF) the socket is still polling — close it. The dead guard
     // above short-circuits the reentrant onClose.
     if (auto* s = std::exchange(sock, nullptr)) us_socket_close(s, 0, nullptr);
+    // A dead client leaves no published host behind, so the next `new Bun.WebView()` spawns at once.
+    Bun__WebViewHost__retire();
     if (!global) return;
     auto* g = global;
     JSValue err = createError(g, reason);
@@ -490,7 +492,6 @@ void HostClient::retireGlobal(Zig::GlobalObject* g)
 {
     if (global != g) return;
     rejectAllAndMarkDead("WebView closed: its test file finished"_s);
-    Bun__WebViewHost__retire();
     global = nullptr;
 }
 

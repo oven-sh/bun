@@ -514,7 +514,7 @@ Closing is synchronous and idempotent. It destroys the page's renderer process, 
 Bun.WebView.closeAll();
 ```
 
-Force-kills (`SIGKILL`) both the Chrome subprocess and the WebKit host subprocess. Pending promises on every view reject on the next event-loop tick. Subsequent `new Bun.WebView()` calls respawn as needed.
+Closes every view and force-kills (`SIGKILL`) both the Chrome subprocess and the WebKit host subprocess. Pending promises on every view reject with `Error("WebView closed by WebView.closeAll()")`, and every later method call on those views throws `ERR_INVALID_STATE`. The next `new Bun.WebView()` spawns a fresh browser.
 
 Bun calls this automatically at process exit, so browser subprocesses never outlive your script.
 

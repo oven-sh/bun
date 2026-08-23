@@ -19,7 +19,6 @@ static JSC_DECLARE_HOST_FUNCTION(callWebView);
 static JSC_DECLARE_HOST_FUNCTION(constructWebView);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewConstructorCloseAll);
 
-extern "C" void Bun__WebView__closeAllForTermination();
 extern "C" size_t Bun__Feature__webview_chrome;
 extern "C" size_t Bun__Feature__webview_webkit;
 
@@ -86,14 +85,9 @@ JSC_DEFINE_HOST_FUNCTION(callWebView, (JSGlobalObject * globalObject, CallFrame*
         "Class constructor WebView cannot be invoked without 'new'"_s);
 }
 
-// SIGKILLs both browser subprocesses. The onProcessExit path (EVFILT_PROC →
-// Bun__Chrome__died / Bun__WebViewHost__childDied) rejects pending promises
-// and marks transports dead on the next event loop tick — we don't touch JS
-// state here. Calling on an already-dead process is a no-op (kill(9) returns
-// ESRCH, discarded).
 JSC_DEFINE_HOST_FUNCTION(jsWebViewConstructorCloseAll, (JSGlobalObject*, CallFrame*))
 {
-    Bun__WebView__closeAllForTermination();
+    closeAllWebViews();
     return JSValue::encode(jsUndefined());
 }
 
@@ -330,6 +324,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "width"_s, 1, 16384, jsNumber(width));
     if (height == 0 || height > 16384)
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "height"_s, 1, 16384, jsNumber(height));
+
+    // A global that `bun test --isolate` is retiring must not bind a new browser to itself.
+    if (zigGlobalObject->scriptExecutionContext()->activeDOMObjectsAreStopped()) [[unlikely]] {
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE,
+            "Bun.WebView cannot be created while its global object is shutting down"_s);
+    }
 
     Structure* structure = zigGlobalObject->m_JSWebViewClassStructure.get(zigGlobalObject);
     JSValue newTarget = callFrame->newTarget();

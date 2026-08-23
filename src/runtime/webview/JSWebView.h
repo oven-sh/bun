@@ -227,6 +227,9 @@ void setupJSWebViewClassStructure(JSC::LazyClassStructure::Initializer&);
 // `bun test --isolate` retires `global`: the transports bound to it close their views and let their browser go.
 void retireWebViewsForTestIsolation(Zig::GlobalObject* global);
 
+// WebView.closeAll(): every view closes, its pending promises reject, the browser processes die.
+void closeAllWebViews();
+
 // Shared weak owner for HostClient.viewsById and Transport.m_pending/
 // .m_sessions. Roots a view while m_pendingActivityCount > 0.
 JSC::WeakHandleOwner& webViewWeakOwner();

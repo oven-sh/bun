@@ -169,7 +169,8 @@ describe.concurrent("DOMException formats as an error", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toContain("AbortError");
     expect(stderr).toContain("aborted");
     expect(stderr).not.toContain("INDEX_SIZE_ERR");
@@ -182,7 +183,8 @@ describe.concurrent("DOMException formats as an error", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toContain("AbortError: boom");
     expect(stderr).not.toContain("INDEX_SIZE_ERR");
     expect(exitCode).toBe(1);
@@ -200,11 +202,22 @@ describe.concurrent("DOMException formats as an error", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toContain("error: outer");
     expect(stderr).toContain("AbortError: inner");
     expect(stderr).not.toContain("INDEX_SIZE_ERR");
     expect(exitCode).toBe(1);
+  });
+
+  test("self-referencing DOMException prints [Circular] instead of recursing", () => {
+    const err = new DOMException("x", "AbortError");
+    err.self = err;
+    const inspected = Bun.inspect(err);
+    expect(inspected).toContain("[Circular]");
+    expect(inspected).not.toContain("INDEX_SIZE_ERR");
+    // The header must not repeat once per recursion level.
+    expect(inspected.split("AbortError: x").length - 1).toBeLessThanOrEqual(3);
   });
 });
 

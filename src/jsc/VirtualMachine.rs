@@ -6316,7 +6316,9 @@ impl VirtualMachine {
                 }
 
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
+                // Only the errors_to_append path guards against circular
+                // references, so a DOMException takes the ErrorInstance route.
+                if (kind == JSType::ErrorInstance || value.is_dom_exception()) && !prev_had_errors {
                     if field.eq_ascii(b"cause") {
                         saw_cause = true;
                     }

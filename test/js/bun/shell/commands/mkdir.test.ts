@@ -79,7 +79,8 @@ test("operands longer than the path buffers are reported, not a crash", async ()
 
 // `-v` output goes through one OutputTask per operand; once the reader side of
 // the pipe is gone (EPIPE) the remaining tasks must still complete.
-test("mkdir -v into a closed pipe finishes", async () => {
+// `head` is not a shell builtin, so this needs a system `head` (not on Windows CI).
+test.skipIf(isWindows)("mkdir -v into a closed pipe finishes", async () => {
   using dir = tempDir("mkdir-epipe", {});
   const names = Array.from({ length: 40 }, (_, i) => `d${i}`).join(" ");
   await using proc = Bun.spawn({
@@ -97,7 +98,9 @@ test("mkdir -v into a closed pipe finishes", async () => {
   // `head -1` passes exactly one line through (the directories are created
   // concurrently, so which one is not fixed); the rest hit EPIPE.
   const [out, code] = JSON.parse(stdout);
-  expect(out).toMatch(new RegExp(`^${join(String(dir), "d")}\\d+\\n$`));
+  const prefix = join(String(dir), "d");
+  expect(out.startsWith(prefix)).toBe(true);
+  expect(out.slice(prefix.length)).toMatch(/^\d+\n$/);
   expect(code).toBe(0);
   expect(existsSync(join(String(dir), "d39"))).toBe(true);
   expect(exitCode).toBe(0);

@@ -370,6 +370,35 @@ test("bun test --heap-prof writes a profile", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("bun test --heap-prof-md writes a markdown profile", async () => {
+  using dir = tempDir("heap-prof-md-bun-test", {
+    "alloc.test.js": `
+      import { test, expect } from "bun:test";
+      test("allocates", () => {
+        const arr = [];
+        for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i });
+        expect(arr.length).toBe(100);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--heap-prof-md", "--heap-prof-name", "test-run.md", "alloc.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("1 pass");
+
+  const content = await Bun.file(join(String(dir), "test-run.md")).text();
+  expect(content).toContain("# Bun Heap Profile");
+  expect(exitCode).toBe(0);
+});
+
 test("--heap-prof --heap-prof-interval is accepted", async () => {
   using dir = tempDir("heap-prof-interval-test", {});
 

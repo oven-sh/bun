@@ -150,6 +150,8 @@ describe("Bun.otel", () => {
     });
     await expect(rejects()).rejects.toThrow("later");
     expect(() => (Bun.otel.wrap as any)(() => 1)).toThrow(/span name/);
+    const weird = Object.defineProperty(() => 1, "length", { value: Infinity });
+    expect(Bun.otel.wrap("weird", weird).length).toBe(65535);
     // no active span → false
     expect(Bun.otel.set("k", 1)).toBe(false);
     const got = await collect();

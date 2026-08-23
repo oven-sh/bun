@@ -15,6 +15,7 @@ pub use crate::resolved_source_tag::ResolvedSourceTag as Tag;
 /// `~ErrorableResolvedSource` once written into a C++ out-param. Consumers
 /// (`Zig::SourceProvider::create`) take the fields they keep by transfer.
 #[repr(C)]
+#[derive(Default)]
 pub struct ResolvedSource {
     pub source_code: BunString,
     pub source_url: BunString,
@@ -26,8 +27,6 @@ pub struct ResolvedSource {
     /// - This structure is stored on the stack
     /// - There is a JSC::Strong reference to it
     pub cjs_custom_extension_index: JSValue,
-
-    pub allocator: *mut c_void,
 
     pub jsvalue_for_export: JSValue,
 
@@ -43,24 +42,6 @@ pub struct ResolvedSource {
     /// was used at build time. If empty, the origin is derived from source_url.
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
-}
-
-impl Default for ResolvedSource {
-    fn default() -> Self {
-        Self {
-            source_code: BunString::empty(),
-            source_url: BunString::empty(),
-            is_commonjs_module: false,
-            cjs_custom_extension_index: JSValue::ZERO,
-            allocator: core::ptr::null_mut(),
-            jsvalue_for_export: JSValue::ZERO,
-            tag: Tag::Javascript,
-            already_bundled: false,
-            bytecode_cache: Bytecode::default(),
-            module_info: ModuleInfo::default(),
-            bytecode_origin_path: BunString::empty(),
-        }
-    }
 }
 
 /// `ResolvedSource.module_info`: C++ sees a nullable `bun_ModuleInfoDeserialized*`
@@ -159,4 +140,4 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
 
 // C++ mirror: `ResolvedSource` in headers-handwritten.h (2×BunString, bool,
 // 3×ptr-size, u32, bool, Bytecode{ptr,usize,bool}, ptr, BunString).
-bun_core::assert_ffi_layout!(ResolvedSource, 144, 8);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8);

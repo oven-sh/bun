@@ -1455,9 +1455,7 @@ unsafe extern "C" fn Zig__GlobalObject__resolve(
         crate::virtual_machine::ResolveMode::Esm,
     ) {
         Ok(Ok(path)) => *res = ErrorableString::ok(path),
-        Ok(Err(value)) => {
-            *res = ErrorableString::err(crate::ErrorCode(crate::ErrorCode::JS_ERROR_OBJECT), value)
-        }
+        Ok(Err(value)) => *res = ErrorableString::err(value),
         Err(_) => debug_assert!(global.has_exception()),
     }
 }

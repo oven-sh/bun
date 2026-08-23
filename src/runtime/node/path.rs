@@ -1365,33 +1365,23 @@ fn join_posix_t<'a, T: PathCharCwd>(
 }
 
 /// # Safety
-/// `lhs` and `result` must be valid, aligned `BunString*` pointers and
 /// `rhs_ptr[..rhs_len]` must be a valid readable slice. Called only from C++.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Node__Path_joinWTF(
-    lhs: *mut bun_core::String,
+    lhs: &bun_core::String,
     rhs_ptr: *const u8,
     rhs_len: usize,
-    result: *mut bun_core::String,
-) {
-    // SAFETY: caller passes valid pointers from C++.
+) -> bun_core::String {
+    // SAFETY: caller passes a valid slice from C++.
     let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
     let mut buf = [0u8; path_size::<u8>()];
     let mut buf2 = [0u8; path_size::<u8>()];
-    // SAFETY: lhs is a valid BunString pointer.
-    let slice = unsafe { &*lhs }.to_utf8();
+    let lhs = lhs.to_utf8();
     #[cfg(windows)]
-    {
-        let win = join_windows_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
-        // SAFETY: result is a valid out-pointer.
-        unsafe { result.write(bun_core::String::clone_utf8(win)) };
-    }
+    let joined = join_windows_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
     #[cfg(not(windows))]
-    {
-        let posix = join_posix_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
-        // SAFETY: result is a valid out-pointer.
-        unsafe { result.write(bun_core::String::clone_utf8(posix)) };
-    }
+    let joined = join_posix_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
+    bun_core::String::clone_utf8(joined)
 }
 
 /// Based on Node v21.6.1 path.win32.join:

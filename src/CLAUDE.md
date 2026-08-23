@@ -83,6 +83,12 @@ match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
 are single chars in Latin-1 but invalid UTF-8 — so converting either direction
 requires a real encoder, not a cast.
 
+`String` owns one ref when WTF-backed: `Drop` derefs, `Clone` refs, it is
+not `Copy`. Borrow with `&String` (or `StringView<'_>` when a by-value borrow
+is needed). In an `extern "C"` signature a by-value `String` means ownership
+crosses the boundary (C++ `Bun::toStringRef` return / `transferToWTFString()`
+consumer); `&String` ⇔ `const BunString*`.
+
 ```rust
 use bun_core::String;
 
@@ -98,7 +104,8 @@ To/from JS values, use the `bun_jsc::StringJsc` extension trait:
 
 ```rust
 use bun_jsc::StringJsc;
-let js: JSValue = s.to_js(global)?;
+let js: JSValue = s.to_js(global)?;        // JS takes its own ref; `s` still usable
+let js: JSValue = s.into_js(global)?;      // hands `s`'s ref to the JSString
 let s = bun_core::String::from_js(value, global)?;
 let err = s.to_error_instance(global);
 ```

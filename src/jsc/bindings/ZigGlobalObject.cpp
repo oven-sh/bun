@@ -3637,7 +3637,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 }
 
 extern "C" bool Bun__VM__entryEvaluationStarted(void*);
-extern "C" void Bun__VM__entryRootKey(void*, BunString*);
+extern "C" BunString Bun__VM__entryRootKey(void*);
 extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
 
 // A module body is about to run. That means "the entry's graph is linked and executing" only if it is
@@ -3650,8 +3650,7 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     void* bunVM = globalObject->bunVM();
     if (Bun__VM__entryEvaluationStarted(bunVM))
         return;
-    BunString rootKey;
-    Bun__VM__entryRootKey(bunVM, &rootKey);
+    BunString rootKey = Bun__VM__entryRootKey(bunVM);
     auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
     if (!entry)
         return;

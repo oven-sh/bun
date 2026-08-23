@@ -61,16 +61,16 @@ unsafe extern "C" {
 }
 
 impl JSFunction {
-    pub fn create<'a>(
+    pub fn create(
         global: &JSGlobalObject,
-        fn_name: impl Into<bun_core::StringView<'a>>,
+        fn_name: &'static str,
         implementation: JSHostFn,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) -> JSValue {
         JSFunction__createFromZig(
             global,
-            &fn_name.into(),
+            &BunString::static_(fn_name),
             implementation,
             function_length,
             options.implementation_visibility,

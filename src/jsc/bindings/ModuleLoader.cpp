@@ -48,7 +48,7 @@ using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
 
-extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
+extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
@@ -524,9 +524,7 @@ JSValue fetchBuiltinModuleWithoutResolution(
     auto scope = DECLARE_THROW_SCOPE(vm);
     BunString referrer = BunStringEmpty;
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, &referrer, res)) {
-        if (!res->success) {
-            return {};
-        }
+        ASSERT(res->success);
 
         auto tag = res->result.value.tag;
         switch (tag) {

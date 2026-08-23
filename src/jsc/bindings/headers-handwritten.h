@@ -6,7 +6,6 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 #include <set>
-#include <string.h>
 
 #ifndef HEADERS_HANDWRITTEN
 #define HEADERS_HANDWRITTEN
@@ -126,7 +125,6 @@ typedef struct ResolvedSource {
     BunString source_url;
     bool isCommonJSModule;
     JSC::EncodedJSValue cjsCustomExtension;
-    void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool already_bundled;
@@ -142,7 +140,7 @@ typedef struct ResolvedSource {
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 144, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -151,17 +149,13 @@ typedef union ErrorableResolvedSourceResult {
 extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized* info);
 extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
 struct ErrorableResolvedSource {
-    ErrorableResolvedSourceResult result;
-    bool success;
+    WTF_MAKE_NONCOPYABLE(ErrorableResolvedSource);
 
-    ErrorableResolvedSource()
-        : success(false)
-    {
-        // Zeroed BunString is BunStringTag::Dead; zeroed EncodedJSValue is empty.
-        memset(&result, 0, sizeof result);
-    }
-    ErrorableResolvedSource(const ErrorableResolvedSource&) = delete;
-    ErrorableResolvedSource& operator=(const ErrorableResolvedSource&) = delete;
+public:
+    ErrorableResolvedSourceResult result {};
+    bool success { false };
+
+    ErrorableResolvedSource() = default;
     ~ErrorableResolvedSource()
     {
         if (!success)
@@ -379,7 +373,7 @@ extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
-    ZigString* sourceCode,
+    const ZigString* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
 
@@ -390,8 +384,8 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
 extern "C" JSC::JSPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    BunString* specifier,
-    BunString* referrer,
+    const BunString* specifier,
+    const BunString* referrer,
     const BunString* typeAttribute,
     ErrorableResolvedSource* result,
     bool allowPromise,

@@ -35,8 +35,8 @@ use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
 };
 use bun_jsc::{
-    AnyPromise, ErrorCode, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
-    JSModuleLoader, JSValue, JsResult, ResolvedSource,
+    AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
+    JSValue, JsResult, ResolvedSource,
 };
 
 use bun_ast::ImportKind;
@@ -2184,8 +2184,6 @@ fn console_print_runtime_object_inner<const C: bool>(
 // LoaderHooks bodies
 // ════════════════════════════════════════════════════════════════════════════
 
-use bun_jsc::virtual_machine::create_if_different;
-
 fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
     match err {
         crate::Error::Jsc(e) => *e,
@@ -2275,7 +2273,7 @@ fn transpile_source_code_inner(
             ))
     {
         return Ok(ResolvedSource {
-            source_url: create_if_different(input_specifier, path.text),
+            source_url: input_specifier.create_if_different(path.text),
             ..Default::default()
         });
     }
@@ -2818,7 +2816,7 @@ fn transpile_source_code_inner(
                 if loader == L::Json {
                     return Ok(ResolvedSource {
                         source_code: bun_core::String::clone_utf8(&source.contents),
-                        source_url: create_if_different(input_specifier, path.text),
+                        source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::JsonForObjectLoader,
                         ..Default::default()
                     });
@@ -2842,7 +2840,7 @@ fn transpile_source_code_inner(
                     };
                     return Ok(ResolvedSource {
                         source_code,
-                        source_url: create_if_different(input_specifier, path.text),
+                        source_url: input_specifier.create_if_different(path.text),
                         ..Default::default()
                     });
                 }
@@ -2895,7 +2893,7 @@ fn transpile_source_code_inner(
                         }
                     };
                     return Ok(ResolvedSource {
-                        source_url: create_if_different(input_specifier, path.text),
+                        source_url: input_specifier.create_if_different(path.text),
                         jsvalue_for_export,
                         tag: ResolvedSourceTag::ExportsObject,
                         ..Default::default()
@@ -2911,15 +2909,10 @@ fn transpile_source_code_inner(
                     // transfers to C++ exactly as in the spec.
                     let already_bundled = core::mem::take(&mut parse_result.already_bundled);
                     let is_commonjs_module = already_bundled.is_common_js();
-                    let bytecode_cache = match already_bundled {
-                        AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
-                            Bytecode::owned(bytes)
-                        }
-                        _ => Bytecode::default(),
-                    };
+                    let bytecode_cache = Bytecode::owned(already_bundled.into_bytecode());
                     return Ok(ResolvedSource {
                         source_code: bun_core::String::clone_latin1(&source.contents),
-                        source_url: create_if_different(input_specifier, path.text),
+                        source_url: input_specifier.create_if_different(path.text),
                         already_bundled: true,
                         bytecode_cache,
                         is_commonjs_module,
@@ -2933,7 +2926,7 @@ fn transpile_source_code_inner(
                     if ext == b".cjs" || ext == b".cts" {
                         return Ok(ResolvedSource {
                             source_code: bun_core::String::static_(b"(function(){})"),
-                            source_url: create_if_different(input_specifier, path.text),
+                            source_url: input_specifier.create_if_different(path.text),
                             is_commonjs_module: true,
                             tag: ResolvedSourceTag::Javascript,
                             ..Default::default()
@@ -3050,7 +3043,7 @@ fn transpile_source_code_inner(
                     };
                     return Ok(ResolvedSource {
                         source_code,
-                        source_url: create_if_different(input_specifier, path.text),
+                        source_url: input_specifier.create_if_different(path.text),
                         is_commonjs_module,
                         module_info,
                         tag,
@@ -3343,7 +3336,7 @@ fn transpile_source_code_inner(
 
                 return Ok(ResolvedSource {
                     source_code,
-                    source_url: create_if_different(input_specifier, path.text),
+                    source_url: input_specifier.create_if_different(path.text),
                     is_commonjs_module,
                     module_info,
                     tag,
@@ -3408,7 +3401,7 @@ fn transpile_source_code_inner(
                         source_code: bun_core::String::static_(include_bytes!(
                             "../js/wasi-runner.js"
                         )),
-                        source_url: create_if_different(input_specifier, path.text),
+                        source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::Esm,
                         ..Default::default()
                     });
@@ -3437,7 +3430,7 @@ fn transpile_source_code_inner(
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(sqlite_module_source_code_string),
-                source_url: create_if_different(input_specifier, path.text),
+                source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::Esm,
                 ..Default::default()
             })
@@ -3450,7 +3443,7 @@ fn transpile_source_code_inner(
             if disable_transpilying {
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
                 return Ok(ResolvedSource {
-                    source_url: create_if_different(input_specifier, path.text),
+                    source_url: input_specifier.create_if_different(path.text),
                     tag: ResolvedSourceTag::Esm,
                     ..Default::default()
                 });
@@ -3464,7 +3457,7 @@ fn transpile_source_code_inner(
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
                 jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle, global),
-                source_url: create_if_different(input_specifier, path.text),
+                source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()
             })
@@ -3477,7 +3470,7 @@ fn transpile_source_code_inner(
             if disable_transpilying {
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
                 return Ok(ResolvedSource {
-                    source_url: create_if_different(input_specifier, path.text),
+                    source_url: input_specifier.create_if_different(path.text),
                     tag: ResolvedSourceTag::Esm,
                     ..Default::default()
                 });
@@ -3549,7 +3542,7 @@ fn transpile_source_code_inner(
             if matches!(loader, L::Css) {
                 return Ok(ResolvedSource {
                     jsvalue_for_export: JSValue::create_empty_object(global, 0),
-                    source_url: create_if_different(input_specifier, path.text),
+                    source_url: input_specifier.create_if_different(path.text),
                     tag: ResolvedSourceTag::ExportDefaultObject,
                     ..Default::default()
                 });
@@ -3583,7 +3576,7 @@ fn transpile_source_code_inner(
             };
             Ok(ResolvedSource {
                 jsvalue_for_export: value,
-                source_url: create_if_different(input_specifier, path.text),
+                source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()
             })
@@ -4333,7 +4326,7 @@ unsafe fn transpile_file(
                 .to_js();
             // SAFETY: per fn contract — `ret` is a valid out-param.
             unsafe {
-                *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js);
+                *ret = ErrorableResolvedSource::err(js);
             }
             return ptr::null_mut();
         }
@@ -4588,49 +4581,51 @@ unsafe fn transpile_file(
             unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
             promise.cast::<c_void>()
         }
+        Err(crate::Error::AsyncModule) => {
+            debug_assert!(!promise.is_null());
+            promise.cast::<c_void>()
+        }
         Err(err) => {
-            if matches!(err, crate::Error::AsyncModule) {
-                debug_assert!(!promise.is_null());
-                return promise.cast::<c_void>();
-            }
-            if matches!(
-                err,
-                crate::Error::PluginError | crate::Error::Bundler(bun_bundler::Error::Plugin)
-            ) {
-                return ptr::null_mut();
-            }
-            if matches!(
-                err,
-                crate::Error::JSError
-                    | crate::Error::Js(_)
-                    | crate::Error::Bundler(bun_bundler::Error::Js(_))
-            ) {
-                // `take_error` unwraps
-                // the JSC::Exception to its inner value; the C++ caller
-                // re-wraps via `JSC::Exception::create`, so storing the raw
-                // Exception here would double-wrap and trip
-                // `ASSERT(!value.inherits<Exception>())` in JSPromise::reject.
-                let exc = global_ref.take_error(bun_jsc::JsError::Thrown);
-                // SAFETY: per fn contract.
-                unsafe {
-                    *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc);
-                }
-                return ptr::null_mut();
-            }
-            // Generic transpile error → format `log` into `*ret`.
-            bun_jsc::module_loader::process_fetch_log(
-                global_ref,
-                // SAFETY: per fn contract — pointers valid for the call.
-                unsafe { &*specifier_ptr },
-                // SAFETY: per fn contract — `referrer` is valid for the call.
-                unsafe { &*referrer },
-                &mut log,
+            // SAFETY: per fn contract — pointers valid for the call.
+            let (specifier, referrer) = unsafe { (&*specifier_ptr, &*referrer) };
+            if let Some(value) =
+                transpile_error_value(global_ref, specifier, referrer, &mut log, err)
+            {
                 // SAFETY: per fn contract — `ret` is a valid out-param.
-                unsafe { &mut *ret },
-                to_jsc_fetch_error(&err),
-            );
+                unsafe { *ret = ErrorableResolvedSource::err(value) };
+            }
             ptr::null_mut()
         }
+    }
+}
+
+/// The JS value a failed transpile should reject with, or `None` for a plugin
+/// error (the plugin already threw).
+fn transpile_error_value(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
+    log: &mut bun_ast::Log,
+    err: crate::Error,
+) -> Option<JSValue> {
+    match err {
+        crate::Error::PluginError | crate::Error::Bundler(bun_bundler::Error::Plugin) => None,
+        // `take_error` unwraps the JSC::Exception to its inner value; the C++
+        // caller re-wraps via `JSC::Exception::create`, so storing the raw
+        // Exception here would double-wrap and trip
+        // `ASSERT(!value.inherits<Exception>())` in JSPromise::reject.
+        crate::Error::JSError
+        | crate::Error::Js(_)
+        | crate::Error::Bundler(bun_bundler::Error::Js(_)) => {
+            Some(global.take_error(bun_jsc::JsError::Thrown))
+        }
+        err => Some(bun_jsc::module_loader::process_fetch_log(
+            global,
+            specifier,
+            referrer,
+            log,
+            to_jsc_fetch_error(&err),
+        )),
     }
 }
 
@@ -4646,7 +4641,7 @@ unsafe fn transpile_virtual_module(
     global: *mut JSGlobalObject,
     specifier_ptr: *const bun_core::String,
     referrer_ptr: *const bun_core::String,
-    source_code: *mut bun_core::ZigString,
+    source_code: *const bun_core::ZigString,
     loader_: bun_options_types::schema::api::Loader,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
@@ -4746,40 +4741,14 @@ unsafe fn transpile_virtual_module(
             true
         }
         Err(err) => {
-            if matches!(
-                err,
-                crate::Error::PluginError | crate::Error::Bundler(bun_bundler::Error::Plugin)
-            ) {
-                return true;
-            }
-            if matches!(
-                err,
-                crate::Error::JSError
-                    | crate::Error::Js(_)
-                    | crate::Error::Bundler(bun_bundler::Error::Js(_))
-            ) {
-                // `take_error` unwraps
-                // the JSC::Exception to its inner value (see same note in
-                // `transpile_file` above).
-                let exc = global_ref.take_error(bun_jsc::JsError::Thrown);
-                // SAFETY: per fn contract.
-                unsafe {
-                    *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc);
-                }
-                return true;
-            }
-            // Generic transpile error → format `log` into `*ret`.
-            bun_jsc::module_loader::process_fetch_log(
-                global_ref,
-                // SAFETY: per fn contract — pointers valid for the call.
-                unsafe { &*specifier_ptr },
-                // SAFETY: per fn contract — `referrer_ptr` is valid for the call.
-                unsafe { &*referrer_ptr },
-                &mut log,
+            // SAFETY: per fn contract — pointers valid for the call.
+            let (specifier, referrer) = unsafe { (&*specifier_ptr, &*referrer_ptr) };
+            if let Some(value) =
+                transpile_error_value(global_ref, specifier, referrer, &mut log, err)
+            {
                 // SAFETY: per fn contract — `ret` is a valid out-param.
-                unsafe { &mut *ret },
-                to_jsc_fetch_error(&err),
-            );
+                unsafe { *ret = ErrorableResolvedSource::err(value) };
+            }
             true
         }
     }
@@ -4895,32 +4864,12 @@ fn extract_owner_uid() -> u32 {
 }
 
 /// `LoaderHooks::resolve_embedded_node_file` body: delegates to
-/// [`resolve_embedded_file_to_buf`] with `extname = "node"` and writes the
-/// on-disk path back into `*in_out_str`.
-///
-/// # Safety
-/// `vm` is the live per-thread VM; `in_out_str` is a valid in/out
-/// `bun.String*` (C++ ABI, BunProcess.cpp). Caller (`Bun__resolveEmbeddedNodeFile`
-/// in `bun_jsc::module_loader`) has already checked
-/// `vm.standalone_module_graph.is_some()`.
-unsafe fn resolve_embedded_node_file_hook(
-    vm: *mut VirtualMachine,
-    in_out_str: *mut bun_core::String,
-) -> bool {
-    // SAFETY: per fn contract — `in_out_str` is a valid `bun.String*`.
-    let input_path_utf8 = unsafe { &*in_out_str }.to_utf8();
-    let input_path = input_path_utf8.slice();
-    let _ = vm;
-
+/// [`resolve_embedded_file_to_buf`] with `extname = "node"`.
+fn resolve_embedded_node_file_hook(path: &bun_core::String) -> Option<bun_core::String> {
+    let input_path = path.to_utf8();
     let mut path_buf = bun_paths::path_buffer_pool::get();
-    let Some(len) = resolve_embedded_file_to_buf(input_path, b"node", &mut path_buf[..]) else {
-        return false;
-    };
-
-    // SAFETY: per fn contract; the caller's borrowed input is overwritten
-    // (not dropped) and it now owns the +1 result.
-    unsafe { in_out_str.write(bun_core::String::clone_utf8(&path_buf[..len])) };
-    true
+    let len = resolve_embedded_file_to_buf(input_path.slice(), b"node", &mut path_buf[..])?;
+    Some(bun_core::String::clone_utf8(&path_buf[..len]))
 }
 
 /// The static `LoaderHooks` instance handed to `bun_jsc`.

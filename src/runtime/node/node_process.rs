@@ -99,13 +99,12 @@ extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
 
 /// `--redirect-warnings=<path>` value, if set. Returns false when unset.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::String) -> bool {
-    let Some(path) = crate::cli::Bun__Node__RedirectWarnings.get() else {
-        return false;
-    };
-    // SAFETY: out is a valid out-param provided by the C++ caller.
-    unsafe { out.write(bun_core::String::clone_utf8(path)) };
-    true
+/// `Dead` when unset.
+pub(crate) extern "C" fn Bun__Node__getRedirectWarnings() -> bun_core::String {
+    match crate::cli::Bun__Node__RedirectWarnings.get() {
+        Some(path) => bun_core::String::clone_utf8(path),
+        None => bun_core::String::dead(),
+    }
 }
 
 /// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided buffers; returns
@@ -190,17 +189,17 @@ mod _impl {
     }
 
     #[unsafe(export_name = "Bun__Process__getTitle")]
-    extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
+    extern "C" fn get_title(_global: *const JSGlobalObject) -> BunString {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
         // Node's default process.title is argv[0] as invoked
         // (uv_setup_args/uv_get_process_title semantics), not a fixed name.
         let argv = bun_core::argv();
-        let str_ = guard
-            .as_deref()
-            .or_else(|| argv.get(0).map(|z| z.as_bytes()))
-            .unwrap_or(b"bun");
-        // SAFETY: title is a valid (uninitialized) out-param provided by C++ caller
-        unsafe { title.write(BunString::clone_utf8(str_)) };
+        BunString::clone_utf8(
+            guard
+                .as_deref()
+                .or_else(|| argv.get(0).map(|z| z.as_bytes()))
+                .unwrap_or(b"bun"),
+        )
     }
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c

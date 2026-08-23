@@ -223,8 +223,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JS
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(globalObject, prefix, code, suffix)));
 }
-extern "C" void Bun__Node__Path_joinWTF(BunString* lhs, const char* rhs,
-    size_t len, BunString* result);
+extern "C" BunString Bun__Node__Path_joinWTF(const BunString* lhs, const char* rhs, size_t len);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -268,13 +267,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/modules/cjs/loader.js#L1603-L1620
     if (trailingSlash) {
         BunString lhs = Bun::toString(val);
-        BunString result;
-        Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1, &result);
-        val = result.toWTFString();
-        if (!val.isNull()) {
-            ASSERT(val.impl()->refCount() == 2);
-            val.impl()->deref();
-        }
+        val = Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1).transferToWTFString();
     }
 
     RETURN_IF_EXCEPTION(scope, {});

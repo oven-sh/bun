@@ -17,8 +17,8 @@ use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
-    self as jsc, ErrorCode, ErrorableResolvedSource, Exception, JSGlobalObject, JSInternalPromise,
-    JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM, ZigException,
+    self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
+    PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -579,15 +579,14 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
-        out: &mut core::mem::MaybeUninit<bun_core::String>,
-    ) {
-        out.write(
+    ) -> bun_core::StringView<'_> {
+        bun_core::StringView::from_bytes(
             if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
-                bun_core::String::static_(MAIN_FILE_NAME)
+                MAIN_FILE_NAME
             } else {
-                bun_core::String::borrow_utf8(vm.main())
+                vm.main()
             },
-        );
+        )
     }
 
     #[unsafe(no_mangle)]
@@ -2898,22 +2897,16 @@ impl VirtualMachine {
     }
 }
 
-/// Synthesize a JS
-/// `BuildMessage` / `ResolveMessage` / `AggregateError` from the parser
-/// `log` and write it into `ret` as `.err(..)` so the C++ module-loader
-/// (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp) rejects the import promise
-/// with a real Error instead of `undefined`.
-///
-/// Free function; takes `&JSGlobalObject` directly rather
-/// than `&mut VirtualMachine` because the body never touches VM state.
-pub(crate) fn process_fetch_log(
+/// Synthesize a JS `BuildMessage` / `ResolveMessage` / `AggregateError` from
+/// the parser `log` for a failed fetch, so the import promise rejects with a
+/// real Error instead of `undefined`.
+pub fn process_fetch_log(
     global_this: &JSGlobalObject,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
     log: &mut bun_ast::Log,
-    ret: &mut ErrorableResolvedSource,
     err: crate::CrateError,
-) {
+) -> JSValue {
     use crate::{BuildMessage, ResolveMessage};
 
     // Helper: on error, swap in the pending exception value.
@@ -2954,25 +2947,21 @@ pub(crate) fn process_fetch_log(
                     ..Default::default()
                 }
             };
-            *ret = ErrorableResolvedSource::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                take(BuildMessage::create(global_this, msg)),
-            );
+            take(BuildMessage::create(global_this, msg))
         }
 
         1 => {
             // Note: `Msg` is not `Copy`, so move it out — the caller deinits
             // the log immediately after, so consuming the vec is sound.
             let msg = log.msgs.swap_remove(0);
-            let value = match msg.metadata {
+            match msg.metadata {
                 bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
                 bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
                     global_this,
                     &msg,
                     referrer_utf8.slice(),
                 )),
-            };
-            *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), value);
+            }
         }
 
         _ => {
@@ -3005,10 +2994,7 @@ pub(crate) fn process_fetch_log(
             );
             let mut message = crate::ZigString::init(message_text);
             message.mark_global();
-            *ret = ErrorableResolvedSource::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                take(global_this.create_aggregate_error(&errors_stack[..len], &message)),
-            );
+            take(global_this.create_aggregate_error(&errors_stack[..len], &message))
         }
     }
 }
@@ -3415,16 +3401,6 @@ fn normalize_source(source: &[u8]) -> &[u8] {
         return rest;
     }
     source
-}
-
-/// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is
-/// byte-equal to `s`, in which case bump `s`'s refcount instead.
-#[inline]
-pub fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
-    if s.eql_utf8(other) {
-        return s.clone();
-    }
-    bun_core::String::clone_utf8(other)
 }
 
 // Additional FFI used by the formerly-gated impl.
@@ -4121,7 +4097,7 @@ impl VirtualMachine {
         // refCountedString will panic if the code is empty
         if code.is_empty() {
             return ResolvedSource {
-                source_url: create_if_different(specifier, source_url),
+                source_url: specifier.create_if_different(source_url),
                 ..Default::default()
             };
         }
@@ -4132,8 +4108,7 @@ impl VirtualMachine {
 
         ResolvedSource {
             source_code: bun_core::String::retain_wtf_impl(source_ref.impl_),
-            source_url: create_if_different(specifier, source_url),
-            allocator: source.cast::<c_void>(),
+            source_url: specifier.create_if_different(source_url),
             ..Default::default()
         }
     }

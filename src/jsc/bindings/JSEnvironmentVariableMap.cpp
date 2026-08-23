@@ -39,7 +39,7 @@ extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
-extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
+extern "C" BunString Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
@@ -243,8 +243,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
         return JSValue::encode(jsUndefined());
 
     BunString name = Bun::toStringView(propertyName.publicName());
-    BunString value = { BunStringTag::Dead };
-    if (!Bun__getEnvValueBunString(globalObject, &name, &value)) {
+    BunString value = Bun__getEnvValueBunString(globalObject, &name);
+    if (value.tag == BunStringTag::Dead) {
         return JSValue::encode(jsUndefined());
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));

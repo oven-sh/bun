@@ -60,11 +60,10 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // - `&String` is the borrow. `StringView<'a>` is the by-value borrow (C++
 //   `Bun::toString`/`toStringView` results, property-iterator names,
 //   sub-slices of a WTF string).
-// - `RawString` (= `bun_alloc::String`): the `Copy` POD underneath. Only for
-//   `#[repr(C)]` out-param slots C++ fills in place and other spots that must
-//   stay `Copy`; adopt with `String::from_raw` / `StringView::from_raw`.
+// `RawString` (= `bun_alloc::String`) is the `Copy` POD underneath; nothing
+// outside this module needs it.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_alloc::String as RawString;
+use bun_alloc::String as RawString;
 pub use bun_alloc::{StringImpl, Tag};
 
 #[repr(transparent)]
@@ -74,8 +73,8 @@ pub struct String(RawString);
 // (`headers-handwritten.h`); returned **by value** from every `BunString__*`
 // FFI below, so size/align drift is silent ABI corruption.
 crate::assert_ffi_layout!(String, 24, 8);
-// FFI surface from `src/jsc/bindings/BunString.cpp`. All return a fresh
-// WTF-backed string with refcount = 1, adopted via `String::from_raw`.
+// FFI surface from `src/jsc/bindings/BunString.cpp`. Constructors return an
+// owned +1 (declared `-> String`).
 unsafe extern "C" {
     fn BunString__fromBytes(bytes: *const u8, len: usize) -> String;
     fn BunString__fromLatin1(bytes: *const u8, len: usize) -> String;
@@ -117,20 +116,8 @@ impl String {
     pub const EMPTY: Self = Self(RawString::EMPTY);
     pub const DEAD: Self = Self(RawString::DEAD);
 
-    /// Adopt a `RawString` that arrived across FFI carrying a +1 (or a
-    /// non-WTF tag, for which ownership is moot).
-    ///
-    /// # Safety
-    /// `raw` must not be adopted twice: the returned `String` will `deref()`
-    /// on drop, so every other copy of these bits must be treated as a borrow.
     #[inline]
-    pub const unsafe fn from_raw(raw: RawString) -> Self {
-        Self(raw)
-    }
-    /// Release ownership to whoever receives the bits (C++, a `#[repr(C)]`
-    /// struct). No refcount traffic; `Drop` will not run.
-    #[inline]
-    pub fn into_raw(self) -> RawString {
+    fn into_raw(self) -> RawString {
         core::mem::ManuallyDrop::new(self).0
     }
 
@@ -230,6 +217,15 @@ impl String {
             },
         })
     }
+    /// `clone_utf8(other)`, unless `other` is byte-equal to `self`, in which
+    /// case another ref to `self`.
+    pub fn create_if_different(&self, other: &[u8]) -> Self {
+        if self.eql_utf8(other) {
+            return self.clone();
+        }
+        Self::clone_utf8(other)
+    }
+
     /// `bun.String.cloneUTF8` — copies `s` into a fresh WTF::StringImpl.
     pub fn clone_utf8(s: &[u8]) -> Self {
         if s.is_empty() {
@@ -397,7 +393,6 @@ impl String {
     /// `(dead, null)` if WTF allocation failed (check `tag == .Dead` before
     /// using the buffer).
     pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
-        // SAFETY: fresh +1 (or Dead on allocation failure).
         let s = BunString__fromLatin1Unitialized(len);
         if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
@@ -414,7 +409,6 @@ impl String {
         (s, buf)
     }
     pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
-        // SAFETY: fresh +1 (or Dead on allocation failure).
         let s = BunString__fromUTF16Unitialized(len);
         if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
@@ -803,29 +797,6 @@ impl String {
         Self::init(ZigString::from_bytes(value))
     }
 
-    /// Detach from borrowed storage: WTF-backed inputs just take another ref;
-    /// `ZigString`/`Static` inputs are copied into a fresh `WTF::StringImpl`
-    /// so the result no longer points at the caller's bytes.
-    pub fn to_wtf(&self) -> Self {
-        if self.0.tag == Tag::WTFStringImpl {
-            return self.clone();
-        }
-        if self.is_empty() {
-            return Self::EMPTY;
-        }
-        if self.is_utf16() {
-            let len = self.length();
-            let (new, chars) = Self::create_uninitialized_utf16(len);
-            if new.0.tag != Tag::Dead {
-                // SAFETY: tag ≠ WTFStringImpl is excluded above so
-                // `value.zig_string` is the active variant.
-                chars.copy_from_slice(self.as_zig().utf16_slice());
-            }
-            return new;
-        }
-        Self::clone_utf8(self.byte_slice())
-    }
-
     /// `bun.String.toZigString` — borrow as a `ZigString` (no ref taken).
     pub fn to_zig_string(&self) -> ZigString {
         match self.0.tag {
@@ -1180,6 +1151,10 @@ impl<'a> StringView<'a> {
         core::mem::ManuallyDrop::new(String::EMPTY),
         core::marker::PhantomData,
     );
+    pub const DEAD: StringView<'static> = StringView(
+        core::mem::ManuallyDrop::new(String::DEAD),
+        core::marker::PhantomData,
+    );
 
     #[inline]
     pub fn new(s: &'a String) -> Self {
@@ -1193,45 +1168,12 @@ impl<'a> StringView<'a> {
     pub fn from_bytes(bytes: &'a [u8]) -> Self {
         Self::of_zig(ZigString::from_bytes(bytes))
     }
-    /// # Safety
-    /// `raw` must stay valid (its WTF impl alive / its bytes live) for `'a`.
-    #[inline]
-    pub const unsafe fn from_raw(raw: RawString) -> Self {
-        Self(
-            core::mem::ManuallyDrop::new(String(raw)),
-            core::marker::PhantomData,
-        )
-    }
     #[inline]
     fn of_zig(z: ZigString) -> Self {
         Self(
             core::mem::ManuallyDrop::new(String::wrap_zig(Tag::ZigString, z)),
             core::marker::PhantomData,
         )
-    }
-}
-impl<'a> From<&'a String> for StringView<'a> {
-    #[inline]
-    fn from(s: &'a String) -> Self {
-        Self::new(s)
-    }
-}
-impl<'a> From<&'a [u8]> for StringView<'a> {
-    #[inline]
-    fn from(s: &'a [u8]) -> Self {
-        Self::from_bytes(s)
-    }
-}
-impl<'a, const N: usize> From<&'a [u8; N]> for StringView<'a> {
-    #[inline]
-    fn from(s: &'a [u8; N]) -> Self {
-        Self::from_bytes(s)
-    }
-}
-impl<'a> From<&'a str> for StringView<'a> {
-    #[inline]
-    fn from(s: &'a str) -> Self {
-        Self::from_bytes(s.as_bytes())
     }
 }
 impl core::ops::Deref for StringView<'_> {

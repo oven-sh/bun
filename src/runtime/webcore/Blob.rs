@@ -4208,7 +4208,7 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
+pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);
 
     // This is not 100% correct...

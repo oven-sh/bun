@@ -1406,14 +1406,11 @@ void JSCommonJSModule::evaluate(
         auto string = source.source_code.toWTFString(BunString::ZeroCopy);
         auto trimStart = string.find('\n');
         if (trimStart != WTF::notFound) {
-            auto wrapperStart = globalObject->m_moduleWrapperStart;
-            auto wrapperEnd = globalObject->m_moduleWrapperEnd;
             auto wrapped = makeString(
-                wrapperStart,
+                globalObject->m_moduleWrapperStart,
                 string.substring(trimStart, string.length() - trimStart - 4),
-                wrapperEnd);
-            string = {};
-            source.source_code.deref();
+                globalObject->m_moduleWrapperEnd);
+            string = source.source_code.transferToWTFString();
             source.source_code = Bun::toStringRef(wrapped);
         }
     }

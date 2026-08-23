@@ -1763,8 +1763,8 @@ unsafe extern "C" {
     safe fn Bun__Dirent__toJS(
         global: &JSGlobalObject,
         kind: i32,
-        name: &mut bun_core::String,
-        path: &mut bun_core::String,
+        name: bun_core::String,
+        path: bun_core::String,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JSValue;
 }
@@ -1774,8 +1774,8 @@ impl Dirent {
         Bun__JSDirentObjectConstructor(global)
     }
 
-    pub fn to_js(
-        &mut self,
+    pub fn into_js(
+        self,
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
@@ -1798,19 +1798,11 @@ impl Dirent {
             Bun__Dirent__toJS(
                 global_object,
                 kind_int,
-                &mut self.name,
-                &mut self.path,
+                self.name,
+                self.path,
                 cached_previous_path_jsvalue,
             )
         })
-    }
-
-    pub(crate) fn to_js_newly_created(
-        &mut self,
-        global_object: &JSGlobalObject,
-        previous_jsstring: Option<&mut *mut jsc::JSString>,
-    ) -> JsResult<JSValue> {
-        self.to_js(global_object, previous_jsstring)
     }
 }
 

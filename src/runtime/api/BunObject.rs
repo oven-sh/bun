@@ -2077,21 +2077,19 @@ pub(crate) mod environment_variables {
         false
     }
 
-    /// BunString variant of Bun__getEnvValue. The returned value borrows from
-    /// the env map; caller must copy before the map can mutate.
+    /// The value borrows the env map; the caller copies before the map can
+    /// mutate. `Dead` when absent.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValueBunString(
-        global_object: &JSGlobalObject,
+    extern "C" fn Bun__getEnvValueBunString<'a>(
+        global_object: &'a JSGlobalObject,
         name: &BunString,
-        value: &mut core::mem::MaybeUninit<BunString>,
-    ) -> bool {
+    ) -> bun_core::StringView<'a> {
         let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
-        let Some(val) = vm.env_loader().get(name_slice.slice()) else {
-            return false;
-        };
-        value.write(BunString::borrow_utf8(val));
-        true
+        match vm.env_loader().get(name_slice.slice()) {
+            Some(val) => bun_core::StringView::from_bytes(val),
+            None => bun_core::StringView::DEAD,
+        }
     }
 
     /// Sync a process.env write back to the native env map so that native

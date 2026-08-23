@@ -10,8 +10,8 @@ use bun_resolver::fs as Fs;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorCode, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
-    JsError, JsResult, ResolvedSource, StrongOptional, ZigStringJsc as _,
+    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError,
+    JsResult, ResolvedSource, StrongOptional, ZigStringJsc as _,
 };
 
 bun_core::declare_scope!(AsyncModule, hidden);
@@ -164,28 +164,15 @@ impl AsyncModule {
             Ok(resolved_source) => ErrorableResolvedSource::ok(resolved_source),
             Err(e) => {
                 if e == crate::CrateError::JSError {
-                    ErrorableResolvedSource::err(
-                        ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                        global_this.take_error(JsError::Thrown),
-                    )
+                    ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown))
                 } else {
-                    // `process_fetch_log` synthesizes a JS Error/AggregateError
-                    // from the parser log and writes it into
-                    // `errorable.result.err.value`; without it the import
-                    // promise would reject with `undefined`.
-                    let mut errorable = ErrorableResolvedSource::err(
-                        ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                        JSValue::UNDEFINED,
-                    );
-                    crate::virtual_machine::process_fetch_log(
+                    ErrorableResolvedSource::err(crate::virtual_machine::process_fetch_log(
                         global_this,
                         specifier,
                         referrer,
                         log,
-                        &mut errorable,
                         e,
-                    );
-                    errorable
+                    ))
                 }
             }
         };
@@ -666,28 +653,14 @@ impl AsyncModule {
             Ok(rs) => ErrorableResolvedSource::ok(rs),
             Err(
                 crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_)),
-            ) => ErrorableResolvedSource::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                global_this.take_error(JsError::Thrown),
-            ),
-            Err(err) => {
-                // Pre-seed the
-                // err so the `&mut` borrow is definitely-initialized;
-                // `process_fetch_log` overwrites `result.err.value`.
-                let mut errorable = ErrorableResolvedSource::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    JSValue::UNDEFINED,
-                );
-                crate::virtual_machine::process_fetch_log(
-                    global_this,
-                    &BunString::init(ZigString::init(this.specifier())),
-                    &BunString::init(ZigString::init(this.referrer())),
-                    &mut log,
-                    &mut errorable,
-                    err,
-                );
-                errorable
-            }
+            ) => ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown)),
+            Err(err) => ErrorableResolvedSource::err(crate::virtual_machine::process_fetch_log(
+                global_this,
+                &BunString::init(ZigString::init(this.specifier())),
+                &BunString::init(ZigString::init(this.referrer())),
+                &mut log,
+                err,
+            )),
         };
         let mut errorable = errorable;
         // log dropped at scope exit (defer log.deinit()).

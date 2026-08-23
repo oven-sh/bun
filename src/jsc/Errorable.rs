@@ -20,22 +20,6 @@ pub union Result<T> {
 }
 
 impl<T> Errorable<T> {
-    pub fn unwrap(self) -> core::result::Result<T, ErrorCode> {
-        let this = ManuallyDrop::new(self);
-        if this.success {
-            // SAFETY: success == true implies the `value` arm is active; `this`
-            // is ManuallyDrop so the value is moved out exactly once.
-            unsafe {
-                Ok(ManuallyDrop::into_inner(core::ptr::read(
-                    &raw const this.result.value,
-                )))
-            }
-        } else {
-            // SAFETY: success == false implies the `err` arm is active.
-            unsafe { Err(this.result.err.code) }
-        }
-    }
-
     pub fn ok(val: T) -> Self {
         Self {
             result: Result {
@@ -45,12 +29,13 @@ impl<T> Errorable<T> {
         }
     }
 
-    pub fn err(code: ErrorCode, err_value: JSValue) -> Self {
+    /// `value` is the JS error to throw/reject with.
+    pub fn err(value: JSValue) -> Self {
         Self {
             result: Result {
                 err: ZigErrorType {
-                    code,
-                    value: err_value,
+                    code: ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                    value,
                 },
             },
             success: false,

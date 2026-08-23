@@ -40,7 +40,7 @@ use crate::runtime_transpiler_cache::{
     RuntimeTranspilerCache as JscRuntimeTranspilerCache,
 };
 use crate::strong::Optional as StrongOptional;
-use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, create_if_different};
+use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine};
 use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
 
 // LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
@@ -531,7 +531,7 @@ impl TranspilerJob {
                 let mut resolved_source = core::mem::take(&mut self.resolved_source);
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
-                resolved_source.source_url = create_if_different(&out, self.path.text);
+                resolved_source.source_url = out.create_if_different(self.path.text);
                 (out, Ok(resolved_source))
             }
         };
@@ -979,12 +979,8 @@ impl TranspilerJob {
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
             let already_bundled = core::mem::take(&mut parse_result.already_bundled);
             let is_commonjs_module = already_bundled.is_common_js();
-            let bytecode_cache = match already_bundled {
-                AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
-                    crate::resolved_source::Bytecode::owned(bytes)
-                }
-                _ => Default::default(),
-            };
+            let bytecode_cache =
+                crate::resolved_source::Bytecode::owned(already_bundled.into_bytecode());
             self.resolved_source = ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,

@@ -432,23 +432,11 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
     let code = unsafe { (*arg_code).to_utf8() };
     // SAFETY: `arg_formatter` points to a `Formatter` on the C++ caller's stack.
     let formatter = unsafe { *arg_formatter };
-    match bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter) {
-        Ok(s) => {
-            // SAFETY: `out` is an uninitialized C++ stack out-param.
-            unsafe { out.write(s) };
-            true
-        }
-        // OOM is the one `JsError` variant that does **not** leave a pending
-        // exception on the VM; throw it explicitly before signalling failure.
-        Err(bun_jsc::JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory();
-            false
-        }
-        // `JSError` already set (or cleared) the pending
-        // exception on `global`; the bindgen ABI signals "exception pending"
-        // via `false`.
-        Err(_) => false,
-    }
+    bindgen_out(
+        global,
+        out,
+        bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter),
+    )
 }
 
 /// `DevServer.getDeinitCountForTesting() -> usize`.

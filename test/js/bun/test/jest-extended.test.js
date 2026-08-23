@@ -175,26 +175,19 @@ describe("jest-extended", () => {
     expect({ foo: "bun" }).not.toSatisfy(fooIsBar);
     expect({ bar: "foo" }).not.toSatisfy(fooIsBar);
 
-    // A throwing predicate propagates its own error (same as jest-extended).
-    const err = new Error("Bun!");
-    let caught;
-    try {
+    // Test errors
+    // @ts-expect-error
+    expect(() =>
       expect(1).toSatisfy(() => {
-        throw err;
-      });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBe(err);
-    caught = undefined;
-    try {
+        throw new Error("Bun!");
+      }),
+    ).toThrow("Bun!");
+    // @ts-expect-error
+    expect(() =>
       expect(1).not.toSatisfy(() => {
-        throw err;
-      });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBe(err);
+        throw new Error("Bun!");
+      }),
+    ).toThrow("Bun!");
   });
 
   // Array

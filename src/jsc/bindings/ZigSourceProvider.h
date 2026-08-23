@@ -42,6 +42,9 @@ public:
         return m_cachedBytecode.copyRef();
     };
 
+    // Node compile cache (misses only): the block is encoded once, before Bun's GC drops unlinked code or at persist time.
+    void didGenerateUnlinkedCodeBlock(JSC::VM&, const JSC::SourceCodeKey&, JSC::UnlinkedCodeBlock*) const final;
+
     ResolvedSource m_resolvedSource;
 
 private:

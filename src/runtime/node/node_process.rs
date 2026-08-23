@@ -80,7 +80,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
                 !vm.env_loader().has_set_no_clear_terminal_on_reload(
                     !bun_core::Output::enable_ansi_colors_stdout(),
                 );
-            bun_jsc::node_compile_cache::persist_now();
+            bun_jsc::node_compile_cache::persist_now(vm.jsc_vm_mut());
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }

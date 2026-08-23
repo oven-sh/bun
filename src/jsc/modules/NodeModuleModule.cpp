@@ -869,7 +869,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject, JSC
 
 extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, int32_t portable, BunString* outDirectory, BunString* outMessage);
 extern "C" BunString Bun__NodeCompileCache__getDir();
-extern "C" void Bun__NodeCompileCache__flush();
+extern "C" void Bun__NodeCompileCache__flush(JSC::VM*);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     (JSGlobalObject * globalObject,
@@ -942,7 +942,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFlushCompileCache,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-    Bun__NodeCompileCache__flush();
+    Bun__NodeCompileCache__flush(&globalObject->vm());
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

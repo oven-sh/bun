@@ -275,9 +275,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     putDirectNamed(vm, object, "uv"_s, JSValue(JSC::jsOwnedString(vm, String::fromLatin1(uv_version_string()))));
 #endif
     putVersion("napi", "10");
-    // Ask the linked ICU instead of using U_ICU_VERSION / U_UNICODE_VERSION.
-    // macOS links the system libicucore, so the headers the build compiled
-    // against can be a different ICU than the one the process runs with.
+    // macOS links the system libicucore: U_ICU_VERSION is the header's version, not the library's.
     {
         UVersionInfo versionInfo;
         char versionString[U_MAX_VERSION_STRING_LENGTH];

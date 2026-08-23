@@ -454,9 +454,7 @@ impl BlockList {
         let nonce = match r.read_int_le::<u64>() {
             Ok(n) => n,
             Err(_) => {
-                return Err(global.throw(format_args!(
-                    "BlockList.onStructuredCloneDeserialize failed"
-                )));
+                return Err(global.throw_type_error(format_args!("Unable to deserialize data.")));
             }
         };
 
@@ -473,9 +471,7 @@ impl BlockList {
         let this: *mut Self = {
             let refs = SERIALIZED_REFS.lock();
             let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
-                return Err(global.throw(format_args!(
-                    "BlockList.onStructuredCloneDeserialize failed"
-                )));
+                return Err(global.throw_type_error(format_args!("Unable to deserialize data.")));
             };
             let this = addr as *mut Self;
             // SAFETY: the entry was pushed by `on_structured_clone_serialize`

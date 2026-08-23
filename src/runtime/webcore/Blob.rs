@@ -829,10 +829,9 @@ impl BlobExt for Blob {
             Err(e) if e.name() == "OutOfMemory" => {
                 return Err(global_this.throw_out_of_memory());
             }
+            // Same error every other malformed record produces (SerializedScriptValue's ValidationError).
             Err(_) => {
-                return Err(
-                    global_this.throw(format_args!("Blob.onStructuredCloneDeserialize failed"))
-                );
+                return Err(global_this.throw_type_error(format_args!("Unable to deserialize data.")));
             }
         };
 

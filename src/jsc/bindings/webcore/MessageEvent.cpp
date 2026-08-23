@@ -94,8 +94,13 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
     bool didFail = false;
 
     auto deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::NonThrowing, &didFail);
-    if (topExceptionScope.exception()) [[unlikely]]
+    // A record that fails to rehydrate is delivered as a `messageerror` event, not an exception; only the VM's
+    // termination stays pending for the caller.
+    if (topExceptionScope.exception()) [[unlikely]] {
+        topExceptionScope.clearExceptionExceptTermination();
+        didFail = true;
         deserialized = jsUndefined();
+    }
 
     JSC::Strong<JSC::Unknown> strongData(vm, deserialized);
 

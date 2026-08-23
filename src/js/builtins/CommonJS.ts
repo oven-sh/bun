@@ -35,8 +35,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     if (builtin !== undefined) {
       return builtin;
     }
-    // Otherwise `id` is a virtual module (mock.module(), build.module()) registered under a
-    // "node:" name. It loads like any other module below.
+    // undefined: a virtual module is registered under this id. Load it below.
   }
 
   const existing = $requireMap.$get(id);

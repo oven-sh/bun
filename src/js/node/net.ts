@@ -3576,6 +3576,8 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     if (typeof this._handle.stop === "function") {
       this._handle.stop(false);
+      // Listener::do_stop unrefs the loop at once; hold it one turn like node's uv_close() (test-process-beforeexit).
+      setImmediate(noop);
       // Released here, not on 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2434-L2437
       const clusterHandle = this[kClusterHandle];
       if (clusterHandle) {
@@ -3860,7 +3862,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     );
   } catch (err) {
     const isUnix = path != null;
-    setTimeout(emitErrorNextTick, 1, this, formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port));
+    process.nextTick(
+      emitErrorNextTick,
+      this,
+      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
+    );
   }
   return this;
 };
@@ -3964,14 +3970,8 @@ Server.prototype[kRealListen] = function (
   // Unref the handle if the server was unref'ed prior to listening
   if (this._unref) this.unref();
 
-  // We must schedule the emitListeningNextTick() only after the next run of
-  // the event loop's IO queue. Otherwise, the server may not actually be listening
-  // when the 'listening' event is emitted.
-  //
-  // That leads to all sorts of confusion.
-  //
-  // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this);
+  // A tick, not a timer, so a close() from 'listening' runs before the loop accepts anything (as in Node).
+  process.nextTick(emitListeningNextTick, this);
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
@@ -4156,7 +4156,7 @@ function listenInCluster(
         server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;
         handle.close();
-        setTimeout(emitErrorNextTick, 1, server, err);
+        process.nextTick(emitErrorNextTick, server, err);
       }
       return;
     }
@@ -4180,7 +4180,7 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
   if (this._unref) this.unref();
-  setTimeout(emitListeningNextTick, 1, this);
+  process.nextTick(emitListeningNextTick, this);
 };
 
 function onClusterConnection(err, clientHandle) {

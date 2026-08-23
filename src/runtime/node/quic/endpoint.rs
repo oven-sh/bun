@@ -15,6 +15,7 @@ use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::socket::udp_socket::get_us_error;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 use super::callbacks;
@@ -169,6 +170,12 @@ struct ProvisionalSession {
 struct BindConfig {
     host: Vec<u8>,
     port: u16,
+    /// `LIBUS_*` bind flags (`ipv6Only`, `reusePort`).
+    flags: c_int,
+    /// Zero leaves the OS default, as node's `Endpoint::UDP::Bind` does.
+    receive_buffer_size: i32,
+    send_buffer_size: i32,
+    ttl: i32,
 }
 
 impl Default for BindConfig {
@@ -176,7 +183,35 @@ impl Default for BindConfig {
         BindConfig {
             host: b"127.0.0.1\0".to_vec(),
             port: 0,
+            flags: uws::LIBUS_LISTEN_DEFAULT,
+            receive_buffer_size: 0,
+            send_buffer_size: 0,
+            ttl: 0,
         }
+    }
+}
+
+impl BindConfig {
+    /// `Err` is the errno; node reports these as bind failures too.
+    fn apply_socket_options(&self, socket: &mut uws::udp::Socket) -> Result<(), c_int> {
+        let mut out: c_int = 0;
+        if self.receive_buffer_size > 0 {
+            setsockopt_result(socket.buffer_size(true, self.receive_buffer_size, &mut out))?;
+        }
+        if self.send_buffer_size > 0 {
+            setsockopt_result(socket.buffer_size(false, self.send_buffer_size, &mut out))?;
+        }
+        if self.ttl > 0 {
+            setsockopt_result(socket.set_unicast_ttl(self.ttl))?;
+        }
+        Ok(())
+    }
+}
+
+fn setsockopt_result(rc: c_int) -> Result<(), c_int> {
+    match get_us_error::<true>(rc, bun_sys::Tag::setsockopt) {
+        Some(err) => Err(c_int::from(err.errno)),
+        None => Ok(()),
     }
 }
 
@@ -1238,14 +1273,39 @@ impl QuicEndpoint {
                         host_nul.push(0);
                         // SAFETY: `raw` is uniquely owned here.
                         unsafe {
-                            (**raw).bind_config.set(BindConfig {
-                                host: host_nul,
-                                port,
+                            (**raw).bind_config.with_mut(|cfg| {
+                                cfg.host = host_nul;
+                                cfg.port = port;
                             })
                         };
                     }
                 }
             }
+            // Truthiness, like node's BooleanValue (quic/defs.h SetOption).
+            let mut flags = uws::LIBUS_LISTEN_DEFAULT;
+            if options.get_boolean_loose(global, "ipv6Only")? == Some(true) {
+                flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
+            }
+            if options.get_boolean_loose(global, "reusePort")? == Some(true) {
+                // node:dgram's bits: no SO_REUSEPORT fails the bind, like UV_UDP_REUSEPORT.
+                flags |=
+                    uws::LIBUS_LISTEN_REUSE_PORT | uws::LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE;
+            }
+            let receive_buffer_size = read_u64_option(global, options, "udpReceiveBufferSize")?
+                .map_or(0, |v| v.min(i32::MAX as u64) as i32);
+            let send_buffer_size = read_u64_option(global, options, "udpSendBufferSize")?
+                .map_or(0, |v| v.min(i32::MAX as u64) as i32);
+            let ttl = read_u64_option(global, options, "udpTTL")?
+                .map_or(0, |v| v.min(u8::MAX as u64) as i32);
+            // SAFETY: as above.
+            unsafe {
+                (**raw).bind_config.with_mut(|cfg| {
+                    cfg.flags = flags;
+                    cfg.receive_buffer_size = receive_buffer_size;
+                    cfg.send_buffer_size = send_buffer_size;
+                    cfg.ttl = ttl;
+                })
+            };
             if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
                 if let Some(bl) = crate::generated_classes::js_BlockList::from_js(bl_js) {
                     // SAFETY: `raw` is uniquely owned here; the Strong keeps
@@ -1376,24 +1436,28 @@ impl QuicEndpoint {
             on_recv_error,
             cfg.host.as_ptr().cast(),
             cfg.port,
-            0,
+            cfg.flags,
             Some(&mut err),
             core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
         );
-        if !socket.is_null() {
+        let bound = if socket.is_null() {
+            Err(err)
+        } else {
+            self.socket.set(Some(socket));
             // Linked only while we hold a socket, so an idle endpoint costs
             // the loop nothing.
             self.link_loop_driver();
-        }
-        if socket.is_null() {
+            cfg.apply_socket_options(uws::udp::Socket::opaque_mut(socket))
+        };
+        if let Err(status) = bound {
+            // `finish_close` also releases a socket whose options failed.
             self.this_value
                 .with_mut(|r| r.set_strong(this_value, global));
             self.finish_close();
             self.pending_endpoint_close.set(false);
-            self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, err);
+            self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, status);
             return Ok(false);
         }
-        self.socket.set(Some(socket));
         let sock = uws::udp::Socket::opaque_mut(socket);
         let port = sock.bound_port();
         let mut ip = [0u8; IPV6_ADDR_LEN];

@@ -2529,7 +2529,11 @@ struct Destination {
     address: JSValue,
 }
 
-fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
+/// `None` when `res`, a raw `us_udp_socket_*` return value, means success.
+pub(crate) fn get_us_error<const USE_WSA: bool>(
+    res: c_int,
+    tag: bun_sys::Tag,
+) -> Option<bun_sys::Error> {
     #[cfg(windows)]
     {
         // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows.

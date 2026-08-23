@@ -1698,24 +1698,43 @@ describe.concurrent("paused socket whose peer ends", () => {
   it("still emits 'end' and 'close' after it end()ed first", () => pauseThenPeerEnds(true));
 });
 
-describe.concurrent("pauseOnConnect", () => {
-  // The peer's bytes are queued on `socket` once the write callback ran; the poll
-  // between the two immediates is when a handle that reads would consume them.
-  async function expectNothingRead(socket: Socket, peer: Socket, bytes: string) {
-    await new Promise(resolve => peer.write(bytes, resolve));
-    await new Promise(resolve => setImmediate(() => setImmediate(resolve)));
-    expect({ paused: socket.isPaused(), bytesRead: socket.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
-    const data = once(socket, "data");
-    socket.resume();
-    expect(String((await data)[0])).toBe(bytes);
-  }
+// The peer's bytes are queued on `socket` once the write callback ran; the poll
+// between the two immediates is when a handle that reads would consume them.
+async function expectNothingRead(socket: Socket, peer: Socket, bytes: string) {
+  await new Promise(resolve => peer.write(bytes, resolve));
+  await new Promise(resolve => setImmediate(() => setImmediate(resolve)));
+  expect({ paused: socket.isPaused(), bytesRead: socket.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
+  const data = once(socket, "data");
+  socket.resume();
+  expect(String((await data)[0])).toBe(bytes);
+}
 
+// Node starts a connection's reads with a read(0) after the 'connect' listeners ran,
+// and skips it if one of them paused: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1695-L1696
+it("pause() in a 'connect' listener leaves the peer's bytes unread until resume()", async () => {
+  const accepted = Promise.withResolvers<Socket>();
+  const server = createServer(accepted.resolve);
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const client: Socket = connect(port, "127.0.0.1", () => client.pause());
+    const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+    await expectNothingRead(client, socket, "reply");
+    socket.destroy();
+    await once(client, "close");
+  } finally {
+    server.close();
+  }
+});
+
+describe.concurrent("pauseOnConnect", () => {
   it("reads server.pauseOnConnect per connection, like node", async () => {
     const server = createServer();
-    server.pauseOnConnect = true;
     const accepted = Promise.withResolvers<Socket>();
     server.on("connection", accepted.resolve);
     await once(server.listen(0, "127.0.0.1"), "listening");
+    // Set after listen(): the listener was created without it, so this connection is stopped from JS.
+    server.pauseOnConnect = true;
     try {
       const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
       const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);

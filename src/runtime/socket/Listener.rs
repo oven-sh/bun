@@ -1274,14 +1274,9 @@ impl Listener {
                         ssl_taken.as_ref(),
                         false,
                     ));
-                    {
-                        let mut f = tls_ref.flags.get();
-                        f.set(
-                            SocketFlags::PAUSE_ON_CONNECT,
-                            socket_config.pause_on_connect,
-                        );
-                        tls_ref.flags.set(f);
-                    }
+                    tls_ref.update_flags(|f| {
+                        f.set(SocketFlags::PAUSE_ON_CONNECT, socket_config.pause_on_connect)
+                    });
                     TLSSocket::data_set_cached(
                         tls_ref.get_this_value(global),
                         global,
@@ -1363,14 +1358,9 @@ impl Listener {
                         })
                     };
                     let tcp_ref = tcp;
-                    {
-                        let mut f = tcp_ref.flags.get();
-                        f.set(
-                            SocketFlags::PAUSE_ON_CONNECT,
-                            socket_config.pause_on_connect,
-                        );
-                        tcp_ref.flags.set(f);
-                    }
+                    tcp_ref.update_flags(|f| {
+                        f.set(SocketFlags::PAUSE_ON_CONNECT, socket_config.pause_on_connect)
+                    });
                     tcp_ref.ref_();
                     TCPSocket::data_set_cached(
                         tcp_ref.get_this_value(global),
@@ -1638,12 +1628,10 @@ fn connect_finish<const IS_SSL: bool>(
     socket_ref.reset_client_tls_flags(
         IS_SSL && crate::socket::resolve_reject_unauthorized(vm, ssl.as_deref(), false),
     );
-    {
-        let mut f = socket_ref.flags.get();
+    socket_ref.update_flags(|f| {
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
         f.set(SocketFlags::PAUSE_ON_CONNECT, pause_on_connect);
-        socket_ref.flags.set(f);
-    }
+    });
     // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.
     socket_ref
         .poll_ref

@@ -568,22 +568,18 @@ const SocketHandlers: SocketHandler = {
 } as const;
 
 // Node's readStop: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
+// A handle that is not reading does not hold the loop; a pending write still does (see unrefAfterDrain).
 function readStop(self, handle) {
   handle?.pause?.();
-  releaseReadHold(self, handle);
-}
-
-// A handle that is not reading does not hold the loop; a pending write still does (see unrefAfterDrain).
-function releaseReadHold(self, handle) {
   // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
   if (!self[kwriteCallback]) handle?.unref?.();
 }
 
-// The handle opened paused (pauseOnConnect in its native config): https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
 function pauseOnCreate(self, handle) {
-  releaseReadHold(self, handle);
+  readStop(self, handle);
   self.readableFlowing = false;
 }
 
@@ -3389,8 +3385,10 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
-    // Node only starts reading at the read(0) below, which a paused stream skips. TLS needs the reads to handshake.
-    if (self.isPaused() && !self.encrypted) readStop(self, self._handle);
+    // Node's handle is not reading yet at this point; ours is. A paused stream skips the read(0)
+    // below, so stop now, and again after the listeners if one of them paused. TLS reads to handshake.
+    const pausedBeforeConnect = self.isPaused();
+    if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
 
     self.emit("connect");
     self.emit("ready");
@@ -3403,6 +3401,7 @@ function afterConnect(status, handle, req, readable, writable) {
     // this doesn't actually consume any bytes, because len=0.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1695-L1696
     if (readable && !self.isPaused()) self.read(0);
+    else if (!pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
   } else {
     let details;
     const localAddress = req.localAddress;

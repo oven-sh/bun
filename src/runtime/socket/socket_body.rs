@@ -443,7 +443,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
-    fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
+    pub(crate) fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
         let mut v = self.flags.get();
         f(&mut v);
         self.flags.set(v);

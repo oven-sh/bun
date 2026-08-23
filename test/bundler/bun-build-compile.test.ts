@@ -90,8 +90,6 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     60_000,
   );
 
-  // Loading a module from embedded bytecode should touch only the pages it decodes: not the module's source text (its
-  // hash is recorded at build time) and not the bodies of functions that are never called.
   test("compile with invalid target fails gracefully", async () => {
     using dir = tempDir("build-compile-invalid", {
       "index.js": `console.log("test");`,

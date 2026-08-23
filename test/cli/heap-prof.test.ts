@@ -222,7 +222,7 @@ test("bun test rejects heap profiling with multiple parallel workers", async () 
   expect(stdout).toBe("");
   expect(stderr).toBe(
     "error: profiling is not supported with bun test --parallel\n" +
-      "note: Remove --parallel to profile the test process.\n",
+      "note: Use --parallel=1 or remove --parallel to profile the test process.\n",
   );
   expect(exitCode).toBe(1);
 });

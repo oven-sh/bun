@@ -1399,7 +1399,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 "<red>error<r>: profiling is not supported with bun test --parallel"
             );
             bun_core::pretty_errorln!(
-                "<blue>note<r><d>:<r> Remove --parallel to profile the test process."
+                "<blue>note<r><d>:<r> Use --parallel=1 or remove --parallel to profile the test process."
             );
             Global::exit(1);
         }

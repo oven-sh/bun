@@ -63,6 +63,7 @@ pub(crate) fn get_public_path_with_asset_prefix(
 }
 
 use bun_jsc::HostReturn as _;
+use bun_jsc::JsClass as _;
 use core::ffi::c_void;
 use std::io::Write as _;
 
@@ -1848,7 +1849,6 @@ fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> J
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    use crate::webcore::blob::{Blob, BlobExt as _};
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
     let Some(graph) = StandaloneModuleGraph::get_ref() else {
         return JSValue::create_empty_array(global_this, 0);
@@ -1881,12 +1881,8 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         let file: &GraphFile = &unsorted_files[*index as usize];
         // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
         // as the blob name, preserving any subdirectory from the asset template.
-        let blob = Blob::new(crate::api::standalone_graph_jsc::file_blob(
-            file,
-            global_this,
-        ));
-        // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
-        array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
+        let blob = crate::api::standalone_graph_jsc::file_blob(file, global_this);
+        array.put_index(global_this, i as u32, blob.to_js(global_this))?;
     }
 
     Ok(array)
@@ -2837,7 +2833,7 @@ mod stdio_stores {
     use super::*;
     use crate::node::types::PathOrFileDescriptor;
     use crate::webcore::blob::store::{Data, File as FileStore, IsAllAscii};
-    use crate::webcore::blob::{Blob, BlobExt as _, Store};
+    use crate::webcore::blob::{Blob, Store};
     use bun_ptr::RefPtr;
 
     thread_local! {
@@ -2881,9 +2877,7 @@ mod stdio_stores {
             // store.ref() — extra +1 for the new Blob.
             s.as_ref().unwrap().clone()
         });
-        let blob = Blob::new(Blob::init_with_store(store, global_this));
-        // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&*blob).to_js(global_this) }
+        Blob::init_with_store(store, global_this).to_js(global_this)
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {

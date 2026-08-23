@@ -2642,6 +2642,15 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
+    pub fn truncate(path: &ZStr, len: i64) -> Maybe<()> {
+        check_p!(
+            // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+            unsafe { libc::truncate(path.as_ptr(), len as libc::off_t) },
+            Tag::truncate,
+            path
+        );
+        Ok(())
+    }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
         // `buf.len()` bytes (including the NUL).
@@ -4428,6 +4437,53 @@ fn read_fill_vec(
     }
 }
 
+/// One `syscall` — a [`read`]-shaped producer that writes only the prefix it
+/// reports — into uninitialized `buf`; the prefix it filled.
+#[inline]
+fn fill_uninit<'a>(
+    buf: &'a mut [core::mem::MaybeUninit<u8>],
+    syscall: impl FnOnce(&mut [u8]) -> Maybe<usize>,
+) -> Maybe<&'a mut [u8]> {
+    let len = buf.len();
+    let ptr = buf.as_mut_ptr().cast::<u8>();
+    // SAFETY: write-only view for the producer, as `bun_core::vec::spare_bytes_mut`.
+    let n = syscall(unsafe { core::slice::from_raw_parts_mut(ptr, len) })?;
+    assert!(n <= len);
+    // SAFETY: the producer initialized `buf[..n]`.
+    Ok(unsafe { core::slice::from_raw_parts_mut(ptr, n) })
+}
+
+/// [`read`] into uninitialized memory: the bytes the kernel wrote.
+pub fn read_uninit(fd: Fd, buf: &mut [core::mem::MaybeUninit<u8>]) -> Maybe<&mut [u8]> {
+    fill_uninit(buf, |b| read(fd, b))
+}
+
+/// [`recv_non_block`] into uninitialized memory: the bytes the kernel wrote.
+pub fn recv_non_block_uninit(fd: Fd, buf: &mut [core::mem::MaybeUninit<u8>]) -> Maybe<&mut [u8]> {
+    fill_uninit(buf, |b| recv_non_block(fd, b))
+}
+
+/// [`read`] at most `max` bytes into `buf`'s spare capacity and extend its
+/// length by what the kernel wrote; that count (0 on EOF or no spare room).
+pub fn read_to_spare(fd: Fd, buf: &mut Vec<u8>, max: usize) -> Maybe<usize> {
+    let spare = buf.spare_capacity_mut();
+    let len = spare.len().min(max);
+    let n = read_uninit(fd, &mut spare[..len])?.len();
+    // SAFETY: `read_uninit` initialized `n <= spare` bytes past `len()`.
+    unsafe { buf.set_len(buf.len() + n) };
+    Ok(n)
+}
+
+/// [`read_to_spare`] with [`recv_non_block`].
+pub fn recv_non_block_to_spare(fd: Fd, buf: &mut Vec<u8>, max: usize) -> Maybe<usize> {
+    let spare = buf.spare_capacity_mut();
+    let len = spare.len().min(max);
+    let n = recv_non_block_uninit(fd, &mut spare[..len])?.len();
+    // SAFETY: `recv_non_block_uninit` initialized `n <= spare` bytes past `len()`.
+    unsafe { buf.set_len(buf.len() + n) };
+    Ok(n)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.PlatformIOVecConst` / `bun.platformIOVecConstCreate` — POSIX
 // `iovec_const` (= `struct iovec` with the writev contract that `base` is
@@ -5467,6 +5523,48 @@ pub mod linux {
 
     // sendfile — use the existing `linux::sendfile` (libc
     // wrapper, isize return) defined above; `get_errno::<isize>` decodes it.
+
+    /// `copy_file_range(in, NULL, out, NULL, len, flags)`: both fds' own
+    /// offsets are used and advanced. Raw return; decode with `get_errno`.
+    #[inline]
+    pub fn copy_file_range_cur(in_: super::Fd, out: super::Fd, len: usize, flags: u32) -> isize {
+        // SAFETY: null offset pointers; the kernel validates the fds.
+        unsafe {
+            copy_file_range(
+                in_.native(),
+                core::ptr::null_mut(),
+                out.native(),
+                core::ptr::null_mut(),
+                len,
+                flags,
+            )
+        }
+    }
+
+    /// `sendfile(out, in, NULL, count)`: `in`'s own offset is used and
+    /// advanced. Raw return; decode with `get_errno`.
+    #[inline]
+    pub fn sendfile_cur(out: super::Fd, in_: super::Fd, count: usize) -> isize {
+        // SAFETY: null offset pointer; the kernel validates the fds.
+        unsafe { sendfile(out.native(), in_.native(), core::ptr::null_mut(), count) }
+    }
+
+    /// `splice(in, NULL, out, NULL, len, flags)`. Raw return; decode with
+    /// `get_errno`.
+    #[inline]
+    pub fn splice_cur(in_: super::Fd, out: super::Fd, len: usize, flags: u32) -> isize {
+        // SAFETY: null offset pointers; the kernel validates the fds.
+        unsafe {
+            libc::splice(
+                in_.native(),
+                core::ptr::null_mut(),
+                out.native(),
+                core::ptr::null_mut(),
+                len,
+                flags,
+            )
+        }
+    }
 
     /// `bun.linux.RWFFlagSupport` — runtime probe for `RWF_NOWAIT` (kernel ≥ 4.14).
     pub struct RWFFlagSupport;
@@ -7229,6 +7327,11 @@ pub fn get_fcntl_flags(fd: Fd) -> Maybe<FcntlInt> {
 #[cfg(windows)]
 pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
     Err(Error::from_code_int(libc::ENOSYS, Tag::fcntl))
+}
+/// `fcntl(fd, F_SETFL, flags)`.
+#[cfg(unix)]
+pub fn set_fcntl_flags(fd: Fd, flags: FcntlInt) -> Maybe<()> {
+    fcntl(fd, libc::F_SETFL, flags).map(|_| ())
 }
 #[inline]
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {

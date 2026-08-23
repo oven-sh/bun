@@ -653,6 +653,73 @@ pub unsafe fn host_fn_finalize_ref_counted<T: bun_ptr::AnyRefCounted>(
     unsafe { T::rc_deref(this) };
 }
 
+/// `SYSV_ABI void (*)(CloneSerializer*, const uint8_t*, uint32_t)` — the
+/// byte sink C++ hands `onStructuredCloneSerialize`.
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub type WriteBytesFn = unsafe extern "sysv64" fn(*mut c_void, *const u8, u32);
+/// `SYSV_ABI void (*)(CloneSerializer*, const uint8_t*, uint32_t)` — the
+/// byte sink C++ hands `onStructuredCloneSerialize`.
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+pub type WriteBytesFn = unsafe extern "C" fn(*mut c_void, *const u8, u32);
+
+/// The `SerializedScriptValue` byte sink an `on_structured_clone_serialize`
+/// writes into. Built by the codegen thunk for the duration of that call.
+pub struct StructuredCloneWriter {
+    ctx: *mut c_void,
+    write: WriteBytesFn,
+}
+
+impl StructuredCloneWriter {
+    /// # Safety
+    /// `ctx`/`write` are the `CloneSerializer*` and callback C++ passed for
+    /// this serialize call, and the writer is dropped before it returns.
+    #[inline]
+    pub unsafe fn new(ctx: *mut c_void, write: WriteBytesFn) -> Self {
+        Self { ctx, write }
+    }
+}
+
+impl bun_io::Write for StructuredCloneWriter {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
+        // SAFETY: `new`'s contract — the serializer is live for this call.
+        unsafe { (self.write)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
+        Ok(())
+    }
+}
+
+/// The bytes an `on_structured_clone_deserialize` reads from.
+pub type StructuredCloneReader<'a> = bun_io::FixedBufferStream<&'a [u8]>;
+
+/// Codegen thunk entry for `onStructuredCloneDeserialize`: hand `f` the
+/// serialized bytes `[*ptr, end)` and advance `*ptr` past what it consumed.
+/// `f` returns `Ok(None)` for a malformed record; the thunk then returns the
+/// empty value with nothing pending (CloneDeserializer::readTerminal → fail()).
+///
+/// # Safety
+/// `ptr` is C++'s live cursor into a `SerializedScriptValue` buffer ending
+/// at `end` (`*ptr <= end`), valid for the call.
+pub unsafe fn host_fn_structured_clone_deserialize(
+    global: &JSGlobalObject,
+    ptr: *mut *mut u8,
+    end: *const u8,
+    f: impl FnOnce(&JSGlobalObject, &mut StructuredCloneReader<'_>) -> JsResult<Option<JSValue>>,
+) -> JSValue {
+    // SAFETY: fn contract.
+    let (start, bytes) = unsafe {
+        let start = *ptr;
+        (start, bun_core::ffi::slice(start, end as usize - start as usize))
+    };
+    let mut reader = bun_io::FixedBufferStream::new(bytes);
+    let result = match f(global, &mut reader) {
+        Ok(Some(value)) => value,
+        Ok(None) => JSValue::ZERO,
+        Err(err) => host_call_error_value(global, err),
+    };
+    // SAFETY: `pos <= len`, so the cursor stays inside `[start, end]`.
+    unsafe { *ptr = start.add(reader.pos.min(bytes.len())) };
+    result
+}
+
 /// Codegen thunk entry for prototype setters.
 #[track_caller]
 #[inline]

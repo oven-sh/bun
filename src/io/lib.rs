@@ -1363,6 +1363,34 @@ pub const fn io_request_callback<T: IoRequestHandler + 'static>() -> RequestCall
     run::<T>
 }
 
+/// One more thing the io thread can be asked to do with a `T`'s request,
+/// besides its [`IoRequestHandler`]: the owner swaps this in with
+/// [`Request::store_callback_seq_cst`] before re-queuing the request.
+pub trait IoRequestHook<T: IntrusiveIoRequest> {
+    /// io thread: `owner`'s request was just popped (`scheduled` is already
+    /// cleared). Nothing else touches the owner while it is queued or here.
+    fn on_io_request(owner: &mut T) -> Action<'_>;
+}
+
+/// The [`RequestCallback`] that has `H` handle `T`'s request.
+pub const fn io_request_callback_with<T, H>() -> RequestCallback
+where
+    T: IntrusiveIoRequest + 'static,
+    H: IoRequestHook<T>,
+{
+    /// # Safety
+    /// [`RequestCallback`] contract: `request` is the intrusive request of a
+    /// live `T` that scheduled it, and nothing else touches that `T` now.
+    unsafe fn run<T: IntrusiveIoRequest + 'static, H: IoRequestHook<T>>(
+        request: &mut Request,
+    ) -> Action<'_> {
+        // SAFETY: fn contract — `request` is embedded in a live, unaliased `T`.
+        let owner: &mut T = unsafe { &mut *T::from_io_request(core::ptr::from_mut(request)) };
+        H::on_io_request(owner)
+    }
+    run::<T, H>
+}
+
 // ─── ParkedRequest ────────────────────────────────────────────────────────────
 
 /// The io [`Request`] of a job that may park on the io loop waiting for a

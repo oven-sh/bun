@@ -1001,6 +1001,22 @@ impl RareData {
         self.stdin_store
             .map_or(core::ptr::null_mut(), NonNull::as_ptr)
     }
+
+    /// The lazily-created store behind `Bun.stdin` / `Bun.stdout` /
+    /// `Bun.stderr`, as a counted ref of its own.
+    pub fn stdio_store(
+        &mut self,
+        which: bun_sys::Stdio,
+    ) -> bun_ptr::RefPtr<crate::webcore_types::Store> {
+        let erased = match which {
+            bun_sys::Stdio::StdIn => self.stdin(),
+            bun_sys::Stdio::StdOut => self.stdout(),
+            bun_sys::Stdio::StdErr => self.stderr(),
+        };
+        // SAFETY: `stdio_ctor` returns `Box::<Store>::into_raw`, non-null and
+        // live (RareData holds a ref) until `RareData` is torn down.
+        unsafe { bun_ptr::RefPtr::init_ref(erased.cast::<crate::webcore_types::Store>()) }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

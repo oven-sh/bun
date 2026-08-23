@@ -831,14 +831,22 @@ unsafe fn __bun_io_pollable_on_io_error(
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
 unsafe fn __bun_io_pollable_on_closed(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
-    use crate::webcore::blob::FileCloser;
+    // The parked-io close path (and `FileCloser`) is POSIX-only.
+    #[cfg(windows)]
+    {
+        let _ = (tag, poll);
+        unreachable!("io::Poll on_closed on Windows");
+    }
+    #[cfg(not(windows))]
     match tag {
         bun_io::PollableTag::ReadFile => {
+            use crate::webcore::blob::FileCloser as _;
             // SAFETY: per fn contract.
             let this = unsafe { &mut *ReadFile::from_field_ptr(poll) };
             ReadFile::on_io_request_closed(this);
         }
         bun_io::PollableTag::WriteFile => {
+            use crate::webcore::blob::FileCloser as _;
             // SAFETY: per fn contract.
             let this = unsafe { &mut *WriteFile::from_field_ptr(poll) };
             WriteFile::on_io_request_closed(this);

@@ -243,7 +243,9 @@ fn read_named_registries(
                     let key = prop.key.as_ref().expect("infallible: prop has key");
                     let value = prop.value.as_ref().expect("infallible: prop has value");
                     if let (Some(name_str), Some(url_str)) = (as_string(key), as_string(value)) {
-                        registries.put(name_str, Box::from(url_str))?;
+                        // Without its credentials: this URL is recorded in bun.lock as the tarball base.
+                        let url = crate::bun_schema::api::NpmRegistry::from_url(url_str).url;
+                        registries.put(name_str, url)?;
                     }
                 }
             }
@@ -1311,7 +1313,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                         bun_core::warn!(
                                             "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
                                             bstr::BStr::new(registry_name),
-                                            bstr::BStr::new(url)
+                                            bun_core::fmt::redacted_npm_url(url)
                                         );
                                     }
                                     &**url

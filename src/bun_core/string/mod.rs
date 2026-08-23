@@ -60,14 +60,13 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // - `&String` is the borrow. `StringView<'a>` is the by-value borrow (C++
 //   `Bun::toString`/`toStringView` results, property-iterator names,
 //   sub-slices of a WTF string).
-// `RawString` (= `bun_alloc::String`) is the `Copy` POD underneath; nothing
-// outside this module needs it.
+// `bun_alloc::String` is the `Copy` POD underneath; nothing outside this
+// module needs it.
 // ──────────────────────────────────────────────────────────────────────────
-use bun_alloc::String as RawString;
 pub use bun_alloc::{StringImpl, Tag};
 
 #[repr(transparent)]
-pub struct String(RawString);
+pub struct String(bun_alloc::String);
 
 // C++ mirror: `struct BunString { BunStringTag tag; BunStringImpl impl; }`
 // (`headers-handwritten.h`); returned **by value** from every `BunString__*`
@@ -113,11 +112,11 @@ pub(crate) type ExternalStringImplFreeFunction<Ctx> =
     extern "C" fn(ctx: Ctx, buffer: *mut core::ffi::c_void, len: usize);
 
 impl String {
-    pub const EMPTY: Self = Self(RawString::EMPTY);
-    pub const DEAD: Self = Self(RawString::DEAD);
+    pub const EMPTY: Self = Self(bun_alloc::String::EMPTY);
+    pub const DEAD: Self = Self(bun_alloc::String::DEAD);
 
     #[inline]
-    fn into_raw(self) -> RawString {
+    fn into_raw(self) -> bun_alloc::String {
         core::mem::ManuallyDrop::new(self).0
     }
 
@@ -139,7 +138,7 @@ impl String {
     /// union (both `#[repr(C)] { *const u8, usize }`, same tag-bit scheme).
     #[inline(always)]
     fn wrap_zig(tag: Tag, z: ZigString) -> Self {
-        Self(RawString {
+        Self(bun_alloc::String {
             tag,
             value: StringImpl { zig_string: z.0 },
         })
@@ -210,7 +209,7 @@ impl String {
     #[inline]
     pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
         // No UTF-8 mark on the static path.
-        Self(RawString {
+        Self(bun_alloc::String {
             tag: Tag::StaticZigString,
             value: StringImpl {
                 zig_string: bun_alloc::ZigString::init(s.as_ref()),
@@ -479,7 +478,7 @@ impl String {
         if wtf.is_null() {
             return Self::EMPTY;
         }
-        Self(RawString {
+        Self(bun_alloc::String {
             tag: Tag::WTFStringImpl,
             value: StringImpl {
                 wtf_string_impl: wtf,

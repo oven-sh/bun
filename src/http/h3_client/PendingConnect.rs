@@ -156,15 +156,14 @@ impl PendingConnect {
     }
 }
 
-/// A [`PendingConnect`] parked on the DNS cache until its lookup resolves;
-/// consumed by exactly one of [`notify`](Self::notify) /
-/// [`notify_threadsafe`](Self::notify_threadsafe). Dropping it unconsumed
-/// leaks (it is never freed off the HTTP thread).
+/// A [`PendingConnect`] parked on the DNS cache until its lookup resolves on
+/// some other thread; consumed by [`notify_threadsafe`](Self::notify_threadsafe)
+/// (the only thing another thread may do with a `PendingConnect`). Dropping it
+/// unconsumed leaks (it is never freed off the HTTP thread).
 pub struct DnsPendingConnect(NonNull<PendingConnect>);
 
-// SAFETY: `notify_threadsafe` is the documented cross-thread entry (it only
-// queues the pointer under `RESOLVED`'s lock and wakes the HTTP thread);
-// `notify` is HTTP-thread-only, like every other `PendingConnect` method.
+// SAFETY: the only operation is `notify_threadsafe`, which queues the pointer
+// under `RESOLVED`'s lock and wakes the HTTP thread.
 unsafe impl Send for DnsPendingConnect {}
 
 impl DnsPendingConnect {
@@ -173,20 +172,20 @@ impl DnsPendingConnect {
         Self(NonNull::from(Box::leak(pc)))
     }
 
-    /// The lookup resolved. HTTP thread only (the registrant's thread), like
-    /// every other `PendingConnect` method; use
-    /// [`notify_threadsafe`](Self::notify_threadsafe) anywhere else.
-    #[inline]
-    pub fn notify(self) {
-        // SAFETY: the box `new` leaked, consumed once here.
-        unsafe { PendingConnect::on_dns_resolved(self.0.as_ptr()) }
-    }
-
     /// The lookup resolved (any thread).
     #[inline]
     pub fn notify_threadsafe(self) {
         // SAFETY: the box `new` leaked, consumed once here.
         unsafe { PendingConnect::on_dns_resolved_threadsafe(self.0.as_ptr()) }
+    }
+}
+
+impl PendingConnect {
+    /// The lookup had already resolved when this was registered (HTTP thread).
+    #[inline]
+    pub fn on_dns_resolved_now(self: Box<Self>) {
+        // SAFETY: `into_raw` of the box we own; consumed once here.
+        unsafe { Self::on_dns_resolved(Box::into_raw(self)) }
     }
 }
 

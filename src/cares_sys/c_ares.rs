@@ -1146,14 +1146,18 @@ impl Channel {
     /// `ares_set_servers_ports` with `servers` in order (c-ares copies them);
     /// an empty slice clears the list.
     pub fn set_servers(&self, servers: &mut [struct_ares_addr_port_node]) -> Result<(), Error> {
+        let len = servers.len();
         let base = servers.as_mut_ptr();
-        for i in 0..servers.len() {
-            servers[i].next = if i + 1 < servers.len() {
-                // SAFETY: `i + 1` is in bounds of `servers`.
-                unsafe { base.add(i + 1) }
-            } else {
-                ptr::null_mut()
-            };
+        for i in 0..len {
+            // SAFETY: `i` and `i + 1` (when used) are in bounds of `servers`;
+            // every write goes through `base` so the links stay valid for it.
+            unsafe {
+                (*base.add(i)).next = if i + 1 < len {
+                    base.add(i + 1)
+                } else {
+                    ptr::null_mut()
+                };
+            }
         }
         let head = if servers.is_empty() {
             ptr::null_mut()

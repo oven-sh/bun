@@ -1827,14 +1827,6 @@ pub mod internal {
                 DNSRequestOwner::Quic(pc) => pc.notify_threadsafe(),
             }
         }
-
-        pub(crate) fn notify(self, req: ThisPtr<Request>) {
-            match self {
-                DNSRequestOwner::Prefetch => freeaddrinfo(req, 0),
-                DNSRequestOwner::Socket(socket) => socket.notify(),
-                DNSRequestOwner::Quic(pc) => pc.notify(),
-            }
-        }
     }
 
     /// Register `pc` to be notified when `request` resolves. Mirrors
@@ -1842,15 +1834,19 @@ pub mod internal {
     /// no us_connecting_socket_t to hang the callback on. The .quic notify
     /// path frees the addrinfo request inline (via Bun__addrinfo_freeRequest),
     /// which re-acquires global_cache.lock — so drop it before notifying.
-    pub(crate) fn register_quic(request: ThisPtr<Request>, pc: bun_http::H3::DnsPendingConnect) {
+    pub(crate) fn register_quic(request: ThisPtr<Request>, pc: Box<bun_http::H3::PendingConnect>) {
         let guard = global_cache().lock();
-        let owner = DNSRequestOwner::Quic(pc);
         if request.has_result() {
             drop(guard);
-            owner.notify(request);
+            pc.on_dns_resolved_now();
             return;
         }
-        request.notify.lock().push(owner);
+        request
+            .notify
+            .lock()
+            .push(DNSRequestOwner::Quic(bun_http::H3::DnsPendingConnect::new(
+                pc,
+            )));
         drop(guard);
     }
 
@@ -2334,14 +2330,18 @@ pub mod internal {
 
     pub(crate) fn us_getaddrinfo_set(request: ThisPtr<Request>, socket: &ConnectingSocket) {
         let _guard = global_cache().lock();
-        // usockets keeps `socket` alive until it is notified or withdraws
-        // itself with `Bun__addrinfo_cancel`.
-        let query = DNSRequestOwner::Socket(DnsWaitingSocket::new(BackRef::new(socket)));
         if request.has_result() {
-            query.notify(request);
+            bun_uws_sys::addrinfo::dns_ready(socket);
             return;
         }
-        request.notify.lock().push(query);
+        // usockets keeps `socket` alive until it is notified or withdraws
+        // itself with `Bun__addrinfo_cancel`.
+        request
+            .notify
+            .lock()
+            .push(DNSRequestOwner::Socket(DnsWaitingSocket::new(
+                BackRef::new(socket),
+            )));
     }
 
     pub(crate) fn us_getaddrinfo_cancel(
@@ -4428,8 +4428,5 @@ pub fn addrinfo_register_quic(
     request: ThisPtr<crate::dns_jsc::internal::Request>,
     pc: Option<Box<bun_http::H3::PendingConnect>>,
 ) {
-    internal::register_quic(
-        request,
-        bun_http::H3::DnsPendingConnect::new(pc.expect("PendingConnect")),
-    )
+    internal::register_quic(request, pc.expect("PendingConnect"))
 }

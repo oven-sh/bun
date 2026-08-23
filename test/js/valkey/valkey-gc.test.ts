@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isASAN, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isDebug, isMusl, isWindows } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -904,4 +904,36 @@ test.concurrent("a client closed and collected from within its own reply does no
   expect(reached).not.toBeNull();
   // Keep the per-lane count in the CI log so a slide toward zero is visible.
   console.log(`close-from-reply fixture: ${reached![1]} of 10 rounds reached the window`);
+});
+
+test("new RedisClient(url) does not leak the URL and its components", async () => {
+  const code = /* js */ `
+    const base = "a".repeat(200 * 1024);
+    function once(i) { try { new Bun.RedisClient("redis://user:" + base + i + "@127.0.0.1:1/0"); } catch {} }
+    for (let i = 0; i < 20; i++) once(i);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) once(i);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", code],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim());
+  // Unfixed: ~148 MiB. Fixed: allocator slack only.
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 90 : 70);
+  expect(exitCode).toBe(0);
 });

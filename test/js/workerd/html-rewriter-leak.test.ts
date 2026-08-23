@@ -710,3 +710,40 @@ test("a direct-stream pull parked on flush(true) is released when the handler pr
   }
   expect(msg).toContain("will never settle");
 });
+
+test("element.attributes iterator does not leak names/values", async () => {
+  const code = /* js */ `
+    const big = Buffer.alloc(256 * 1024, "a").toString();
+    const html = '<a x="' + big + '"></a>';
+    async function once() {
+      let n = 0;
+      await new HTMLRewriter().on("a", { element(el) { for (const [k, v] of el.attributes) n += v.length; } }).transform(new Response(html)).text();
+      return n;
+    }
+    for (let i = 0; i < 20; i++) await once();
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) await once();
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", code],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim());
+  // Unfixed: ~95 MiB. Fixed: allocator slack only.
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 70 : 50);
+  expect(exitCode).toBe(0);
+});

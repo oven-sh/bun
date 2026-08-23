@@ -28,3 +28,23 @@ test("json/jsonb bind parameter does not leak the stringified payload", async ()
   expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 80 : 60);
   expect(exitCode).toBe(0);
 });
+
+// Every field of each ErrorResponse was leaked (3 × 256 KiB × 150 ≈ 110 MiB).
+test("error response fields are not leaked", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "postgres-error-field-leak.fixture.ts")],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.trim()).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim());
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 90 : 70);
+  expect(exitCode).toBe(0);
+});

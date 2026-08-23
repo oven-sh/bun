@@ -1193,6 +1193,11 @@ pub(crate) fn install_isolated_packages(
 
             let mut states = vec![State::Unvisited; store.entries.len()].into_boxed_slice();
 
+            // Entries whose lifecycle scripts are allowed to run; their
+            // transitive dependency closure is forced project-local after the
+            // DFS below.
+            let mut trusted_entries: Vec<usize> = Vec::new();
+
             // Iterative DFS so dependency cycles (which the isolated graph permits)
             // can't overflow the stack and are handled deterministically: a back-edge
             // contributes the dependency *name* to the parent's hash but not the
@@ -1237,6 +1242,33 @@ pub(crate) fn install_isolated_packages(
                                 // mutate (or may mutate) their install directory, so a
                                 // shared global copy would either diverge from the
                                 // patch or be mutated underneath other projects.
+                                //
+                                // Intentionally *not* gated on `do.run_scripts`
+                                // (a later install without `--ignore-scripts`
+                                // would run the postinstall through the project
+                                // symlink and mutate the shared directory) *or*
+                                // on `meta.hasInstallScript()` (that flag is not
+                                // serialised in `bun.lock`, so it reads `false`
+                                // on every install after the first; a trusted
+                                // scripted package would flip from project-local
+                                // on the cold install to global on the warm one).
+                                // Over-excludes the rare "trusted but actually no
+                                // scripts" case in exchange for not needing a
+                                // lockfile-format change.
+                                let dep_name = if dep_id != invalid_dependency_id {
+                                    dependencies[dep_id as usize].name.slice(string_buf)
+                                } else {
+                                    pkg_names[pkg_id as usize].slice(string_buf)
+                                };
+                                if lockfile.has_trusted_dependency(
+                                    dep_name,
+                                    pkg_names[pkg_id as usize].slice(string_buf),
+                                    pkg_res,
+                                ) || trusted_from_update.contains(&pkg_id)
+                                {
+                                    trusted_entries.push(entry_idx);
+                                    break 'eligible false;
+                                }
                                 if lockfile.patched_dependencies.count() > 0 {
                                     let mut name_version_buf = PathBuffer::uninit();
                                     let mut cursor =
@@ -1265,31 +1297,6 @@ pub(crate) fn install_isolated_packages(
                                     ) {
                                         break 'eligible false;
                                     }
-                                }
-                                // Intentionally *not* gated on `do.run_scripts`
-                                // (a later install without `--ignore-scripts`
-                                // would run the postinstall through the project
-                                // symlink and mutate the shared directory) *or*
-                                // on `meta.hasInstallScript()` (that flag is not
-                                // serialised in `bun.lock`, so it reads `false`
-                                // on every install after the first; a trusted
-                                // scripted package would flip from project-local
-                                // on the cold install to global on the warm one).
-                                // Over-excludes the rare "trusted but actually no
-                                // scripts" case in exchange for not needing a
-                                // lockfile-format change.
-                                let dep_name = if dep_id != invalid_dependency_id {
-                                    dependencies[dep_id as usize].name.slice(string_buf)
-                                } else {
-                                    pkg_names[pkg_id as usize].slice(string_buf)
-                                };
-                                if lockfile.has_trusted_dependency(
-                                    dep_name,
-                                    pkg_names[pkg_id as usize].slice(string_buf),
-                                    pkg_res,
-                                ) || trusted_from_update.contains(&pkg_id)
-                                {
-                                    break 'eligible false;
                                 }
                                 break 'eligible true;
                             }
@@ -1397,6 +1404,37 @@ pub(crate) fn install_isolated_packages(
                         states[entry_idx] = State::Done;
                     }
                     stack.pop();
+                }
+            }
+
+            // A trusted entry's lifecycle scripts run with its dep symlinks in
+            // place, so they can write through `node_modules/<dep>` into
+            // whatever those symlinks target. The trusted entry itself is
+            // already project-local (eligibility check above), but that is not
+            // enough: the npm `bun` wrapper's postinstall, for example, renames
+            // the platform binary out of `@oven/bun-<platform>`, which would
+            // empty the shared store entry underneath every other project (or
+            // fail outright with the store on another filesystem). Force the
+            // trusted entry's transitive dependency closure project-local too.
+            // The walk crosses entries that are already ineligible for other
+            // reasons (patched, workspace) because *their* deps are still
+            // reachable from the script. Dependents of the newly poisoned
+            // entries are handled by the fixed-point pass below.
+            {
+                let mut visited = vec![false; store.entries.len()].into_boxed_slice();
+                let mut queue = trusted_entries;
+                for &entry_idx in &queue {
+                    visited[entry_idx] = true;
+                }
+                while let Some(entry_idx) = queue.pop() {
+                    for dep in entry_dependencies[entry_idx].slice() {
+                        let dep_entry_idx = dep.entry_id.get() as usize;
+                        if !visited[dep_entry_idx] {
+                            visited[dep_entry_idx] = true;
+                            entry_hashes[dep_entry_idx] = 0;
+                            queue.push(dep_entry_idx);
+                        }
+                    }
                 }
             }
 

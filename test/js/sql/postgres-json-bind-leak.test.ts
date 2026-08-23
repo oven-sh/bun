@@ -23,8 +23,8 @@ test("json/jsonb bind parameter does not leak the stringified payload", async ()
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr.trim()).toBe("");
   const { deltaMiB } = JSON.parse(stdout.trim());
-  // Unfixed: ~300 × 512 KiB retained (≈160 MiB). Fixed: single digits in
-  // release, a little more under debug/ASAN allocator slack.
-  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 60 : 30);
+  // Unfixed: ~300 × 512 KiB retained (≈160 MiB). Fixed: allocator slack only
+  // (≈10 MiB Linux release, ≈30 MiB macOS, more under debug/ASAN).
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 80 : 60);
   expect(exitCode).toBe(0);
 });

@@ -1,10 +1,13 @@
 //! blocking, but off the main thread
 
 use crate::node::fs as node_fs;
+#[cfg(windows)]
 use crate::node::types::PathLikeExt as _;
 #[cfg(not(windows))]
 use crate::webcore::blob::{self, Retry};
-use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, Store, store};
+use crate::webcore::blob::{FileSnapshot, SnapshotPath};
+use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, Store};
+#[cfg(windows)]
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
@@ -28,11 +31,13 @@ use core::marker::ConstParamTy;
 
 #[cfg_attr(windows, allow(dead_code))] // Windows copies go through `CopyFileWindows`
 pub struct CopyFile {
-    /// The destination store (a `Data::File`); its `File` is
-    /// [`destination_file_store`](Self::destination_file_store). The refs keep
-    /// both stores alive while this task is on the work pool.
-    pub(crate) store: RefPtr<Store>,
-    pub(crate) source_store: RefPtr<Store>,
+    /// What the pool thread reads of each store's `File`, copied at creation.
+    pub(crate) destination_file_store: FileSnapshot,
+    pub(crate) source_file_store: FileSnapshot,
+    /// Held (not read) so both stores stay alive while this task is on the
+    /// work pool; released before the promise settles.
+    _store: RefPtr<Store>,
+    _source_store: RefPtr<Store>,
     pub offset: SizeType,
     #[cfg(not(windows))]
     pub(crate) max_length: SizeType,
@@ -81,13 +86,13 @@ impl jsc::JobContext for CopyFile {
 impl CopyFile {
     #[cfg(not(windows))]
     #[inline]
-    pub(crate) fn destination_file_store(&self) -> &store::File {
-        self.store.data.as_file()
+    pub(crate) fn destination_file_store(&self) -> &FileSnapshot {
+        &self.destination_file_store
     }
 
     #[inline]
-    pub(crate) fn source_file_store(&self) -> &store::File {
-        self.source_store.data.as_file()
+    pub(crate) fn source_file_store(&self) -> &FileSnapshot {
+        &self.source_file_store
     }
 
     /// Schedule the copy on the work pool; returns its promise.
@@ -102,8 +107,10 @@ impl CopyFile {
         destination_mode: Option<Mode>,
     ) -> JSValue {
         let copy = CopyFile {
-            store,
-            source_store,
+            destination_file_store: FileSnapshot::new(store.data.as_file()),
+            source_file_store: FileSnapshot::new(source_store.data.as_file()),
+            _store: store,
+            _source_store: source_store,
             offset: off,
             max_length: max_len,
             mkdirp_if_not_exists,
@@ -127,10 +134,8 @@ impl CopyFile {
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
-        if matches!(
-            self.source_file_store().pathlike,
-            PathOrFileDescriptor::Path(_)
-        ) && system_error.path.is_empty()
+        if matches!(self.source_file_store().pathlike, SnapshotPath::Path(_))
+            && system_error.path.is_empty()
         {
             system_error.path =
                 bun_core::String::clone_utf8(self.source_file_store().pathlike.path().slice());
@@ -164,14 +169,10 @@ impl CopyFile {
 
     #[cfg(not(windows))]
     pub(crate) fn do_close(&mut self) {
-        let close_input = !matches!(
-            self.destination_file_store().pathlike,
-            PathOrFileDescriptor::Fd(_)
-        ) && self.destination_fd != Fd::INVALID;
-        let close_output = !matches!(
-            self.source_file_store().pathlike,
-            PathOrFileDescriptor::Fd(_)
-        ) && self.source_fd != Fd::INVALID;
+        let close_input = !matches!(self.destination_file_store().pathlike, SnapshotPath::Fd(_))
+            && self.destination_fd != Fd::INVALID;
+        let close_output = !matches!(self.source_file_store().pathlike, SnapshotPath::Fd(_))
+            && self.source_fd != Fd::INVALID;
 
         // Apply destination mode using fchmod before closing.
         // This ensures mode is applied even when overwriting existing files, since
@@ -317,7 +318,7 @@ impl CopyFile {
     ) -> Result<(), crate::Error> {
         let bun_opened_dest = matches!(
             self.destination_file_store().pathlike,
-            PathOrFileDescriptor::Path(_)
+            SnapshotPath::Path(_)
         );
         let cap = if unknown_size {
             MAX_SIZE
@@ -598,11 +599,11 @@ impl CopyFile {
             #[cfg(not(target_os = "macos"))]
             let stat_: Option<Stat> = None;
 
-            if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store().pathlike {
+            if let SnapshotPath::Fd(fd) = &self.destination_file_store().pathlike {
                 self.destination_fd = *fd;
             }
 
-            if let PathOrFileDescriptor::Fd(fd) = &self.source_file_store().pathlike {
+            if let SnapshotPath::Fd(fd) = &self.source_file_store().pathlike {
                 self.source_fd = *fd;
             }
 
@@ -613,13 +614,10 @@ impl CopyFile {
                 #[cfg(target_os = "macos")]
                 {
                     if self.offset == 0
-                        && matches!(
-                            self.source_file_store().pathlike,
-                            PathOrFileDescriptor::Path(_)
-                        )
+                        && matches!(self.source_file_store().pathlike, SnapshotPath::Path(_))
                         && matches!(
                             self.destination_file_store().pathlike,
-                            PathOrFileDescriptor::Path(_)
+                            SnapshotPath::Path(_)
                         )
                     {
                         'do_clonefile: {
@@ -729,10 +727,7 @@ impl CopyFile {
             debug_assert!(self.destination_fd.is_valid());
             debug_assert!(self.source_fd.is_valid());
 
-            if matches!(
-                self.destination_file_store().pathlike,
-                PathOrFileDescriptor::Fd(_)
-            ) {
+            if matches!(self.destination_file_store().pathlike, SnapshotPath::Fd(_)) {
                 // nothing to do for the Fd case
             }
 
@@ -770,7 +765,7 @@ impl CopyFile {
                 if PREALLOCATE_SUPPORTED
                     && matches!(
                         self.destination_file_store().pathlike,
-                        PathOrFileDescriptor::Path(_)
+                        SnapshotPath::Path(_)
                     )
                     && self.max_length > PREALLOCATE_LENGTH
                     && self.max_length != MAX_SIZE
@@ -839,7 +834,7 @@ impl CopyFile {
                 // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
                 if matches!(
                     self.destination_file_store().pathlike,
-                    PathOrFileDescriptor::Path(_)
+                    SnapshotPath::Path(_)
                 ) {
                     if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
                         self.do_close();
@@ -866,7 +861,7 @@ impl CopyFile {
             {
                 if matches!(
                     self.destination_file_store().pathlike,
-                    PathOrFileDescriptor::Path(_)
+                    SnapshotPath::Path(_)
                 ) {
                     let mut total_written: u64 = 0;
                     match node_fs::NodeFS::copy_file_using_read_write_loop(

@@ -8,10 +8,12 @@ use core::sync::atomic::Ordering;
 use crate::Error;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
-use crate::webcore::blob::store::{Data, File as FileStore};
+use crate::webcore::blob::store::Data;
+#[cfg(windows)]
+use crate::webcore::blob::store::File as FileStore;
 use crate::webcore::blob::{Blob, MAX_SIZE, SizeType, SourceBytes, Store};
 #[cfg(not(windows))]
-use crate::webcore::blob::{FileCloser, FileOpener};
+use crate::webcore::blob::{FileCloser, FileOpener, FileSnapshot, PathOrFdRef};
 use bun_core::String as BunString;
 use bun_io as io;
 #[cfg(windows)]
@@ -193,9 +195,11 @@ impl ReadFile {
 
 #[cfg_attr(windows, allow(dead_code))] // Windows reads go through `ReadFileUV`
 pub struct ReadFile {
-    /// The file store being read (a `Data::File`); its `File` is
-    /// [`file_store`](Self::file_store).
+    /// The file store being read (a `Data::File`).
     pub(crate) store: RefPtr<Store>,
+    /// What the pool thread reads of that store's `File`, copied at creation.
+    #[cfg(not(windows))]
+    pub(crate) file_store: FileSnapshot,
     pub offset: SizeType,
     #[cfg(not(windows))]
     pub(crate) max_length: SizeType,
@@ -264,8 +268,8 @@ impl FileOpener for ReadFile {
     fn set_system_error(&mut self, e: jsc::SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &crate::webcore::node_types::PathOrFileDescriptor<'static> {
-        &self.file_store().pathlike
+    fn pathlike(&self) -> PathOrFdRef<'_> {
+        self.file_store.pathlike.as_ref()
     }
 }
 
@@ -273,12 +277,6 @@ impl FileOpener for ReadFile {
 crate::webcore::blob::impl_file_closer!(ReadFile);
 
 impl ReadFile {
-    #[cfg(not(windows))]
-    #[inline]
-    pub(crate) fn file_store(&self) -> &FileStore {
-        self.store.data.as_file()
-    }
-
     pub(crate) fn update(&mut self) {
         #[cfg(windows)]
         {
@@ -298,8 +296,10 @@ impl ReadFile {
     #[cfg(not(windows))]
     pub(crate) fn create(store: RefPtr<Store>, off: SizeType, max_len: SizeType) -> ReadFile {
         // store.ref() — `RefPtr<Store>` carries the +1; held in `self.store`.
+        let file_store = FileSnapshot::new(store.data.as_file());
         ReadFile {
             store,
+            file_store,
             offset: off,
             max_length: max_len,
             total_size: MAX_SIZE,
@@ -400,7 +400,7 @@ impl ReadFile {
         retry: &mut bool,
     ) -> Option<usize> {
         let cap = (self.max_length.saturating_sub(self.read_off)) as usize;
-        let is_socket = bun_sys::S::ISSOCK(self.file_store().mode);
+        let is_socket = bun_sys::S::ISSOCK(self.file_store.mode);
         let result: bun_sys::Result<usize> = if buffer.spare_capacity_mut().len() < stack.len() {
             let room = stack.len().min(cap);
             let stack = &mut stack[..room];
@@ -450,8 +450,8 @@ impl ReadFile {
                             self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                             self.system_error = Some(err.to_system_error().into());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
-                                let path = if self.file_store().pathlike.is_path() {
-                                    BunString::clone_utf8(self.file_store().pathlike.path().slice())
+                                let path = if self.file_store.pathlike.is_path() {
+                                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
                                 } else {
                                     BunString::EMPTY
                                 };
@@ -498,8 +498,8 @@ impl ReadFile {
         {
             self.io_task = Some(task);
 
-            if self.file_store().pathlike.is_fd() {
-                self.opened_fd = self.file_store().pathlike.fd();
+            if self.file_store.pathlike.is_fd() {
+                self.opened_fd = self.file_store.pathlike.fd();
             }
 
             self.get_fd(Self::run_async_with_fd);
@@ -508,7 +508,7 @@ impl ReadFile {
 
     #[cfg(not(windows))]
     pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_store().pathlike.is_path()
+        self.file_store.pathlike.is_path()
     }
 
     #[cfg(not(windows))]
@@ -551,8 +551,8 @@ impl ReadFile {
             self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             self.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
-                path: if self.file_store().pathlike.is_path() {
-                    BunString::clone_utf8(self.file_store().pathlike.path().slice())
+                path: if self.file_store.pathlike.is_path() {
+                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
                 } else {
                     BunString::EMPTY
                 },
@@ -596,7 +596,7 @@ impl ReadFile {
 
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
-        if self.size == 0 && bun_sys::is_regular_file(self.file_store().mode) {
+        if self.size == 0 && bun_sys::is_regular_file(self.file_store.mode) {
             self.buffer = Vec::new();
             self.on_finish();
             return;

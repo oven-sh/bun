@@ -2572,7 +2572,7 @@ impl BlobExt for Blob {
         if view.is_empty() {
             return Ok(jsc::DOMFormData::create(global));
         }
-        Ok(self.to_form_data_with_bytes(global, SourceBytes::Store(view, Lifetime::Temporary)))
+        Ok(self.to_form_data_with_bytes(global, SourceBytes::Store(view, Lifetime::Clone)))
     }
     #[inline]
     fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(
@@ -5786,6 +5786,118 @@ pub fn jsdom_file_has_instance(_a: JSValue, _b: &JSGlobalObject, value: JSValue)
 // FileOpener<T> / FileCloser<T>
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What a pool-thread job (`ReadFile`, `CopyFile`) needs of a `store::File`,
+/// copied on the JS thread when the job is created: the JS thread may re-stat
+/// the live store (`resolve_file_stat` rewrites `mode`/`seekable`/...) while
+/// the job runs, so the job never reads the store's `File` itself.
+#[cfg_attr(windows, allow(dead_code))] // the Windows jobs run on the JS thread
+pub struct FileSnapshot {
+    pub pathlike: SnapshotPath,
+    pub mode: bun_sys::Mode,
+    pub is_atty: Option<bool>,
+}
+
+#[cfg_attr(windows, allow(dead_code))] // the Windows jobs run on the JS thread
+impl FileSnapshot {
+    pub fn new(file: &store::File) -> Self {
+        Self {
+            pathlike: match &file.pathlike {
+                PathOrFileDescriptor::Fd(fd) => SnapshotPath::Fd(*fd),
+                PathOrFileDescriptor::Path(p) => {
+                    SnapshotPath::Path(SnapshotPathBuf(p.slice().into()))
+                }
+            },
+            mode: file.mode,
+            is_atty: file.is_atty,
+        }
+    }
+}
+
+/// [`FileSnapshot`]'s owned copy of a `PathOrFileDescriptor`.
+#[cfg_attr(windows, allow(dead_code))] // the Windows jobs run on the JS thread
+pub enum SnapshotPath {
+    Fd(Fd),
+    Path(SnapshotPathBuf),
+}
+
+#[cfg_attr(windows, allow(dead_code))] // the Windows jobs run on the JS thread
+pub struct SnapshotPathBuf(Box<[u8]>);
+
+#[cfg_attr(windows, allow(dead_code))] // the Windows jobs run on the JS thread
+impl SnapshotPathBuf {
+    #[inline]
+    pub fn slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// NUL-terminated in `buf` (empty if it does not fit), as
+    /// `PathLike::slice_z` does on POSIX.
+    pub fn slice_z<'a>(&'a self, buf: &'a mut bun_paths::PathBuffer) -> &'a bun_core::ZStr {
+        let path = &self.0[..];
+        if path.len() >= buf.len() {
+            bun_core::debug_warn!(
+                "path too long: {} bytes exceeds PathBuffer capacity of {}\n",
+                path.len(),
+                buf.len()
+            );
+            return bun_core::ZStr::EMPTY;
+        }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        bun_core::ZStr::from_buf(&buf[..], path.len())
+    }
+}
+
+#[cfg_attr(windows, allow(dead_code))] // the Windows jobs run on the JS thread
+impl SnapshotPath {
+    #[inline]
+    pub fn is_fd(&self) -> bool {
+        matches!(self, SnapshotPath::Fd(_))
+    }
+    #[inline]
+    pub fn is_path(&self) -> bool {
+        matches!(self, SnapshotPath::Path(_))
+    }
+    #[inline]
+    pub fn fd(&self) -> Fd {
+        match self {
+            SnapshotPath::Fd(fd) => *fd,
+            SnapshotPath::Path(_) => unreachable!("SnapshotPath::fd on a path"),
+        }
+    }
+    #[inline]
+    pub fn path(&self) -> &SnapshotPathBuf {
+        match self {
+            SnapshotPath::Path(p) => p,
+            SnapshotPath::Fd(_) => unreachable!("SnapshotPath::path on an fd"),
+        }
+    }
+    #[inline]
+    pub fn as_ref(&self) -> PathOrFdRef<'_> {
+        match self {
+            SnapshotPath::Fd(fd) => PathOrFdRef::Fd(*fd),
+            SnapshotPath::Path(p) => PathOrFdRef::Path(p.slice()),
+        }
+    }
+}
+
+/// A path-or-fd borrowed from wherever a [`FileOpener`] keeps it.
+#[cfg_attr(windows, allow(dead_code))] // the Windows jobs run on the JS thread
+pub enum PathOrFdRef<'a> {
+    Fd(Fd),
+    Path(&'a [u8]),
+}
+
+#[cfg(not(windows))]
+impl<'a> From<&'a PathOrFileDescriptor<'_>> for PathOrFdRef<'a> {
+    fn from(p: &'a PathOrFileDescriptor<'_>) -> Self {
+        match p {
+            PathOrFileDescriptor::Fd(fd) => PathOrFdRef::Fd(*fd),
+            PathOrFileDescriptor::Path(p) => PathOrFdRef::Path(p.slice()),
+        }
+    }
+}
+
 // TODO: move to bun_sys?
 /// Generic (POSIX, pool-thread) file-open helper used by the ReadFile/WriteFile
 /// state machines, modeled as a trait the target implements. Windows opens go
@@ -5800,8 +5912,8 @@ pub trait FileOpener: Sized {
     fn set_opened_fd(&mut self, fd: Fd);
     fn set_errno(&mut self, e: crate::Error);
     fn set_system_error(&mut self, e: jsc::SystemError);
-    /// Either `self.file_store.pathlike` or `self.file_blob.store.data.file.pathlike`.
-    fn pathlike(&self) -> &PathOrFileDescriptor<'static>;
+    /// The file to open: the job's snapshot, or `self.file_blob.store.data.file.pathlike`.
+    fn pathlike(&self) -> PathOrFdRef<'_>;
     /// Implementors that have a `mkdirp_if_not_exists` field (`WriteFile`,
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
@@ -5818,8 +5930,8 @@ pub trait FileOpener: Sized {
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::PathBuffer::uninit();
         let path_string = match self.pathlike() {
-            PathOrFileDescriptor::Path(p) => p.clone(),
-            PathOrFileDescriptor::Fd(_) => unreachable!(),
+            PathOrFdRef::Path(p) => SnapshotPathBuf(p.into()),
+            PathOrFdRef::Fd(_) => unreachable!(),
         };
         let path = path_string.slice_z(&mut buf);
 
@@ -5865,8 +5977,7 @@ pub trait FileOpener: Sized {
             return;
         }
 
-        if let PathOrFileDescriptor::Fd(fd) = self.pathlike() {
-            let fd = *fd;
+        if let PathOrFdRef::Fd(fd) = self.pathlike() {
             self.set_opened_fd(fd);
             callback(self, fd);
             return;

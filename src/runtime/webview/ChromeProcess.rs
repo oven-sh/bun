@@ -52,6 +52,9 @@ pub(crate) struct ChromeProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
     // because the refcount, not this struct, owns the allocation.
     process: NonNull<Process>,
+    /// Set by [`Bun__Chrome__retire`]: the transport has already let go of
+    /// this Chrome, so its exit is only reaped, not reported to C++.
+    retired: bool,
     #[cfg(windows)]
     pipes: WindowsPipes,
     #[cfg(windows)]
@@ -94,6 +97,31 @@ extern "C" fn Bun__Chrome__kill() {
             let _ = i.process.as_mut().kill(9);
         }
     }
+}
+
+/// `bun test --isolate` is retiring the global that spawned this Chrome
+/// (Transport::retireGlobal, after it rejected everything pending). Unpublish
+/// and kill the process now so the next file's `new Bun.WebView()` can spawn
+/// its own without waiting for this one to be reaped; `on_exit` still reaps
+/// it, but no longer tells C++ about a death the transport has moved past.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Chrome__retire() {
+    let this = INSTANCE.swap(ptr::null_mut(), Ordering::Relaxed);
+    // SAFETY: INSTANCE held a live heap-allocated pointer; `on_exit` only
+    // frees it after it runs, and we have just taken it out of INSTANCE.
+    let Some(chrome) = (unsafe { this.as_mut() }) else {
+        return;
+    };
+    chrome.retired = true;
+    #[cfg(windows)]
+    {
+        // Events from this Chrome that are still queued carry its generation
+        // and are dropped in `QueuedEvent::deliver`.
+        GENERATION.fetch_add(1, Ordering::Relaxed);
+        chrome.pipes.close();
+    }
+    // SAFETY: `process` is live until `on_exit` derefs it.
+    let _ = unsafe { chrome.process.as_mut().kill(9) };
 }
 
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
@@ -163,14 +191,22 @@ impl ChromeProcess {
     /// Safety: `this` is the pointer published in INSTANCE (freed here); `process` is the exit callback's own argument, which carries the `&mut Process` already live in its frame (as in `SyncWindowsProcess::on_process_exit`).
     unsafe fn on_exit(this: *mut ChromeProcess, process: *mut Process, status: &Status) {
         scoped_log!(Chrome, "chrome exited: {}", status);
-        debug_assert_eq!(INSTANCE.load(Ordering::Relaxed), this);
-        INSTANCE.store(ptr::null_mut(), Ordering::Relaxed);
+        // A retired Chrome was already unpublished by `Bun__Chrome__retire`.
+        let _ = INSTANCE.compare_exchange(
+            this,
+            ptr::null_mut(),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
         // SAFETY: caller contract; nothing else references the allocation once INSTANCE is cleared.
         let mut chrome = unsafe { bun_core::heap::take(this) };
         debug_assert_eq!(process, chrome.process.as_ptr());
         chrome.close_transport();
         // SAFETY: caller contract; this drops the strong ref taken by to_process.
         unsafe { Process::deref(process) };
+        if chrome.retired {
+            return;
+        }
         let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
         #[cfg(windows)]
         PipeEvent::Exited { signo }.post(chrome.generation);
@@ -655,7 +691,10 @@ impl Endpoints {
 
     /// Publishes the singleton and returns our fd for C++ to adopt.
     fn attach(mut self, process: NonNull<Process>) -> crate::Result<i32> {
-        let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess { process }));
+        let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
+            process,
+            retired: false,
+        }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
         unsafe {
@@ -798,6 +837,7 @@ impl Endpoints {
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
             process,
+            retired: false,
             pipes,
             generation,
         }));

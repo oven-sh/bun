@@ -224,6 +224,12 @@ JSC::JSValue toJS(JSC::JSGlobalObject*, WebCore::JSDOMGlobalObject*, WebViewEven
 
 void setupJSWebViewClassStructure(JSC::LazyClassStructure::Initializer&);
 
+// `bun test --isolate` is retiring `global` on a live VM. Each backend's
+// transport is a process singleton bound to the global that spawned it; this
+// closes that global's views, rejects their pending promises and lets the
+// browser process go, so the next file spawns its own.
+void retireWebViewsForTestIsolation(Zig::GlobalObject* global);
+
 // Shared weak owner for HostClient.viewsById and Transport.m_pending/
 // .m_sessions. Roots a view while m_pendingActivityCount > 0.
 JSC::WeakHandleOwner& webViewWeakOwner();

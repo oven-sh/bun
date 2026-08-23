@@ -2653,7 +2653,9 @@ describe("pauseOnConnect", () => {
       await new Promise<void>((resolve, reject) => client.write("hello", err => (err ? reject(err) : resolve())));
       const probeClient = net.connect((probe.address() as AddressInfo).port, "127.0.0.1", () => probeClient.end("x"));
       await probed.promise;
-      // Node's TLSWrap reads ahead here (bytesRead would be 5); ours leaves the bytes in the kernel.
+      // Node's TLSWrap reads ahead here (bytesRead would be 5). Ours stops reading once the
+      // handshake completed, so bytes sent after it stay in the kernel (app data that shares
+      // a segment with the client's Finished is still decrypted and buffered).
       expect({ paused: socket.isPaused(), bytesRead: socket.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
       const received = once(socket, "data");
       socket.resume();

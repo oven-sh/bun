@@ -1085,16 +1085,20 @@ if (cluster.isPrimary) {
   const worker = cluster.fork();
   worker.on("message", m => { console.log(JSON.stringify(m)); worker.kill(); process.exit(0); });
   cluster.on("listening", (_w, addr) => {
-    // "early" is in the worker's receive buffer before the write callback runs, so a
-    // report taken after this message proves the paused socket did not read it.
+    // "early" is in the worker's receive buffer before the write callback runs.
     const c = net.connect(addr.port, "127.0.0.1", () => c.write("early", () => worker.send("written")));
     c.on("error", () => {});
   });
 } else {
   let sock, written = false, earlyData = false;
+  // The IPC message can be dispatched in the same poll as, and ahead of, the socket's
+  // readable event, so report after the poll between two immediates: a handle that
+  // reads has consumed "early" by then.
   const report = () => {
     if (!sock || !written) return;
-    process.send({ paused: sock.isPaused(), bytesRead: sock.bytesRead, earlyData, _server: sock._server === server });
+    setImmediate(() => setImmediate(() => {
+      process.send({ paused: sock.isPaused(), bytesRead: sock.bytesRead, earlyData, _server: sock._server === server });
+    }));
   };
   process.on("message", () => { written = true; report(); });
   const server = net.createServer({ pauseOnConnect: true }, s => {

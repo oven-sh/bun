@@ -68,14 +68,15 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       expect(result.success).toBe(true);
 
       const run = async (extraEnv: Record<string, string>) => {
-        // stderr carries the "options change between releases" notice for BUN_JSC_*; only stdout matters here.
         await using proc = Bun.spawn({
           cmd: [outfile],
           env: { ...bunEnv, ...extraEnv },
           stdout: "pipe",
-          stderr: "ignore",
+          stderr: "pipe",
         });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toContain("anonKB");
         expect(exitCode).toBe(0);
         return JSON.parse(stdout.trim()) as { n: number; anonKB: number };
       };

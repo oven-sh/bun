@@ -76,8 +76,9 @@ Ref<SourceProvider> SourceProvider::create(
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 
-    // Source and bytecode that arrive with needsDeref unset are the standalone executable's own section: mapped for the life of the process.
-    const bool bytecodeIsEmbeddedInExecutable = resolvedSource.bytecode_cache && !resolvedSource.needsDeref && !isBuiltin;
+    // Bytecode that arrives with needsDeref unset (the standalone executable's modules, served through the builtin path) is a
+    // section of the running executable: mapped for the life of the process.
+    const bool bytecodeIsEmbeddedInExecutable = resolvedSource.bytecode_cache && !resolvedSource.needsDeref;
 
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 

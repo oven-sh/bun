@@ -300,12 +300,60 @@ it("jsx with two elements", () => {
 
 const Foo = () => <div hello="quoted">foo</div>;
 
-it("jsx with anon component", () => {
-  const input = Bun.inspect(<Foo />);
+// Module scope on purpose: the transpiler inlines a single-use `const` declared
+// inside a test body, and the inlined function loses its inferred `.name`.
+const FunctionExpression = function () {};
+function Declaration() {}
+const WithDisplayName = function RenderName() {};
+WithDisplayName.displayName = "Shown";
+class ClassComponent {}
+const ClassExpression = class {};
+async function AsyncComponent() {}
+// `React.forwardRef()` / `React.memo()` return objects, not functions; they are
+// named by assigning `displayName`.
+const ForwardRefLike = { $$typeof: Symbol.for("react.forward_ref"), render: () => null, displayName: "Button" };
+const MemoLike = { $$typeof: Symbol.for("react.memo"), type: Foo };
+function makeUnnamed() {
+  return () => null;
+}
+const Unnamed = makeUnnamed();
 
-  const output = `<NoName />`;
+describe("jsx component tag name", () => {
+  const cases = [
+    ["arrow function", Foo, "Foo"],
+    ["anonymous function expression", FunctionExpression, "FunctionExpression"],
+    ["function declaration", Declaration, "Declaration"],
+    ["displayName wins over the function name", WithDisplayName, "Shown"],
+    ["class", ClassComponent, "ClassComponent"],
+    ["anonymous class expression", ClassExpression, "ClassExpression"],
+    ["async function", AsyncComponent, "AsyncComponent"],
+    ["displayName on a forwardRef/memo-style object", ForwardRefLike, "Button"],
+    ["memo-style object without a displayName", MemoLike, "NoName"],
+    ["function with no name at all", Unnamed, "NoName"],
+  ];
 
-  expect(input).toBe(output);
+  for (const [description, Component, tagName] of cases) {
+    it(description, () => {
+      const element = <Component />;
+
+      expect(Bun.inspect(element)).toBe(`<${tagName} />`);
+      // The test runner's formatter (diffs, snapshots) has its own JSX printer.
+      expect(element).toMatchInlineSnapshot(`<${tagName} />`);
+    });
+  }
+
+  it("closing tag uses the same name", () => {
+    const element = <Foo>child</Foo>;
+
+    expect(Bun.inspect(element)).toBe(`<Foo>child</Foo>`);
+    expect(element).toMatchInlineSnapshot(`<Foo>child</Foo>`);
+  });
+
+  it("is the name console.log prints for the component itself", () => {
+    expect(Bun.inspect(Foo)).toBe("[Function: Foo]");
+    expect(Bun.inspect(ClassExpression)).toBe("[class ClassExpression]");
+    expect(Bun.inspect(WithDisplayName)).toBe("[Function: Shown]");
+  });
 });
 
 it("jsx with fragment", () => {

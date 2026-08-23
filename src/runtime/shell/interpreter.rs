@@ -744,13 +744,7 @@ impl Interpreter {
         }
 
         // ── tick until done ────────────────────────────────────────────────
-        let interp_ptr: *const Interpreter = &raw const *interp;
-        mini.tick(core::ptr::null_mut(), |_ctx| {
-            // SAFETY: `interp` lives in this stack frame for the whole tick
-            // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so
-            // the read is sound even while tasks `tick` drains mutate it.
-            unsafe { (*interp_ptr).flags.get().done() }
-        });
+        mini.tick(core::ptr::null_mut(), |_ctx| interp.flags.get().done());
 
         let code = interp.exit_code.get().expect("exit_code set by finish()");
         interp.deinit_from_exec();

@@ -1062,9 +1062,7 @@ impl<'a> Visitor<'a> {
         vloc: json_parser::ValueLocation<'_>,
     ) -> Entry {
         if !self.stack_check.is_safe_to_recurse() {
-            // `ValueLocation::resolve` recurses once per `ArrayItem` link, and
-            // the chain is as deep as the nesting that exhausted the stack.
-            // Point at the enclosing property instead.
+            // `ValueLocation::resolve` recurses per `ArrayItem` link: as deep as the nesting that ran out of stack.
             let mut property = &vloc;
             while let json_parser::ValueLocation::ArrayItem(parent, _) = property {
                 property = parent;
@@ -1286,8 +1284,7 @@ pub(crate) struct ESModule<'a> {
     pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub(crate) module_type: &'a mut ModuleType,
-    /// Bounds the per-level recursion in `resolve_target`. The JSON parser's
-    /// guard does not cover it: its frames are smaller, so it accepts deeper targets.
+    /// Guards `resolve_target`'s recursion; the JSON parser's guard (smaller frames) accepts deeper targets.
     pub(crate) stack_check: StackCheck,
 }
 

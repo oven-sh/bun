@@ -162,14 +162,10 @@ struct ErrorableResolvedSource {
     }
     ErrorableResolvedSource(const ErrorableResolvedSource&) = delete;
     ErrorableResolvedSource& operator=(const ErrorableResolvedSource&) = delete;
-    ~ErrorableResolvedSource() { reset(); }
-
-    /// Release an owned `value` (if any) and return to the empty `!success` state.
-    void reset()
+    ~ErrorableResolvedSource()
     {
         if (!success)
             return;
-        success = false;
         result.value.source_code.deref();
         result.value.source_url.deref();
         result.value.bytecode_origin_path.deref();
@@ -177,7 +173,6 @@ struct ErrorableResolvedSource {
             ResolvedSource__freeBytecode(result.value.bytecode_cache);
         if (result.value.module_info)
             zig__ModuleInfoDeserialized__deinit(result.value.module_info);
-        memset(&result, 0, sizeof result);
     }
 };
 

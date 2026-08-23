@@ -79,8 +79,11 @@ Ref<SourceProvider> SourceProvider::create(
 
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 
-    BunString sourceURLBunString = Bun::toString(sourceURLString);
-    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(&sourceURLBunString);
+    bool shouldGenerateCodeCoverage = false;
+    if (isCodeCoverageEnabled && !isBuiltin) {
+        BunString sourceURLBunString = Bun::toString(sourceURLString);
+        shouldGenerateCodeCoverage = BunTest__shouldGenerateCodeCoverage(&sourceURLBunString);
+    }
 
     // Compute source origin: use explicit bytecode_origin_path if provided, otherwise derive from source_url.
     // bytecode_origin_path is used for bytecode cache validation where the origin must match
@@ -109,7 +112,7 @@ Ref<SourceProvider> SourceProvider::create(
                 string.isNull() ? Ref { *StringImpl::empty() } : Ref { *string.impl() },
                 JSC::SourceTaintedOrigin::Untainted,
                 origin,
-                String { sourceURLString }, TextPosition(),
+                WTF::move(sourceURLString), TextPosition(),
                 sourceType));
             provider->m_cachedBytecode = WTF::move(bytecode);
             return provider;
@@ -121,7 +124,7 @@ Ref<SourceProvider> SourceProvider::create(
             string.isNull() ? Ref { *StringImpl::empty() } : Ref { *string.impl() },
             JSC::SourceTaintedOrigin::Untainted,
             origin,
-            String { sourceURLString }, TextPosition(),
+            WTF::move(sourceURLString), TextPosition(),
             sourceType));
     };
 

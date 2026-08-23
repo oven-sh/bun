@@ -1656,7 +1656,7 @@ impl QuicSession {
         // so bailing here would silently end the whole qlog stream, not just
         // drop this record.
         let data_js = bun_core::String::clone_utf8(data.as_bytes())
-            .to_js(global)
+            .into_js(global)
             .or_report();
         if let Some(cb) = callbacks::get(global, "onSessionQlog") {
             let vm = global.bun_vm().as_mut();

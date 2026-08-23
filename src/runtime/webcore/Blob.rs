@@ -2578,7 +2578,7 @@ impl BlobExt for Blob {
                     BunString::clone_utf16(&units)
                 }
             };
-            return out.to_js(global);
+            return out.into_js(global);
         }
 
         // null == unknown
@@ -2680,7 +2680,7 @@ impl BlobExt for Blob {
                     let out = BunString::clone_latin1(buf);
                     // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
-                    return out.to_js(global);
+                    return out.into_js(global);
                 }
                 Ok(ZigString::init(buf).to_external_value(global))
             }
@@ -6719,7 +6719,7 @@ impl Internal {
             // If there was a UTF8 BOM, we clone it.
             let out = BunString::clone_latin1(&self.bytes[3..]);
             self.bytes = Vec::new();
-            return out.to_js(global_this);
+            return out.into_js(global_this);
         } else {
             // All-ASCII fast path: hand the heap buffer to JSC's external-string
             // finalizer (mark_global → freed by mimalloc on GC). `to_owned_slice`

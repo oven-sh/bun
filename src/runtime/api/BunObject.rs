@@ -1181,7 +1181,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         // e.g. an onResolve plugin returned an invalid result
         return Err(ctx.throw_value(err));
     }
-    let result_value: &BunString = errorable.value().unwrap();
+    let result_value = errorable.unwrap().expect("checked success above");
 
     if !query_string.is_empty() {
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
@@ -1191,7 +1191,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         return Ok(Resolved::Found(ZigString::init_utf8(&arraylist).to_js(ctx)));
     }
 
-    Ok(Resolved::Found(result_value.to_js(ctx)?))
+    Ok(Resolved::Found(result_value.into_js(ctx)?))
 }
 
 #[bun_jsc::host_fn]

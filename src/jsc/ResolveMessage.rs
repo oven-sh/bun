@@ -123,8 +123,7 @@ impl ResolveMessage {
                     };
                 };
 
-                let atom = bun_core::String::create_atom(code);
-                atom.to_js(global)
+                bun_core::String::create_atom(code).into_js(global)
             }
             _ => Ok(JSValue::UNDEFINED),
         }

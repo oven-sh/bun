@@ -143,7 +143,7 @@ struct Stringifier {
     /// borrowed, not ref-counted: each is pushed and popped within the one
     /// `JSPropertyIterator` loop body whose iterator keeps the name alive
     /// (the iterator's strings carry no extra reference).
-    path: Vec<BunString>,
+    path: Vec<bun_core::RawString>,
     /// Whether any line has been written (controls blank lines before headers).
     wrote: bool,
 }
@@ -261,7 +261,7 @@ impl Stringifier {
                 Layout::Table => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(prop_name.to_owned());
+                    self.path.push(*prop_name.as_raw());
                     self.stringify_table_body(global, value, true)?;
                     self.path.pop();
                     self.visiting.remove(&value);
@@ -269,7 +269,7 @@ impl Stringifier {
                 Layout::ArrayOfTables => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(prop_name.to_owned());
+                    self.path.push(*prop_name.as_raw());
                     let mut items = value.array_iterator(global)?;
                     while let Some(item) = items.next()? {
                         let item = item.unwrap_boxed_primitive(global)?;
@@ -413,6 +413,7 @@ impl Stringifier {
         self.builder
             .append_latin1(if array_of_tables { b"[[" } else { b"[" });
         for (i, seg) in self.path.iter().enumerate() {
+            let seg = BunString::from_raw_ref(seg);
             if i > 0 {
                 self.builder.append_lchar(b'.');
             }

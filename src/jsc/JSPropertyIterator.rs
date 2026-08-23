@@ -162,10 +162,9 @@ impl<'a> JSPropertyIterator<'a> {
         })
     }
 
-    /// The name is borrowed from the iterator (C++ `Bun::toString`, no ref).
-    /// The value is `JSValue::ZERO` unless `options.include_value`.
-    /// The name borrows the C++ iterator's storage and is valid until `self`
-    /// drops (hence `&self`: a yielded name may be held across later calls).
+    /// The name borrows the C++ iterator's storage (no ref) and is valid until
+    /// `self` drops, hence `&self`: a yielded name may be held across later
+    /// calls. The value is `JSValue::ZERO` unless `options.include_value`.
     pub fn next(&self) -> JsResult<Option<(bun_core::StringView<'_>, JSValue)>> {
         loop {
             let i: usize = self.iter_i.get() as usize;

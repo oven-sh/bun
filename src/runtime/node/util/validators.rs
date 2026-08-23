@@ -32,7 +32,7 @@ pub(crate) fn throw_err_invalid_arg_type(
     expected_type: &str,
     value: JSValue,
 ) -> JsError {
-    let actual_type = global_this.type_name_of(value);
+    let actual_type = value.type_name(global_this);
     throw_err_invalid_arg_type_with_message(
         global_this,
         format_args!(
@@ -384,7 +384,7 @@ pub(crate) fn validate_array(
     min_length: Option<i32>,
 ) -> JsResult<()> {
     if !value.js_type().is_array() {
-        let actual_type = global_this.type_name_of(value);
+        let actual_type = value.type_name(global_this);
         return Err(throw_err_invalid_arg_type_with_message(
             global_this,
             format_args!(

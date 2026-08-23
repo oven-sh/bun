@@ -2217,9 +2217,7 @@ unsafe fn __bun_transpile_source_code(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> Result<ResolvedSource, bun_jsc::CrateError> {
-    let extra = args.extra.cast::<TranspileExtra>();
-    debug_assert!(!extra.is_null());
-    transpile_source_code_inner(jsc_vm, args, extra).map_err(|e| to_jsc_fetch_error(&e))
+    transpile_source_code_inner(jsc_vm, args).map_err(|e| to_jsc_fetch_error(&e))
 }
 
 /// Inner body of [`__bun_transpile_source_code`] — split for `?`-on-`Result`
@@ -2232,9 +2230,9 @@ unsafe fn __bun_transpile_source_code(
 fn transpile_source_code_inner(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
-    extra: *mut TranspileExtra,
 ) -> crate::Result<ResolvedSource> {
     use Loader as L;
+    let extra = args.extra;
 
     // SAFETY: per fn contract — `extra` is a live `TranspileExtra` for the call.
     // Note: raw-ptr (not `&mut`) so the recursive `.wasm` arm can mutate
@@ -2760,7 +2758,6 @@ fn transpile_source_code_inner(
                             flags: args.flags,
                             extra: args.extra,
                         },
-                        extra,
                     );
                 }
 
@@ -3397,7 +3394,7 @@ fn transpile_source_code_inner(
                 (*extra).loader = L::File;
                 (*extra).module_type = ModuleType::Unknown;
             }
-            transpile_source_code_inner(jsc_vm, args, extra)
+            transpile_source_code_inner(jsc_vm, args)
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -4518,10 +4515,10 @@ pub unsafe extern "C" fn Bun__transpileFile(
         virtual_source: lr.virtual_source,
         global_object: global.as_ptr(),
         flags: FetchFlags::Transpile,
-        extra: (&raw mut extra).cast::<c_void>(),
+        extra: &raw mut extra,
     };
 
-    match transpile_source_code_inner(jsc_vm, &args, &raw mut extra) {
+    match transpile_source_code_inner(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             promise.cast::<c_void>()
@@ -4659,10 +4656,10 @@ pub extern "C" fn Bun__transpileVirtualModule(
         virtual_source: Some(&virtual_source),
         global_object: global.as_ptr(),
         flags: FetchFlags::Transpile,
-        extra: (&raw mut extra).cast::<c_void>(),
+        extra: &raw mut extra,
     };
 
-    match transpile_source_code_inner(jsc_vm, &args, &raw mut extra) {
+    match transpile_source_code_inner(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             bun_analytics::features::virtual_modules

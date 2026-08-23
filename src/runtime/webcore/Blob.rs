@@ -3269,10 +3269,10 @@ impl BlobExt for Blob {
                             // buffers instead — regardless of `MOVE`.
                             return Ok(artifact.blob.dupe());
                         } else {
-                            let sliced = current.to_slice(global)?;
-                            if !sliced.slice().is_empty() {
+                            let (_js, sliced) = current.to_js_string_view(global)?;
+                            if !sliced.is_empty() {
                                 return Ok(Blob::init_with_all_ascii(
-                                    sliced.into_vec(),
+                                    sliced.to_owned_slice(),
                                     global,
                                     false,
                                 ));

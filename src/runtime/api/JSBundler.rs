@@ -1450,14 +1450,16 @@ pub mod js_bundler {
         } else {
             let global = bv2_plugin(resolve.bv2).global_object();
             let path = path_value
-                .to_slice(global)
+                .to_js_string_view(global)
                 .expect("Unexpected: path is not a string")
-                .into_vec()
+                .1
+                .to_owned_slice()
                 .into_boxed_slice();
             let namespace = namespace_value
-                .to_slice(global)
+                .to_js_string_view(global)
                 .expect("Unexpected: namespace is not a string")
-                .into_vec()
+                .1
+                .to_owned_slice()
                 .into_boxed_slice();
             resolve.value = ResolveValue::Success(ResolveSuccess {
                 path,

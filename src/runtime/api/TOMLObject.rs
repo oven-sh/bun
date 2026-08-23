@@ -144,7 +144,6 @@ struct Stringifier {
 
 /// Header path of the table being emitted: a parent-linked chain of
 /// iterator-borrowed keys on the `stringify_table_body` recursion stack.
-#[derive(Clone, Copy)]
 struct Path<'p> {
     parent: Option<&'p Path<'p>>,
     key: &'p BunString,

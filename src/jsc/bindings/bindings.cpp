@@ -4843,7 +4843,7 @@ BunString JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, J
 
     auto& uid = symbol->uid();
     if (!uid.isNullSymbol() && !uid.isEmpty()) {
-        return Bun::toStringRef(&static_cast<WTF::StringImpl&>(uid));
+        return Bun::toString(&static_cast<WTF::StringImpl&>(uid));
     }
     return BunStringEmpty;
 }
@@ -4936,10 +4936,12 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
 /// aliases the returned JSString's StringImpl.
 extern "C" JSC::JSString* JSC__JSValue__toStringAndView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
     auto* str = JSC::JSValue::decode(JSValue0).toStringOrNull(global);
-    if (!str) [[unlikely]]
-        return nullptr;
-    *view = Bun::toString(str->value(global).data);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto value = str->value(global);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    *view = Bun::toString(value.data);
     return str;
 }
 
@@ -5003,7 +5005,8 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
         return Bun::toStringRef(calculated);
     }
 
-    return Bun::toStringRef(view.toString());
+    // `className()` is a static C string.
+    return { BunStringTag::StaticZigString, { .zig = { reinterpret_cast<const unsigned char*>(ptr), view.length() } } };
 }
 
 bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)

@@ -262,8 +262,8 @@ pub(crate) fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.to_slice(global_object)?;
-                    let Some(&v) = COMPRESS_TABLE.lookup(key.slice()) else {
+                    let (_js, key) = compression.to_js_string_view(global_object)?;
+                    let Some(&v) = COMPRESS_TABLE.lookup(key.to_utf8().slice()) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "WebSocketServerContext expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
@@ -286,8 +286,8 @@ pub(crate) fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.to_slice(global_object)?;
-                    let Some(&v) = DECOMPRESS_TABLE.lookup(key.slice()) else {
+                    let (_js, key) = compression.to_js_string_view(global_object)?;
+                    let Some(&v) = DECOMPRESS_TABLE.lookup(key.to_utf8().slice()) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));

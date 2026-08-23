@@ -148,8 +148,8 @@ impl AsyncModule {
     }
 
     /// Dispatch the (possibly errored) transpile
-    /// result back into JSC via `Bun__onFulfillAsyncModule`. This is the entry
-    /// point `RuntimeTranspilerStore::run_from_js_thread` calls when a
+    /// result back into JSC via `Bun__onFulfillAsyncModule`. Called from
+    /// `RuntimeTranspilerStore::run_from_js_thread` and `on_done` when a
     /// concurrent transpile job finishes.
     pub(crate) fn fulfill(
         global_this: &JSGlobalObject,

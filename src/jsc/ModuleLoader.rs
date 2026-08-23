@@ -5,8 +5,6 @@
 //! the standalone graph); this crate calls the first two through link-time
 //! `extern "Rust"` decls.
 
-use core::ffi::c_void;
-
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::PluginRunner;
 use bun_options_types::LoaderExt as _;
@@ -110,24 +108,19 @@ impl FetchFlags {
     }
 }
 
-/// `transpile_source_code` parameters that name only low-tier types. The
-/// remaining params (`path: Fs.Path`, `loader: options.Loader`,
-/// `module_type: options.ModuleType`, `printer: *BufferPrinter`) are passed
-/// through the `extra: *mut c_void` slot — `bun_runtime` owns the cast.
 pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
     pub input_specifier: &'a bun_core::String,
     pub log: *mut bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source>,
+    /// Null on the low-tier `Bun__*` entry points.
     pub global_object: *mut JSGlobalObject,
     pub flags: FetchFlags,
-    /// `*mut TranspileExtra`; never null.
-    pub extra: *mut c_void,
+    /// Raw so the `.wasm` re-entry can mutate `loader` and recurse.
+    pub extra: *mut TranspileExtra,
 }
 
-/// Concrete shape behind [`TranspileArgs::extra`].
-#[repr(C)]
 pub struct TranspileExtra {
     pub path: bun_resolver::fs::Path<'static>,
     pub loader: bun_ast::Loader,

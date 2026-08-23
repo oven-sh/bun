@@ -582,14 +582,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// JS `typeof`, or `"array"` for arrays.
-    pub fn type_name_of(&self, value: JSValue) -> bun_core::StringView<'_> {
-        if value.js_type().is_array() {
-            return bun_core::StringView::static_(b"array");
-        }
-        value.js_type_string(self)
-    }
-
     /// `validators.throwErrInvalidArgType` —
     /// `The "<name>" property must be of type <expected>, got <actual>`
     /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
@@ -599,7 +591,7 @@ impl JSGlobalObject {
         expected_type: &str,
         value: JSValue,
     ) -> JsError {
-        let actual_type = self.type_name_of(value);
+        let actual_type = value.type_name(self);
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(

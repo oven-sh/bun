@@ -4291,7 +4291,7 @@ impl VirtualMachine {
             virtual_source: lr.virtual_source,
             global_object: std::ptr::from_ref::<JSGlobalObject>(global_object).cast_mut(),
             flags,
-            extra: (&raw mut extra).cast::<c_void>(),
+            extra: &raw mut extra,
         };
         let result = ModuleLoader::transpile_source_code(guard.0, &args);
         if result.is_err() && flags == FetchFlags::PrintSource {

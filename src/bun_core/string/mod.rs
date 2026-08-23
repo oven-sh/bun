@@ -1172,14 +1172,9 @@ impl<'a> StringView<'a> {
     }
     /// `'static` ASCII/Latin-1 literal (no scan).
     #[inline]
-    pub const fn static_(bytes: &'static [u8]) -> StringView<'static> {
+    pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> StringView<'static> {
         StringView(
-            core::mem::ManuallyDrop::new(String(bun_alloc::String {
-                tag: Tag::StaticZigString,
-                value: StringImpl {
-                    zig_string: bun_alloc::ZigString::init(bytes),
-                },
-            })),
+            core::mem::ManuallyDrop::new(String::static_(s)),
             core::marker::PhantomData,
         )
     }

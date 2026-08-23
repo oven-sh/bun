@@ -886,6 +886,13 @@ impl JSValue {
         debug_assert!(self.is_string_literal());
         JSString::opaque_ref(JSC__JSValue__asString(self))
     }
+    /// JS `typeof`, or `"array"` for arrays.
+    pub fn type_name<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
+        if self.js_type().is_array() {
+            return bun_core::StringView::static_(b"array");
+        }
+        self.js_type_string(global)
+    }
     /// `jsTypeString()` — the JS `typeof` result (e.g. `"object"`, `"number"`).
     /// Never throws; the backing cell is GC-rooted by the VM's SmallStrings
     /// table.
@@ -2325,13 +2332,14 @@ impl JSValue {
         }
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__getClassName(self, global))
     }
-    /// `JSValue.getDescription` — symbol description (empty if none).
-    pub fn get_description(self, global: &JSGlobalObject) -> bun_core::String {
+    /// `JSValue.getDescription` — symbol description (empty if none),
+    /// borrowed from the Symbol.
+    pub fn get_description<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
         JSC__JSValue__getSymbolDescription(self, global)
     }
     /// `JSValue.symbolFor(global, key)` — `Symbol.for(key)`.
-    pub fn symbol_for(global: &JSGlobalObject, key: &[u8]) -> JSValue {
-        JSC__JSValue__symbolFor(global, &bun_core::String::borrow_utf8(key))
+    pub fn symbol_for(global: &JSGlobalObject, key: &'static [u8]) -> JSValue {
+        JSC__JSValue__symbolFor(global, &bun_core::String::static_(key))
     }
 
     // ── Property access. ──────────────────────────
@@ -2692,10 +2700,10 @@ unsafe extern "C" {
         out: &mut bun_core::String,
     );
     safe fn JSC__JSValue__getClassName(this: JSValue, global: &JSGlobalObject) -> bun_core::String;
-    safe fn JSC__JSValue__getSymbolDescription(
+    safe fn JSC__JSValue__getSymbolDescription<'a>(
         this: JSValue,
-        global: &JSGlobalObject,
-    ) -> bun_core::String;
+        global: &'a JSGlobalObject,
+    ) -> bun_core::StringView<'a>;
     safe fn JSC__JSValue__symbolFor(global: &JSGlobalObject, key: &bun_core::String) -> JSValue;
     safe fn JSC__JSValue__getOwn(
         this: JSValue,

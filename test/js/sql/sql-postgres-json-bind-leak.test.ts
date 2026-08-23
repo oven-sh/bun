@@ -126,13 +126,10 @@ test("Postgres: JSON.stringify result for json/jsonb bind parameter is not leake
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const filteredStderr = stderr
-    .split("\n")
-    .filter(line => !line.startsWith("WARNING: ASAN interferes"))
-    .join("\n")
-    .trim();
-  expect(filteredStderr).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
+  expect(stderr.trim()).toBe("");
+  const trimmedStdout = stdout.trim();
+  expect(trimmedStdout).not.toBe("");
+  const { deltaMiB } = JSON.parse(trimmedStdout);
   // With the leak, every one of the ~300 x 512 KiB stringified payloads is
   // retained (>= ~150 MiB). With the fix the WTFStringImpl is deref'd on scope
   // exit and growth stays in single digits.

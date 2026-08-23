@@ -130,6 +130,31 @@ pub mod convert {
                             )
                         }
                     }
+
+                    /// [`le`] appended to `out`, reserving the room itself (`None`
+                    /// if that allocation fails). The bytes are kept only when
+                    /// all of `input` converted (`SUCCESS`, `count` = bytes
+                    /// appended); on any other status `out` is left unchanged.
+                    pub fn le_append(input: &[u16], out: &mut Vec<u8>) -> Option<SIMDUTFResult> {
+                        out.try_reserve(crate::simdutf::length::utf8::from::utf16::le(input))
+                            .ok()?;
+                        let spare = out.spare_capacity_mut();
+                        // SAFETY: `spare` holds `utf8_length_from_utf16le(input)`
+                        // bytes, simdutf's documented bound for this conversion.
+                        let r = unsafe {
+                            simdutf__convert_utf16le_to_utf8_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                spare.as_mut_ptr().cast::<u8>(),
+                            )
+                        };
+                        if r.status == Status::SUCCESS {
+                            debug_assert!(r.count <= spare.len());
+                            // SAFETY: on success simdutf initialized the first `count` spare bytes.
+                            unsafe { out.set_len(out.len() + r.count) };
+                        }
+                        Some(r)
+                    }
                 }
 
                 pub fn le(input: &[u16], output: &mut [u8]) -> usize {

@@ -1,9 +1,7 @@
-use core::ffi::c_void;
-
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
-use bun_jsc::js_string::Iterator as JSStringIterator;
-use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
+use bun_jsc::js_string::StringVisitor;
+use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 
 // `const TextEncoder = @This();` — file is a namespace of exported fns; no wrapper struct needed.
 
@@ -12,17 +10,8 @@ fn create_uninitialized_uint8_array(global: &JSGlobalObject, len: usize) -> JsRe
     JSValue::create_uninitialized_uint8_array(global, len)
 }
 
-/// # Safety
-/// `ptr` must be valid for reading `len` bytes of Latin-1 data.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn TextEncoder__encode8(
-    global_this: &JSGlobalObject,
-    ptr: *const u8,
-    len: usize,
-) -> JSValue {
-    // SAFETY: caller guarantees ptr[0..len] is valid Latin-1 data
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-
+// HOST_EXPORT(TextEncoder__encode8, c)
+pub fn encode8(global_this: &JSGlobalObject, slice: &[u8]) -> JSValue {
     if strings::first_non_ascii(slice).is_none() {
         let Ok(uint8array) = create_uninitialized_uint8_array(global_this, slice.len()) else {
             return JSValue::ZERO;
@@ -61,7 +50,8 @@ fn replacement_char_uint8_array(global_this: &JSGlobalObject) -> JSValue {
     uint8array
 }
 
-fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
+// HOST_EXPORT(TextEncoder__encode16, c)
+pub fn encode16(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
     const SMALL_BUF_LEN: usize = 192;
     if slice.len() <= SMALL_BUF_LEN / 3 {
         let mut buf = [0u8; SMALL_BUF_LEN];
@@ -109,28 +99,6 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
         .or_pending_exception()
 }
 
-/// # Safety
-/// `ptr` must be valid for reading `len` UTF-16 code units.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn TextEncoder__encode16(
-    global_this: &JSGlobalObject,
-    ptr: *const u16,
-    len: usize,
-) -> JSValue {
-    // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    encode16_impl(global_this, slice)
-}
-
-/// # Safety
-/// `ptr` must be valid for reading `len` UTF-16 code units.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
-    // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    encode16_impl(global_this, slice)
-}
-
 // This is a fast path for copying a Rope string into a Uint8Array.
 // This keeps us from an extra string temporary allocation
 struct RopeStringEncoder<'a> {
@@ -139,98 +107,50 @@ struct RopeStringEncoder<'a> {
     any_non_ascii: bool,
 }
 
-impl<'a> RopeStringEncoder<'a> {
-    /// Recover `(&mut JSStringIterator, &mut Self)` from the rope-iteration
-    /// callback's `*mut JSStringIterator`. Centralises the per-callback raw
-    /// derefs so the four `extern "C"` thunks below are safe callers (one
-    /// accessor, N safe call sites).
-    ///
-    /// # Safety (encapsulated)
-    /// Only ever invoked from the four callbacks registered in [`Self::iter`],
-    /// which JSC calls with the live stack-allocated `JSStringIterator` whose
-    /// `.data` field was set to `&mut Self` by `iter()`. The iterator and the
-    /// encoder live in disjoint stack allocations (the iterator is a local in
-    /// `TextEncoder__encodeRopeString`; the encoder is its sibling local), so
-    /// the two `&mut` borrows do not alias. JSC rope iteration is
-    /// single-threaded and re-entrancy-free, so each is the sole live `&mut`
-    /// for the callback's duration.
-    #[inline(always)]
-    fn resolve<'r>(it: *mut JSStringIterator) -> (&'r mut JSStringIterator, &'r mut Self) {
-        debug_assert!(!it.is_null());
-        // SAFETY: see fn doc — `it` is the live iterator JSC passed; `it.data`
-        // is the `&mut RopeStringEncoder` stashed in `iter()`. Disjoint
-        // allocations, single-threaded, exclusively accessed for `'r`.
-        unsafe {
-            let it = &mut *it;
-            let this = &mut *it.data_ptr().cast::<RopeStringEncoder<'a>>();
-            (it, this)
-        }
-    }
-
-    // The four rope-iteration callbacks coerce (safe → unsafe `extern "C"`) to
-    // the `JSStringIterator` callback-pointer field types at `iter()` below.
-    extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
-        let (it, this) = Self::resolve(it);
-        // SAFETY: ptr[0..len] is provided by JSC rope iteration
-        let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+impl StringVisitor for RopeStringEncoder<'_> {
+    fn append8(&mut self, src: &[u8]) -> bool {
         let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
-            &mut this.buf[this.tail..],
+            &mut self.buf[self.tail..],
             src,
         );
         if result.read == u32::MAX && result.written == u32::MAX {
-            it.stop = 1;
-            this.any_non_ascii = true;
+            self.any_non_ascii = true;
+            false
         } else {
-            this.tail += result.written as usize;
+            self.tail += result.written as usize;
+            true
         }
     }
 
-    extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
-        let (it, this) = Self::resolve(it);
-        this.any_non_ascii = true;
-        it.stop = 1;
+    fn append16(&mut self, _: &[u16]) -> bool {
+        self.any_non_ascii = true;
+        false
     }
 
-    extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
-        let (it, this) = Self::resolve(it);
-        // SAFETY: ptr[0..len] is provided by JSC rope iteration
-        let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+    fn write8(&mut self, src: &[u8], offset: u32) -> bool {
         let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
-            &mut this.buf[offset as usize..],
+            &mut self.buf[offset as usize..],
             src,
         );
         if result.read == u32::MAX && result.written == u32::MAX {
-            it.stop = 1;
-            this.any_non_ascii = true;
+            self.any_non_ascii = true;
+            false
+        } else {
+            true
         }
     }
 
-    extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
-        let (it, this) = Self::resolve(it);
-        this.any_non_ascii = true;
-        it.stop = 1;
-    }
-
-    fn iter(&mut self) -> JSStringIterator {
-        JSStringIterator {
-            data: std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-            stop: 0,
-            append8: Some(Self::append8),
-            append16: Some(Self::append16),
-            write8: Some(Self::write8),
-            write16: Some(Self::write16),
-        }
+    fn write16(&mut self, _: &[u16], _: u32) -> bool {
+        self.any_non_ascii = true;
+        false
     }
 }
 
 // This fast path is only suitable for ASCII strings
 // It's not suitable for UTF-16 strings, because getting the byteLength is unpredictable
 // It also isn't usable for latin1 strings which contain non-ascii characters
-#[unsafe(no_mangle)]
-extern "C" fn TextEncoder__encodeRopeString(
-    global_this: &JSGlobalObject,
-    rope_str: &JSString,
-) -> JSValue {
+// HOST_EXPORT(TextEncoder__encodeRopeString, c)
+pub fn encode_rope_string(global_this: &JSGlobalObject, rope_str: &bun_jsc::JSString) -> JSValue {
     debug_assert!(rope_str.is_8bit());
     let length = rope_str.length();
     let array = match create_uninitialized_uint8_array(global_this, length) {
@@ -246,9 +166,8 @@ extern "C" fn TextEncoder__encodeRopeString(
         tail: 0,
         any_non_ascii: false,
     };
-    let mut iter = encoder.iter();
     array.ensure_still_alive();
-    rope_str.iterator(global_this, &mut iter);
+    rope_str.visit(global_this, &mut encoder);
     array.ensure_still_alive();
 
     if encoder.any_non_ascii {
@@ -258,46 +177,20 @@ extern "C" fn TextEncoder__encodeRopeString(
     array
 }
 
-/// # Safety
-/// `input_ptr` must be valid for reading `input_len` UTF-16 code units and
-/// `buf_ptr` must be valid for writing `buf_len` bytes.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn TextEncoder__encodeInto16(
-    input_ptr: *const u16,
-    input_len: usize,
-    buf_ptr: *mut u8,
-    buf_len: usize,
-) -> u64 {
-    // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
-    // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
-    let result: strings::EncodeIntoResult = strings::copy_utf16_into_utf8(output, input);
-    // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
+/// `read` at byte offset 0 and `written` at offset 4, as the C++ caller unpacks them.
+fn pack_encode_into_result(result: strings::EncodeIntoResult) -> u64 {
     let mut b = [0u8; 8];
     b[..4].copy_from_slice(&result.read.to_ne_bytes());
     b[4..].copy_from_slice(&result.written.to_ne_bytes());
     u64::from_ne_bytes(b)
 }
 
-/// # Safety
-/// `input_ptr` must be valid for reading `input_len` bytes of Latin-1 data and
-/// `buf_ptr` must be valid for writing `buf_len` bytes.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn TextEncoder__encodeInto8(
-    input_ptr: *const u8,
-    input_len: usize,
-    buf_ptr: *mut u8,
-    buf_len: usize,
-) -> u64 {
-    // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
-    // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
-    let result: strings::EncodeIntoResult = strings::copy_latin1_into_utf8(output, input);
-    // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
-    let mut b = [0u8; 8];
-    b[..4].copy_from_slice(&result.read.to_ne_bytes());
-    b[4..].copy_from_slice(&result.written.to_ne_bytes());
-    u64::from_ne_bytes(b)
+// HOST_EXPORT(TextEncoder__encodeInto16, c)
+pub fn encode_into16(input: &[u16], output: &mut [u8]) -> u64 {
+    pack_encode_into_result(strings::copy_utf16_into_utf8(output, input))
+}
+
+// HOST_EXPORT(TextEncoder__encodeInto8, c)
+pub fn encode_into8(input: &[u8], output: &mut [u8]) -> u64 {
+    pack_encode_into_result(strings::copy_latin1_into_utf8(output, input))
 }

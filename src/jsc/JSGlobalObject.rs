@@ -863,7 +863,7 @@ impl JSGlobalObject {
     pub fn queue_microtask_boxed<T: MicrotaskCallback>(
         &self,
         task: Box<T>,
-    ) -> bun_ptr::BackRef<T, bun_ptr::Mut> {
+    ) -> bun_ptr::BackRef<T, bun_ptr::Root> {
         unsafe extern "C" fn run<T: MicrotaskCallback>(ctx: *mut c_void) {
             // SAFETY: `ctx` is the `Box<T>` leaked below; the microtask queue
             // invokes each callback exactly once.
@@ -873,7 +873,7 @@ impl JSGlobalObject {
         self.queue_microtask_callback(task, run::<T>);
         // SAFETY: `task` is the live leaked box; see the doc comment for the
         // holder's obligation.
-        unsafe { bun_ptr::BackRef::from_raw_mut(task) }
+        unsafe { bun_ptr::BackRef::from_root(task) }
     }
 
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {

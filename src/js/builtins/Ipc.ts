@@ -43,7 +43,10 @@ export function serialize(message, handle, options, target) {
     }
     if (!keepOpen) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L120-L148
-      if (server) {
+      // Only a server that counts its connections in JS (net.Server; Bun's http.Server
+      // counts natively) hands the count over and drops the socket's back-reference,
+      // which its _destroy would otherwise decrement again.
+      if (server && typeof server._connections === "number") {
         server._connections--;
         handle.server = null;
         handle._server = null;

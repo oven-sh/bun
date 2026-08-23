@@ -906,6 +906,52 @@ for (const secure of [true, false]) {
         raw.close();
       });
 
+      test("more than 200 header fields → 431, connection survives", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        const many: [string, string][] = [];
+        for (let i = 0; i < 300; i++) many.push(["x-" + i, "1"]);
+        raw.headers(1, [...baseHeaders("/headers"), ...many]);
+        const h = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+        expect(decodeStatus(h.payload)).toBe(431);
+        raw.headers(3, baseHeaders("/hello"));
+        expect((await raw.body(3)).toString()).toBe("hello");
+        raw.close();
+      });
+
+      for (const [name, abort] of [
+        ["client RST_STREAM", (id: number) => frame(T.RST_STREAM, 0, id, Buffer.from([0, 0, 0, 8]))],
+        ["server-induced reset (WINDOW_UPDATE 0)", (id: number) => frame(T.WINDOW_UPDATE, 0, id, Buffer.alloc(4))],
+      ] as const) {
+        test(`rapid reset flood via ${name} → GOAWAY ENHANCE_YOUR_CALM`, async () => {
+          const raw = await RawH2.connect(fx.port, secure);
+          await raw.waitFor(f => f.type === T.SETTINGS);
+          const block = hpackLiteral(baseHeaders("/slow?ms=30000"));
+          // The bucket holds 1000 resets. Send 50 open+reset pairs per write and
+          // round-trip a PING between batches so the GOAWAY isn't lost behind
+          // unread input when the server closes.
+          let id = 1;
+          for (let batch = 0; ; batch++) {
+            expect(batch).toBeLessThan(40);
+            const parts: Buffer[] = [];
+            for (let n = 0; n < 50; n++, id += 2) {
+              parts.push(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, id, block), abort(id));
+            }
+            const opaque = Buffer.alloc(8);
+            opaque.writeUInt32BE(batch, 4);
+            parts.push(frame(T.PING, 0, 0, opaque));
+            raw.write(Buffer.concat(parts));
+            const f = await raw.waitFor(
+              f => f.type === T.GOAWAY || (f.type === T.PING && f.payload.readUInt32BE(4) === batch),
+            );
+            if (f.type === T.GOAWAY) {
+              expect(f.payload.readUInt32BE(4)).toBe(11);
+              break;
+            }
+          }
+          raw.close();
+        });
+      }
+
       test("te: trailers is accepted", async () => {
         const raw = await RawH2.connect(fx.port, secure);
         raw.headers(1, [...baseHeaders("/hello"), ["te", "trailers"]]);

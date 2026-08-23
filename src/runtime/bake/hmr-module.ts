@@ -478,7 +478,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       // not a performance optimization but a behavioral correctness issue.
       return isAsync
         ? Promise.all(list).then(
-            list => finishLoadModuleAsync(mod, load, list),
+            list => finishLoadModuleAsync(mod, load, stars, list),
             e => {
               mod.state = State.Error;
               mod.failure = e;
@@ -488,6 +488,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         : finishLoadModuleAsync(
             mod,
             load,
+            stars,
             list as HMRModule[], // no promises as by assert above
           );
     }
@@ -531,8 +532,10 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   }
 }
 
-/** One-phase load of a module with top-level await. */
-function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
+/** One-phase load of a module with top-level await. The star re-exports
+ * merge after the body assigns the exports object. The dependencies are
+ * loaded by then, so both merge halves run back to back. */
+function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], stars: Id[], modules: HMRModule[]) {
   try {
     const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
@@ -543,12 +546,16 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
       return p.then(() => {
         mod.state = State.Loaded;
         if (mod.exports === exportsBefore) mod.exports = {};
+        const lateStars = mergeStarExports(mod, stars);
+        if (lateStars) mergeLateStarExports(mod, lateStars);
         mod.cjs = null;
         if (shouldPatchImporters) patchImporters(mod);
         return mod;
       });
     }
     if (mod.exports === exportsBefore) mod.exports = {};
+    const lateStars = mergeStarExports(mod, stars);
+    if (lateStars) mergeLateStarExports(mod, lateStars);
     mod.cjs = null;
     if (shouldPatchImporters) patchImporters(mod);
     mod.state = State.Loaded;

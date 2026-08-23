@@ -355,6 +355,30 @@ devTest("export star through a CommonJS module", {
     await c.expectMessage("PASS");
   },
 });
+devTest("export star from a module with top-level await", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export const x = 1;
+    `,
+    "barrel.ts": `
+      export * from './lib';
+      await 0;
+      export const y = 2;
+    `,
+    "index.ts": `
+      import { x, y } from './barrel';
+      if (x === 1 && y === 2) console.log("PASS");
+      else console.log("FAIL: x=" + x + " y=" + y);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
 devTest("an arrow function component export stays a fast refresh boundary", {
   // The exports object exposes non-function-declaration exports through
   // getters. isReactRefreshBoundary must read through them, or a module

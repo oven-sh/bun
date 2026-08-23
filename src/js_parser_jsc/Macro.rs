@@ -559,15 +559,15 @@ impl<'a> Run<'a> {
         };
 
         let global = vm.global();
-        let result = match vm.run_with_api_lock(|| macro_callback.call(global, JSValue::ZERO, args))
-        {
+        let result = match vm.run_with_api_lock(|| macro_callback.call(global, JSValue::ZERO, args)) {
             Ok(result) => result,
-            Err(e) => {
-                // The macro threw: report it (with its stack) and fail this expansion.
-                let err = global.take_exception(e);
+            // The macro threw: report it (with its stack) and fail this expansion.
+            Err(JsError::Thrown) => {
+                let err = global.take_exception(JsError::Thrown);
                 vm.as_mut().uncaught_exception(global, err, false);
                 return Err(MacroError::MacroFailed);
             }
+            Err(e) => return Err(e.into()),
         };
 
         let mut runner = Run {
@@ -587,8 +587,8 @@ impl<'a> Run<'a> {
             // Converting the macro's return value threw (a getter, an iterator, a toString): report it the
             // way a throw from the macro function itself is reported above, rather than leaving it pending
             // under the parser.
-            Err(MacroError::Js(e)) => {
-                let err = global.take_exception(e);
+            Err(MacroError::Js(JsError::Thrown)) => {
+                let err = global.take_exception(JsError::Thrown);
                 vm.as_mut().uncaught_exception(global, err, false);
                 Err(MacroError::MacroFailed)
             }

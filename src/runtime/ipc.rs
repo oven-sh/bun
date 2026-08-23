@@ -404,8 +404,6 @@ mod advanced {
 
         let payload_length: usize = size_of::<IPCMessageType>() + size_of::<u32>() + size as usize;
 
-        // Propagate OOM so serializeAndSend
-        // returns `.failure` instead of silently discarding the Result.
         writer
             .ensure_unused_capacity(payload_length)
             .map_err(|_| global.throw_out_of_memory())?;
@@ -569,8 +567,6 @@ mod json {
             result_len += 1;
         }
 
-        // Propagate OOM so serializeAndSend
-        // returns `.failure` instead of silently discarding the Result.
         writer
             .ensure_unused_capacity(result_len)
             .map_err(|_| global.throw_out_of_memory())?;

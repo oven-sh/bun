@@ -181,9 +181,13 @@ describe("a macro that throws", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain("error: macro boom");
       expect(stdout.trim().split("\n").at(-1)).toBe("import failed: macro threw exception");
-      expect(exitCode).toBe(0);
+      // One assertion so the child's stderr is in the diff if it did not exit cleanly.
+      expect({ exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+        exitCode: 0,
+        signalCode: null,
+        stderr: expect.stringContaining("error: macro boom"),
+      });
     });
   }
 });

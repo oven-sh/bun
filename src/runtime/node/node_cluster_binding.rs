@@ -168,14 +168,20 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         );
     }
 
-    let success = ipc_data.serialize_and_send(
+    let sent = ipc_data.serialize_and_send(
         global,
         message,
         IsInternal::Internal,
         JSValue::NULL,
         native_handle,
-    )?;
-    Ok(match success {
+    );
+    if !matches!(sent, Ok(SerializeAndSendResult::Success | SerializeAndSendResult::Backoff)) {
+        // Nothing was queued, so no ack/nack will ever retire the callback registered above.
+        ipc_data.internal_msg_queue.with_mut(|q| {
+            q.callbacks.swap_remove(&this_seq);
+        });
+    }
+    Ok(match sent? {
         SerializeAndSendResult::Success => JSValue::TRUE,
         SerializeAndSendResult::Backoff => JSValue::FALSE,
         SerializeAndSendResult::Failure => JSValue::NULL,

@@ -263,7 +263,8 @@ declare function $resolveSync(
   isESM?: boolean,
   isUserRequireResolve?: boolean,
   paths?: string[],
-  parentModule?: JSCommonJSModule,
+  /** Handed to an overridden `Module._resolveFilename` as `parent`; `Module._load` may pass any value. */
+  parentModule?: unknown,
   resolveFilenameOptions?: unknown,
 ): string;
 declare function $self(): TODO;

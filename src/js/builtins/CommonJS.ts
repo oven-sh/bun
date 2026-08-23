@@ -31,11 +31,21 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
   return $requireCommonJSModule.$call(this, originalId);
 }
 
-// `this` anchors resolution; a 3rd argument (passed only by the native `Module._load`) is recorded as `module.parent`.
+// `this` anchors resolution; a 3rd argument (passed only by the native `Module._load`) is the `parent`
+// the caller gave, handed to an overridden `_resolveFilename` and recorded as `module.parent`.
 $overriddenName = "require";
 $visibility = "Private";
 export function requireCommonJSModule(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
+  const recordedParent = $argumentCount() > 2 ? $argument(2) : this;
+  const id = $resolveSync(
+    originalId,
+    this.filename,
+    false,
+    false,
+    options ? options.paths : undefined,
+    recordedParent,
+    options,
+  );
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -78,8 +88,6 @@ export function requireCommonJSModule(this: JSCommonJSModule, originalId: string
       return existing.exports;
     }
   }
-
-  const recordedParent = $argumentCount() > 2 ? $argument(2) : this;
 
   // A resolved id may carry a `?query` suffix (part of the module cache key);
   // match the native-addon extension against the path portion only.

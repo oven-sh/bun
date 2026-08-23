@@ -46,6 +46,18 @@ assert.deepStrictEqual(order, [
   "_resolveFilename:./moduleLoadOverwrite-fixture-3.cjs",
 ]);
 
+// A direct `Module._load` with a non-module parent hands that same value to
+// `_resolveFilename` (not an internal stand-in) and records it as `module.parent`.
+const plainParent = { filename: __filename };
+let resolveParent;
+Module._resolveFilename = function (request, parent) {
+  resolveParent = parent;
+  return originalResolveFilename.apply(this, arguments);
+};
+assert.strictEqual(Module._load("./moduleLoadOverwrite-fixture-4.cjs", plainParent, false), "four");
+assert.strictEqual(resolveParent, plainParent);
+assert.strictEqual(require.cache[require.resolve("./moduleLoadOverwrite-fixture-4.cjs")].parent, plainParent);
+
 Module._resolveFilename = originalResolveFilename;
 Module._load = originalLoad;
 Module.prototype.require = originalRequire;

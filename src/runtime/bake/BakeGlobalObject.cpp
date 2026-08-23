@@ -63,13 +63,14 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
 
     if (auto string = dynamicDowncast<JSC::JSString>(referrer)) {
         WTF::String refererString = string->getString(global);
+        RETURN_IF_EXCEPTION(scope, {});
 
         WTF::String keyString = key.toWTFString(global);
-        RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
-            BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
-            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+            BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
+            RETURN_IF_EXCEPTION(scope, {});
 
             return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
         }
@@ -77,11 +78,11 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
 
     if (auto string = dynamicDowncast<JSC::JSString>(key)) {
         auto keyView = string->getString(global);
-        RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (keyView.startsWith("bake:/"_s)) {
             BunString result = BakeProdResolve(global, Bun::toString("bake:/"_s), Bun::toString(keyView.substringSharingImpl("bake:"_s.length())));
-            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+            RETURN_IF_EXCEPTION(scope, {});
 
             return JSC::Identifier::fromString(vm, result.transferToWTFString());
         }

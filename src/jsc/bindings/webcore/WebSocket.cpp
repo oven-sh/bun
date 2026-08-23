@@ -988,6 +988,9 @@ ExceptionOr<void> WebSocket::ping()
 
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Match ping(String) with an empty payload: both send the same frame
+        // when OPEN, so both account the same 6 framing bytes after close.
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(0));
         return {};
     }
 
@@ -1074,6 +1077,8 @@ ExceptionOr<void> WebSocket::pong()
 
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Match pong(String) with an empty payload: see ping().
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(0));
         return {};
     }
 

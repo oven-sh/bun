@@ -372,9 +372,19 @@ describe("WebSocket.bufferedAmount (client)", () => {
         samples.push(ws.bufferedAmount);
         ws.pong(blob());
         samples.push(ws.bufferedAmount);
-        resolve(samples);
+        // The no-argument forms send the same empty control frame as ping("")
+        // when OPEN, so they must account the same 6 framing bytes after close.
+        const beforeEmptyPing = ws.bufferedAmount;
+        ws.ping();
+        const afterEmptyPing = ws.bufferedAmount;
+        ws.pong();
+        const afterEmptyPong = ws.bufferedAmount;
+        resolve([...samples, afterEmptyPing - beforeEmptyPing, afterEmptyPong - afterEmptyPing]);
       };
-      const samples = await promise;
+      const all = await promise;
+      const emptyPongDelta = all.pop()!;
+      const emptyPingDelta = all.pop()!;
+      const samples = all;
 
       // Each Blob overload must add at least the blob's raw size. Before the fix
       // the Blob branch alone returned without touching bufferedAmount, so the
@@ -382,6 +392,9 @@ describe("WebSocket.bufferedAmount (client)", () => {
       for (let i = 1; i < samples.length; i++) {
         expect(samples[i] - samples[i - 1]).toBeGreaterThanOrEqual(blobBytes);
       }
+      // 2-byte header + 4-byte masking key.
+      expect(emptyPingDelta).toBe(6);
+      expect(emptyPongDelta).toBe(6);
     } finally {
       close();
     }

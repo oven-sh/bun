@@ -213,3 +213,22 @@ test("onResolve plugin errors surface from mock.module; an unresolvable specifie
     Bun.plugin.clearAll();
   }
 });
+
+test("mocking a builtin applies to require() the same as import()", () => {
+  mock.module("node:querystring", () => ({
+    stringify: () => "MOCKED",
+    default: { stringify: () => "MOCKED" },
+  }));
+
+  expect(require("node:querystring").stringify({})).toBe("MOCKED");
+  expect(require("querystring").stringify({})).toBe("MOCKED");
+});
+
+test("mocking a builtin with __esModule returns default for require()", () => {
+  mock.module("node:punycode", () => ({
+    __esModule: true,
+    default: { encode: () => "MOCKED-DEFAULT" },
+  }));
+
+  expect(require("node:punycode").encode("x")).toBe("MOCKED-DEFAULT");
+});

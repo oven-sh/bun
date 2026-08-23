@@ -4030,6 +4030,88 @@ describe("Buffer.from(arrayBuffer, byteOffset, length) bounds", () => {
   });
 });
 
+// Node's Buffer.from(view) reads view.length, which is 0 once the view's ArrayBuffer
+// has been detached, and returns an empty Buffer rather than throwing.
+describe("Buffer.from(view) and new Buffer(view) with a detached view", () => {
+  function detached(makeView, arrayBuffer = new ArrayBuffer(8)) {
+    const view = makeView(arrayBuffer);
+    arrayBuffer.transfer();
+    return view;
+  }
+
+  function describeResult(makeBuffer) {
+    try {
+      const buf = makeBuffer();
+      return Buffer.isBuffer(buf) ? `Buffer(${buf.length})` : buf;
+    } catch (e) {
+      return `${e.constructor.name}: ${e.message}`;
+    }
+  }
+
+  const viewConstructors = [
+    Uint8Array,
+    Uint8ClampedArray,
+    Int8Array,
+    Uint16Array,
+    Int16Array,
+    Uint32Array,
+    Int32Array,
+    Float16Array,
+    Float32Array,
+    Float64Array,
+    BigInt64Array,
+    BigUint64Array,
+  ];
+
+  it("returns an empty Buffer for every TypedArray type", () => {
+    const results = Object.fromEntries(
+      viewConstructors.map(View => [View.name, describeResult(() => Buffer.from(detached(ab => new View(ab))))]),
+    );
+    expect(results).toEqual(Object.fromEntries(viewConstructors.map(View => [View.name, "Buffer(0)"])));
+  });
+
+  it("returns an empty Buffer for a detached Buffer", () => {
+    const source = detached(ab => Buffer.from(ab));
+    expect([source.buffer.detached, source.length]).toEqual([true, 0]);
+    const copy = Buffer.from(source);
+    expect(Buffer.isBuffer(copy)).toBe(true);
+    expect(copy.length).toBe(0);
+    expect(copy.buffer.detached).toBe(false);
+    expect(copy.toString()).toBe("");
+    // Trailing arguments are ignored for views, detached or not.
+    expect(Buffer.from(source, 1, 2).length).toBe(0);
+  });
+
+  it("returns an empty Buffer from the deprecated constructor forms and for a DataView", () => {
+    const results = {
+      "new Buffer(Uint8Array)": describeResult(() => new Buffer(detached(ab => new Uint8Array(ab)))),
+      "Buffer(Uint8Array)": describeResult(() => Buffer(detached(ab => new Uint8Array(ab)))),
+      "new Buffer(Uint16Array)": describeResult(() => new Buffer(detached(ab => new Uint16Array(ab)))),
+      "Buffer(Uint16Array)": describeResult(() => Buffer(detached(ab => new Uint16Array(ab)))),
+      // A DataView has no .length, so Buffer.from() never copies one; new Buffer() hands it to the native constructor.
+      "new Buffer(DataView)": describeResult(() => new Buffer(detached(ab => new DataView(ab)))),
+      "Buffer(DataView)": describeResult(() => Buffer(detached(ab => new DataView(ab)))),
+      "Buffer.from(DataView)": describeResult(() => Buffer.from(detached(ab => new DataView(ab)))),
+    };
+    expect(results).toEqual(Object.fromEntries(Object.keys(results).map(name => [name, "Buffer(0)"])));
+  });
+
+  it("returns an empty Buffer for length-tracking views of a detached resizable ArrayBuffer", () => {
+    const resizable = () => new ArrayBuffer(8, { maxByteLength: 16 });
+    const results = {
+      Uint8Array: describeResult(() => Buffer.from(detached(rab => new Uint8Array(rab), resizable()))),
+      Uint16Array: describeResult(() => Buffer.from(detached(rab => new Uint16Array(rab), resizable()))),
+      DataView: describeResult(() => new Buffer(detached(rab => new DataView(rab), resizable()))),
+    };
+    expect(results).toEqual({ Uint8Array: "Buffer(0)", Uint16Array: "Buffer(0)", DataView: "Buffer(0)" });
+  });
+
+  it("still copies the bytes of a live view", () => {
+    expect(Buffer.from(new Uint8Array([1, 2, 3, 4]))).toEqual(Buffer.from([1, 2, 3, 4]));
+    expect(Buffer.from(new Uint16Array([1, 258]))).toEqual(Buffer.from([1, 2]));
+  });
+});
+
 describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
   for (const method of ["writeBigInt64BE", "writeBigInt64LE", "writeBigUInt64BE", "writeBigUInt64LE"]) {
     for (const bufferLength of [0, 1, 2, 3, 4, 5, 6]) {

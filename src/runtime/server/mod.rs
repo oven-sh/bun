@@ -2744,10 +2744,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Self: ServerPools<SSL, DEBUG>,
     {
         // SAFETY: `this` is the live boxed server from `init()`; short-lived shared read.
-        let (http2, http1, idle_timeout, has_dev_server) = unsafe {
+        let (http2, is_node_http, http1, idle_timeout, has_dev_server) = unsafe {
             let cfg = &(*this).config;
             (
-                cfg.http2 && !cfg.is_node_http_server && cfg.on_node_http_request.is_empty(),
+                cfg.http2,
+                cfg.is_node_http_server || !cfg.on_node_http_request.is_empty(),
                 cfg.http1,
                 u32::from(cfg.idle_timeout),
                 (*this).dev_server.is_some(),
@@ -2756,11 +2757,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !http2 {
             return true;
         }
-        if has_dev_server {
-            // DevServer's HMR/asset routes are registered on the HTTP/1 router only.
-            bun_core::warn!(
-                "http2: true is ignored while the development server (HTML imports with HMR) is active"
-            );
+        // node:http compat servers and DevServer's HMR/asset routes are HTTP/1-only.
+        if is_node_http || has_dev_server {
+            let why = if has_dev_server {
+                "while the development server (HTML imports with HMR) is active"
+            } else {
+                "for node:http servers"
+            };
+            if !http1 {
+                // SAFETY: `this` is live; `global_this()` borrows the STATIC global, not `*this`.
+                let global = unsafe { (*this).global_this() };
+                let _ = global.throw_invalid_arguments(format_args!(
+                    "http1: false with http2: true is not supported {why}"
+                ));
+                Self::deinit(this);
+                return false;
+            }
+            bun_core::warn!("http2: true is ignored {}", why);
             return true;
         }
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.

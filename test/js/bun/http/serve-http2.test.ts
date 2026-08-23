@@ -692,8 +692,7 @@ for (const secure of [true, false]) {
       const before = (fx.stderr().match(/ABORTED/g) ?? []).length;
       const req = session.request({ ":path": "/abort" });
       req.on("error", () => {});
-      await new Promise<void>(r => req.on("ready", () => r()) || (req.id && r()));
-      // Let HEADERS reach the server before cancelling.
+      // A round trip on the same connection: HEADERS for /abort has reached the server.
       await request(session, { ":path": "/hello" });
       req.close(http2.constants.NGHTTP2_CANCEL);
       while ((fx.stderr().match(/ABORTED/g) ?? []).length === before) {
@@ -1072,8 +1071,9 @@ describe("Bun.serve http2 lifecycle", () => {
     // as a stream error or as an end with no HEADERS; both have no :status.
     const result = await pending;
     expect(result instanceof Error ? NaN : result.status).toBeNaN();
-    expect(await fx.proc.exited).toBe(0);
+    await fx.proc.exited;
     expect(fx.stderr()).toContain("ABORTED");
+    expect(fx.proc.exitCode).toBe(0);
   });
 
   test("client disconnect with many open streams", async () => {
@@ -1116,7 +1116,11 @@ describe("Bun.serve http2 lifecycle", () => {
     });
     const reader = proc.stdout.getReader();
     let line = "";
-    while (!line.includes("\n")) line += new TextDecoder().decode((await reader.read()).value);
+    while (!line.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("server exited before printing its port");
+      line += new TextDecoder().decode(value);
+    }
     const port = Number(line.trim());
     const raw = await RawH2.connect(port, false);
     await raw.waitFor(f => f.type === T.SETTINGS);
@@ -1173,6 +1177,38 @@ describe("Bun.serve http2 with http1: false", () => {
     session.close();
     const res = await fetch(`http://127.0.0.1:${fx.port}/hello`);
     expect(res.status).toBe(505);
+  });
+
+  test("development server with HTML imports: http2 is ignored, and http1: false is rejected", async () => {
+    using dir = tempDir("serve-http2-dev", {
+      "index.html": "<!doctype html><script src='./a.js'></script>",
+      "a.js": "console.log(1)",
+      "serve.ts": `
+        import index from "./index.html";
+        try {
+          Bun.serve({ port: 0, http2: true, http1: process.argv[2] !== "no-h1", development: true, routes: { "/": index }, fetch: () => new Response("x") }).stop();
+          console.log("ok");
+        } catch (e) { console.log("threw: " + e.message); }
+      `,
+    });
+    for (const [arg, expected] of [
+      ["", "ok"],
+      [
+        "no-h1",
+        "threw: http1: false with http2: true is not supported while the development server (HTML imports with HMR) is active",
+      ],
+    ]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "serve.ts", arg],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(expected);
+      if (arg === "") expect(stderr).toContain("http2: true is ignored");
+    }
   });
 
   test("validation: http1: false alone throws", () => {

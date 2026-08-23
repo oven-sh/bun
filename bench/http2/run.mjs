@@ -54,10 +54,11 @@ function h2load(port, path, h1) {
   ];
   const { stdout, status } = spawnSync("h2load", args, { encoding: "utf8" });
   if (status !== 0) throw new Error("h2load failed: " + stdout);
-  const rps = /finished in .*?, ([\d.]+) req\/s/.exec(stdout)?.[1];
-  const ok = /(\d+) succeeded/.exec(stdout)?.[1];
-  if (ok !== REQUESTS) throw new Error(`only ${ok}/${REQUESTS} succeeded:\n${stdout}`);
-  return Number(rps);
+  const rps = Number(/finished in .*?, ([\d.]+) req\/s/.exec(stdout)?.[1]);
+  const ok = Number(/(\d+) succeeded/.exec(stdout)?.[1]);
+  if (!(ok === Number(REQUESTS)) || !Number.isFinite(rps))
+    throw new Error(`only ${ok}/${REQUESTS} succeeded:\n${stdout}`);
+  return rps;
 }
 
 const rows = [];

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
@@ -191,7 +191,7 @@ describe.if(!isWindows)("uv stubs", () => {
 // (ibm_db) call uv_queue_work(uv_default_loop(), ...) directly, and the
 // after-work callback only fires when that loop runs (#40225). libuv's real
 // default loop exists in the binary but nothing ever runs it.
-describe.if(isWindows)("uv_default_loop", () => {
+describe.if(isWindows && canBuildNodeAddons())("uv_default_loop", () => {
   let addon: {
     queueWork: (cb: (ranWork: number) => void) => void;
     defaultLoopIsNapiLoop: () => boolean;
@@ -226,7 +226,8 @@ describe.if(isWindows)("uv_default_loop", () => {
     await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} run build:napi`.env(bunEnv).cwd(tempdir);
     addonPath = path.join(tempdir, "build/Release/default_loop.node");
     addon = require(addonPath);
-  });
+    // The MSBuild compile of the addon overruns the default 5s hook timeout.
+  }, 300_000);
 
   test("returns the loop bun drives", () => {
     expect(addon.defaultLoopIsNapiLoop()).toBe(true);

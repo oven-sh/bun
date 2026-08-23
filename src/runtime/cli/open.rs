@@ -316,9 +316,6 @@ fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     }
 }
 
-// Note: `buf` stores (ptr, len) pairs because entries point into `file_path_buf`
-// (self-referential) as well as caller-provided/static slices. Reconstructed as slices
-// in `auto_close`.
 fn auto_close(argv: Vec<Box<[u8]>>) {
     Global::set_thread_name(bun_core::zstr!("Open Editor"));
 

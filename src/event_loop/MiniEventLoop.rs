@@ -220,7 +220,9 @@ impl GlobalMiniEventLoop {
     /// The C-owned uws loop this event loop wraps (see [`MiniEventLoop::loop_ptr`]).
     #[inline]
     pub fn loop_ptr(self) -> *mut UwsLoop {
-        self.0.loop_
+        // SAFETY: the thread-lifetime singleton pointer (non-null, never freed);
+        // no `&`/`&mut` is formed, so this may be called from inside `tick_once`.
+        unsafe { (*self.as_ptr()).loop_ }
     }
 
     #[inline]

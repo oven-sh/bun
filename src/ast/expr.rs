@@ -1037,7 +1037,7 @@ impl IntoExprData for &E::EString {
 impl Expr {
     /// When the lifetime of an Expr.Data's pointer must exist longer than reset() is called, use this function.
     /// Be careful to free the memory (or use an arena that does it for you)
-    /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
+    /// Prefer `Expr::init` for nodes that only need to live until the current parse's reset().
     #[inline]
     pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
         data::Store::assert();

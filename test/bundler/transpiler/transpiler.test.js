@@ -2043,6 +2043,73 @@ export default class {
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
     });
+
+    it("string replacement values survive other modules being loaded after the transpiler is created", async () => {
+      // String values are the only replacement values that are heap-allocated
+      // AST nodes. They used to be allocated in the thread-local AST store,
+      // which every synchronous parse on the main thread (a require() of a
+      // CommonJS file, an import of a JSON file, ...) resets and then refills
+      // with that module's own nodes, so a later transform printed the
+      // replacement out of memory that by then held some other node. Debug
+      // builds poison the store on reset, so any reset exposes the stale read;
+      // release builds only misbehave once the slot has been reused, which is
+      // why the required module declares a few hundred strings (a few dozen
+      // are enough to reach the slot).
+      const resetLines = [];
+      for (let i = 0; i < 300; i++) {
+        resetLines.push(`const s${i} = "other string ${i}";`);
+      }
+      resetLines.push("module.exports = { s0, s299 };");
+
+      using dir = tempDir("transpiler-replace-string-values", {
+        "reset.cjs": resetLines.join("\n"),
+        "reset.json": `{}`,
+        "entry.mjs": `
+          const transpiler = new Bun.Transpiler({
+            exports: {
+              replace: {
+                foo: "bar",
+                getStaticProps: ["__N_SSG", "ssg"],
+                default: "dflt",
+              },
+            },
+          });
+
+          require("./reset.cjs");
+          await import("./reset.json");
+
+          console.log(
+            JSON.stringify([
+              transpiler.transformSync("export const foo = 1;"),
+              transpiler.transformSync("export function getStaticProps() {}"),
+              transpiler.transformSync("export default 1;"),
+              await transpiler.transform("export const foo = 1;"),
+              await transpiler.transform("export function getStaticProps() {}"),
+              await transpiler.transform("export default 1;"),
+            ]),
+          );
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        'export const foo = "bar";\n',
+        'export var __N_SSG = "ssg";\n',
+        'export default "dflt";\n',
+        'export const foo = "bar";\n',
+        'export var __N_SSG = "ssg";\n',
+        'export default "dflt";\n',
+      ]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   const bunTranspiler = new Bun.Transpiler({

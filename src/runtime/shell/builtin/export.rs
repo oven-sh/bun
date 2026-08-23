@@ -43,27 +43,27 @@ impl Export {
             let val = EnvStr::dupe_ref_counted(value);
             drop(bltn);
             shell.borrow_mut().export_env.insert(label, val);
-            label.deref();
-            val.deref();
         }
         Builtin::done(interp, cmd, 0)
     }
 
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let mut entries: Vec<(EnvStr, EnvStr)> = Builtin::shell(interp, cmd)
-            .borrow()
-            .export_env
-            .iter()
-            .map(|(k, v)| (*k, *v))
-            .collect();
-        index_sort::sort_slice_by(&mut entries, |a, b| a.0.slice().cmp(b.0.slice()));
-
         let mut buf = Vec::new();
-        for (k, v) in &entries {
-            buf.extend_from_slice(k.slice());
-            buf.push(b'=');
-            buf.extend_from_slice(v.slice());
-            buf.push(b'\n');
+        {
+            let shell = Builtin::shell(interp, cmd);
+            let shell = shell.borrow();
+            let mut entries: Vec<(&[u8], &[u8])> = shell
+                .export_env
+                .iter()
+                .map(|(k, v)| (k.slice(), v.slice()))
+                .collect();
+            index_sort::sort_slice_by(&mut entries, |a, b| a.0.cmp(b.0));
+            for (k, v) in &entries {
+                buf.extend_from_slice(k);
+                buf.push(b'=');
+                buf.extend_from_slice(v);
+                buf.push(b'\n');
+            }
         }
 
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();

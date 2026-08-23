@@ -351,6 +351,13 @@ impl MiniEventLoop {
         }
     }
 
+    /// One tick of the platform (uSockets) loop, so pending I/O is serviced
+    /// before the caller queues more work.
+    pub fn tick_platform_loop(&mut self) {
+        // SAFETY: see `loop_ptr()` invariant.
+        unsafe { (*self.loop_ptr()).tick() };
+    }
+
     /// `task` must outlive the queued work item; ownership of the intrusive
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {

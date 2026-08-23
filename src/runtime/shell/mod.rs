@@ -25,8 +25,6 @@ pub use shell_body as shell;
 pub mod env_map;
 #[path = "EnvStr.rs"]
 pub mod env_str;
-#[path = "RefCountedStr.rs"]
-pub mod ref_counted_str;
 #[path = "util.rs"]
 pub mod util;
 

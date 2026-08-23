@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { open as fsOpen } from "node:fs/promises";
@@ -1172,7 +1172,11 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
 // closed without writing produced a head with neither Content-Length nor
 // Transfer-Encoding that never completes. Either chunked-with-terminator or
 // Content-Length framing is acceptable; the response just has to be complete.
-describe.skipIf(isWindows)("Response(Bun.file(FIFO)) ends the response when the pipe writer closes", () => {
+//
+// Linux-only: on macOS, kqueue never wakes a FIFO reader parked on an empty
+// pipe when the last writer closes (data events deliver, that EOF does not),
+// so the completion path under test is never reached there.
+describe.skipIf(isWindows || isMacOS)("Response(Bun.file(FIFO)) ends the response when the pipe writer closes", () => {
   // Returns the decoded body, or null if the wire bytes do not form a
   // complete HTTP/1.1 message (the failure mode under test).
   function decodeBody(wire: string): { status: string; body: string } | null {

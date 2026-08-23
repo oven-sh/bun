@@ -201,14 +201,18 @@ describe.if(isWindows && canBuildNodeAddons())("uv_default_loop", () => {
   beforeAll(async () => {
     const files = {
       "default_loop.c": await Bun.file(defaultLoopSource).text(),
+      // `bun --bun node-gyp` (the napi-app recipe): under node, config.gypi
+      // inherits clang=1 and lld linker flags from node's own build and MSBuild
+      // then wants the ClangCL toolset, which plain VS installs lack.
       "package.json": JSON.stringify({
         "name": "default-loop-addon",
         "version": "1.0.0",
+        "gypfile": true,
         "scripts": {
-          "build:napi": "node-gyp configure && node-gyp build",
+          "install": "bun --bun node-gyp rebuild",
         },
         "dependencies": {
-          "node-gyp": "10.2.0",
+          "node-gyp": "^11.2.0",
         },
       }),
       "binding.gyp": `{
@@ -221,9 +225,7 @@ describe.if(isWindows && canBuildNodeAddons())("uv_default_loop", () => {
       }`,
     };
     const tempdir = tempDirWithFiles("uv-default-loop", files);
-    // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs
-    // for a root binding.gyp package; build:napi is the single explicit build.
-    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} run build:napi`.env(bunEnv).cwd(tempdir);
+    await Bun.$`${bunExe()} i`.env(bunEnv).cwd(tempdir);
     addonPath = path.join(tempdir, "build/Release/default_loop.node");
     addon = require(addonPath);
     // The MSBuild compile of the addon overruns the default 5s hook timeout.

@@ -196,6 +196,33 @@ impl<T: ?Sized, P> BackRef<T, P> {
     }
 }
 
+impl<T: AnyRefCounted> BackRef<T, Mut>
+where
+    T::DestructorCtx: Default,
+{
+    /// View the pointee as a [`ThisPtr`] for the refcounted-dispatch entry
+    /// points that take one. Safe under the `BackRef` invariant: the pointee is
+    /// live for as long as this back-reference is held, which is exactly
+    /// [`ThisPtr::new`]'s precondition; `Mut` records that the pointer carries
+    /// the allocation's root provenance (it came from a `ThisPtr`), so the
+    /// callee may release refs through it.
+    #[inline]
+    pub fn this_ptr(&self) -> ThisPtr<T> {
+        // SAFETY: BackRef invariant — pointee is live and non-null.
+        unsafe { ThisPtr::new(self.0.as_ptr()) }
+    }
+}
+
+impl<T> From<ThisPtr<T>> for BackRef<T, Mut> {
+    /// Record a dispatch-time [`ThisPtr`] as a back-reference. The holder takes
+    /// on the `BackRef` invariant: it must drop/clear this before the pointee
+    /// can be freed.
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        BackRef(p.0, core::marker::PhantomData)
+    }
+}
+
 impl<T: ?Sized, P> Copy for BackRef<T, P> {}
 impl<T: ?Sized, P> Clone for BackRef<T, P> {
     #[inline]

@@ -1931,14 +1931,12 @@ Socket.prototype.connect = function connect(...args) {
       this.pause();
     } else {
       process.nextTick(() => {
-        // Honor pause()/resume() calls made while connecting — only start
-        // reading if the user hasn't explicitly paused the stream. Matches
-        // Node's afterConnect, which calls socket.read(0) only when not paused:
+        // An already-open handle (fd, wrapped duplex) starts reading here unless
+        // the user paused; read(0) does that without switching to flowing mode.
+        // A pending connect gets this from afterConnect instead, so a pause()
+        // that lands before then is still honored:
         // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1649
-        // read(0) starts the handle reading without switching the stream into
-        // flowing mode, so data that arrives before a 'data' listener is
-        // attached stays buffered instead of being emitted to nobody.
-        if (!this.isPaused()) this.read(0);
+        if (!this.connecting && !this.isPaused()) this.read(0);
       });
       if (fd == null) this.connecting = true;
     }
@@ -4277,8 +4275,8 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
-    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref().
-    if (self[kUserUnrefed]) handle.unref?.();
+    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref()/pause().
+    if (self[kUserUnrefed] || self[kPausedUnref]) handle.unref?.();
   }
 }
 

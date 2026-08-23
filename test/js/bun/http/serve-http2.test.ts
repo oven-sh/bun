@@ -929,6 +929,23 @@ for (const secure of [true, false]) {
         raw.close();
       });
 
+      test("DATA / WINDOW_UPDATE on an even stream id → GOAWAY PROTOCOL_ERROR", async () => {
+        for (const send of [
+          (raw: RawH2) => raw.write(frame(T.DATA, F.END_STREAM, 2, Buffer.from("x"))),
+          (raw: RawH2) => {
+            const inc = Buffer.alloc(4);
+            inc.writeUInt32BE(1);
+            raw.write(frame(T.WINDOW_UPDATE, 0, 2, inc));
+          },
+        ]) {
+          const raw = await RawH2.connect(fx.port, secure);
+          raw.headers(3, baseHeaders("/hello"), F.END_HEADERS | F.END_STREAM);
+          send(raw);
+          expect((await raw.goaway()).code).toBe(1);
+          raw.close();
+        }
+      });
+
       test("stream WINDOW_UPDATE of 0 → RST_STREAM PROTOCOL_ERROR", async () => {
         const raw = await RawH2.connect(fx.port, secure);
         raw.headers(1, baseHeaders("/slow?ms=200"), F.END_HEADERS | F.END_STREAM);

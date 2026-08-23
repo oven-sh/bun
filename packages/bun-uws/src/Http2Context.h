@@ -1160,7 +1160,7 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
         }
         Http2Response *stream = findStream(streamId);
         if (!stream || stream->remoteClosed) {
-            if (streamId > lastStreamId) return connectionError(http2::ERR_PROTOCOL_ERROR);
+            if (streamId > lastStreamId || (streamId & 1) == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
             if (stream) streamError(streamId, stream, http2::ERR_STREAM_CLOSED);
             else writeRstStream(streamId, http2::ERR_STREAM_CLOSED);
             return true;
@@ -1208,7 +1208,7 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
         return true;
 
     case http2::RST_STREAM: {
-        if (streamId == 0 || streamId > lastStreamId) return connectionError(http2::ERR_PROTOCOL_ERROR);
+        if (streamId == 0 || streamId > lastStreamId || (streamId & 1) == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
         if (length != 4) return connectionError(http2::ERR_FRAME_SIZE_ERROR);
         Http2Response *stream = findStream(streamId);
         if (stream) {
@@ -1251,7 +1251,7 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
         }
         Http2Response *stream = findStream(streamId);
         if (!stream) {
-            if (streamId > lastStreamId) return connectionError(http2::ERR_PROTOCOL_ERROR);
+            if (streamId > lastStreamId || (streamId & 1) == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
             return true;
         }
         if (increment == 0) { streamError(streamId, stream, http2::ERR_PROTOCOL_ERROR); return true; }
@@ -1684,7 +1684,7 @@ inline Http2Response *Http2Response::cork(MoveOnlyFunction<void()> &&fn) {
 
 inline void Http2Response::setTimeout(uint8_t seconds) {
     if (dead) return;
-    timeoutS = seconds;
+    timeoutS = seconds == 255 ? 254 : seconds;
     conn->recomputeIdleTimeout();
 }
 

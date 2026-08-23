@@ -159,49 +159,28 @@ pub struct TranspileExtra {
     pub promise_ptr: *mut *mut JSInternalPromise,
 }
 
-/// Result of `LoaderHooks::fetch_builtin_module` — tri-state because
-/// an ERROR during builtin lookup must be
-/// surfaced to C++ (return `true` with `ret` populated as `.err`) rather than
-/// falling through to filesystem resolution.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FetchBuiltinResult {
-    /// Not a builtin/standalone-graph module — caller falls through.
-    NotFound,
-    /// Builtin found; `*out` is populated with `.ok(resolved)`.
-    Found,
-    /// Lookup errored; `*out` is populated with `.err(...)` (via
-    /// `VirtualMachine::process_fetch_log`). Caller must return `true`.
-    Errored,
-}
-
 pub struct LoaderHooks {
-    /// `ModuleLoader.transpileSourceCode(...)` — full body. Returns `false`
-    /// on error (error is written into `*ret` as `.err(...)`).
+    /// `ModuleLoader.transpileSourceCode(...)` — full body.
     pub transpile_source_code: unsafe fn(
         jsc_vm: *mut VirtualMachine,
         args: &TranspileArgs<'_>,
-        ret: *mut ErrorableResolvedSource,
-    ) -> bool,
-    /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — writes `*out`
-    /// (as `ErrorableResolvedSource`) and returns a tri-state. On
-    /// `Found`/`Errored`, `*out` is populated; on `NotFound` it is untouched.
+    ) -> Result<ResolvedSource, crate::CrateError>,
+    /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — `None` when the
+    /// specifier is not a builtin / standalone-graph module.
     pub fetch_builtin_module: unsafe fn(
         jsc_vm: *mut VirtualMachine,
         global: *mut JSGlobalObject,
         specifier: &bun_core::String,
         referrer: &bun_core::String,
-        out: *mut ErrorableResolvedSource,
-    ) -> FetchBuiltinResult,
+    ) -> Option<ResolvedSource>,
     /// `ModuleLoader.getHardcodedModule(jsc_vm, specifier, hardcoded)` —
-    /// per-variant body of the builtin-module fast path. `false` ⇒ `None`
-    /// (recognised but not currently servable); `true` ⇒ `*out` populated.
+    /// per-variant body of the builtin-module fast path. `None` ⇒ recognised
+    /// but not currently servable.
     pub get_hardcoded_module: unsafe fn(
         jsc_vm: *mut VirtualMachine,
         specifier: &bun_core::String,
         hardcoded: bun_resolve_builtins::Module,
-        out: *mut ResolvedSource,
-    ) -> bool,
+    ) -> Option<ResolvedSource>,
     /// `ModuleLoader.resolveEmbeddedFile(vm, &path_buf, input_path, "node")`
     /// — extracts an embedded `.node` addon
     /// from the standalone-module graph to a real on-disk temp file and writes
@@ -261,14 +240,13 @@ fn loader_hooks() -> Option<&'static LoaderHooks> {
 pub(crate) fn transpile_source_code(
     jsc_vm: &mut VirtualMachine,
     args: &TranspileArgs<'_>,
-    ret: &mut ErrorableResolvedSource,
-) -> bool {
+) -> Result<ResolvedSource, crate::CrateError> {
     let Some(hooks) = loader_hooks() else {
         // No high tier (unit tests) — fail closed.
-        return false;
+        return Err(crate::CrateError::ModuleNotFound);
     };
     // SAFETY: hook contract — `jsc_vm` is the live per-thread VM.
-    unsafe { (hooks.transpile_source_code)(jsc_vm, args, ret) }
+    unsafe { (hooks.transpile_source_code)(jsc_vm, args) }
 }
 
 /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)`.
@@ -277,15 +255,11 @@ pub(crate) fn fetch_builtin_module(
     global: NonNull<JSGlobalObject>,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
-    out: &mut ErrorableResolvedSource,
-) -> FetchBuiltinResult {
-    let Some(hooks) = loader_hooks() else {
-        return FetchBuiltinResult::NotFound;
-    };
-    // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `out` is a
-    // valid out-param; `global` is the live JS-thread global passed through
-    // opaquely to the §Dispatch hook.
-    unsafe { (hooks.fetch_builtin_module)(jsc_vm, global.as_ptr(), specifier, referrer, out) }
+) -> Option<ResolvedSource> {
+    let hooks = loader_hooks()?;
+    // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `global` is
+    // the live JS-thread global passed through opaquely to the §Dispatch hook.
+    unsafe { (hooks.fetch_builtin_module)(jsc_vm, global.as_ptr(), specifier, referrer) }
 }
 
 /// `VirtualMachine.processFetchLog(global, specifier, referrer, log, &errorable,
@@ -372,13 +346,12 @@ unsafe extern "C" fn Bun__fetchBuiltinModule(
             &mut *ret,
         )
     };
-    // When `fetchBuiltinModule`
-    // ERRORS, it calls `VirtualMachine.processFetchLog(..., ret, err)` and
-    // returns **true** (so C++ surfaces the error instead of falling through to
-    // filesystem resolution). The hook writes `ret` directly on Found/Errored.
-    match fetch_builtin_module(jsc_vm, global_object, specifier, referrer, ret) {
-        FetchBuiltinResult::NotFound => false,
-        FetchBuiltinResult::Found | FetchBuiltinResult::Errored => true,
+    match fetch_builtin_module(jsc_vm, global_object, specifier, referrer) {
+        Some(resolved) => {
+            *ret = ErrorableResolvedSource::ok(resolved);
+            true
+        }
+        None => false,
     }
 }
 
@@ -447,12 +420,11 @@ unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
     let Some(hooks) = loader_hooks() else {
         return false;
     };
-    let mut resolved = ResolvedSource::default();
-    // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `&mut
-    // resolved` is a valid out-param.
-    if !unsafe { (hooks.get_hardcoded_module)(jsc_vm, specifier, hardcoded, &raw mut resolved) } {
+    // SAFETY: hook contract — `jsc_vm` is the live per-thread VM.
+    let Some(resolved) = (unsafe { (hooks.get_hardcoded_module)(jsc_vm, specifier, hardcoded) })
+    else {
         return false;
-    }
+    };
     // SAFETY: C++ passed a valid out-param.
     unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
     true

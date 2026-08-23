@@ -276,7 +276,7 @@ fn with_text_format_source_encoded<R>(
                 break 'bytes _blob_hold.slice();
             }
         }
-        let mut s = input_value.to_bun_string(global)?;
+        let s = input_value.to_bun_string(global)?;
         if string_input == StringInput::AsIs {
             _latin1_hold = s;
             if _latin1_hold.is_8bit() {
@@ -286,9 +286,7 @@ fn with_text_format_source_encoded<R>(
             encoding = SourceEncoding::Utf16Text;
             break 'bytes bytemuck::cast_slice(_latin1_hold.utf16());
         }
-        // `to_slice` moves the +1 ref into the returned slice's
-        // `.underlying`, so the temporary `BunString` drop is a no-op.
-        _str_hold = StringOrBuffer::String(s.to_slice());
+        _str_hold = StringOrBuffer::String(s.into_slice());
         _str_hold.slice()
     };
 

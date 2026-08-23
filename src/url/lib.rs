@@ -370,7 +370,7 @@ impl<'a> URL<'a> {
         };
         let is_http = url.protocol().eql_comptime(b"http");
         // `whatwg::URL::hostname` is the host with its port.
-        let mut host_with_path = url.hostname().to_utf8_bytes();
+        let mut host_with_path = url.hostname().to_owned_slice();
         let pathname = url.pathname();
         let path = pathname.to_utf8();
         host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));

@@ -411,9 +411,9 @@ impl StringOrBuffer {
                 if string_objects == StringObjects::Reject && str_type != JSType::String {
                     return Ok(false);
                 }
-                let mut str = bun_core::String::from_js(value, global)?;
+                let str = bun_core::String::from_js(value, global)?;
                 if flavor == Flavor::Async {
-                    let mut sliced = str.to_thread_safe_slice();
+                    let mut sliced = str.into_thread_safe_slice();
                     sliced.report_extra_memory(global.vm());
 
                     if sliced.underlying.is_empty() {
@@ -423,7 +423,7 @@ impl StringOrBuffer {
 
                     *out = Self::ThreadsafeString(sliced);
                 } else {
-                    *out = Self::String(str.to_slice());
+                    *out = Self::String(str.into_slice());
                 }
                 Ok(true)
             }
@@ -905,7 +905,7 @@ pub trait PathLikeExt {
         Self: Sized;
     fn from_bun_string(
         global: &JSGlobalObject,
-        str: &mut bun_core::String,
+        str: bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike>
     where
@@ -1181,20 +1181,18 @@ impl PathLikeExt for PathLike {
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
-                let mut str = arg.to_bun_string(ctx)?;
-
+                let str = arg.to_bun_string(ctx)?;
                 arguments.eat();
-
                 Ok(Some(Self::from_bun_string(
                     ctx,
-                    &mut str,
+                    str,
                     arguments.will_be_async,
                 )?))
             }
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
                     use jsc::dom_url::ToFileSystemPathError;
-                    let mut str = match domurl.file_system_path() {
+                    let str = match domurl.file_system_path() {
                         Ok(s) => s,
                         Err(ToFileSystemPathError::NotFileUrl) => {
                             return Err(ctx
@@ -1233,7 +1231,7 @@ impl PathLikeExt for PathLike {
 
                     return Ok(Some(Self::from_bun_string(
                         ctx,
-                        &mut str,
+                        str,
                         arguments.will_be_async,
                     )?));
                 }
@@ -1245,11 +1243,11 @@ impl PathLikeExt for PathLike {
 
     fn from_bun_string(
         global: &JSGlobalObject,
-        str: &mut bun_core::String,
+        str: bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> {
         if will_be_async {
-            let mut sliced = str.to_thread_safe_slice();
+            let mut sliced = str.into_thread_safe_slice();
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
@@ -1263,7 +1261,7 @@ impl PathLikeExt for PathLike {
             }
             Ok(Self::ThreadsafeString(sliced))
         } else {
-            let mut sliced = str.to_slice();
+            let mut sliced = str.into_slice();
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.

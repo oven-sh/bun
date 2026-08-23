@@ -2598,8 +2598,10 @@ impl DevServer {
         let url_bunstr = match &req {
             // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
             SavedRequestUnion::Stack(r) => bun_core::StringView::from_bytes((**r).url()),
-            // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
-            SavedRequestUnion::Saved(data) => unsafe { (*data.request).url.get() },
+            SavedRequestUnion::Saved(data) => {
+                // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
+                bun_core::StringView::new(unsafe { (*data.request).url.get() })
+            }
         };
         let url = url_bunstr.to_utf8();
 

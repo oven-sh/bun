@@ -781,14 +781,13 @@ pub mod testing_apis {
         let jsobjs_len: u32 = u32::try_from(jsobjs.len()).expect("int cast");
         let lex_result = 'brk: {
             if strings::is_all_ascii(&script[..]) {
-                let mut lexer =
-                    LexerAscii::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
+                let mut lexer = LexerAscii::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
                 if let Err(err) = lexer.lex() {
                     return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
                 }
                 break 'brk lexer.get_result();
             }
-            let mut lexer = LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
+            let mut lexer = LexerUnicode::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
             if let Err(err) = lexer.lex() {
                 return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
             }
@@ -863,7 +862,7 @@ pub mod testing_apis {
             &arena,
             &script[..],
             &mut jsobjs[..],
-            &mut jsstrings[..],
+            &jsstrings[..],
             &mut out_parser,
             &mut out_lex_result,
         ) {

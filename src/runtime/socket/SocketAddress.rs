@@ -9,13 +9,14 @@ use core::ffi::{c_int, c_void};
 use core::mem;
 
 use bun_cares_sys::c_ares as ares;
-use bun_core::{String as BunString, StringCell, ZStr, strings};
+use bun_core::{String as BunString, ZStr, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
+use bun_ptr::JsCell;
 
 // The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the one
 // field written from a host_fn-reachable path (`_presentation`, lazily filled
-// by `address()`) is `StringCell`-wrapped. `_addr` is read-only after
+// by `address()`) is `JsCell`-wrapped. `_addr` is read-only after
 // construction and stays bare.
 #[bun_jsc::JsClass]
 pub struct SocketAddress {
@@ -30,7 +31,7 @@ pub struct SocketAddress {
     /// - `.Empty` is used for default ipv4 and ipv6 addresses (`127.0.0.1` and `::`, respectively).
     ///
     /// @internal
-    _presentation: StringCell,
+    _presentation: JsCell<BunString>,
 }
 
 impl SocketAddress {
@@ -251,7 +252,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin6 },
-                _presentation: StringCell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::dead()),
             }
         } else {
             let mut sin = inet::sockaddr_in {
@@ -265,7 +266,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin },
-                _presentation: StringCell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::dead()),
             }
         };
 
@@ -309,7 +310,7 @@ impl SocketAddress {
         if options_obj.is_undefined() {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::LOOPBACK_V4,
-                _presentation: StringCell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::empty()),
                 // ._presentation = WellKnownAddress::loopback_v4(),
             }));
         }
@@ -325,7 +326,7 @@ impl SocketAddress {
         {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::ANY_V6,
-                _presentation: StringCell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::empty()),
                 // ._presentation = WellKnownAddress::any_v6(),
             }));
         }
@@ -427,7 +428,7 @@ impl SocketAddress {
 
         Ok(SocketAddress {
             _addr: addr,
-            _presentation: StringCell::new(presentation),
+            _presentation: JsCell::new(presentation),
         })
     }
 }
@@ -466,7 +467,7 @@ impl SocketAddress {
         // TODO: make sure casting doesn't swap byte order on us.
         SocketAddress {
             _addr: sockaddr::v4(port_.to_be(), u32::from_ne_bytes(addr)),
-            _presentation: StringCell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::dead()),
         }
     }
 
@@ -483,7 +484,7 @@ impl SocketAddress {
     ) -> SocketAddress {
         SocketAddress {
             _addr: sockaddr::v6(port_.to_be(), addr, flowinfo, scope_id),
-            _presentation: StringCell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::dead()),
         }
     }
 }
@@ -502,7 +503,7 @@ impl SocketAddress {
 // =============================================================================
 
 impl SocketAddress {
-    /// Turn this address into a DTO. `this` is consumed and undefined after this call.
+    /// Turn this address into a DTO.
     ///
     /// This is similar to `.toJS`, but differs in the following ways:
     /// - `this` is consumed
@@ -514,14 +515,13 @@ impl SocketAddress {
     /// This method is slightly faster if you are creating a lot of socket addresses
     /// that will not be around for very long. `createDTO` is even faster, but
     /// requires callers to already have a presentation-formatted address.
-    pub(crate) fn into_dto(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn into_dto(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         self.address();
-        let addr_str = self._presentation.replace(BunString::dead());
         let port = self.port();
         let is_v6 = self.family() == AF::INET6;
         Ok(JSSocketAddressDTO__create(
             global,
-            addr_str.into_js(global)?,
+            self._presentation.take().into_js(global)?,
             port,
             is_v6,
         ))
@@ -584,7 +584,7 @@ impl SocketAddress {
     /// ### TODO
     /// - replace `addressToString` in the dns module with this
     /// - use this impl in the server module
-    pub(crate) fn address(&self) -> bun_core::StringView<'_> {
+    pub(crate) fn address(&self) -> &BunString {
         let cached = self._presentation.get();
         if cached.tag() != bun_core::Tag::Dead {
             return cached;

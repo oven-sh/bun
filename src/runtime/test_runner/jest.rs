@@ -14,7 +14,7 @@ use crate::timer::ElTimespec;
 
 pub use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
-use super::scope_functions::{create_bound, strings as scope_strings, Mode as ScopeKind};
+use super::scope_functions::{create_bound, Mode as ScopeKind};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
 use bun_test::js_fns::generic_hook;
@@ -338,7 +338,7 @@ pub mod Jest {
             ScopeKind::Test,
             JSValue::ZERO,
             BaseScopeCfg::default(),
-            scope_strings::TEST(),
+            "test",
         )?;
         module.put(global_object, b"test", test_scope_functions);
         module.put(global_object, b"it", test_scope_functions);
@@ -348,7 +348,7 @@ pub mod Jest {
             ScopeKind::Test,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
-            scope_strings::XTEST(),
+            "xtest",
         )?;
         module.put(global_object, b"xtest", xtest_scope_functions);
         module.put(global_object, b"xit", xtest_scope_functions);
@@ -358,7 +358,7 @@ pub mod Jest {
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg::default(),
-            scope_strings::DESCRIBE(),
+            "describe",
         )?;
         module.put(global_object, b"describe", describe_scope_functions);
 
@@ -367,7 +367,7 @@ pub mod Jest {
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
-            scope_strings::XDESCRIBE(),
+            "xdescribe",
         )?;
         module.put(global_object, b"xdescribe", xdescribe_scope_functions);
 

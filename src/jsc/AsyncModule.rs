@@ -154,17 +154,15 @@ impl AsyncModule {
     pub(crate) fn fulfill(
         global_this: &JSGlobalObject,
         promise: JSValue,
-        resolved_source: ResolvedSource,
-        err: Option<crate::CrateError>,
+        result: Result<ResolvedSource, crate::CrateError>,
         specifier: &BunString,
         referrer: &BunString,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
-        let mut errorable = match err {
-            None => ErrorableResolvedSource::ok(resolved_source),
-            Some(e) => {
-                drop(resolved_source);
+        let mut errorable = match result {
+            Ok(resolved_source) => ErrorableResolvedSource::ok(resolved_source),
+            Err(e) => {
                 if e == crate::CrateError::JSError {
                     ErrorableResolvedSource::err(
                         ErrorCode(ErrorCode::JS_ERROR_OBJECT),

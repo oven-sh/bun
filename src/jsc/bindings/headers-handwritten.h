@@ -342,7 +342,6 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
-BunString toString(const char* bytes, size_t length);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);

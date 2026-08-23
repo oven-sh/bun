@@ -1856,7 +1856,7 @@ impl JSFrameworkRouter {
                     )))
                 })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
-                &bun_core::String::static_str("Errors scanning routes"),
+                &bun_core::String::static_("Errors scanning routes"),
                 arr,
             )?));
         }
@@ -2025,7 +2025,7 @@ impl JSFrameworkRouter {
         obj.put(
             global,
             b"kind",
-            bun_core::String::static_str(<&'static str>::from(parsed.kind)).to_js(global)?,
+            bun_core::String::static_(<&'static str>::from(parsed.kind)).to_js(global)?,
         );
         obj.put(global, b"pattern", out.into_js(global)?);
         Ok(obj)

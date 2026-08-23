@@ -592,14 +592,14 @@ impl QuicSession {
             .filter(|v| v.is_string())
         {
             self.datagram_drop_newest
-                .set(bun_core::String::from_js(v, global)?.to_utf8_bytes() == b"drop-newest");
+                .set(bun_core::String::from_js(v, global)?.to_owned_slice() == b"drop-newest");
         }
         if let Some(v) = options.get(global, "qlog")? {
             self.qlog_enabled.set(v.to_boolean());
         }
         if let Some(v) = options.get(global, "verifyPeer")?.filter(|v| v.is_string()) {
             self.reject_unverified_peer
-                .set(bun_core::String::from_js(v, global)?.to_utf8_bytes() != b"manual");
+                .set(bun_core::String::from_js(v, global)?.to_owned_slice() != b"manual");
         }
         if let Some(app) = options
             .get(global, "application")?
@@ -1812,7 +1812,7 @@ impl QuicSession {
                 .get(global, "type")?
                 .map(|v| {
                     bun_core::String::from_js(v, global)
-                        .map(|s| s.to_utf8_bytes() == b"application")
+                        .map(|s| s.to_owned_slice() == b"application")
                 })
                 .transpose()?
                 .unwrap_or(false);
@@ -1820,7 +1820,7 @@ impl QuicSession {
             reason = options
                 .get(global, "reason")?
                 .filter(|v| v.is_string())
-                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_utf8_bytes()))
+                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
                 .transpose()?
                 .unwrap_or_default();
             self.self_close.with_mut(|s| {

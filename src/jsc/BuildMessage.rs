@@ -118,7 +118,7 @@ impl BuildMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_str(b"BuildMessage").to_js(global)?,
+            bun_core::String::static_(b"BuildMessage").to_js(global)?,
         );
         object.put(global, b"position", self.get_position(global)?);
         object.put(global, b"message", self.get_message(global)?);

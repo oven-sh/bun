@@ -2238,16 +2238,6 @@ mod _async_tasks {
         Files(Vec<BunString>),
     }
 
-    impl ResultListEntryValue {
-        pub(crate) fn deinit(&mut self) {
-            match self {
-                ResultListEntryValue::WithFileTypes(res) => res.clear(),
-                ResultListEntryValue::Buffers(res) => res.clear(),
-                ResultListEntryValue::Files(res) => res.clear(),
-            }
-        }
-    }
-
     pub struct ResultListEntry {
         pub(crate) next: bun_threading::Link<ResultListEntry>, // INTRUSIVE: UnboundedQueue link
         pub value: ResultListEntryValue,
@@ -2511,7 +2501,7 @@ mod _async_tasks {
         }
 
         fn clear_result_list(&mut self) {
-            self.result_list.deinit();
+            self.result_list.clear();
             let batch = self.result_list_queue.pop_batch();
             let mut iter = batch.iterator();
             let mut to_destroy: Option<*mut ResultListEntry> = None;
@@ -2520,8 +2510,6 @@ mod _async_tasks {
                 if val.is_null() {
                     break;
                 }
-                // SAFETY: `val` is a live queue node until freed below
-                unsafe { &mut *val }.value.deinit();
                 if let Some(dest) = to_destroy {
                     // SAFETY: paired with heap::alloc in write_results()
                     unsafe { drop(bun_core::heap::take(dest)) };
@@ -2562,6 +2550,13 @@ mod _async_tasks {
     impl ResultListEntryValue {
         fn from_vec<T: IntoResultListEntry>(v: Vec<T>) -> Self {
             T::into_variant(v)
+        }
+        fn clear(&mut self) {
+            match self {
+                Self::WithFileTypes(v) => v.clear(),
+                Self::Buffers(v) => v.clear(),
+                Self::Files(v) => v.clear(),
+            }
         }
         fn reserve_exact(&mut self, n: usize) {
             match self {

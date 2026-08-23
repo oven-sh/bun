@@ -554,7 +554,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
 
     // The URL outlives the process: the debugger struct stores `'static` slices
     // (CLI-arena lifetimes), so leak the runtime-provided URL the same way.
-    let url_bytes: &'static [u8] = Box::leak(url.to_utf8_bytes().into_boxed_slice());
+    let url_bytes: &'static [u8] = Box::leak(url.to_owned_slice().into_boxed_slice());
     this.as_mut().debugger = Some(Box::new(Debugger {
         path_or_port: Some(url_bytes),
         wait_for_connection: if wait_for_connection {

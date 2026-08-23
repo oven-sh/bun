@@ -294,7 +294,7 @@ impl JSGlobalObject {
             debug_assert!(self.has_exception());
             return JsError::Thrown;
         }
-        let name_value = match BunString::static_str("TODOError").to_js(self) {
+        let name_value = match BunString::static_("TODOError").to_js(self) {
             Ok(v) => v,
             Err(_) => return JsError::Thrown,
         };
@@ -732,7 +732,7 @@ impl JSGlobalObject {
         // there are no interpolated args — fast path for constant messages.
         if let Some(fmt) = args.as_str() {
             if strings::is_all_ascii(fmt.as_bytes()) {
-                return BunString::static_str(fmt).to_error_instance(self);
+                return BunString::static_(fmt).to_error_instance(self);
             } else {
                 return ZigString::init_utf8(fmt.as_bytes()).to_error_instance(self);
             }
@@ -1448,21 +1448,21 @@ unsafe extern "C" fn Zig__GlobalObject__resolve(
 ) {
     crate::mark_binding();
     // SAFETY: C++ passes valid non-null pointers; the caller keeps ownership
-    // of `specifier`/`source`.
-    let (global, specifier, source) = unsafe { (&*global, &*specifier, &*source) };
-    // SAFETY: C++ passes valid non-null pointers.
-    let (res, query) = unsafe { (&mut *res, &mut *query) };
-    if VirtualMachine::resolve(
-        res,
+    // of `specifier`/`source`; `res`/`query` are initialized out-params.
+    let (global, specifier, source, res, query) =
+        unsafe { (&*global, &*specifier, &*source, &mut *res, &mut *query) };
+    match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         global,
         specifier,
         source,
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
-    )
-    .is_err()
-    {
-        debug_assert!(global.has_exception());
+    ) {
+        Ok(Ok(path)) => *res = ErrorableString::ok(path),
+        Ok(Err(value)) => {
+            *res = ErrorableString::err(crate::ErrorCode(crate::ErrorCode::JS_ERROR_OBJECT), value)
+        }
+        Err(_) => debug_assert!(global.has_exception()),
     }
 }
 

@@ -414,7 +414,7 @@ impl Interpreter {
         arena: &'a bun_alloc::Arena,
         src: &'a [u8],
         jsobjs: &'a mut [crate::jsc::JSValue],
-        jsstrings_to_escape: &'a mut [bun_core::String],
+        jsstrings_to_escape: &'a [bun_core::String],
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
@@ -691,7 +691,7 @@ impl Interpreter {
                 arena,
                 src,
                 &mut [],
-                &mut [],
+                &[],
                 &mut out_parser,
                 &mut out_lex_result,
             ) {

@@ -541,13 +541,11 @@ impl AnyRoute {
         let Some(path_js) = argument.get(init_ctx.global, b"path")? else {
             return Ok(None);
         };
-        let mut path_string = BunString::from_js(path_js, init_ctx.global)?;
         let mut path = Node::PathOrFileDescriptor::Path(Node::PathLike::from_bun_string(
             init_ctx.global,
-            &mut path_string,
+            BunString::from_js(path_js, init_ctx.global)?,
             false,
         )?);
-        drop(path_string);
 
         // Construct the route by stripping paths above the root.
         //

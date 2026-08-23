@@ -115,6 +115,9 @@ impl Default for Bytecode {
 
 impl Bytecode {
     pub fn borrowed(bytes: &[u8]) -> Self {
+        if bytes.is_empty() {
+            return Self::default();
+        }
         Self {
             ptr: bytes.as_ptr().cast_mut(),
             len: bytes.len(),
@@ -122,15 +125,15 @@ impl Bytecode {
         }
     }
     pub fn owned(bytes: Box<[u8]>) -> Self {
+        if bytes.is_empty() {
+            return Self::default();
+        }
         let len = bytes.len();
         Self {
             ptr: bun_core::heap::into_raw(bytes).cast::<u8>(),
             len,
             owned: true,
         }
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
 }
 

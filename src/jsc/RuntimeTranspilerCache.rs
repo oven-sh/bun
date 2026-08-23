@@ -223,30 +223,10 @@ impl Metadata {
 // against the hand-summed constant drifting from the field list.
 const _: () = assert!(Metadata::SIZE == 4 + 1 + 1 + 12 * 8);
 
-pub enum OutputCode {
-    Utf8(Box<[u8]>),
-    String(BunString),
-}
-
-impl Default for OutputCode {
-    fn default() -> Self {
-        OutputCode::Utf8(Box::default())
-    }
-}
-
-impl OutputCode {
-    pub fn byte_slice(&self) -> &[u8] {
-        match self {
-            OutputCode::Utf8(b) => b,
-            OutputCode::String(s) => s.byte_slice(),
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct Entry {
     pub metadata: Metadata,
-    pub output_code: OutputCode,
+    pub output_code: BunString,
     pub sourcemap: Box<[u8]>,
     pub esm_record: Box<[u8]>,
 }
@@ -412,12 +392,12 @@ impl Entry {
         }
 
         debug_assert!(
-            matches!(&self.output_code, OutputCode::Utf8(b) if b.is_empty()),
+            self.output_code.is_empty(),
             "this should be the default value"
         );
 
         self.output_code = if self.metadata.output_byte_length == 0 {
-            OutputCode::String(BunString::empty())
+            BunString::empty()
         } else {
             match self.metadata.output_encoding {
                 Encoding::UTF8 => {
@@ -458,11 +438,11 @@ impl Entry {
                     if bun_core::strings::is_all_ascii(bytes) {
                         // Fast path: ASCII ⊂ Latin-1, so `scratch` is already
                         // the correct `BunString`.
-                        OutputCode::String(scratch)
+                        scratch
                     } else {
                         // Rare path: real multi-byte UTF-8. Transcode into a
                         // fresh WTF string; the Latin-1 scratch drops.
-                        OutputCode::String(BunString::clone_utf8(bytes))
+                        BunString::clone_utf8(bytes)
                     }
                 }
                 Encoding::LATIN1 => {
@@ -486,7 +466,7 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    OutputCode::String(latin1)
+                    latin1
                 }
                 Encoding::UTF16 => {
                     let char_len = (self.metadata.output_byte_length / 2) as usize;
@@ -513,7 +493,7 @@ impl Entry {
                         }
                     }
 
-                    OutputCode::String(string)
+                    string
                 }
 
                 _ => unreachable!("Unexpected output encoding"),
@@ -768,7 +748,7 @@ impl RuntimeTranspilerCache {
 
         let mut entry = Entry {
             metadata: Metadata::default(),
-            output_code: OutputCode::Utf8(Box::default()),
+            output_code: BunString::empty(),
             sourcemap: Box::default(),
             esm_record: Box::default(),
         };

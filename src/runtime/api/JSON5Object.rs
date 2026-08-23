@@ -408,11 +408,7 @@ impl Stringifier {
             }
             Space::Str(space_str) => {
                 self.builder.append_lchar(b'\n');
-                let clamped = if space_str.length() > 10 {
-                    space_str.substring_with_len(0, 10)
-                } else {
-                    bun_core::StringView::new(space_str)
-                };
+                let clamped = space_str.trunc(10);
                 for _ in 0..self.indent {
                     self.builder.append_string(&clamped);
                 }

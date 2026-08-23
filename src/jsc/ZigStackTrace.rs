@@ -29,6 +29,14 @@ pub struct ZigStackTrace {
     pub(crate) referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
+impl Drop for ZigStackTrace {
+    fn drop(&mut self) {
+        if let Some(source) = self.referenced_source_provider.take() {
+            SourceProvider::opaque_mut(source.as_ptr()).deref();
+        }
+    }
+}
+
 impl ZigStackTrace {
     pub fn from_frames(frames_slice: &mut [ZigStackFrame]) -> ZigStackTrace {
         ZigStackTrace {

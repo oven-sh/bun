@@ -81,7 +81,7 @@ const _: () = {
 /// `finalize`, so stay plain.
 #[repr(C)]
 pub struct Request {
-    pub(crate) url: bun_core::StringCell,
+    pub(crate) url: bun_ptr::JsCell<bun_core::String>,
 
     headers: JsCell<Option<HeadersRef>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
@@ -421,7 +421,7 @@ impl Request {
         method: Method,
     ) -> Request {
         Request {
-            url: bun_core::StringCell::new(url),
+            url: bun_ptr::JsCell::new(url),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -931,7 +931,7 @@ impl Request {
                         self.url.set(BunString::clone_utf8(&temp_url));
                     }
 
-                    let href = bun_url::href_from_string(&self.url.get());
+                    let href = bun_url::href_from_string(self.url.get());
                     // TODO: what is the right thing to do for invalid URLS?
                     if !href.is_empty() {
                         self.url.set(href);
@@ -985,7 +985,7 @@ impl Request {
         // (the +1) is moved into `req.body` next.
         let body_seed_ptr = body.as_ptr();
         let mut req = Request {
-            url: bun_core::StringCell::new(BunString::empty()),
+            url: bun_ptr::JsCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -1415,7 +1415,7 @@ impl Request {
             ))));
         }
 
-        let href = bun_url::href_from_string(&req.url.get());
+        let href = bun_url::href_from_string(req.url.get());
         if href.is_empty() {
             if !global_this.has_exception() {
                 // globalThis.throw can cause GC, which could cause the above string to be freed.
@@ -1514,7 +1514,7 @@ impl Request {
         let url = if preserve_url {
             req.url.take()
         } else {
-            self.url.get().to_owned()
+            self.url.get().clone()
         };
 
         // `ptr::write` is a raw bit-overwrite — no destructors run on the old
@@ -1531,7 +1531,7 @@ impl Request {
             core::ptr::write(
                 req,
                 Request {
-                    url: bun_core::StringCell::new(url),
+                    url: bun_ptr::JsCell::new(url),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
@@ -1557,7 +1557,7 @@ impl Request {
         // `clone_into` `ptr::write`s the new fields over the seed
         // without reading or dropping it.
         let mut req = Box::new(Request {
-            url: bun_core::StringCell::new(BunString::empty()),
+            url: bun_ptr::JsCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
@@ -1589,7 +1589,7 @@ impl Request {
         body: BodyHiveHandle,
     ) -> Request {
         Request {
-            url: bun_core::StringCell::new(BunString::empty()),
+            url: bun_ptr::JsCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),

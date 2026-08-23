@@ -36,16 +36,6 @@ impl<T> Errorable<T> {
         }
     }
 
-    pub fn value(&self) -> Option<&T> {
-        // SAFETY: success == true implies the `value` arm is active.
-        self.success.then(|| unsafe { &*self.result.value })
-    }
-
-    pub fn value_mut(&mut self) -> Option<&mut T> {
-        // SAFETY: success == true implies the `value` arm is active.
-        self.success.then(|| unsafe { &mut *self.result.value })
-    }
-
     pub fn ok(val: T) -> Self {
         Self {
             result: Result {

@@ -36,7 +36,7 @@ use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
-    Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
+    Entry as CacheEntry, ModuleType as CacheModuleType,
     RuntimeTranspilerCache as JscRuntimeTranspilerCache,
 };
 use crate::strong::Optional as StrongOptional;
@@ -525,20 +525,16 @@ impl TranspilerJob {
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
-        let mut resolved_source = core::mem::take(&mut self.resolved_source);
-        let specifier = 'brk: {
-            if self.parse_error.is_some() {
-                break 'brk String::clone_utf8(self.path.text);
+        let (specifier, result) = match self.parse_error {
+            Some(e) => (String::clone_utf8(self.path.text), Err(e)),
+            None => {
+                let mut resolved_source = core::mem::take(&mut self.resolved_source);
+                let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
+                debug_assert!(resolved_source.source_url.is_empty());
+                resolved_source.source_url = create_if_different(&out, self.path.text);
+                (out, Ok(resolved_source))
             }
-
-            let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
-
-            debug_assert!(resolved_source.source_url.is_empty());
-            resolved_source.source_url = create_if_different(&out, self.path.text);
-            break 'brk out;
         };
-
-        let parse_error = self.parse_error;
 
         self.promise.deinit();
         self.reset_for_pool();
@@ -554,8 +550,7 @@ impl TranspilerJob {
         AsyncModule::fulfill(
             &global_this,
             promise,
-            resolved_source,
-            parse_error,
+            result,
             &specifier,
             &referrer,
             &mut log,
@@ -971,10 +966,7 @@ impl TranspilerJob {
             };
 
             self.resolved_source = ResolvedSource {
-                source_code: match &mut entry.output_code {
-                    OutputCode::String(s) => core::mem::take(s),
-                    OutputCode::Utf8(utf8) => String::clone_utf8(&core::mem::take(utf8)),
-                },
+                source_code: core::mem::take(&mut entry.output_code),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
                 module_info: module_info.into(),
                 tag: this_tag,
@@ -988,9 +980,7 @@ impl TranspilerJob {
             let already_bundled = core::mem::take(&mut parse_result.already_bundled);
             let is_commonjs_module = already_bundled.is_common_js();
             let bytecode_cache = match already_bundled {
-                AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes)
-                    if !bytes.is_empty() =>
-                {
+                AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
                     crate::resolved_source::Bytecode::owned(bytes)
                 }
                 _ => Default::default(),

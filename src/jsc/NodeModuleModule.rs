@@ -1,5 +1,5 @@
 use crate::{
-    self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
+    self as jsc, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
     VirtualMachineRef as VirtualMachine,
 };
 use bun_ast::Loader;
@@ -90,16 +90,14 @@ fn find_path_inner(
     cur_path: &BunString,
     global: &JSGlobalObject,
 ) -> JsResult<Option<BunString>> {
-    let mut errorable = ErrorableString::err(crate::ErrorCode(0), JSValue::ZERO);
-    VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
-        &mut errorable,
+    Ok(VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         global,
         request,
         cur_path,
         None,
         crate::virtual_machine::ResolveMode::RequireResolve,
-    )?;
-    Ok(errorable.unwrap().ok())
+    )?
+    .ok())
 }
 
 pub fn stat(path: &[u8]) -> i32 {

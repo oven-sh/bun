@@ -64,74 +64,54 @@ pub struct ScopeFunctions {
     pub(crate) each: JSValue,
 }
 
-pub(crate) mod strings {
-    #[allow(non_snake_case)] #[inline] pub(crate) fn DESCRIBE() -> &'static str { "describe" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn XDESCRIBE() -> &'static str { "xdescribe" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn TEST() -> &'static str { "test" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn XTEST() -> &'static str { "xtest" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP() -> &'static str { "skip" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO() -> &'static str { "todo" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING() -> &'static str { "failing" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT() -> &'static str { "concurrent" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL() -> &'static str { "serial" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn ONLY() -> &'static str { "only" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn IF() -> &'static str { "if" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP_IF() -> &'static str { "skipIf" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO_IF() -> &'static str { "todoIf" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING_IF() -> &'static str { "failingIf" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT_IF() -> &'static str { "concurrentIf" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL_IF() -> &'static str { "serialIf" }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn EACH() -> &'static str { "each" }
-}
-
 impl ScopeFunctions {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", strings::SKIP())
+        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", "skip")
     }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_todo(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", strings::TODO())
+        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", "todo")
     }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_failing(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", strings::FAILING())
+        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", "failing")
     }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", strings::CONCURRENT())
+        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", "concurrent")
     }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_serial(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", strings::SERIAL())
+        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", "serial")
     }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", strings::ONLY())
+        this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", "only")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, strings::IF())
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, "if")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, strings::SKIP_IF())
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, "skipIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, strings::TODO_IF())
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, "todoIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, strings::FAILING_IF())
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, "failingIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, strings::CONCURRENT_IF())
+        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, "concurrentIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, strings::SERIAL_IF())
+        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, "serialIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -146,7 +126,7 @@ impl ScopeFunctions {
         if !this.each.is_empty() {
             return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
         }
-        create_bound(global, this.mode, array, this.cfg, strings::EACH())
+        create_bound(global, this.mode, array, this.cfg, "each")
     }
 }
 
@@ -225,7 +205,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 };
 
                 let bound = if let Some(cb) = args.callback {
-                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_str("cb"), 0.0, args_list.as_slice())?)
+                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_("cb"), 0.0, args_list.as_slice())?)
                 } else {
                     None
                 };
@@ -798,7 +778,7 @@ fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.
     let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
-    let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_str(name), 1.0, &[])?;
+    let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)
 }

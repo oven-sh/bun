@@ -4088,32 +4088,34 @@ pub(crate) mod http_server_agent {
                 .map_err(|_| bun_alloc::AllocError)?;
             for user_route in &s.user_routes {
                 max_id = max_id.max(user_route.id);
-                let mut route = Route::default();
-                route.route_id = user_route.id as i32;
-                route.path = BunString::init(user_route.route.path.as_bytes());
-                route.r#type = RouteType::Api;
-                routes.push(route);
+                routes.push(Route {
+                    route_id: user_route.id as i32,
+                    path: BunString::init(user_route.route.path.as_bytes()),
+                    r#type: RouteType::Api,
+                    ..Default::default()
+                });
             }
         });
 
         for entry in &config.static_routes {
             max_id += 1;
-            let mut route = Route::default();
-            route.route_id = max_id as i32;
-            route.path = BunString::init(&*entry.path);
-            route.r#type = match &entry.route {
-                AnyRoute::Html(_) => RouteType::Html,
-                AnyRoute::Static(_) => RouteType::Static,
-                _ => RouteType::Default,
-            };
-            route.file_path = match &entry.route {
-                // SAFETY: RefPtr.data is a live NonNull while held in the
-                // route table; `.bundle` (IntrusiveRc) derefs to the live
-                // HTMLBundle whose `path` outlives this borrow.
-                AnyRoute::Html(r) => BunString::init(&*r.data().bundle.path),
-                _ => BunString::EMPTY,
-            };
-            routes.push(route);
+            routes.push(Route {
+                route_id: max_id as i32,
+                path: BunString::init(&*entry.path),
+                r#type: match &entry.route {
+                    AnyRoute::Html(_) => RouteType::Html,
+                    AnyRoute::Static(_) => RouteType::Static,
+                    _ => RouteType::Default,
+                },
+                file_path: match &entry.route {
+                    // SAFETY: RefPtr.data is a live NonNull while held in the
+                    // route table; `.bundle` (IntrusiveRc) derefs to the live
+                    // HTMLBundle whose `path` outlives this borrow.
+                    AnyRoute::Html(r) => BunString::init(&*r.data().bundle.path),
+                    _ => BunString::EMPTY,
+                },
+                ..Default::default()
+            });
         }
 
         InspectorHTTPServerAgent::notify_server_routes_updated(

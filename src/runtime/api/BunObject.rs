@@ -76,8 +76,8 @@ use std::io::Write as _;
 
 use bun_core::Output;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, ConsoleObject, ErrorableString, JSFunction,
-    JSGlobalObject, JSObject, JSPromise, JSValue, JsResult,
+    self as jsc, ArrayBuffer, CallFrame, ConsoleObject, JSFunction, JSGlobalObject, JSObject,
+    JSPromise, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
@@ -1152,7 +1152,6 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     from: &BunString,
     mode: ResolveMode,
 ) -> JsResult<Resolved> {
-    let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
     let mut query_string = BunString::empty();
 
     let decoded_specifier;
@@ -1163,25 +1162,20 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         specifier
     };
 
-    VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
-        &mut errorable,
+    let result_value = match VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
         ctx,
         specifier_for_resolve,
         from,
         Some(&mut query_string),
         mode,
-    )?;
-
-    if !errorable.success {
-        // SAFETY: !success → `err` arm of the #[repr(C)] union is active.
-        let err = unsafe { errorable.result.err }.value;
-        if err.as_class_ref::<jsc::ResolveMessage>().is_some() {
+    )? {
+        Ok(path) => path,
+        Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
             return Ok(Resolved::NotFound(err));
         }
         // e.g. an onResolve plugin returned an invalid result
-        return Err(ctx.throw_value(err));
-    }
-    let result_value = errorable.unwrap().expect("checked success above");
+        Err(err) => return Err(ctx.throw_value(err)),
+    };
 
     if !query_string.is_empty() {
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
@@ -1954,7 +1948,7 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         let blob = Blob::new(input_blob.dupe_with_content_type(true));
         // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set(input_blob.name.get().to_owned()) };
+        unsafe { (*blob).name.set(input_blob.name.get().clone()) };
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
         array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
     }

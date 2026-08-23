@@ -123,7 +123,7 @@ impl AnchorAlias {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
                 ValueOrigin::PropValue(prop_name) => AnchorAliasName::PropValue {
-                    prop_name: prop_name.to_owned(),
+                    prop_name: (*prop_name).clone(),
                     counter: 0,
                 },
             },
@@ -588,11 +588,7 @@ impl Stringifier {
             Space::Str(space_str) => {
                 self.builder.append_lchar(b'\n');
 
-                let clamped = if space_str.length() > 10 {
-                    space_str.substring_with_len(0, 10)
-                } else {
-                    bun_core::StringView::new(space_str)
-                };
+                let clamped = space_str.trunc(10);
 
                 self.builder
                     .ensure_unused_capacity(indent_count * clamped.length());

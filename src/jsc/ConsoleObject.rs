@@ -777,7 +777,7 @@ impl<'a> TablePrinter<'a> {
 
                         // The column outlives the iterator that lends `col_key`.
                         columns.push(Column {
-                            name: col_key.to_owned(),
+                            name: (*col_key).clone(),
                             width: 1,
                         });
                         break 'brk columns.len() - 1;

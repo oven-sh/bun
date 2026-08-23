@@ -91,7 +91,7 @@ let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
 let s = String::static_(b"literal");       // 'static slice, never freed
 
 let utf8: ZigStringSlice = s.to_utf8();    // ref-holding view; falls back to allocating a copy
-let owned: Vec<u8>       = s.to_utf8_bytes();
+let owned: Vec<u8>       = s.to_owned_slice();
 ```
 
 To/from JS values, use the `bun_jsc::StringJsc` extension trait:

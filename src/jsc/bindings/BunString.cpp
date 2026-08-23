@@ -165,11 +165,6 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     UNREACHABLE();
 }
 
-BunString toString(const char* bytes, size_t length)
-{
-    return BunString__fromBytes(bytes, length);
-}
-
 extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toThreadSafe(BunString* str)
 {
     if (str->tag == BunStringTag::WTFStringImpl) {

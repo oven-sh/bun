@@ -246,7 +246,7 @@ pub trait BlobExt {
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_mime_type_or_content_type(&self) -> Option<MimeType>;
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue;
-    fn get_name_string(&self) -> Option<bun_core::StringView<'_>>;
+    fn get_name_string(&self) -> Option<&BunString>;
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue>;
     fn set_name(
         &self,
@@ -1110,8 +1110,7 @@ impl BlobExt for Blob {
                         writer,
                         ENABLE_ANSI_COLORS,
                         "name<d>:<r> <green>\"{f}\"<r>",
-                        self.get_name_string()
-                            .unwrap_or(bun_core::StringView::EMPTY),
+                        self.get_name_string().unwrap_or(&BunString::EMPTY),
                     )?;
                     if !self.content_type_slice().is_empty()
                         || self.offset.get() > 0
@@ -2033,7 +2032,7 @@ impl BlobExt for Blob {
         JscZigString::EMPTY.to_js(global_this)
     }
 
-    fn get_name_string(&self) -> Option<bun_core::StringView<'_>> {
+    fn get_name_string(&self) -> Option<&BunString> {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
@@ -2065,7 +2064,6 @@ impl BlobExt for Blob {
             return Ok(());
         }
         if value.is_string() {
-            self.name.set(BunString::empty());
             self.name.set(BunString::from_js(value, global_this)?);
             bun_jsc::generated::JSBlob::name_set_cached(js_this, global_this, value);
         }

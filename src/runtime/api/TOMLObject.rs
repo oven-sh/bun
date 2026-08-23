@@ -413,7 +413,8 @@ impl Stringifier {
         self.builder
             .append_latin1(if array_of_tables { b"[[" } else { b"[" });
         for (i, seg) in self.path.iter().enumerate() {
-            let seg = BunString::from_raw_ref(seg);
+            // SAFETY: pushed/popped within the lending property iterator's loop body.
+            let seg = &*unsafe { bun_core::StringView::from_raw(*seg) };
             if i > 0 {
                 self.builder.append_lchar(b'.');
             }
@@ -555,7 +556,7 @@ impl Stringifier {
     // ── errors ─────────────────────────────────────────────────────────────
 
     fn err_null_value(&mut self, global: &JSGlobalObject, key: &BunString) -> StringifyError {
-        let key_utf8 = key.to_utf8_bytes();
+        let key_utf8 = key.to_owned_slice();
         global
             .throw(format_args!(
                 "TOML cannot represent null (key '{}'); remove the key or use a sentinel value",

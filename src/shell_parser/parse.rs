@@ -2221,7 +2221,7 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
 
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
-    pub(crate) string_refs: &'bump mut [BunString],
+    pub(crate) string_refs: &'bump [BunString],
 
     /// Number of JS object references expected (for bounds validation)
     pub(crate) jsobjs_len: u32,
@@ -2231,7 +2231,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     pub fn new(
         bump: &'bump Bump,
         src: &'bump [u8],
-        strings_to_escape: &'bump mut [BunString],
+        strings_to_escape: &'bump [BunString],
         jsobjs_len: u32,
     ) -> Self {
         Self {
@@ -2292,7 +2292,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             delimit_quote: false,
             // reshaped for borrowck — move the exclusive borrow into the sublexer
             // and restore it in continue_from_sublexer (avoids aliased &mut).
-            string_refs: core::mem::take(&mut self.string_refs),
+            string_refs: self.string_refs,
             jsobjs_len: self.jsobjs_len,
         };
         sublexer.chars.state = CharState::Normal;
@@ -2314,7 +2314,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.word_start = sublexer.word_start;
         self.j = sublexer.j;
         self.delimit_quote = sublexer.delimit_quote;
-        self.string_refs = core::mem::take(&mut sublexer.string_refs);
     }
 
     fn make_snapshot(&self) -> BacktrackSnapshot<'bump, ENCODING> {
@@ -2411,7 +2410,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 if self.looks_like_js_string_ref() {
                     if let Some(bunstr) = self.eat_js_string_ref() {
                         self.break_word(AddDelimiter::No)?;
-                        self.handle_js_string_ref(&bunstr)?;
+                        self.handle_js_string_ref(bunstr)?;
                         continue;
                     }
                 } else if self.looks_like_js_obj_ref() {
@@ -3370,17 +3369,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         None
     }
 
-    fn eat_js_string_ref(&mut self) -> Option<bun_core::StringView<'bump>> {
+    fn eat_js_string_ref(&mut self) -> Option<&'bump BunString> {
         if let Some(idx) = self.eat_js_substitution_idx(
             LEX_JS_STRING_PREFIX,
             "JS string ref",
             Self::validate_js_string_ref_idx,
         ) {
-            // SAFETY: `string_refs` is `&'bump [String]`; elements are neither
-            // moved nor dropped for `'bump`.
-            return Some(unsafe {
-                bun_core::StringView::from_raw(*self.string_refs[idx].as_raw())
-            });
+            return Some(&self.string_refs[idx]);
         }
         None
     }

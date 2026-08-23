@@ -1,5 +1,4 @@
 use core::ffi::{c_int, c_void};
-use core::mem::MaybeUninit;
 use core::ptr;
 
 use crate::exception_list;
@@ -87,10 +86,7 @@ pub struct Holder {
     pub(crate) source_line_numbers: [i32; Self::SOURCE_LINES_COUNT],
     pub(crate) source_lines: [String; Self::SOURCE_LINES_COUNT],
     pub(crate) frames: [ZigStackFrame; Self::FRAME_COUNT],
-    pub(crate) loaded: bool,
-    // Never read until `loaded` flips and `zig_exception()` writes it;
-    // all access must be gated on `loaded`.
-    pub(crate) zig_exception: MaybeUninit<ZigException>,
+    pub(crate) zig_exception: Option<ZigException>,
     pub(crate) need_to_clear_parser_arena_on_deinit: bool,
 }
 
@@ -103,8 +99,7 @@ impl Holder {
             frames: core::array::from_fn(|_| ZigStackFrame::ZERO),
             source_line_numbers: [-1; Self::SOURCE_LINES_COUNT],
             source_lines: core::array::from_fn(|_| String::EMPTY),
-            zig_exception: MaybeUninit::uninit(),
-            loaded: false,
+            zig_exception: None,
             need_to_clear_parser_arena_on_deinit: false,
         }
     }
@@ -115,58 +110,36 @@ impl Holder {
 
     /// `Drop` releases the strings; this additionally resets the parser arena,
     /// which needs `vm`.
-    pub(crate) fn deinit(mut self, vm: &mut VirtualMachine) {
-        if core::mem::take(&mut self.need_to_clear_parser_arena_on_deinit) {
+    pub(crate) fn deinit(self, vm: &mut VirtualMachine) {
+        if self.need_to_clear_parser_arena_on_deinit {
             ModuleLoader::reset_arena(vm);
         }
     }
 
     pub fn zig_exception(&mut self) -> &mut ZigException {
-        if !self.loaded {
-            self.zig_exception.write(ZigException {
-                r#type: JSErrorCode(255),
-                runtime_type: JSRuntimeType::NOTHING,
-                name: String::EMPTY,
-                message: String::EMPTY,
-                exception: ptr::null_mut(),
-                stack: ZigStackTrace {
-                    source_lines_ptr: self.source_lines.as_mut_ptr(),
-                    source_lines_numbers: self.source_line_numbers.as_mut_ptr(),
-                    source_lines_len: Self::SOURCE_LINES_COUNT as u8,
-                    source_lines_to_collect: Self::SOURCE_LINES_COUNT as u8,
-                    frames_ptr: self.frames.as_mut_ptr(),
-                    frames_len: 0,
-                    frames_cap: Self::FRAME_COUNT as u8,
-                    referenced_source_provider: None,
-                },
-                errno: 0,
-                syscall: String::EMPTY,
-                system_code: String::EMPTY,
-                path: String::EMPTY,
-                remapped: false,
-                fd: -1,
-                browser_url: String::EMPTY,
-            });
-            self.loaded = true;
-        }
-
-        // SAFETY: either the branch above just wrote it, or `loaded` was already
-        // true from a prior call that wrote it.
-        unsafe { self.zig_exception.assume_init_mut() }
-    }
-}
-
-impl Drop for Holder {
-    fn drop(&mut self) {
-        if self.loaded {
-            // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
-            // `source_lines`/`frames` are fields and drop after this.
-            let exception = unsafe { self.zig_exception.assume_init_mut() };
-            if let Some(source) = exception.stack.referenced_source_provider.take() {
-                crate::SourceProvider::opaque_mut(source.as_ptr()).deref();
-            }
-            // SAFETY: as above; not read again.
-            unsafe { self.zig_exception.assume_init_drop() };
-        }
+        self.zig_exception.get_or_insert_with(|| ZigException {
+            r#type: JSErrorCode(255),
+            runtime_type: JSRuntimeType::NOTHING,
+            name: String::EMPTY,
+            message: String::EMPTY,
+            exception: ptr::null_mut(),
+            stack: ZigStackTrace {
+                source_lines_ptr: self.source_lines.as_mut_ptr(),
+                source_lines_numbers: self.source_line_numbers.as_mut_ptr(),
+                source_lines_len: Self::SOURCE_LINES_COUNT as u8,
+                source_lines_to_collect: Self::SOURCE_LINES_COUNT as u8,
+                frames_ptr: self.frames.as_mut_ptr(),
+                frames_len: 0,
+                frames_cap: Self::FRAME_COUNT as u8,
+                referenced_source_provider: None,
+            },
+            errno: 0,
+            syscall: String::EMPTY,
+            system_code: String::EMPTY,
+            path: String::EMPTY,
+            remapped: false,
+            fd: -1,
+            browser_url: String::EMPTY,
+        })
     }
 }

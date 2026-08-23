@@ -28,7 +28,7 @@ use core::ptr;
 
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{
-    ArenaResetGuard, FetchBuiltinResult, FetchFlags, LoaderHooks, TranspileArgs, TranspileExtra,
+    ArenaResetGuard, FetchFlags, LoaderHooks, TranspileArgs, TranspileExtra,
 };
 use bun_jsc::resolved_source::{Bytecode, ModuleInfo};
 use bun_jsc::virtual_machine::{
@@ -2184,15 +2184,7 @@ fn console_print_runtime_object_inner<const C: bool>(
 // LoaderHooks bodies
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `clone_utf8(other)` unless `other` is
-/// byte-equal to `s`, in which case bump `s`'s refcount instead.
-#[inline]
-fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
-    if s.eql_utf8(other) {
-        return s.clone();
-    }
-    bun_core::String::clone_utf8(other)
-}
+use bun_jsc::virtual_machine::create_if_different;
 
 fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
     match err {
@@ -2238,49 +2230,12 @@ fn note_compile_cache_parse_failure(
 unsafe fn transpile_source_code(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
-    ret: *mut ErrorableResolvedSource,
-) -> bool {
-    // ── Recover (path, loader, module_type, printer) ────────────────────────
-    // The §Dispatch shim packs
-    // them into `args.extra`. When null (low-tier `Bun__*` shim entry), the
-    // hook recomputes from `specifier` — that path is owned by `transpile_file`
-    // and not exercised here, so a null `extra` is a hard error.
+) -> Result<ResolvedSource, bun_jsc::CrateError> {
+    // The §Dispatch shim packs (path, loader, module_type, printer) into
+    // `args.extra`; only `transpile_file` enters with it null.
     let extra = args.extra.cast::<TranspileExtra>();
-    if extra.is_null() {
-        // SAFETY: per fn contract — `ret` is a valid out-param.
-        unsafe {
-            *ret = ErrorableResolvedSource::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                JSValue::UNDEFINED,
-            );
-        }
-        return false;
-    }
-    match transpile_source_code_inner(jsc_vm, args, extra) {
-        Ok(resolved) => {
-            // SAFETY: per fn contract.
-            unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
-            // Note: spec calls `resetArena` only on the `Bun__transpileFile`
-            // path, never inside `transpileSourceCode` itself — the
-            // `transpile_file` hook owns that. Do NOT reset here.
-            true
-        }
-        Err(_) => {
-            // Note: on `error.ParseError` /
-            // `error.AsyncModule` the caller (`Bun__transpileFile`) catches and
-            // routes through `process_fetch_log`. Mirror that: write `.err` so the
-            // low tier surfaces it; `process_fetch_log` is invoked by the
-            // `transpile_file` hook, not here.
-            // SAFETY: per fn contract.
-            unsafe {
-                *ret = ErrorableResolvedSource::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    JSValue::UNDEFINED,
-                )
-            };
-            false
-        }
-    }
+    debug_assert!(!extra.is_null());
+    transpile_source_code_inner(jsc_vm, args, extra).map_err(|e| to_jsc_fetch_error(&e))
 }
 
 /// Inner body of [`transpile_source_code`] — split for `?`-on-`Result` error
@@ -2320,7 +2275,6 @@ fn transpile_source_code_inner(
             ))
     {
         return Ok(ResolvedSource {
-            source_code: bun_core::String::empty(),
             source_url: create_if_different(input_specifier, path.text),
             ..Default::default()
         });
@@ -2958,9 +2912,7 @@ fn transpile_source_code_inner(
                     let already_bundled = core::mem::take(&mut parse_result.already_bundled);
                     let is_commonjs_module = already_bundled.is_common_js();
                     let bytecode_cache = match already_bundled {
-                        AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes)
-                            if !bytes.is_empty() =>
-                        {
+                        AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
                             Bytecode::owned(bytes)
                         }
                         _ => Bytecode::default(),
@@ -2996,7 +2948,7 @@ fn transpile_source_code_inner(
                 // `JSC_PARSER_CACHE_VTABLE.get`.
                 if let Some(entry_ptr) = cache.entry.take() {
                     use bun_jsc::runtime_transpiler_cache::{
-                        Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
+                        Entry as CacheEntry, ModuleType as CacheModuleType,
                     };
                     // SAFETY: `entry_ptr` was produced by `heap::into_raw(Box<CacheEntry>)`
                     // in `JSC_PARSER_CACHE_VTABLE.get`; sole owner.
@@ -3035,7 +2987,7 @@ fn transpile_source_code_inner(
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                         && source.path.is_file()
                         && loader.is_java_script_like()
-                        && !matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16())
+                        && !entry.output_code.is_utf16()
                     {
                         bun_jsc::node_compile_cache::fetch(
                             source.path.text,
@@ -3045,12 +2997,7 @@ fn transpile_source_code_inner(
                     } else {
                         None
                     };
-                    let source_code = match &mut entry.output_code {
-                        OutputCode::String(s) => core::mem::take(s),
-                        OutputCode::Utf8(utf8) => {
-                            bun_core::String::clone_utf8(&core::mem::take(utf8))
-                        }
-                    };
+                    let source_code = core::mem::take(&mut entry.output_code);
                     // When the cached entry was detected as
                     // CJS but lives inside a `"type":"module"` package, emit
                     // `package_json_type_module` so the C++ loader applies the
@@ -3503,7 +3450,6 @@ fn transpile_source_code_inner(
             if disable_transpilying {
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
                 return Ok(ResolvedSource {
-                    source_code: bun_core::String::empty(),
                     source_url: create_if_different(input_specifier, path.text),
                     tag: ResolvedSourceTag::Esm,
                     ..Default::default()
@@ -3531,7 +3477,6 @@ fn transpile_source_code_inner(
             if disable_transpilying {
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
                 return Ok(ResolvedSource {
-                    source_code: bun_core::String::empty(),
                     source_url: create_if_different(input_specifier, path.text),
                     tag: ResolvedSourceTag::Esm,
                     ..Default::default()
@@ -3731,7 +3676,6 @@ export default db;
 fn js_synthetic_module(name: &'static [u8]) -> ResolvedSource {
     use bun_jsc::resolved_source::Tag;
     ResolvedSource {
-        source_code: bun_core::String::empty(),
         source_url: bun_core::String::static_(name),
         tag: Tag::from_name(name),
         ..ResolvedSource::default()
@@ -3854,8 +3798,7 @@ unsafe fn fetch_builtin_module(
     global: *mut JSGlobalObject,
     specifier: &bun_core::String,
     _referrer: &bun_core::String,
-    out: *mut ErrorableResolvedSource,
-) -> FetchBuiltinResult {
+) -> Option<ResolvedSource> {
     // The PHF map keys on `&[u8]`, so transcode once up-front;
     // builtin specifiers are short ASCII so `to_utf8()` is borrow-only in
     // the common case (`ZigStringSlice` drops without freeing).
@@ -3864,28 +3807,17 @@ unsafe fn fetch_builtin_module(
 
     // ── HardcodedModule fast path ───────────────────────────────────────
     if let Some(&hardcoded) = HardcodedModule::MAP.get(spec) {
-        return match get_hardcoded_module(jsc_vm, specifier, hardcoded) {
-            Some(resolved) => {
-                // SAFETY: per fn contract — `out` is a valid out-param.
-                unsafe { *out = ErrorableResolvedSource::ok(resolved) };
-                FetchBuiltinResult::Found
-            }
-            // Recognised builtin but not servable right now → fall through
-            // to filesystem resolution.
-            None => FetchBuiltinResult::NotFound,
-        };
+        // `None` ⇒ recognised builtin but not servable right now → fall
+        // through to filesystem resolution.
+        return get_hardcoded_module(jsc_vm, specifier, hardcoded);
     }
 
     if let Some((name, tag)) = bun_jsc::module_loader::exposed_internal_tag(spec) {
-        let resolved = ResolvedSource {
-            source_code: bun_core::String::empty(),
+        return Some(ResolvedSource {
             source_url: bun_core::String::clone_utf8(&name),
             tag,
             ..ResolvedSource::default()
-        };
-        // SAFETY: per fn contract — `out` is a valid out-param.
-        unsafe { *out = ErrorableResolvedSource::ok(resolved) };
-        return FetchBuiltinResult::Found;
+        });
     }
 
     // ── `macro:` namespace ──────────────────────────────────────────────
@@ -3901,16 +3833,14 @@ unsafe fn fetch_builtin_module(
             // SAFETY: `entry` is the `heap::alloc`d `MacroEntryPoint`
             // inserted by `load_macro_entry_point`; map ownership keeps it
             // alive for the VM lifetime.
-            unsafe {
-                *out = ErrorableResolvedSource::ok(ResolvedSource {
-                    source_code: bun_core::String::clone_utf8(&(*entry).source.contents),
-                    source_url: specifier.clone(),
-                    ..ResolvedSource::default()
-                });
-            }
-            return FetchBuiltinResult::Found;
+            let contents = unsafe { &(*entry).source.contents };
+            return Some(ResolvedSource {
+                source_code: bun_core::String::clone_utf8(contents),
+                source_url: specifier.clone(),
+                ..ResolvedSource::default()
+            });
         }
-        return FetchBuiltinResult::NotFound;
+        return None;
     }
 
     // ── Standalone-module-graph probe ───────────────────────────────────
@@ -3945,15 +3875,11 @@ export const db = new Database(readFileSync(import.meta.path));
 export const __esModule = true;
 export default db;
 ";
-                // SAFETY: per fn contract — `out` is a valid out-param.
-                unsafe {
-                    *out = ErrorableResolvedSource::ok(ResolvedSource {
-                        source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
-                        source_url: specifier.clone(),
-                        ..ResolvedSource::default()
-                    });
-                }
-                return FetchBuiltinResult::Found;
+                return Some(ResolvedSource {
+                    source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
+                    source_url: specifier.clone(),
+                    ..ResolvedSource::default()
+                });
             }
 
             if file.is_text_module() {
@@ -3964,55 +3890,36 @@ export default db;
                 // Only a `Dead` string throws; `to_wtf_string` never yields one.
                 let value = bun_jsc::bun_string_jsc::into_js(file.to_wtf_string(), global)
                     .expect("embedded text module string is never dead");
-                // No `specifier`/`source_url`: the ExportDefaultObject consumers
-                // never read or deref them.
-                // SAFETY: per fn contract — `out` is a valid out-param.
-                unsafe {
-                    *out = ErrorableResolvedSource::ok(ResolvedSource {
-                        jsvalue_for_export: value,
-                        tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
-                        ..ResolvedSource::default()
-                    });
-                }
-                return FetchBuiltinResult::Found;
-            }
-
-            let bytecode_len = file.bytecode.len();
-            let module_info_len = file.module_info.len();
-            // SAFETY: per fn contract — `out` is a valid out-param.
-            // `file.module_info` is a live subrange of the embedded section
-            // (set in `Graph::from_bytes`); `create_from_cached_record`
-            // copies out of it before returning.
-            unsafe {
-                *out = ErrorableResolvedSource::ok(ResolvedSource {
-                    source_code: file.to_wtf_string(),
-                    source_url: specifier.clone(),
-                    bytecode_origin_path: if !file.bytecode_origin_path.is_empty() {
-                        bun_core::String::from_bytes(file.bytecode_origin_path)
-                    } else {
-                        bun_core::String::empty()
-                    },
-                    bytecode_cache: if bytecode_len > 0 {
-                        Bytecode::borrowed(&*file.bytecode)
-                    } else {
-                        Bytecode::default()
-                    },
-                    module_info: if module_info_len > 0 {
-                        bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
-                            ::create_from_cached_record(&*file.module_info)
-                            .into()
-                    } else {
-                        ModuleInfo::default()
-                    },
-                    is_commonjs_module: file.module_format == ModuleFormat::Cjs,
+                return Some(ResolvedSource {
+                    jsvalue_for_export: value,
+                    tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
                     ..ResolvedSource::default()
                 });
             }
-            return FetchBuiltinResult::Found;
+
+            // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
+            // the embedded section (set in `Graph::from_bytes`);
+            // `create_from_cached_record` copies out of it before returning.
+            let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
+            return Some(ResolvedSource {
+                source_code: file.to_wtf_string(),
+                source_url: specifier.clone(),
+                bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
+                bytecode_cache: Bytecode::borrowed(bytecode),
+                module_info: if !module_info.is_empty() {
+                    bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
+                        ::create_from_cached_record(module_info)
+                        .into()
+                } else {
+                    ModuleInfo::default()
+                },
+                is_commonjs_module: file.module_format == ModuleFormat::Cjs,
+                ..ResolvedSource::default()
+            });
         }
     }
 
-    FetchBuiltinResult::NotFound
+    None
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -4463,8 +4370,6 @@ unsafe fn transpile_file(
                     // SAFETY: `ret` is a valid out-param per fn contract.
                     unsafe {
                         *ret = ErrorableResolvedSource::ok(ResolvedSource {
-                            source_code: bun_core::String::empty(),
-                            source_url: bun_core::String::empty(),
                             cjs_custom_extension_index: strong.get(),
                             tag: ResolvedSourceTag::CommonJsCustomExtension,
                             ..Default::default()
@@ -4606,8 +4511,6 @@ unsafe fn transpile_file(
                                 // contract.
                                 unsafe {
                                     *ret = ErrorableResolvedSource::ok(ResolvedSource {
-                                        source_code: bun_core::String::empty(),
-                                        source_url: bun_core::String::empty(),
                                         cjs_custom_extension_index: strong.get(),
                                         tag: ResolvedSourceTag::CommonJsCustomExtension,
                                         ..Default::default()
@@ -4729,29 +4632,6 @@ unsafe fn transpile_file(
             );
             ptr::null_mut()
         }
-    }
-}
-
-/// `LoaderHooks::get_hardcoded_module` body — thin adaptor over the local
-/// [`get_hardcoded_module`] that writes through an out-param (the §Dispatch
-/// fn-ptr can't return `Option<ResolvedSource>` by value across the boundary
-/// without naming the high-tier `ResolvedSource` move semantics).
-///
-/// # Safety
-/// `jsc_vm` is the live per-thread VM; `out` is a valid out-param.
-unsafe fn get_hardcoded_module_hook(
-    jsc_vm: *mut VirtualMachine,
-    specifier: &bun_core::String,
-    hardcoded: HardcodedModule,
-    out: *mut ResolvedSource,
-) -> bool {
-    match get_hardcoded_module(jsc_vm, specifier, hardcoded) {
-        Some(resolved) => {
-            // SAFETY: per fn contract — `out` is a valid out-param.
-            unsafe { *out = resolved };
-            true
-        }
-        None => false,
     }
 }
 
@@ -5049,7 +4929,7 @@ unsafe fn resolve_embedded_node_file_hook(
 static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
     transpile_source_code,
     fetch_builtin_module,
-    get_hardcoded_module: get_hardcoded_module_hook,
+    get_hardcoded_module,
     resolve_embedded_node_file: resolve_embedded_node_file_hook,
     transpile_virtual_module,
     transpile_file,

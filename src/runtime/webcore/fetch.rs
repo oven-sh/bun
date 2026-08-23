@@ -532,7 +532,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         if let Some(req) = request_mut!() {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
-            break 'extract_url req.url.get().to_owned();
+            break 'extract_url req.url.get().clone();
         }
 
         if let Some(request_init) = request_init_object {

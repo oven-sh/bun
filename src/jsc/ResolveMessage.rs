@@ -298,7 +298,7 @@ impl ResolveMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_str(b"ResolveMessage").to_js(global)?,
+            bun_core::String::static_(b"ResolveMessage").to_js(global)?,
         );
         object.put(global, b"position", Self::get_position(this, global)?);
         object.put(global, b"message", Self::get_message(this, global)?);

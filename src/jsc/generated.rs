@@ -50,10 +50,6 @@ impl<T: Clone> GenOpt<T> {
     pub fn as_ref(&self) -> Option<&T> {
         self.0.as_ref()
     }
-    #[inline]
-    pub fn take(&mut self) -> Option<T> {
-        self.0.take()
-    }
 }
 
 /// Required-value accessor: `field.get() -> T` (used inside tagged-union arms).

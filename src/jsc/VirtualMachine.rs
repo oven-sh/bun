@@ -17,9 +17,8 @@ use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
-    self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, Exception, JSGlobalObject,
-    JSInternalPromise, JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM,
-    ZigException,
+    self as jsc, ErrorCode, ErrorableResolvedSource, Exception, JSGlobalObject, JSInternalPromise,
+    JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -3421,7 +3420,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 /// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is
 /// byte-equal to `s`, in which case bump `s`'s refcount instead.
 #[inline]
-pub(crate) fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
+pub fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
     if s.eql_utf8(other) {
         return s.clone();
     }
@@ -4122,7 +4121,6 @@ impl VirtualMachine {
         // refCountedString will panic if the code is empty
         if code.is_empty() {
             return ResolvedSource {
-                source_code: bun_core::String::empty(),
                 source_url: create_if_different(specifier, source_url),
                 ..Default::default()
             };
@@ -4229,14 +4227,10 @@ impl VirtualMachine {
         debug_assert!(VirtualMachine::is_loaded());
 
         let global_ptr = core::ptr::NonNull::from(global_object);
-        let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
-        let builtin =
-            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, specifier, referrer, &mut ret);
-        match builtin {
-            ModuleLoader::FetchBuiltinResult::Found | ModuleLoader::FetchBuiltinResult::Errored => {
-                return ret.unwrap().map_err(Into::into);
-            }
-            ModuleLoader::FetchBuiltinResult::NotFound => {}
+        if let Some(resolved) =
+            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, specifier, referrer)
+        {
+            return Ok(resolved);
         }
 
         let specifier_clone = specifier.to_utf8();
@@ -4328,14 +4322,12 @@ impl VirtualMachine {
             flags,
             extra: (&raw mut extra).cast::<c_void>(),
         };
-        let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
-        let ok = ModuleLoader::transpile_source_code(guard.0, &args, &mut ret);
-
-        if !ok && flags == FetchFlags::PrintSource {
+        let result = ModuleLoader::transpile_source_code(guard.0, &args);
+        if result.is_err() && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
         }
         // `blob_to_deinit` drop guard fires here.
-        ret.unwrap().map_err(Into::into)
+        result
     }
 
     /// Dupe `s` into a VM-owned allocation for the `_resolve` fast-paths.
@@ -4537,34 +4529,16 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// Resolves `specifier` relative to `source`, writing the result or error into `res`.
-    pub(crate) fn resolve(
-        res: &mut ErrorableString,
-        global: &JSGlobalObject,
-        specifier: &bun_core::String,
-        source: &bun_core::String,
-        query_string: Option<&mut bun_core::String>,
-        mode: ResolveMode,
-    ) -> JsResult<()> {
-        Self::resolve_maybe_needs_trailing_slash::<true>(
-            res,
-            global,
-            specifier,
-            source,
-            query_string,
-            mode,
-        )
-    }
-
-    /// Module-resolution core: resolves `specifier` relative to `source`, with path-length checks when `IS_A_FILE_PATH`.
+    /// Module-resolution core: resolves `specifier` relative to `source`, with
+    /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(value))` is a
+    /// resolution failure to be thrown/rejected with `value`.
     pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>(
-        res: &mut ErrorableString,
         global: &JSGlobalObject,
         specifier: &bun_core::String,
         source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
-    ) -> JsResult<()> {
+    ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
         // filesystem, so the path-length cap does not apply to them.
@@ -4585,11 +4559,11 @@ impl VirtualMachine {
                 data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
                 ..Default::default()
             };
-            *res = ErrorableString::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
-            );
-            return Ok(());
+            return Ok(Err(crate::ResolveMessage::create(
+                global,
+                &msg,
+                source_utf8.slice(),
+            )?));
         }
 
         let mut result = ResolveFunctionResult::default();
@@ -4616,8 +4590,7 @@ impl VirtualMachine {
                     source,
                     crate::BunPluginTarget::Bun,
                 )? {
-                    *res = resolved_path;
-                    return Ok(());
+                    return Ok(resolved_path);
                 }
             }
         }
@@ -4627,20 +4600,18 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
-            *res = ErrorableString::ok(
+            return Ok(Ok(
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                     specifier.clone()
                 } else {
                     bun_core::String::init(hardcoded.path.as_bytes())
                 },
-            );
-            return Ok(());
+            ));
         }
 
         // Node's `--expose-internals`.
         if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
-            *res = ErrorableString::ok(specifier.clone());
-            return Ok(());
+            return Ok(Ok(specifier.clone()));
         }
 
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
@@ -4734,23 +4705,18 @@ impl VirtualMachine {
                         ..Default::default()
                     }
                 });
-            *res = ErrorableString::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
-            );
-            return Ok(());
+            return Ok(Err(crate::ResolveMessage::create(
+                global,
+                &msg,
+                source_utf8.slice(),
+            )?));
         }
 
         if let Some(query) = query_string {
-            *query = if !result.query_string.is_empty() {
-                bun_core::String::clone_utf8(result.query_string)
-            } else {
-                bun_core::String::empty()
-            };
+            *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        *res = ErrorableString::ok(bun_core::String::clone_utf8(result.path));
-        Ok(())
+        Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
@@ -6828,7 +6794,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     specifier: &bun_core::String,
     importer: &bun_core::String,
     target: crate::BunPluginTarget,
-) -> JsResult<Option<ErrorableString>> {
+) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     use crate::StringJsc as _;
     let empty = bun_core::String::EMPTY;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
@@ -6854,42 +6820,36 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         return Ok(None);
     }
     if !path_value.is_string() {
-        return Ok(Some(ErrorableString::err(
-            ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-            bun_core::String::static_(b"Expected \"path\" to be a string in onResolve plugin")
-                .to_error_instance(global),
-        )));
+        return Ok(Some(Err(bun_core::String::static_(
+            b"Expected \"path\" to be a string in onResolve plugin",
+        )
+        .to_error_instance(global))));
     }
 
     let file_path = path_value.to_bun_string(global)?;
 
     if file_path.length() == 0 {
-        return Ok(Some(ErrorableString::err(
-            ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-            bun_core::String::static_(
-                b"Expected \"path\" to be a non-empty string in onResolve plugin",
-            )
-            .to_error_instance(global),
-        )));
+        return Ok(Some(Err(bun_core::String::static_(
+            b"Expected \"path\" to be a non-empty string in onResolve plugin",
+        )
+        .to_error_instance(global))));
     } else if file_path.eql_comptime(b".")
         || file_path.eql_comptime(b"..")
         || file_path.eql_comptime(b"...")
         || file_path.eql_comptime(b" ")
     {
-        return Ok(Some(ErrorableString::err(
-            ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-            bun_core::String::static_(b"\"path\" is invalid in onResolve plugin")
-                .to_error_instance(global),
-        )));
+        return Ok(Some(Err(bun_core::String::static_(
+            b"\"path\" is invalid in onResolve plugin",
+        )
+        .to_error_instance(global))));
     }
     let user_namespace: bun_core::String = 'brk: {
         if let Some(namespace_value) = on_resolve_plugin.get(global, b"namespace")? {
             if !namespace_value.is_string() {
-                return Ok(Some(ErrorableString::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    bun_core::String::static_(b"Expected \"namespace\" to be a string")
-                        .to_error_instance(global),
-                )));
+                return Ok(Some(Err(bun_core::String::static_(
+                    b"Expected \"namespace\" to be a string",
+                )
+                .to_error_instance(global))));
             }
 
             let namespace_str = namespace_value.to_bun_string(global)?;
@@ -6914,14 +6874,11 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
     // form the module loader dispatches on.
     if user_namespace.eql_comptime(b"file") {
-        return Ok(Some(ErrorableString::ok(file_path)));
+        return Ok(Some(Ok(file_path)));
     }
 
-    // Our slow way of cloning the string into memory owned by JSC.
-    use std::io::Write as _;
-    let mut combined_string: Vec<u8> = Vec::new();
-    write!(&mut combined_string, "{}:{}", user_namespace, file_path).expect("unreachable");
-    let out_ = bun_core::String::borrow_utf8(&combined_string);
-    let out = out_.to_js(global)?.to_bun_string(global)?;
-    Ok(Some(ErrorableString::ok(out)))
+    Ok(Some(Ok(bun_core::String::create_format(format_args!(
+        "{}:{}",
+        user_namespace, file_path
+    )))))
 }

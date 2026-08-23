@@ -100,7 +100,6 @@ impl IntoIterObject for &mut JSObject {
 
 pub struct JSPropertyIterator<'a> {
     pub len: usize,
-    pub(crate) i: u32,
     pub(crate) iter_i: u32,
     /// null if and only if `object` has no properties (i.e. `len == 0`)
     pub(crate) impl_: Option<NonNull<JSPropertyIteratorImpl>>,
@@ -158,7 +157,6 @@ impl<'a> JSPropertyIterator<'a> {
 
         Ok(Self {
             len,
-            i: 0,
             iter_i: 0,
             impl_,
             global_object,
@@ -174,11 +172,9 @@ impl<'a> JSPropertyIterator<'a> {
         loop {
             let i: usize = self.iter_i as usize;
             if i >= self.len {
-                self.i = self.iter_i;
                 return Ok(None);
             }
 
-            self.i = self.iter_i;
             self.iter_i += 1;
             let mut name = bstr::String::DEAD;
             if self.options.include_value {

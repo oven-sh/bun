@@ -5026,9 +5026,6 @@ pub mod formatter {
             writer.write_all(pf!("<r>").as_bytes());
             writer.write_all(b"<");
 
-            // Both arms of the `type` if/else below assign these, so deferred
-            // init avoids the dead-store warning.
-            let mut needs_space: bool;
             let mut tag_name_str = ZigString::init(b"");
 
             // `ZigStringSlice` frees on `Drop`, so no explicit cleanup is
@@ -5054,10 +5051,8 @@ pub mod formatter {
                 }
 
                 tag_name_slice = tag_name_str.to_slice();
-                needs_space = true;
             } else {
                 tag_name_slice = ZigString::init(b"unknown").to_slice();
-                needs_space = true;
             }
 
             if !is_tag_kind_primitive {
@@ -5072,11 +5067,7 @@ pub mod formatter {
 
             if let Some(key_value) = value.get(self.global_this, "key")? {
                 if !key_value.is_undefined_or_null() {
-                    if needs_space {
-                        writer.write_all(b" key=");
-                    } else {
-                        writer.write_all(b"key=");
-                    }
+                    writer.write_all(b" key=");
 
                     let old_quote_strings = self.quote_strings;
                     self.quote_strings = true;
@@ -5096,8 +5087,6 @@ pub mod formatter {
                         failed: false,
                         estimated_line_length: &mut self.estimated_line_length,
                     };
-
-                    needs_space = true;
                 }
             }
 
@@ -5127,11 +5116,9 @@ pub mod formatter {
                     {
                         self.indent += 1;
                         let _ind = defer_decrement!(self.indent);
-                        let count_without_children =
-                            props_iter.len - usize::from(children_prop.is_some());
+                        let mut printed_props: usize = 0;
 
                         while let Some(prop) = props_iter.next()? {
-                            let props_i = props_iter.i as usize;
                             if prop.eql_comptime("children") {
                                 continue;
                             }
@@ -5144,10 +5131,14 @@ pub mod formatter {
                                 continue;
                             }
 
-                            if needs_space {
+                            // Five props fit on the tag's line; the rest go one per line.
+                            if !self.single_line && printed_props >= 5 {
+                                writer.write_all(b"\n");
+                                write_indent_n(self.indent, writer.ctx).expect("unreachable");
+                            } else {
                                 writer.space();
                             }
-                            needs_space = false;
+                            printed_props += 1;
 
                             writer.print(format_args!(
                                 "{}{}{}={}",
@@ -5173,26 +5164,6 @@ pub mod formatter {
 
                             if tag.cell.is_string_like() && C {
                                 writer.write_all(pfmt!("<r>", true).as_bytes());
-                            }
-
-                            if !self.single_line
-                                && (
-                                    // count_without_children is necessary to prevent
-                                    // printing an extra newline if there are children
-                                    // and one prop and the child prop is the last prop
-                                    props_i + 1 < count_without_children
-                                    // 3 is arbitrary but basically
-                                    //  <input type="text" value="foo" />
-                                    //  ^ should be one line
-                                    // <input type="text" value="foo" bar="true" baz={false} />
-                                    //  ^ should be multiple lines
-                                    && props_i > 3
-                                )
-                            {
-                                writer.write_all(b"\n");
-                                write_indent_n(self.indent, writer.ctx).expect("unreachable");
-                            } else if props_i + 1 < count_without_children {
-                                writer.space();
                             }
                         }
                     }

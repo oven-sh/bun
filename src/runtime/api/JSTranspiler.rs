@@ -189,10 +189,7 @@ impl Config {
                     JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
                 // `defer define_iter.deinit()` → Drop
 
-                // `define_iter.i` is the property position, not a dense index of yielded
-                // entries. With `skip_empty_name = true` (or a skipped property getter),
-                // writing at `define_iter.i` would leave earlier slots uninitialized.
-                // Use Vecs so the stored slice is always exactly what was appended.
+                // `len` counts slots that `next()` may skip, so it is only a capacity hint.
                 let mut names: Vec<Box<[u8]>> = Vec::new();
                 let mut values: Vec<Box<[u8]>> = Vec::new();
                 names.reserve_exact(define_iter.len);

@@ -104,11 +104,19 @@ static JSC::JSValue invokeAccessor(
         frame[Info::kValueIndex] = valueLocal.tagged();
         const auto& info = *reinterpret_cast<const PropertyCallbackInfo<void>*>(&frame[Info::kPropertyKeyIndex]);
         setter(property, valueLocal, info);
-        return JSC::jsUndefined();
+    } else {
+        const auto& info = *reinterpret_cast<const Info*>(&frame[Info::kPropertyKeyIndex]);
+        getter(property, info);
     }
 
-    const auto& info = *reinterpret_cast<const Info*>(&frame[Info::kPropertyKeyIndex]);
-    getter(property, info);
+    if (JSC::JSValue thrown = isolate->globalInternals()->takePendingException()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::throwException(globalObject, scope, thrown);
+        return {};
+    }
+    if (setter) {
+        return JSC::jsUndefined();
+    }
 
     TaggedPointer& returnValue = frame[Info::kReturnValueIndex];
     if (returnValue.isEmpty()) {

@@ -180,6 +180,11 @@ void node_module_register(void* opaque_mod)
     }
 
     RETURN_IF_EXCEPTION(scope, void());
+    // This runs under dlopen(); process.dlopen throws slot 0 once dlopen() returns.
+    if (JSC::JSValue thrown = isolate->globalInternals()->takePendingException()) [[unlikely]] {
+        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, thrown);
+        return;
+    }
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 

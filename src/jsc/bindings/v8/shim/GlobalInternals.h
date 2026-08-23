@@ -107,6 +107,16 @@ public:
 
     void setCurrentHandleScope(HandleScope* handleScope) { m_currentHandleScope = handleScope; }
 
+    // What the addon threw through the API (Isolate::ThrowException). It is not thrown into the VM while addon code is
+    // still running; the trampoline that called into the addon throws it when the addon returns.
+    void setPendingException(JSC::JSValue value) { m_pendingException.set(JSC::JSCell::vm(), this, value); }
+    JSC::JSValue takePendingException()
+    {
+        JSC::JSValue value = m_pendingException.get();
+        m_pendingException.clear();
+        return value;
+    }
+
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcPrologueCallbacks() { return m_gcPrologueCallbacks; }
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcEpilogueCallbacks() { return m_gcEpilogueCallbacks; }
     WTF::Vector<std::pair<NearHeapLimitCallback, void*>>& nearHeapLimitCallbacks() { return m_nearHeapLimitCallbacks; }
@@ -135,6 +145,7 @@ private:
     // HandleScopeBuffer::m_rawGrants (cells are swept without destructors).
     WTF::Vector<TaggedPointer*> m_activeReturnValueSlots;
     JSC::LazyProperty<GlobalInternals, HandleScopeBuffer> m_globalHandles;
+    JSC::WriteBarrier<JSC::Unknown> m_pendingException;
 
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcPrologueCallbacks;
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcEpilogueCallbacks;

@@ -64,6 +64,7 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_functionTemplateStructure.visit(visitor);
     thisObject->m_v8FunctionStructure.visit(visitor);
     thisObject->m_globalHandles.visit(visitor);
+    visitor.append(thisObject->m_pendingException);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, GlobalInternals);

@@ -140,25 +140,12 @@ void Isolate::RequestInterrupt(InterruptCallback callback, void* data)
     });
 }
 
-// v8::Isolate::ThrowException returns to addon code with the exception left pending on the VM; the frame that
-// observes it is the FunctionTemplate trampoline (or whatever entered the addon), not a C++ caller of this
-// function. So, as in the napi entry points, this is the top of its own scope: throw through a transient
-// ThrowScope and acknowledge it here so the addon's next API call does not see an unchecked simulated throw.
-static void throwIntoVM(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
-{
-    JSC::VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    {
-        auto inner = DECLARE_THROW_SCOPE(vm);
-        JSC::throwException(globalObject, inner, value);
-        inner.release();
-    }
-    EXCEPTION_ASSERT(scope.exception());
-}
-
+// The value is not thrown into the VM here: addon code keeps running after ThrowException() and cannot check a JS
+// exception. The trampoline that called into the addon (FunctionTemplate call/construct, accessor callbacks, module
+// registration) throws it when the addon returns — see GlobalInternals::takePendingException.
 Local<Value> Isolate::ThrowException(Local<Value> exception)
 {
-    throwIntoVM(m_globalObject, exception->localToJSValue());
+    m_globalInternals->setPendingException(exception->localToJSValue());
     return exception;
 }
 
@@ -168,9 +155,8 @@ Local<Value> Isolate::ThrowError(Local<String> message)
     // tryGetValue(): an unresolvable rope yields a null message here rather than a second exception.
     WTF::String wtfMessage = message->localToJSString()->tryGetValue();
     JSC::JSObject* error = JSC::createError(m_globalObject, wtfMessage);
-    Local<Value> handle = currentHandleScope()->createLocal<Value>(vm, error);
-    throwIntoVM(m_globalObject, error);
-    return handle;
+    m_globalInternals->setPendingException(error);
+    return currentHandleScope()->createLocal<Value>(vm, error);
 }
 
 Isolate::Isolate(shim::GlobalInternals* globalInternals)

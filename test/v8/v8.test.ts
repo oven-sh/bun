@@ -453,6 +453,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("Exception::Error/TypeError create throwable Error objects", async () => {
       await checkSameOutput("test_v8_exception");
     });
+    it("ThrowException() takes effect when the callback returns; the addon can keep using the API until then", async () => {
+      await checkSameOutput("test_v8_throw_then_continue");
+    });
   });
 
   describe("Aligned internal fields", () => {

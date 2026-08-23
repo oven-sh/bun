@@ -628,12 +628,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
 
+        // Slot 0 holds either the module object or what registration threw.
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         if (resultValue && resultValue != strongModule.get()) {
-            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
-                JSC::throwException(globalObject, scope, resultValue);
-                return {};
-            }
+            JSC::throwException(globalObject, scope, resultValue);
+            return {};
         }
 
         return JSValue::encode(jsUndefined());
@@ -677,12 +676,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             }
         }
 
+        // Slot 0 holds either the module object or what registration threw.
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         if (resultValue && resultValue != strongModule.get()) {
-            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
-                JSC::throwException(globalObject, scope, resultValue);
-                return {};
-            }
+            JSC::throwException(globalObject, scope, resultValue);
+            return {};
         }
 
         return JSValue::encode(jsUndefined());

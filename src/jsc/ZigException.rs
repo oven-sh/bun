@@ -1,4 +1,5 @@
 use core::ffi::{c_int, c_void};
+use core::mem::ManuallyDrop;
 use core::ptr;
 
 use crate::exception_list;
@@ -84,10 +85,28 @@ impl ZigException {
 #[repr(C)]
 pub struct Holder {
     pub(crate) source_line_numbers: [i32; Self::SOURCE_LINES_COUNT],
-    pub(crate) source_lines: [String; Self::SOURCE_LINES_COUNT],
-    pub(crate) frames: [ZigStackFrame; Self::FRAME_COUNT],
+    /// Backing storage C++ fills through `zig_exception.stack`; only the
+    /// `..source_lines_len` / `..frames_len` prefixes are live, so `Drop`
+    /// releases just those instead of tag-checking every slot.
+    source_lines: ManuallyDrop<[String; Self::SOURCE_LINES_COUNT]>,
+    frames: ManuallyDrop<[ZigStackFrame; Self::FRAME_COUNT]>,
     pub(crate) zig_exception: Option<ZigException>,
     pub(crate) need_to_clear_parser_arena_on_deinit: bool,
+}
+
+impl Drop for Holder {
+    fn drop(&mut self) {
+        if let Some(exception) = &self.zig_exception {
+            let lines = usize::from(exception.stack.source_lines_len).min(Self::SOURCE_LINES_COUNT);
+            let frames = usize::from(exception.stack.frames_len).min(Self::FRAME_COUNT);
+            // SAFETY: each prefix is initialized (all slots start as EMPTY/ZERO
+            // and C++ only writes within `_len`); dropped exactly once here.
+            unsafe {
+                ptr::drop_in_place(&raw mut self.source_lines[..lines]);
+                ptr::drop_in_place(&raw mut self.frames[..frames]);
+            }
+        }
+    }
 }
 
 impl Holder {
@@ -96,9 +115,9 @@ impl Holder {
 
     pub(crate) fn zero() -> Self {
         Self {
-            frames: core::array::from_fn(|_| ZigStackFrame::ZERO),
+            frames: ManuallyDrop::new(core::array::from_fn(|_| ZigStackFrame::ZERO)),
             source_line_numbers: [-1; Self::SOURCE_LINES_COUNT],
-            source_lines: core::array::from_fn(|_| String::EMPTY),
+            source_lines: ManuallyDrop::new(core::array::from_fn(|_| String::EMPTY)),
             zig_exception: None,
             need_to_clear_parser_arena_on_deinit: false,
         }
@@ -111,7 +130,9 @@ impl Holder {
     /// `Drop` releases the strings; this additionally resets the parser arena,
     /// which needs `vm`.
     pub(crate) fn deinit(self, vm: &mut VirtualMachine) {
-        if self.need_to_clear_parser_arena_on_deinit {
+        let reset = self.need_to_clear_parser_arena_on_deinit;
+        drop(self);
+        if reset {
             ModuleLoader::reset_arena(vm);
         }
     }

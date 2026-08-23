@@ -502,8 +502,7 @@ unsafe fn init_runtime_state(
                                     return false;
                                 }
                                 // SAFETY: `state` is this thread's live `RuntimeState`.
-                                let Some(my_ctx) = (unsafe { (*state).wake_ctx.as_deref() })
-                                else {
+                                let Some(my_ctx) = (unsafe { (*state).wake_ctx.as_deref() }) else {
                                     return false;
                                 };
                                 if !core::ptr::eq(

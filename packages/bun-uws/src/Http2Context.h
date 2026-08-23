@@ -504,7 +504,9 @@ struct Http2Connection {
     inline bool dispatchRequest(Http2Response *stream, const us_quic_header_t *headers, unsigned count);
 };
 
-struct Http2Context {
+/* Is a LoopData::TickHook: linked into the loop's pre/post tick while
+ * sweepList is non-empty. */
+struct Http2Context : public LoopData::TickHook {
     template <bool> friend struct TemplatedApp;
 
     /* group.ext == this; sockets recover us via us_socket_group_ext(). */
@@ -553,16 +555,14 @@ struct Http2Context {
         ctx->loop = loop;
         ctx->idleTimeoutS = idleTimeoutS > 240 ? 240 : idleTimeoutS;
         us_socket_group_init(&ctx->group, (us_loop_t *) loop, &vtable, ctx);
-        loop->addPostHandler(ctx, [ctx](Loop *) { ctx->sweep(); });
-        loop->addPreHandler(ctx, [ctx](Loop *) { ctx->sweep(); });
+        ctx->onTick = [](LoopData::TickHook *h) { static_cast<Http2Context *>(h)->sweep(); };
         return ctx;
     }
 
     void free() {
         closeAll();
         if (parent && detachFromParent) detachFromParent(parent, this);
-        loop->removePostHandler(this);
-        loop->removePreHandler(this);
+        loop->removeTickHook(this);
         us_socket_group_deinit(&group);
         delete this;
     }
@@ -682,6 +682,7 @@ struct Http2Context {
         if (conn->inSweepList || conn->closed) return;
         conn->inSweepList = true;
         sweepList.push_back(conn);
+        loop->addTickHook(this);
     }
 
     /* Loop pre/post hook: pump connections whose streams are parked on the
@@ -689,6 +690,7 @@ struct Http2Context {
     void sweep() {
         std::vector<Http2Connection *> batch;
         batch.swap(sweepList);
+        if (batch.empty()) { loop->removeTickHook(this); return; }
         for (Http2Connection *conn : batch) conn->inSweepList = false;
         for (size_t i = 0; i < batch.size(); i++) {
             Http2Connection *conn = batch[i];

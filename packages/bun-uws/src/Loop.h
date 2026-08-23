@@ -49,9 +49,7 @@ private:
     static void preCb(us_loop_t *loop) {
         LoopData *loopData = (LoopData *) us_loop_ext(loop);
 
-        for (auto &p : loopData->preHandlers) {
-            p.second((Loop *) loop);
-        }
+        loopData->runTickHooks();
 
         /* Drain any leftover corks. Two slots max. */
         for (int i = 0; i < 2; i++) {
@@ -69,9 +67,7 @@ private:
     static void postCb(us_loop_t *loop) {
         LoopData *loopData = (LoopData *) us_loop_ext(loop);
 
-        for (auto &p : loopData->postHandlers) {
-            p.second((Loop *) loop);
-        }
+        loopData->runTickHooks();
     }
 
     Loop() = delete;
@@ -151,30 +147,13 @@ public:
         return (LoopData *) us_loop_ext(loop);
     }
 
-    void addPostHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {
-        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
-
-        loopData->postHandlers.emplace(key, std::move(handler));
+    /* Run `hook->cb` before and after every loop iteration until removed. */
+    void addTickHook(LoopData::TickHook *hook) {
+        ((LoopData *) us_loop_ext((us_loop_t *) this))->addTickHook(hook);
     }
 
-    /* Bug: what if you remove a handler while iterating them? */
-    void removePostHandler(void *key) {
-        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
-
-        loopData->postHandlers.erase(key);
-    }
-
-    void addPreHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {
-        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
-
-        loopData->preHandlers.emplace(key, std::move(handler));
-    }
-
-    /* Bug: what if you remove a handler while iterating them? */
-    void removePreHandler(void *key) {
-        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
-
-        loopData->preHandlers.erase(key);
+    void removeTickHook(LoopData::TickHook *hook) {
+        ((LoopData *) us_loop_ext((us_loop_t *) this))->removeTickHook(hook);
     }
 
     /* Defer this callback on Loop's thread of execution */

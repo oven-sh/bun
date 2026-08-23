@@ -304,10 +304,7 @@ public:
 
         /* Delete TopicTree */
         if (topicTree) {
-            /* And unregister loop callbacks */
-            /* We must unregister any loop post handler here */
-            Loop::get()->removePostHandler(topicTree);
-            Loop::get()->removePreHandler(topicTree);
+            Loop::get()->removeTickHook(topicTree);
             delete topicTree;
         }
     }
@@ -507,17 +504,8 @@ public:
                 return false;
             });
 
-            /* And hook it up with the loop */
-            /* We empty for both pre and post just to make sure */
-            Loop::get()->addPostHandler(topicTree, [topicTree = topicTree](Loop */*loop*/) {
-                /* Commit pub/sub batches every loop iteration */
-                topicTree->drain();
-            });
-
-            Loop::get()->addPreHandler(topicTree, [topicTree = topicTree](Loop */*loop*/) {
-                /* Commit pub/sub batches every loop iteration */
-                topicTree->drain();
-            });
+            /* Commit pub/sub batches before and after every loop iteration */
+            Loop::get()->addTickHook(topicTree);
         }
 
         /* Every route has its own websocket context with its own behavior and user data type */

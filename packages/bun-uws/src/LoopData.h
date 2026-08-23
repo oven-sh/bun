@@ -43,8 +43,39 @@ private:
     int currentDeferQueue = 0;
     std::vector<MoveOnlyFunction<void()>> deferQueues[2];
 
-    /* Map from void ptr to handler */
-    std::map<void *, MoveOnlyFunction<void(Loop *)>> postHandlers, preHandlers;
+public:
+    /* Things that want a callback before and after every loop iteration
+     * (pub/sub drain, HTTP/2 sweep) link a node here: no allocation, O(1)
+     * add/remove, and safe to unlink (self or others) from inside a callback. */
+    struct TickHook {
+        void (*onTick)(TickHook *) = nullptr;
+        TickHook *prev = nullptr, *next = nullptr;
+        bool linked = false;
+    };
+    void addTickHook(TickHook *h) {
+        if (h->linked) return;
+        h->linked = true;
+        h->prev = tickTail;
+        h->next = nullptr;
+        if (tickTail) tickTail->next = h; else tickHead = h;
+        tickTail = h;
+    }
+    void removeTickHook(TickHook *h) {
+        if (!h->linked) return;
+        h->linked = false;
+        if (tickCursor == h) tickCursor = h->next;
+        if (h->prev) h->prev->next = h->next; else tickHead = h->next;
+        if (h->next) h->next->prev = h->prev; else tickTail = h->prev;
+        h->prev = h->next = nullptr;
+    }
+    void runTickHooks() {
+        for (TickHook *h = tickHead; h; h = tickCursor) {
+            tickCursor = h->next;
+            h->onTick(h);
+        }
+    }
+private:
+    TickHook *tickHead = nullptr, *tickTail = nullptr, *tickCursor = nullptr;
 
     /* Cork data: two independent slots so a nested cork (e.g. a resumed async
      * request writing while the outer request is still corked) doesn't force

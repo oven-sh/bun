@@ -16,6 +16,7 @@
  */
 
 #pragma once
+#include "LoopData.h"
 #include <map>
 #include <list>
 #include <unordered_set>
@@ -72,8 +73,9 @@ public:
     }
 };
 
+/* Is a LoopData::TickHook: linked into the loop so pub/sub batches commit every iteration. */
 template <typename T, typename B>
-struct TopicTree {
+struct TopicTree : public LoopData::TickHook {
 
     enum IteratorFlags {
         // To appease clang-analyzer
@@ -146,6 +148,7 @@ private:
 public:
 
     TopicTree(std::function<bool(Subscriber *, T &, IteratorFlags)> cb) : cb(cb) {
+        onTick = [](LoopData::TickHook *h) { static_cast<TopicTree *>(h)->drain(); };
 
     }
 

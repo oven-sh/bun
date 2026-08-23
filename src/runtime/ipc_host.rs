@@ -274,7 +274,7 @@ pub(crate) fn do_send(
     }
 
     let status =
-        ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
+        ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle)?;
 
     if status != SerializeAndSendResult::Failure {
         call_handle_method(global_object, pause_target, "pause")?;

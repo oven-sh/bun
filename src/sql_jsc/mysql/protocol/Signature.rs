@@ -71,9 +71,6 @@ impl Signature {
             });
         }
 
-        if iter.any_failed() {
-            return Err(crate::Error::InvalidQueryBinding);
-        }
 
         Ok(Signature {
             name: name.into_boxed_slice(),

@@ -6157,7 +6157,9 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC::EncodedJSValue timeValue)
     return number;
 }
 
-extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue propertyValue)
+// The own property's value, undefined if there is no such own property (the caller treats an undefined value
+// the same way), {} on exception.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue propertyValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -6167,22 +6169,19 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue v
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
     if (property.getUInt32(index)) {
-        if (!object->getOwnPropertySlotByIndex(object, globalObject, index, slot))
-            return {};
-
+        bool found = object->getOwnPropertySlotByIndex(object, globalObject, index, slot);
         RETURN_IF_EXCEPTION(scope, {});
-
-        return JSC::JSValue::encode(slot.getValue(globalObject, index));
-    } else {
-        auto propertyName = property.toPropertyKey(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!object->getOwnNonIndexPropertySlot(vm, object->structure(), propertyName, slot))
-            return {};
-
-        RETURN_IF_EXCEPTION(scope, {});
-
-        return JSC::JSValue::encode(slot.getValue(globalObject, propertyName));
+        if (!found)
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(slot.getValue(globalObject, index)));
     }
+    auto propertyName = property.toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool found = object->getOwnNonIndexPropertySlot(vm, object->structure(), propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!found)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(slot.getValue(globalObject, propertyName)));
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject* globalObject, BunString* str)

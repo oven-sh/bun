@@ -174,7 +174,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         IsInternal::Internal,
         JSValue::NULL,
         native_handle,
-    );
+    )?;
     Ok(match success {
         SerializeAndSendResult::Success => JSValue::TRUE,
         SerializeAndSendResult::Backoff => JSValue::FALSE,

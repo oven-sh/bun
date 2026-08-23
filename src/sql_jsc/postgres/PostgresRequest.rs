@@ -98,9 +98,6 @@ pub(crate) fn write_bind<Context: WriterContext>(
                     if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
                         break 'brk value.is_string();
                     }
-                    if iter.any_failed() {
-                        return Err(AnyPostgresError::InvalidQueryBinding);
-                    }
                     break 'brk false;
                 });
 

@@ -347,4 +347,9 @@ const _: () = assert!(
     core::mem::align_of::<DebugHTTPSServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK
 );
 const _: () =
+    assert!(core::mem::align_of::<HTTPSServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<DebugHTTPServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK
+);
+const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);

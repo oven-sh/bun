@@ -130,7 +130,7 @@ process.stdin.resume();
 
 type Fixture = {
   port: number;
-  proc: Bun.Subprocess<"pipe", "pipe", "inherit">;
+  proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   stderr: () => string;
   [Symbol.asyncDispose](): Promise<void>;
 };

@@ -118,3 +118,56 @@ test("test snapshots with Boolean and Number", () => {
     },
   });
 });
+
+test("async and generator functions print their own name", () => {
+  function plain() {}
+  async function load() {}
+  function* entries() {}
+  async function* stream() {}
+  const expression = async function save() {};
+  const methods = { async get() {}, *keys() {} };
+  class Tagged {
+    static get [Symbol.toStringTag]() {
+      return "NotTheClassName";
+    }
+  }
+
+  expect({ plain, load, entries, stream, expression, bound: load.bind(null), methods, Tagged }).toMatchInlineSnapshot(`
+    {
+      "Tagged": [class Tagged],
+      "bound": [Function: load],
+      "entries": [Function: entries],
+      "expression": [Function: save],
+      "load": [Function: load],
+      "methods": {
+        "get": [Function: get],
+        "keys": [Function: keys],
+      },
+      "plain": [Function: plain],
+      "stream": [Function: stream],
+    }
+  `);
+
+  expect(() => expect({ load }).toEqual({})).toThrow('"load": [Function: load]');
+
+  const element = { $$typeof: Symbol.for("react.element"), type: load, props: {} };
+  expect(element).toMatchInlineSnapshot(`<load />`);
+});
+
+test("functions without a name of their own print the way existing snapshots have them", () => {
+  // A name inferred from the variable is not printed, and an anonymous async or generator
+  // function is still labelled with its kind, so existing .snap files keep matching.
+  const arrow = () => {};
+  const asyncArrow = async () => {};
+  const generator = function* () {};
+  const asyncGenerator = async function* () {};
+
+  expect({ arrow, asyncArrow, generator, asyncGenerator }).toMatchInlineSnapshot(`
+    {
+      "arrow": [Function],
+      "asyncArrow": [Function: AsyncFunction],
+      "asyncGenerator": [Function: AsyncGeneratorFunction],
+      "generator": [Function: GeneratorFunction],
+    }
+  `);
+});

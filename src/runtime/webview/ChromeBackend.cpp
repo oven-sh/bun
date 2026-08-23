@@ -1356,9 +1356,6 @@ uint32_t Transport::registerView(JSWebView* v)
 void Transport::retireGlobal(Zig::GlobalObject* global)
 {
     if (m_global != global) return;
-    // Closes the socket (pipe mode) or drops the WebSocket, then rejects every
-    // view's pending promises on the outgoing global. No-op if Chrome already
-    // died during the file; the process below is then gone or on its way out.
     rejectAllAndMarkDead("WebView closed: its test file finished"_s);
     Bun__Chrome__retire();
     m_global = nullptr;

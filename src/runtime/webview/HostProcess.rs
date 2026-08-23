@@ -37,8 +37,7 @@ pub(crate) struct HostProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
     // because the refcount, not this struct, owns the allocation.
     process: NonNull<Process>,
-    /// Set by [`Bun__WebViewHost__retire`]: C++ has already let go of this
-    /// host, so its exit is only reaped, not reported.
+    /// Set by [`Bun__WebViewHost__retire`]: the exit is reaped but not reported to C++.
     retired: bool,
 }
 
@@ -68,10 +67,7 @@ extern "C" fn Bun__WebViewHost__kill() {
     }
 }
 
-/// `bun test --isolate` is retiring the global that spawned this host
-/// (HostClient::retireGlobal, after it rejected everything pending). Unpublish
-/// and kill the process now so the next file's `new Bun.WebView()` can spawn
-/// its own without waiting for this one to be reaped.
+/// HostClient::retireGlobal (`bun test --isolate`): unpublish and kill this host so the next file can spawn its own at once.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__WebViewHost__retire() {
     let this = INSTANCE.swap(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);

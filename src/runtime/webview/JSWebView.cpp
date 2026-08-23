@@ -117,8 +117,7 @@ JSWebView::~JSWebView()
     if (m_closed) return;
     if (m_backend == WebViewBackend::Chrome) {
         auto& t = CDP::transport();
-        // Only this view's own session entry: a browser spawned after this
-        // view's transport was retired may reuse the session id string.
+        // Only this view's own entry: a browser spawned after a retire can reuse the session id string.
         if (!m_sessionId.isEmpty()) {
             auto it = t.m_sessions.find(m_sessionId);
             if (it != t.m_sessions.end() && it->value == m_viewId) t.m_sessions.remove(it);

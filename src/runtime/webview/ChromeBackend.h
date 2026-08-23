@@ -417,11 +417,7 @@ public:
     void onWritable();
     void onClose();
 
-    // `bun test --isolate` is retiring `global` on a live VM. The transport
-    // belongs to the global that spawned or connected it, so everything it
-    // routes goes with that global: the views are closed, their pending
-    // promises rejected, a spawned Chrome is killed. The next file's first
-    // `new Bun.WebView()` starts from None. No-op for any other global.
+    // `bun test --isolate` retires `global`: its views close, their promises reject, a spawned Chrome dies.
     void retireGlobal(Zig::GlobalObject* global);
 
     Zig::GlobalObject* m_global = nullptr;

@@ -52,8 +52,7 @@ pub(crate) struct ChromeProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
     // because the refcount, not this struct, owns the allocation.
     process: NonNull<Process>,
-    /// Set by [`Bun__Chrome__retire`]: the transport has already let go of
-    /// this Chrome, so its exit is only reaped, not reported to C++.
+    /// Set by [`Bun__Chrome__retire`]: the exit is reaped but not reported to C++.
     retired: bool,
     #[cfg(windows)]
     pipes: WindowsPipes,
@@ -99,11 +98,7 @@ extern "C" fn Bun__Chrome__kill() {
     }
 }
 
-/// `bun test --isolate` is retiring the global that spawned this Chrome
-/// (Transport::retireGlobal, after it rejected everything pending). Unpublish
-/// and kill the process now so the next file's `new Bun.WebView()` can spawn
-/// its own without waiting for this one to be reaped; `on_exit` still reaps
-/// it, but no longer tells C++ about a death the transport has moved past.
+/// Transport::retireGlobal (`bun test --isolate`): unpublish and kill this Chrome so the next file can spawn its own at once.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Chrome__retire() {
     let this = INSTANCE.swap(ptr::null_mut(), Ordering::Relaxed);
@@ -115,8 +110,7 @@ extern "C" fn Bun__Chrome__retire() {
     chrome.retired = true;
     #[cfg(windows)]
     {
-        // Events from this Chrome that are still queued carry its generation
-        // and are dropped in `QueuedEvent::deliver`.
+        // Queued events from this Chrome carry its generation; `QueuedEvent::deliver` drops them.
         GENERATION.fetch_add(1, Ordering::Relaxed);
         chrome.pipes.close();
     }

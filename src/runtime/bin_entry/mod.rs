@@ -118,8 +118,7 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
         // and the per-process `FSEventStream` / `CFRunLoop` they require.
         // These are platform singletons by design (CF objects are not safely
         // disposable while the dylib remains loaded).
-        "leak:bun_runtime::node::fs_events::init_core_foundation\n",
-        "leak:bun_runtime::node::fs_events::init_core_services\n",
+        "leak:bun_sys::core_foundation::load\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
         // Process-lifetime inspector thread. The debugger handles SIGINT and
         // serves the WebSocket protocol up to (and during) `process.exit()`;

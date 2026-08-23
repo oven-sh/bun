@@ -46,26 +46,20 @@ pub mod whatwg {
     use super::strings;
 
     /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
-    /// Construct via `from_string`/`from_utf8`; free via `deinit`.
+    /// Construct via `from_string`/`from_utf8`; free exactly once via `destroy`.
     #[repr(C)]
     pub struct URL {
         _opaque: [u8; 0],
     }
 
-    // Getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
-    // WTF::URL on read. `URL__deinit` keeps `*mut` (it `delete`s). `BunString*` inputs stay
-    // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
-    // SAFETY (safe fn): `URL` is an opaque ZST handle (never null when behind `&`);
-    // `String` is a `#[repr(C)]` Copy POD that C++ reads (`BunString::toWTFString() const`).
-    // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL` (consumes).
-    // `URL__originLength` keeps a raw `(*const u8, usize)` slice pair → stays `unsafe fn`.
+    // Getters are `safe fn`: C++ only reads, and `&URL` (a ZST) is valid for any non-null pointer.
     unsafe extern "C" {
         // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
-        safe fn URL__deinit(url: &mut URL);
+        fn URL__deinit(url: *mut URL);
         safe fn URL__pathname(url: &URL) -> String;
         safe fn URL__getHref(input: &mut String) -> String;
         safe fn URL__getFileURLString(input: &mut String) -> String;
@@ -114,10 +108,12 @@ pub mod whatwg {
     }
 
     impl URL {
+        /// Owned by the caller; free with [`destroy`](Self::destroy). `None` if invalid.
         pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
             let mut input = *str;
             URL__fromString(&mut input)
         }
+        /// Owned by the caller; free with [`destroy`](Self::destroy). `None` if invalid.
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
         }
@@ -145,8 +141,12 @@ pub mod whatwg {
         pub fn pathname(&self) -> String {
             URL__pathname(self)
         }
-        pub fn deinit(&mut self) {
-            URL__deinit(self)
+        /// # Safety
+        /// `this` must be a live handle from `from_string`/`from_utf8`; it is `delete`d here
+        /// and must not be used afterwards.
+        pub unsafe fn destroy(this: *mut Self) {
+            // SAFETY: fn contract.
+            unsafe { URL__deinit(this) }
         }
     }
 

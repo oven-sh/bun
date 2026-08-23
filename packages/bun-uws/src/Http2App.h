@@ -48,7 +48,7 @@ struct H2App {
     }
     /* GOAWAY + close every connection. */
     void close() { http2Context->closeAll(); }
-    size_t closeIdle() { return http2Context->closeIdle(); }
+    size_t closeIdle(bool closeWhenIdle = false) { return http2Context->closeIdle(closeWhenIdle); }
     void *getNativeHandle() { return http2Context; }
 };
 

@@ -1071,7 +1071,7 @@ describe("Bun.serve http2 lifecycle", () => {
   });
 
   test("stop(true) with open streams aborts them and closes connections", async () => {
-    const fx = await startFixture({ tls: false });
+    await using fx = await startFixture({ tls: false });
     const session = await connectH2(fx.port, false);
     const pending = request(session, { ":path": "/abort" }).catch(e => e);
     await request(session, { ":path": "/hello" });
@@ -1108,7 +1108,7 @@ describe("Bun.serve http2 lifecycle", () => {
 
   test("maxRequestBodySize applies without content-length", async () => {
     using dir = tempDir("serve-http2-maxbody", {});
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",

@@ -646,13 +646,16 @@ struct Http2Context {
         }
     }
 
-    /* Graceful: GOAWAY so no new streams start; connections with nothing in
-     * flight close now, the rest once their last stream retires. */
-    size_t closeIdle() {
+    /* Close connections with nothing in flight (after a GOAWAY). With
+     * `closeWhenIdle`, busy connections also get GOAWAY so no new streams
+     * start and they close once their last stream retires (graceful stop);
+     * without it they are left alone. */
+    size_t closeIdle(bool closeWhenIdle) {
         size_t closedNow = 0;
         std::vector<Http2Connection *> copy = connections;
         for (Http2Connection *conn : copy) {
             if (!isLive(conn) || conn->closed) continue;
+            if (!conn->streams.empty() && !closeWhenIdle) continue;
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
             if (conn->streams.empty()) {
@@ -851,15 +854,16 @@ inline void Http2Connection::touch() {
 }
 
 inline void Http2Connection::recomputeIdleTimeout() {
-    unsigned t = ctx->idleTimeoutS;
-    bool any = false;
+    /* Most permissive among open streams (0 = never); a stream that never
+     * asked counts as the context default, as does a connection with none. */
+    unsigned t = streams.empty() ? ctx->idleTimeoutS : 0;
+    bool never = !streams.empty() && ctx->idleTimeoutS == 0;
     for (Http2Response *stream : streams) {
-        if (stream->timeoutS == 255) continue;
-        if (stream->timeoutS == 0) { t = 0; any = true; break; }
-        t = any ? std::max<unsigned>(t, stream->timeoutS) : stream->timeoutS;
-        any = true;
+        unsigned s = stream->timeoutS == 255 ? ctx->idleTimeoutS : stream->timeoutS;
+        if (s == 0) { never = true; break; }
+        t = std::max(t, s);
     }
-    idleTimeoutS = t;
+    idleTimeoutS = never ? 0 : t;
     touch();
 }
 

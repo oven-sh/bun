@@ -442,7 +442,7 @@ public:
             s = next;
         }
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
-            closed += h2->closeIdle();
+            closed += h2->closeIdle(closeWhenIdle);
         }
         return closed;
     }

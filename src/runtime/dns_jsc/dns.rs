@@ -152,7 +152,7 @@ mod lib_c {
 // LibUVBackend (Windows uv_getaddrinfo)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The windows implementation borrows the struct used for libc getaddrinfo
+/// Windows: `uv_getaddrinfo` on the libuv thread pool.
 #[cfg(windows)]
 pub(crate) mod lib_uv_backend {
     use super::*;
@@ -179,10 +179,6 @@ pub(crate) mod lib_uv_backend {
     }
 
     impl libuv::GetAddrInfoRequest for GetAddrInfoRequest {
-        fn uv_req(&mut self) -> &mut libuv::uv_getaddrinfo_t {
-            self.backend.as_libc_uv_mut()
-        }
-
         fn on_complete(this: Box<Self>, status: c_int, result: libuv::UvAddrInfo) {
             // TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
             let vm = this.head.global_this().bun_vm();
@@ -216,7 +212,7 @@ pub(crate) mod lib_uv_backend {
 
         let request = GetAddrInfoRequest::init(
             cache,
-            get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::uv_uninit()),
+            get_addr_info_request::Backend::CAres,
             Some(this),
             global_this,
         );
@@ -329,8 +325,7 @@ struct PendingEntry<L> {
     /// The lookups that joined after the one that owns the slot, in order.
     waiters: Vec<L>,
     /// The in-flight `uv_getaddrinfo` (host-native cache only), so the stop
-    /// phase can cancel it. Valid while held: the slot is drained (dropping
-    /// this) by the request's completion, before the request is freed.
+    /// phase can cancel it.
     #[cfg(windows)]
     uv_inflight: Option<libuv::InflightGetAddrInfo>,
 }
@@ -722,9 +717,9 @@ impl c_ares::NameInfoHandler for GetNameInfoRequest {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetAddrInfoRequest {
-    /// Backend state that must live at the request's address (the libuv req,
-    /// the dns_sd query); nothing for c-ares / the work pool.
-    #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+    /// Backend state that must live at the request's address (the dns_sd
+    /// query); nothing for c-ares / libuv / the work pool.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) backend: get_addr_info_request::Backend,
     /// See [`PendingEntry`].
     pub(crate) pending_slot: Option<u8>,
@@ -732,6 +727,7 @@ pub struct GetAddrInfoRequest {
 }
 
 pub mod get_addr_info_request {
+    #[cfg(not(windows))]
     use super::*;
 
     /// The blocking `getaddrinfo` of one libc-backend lookup, run on the pool.
@@ -855,25 +851,10 @@ pub mod get_addr_info_request {
         }
     }
 
-    /// Windows libc backend wraps a uv_getaddrinfo_t.
-    #[cfg(windows)]
-    pub struct LibcBackend {
-        pub(crate) uv: libuv::uv_getaddrinfo_t,
-    }
-    #[cfg(windows)]
-    impl LibcBackend {
-        pub(crate) fn uv_uninit() -> Self {
-            Self {
-                uv: bun_core::ffi::zeroed(),
-            }
-        }
-    }
     pub enum Backend {
         CAres,
         #[cfg(target_os = "macos")]
         DnsSd(BackendDnsSd),
-        #[cfg(windows)]
-        Libc(LibcBackend),
     }
 
     impl Backend {
@@ -881,13 +862,6 @@ pub mod get_addr_info_request {
         pub(crate) fn dns_sd(&self) -> &BackendDnsSd {
             match self {
                 Backend::DnsSd(l) => l,
-                _ => unreachable!(),
-            }
-        }
-        #[cfg(windows)]
-        pub(crate) fn as_libc_uv_mut(&mut self) -> &mut libuv::uv_getaddrinfo_t {
-            match self {
-                Backend::Libc(l) => &mut l.uv,
                 _ => unreachable!(),
             }
         }
@@ -1421,6 +1395,11 @@ impl Drop for GlobalData {
         // callbacks and release their refs) rather than whenever the last ref
         // goes; then release ours.
         self.resolver.destroy_channel();
+        // A timer `disarm_all_for_vm_teardown` unlinked (or one still armed:
+        // the timer heap goes with the VM) no longer needs its ref.
+        if let Some(timer_ref) = self.resolver.timer_ref.take() {
+            timer_ref.deref();
+        }
         self.resolver.deref();
     }
 }
@@ -1734,7 +1713,17 @@ pub mod internal {
             if let Some(i) = self.cache.iter().position(is) {
                 let len = self.cache.len();
                 self.delete_entry_at(len, i);
-            } else if let Some(i) = self.orphans.iter().position(is) {
+            } else {
+                self.remove_orphan(entry);
+            }
+        }
+
+        /// Free `entry` if it is an orphan (never findable by `get`, so nothing
+        /// can take a new reference to it).
+        fn remove_orphan(&mut self, entry: ThisPtr<Request>) {
+            let is =
+                |e: &bun_ptr::OwnedThis<Request>| core::ptr::eq(&raw const **e, entry.as_ptr());
+            if let Some(i) = self.orphans.iter().position(is) {
                 drop(self.orphans.swap_remove(i));
             }
         }
@@ -2212,32 +2201,22 @@ pub mod internal {
 
         #[cfg(target_os = "macos")]
         {
-            use bun_uws::InternalLoopDataExt as _;
             if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO
                 .get()
                 .unwrap_or(false)
             {
-                // The loop's parent tag (set by `EventLoopHandle::set_as_parent_of`
-                // at startup) says which of this thread's event loops owns it.
-                let (tag, _) = loop_.internal_loop_data.get_parent();
-                let ctx = match tag {
-                    1 => Some(Async::posix_event_loop::get_vm_ctx(
-                        Async::AllocatorType::Js,
-                    )),
-                    2 => Some(Async::posix_event_loop::get_vm_ctx(
-                        Async::AllocatorType::Mini,
-                    )),
-                    _ => None,
-                };
-                if let Some(ctx) = ctx {
-                    if lookup_dns_sd(req, ctx) {
-                        bun_output::scoped_log!(
-                            dns,
-                            "getaddrinfo({}) = cache miss (dns_sd)",
-                            bstr::BStr::new(host.unwrap_or(b""))
-                        );
-                        return Some(req);
-                    }
+                // The event loop driving `loop_` (set at startup) owns the
+                // dns_sd connection's poll and keep-alive.
+                let ctx = crate::api::bun::process::event_loop_handle_to_ctx(
+                    bun_event_loop::EventLoopHandle::parent_of(loop_),
+                );
+                if lookup_dns_sd(req, ctx) {
+                    bun_output::scoped_log!(
+                        dns,
+                        "getaddrinfo({}) = cache miss (dns_sd)",
+                        bstr::BStr::new(host.unwrap_or(b""))
+                    );
+                    return Some(req);
                 }
                 // if dns_sd was unavailable, fall back to the work pool
             }
@@ -2381,6 +2360,8 @@ pub mod internal {
         if remaining == 0 && (guard.is_nearly_full() || !req.is_valid()) {
             bun_output::scoped_log!(dns, "cache --");
             guard.remove(req);
+        } else if remaining == 0 {
+            guard.remove_orphan(req);
         }
     }
 
@@ -2842,7 +2823,13 @@ impl Resolver {
             return false;
         }
 
-        this.timer_ref.set(Some(RefPtr::from_this(this)));
+        let stale = this.timer_ref.replace(Some(RefPtr::from_this(this)));
+        // Not ACTIVE ⇒ no ref is held (it is released when the timer fires or
+        // is removed).
+        debug_assert!(stale.is_none());
+        if let Some(stale) = stale {
+            stale.deref();
+        }
         let now_ts = now
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
@@ -2863,6 +2850,8 @@ impl Resolver {
 
     fn remove_timer(this: ThisPtr<Self>) {
         if this.event_loop_timer.get().state != EventLoopTimerState::ACTIVE {
+            // (VM teardown's `disarm_all_for_vm_teardown` can unlink an armed
+            // timer behind our back; `GlobalData::drop` releases its ref then.)
             return;
         }
 
@@ -4164,19 +4153,19 @@ impl Resolver {
     }
 
     pub fn new_resolver(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let resolver = RefPtr::new(Resolver::setup(global_this.bun_vm()));
-
+        let mut opts = c_ares::ChannelOptions::default();
         let options = callframe.argument(0);
         if options.is_object() {
-            let mut opts = resolver.options.get();
             if let Some(timeout) = options.get_truthy(global_this, "timeout")? {
                 opts.timeout = Some(timeout.coerce_to_i32(global_this)?);
             }
             if let Some(tries) = options.get_truthy(global_this, "tries")? {
                 opts.tries = Some(tries.coerce_to_i32(global_this)?);
             }
-            resolver.options.set(opts);
         }
+
+        let resolver = RefPtr::new(Resolver::setup(global_this.bun_vm()));
+        resolver.options.set(opts);
 
         // Ownership of the initial ref transfers to the GC wrapper
         // (`DNSResolver__create` → `finalize`).

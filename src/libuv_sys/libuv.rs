@@ -3006,9 +3006,9 @@ unsafe extern "C" {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Typed `uv_getaddrinfo` — the request is a `Box<T>` embedding the
-// `uv_getaddrinfo_t`; libuv owns it from submission until its one completion
-// callback hands it back.
+// Typed `uv_getaddrinfo` — libuv owns a heap `uv_getaddrinfo_t` (plus the
+// caller's `Box<T>`) from submission until its one completion callback hands
+// the `Box<T>` back.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// The owned `addrinfo` list of a completed `uv_getaddrinfo` (libuv re-packs
@@ -3034,28 +3034,37 @@ impl Drop for UvAddrInfo {
     }
 }
 
-/// A heap request type that embeds the `uv_getaddrinfo_t` it is submitted with.
+/// The owner of a `uv_getaddrinfo` lookup.
 pub trait GetAddrInfoRequest: Sized {
-    fn uv_req(&mut self) -> &mut uv_getaddrinfo_t;
     /// The completion (event-loop thread): `status` is 0, a `UV_EAI_*` code, or
     /// `UV_ECANCELED`.
     fn on_complete(this: Box<Self>, status: c_int, result: UvAddrInfo);
 }
 
-/// A submitted [`GetAddrInfoRequest`] that has not completed yet, for
-/// [`cancel`](Self::cancel): a back-reference into the request libuv holds.
-/// Holder obligation (taken on by keeping the value [`getaddrinfo`] returns):
-/// drop it no later than the request box handed back to
-/// [`on_complete`](GetAddrInfoRequest::on_complete) is freed.
-pub struct InflightGetAddrInfo(ptr::NonNull<uv_getaddrinfo_t>);
+/// What libuv holds for one lookup: the request, the token its
+/// [`InflightGetAddrInfo`] shares, and the owner to hand back.
+#[repr(C)]
+struct GetAddrInfoReq<T> {
+    uv: uv_getaddrinfo_t,
+    inflight: std::rc::Rc<Cell<*mut uv_getaddrinfo_t>>,
+    owner: Box<T>,
+}
+
+/// The cancel handle of a submitted lookup. It shares a token with the request
+/// that the completion clears first, so a handle kept past completion is inert.
+pub struct InflightGetAddrInfo(std::rc::Rc<Cell<*mut uv_getaddrinfo_t>>);
 
 impl InflightGetAddrInfo {
     /// `uv_cancel`: if the work has not started, complete it soon with
-    /// `UV_ECANCELED`; otherwise no effect.
+    /// `UV_ECANCELED`; otherwise (or once completed) no effect.
     #[inline]
     pub fn cancel(&self) {
-        // SAFETY: holder contract — the request is still owned by libuv.
-        let _ = unsafe { uv_cancel(self.0.as_ptr().cast::<uv_req_t>()) };
+        let req = self.0.get();
+        if !req.is_null() {
+            // SAFETY: non-null ⇔ the completion has not run, so libuv still
+            // owns the request `getaddrinfo` allocated at this address.
+            let _ = unsafe { uv_cancel(req.cast::<uv_req_t>()) };
+        }
     }
 }
 
@@ -3064,44 +3073,50 @@ unsafe extern "C" fn getaddrinfo_complete<T: GetAddrInfoRequest>(
     status: c_int,
     res: *mut addrinfo,
 ) {
-    // SAFETY: `req.data` is the `Box<T>` `getaddrinfo` submitted, handed back
-    // for this one callback; `res` (== `req.addrinfo`) is ours to free.
-    let this = unsafe { Box::from_raw((*req).data.cast::<T>()) };
-    T::on_complete(this, status, UvAddrInfo(res));
+    // SAFETY: `req` is the first field of the `GetAddrInfoReq<T>` `getaddrinfo`
+    // leaked, handed back for this one callback; `res` (== `req.addrinfo`) is
+    // ours to free.
+    let this = unsafe { Box::from_raw(req.cast::<GetAddrInfoReq<T>>()) };
+    this.inflight.set(ptr::null_mut());
+    T::on_complete(this.owner, status, UvAddrInfo(res));
 }
 
-/// `uv_getaddrinfo` on `loop_`. On `Ok` libuv owns `req` until
+/// `uv_getaddrinfo` on `loop_`. On `Ok` libuv holds `owner` until
 /// [`GetAddrInfoRequest::on_complete`]; on a synchronous failure (e.g.
-/// `UV_EINVAL` for an over-long name) the request comes straight back.
+/// `UV_EINVAL` for an over-long name) it comes straight back.
 pub fn getaddrinfo<T: GetAddrInfoRequest>(
     loop_: *mut Loop,
-    req: Box<T>,
+    owner: Box<T>,
     node: &core::ffi::CStr,
     service: &core::ffi::CStr,
     hints: Option<&addrinfo>,
 ) -> Result<InflightGetAddrInfo, (ReturnCode, Box<T>)> {
-    let raw = Box::into_raw(req);
-    // SAFETY: `raw` is the allocation just leaked, which lives until the
-    // callback re-boxes it, and `uv` points into it; node/service are
-    // NUL-terminated; hints is a live `addrinfo` or null (libuv copies it).
-    let (rc, uv) = unsafe {
-        let uv = ptr::NonNull::from((*raw).uv_req());
-        (*uv.as_ptr()).data = raw.cast::<c_void>();
-        let rc = uv_getaddrinfo(
+    let inflight = std::rc::Rc::new(Cell::new(ptr::null_mut()));
+    let raw = Box::into_raw(Box::new(GetAddrInfoReq {
+        uv: bun_core::ffi::zeroed(),
+        inflight: std::rc::Rc::clone(&inflight),
+        owner,
+    }));
+    let uv = raw.cast::<uv_getaddrinfo_t>();
+    // SAFETY: `uv` is the first field of the allocation just leaked, which
+    // lives until the callback re-boxes it; node/service are NUL-terminated;
+    // hints is a live `addrinfo` or null (libuv copies it).
+    let rc = unsafe {
+        uv_getaddrinfo(
             loop_,
-            uv.as_ptr(),
+            uv,
             Some(getaddrinfo_complete::<T>),
             node.as_ptr(),
             service.as_ptr(),
             hints.map_or(ptr::null(), |h| ptr::from_ref(h).cast::<c_void>()),
-        );
-        (rc, uv)
+        )
     };
     if rc.int() < 0 {
         // SAFETY: libuv did not take the request; we still own `raw`.
-        return Err((rc, unsafe { Box::from_raw(raw) }));
+        return Err((rc, unsafe { Box::from_raw(raw) }.owner));
     }
-    Ok(InflightGetAddrInfo(uv))
+    inflight.set(uv);
+    Ok(InflightGetAddrInfo(inflight))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

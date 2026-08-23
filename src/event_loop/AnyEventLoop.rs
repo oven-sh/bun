@@ -389,6 +389,18 @@ impl EventLoopHandle {
         uws_loop.internal_loop_data.set_parent_raw(tag, ptr);
     }
 
+    /// The event loop registered as `uws_loop`'s parent by
+    /// [`set_as_parent_of`](Self::set_as_parent_of) (panics if none was). The
+    /// loop is owned by (and torn down with) that event loop, so while the
+    /// loop is alive so is its parent.
+    #[inline]
+    pub fn parent_of(uws_loop: &UwsLoop) -> EventLoopHandle {
+        let (tag, ptr) = uws_loop.internal_loop_data.get_parent_raw();
+        // SAFETY: `(tag, ptr)` was stored by `set_as_parent_of` from a live
+        // event loop that owns `uws_loop` (see doc).
+        unsafe { Self::from_tag_ptr(tag, ptr) }
+    }
+
     pub fn from_any(any: &mut AnyEventLoop) -> EventLoopHandle {
         match any {
             AnyEventLoop::Js { owner } => EventLoopHandle::Js { owner: *owner },

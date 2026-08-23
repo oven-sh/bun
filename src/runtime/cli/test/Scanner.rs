@@ -380,7 +380,7 @@ impl<'a> Scanner<'a> {
             }
             fs::EntryKind::File => {
                 // already seen it!
-                if !entry.abs_path.is_empty() {
+                if !entry.abs_path().is_empty() {
                     return;
                 }
 
@@ -416,8 +416,12 @@ impl<'a> Scanner<'a> {
                     Ok(s) => s,
                     Err(_) => bun_core::out_of_memory(),
                 };
-                entry.abs_path = Interned::from_static(stored);
-                self.test_files.push(entry.abs_path);
+                let abs_path = Interned::from_static(stored);
+                {
+                    let _entry_guard = entry.mutex.lock_guard();
+                    entry.set_abs_path(abs_path);
+                }
+                self.test_files.push(abs_path);
             }
         }
     }

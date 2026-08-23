@@ -730,8 +730,8 @@ impl Route {
         // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
         // string) and a `&mut Entry` parameter would alias them.
         // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
-        // `base_`/`extname` are no longer used.
+        // (`set_abs_path`) is interior (`Cell` + publish flag) and happens
+        // under the per-entry mutex.
         // SAFETY: caller passes an EntryStore-owned pointer valid for the
         // process lifetime; no other live `&mut` to it during this call.
         let entry_abs_path = unsafe { &*entry }.abs_path().as_bytes();
@@ -847,12 +847,24 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            if abs_path_str.is_empty() {
-                // The reads of `cache().fd` and the `set_abs_path` write below
-                // rewrite the cached `Entry`; serialize them on the per-entry
-                // mutex (the same lock every other `Entry` rewrite path takes).
+            // The reads of `cache().fd` and the `set_abs_path` write below
+            // rewrite the cached `Entry`; serialize them on the per-entry
+            // mutex (the same lock every other `Entry` rewrite path takes).
+            let entry_guard = if abs_path_str.is_empty() {
                 // SAFETY: see fn-level NOTE — read-only reborrow.
-                let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
+                Some(unsafe { &*entry }.mutex.lock_guard())
+            } else {
+                None
+            };
+            // A resolver on a bundler thread may have published the path between
+            // the unlocked read above and taking the lock; a published value is
+            // never rewritten, so re-check under the lock before filling.
+            if abs_path_str.is_empty() {
+                // SAFETY: see fn-level NOTE — read-only reborrow.
+                abs_path_str = unsafe { &*entry }.abs_path().as_bytes();
+            }
+
+            if abs_path_str.is_empty() {
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
                 // Cell so the drop closure can read it while the body still mutates.
@@ -930,10 +942,11 @@ impl Route {
                     .append(_abs)
                     .expect("unreachable");
 
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
-                // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(Interned::from_static(abs_path_str));
+                // SAFETY: see fn-level NOTE — read-only reborrow; the write is
+                // interior and `entry_guard` is held.
+                unsafe { &*entry }.set_abs_path(Interned::from_static(abs_path_str));
             }
+            drop(entry_guard);
 
             #[cfg(windows)]
             let abs_path: AbsPath = {

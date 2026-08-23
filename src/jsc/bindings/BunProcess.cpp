@@ -67,6 +67,9 @@
 #include "napi_handle_scope.h"
 #include "napi_external.h"
 
+#include <unicode/uchar.h>
+#include <unicode/uversion.h>
+
 #ifndef WIN32
 #include <errno.h>
 #include <dlfcn.h>
@@ -272,8 +275,19 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     putDirectNamed(vm, object, "uv"_s, JSValue(JSC::jsOwnedString(vm, String::fromLatin1(uv_version_string()))));
 #endif
     putVersion("napi", "10");
-    putVersion("icu", U_ICU_VERSION);
-    putVersion("unicode", U_UNICODE_VERSION);
+    // Ask the linked ICU instead of using U_ICU_VERSION / U_UNICODE_VERSION.
+    // macOS links the system libicucore, so the headers the build compiled
+    // against can be a different ICU than the one the process runs with.
+    {
+        UVersionInfo versionInfo;
+        char versionString[U_MAX_VERSION_STRING_LENGTH];
+        u_getVersion(versionInfo);
+        u_versionToString(versionInfo, versionString);
+        putDirectNamed(vm, object, "icu"_s, JSC::jsOwnedString(vm, String::fromLatin1(versionString)));
+        u_getUnicodeVersion(versionInfo);
+        u_versionToString(versionInfo, versionString);
+        putDirectNamed(vm, object, "unicode"_s, JSC::jsOwnedString(vm, String::fromLatin1(versionString)));
+    }
     putVersion("sqlite", Bun__sqlite3_version());
 
 #define STRINGIFY_IMPL(x) #x

@@ -4298,6 +4298,9 @@ where
             return WebCore::DrainResult::Aborted;
         }
 
+        if let Some(resp) = self.live_resp() {
+            resp.grow_request_window();
+        }
         // This means we have received part of the body but not the whole thing
         let emptied = self.request_body_buf.replace(Vec::new());
         if !emptied.is_empty() {
@@ -4330,6 +4333,9 @@ where
             // `.text()`/`.json()` want the whole body; disable pre-stream backpressure.
             self.flags.set_request_body_buffer_all(true);
             self.resume_request_body_socket();
+            if let Some(resp) = self.live_resp() {
+                resp.grow_request_window();
+            }
             // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
             // if is not, this should be removed and only keep protect + setAbortHandler
             // HTTP/3 (RFC 9114): Content-Length is optional; the body is

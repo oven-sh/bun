@@ -76,7 +76,11 @@ static constexpr uint32_t LOCAL_MAX_FRAME_SIZE = 16384;
 /* Per-stream and per-connection receive windows we advertise. Request
  * bodies are handed to the application as they arrive (and it can pause a
  * stream), so these bound how far a peer can run ahead of the reader. */
-static constexpr uint32_t LOCAL_INITIAL_WINDOW_SIZE = 1u << 20;
+/* Advertised per-stream window before the handler asks for the body; grown
+ * to LOCAL_STREAM_WINDOW_SIZE by growReceiveWindow() once it does, so peers
+ * multiplexing many uploads can't park a full body per stream up front. */
+static constexpr uint32_t LOCAL_INITIAL_WINDOW_SIZE = 64 * 1024;
+static constexpr uint32_t LOCAL_STREAM_WINDOW_SIZE = 1u << 20;
 static constexpr uint32_t LOCAL_CONNECTION_WINDOW_SIZE = 1u << 24;
 static constexpr uint32_t LOCAL_MAX_CONCURRENT_STREAMS = 256;
 /* Same cap as the HTTP/1 parser (UWS_HTTP_MAX_HEADERS_COUNT). */
@@ -163,6 +167,8 @@ struct Http2Response {
     int32_t sendWindow;
     /* DATA bytes consumed on this stream not yet returned via WINDOW_UPDATE. */
     uint32_t unackedReceive = 0;
+    uint32_t receiveWindow = http2::LOCAL_INITIAL_WINDOW_SIZE;
+    bool wide = false;
     int64_t declaredContentLength = -1;
     uint64_t receivedBodyBytes = 0;
 
@@ -231,6 +237,8 @@ struct Http2Response {
 
     inline Http2Response *pause();
     inline Http2Response *resume();
+    /* The handler started consuming the body: widen this stream's window. */
+    inline void growReceiveWindow();
     inline Http2Response *cork(MoveOnlyFunction<void()> &&fn);
     void uncork() {}
     bool isCorked() { return false; }
@@ -955,7 +963,9 @@ inline void Http2Connection::writeInformational(Http2Response *stream, std::stri
 
 inline void Http2Connection::replenishStreamWindow(Http2Response *stream, uint32_t bytes) {
     stream->unackedReceive += bytes;
-    if (!stream->paused && stream->unackedReceive >= http2::LOCAL_INITIAL_WINDOW_SIZE / 2) {
+    /* A stream not yet granted the wide window keeps only its initial
+     * allowance: that is what bounds body bytes parked per stream. */
+    if (stream->wide && !stream->paused && stream->unackedReceive >= stream->receiveWindow / 2) {
         writeWindowUpdate(stream->id, stream->unackedReceive);
         stream->unackedReceive = 0;
     }
@@ -1670,6 +1680,15 @@ inline Http2Response *Http2Response::resume() {
         conn->scheduleFlush();
     }
     return this;
+}
+
+inline void Http2Response::growReceiveWindow() {
+    if (dead || remoteClosed || wide) return;
+    wide = true;
+    conn->writeWindowUpdate(id, http2::LOCAL_STREAM_WINDOW_SIZE - receiveWindow + unackedReceive);
+    receiveWindow = http2::LOCAL_STREAM_WINDOW_SIZE;
+    unackedReceive = 0;
+    conn->scheduleFlush();
 }
 
 inline Http2Response *Http2Response::cork(MoveOnlyFunction<void()> &&fn) {

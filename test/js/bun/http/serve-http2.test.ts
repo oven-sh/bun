@@ -82,6 +82,12 @@ const server = serve({
       case "/ws":
         if (server.upgrade(req)) return;
         return new Response("upgrade failed", { status: 400 });
+      case "/late-read": {
+        await Bun.sleep(Number(url.searchParams.get("ms") ?? "200"));
+        let n = 0;
+        for await (const c of req.body) n += c.length;
+        return new Response(String(n));
+      }
       case "/slow": {
         await Bun.sleep(Number(url.searchParams.get("ms") ?? "50"));
         return new Response("slow");
@@ -731,6 +737,26 @@ for (const secure of [true, false]) {
       expect(map.get(3)).toBeGreaterThanOrEqual(100); // MAX_CONCURRENT_STREAMS
       expect(map.get(4)).toBeGreaterThanOrEqual(65535); // INITIAL_WINDOW_SIZE
       await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+      raw.close();
+    });
+
+    test("request body: stream window stays at the initial 64 KB until the handler reads, then opens", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+      raw.headers(1, [...baseHeaders("/late-read?ms=300", "POST"), ["content-length", String(1 << 20)]], F.END_HEADERS);
+      // Fill exactly the advertised 64 KB stream window.
+      for (let i = 0; i < 4; i++) raw.write(frame(T.DATA, 0, 1, Buffer.alloc(16384, 1)));
+      raw.write(frame(T.PING, 0, 0, Buffer.from("windowed")));
+      await raw.waitFor(f => f.type === T.PING && f.payload.toString() === "windowed");
+      // Handler hasn't touched req.body yet: no stream-level WINDOW_UPDATE.
+      expect(raw.frames.some(f => f.type === T.WINDOW_UPDATE && f.streamId === 1)).toBe(false);
+      // Once it starts reading, the window opens and the rest of the body is accepted.
+      const wu = await raw.waitFor(f => f.type === T.WINDOW_UPDATE && f.streamId === 1);
+      expect(wu.payload.readUInt32BE(0)).toBeGreaterThanOrEqual((1 << 20) - 65536);
+      for (let sent = 65536; sent < 1 << 20; sent += 16384) {
+        raw.write(frame(T.DATA, sent + 16384 >= 1 << 20 ? F.END_STREAM : 0, 1, Buffer.alloc(16384, 1)));
+      }
+      expect((await raw.body(1)).toString()).toBe(String(1 << 20));
       raw.close();
     });
 

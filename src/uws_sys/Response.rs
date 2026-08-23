@@ -785,14 +785,6 @@ impl AnyResponse {
         }
     }
 
-    /// HTTP/2 and HTTP/3: one of many streams on a connection, with headers
-    /// delivered as a decoded list and no per-response connection semantics
-    /// (`Connection: close`, `Transfer-Encoding`, upgrade).
-    #[inline]
-    pub fn is_multiplexed(self) -> bool {
-        matches!(self, AnyResponse::H3(_) | AnyResponse::H2(_))
-    }
-
     pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
@@ -877,6 +869,12 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.try_end(data, total_size, close_connection))
     }
 
+    /// HTTP/2: widen the stream receive window once the body is wanted.
+    pub fn grow_request_window(self) {
+        if let AnyResponse::H2(r) = self {
+            bun_opaque::opaque_deref_mut(r).grow_request_window();
+        }
+    }
     pub fn pause(self) {
         any_dispatch!(self, |r| r.pause())
     }

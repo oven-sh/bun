@@ -90,6 +90,11 @@ impl Response {
     pub(crate) fn flush_headers(&mut self, immediate: bool) {
         c::uws_h2_res_flush_headers(self, immediate)
     }
+    /// The handler started consuming the request body: widen this stream's
+    /// receive window from the small initial value.
+    pub fn grow_request_window(&mut self) {
+        c::uws_h2_res_grow_request_window(self)
+    }
     pub(crate) fn pause(&mut self) {
         c::uws_h2_res_pause(self)
     }
@@ -581,6 +586,7 @@ mod c {
             close: bool,
         ) -> bool;
         pub(super) safe fn uws_h2_res_end_without_body(res: &mut Response, close: bool);
+        pub(super) safe fn uws_h2_res_grow_request_window(res: &mut Response);
         pub(super) safe fn uws_h2_res_pause(res: &mut Response);
         pub(super) safe fn uws_h2_res_resume(res: &mut Response);
         pub(super) fn uws_h2_res_write_status(res: *mut Response, p: *const u8, n: usize);

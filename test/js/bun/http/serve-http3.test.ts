@@ -552,7 +552,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     await withServer(async port => {
       // Body is tiny ("one two three"); the point is the server sees
       // backpressure from the QUIC flow-control window and the
-      // H3ResponseSink onWritable path completes instead of hanging.
+      // HTTPSResponseSink onWritable path completes instead of hanging.
       // Throttle by reading via getReader() with a delay between chunks.
       const res = await fetchH3(port, "/stream");
       const reader = res.body!.getReader();
@@ -624,7 +624,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   // The big one: every concurrent stream gets back exactly its own bytes,
   // transformed. Catches shared-buffer reuse in quic.c read_buf, response
   // backpressure aliasing in Http3ResponseData, and partial-write offset
-  // bugs in H3ResponseSink. Bodies are crypto-random so any cross-stream
+  // bugs in HTTPSResponseSink. Bodies are crypto-random so any cross-stream
   // leak shows up as an md5 mismatch, not just an offset shift.
   const isolationRound = async (port: number, count: number, size: number) => {
     const transform = (input: Uint8Array) => {
@@ -741,7 +741,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  test("Response(Bun.file().stream()) goes through H3ResponseSink", async () => {
+  test("Response(Bun.file().stream()) goes through HTTPSResponseSink", async () => {
     await withServer(async (port, dir) => {
       const raw = await fetchH3(port, "/file-stream").then(r => r.bytes());
       expect(raw.length).toBe(200 * 1024);

@@ -44,7 +44,6 @@ use route_param::List as ParamsList;
 pub mod whatwg {
     use super::BunString as String;
     use super::strings;
-    use bun_core::RawString;
 
     /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
     /// Construct via `from_string`/`from_utf8`; free via `deinit`.
@@ -55,35 +54,32 @@ pub mod whatwg {
 
     // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL`
     // (it `delete`s). String inputs are `const BunString*` on the C++ side, so
-    // `&String`; every `RawString` return is a fresh +1 from `Bun::toStringRef`.
+    // `&String`; string returns are +1 (`Bun::toStringRef`), declared as `String`.
     unsafe extern "C" {
         // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
         safe fn URL__fromString(str: &String) -> Option<core::ptr::NonNull<URL>>;
-        safe fn URL__protocol(url: &URL) -> RawString;
-        safe fn URL__href(url: &URL) -> RawString;
-        safe fn URL__hostname(url: &URL) -> RawString;
+        safe fn URL__protocol(url: &URL) -> String;
+        safe fn URL__href(url: &URL) -> String;
+        safe fn URL__hostname(url: &URL) -> String;
         safe fn URL__deinit(url: &mut URL);
-        safe fn URL__pathname(url: &URL) -> RawString;
-        safe fn URL__getHref(input: &String) -> RawString;
-        safe fn URL__getFileURLString(input: &String) -> RawString;
-        safe fn URL__getHrefJoin(base: &String, relative: &String) -> RawString;
-        safe fn URL__fragmentIdentifier(url: &URL) -> RawString;
+        safe fn URL__pathname(url: &URL) -> String;
+        safe fn URL__getHref(input: &String) -> String;
+        safe fn URL__getFileURLString(input: &String) -> String;
+        safe fn URL__getHrefJoin(base: &String, relative: &String) -> String;
+        safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
-        // SAFETY: fresh +1 from `Bun::toStringRef`.
-        unsafe { String::from_raw(URL__getHref(str)) }
+        URL__getHref(str)
     }
     pub fn join(base: &String, relative: &String) -> String {
-        // SAFETY: fresh +1 from `Bun::toStringRef`.
-        unsafe { String::from_raw(URL__getHrefJoin(base, relative)) }
+        URL__getHrefJoin(base, relative)
     }
     pub fn file_url_from_string(str: &String) -> String {
-        // SAFETY: fresh +1 from `Bun::toStringRef`.
-        unsafe { String::from_raw(URL__getFileURLString(str)) }
+        URL__getFileURLString(str)
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
@@ -111,16 +107,13 @@ pub mod whatwg {
         }
         /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
-            // SAFETY: fresh +1 from `Bun::toStringRef`.
-            unsafe { String::from_raw(URL__fragmentIdentifier(self)) }
+            URL__fragmentIdentifier(self)
         }
         pub fn protocol(&self) -> String {
-            // SAFETY: fresh +1 from `Bun::toStringRef`.
-            unsafe { String::from_raw(URL__protocol(self)) }
+            URL__protocol(self)
         }
         pub fn href(&self) -> String {
-            // SAFETY: fresh +1 from `Bun::toStringRef`.
-            unsafe { String::from_raw(URL__href(self)) }
+            URL__href(self)
         }
         /// Returns the host WITH the port.
         ///
@@ -131,12 +124,10 @@ pub mod whatwg {
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
         /// ```
         pub fn hostname(&self) -> String {
-            // SAFETY: fresh +1 from `Bun::toStringRef`.
-            unsafe { String::from_raw(URL__hostname(self)) }
+            URL__hostname(self)
         }
         pub fn pathname(&self) -> String {
-            // SAFETY: fresh +1 from `Bun::toStringRef`.
-            unsafe { String::from_raw(URL__pathname(self)) }
+            URL__pathname(self)
         }
         pub fn deinit(&mut self) {
             URL__deinit(self)

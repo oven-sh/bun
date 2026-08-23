@@ -50,21 +50,19 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.String` — 5-variant tagged WTFString-or-ZigString, 24 bytes on 64-bit.
 //
-// Three types, one layout:
-// - `RawString` (= `bun_alloc::String`): the `#[repr(C)]` `Copy` POD that C++
-//   calls `BunString`. Appears ONLY in `extern "C"` signatures (by value) and
-//   `#[repr(C)]` structs shared with C++. No methods; carries no ownership the
-//   compiler can see. A by-value `RawString` crossing FFI is an ownership
-//   transfer point — adopt it with `String::from_raw`, release it with
-//   `String::into_raw`.
-// - `String`: `#[repr(transparent)]` over `RawString`; OWNS one ref when
-//   WTF-backed. Not `Copy`. `Drop` = `deref()`, `Clone` = `ref()`. Every +1
-//   producer (`clone_utf8`, `create_*`, `to_bun_string`, C++ `toStringRef`
-//   out-params, …) returns this, so a leaked ref is a compile-time
-//   impossibility rather than a convention. For the `ZigString`/`Static`/
-//   `Empty`/`Dead` tags `Drop`/`Clone` are a tag compare and nothing else.
-// - `&String` is the borrow. `StringView<'a>` is a by-value borrow for the
-//   few places that must synthesize one (cells, sub-slices of a WTF string).
+// Three types, one layout (all 24 bytes, identical ABI to C++ `BunString`):
+// - `String`: OWNS one ref when WTF-backed. Not `Copy`. `Drop` = `deref()`,
+//   `Clone` = `ref()`; for the `ZigString`/`Static`/`Empty`/`Dead` tags both
+//   are a tag compare and nothing else. Every +1 producer returns this —
+//   including `extern "C"` declarations: a by-value `String` in an FFI
+//   signature means ownership crosses (C++ `Bun::toStringRef` return, or a
+//   Rust return that C++ `transferToWTFString()`s), exactly like `Box<T>`.
+// - `&String` is the borrow. `StringView<'a>` is the by-value borrow (C++
+//   `Bun::toString`/`toStringView` results, property-iterator names,
+//   sub-slices of a WTF string).
+// - `RawString` (= `bun_alloc::String`): the `Copy` POD underneath. Only for
+//   `#[repr(C)]` out-param slots C++ fills in place and other spots that must
+//   stay `Copy`; adopt with `String::from_raw` / `StringView::from_raw`.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_alloc::String as RawString;
 pub use bun_alloc::{StringImpl, Tag};
@@ -79,30 +77,30 @@ crate::assert_ffi_layout!(String, 24, 8);
 // FFI surface from `src/jsc/bindings/BunString.cpp`. All return a fresh
 // WTF-backed string with refcount = 1, adopted via `String::from_raw`.
 unsafe extern "C" {
-    fn BunString__fromBytes(bytes: *const u8, len: usize) -> RawString;
-    fn BunString__fromLatin1(bytes: *const u8, len: usize) -> RawString;
-    fn BunString__fromUTF16(bytes: *const u16, len: usize) -> RawString;
-    fn BunString__fromUTF16ToLatin1(bytes: *const u16, len: usize) -> RawString;
-    safe fn BunString__fromLatin1Unitialized(len: usize) -> RawString;
-    safe fn BunString__fromUTF16Unitialized(len: usize) -> RawString;
+    fn BunString__fromBytes(bytes: *const u8, len: usize) -> String;
+    fn BunString__fromLatin1(bytes: *const u8, len: usize) -> String;
+    fn BunString__fromUTF16(bytes: *const u16, len: usize) -> String;
+    fn BunString__fromUTF16ToLatin1(bytes: *const u16, len: usize) -> String;
+    safe fn BunString__fromLatin1Unitialized(len: usize) -> String;
+    safe fn BunString__fromUTF16Unitialized(len: usize) -> String;
     // `&mut String` / `&String` are ABI-identical to the C++ `BunString*`
     // (thin non-null pointer to a `#[repr(C)]` struct, asserted by
     // `assert_ffi_layout!` above). C++ reads/writes only the `tag`/`value`
     // fields in place; the type encodes the sole pointer-validity precondition,
     // so `safe fn` discharges the link-time proof here.
     safe fn BunString__toThreadSafe(this: &mut String);
-    fn BunString__createAtom(bytes: *const u8, len: usize) -> RawString;
-    fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> RawString;
-    fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> RawString;
+    fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
+    fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
+    fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
     fn BunString__createExternal(
         bytes: *const u8,
         len: usize,
         is_latin1: bool,
         ctx: *mut core::ffi::c_void,
         callback: Option<extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize)>,
-    ) -> RawString;
-    fn BunString__createExternalGloballyAllocatedLatin1(bytes: *mut u8, len: usize) -> RawString;
-    fn BunString__createExternalGloballyAllocatedUTF16(bytes: *mut u16, len: usize) -> RawString;
+    ) -> String;
+    fn BunString__createExternalGloballyAllocatedLatin1(bytes: *mut u8, len: usize) -> String;
+    fn BunString__createExternalGloballyAllocatedUTF16(bytes: *mut u16, len: usize) -> String;
 }
 
 /// `ctx` is the pointer passed into `create_external`; `buffer` is the
@@ -134,12 +132,6 @@ impl String {
     #[inline]
     pub fn into_raw(self) -> RawString {
         core::mem::ManuallyDrop::new(self).0
-    }
-    /// View the FFI representation without giving up ownership. For filling
-    /// a `#[repr(C)]` struct that C++ only reads while `self` is alive.
-    #[inline]
-    pub const fn as_raw(&self) -> &RawString {
-        &self.0
     }
 
     #[inline]
@@ -244,39 +236,39 @@ impl String {
             return Self::EMPTY;
         }
         // BunString__fromBytes auto-detects all-ASCII → Latin1, else UTF-8.
-        // SAFETY: s.as_ptr()/len describe a valid byte slice; fresh +1.
-        unsafe { Self::from_raw(BunString__fromBytes(s.as_ptr(), s.len())) }
+        // SAFETY: s.as_ptr()/len describe a valid byte slice.
+        unsafe { BunString__fromBytes(s.as_ptr(), s.len()) }
     }
     pub fn clone_latin1(s: &[u8]) -> Self {
         if s.is_empty() {
             return Self::EMPTY;
         }
-        // SAFETY: s.as_ptr()/len describe a valid byte slice; fresh +1.
-        unsafe { Self::from_raw(BunString__fromLatin1(s.as_ptr(), s.len())) }
+        // SAFETY: s.as_ptr()/len describe a valid byte slice.
+        unsafe { BunString__fromLatin1(s.as_ptr(), s.len()) }
     }
     /// `bun.String.cloneUTF16` — narrows to Latin-1 if all-ASCII.
     pub fn clone_utf16(s: &[u16]) -> Self {
         if s.is_empty() {
             return Self::EMPTY;
         }
-        // SAFETY: s.as_ptr()/len describe a valid u16 slice; fresh +1.
+        // SAFETY: s.as_ptr()/len describe a valid u16 slice.
         unsafe {
-            Self::from_raw(if strings::first_non_ascii16(s).is_none() {
+            if strings::first_non_ascii16(s).is_none() {
                 BunString__fromUTF16ToLatin1(s.as_ptr(), s.len())
             } else {
                 BunString__fromUTF16(s.as_ptr(), s.len())
-            })
+            }
         }
     }
     pub fn create_atom(s: &[u8]) -> Self {
-        // SAFETY: s.as_ptr()/len describe a valid byte slice; fresh +1.
-        unsafe { Self::from_raw(BunString__createAtom(s.as_ptr(), s.len())) }
+        // SAFETY: s.as_ptr()/len describe a valid byte slice.
+        unsafe { BunString__createAtom(s.as_ptr(), s.len()) }
     }
     /// `bun.String.tryCreateAtom` — `None` if `bytes` is non-ASCII or too long
     /// to atomize.
     pub fn try_create_atom(bytes: &[u8]) -> Option<Self> {
         // SAFETY: bytes describes a valid slice.
-        let atom = unsafe { Self::from_raw(BunString__tryCreateAtom(bytes.as_ptr(), bytes.len())) };
+        let atom = unsafe { BunString__tryCreateAtom(bytes.as_ptr(), bytes.len()) };
         if atom.0.tag == Tag::Dead {
             None
         } else {
@@ -351,13 +343,13 @@ impl String {
             >(callback) });
         // SAFETY: bytes describes a valid slice; len <= max_length checked.
         let s = unsafe {
-            Self::from_raw(BunString__createExternal(
+            BunString__createExternal(
                 bytes.as_ptr(),
                 bytes.len(),
                 is_latin1,
                 ctx_erased,
                 cb_erased,
-            ))
+            )
         };
         debug_assert!(s.0.tag != Tag::WTFStringImpl || s.as_wtf().ref_count() == 1);
         s
@@ -379,13 +371,7 @@ impl String {
         debug_assert!(!bytes.is_empty());
         // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
         // without copying and never frees it.
-        unsafe {
-            Self::from_raw(BunString__createStaticExternal(
-                bytes.as_ptr(),
-                bytes.len(),
-                is_latin1,
-            ))
-        }
+        unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
     }
     /// UTF-16 form of [`Self::create_static_external`]: `units` must be
     /// 2-byte aligned and live for the rest of the process.
@@ -393,13 +379,7 @@ impl String {
         debug_assert!(!units.is_empty());
         // SAFETY: the C++ side takes the length in code units and stores
         // ptr/len without copying or freeing.
-        unsafe {
-            Self::from_raw(BunString__createStaticExternal(
-                units.as_ptr().cast::<u8>(),
-                units.len(),
-                false,
-            ))
-        }
+        unsafe { BunString__createStaticExternal(units.as_ptr().cast::<u8>(), units.len(), false) }
     }
     /// `bun.String.createFormat` — formats `args` into a temporary buffer and
     /// copies the result into a fresh WTF-backed string.
@@ -418,7 +398,7 @@ impl String {
     /// using the buffer).
     pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
         // SAFETY: fresh +1 (or Dead on allocation failure).
-        let s = unsafe { Self::from_raw(BunString__fromLatin1Unitialized(len)) };
+        let s = BunString__fromLatin1Unitialized(len);
         if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }
@@ -435,7 +415,7 @@ impl String {
     }
     pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
         // SAFETY: fresh +1 (or Dead on allocation failure).
-        let s = unsafe { Self::from_raw(BunString__fromUTF16Unitialized(len)) };
+        let s = BunString__fromUTF16Unitialized(len);
         if s.0.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }
@@ -467,7 +447,7 @@ impl String {
         let (ptr, len) = (bytes.as_mut_ptr(), bytes.len());
         // SAFETY: ownership transferred to WTF::ExternalStringImpl, which frees
         // via mimalloc (the global allocator).
-        unsafe { Self::from_raw(BunString__createExternalGloballyAllocatedLatin1(ptr, len)) }
+        unsafe { BunString__createExternalGloballyAllocatedLatin1(ptr, len) }
     }
 
     /// `bun.String.createExternalGloballyAllocated(.utf16, bytes)`.
@@ -483,7 +463,7 @@ impl String {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         let (ptr, len) = (bytes.as_mut_ptr(), bytes.len());
         // SAFETY: see `create_external_globally_allocated_latin1`.
-        unsafe { Self::from_raw(BunString__createExternalGloballyAllocatedUTF16(ptr, len)) }
+        unsafe { BunString__createExternalGloballyAllocatedUTF16(ptr, len) }
     }
 
     /// `bun.String.createFromOSPath` — clone an OS-native path slice into a

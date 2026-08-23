@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_core::{RawString, String};
+use bun_core::String;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 bun_opaque::opaque_ffi! {
@@ -9,46 +9,38 @@ bun_opaque::opaque_ffi! {
 }
 
 // Getters take `&URL` (non-null `*const URL` at the C ABI; BunString.cpp never
-// mutates the WTF::URL on read). String inputs are `const BunString*`; every
-// `RawString` return is a fresh +1 from `Bun::toStringRef`. `URL__deinit`
-// consumes the C++ allocation, so it keeps a raw pointer and stays `unsafe fn`.
+// mutates the WTF::URL on read). String inputs are `const BunString*`; string
+// returns are +1 (`Bun::toStringRef`) so they are declared as owning `String`.
+// `URL__deinit` consumes the C++ allocation, so it stays `unsafe fn`.
 unsafe extern "C" {
     safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
     safe fn URL__fromString(input: &String) -> *mut URL;
-    safe fn URL__protocol(url: &URL) -> RawString;
-    safe fn URL__username(url: &URL) -> RawString;
-    safe fn URL__password(url: &URL) -> RawString;
-    safe fn URL__host(url: &URL) -> RawString;
+    safe fn URL__protocol(url: &URL) -> String;
+    safe fn URL__username(url: &URL) -> String;
+    safe fn URL__password(url: &URL) -> String;
+    safe fn URL__host(url: &URL) -> String;
     safe fn URL__port(url: &URL) -> u32;
     fn URL__deinit(url: *mut URL);
-    safe fn URL__pathname(url: &URL) -> RawString;
-    safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> RawString;
-    safe fn URL__getFileURLString(input: &String) -> RawString;
-    safe fn URL__pathFromFileURL(input: &String) -> RawString;
-}
-
-/// Adopt a `Bun::toStringRef` result.
-#[inline]
-fn adopt(raw: RawString) -> String {
-    // SAFETY: every `RawString`-returning extern above hands back a fresh +1
-    // (or an inert Dead/Empty tag).
-    unsafe { String::from_raw(raw) }
+    safe fn URL__pathname(url: &URL) -> String;
+    safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> String;
+    safe fn URL__getFileURLString(input: &String) -> String;
+    safe fn URL__pathFromFileURL(input: &String) -> String;
 }
 
 impl URL {
     pub fn file_url_from_string(str: &String) -> String {
-        adopt(URL__getFileURLString(str))
+        URL__getFileURLString(str)
     }
 
     pub fn path_from_file_url(str: &String) -> String {
-        adopt(URL__pathFromFileURL(str))
+        URL__pathFromFileURL(str)
     }
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
     /// If it fails, the tag is marked Dead
     #[track_caller]
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
-        crate::call_check_slow(global, || adopt(URL__getHrefFromJS(value, global)))
+        crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
     }
 
     #[track_caller]
@@ -67,15 +59,15 @@ impl URL {
     // caller must destroy().
 
     pub fn protocol(&self) -> String {
-        adopt(URL__protocol(self))
+        URL__protocol(self)
     }
 
     pub fn username(&self) -> String {
-        adopt(URL__username(self))
+        URL__username(self)
     }
 
     pub fn password(&self) -> String {
-        adopt(URL__password(self))
+        URL__password(self)
     }
 
     /// Returns the host WITHOUT the port.
@@ -87,7 +79,7 @@ impl URL {
     /// URL("http://example.com:8080").host() => "example.com"
     /// ```
     pub fn host(&self) -> String {
-        adopt(URL__host(self))
+        URL__host(self)
     }
 
     /// Returns `u32::MAX` if the port is not set. Otherwise, `port`
@@ -104,6 +96,6 @@ impl URL {
     }
 
     pub fn pathname(&self) -> String {
-        adopt(URL__pathname(self))
+        URL__pathname(self)
     }
 }

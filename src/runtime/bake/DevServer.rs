@@ -5629,12 +5629,9 @@ mod c {
         code: BunString,
     ) -> JsResult<JSValue> {
         unsafe extern "C" {
-            safe fn BakeLoadServerHmrPatch(
-                global: &JSGlobalObject,
-                code: bun_core::RawString,
-            ) -> JSValue;
+            safe fn BakeLoadServerHmrPatch(global: &JSGlobalObject, code: BunString) -> JSValue;
         }
-        jsc::from_js_host_call(global, || BakeLoadServerHmrPatch(global, code.into_raw()))
+        jsc::from_js_host_call(global, || BakeLoadServerHmrPatch(global, code))
     }
 
     pub(super) fn bake_load_server_hmr_patch_with_source_map(
@@ -5651,7 +5648,7 @@ mod c {
             // caller-side validity + ownership precondition.
             fn BakeLoadServerHmrPatchWithSourceMap(
                 global: *const JSGlobalObject,
-                code: bun_core::RawString,
+                code: BunString,
                 ptr: *const u8,
                 len: usize,
             ) -> JSValue;
@@ -5662,7 +5659,7 @@ mod c {
         jsc::from_js_host_call(global, || unsafe {
             BakeLoadServerHmrPatchWithSourceMap(
                 global,
-                code.into_raw(),
+                code,
                 source_map_json_ptr,
                 source_map_json_len,
             )
@@ -5677,12 +5674,12 @@ mod c {
         unsafe extern "C" {
             safe fn BakeLoadInitialServerCode(
                 global: &JSGlobalObject,
-                code: bun_core::RawString,
+                code: BunString,
                 separate_ssr_graph: bool,
             ) -> JSValue;
         }
         jsc::from_js_host_call(global, || {
-            BakeLoadInitialServerCode(global, code.into_raw(), separate_ssr_graph)
+            BakeLoadInitialServerCode(global, code, separate_ssr_graph)
         })
     }
 }

@@ -132,7 +132,7 @@ enum Layout {
     Skip,
 }
 
-struct Stringifier {
+struct Stringifier<'a> {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     // NOTE: `JSValue` keys live on the heap here, but every entry is also
@@ -143,20 +143,20 @@ struct Stringifier {
     /// borrowed, not ref-counted: each is pushed and popped within the one
     /// `JSPropertyIterator` loop body whose iterator keeps the name alive
     /// (the iterator's strings carry no extra reference).
-    path: Vec<bun_core::RawString>,
+    path: Vec<bun_core::StringView<'a>>,
     /// Whether any line has been written (controls blank lines before headers).
     wrote: bool,
 }
 
-impl Stringifier {
-    fn stringify_root(&mut self, global: &JSGlobalObject, root: JSValue) -> StringifyResult<()> {
+impl<'a> Stringifier<'a> {
+    fn stringify_root(&mut self, global: &'a JSGlobalObject, root: JSValue) -> StringifyResult<()> {
         self.mark_visiting(global, root)?;
         self.stringify_table_body(global, root, false)?;
         self.visiting.remove(&root);
         Ok(())
     }
 
-    fn mark_visiting(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
+    fn mark_visiting(&mut self, global: &'a JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         let was_present = self
             .visiting
             .get_or_put(value)
@@ -172,7 +172,7 @@ impl Stringifier {
 
     /// Decides the layout of one (already unboxed) property value. Reads
     /// array elements when classifying arrays.
-    fn layout_of(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<Layout> {
+    fn layout_of(&mut self, global: &'a JSGlobalObject, value: JSValue) -> StringifyResult<Layout> {
         if value.is_undefined() || value.is_symbol() || value.is_function() {
             return Ok(Layout::Skip);
         }
@@ -211,7 +211,7 @@ impl Stringifier {
     /// `own_header` defers `[path]`: a sub-section reached first implies it.
     fn stringify_table_body(
         &mut self,
-        global: &JSGlobalObject,
+        global: &'a JSGlobalObject,
         table: JSValue,
         own_header: bool,
     ) -> StringifyResult<()> {
@@ -261,7 +261,7 @@ impl Stringifier {
                 Layout::Table => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(*prop_name.as_raw());
+                    self.path.push(prop_name);
                     self.stringify_table_body(global, value, true)?;
                     self.path.pop();
                     self.visiting.remove(&value);
@@ -269,7 +269,7 @@ impl Stringifier {
                 Layout::ArrayOfTables => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(*prop_name.as_raw());
+                    self.path.push(prop_name);
                     let mut items = value.array_iterator(global)?;
                     while let Some(item) = items.next()? {
                         let item = item.unwrap_boxed_primitive(global)?;
@@ -306,7 +306,7 @@ impl Stringifier {
     /// classification `layout_of` already computed for it, if any.
     fn stringify_inline_value(
         &mut self,
-        global: &JSGlobalObject,
+        global: &'a JSGlobalObject,
         value: JSValue,
         known_temporal: Option<TemporalType>,
     ) -> StringifyResult<()> {
@@ -413,8 +413,6 @@ impl Stringifier {
         self.builder
             .append_latin1(if array_of_tables { b"[[" } else { b"[" });
         for (i, seg) in self.path.iter().enumerate() {
-            // SAFETY: pushed/popped within the lending property iterator's loop body.
-            let seg = &*unsafe { bun_core::StringView::from_raw(*seg) };
             if i > 0 {
                 self.builder.append_lchar(b'.');
             }
@@ -480,7 +478,11 @@ impl Stringifier {
     /// A JS Date as a TOML offset date-time (`1979-05-27T07:32:00.999Z`).
     /// A TOML offset date-time is RFC 3339, which the 24-byte
     /// `YYYY-MM-DDTHH:mm:ss.sssZ` form of `Date.prototype.toISOString` is.
-    fn append_datetime(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
+    fn append_datetime(
+        &mut self,
+        global: &'a JSGlobalObject,
+        value: JSValue,
+    ) -> StringifyResult<()> {
         let mut buf = [0u8; 64];
         let Some(iso) = value.to_iso_string(global, &mut buf) else {
             return Err(global
@@ -518,7 +520,7 @@ impl Stringifier {
     /// `PlainYearMonth`/`PlainMonthDay`/`Duration` have no TOML form and throw.
     fn append_temporal(
         &mut self,
-        global: &JSGlobalObject,
+        global: &'a JSGlobalObject,
         value: JSValue,
         temporal_type: TemporalType,
     ) -> StringifyResult<()> {
@@ -555,7 +557,7 @@ impl Stringifier {
 
     // ── errors ─────────────────────────────────────────────────────────────
 
-    fn err_null_value(&mut self, global: &JSGlobalObject, key: &BunString) -> StringifyError {
+    fn err_null_value(&mut self, global: &'a JSGlobalObject, key: &BunString) -> StringifyError {
         let key_utf8 = key.to_owned_slice();
         global
             .throw(format_args!(
@@ -565,7 +567,7 @@ impl Stringifier {
             .into()
     }
 
-    fn err_in_array(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyError {
+    fn err_in_array(&mut self, global: &'a JSGlobalObject, value: JSValue) -> StringifyError {
         let what: &str = if value.is_null() {
             "null"
         } else if value.is_undefined() {
@@ -580,7 +582,7 @@ impl Stringifier {
             .into()
     }
 
-    fn err_changed(&mut self, global: &JSGlobalObject) -> StringifyError {
+    fn err_changed(&mut self, global: &'a JSGlobalObject) -> StringifyError {
         global
             .throw(format_args!(
                 "TOML.stringify cannot serialize a value that changed during serialization"

@@ -18,21 +18,18 @@ pub struct HeapProfilerConfig {
 unsafe extern "C" {
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is ABI-identical
     // to a non-null `*mut VM` and C++ mutation is interior to the opaque cell.
-    safe fn Bun__generateHeapProfile(vm: &mut VM) -> bun_core::RawString;
-    safe fn Bun__generateHeapSnapshotV8(vm: &mut VM) -> bun_core::RawString;
+    safe fn Bun__generateHeapProfile(vm: &mut VM) -> BunString;
+    safe fn Bun__generateHeapSnapshotV8(vm: &mut VM) -> BunString;
 }
 
 pub(crate) fn generate_and_write_profile(
     vm: &mut VM,
     config: &HeapProfilerConfig,
 ) -> Result<(), Error> {
-    // SAFETY: both return a fresh +1 from `Bun::toStringRef`.
-    let profile_string = unsafe {
-        BunString::from_raw(if config.text_format {
-            Bun__generateHeapProfile(vm)
-        } else {
-            Bun__generateHeapSnapshotV8(vm)
-        })
+    let profile_string = if config.text_format {
+        Bun__generateHeapProfile(vm)
+    } else {
+        Bun__generateHeapSnapshotV8(vm)
     };
 
     if profile_string.is_empty() {

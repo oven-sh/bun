@@ -559,9 +559,6 @@ function generateRustType(type: CppType, parent: CppType | null): string {
     if (bannedTypes[type.name]) {
       appendError(type.position, bannedTypes[type.name]);
     }
-    // `BunString` by value crosses the boundary as the `Copy` FFI mirror; the
-    // owning `bun_core::String` (has `Drop`) only ever appears behind a pointer.
-    if (type.name === "BunString" && parent?.type !== "pointer") return "bun_core::RawString";
     const t = rustSharedTypes[type.name];
     if (t) return t;
     // Unknown opaque — only valid behind a pointer (the per-type shim casts the

@@ -1230,12 +1230,12 @@ pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
     result.status
 }
 
-/// Returns +1 (or Empty); the C++ caller `transferToJS()`s it.
+/// The C++ caller `transferToJS()`s the result.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__NodeCompileCache__getDir() -> bun_core::RawString {
+pub extern "C" fn Bun__NodeCompileCache__getDir() -> BunString {
     match get_dir() {
-        Some(dir) => BunString::clone_utf8(&dir).into_raw(),
-        None => bun_core::RawString::EMPTY,
+        Some(dir) => BunString::clone_utf8(&dir),
+        None => BunString::EMPTY,
     }
 }
 

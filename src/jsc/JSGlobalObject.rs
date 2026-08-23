@@ -479,9 +479,7 @@ impl JSGlobalObject {
         // must have a Rust-side scope live across the FFI call (and query it) rather than
         // post-hoc `has_exception()` (whose own scope ctor would assert first).
         crate::top_scope!(scope, global);
-        // SAFETY: `Bun::toStringRef` (+1); dropped on the early-return path below.
-        let str =
-            unsafe { BunString::from_raw(Bun__ErrorCode__determineSpecificType(global, value)) };
+        let str = Bun__ErrorCode__determineSpecificType(global, value);
         scope.return_if_exception()?;
         Ok(str)
     }
@@ -490,9 +488,7 @@ impl JSGlobalObject {
     /// quoting, via the same C++ formatter the C++ overloads use).
     pub fn inspect_for_error_message(global: &Self, value: JSValue) -> JsResult<bun_core::String> {
         crate::top_scope!(scope, global);
-        // SAFETY: `Bun::toStringRef` (+1).
-        let str =
-            unsafe { BunString::from_raw(Bun__ErrorCode__inspectForErrorMessage(global, value)) };
+        let str = Bun__ErrorCode__inspectForErrorMessage(global, value);
         scope.return_if_exception()?;
         Ok(str)
     }
@@ -1506,12 +1502,12 @@ unsafe extern "C" {
     safe fn Bun__ErrorCode__determineSpecificType(
         global: &JSGlobalObject,
         value: JSValue,
-    ) -> bun_core::RawString;
+    ) -> BunString;
 
     safe fn Bun__ErrorCode__inspectForErrorMessage(
         global: &JSGlobalObject,
         value: JSValue,
-    ) -> bun_core::RawString;
+    ) -> BunString;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical

@@ -4229,11 +4229,8 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> bun_core::RawString {
-    if let Some(filename) = this.get_file_name() {
-        return BunString::from_bytes(filename).into_raw();
-    }
-    BunString::empty().into_raw()
+pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> bun_core::StringView<'_> {
+    bun_core::StringView::from_bytes(this.get_file_name().unwrap_or_default())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

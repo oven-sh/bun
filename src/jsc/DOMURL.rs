@@ -13,10 +13,7 @@ bun_opaque::opaque_ffi! {
 // call → `safe fn`.
 unsafe extern "C" {
     safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;
-    safe fn WebCore__DOMURL__fileSystemPath(
-        this: &DOMURL,
-        error_code: &mut c_int,
-    ) -> bun_core::RawString;
+    safe fn WebCore__DOMURL__fileSystemPath(this: &DOMURL, error_code: &mut c_int) -> bstr::String;
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
@@ -50,10 +47,7 @@ impl DOMURL {
 
     pub fn file_system_path(&mut self) -> Result<bstr::String, ToFileSystemPathError> {
         let mut error_code: c_int = 0;
-        // SAFETY: `Bun::toStringRef` (+1) or an inert Dead tag.
-        let path = unsafe {
-            bstr::String::from_raw(WebCore__DOMURL__fileSystemPath(self, &mut error_code))
-        };
+        let path = WebCore__DOMURL__fileSystemPath(self, &mut error_code);
         match error_code {
             1 => return Err(ToFileSystemPathError::InvalidHost),
             2 => return Err(ToFileSystemPathError::InvalidPath),

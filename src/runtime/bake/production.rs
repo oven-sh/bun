@@ -1296,7 +1296,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn BakeToWindowsPath(input: &BunString) -> bun_core::RawString {
+extern "C" fn BakeToWindowsPath(input: &BunString) -> BunString {
     #[cfg(unix)]
     {
         let _ = input;
@@ -1308,7 +1308,7 @@ extern "C" fn BakeToWindowsPath(input: &BunString) -> bun_core::RawString {
         let input_slice = input_utf8.slice();
         let mut output = bun_paths::w_path_buffer_pool::get();
         let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
-        BunString::clone_utf16(output_slice.as_slice()).into_raw()
+        BunString::clone_utf16(output_slice.as_slice())
     }
 }
 
@@ -1317,7 +1317,7 @@ extern "C" fn BakeProdResolve(
     global: &JSGlobalObject,
     a_str: &BunString,
     specifier_str: &BunString,
-) -> bun_core::RawString {
+) -> BunString {
     let specifier = specifier_str.to_utf8();
 
     if let Some(alias) = bun_resolve_builtins::Alias::get(
@@ -1325,7 +1325,7 @@ extern "C" fn BakeProdResolve(
         bun_ast::Target::Bun,
         bun_resolve_builtins::Cfg::default(),
     ) {
-        return BunString::static_(alias.path.as_bytes()).into_raw();
+        return BunString::static_(alias.path.as_bytes());
     }
 
     let referrer = a_str.to_utf8();
@@ -1336,7 +1336,7 @@ extern "C" fn BakeProdResolve(
             bun_core::fmt::quote(specifier.slice()),
             bun_core::fmt::quote(referrer.slice()),
         ));
-        return BunString::dead().into_raw();
+        return BunString::dead();
     }
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
@@ -1353,7 +1353,6 @@ extern "C" fn BakeProdResolve(
             specifier.slice(),
         ))
     ))
-    .into_raw()
 }
 
 /// After a production bundle is generated, prerendering needs to be able to
@@ -1588,7 +1587,7 @@ impl Drop for PerThread {
 
 /// Given a key, returns the source code to load.
 #[unsafe(no_mangle)]
-extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> bun_core::RawString {
+extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
     let pt = unsafe { &*pt };
@@ -1600,10 +1599,9 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> bun_core::Raw
         // the lifetime of the attached `PerThread` (see `Value::to_bun_string_ref`).
         return pt.bundled_outputs[value.get() as usize]
             .value
-            .to_bun_string_ref()
-            .into_raw();
+            .to_bun_string_ref();
     }
-    BunString::dead().into_raw()
+    BunString::dead()
 }
 
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)

@@ -715,7 +715,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
-pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> bun_core::RawString {
+pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     let mut array: Vec<u8> = Vec::new();
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
@@ -735,12 +735,12 @@ pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> b
     )
     .is_err()
     {
-        return BunString::empty().into_raw();
+        return BunString::empty();
     }
     if global_this.has_exception() {
-        return BunString::empty().into_raw();
+        return BunString::empty();
     }
-    BunString::clone_utf8(&array).into_raw()
+    BunString::clone_utf8(&array)
 }
 
 fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {

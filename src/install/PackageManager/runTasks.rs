@@ -1893,8 +1893,9 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
         .is_some_and(|e| e.failed)
 }
 
-/// The first failed download in a `run_tasks` pass halves the number of
-/// concurrent requests (down to the configured minimum).
+/// Called once the same download has failed at the connection level for the second
+/// time: shed a quarter of the request concurrency (once per `run_tasks` pass, never
+/// below `min_simultaneous_requests`). A single blip does not throttle the install.
 fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
     if core::mem::replace(has_network_error, true) {
         return;
@@ -1902,7 +1903,6 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
     let min = manager.options.min_simultaneous_requests;
     let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
     if max > min {
-        // shed a quarter of the concurrency (once per run_tasks pass, never below the floor)
         AsyncHTTP::max_simultaneous_requests().store(min.max(max - max / 4), Ordering::Relaxed);
     }
 }

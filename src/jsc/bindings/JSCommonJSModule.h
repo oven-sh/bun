@@ -53,7 +53,7 @@ public:
     // `module.children`. In that case, all children may also need their
     // children fields to exist, recursively. To avoid allocating a *JSArray for
     // each module, the children array is constructed internally as a
-    // Vector of pointers. If accessed, deduplication happens and array is
+    // Vector of pointers, each child once. If accessed, the array is
     // moved into JavaScript. These two fields add 16 bytes to JSCommonJSModule.
     // `m_childrenValue` can be set to any value via the user-exposed setter,
     // but Bun does not test that behavior besides ensuring it does not crash.

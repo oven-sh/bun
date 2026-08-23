@@ -1,15 +1,13 @@
 // JSCommonJSModule::m_children is a WTF::Vector<WriteBarrier<Unknown>> that
-// the mutator appends to on every require() (jsFunctionEvaluateCommonJSModule)
-// while visitChildrenImpl iterates it on the concurrent GC marker thread.
-// Both sides must hold cellLock() so Vector growth cannot free the backing
-// buffer while the marker still holds a stale begin() pointer.
+// the mutator appends to when require() gives a module a new child
+// (jsFunctionEvaluateCommonJSModule) while visitChildrenImpl iterates it on the
+// concurrent GC marker thread. Both sides must hold cellLock() so Vector growth
+// cannot free the backing buffer while the marker still holds a stale begin()
+// pointer.
 //
-// require() of an already-cached module still calls
-// $evaluateCommonJSModule(existing, this), which appends to the referrer's
-// m_children, so a tight loop of `require("./c.cjs")` against a cached child
-// drives thousands of appends (and ~a dozen reallocations) while
-// collectContinuously keeps the concurrent marker repeatedly visiting the
-// same module via require.cache.
+// p.cjs requires many distinct modules, so its m_children grows (and
+// reallocates) while collectContinuously keeps the concurrent marker
+// repeatedly visiting the same module via require.cache.
 //
 // This race is not reliably observable as a crash in the default build
 // because the prebuilt debug WebKit uses bmalloc (USE_SYSTEM_MALLOC=0), so
@@ -30,8 +28,13 @@ test.skipIf(isWindows)(
     const files: Record<string, string> = {
       "c.cjs": `module.exports = 1;\n`,
       "p.cjs": `
-        // ~12 reallocations of this module's m_children backing buffer.
-        for (let i = 0; i < 4000; i++) require("./c.cjs");
+        // ~9 reallocations of this module's m_children backing buffer.
+        const { mkdirSync, writeFileSync } = require("node:fs");
+        mkdirSync("./gen", { recursive: true });
+        for (let i = 0; i < 300; i++) {
+          writeFileSync("./gen/c" + i + ".cjs", "module.exports = " + i + ";");
+          require("./gen/c" + i + ".cjs");
+        }
         // setterChildren: locks, clears the native Vector, stores the JS value.
         module.children = module.children;
         module.exports = module.children.length;
@@ -70,7 +73,7 @@ test.skipIf(isWindows)(
     // text. Debug/ASAN builds print a harmless "WARNING: ASAN interferes
     // with JSC signal handlers" banner on stderr, so only surface stderr
     // when the process failed.
-    expect(stdout.trim()).toBe("ok 1");
+    expect(stdout.trim()).toBe("ok 300");
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   },

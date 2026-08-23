@@ -903,4 +903,31 @@ console.log("survived", require("./late.js"));`,
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
   });
+
+  test("requiring an already-loaded module again does not grow the parent's children", async () => {
+    const files = {
+      "parent.cjs": `
+        const { estimateShallowMemoryUsageOf } = require("bun:jsc");
+        const distinct = 64;
+        const before = estimateShallowMemoryUsageOf(module);
+        for (let i = 0; i < distinct; i++) require("./child" + i + ".cjs");
+        const afterDistinct = estimateShallowMemoryUsageOf(module);
+        for (let i = 0; i < 20000; i++) require("./child" + (i % distinct) + ".cjs");
+        const afterRepeats = estimateShallowMemoryUsageOf(module);
+        console.log(JSON.stringify({ grewForDistinct: afterDistinct > before, grewForRepeats: afterRepeats > afterDistinct, children: module.children.filter(child => child.id.includes("child")).length }));
+      `,
+    };
+    for (let i = 0; i < 64; i++) files[`child${i}.cjs`] = `module.exports = ${i};`;
+    using dir = tempDir("module-children-repeat", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+    const stdout = await proc.stdout.text();
+    expect(JSON.parse(stdout)).toEqual({ grewForDistinct: true, grewForRepeats: false, children: 64 });
+    expect(await proc.exited).toBe(0);
+  });
 });

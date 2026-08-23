@@ -1299,6 +1299,28 @@ pub(crate) fn install_isolated_packages(
                                 }
                                 break 'eligible true;
                             }
+                            ResolutionTag::Folder => {
+                                // Always project-local, but a trusted folder
+                                // dep's scripts run, so record it for the
+                                // closure poisoning below. Workspace and root
+                                // scripts also run, but poisoning their
+                                // closures would force most of the graph out
+                                // of the global store.
+                                let dep_name = if dep_id != invalid_dependency_id {
+                                    dependencies[dep_id as usize].name.slice(string_buf)
+                                } else {
+                                    pkg_names[pkg_id as usize].slice(string_buf)
+                                };
+                                if lockfile.has_trusted_dependency(
+                                    dep_name,
+                                    pkg_names[pkg_id as usize].slice(string_buf),
+                                    pkg_res,
+                                ) || trusted_from_update.contains(&pkg_id)
+                                {
+                                    trusted_entries.push(entry_idx);
+                                }
+                                false
+                            }
                             _ => false,
                         };
 

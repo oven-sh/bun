@@ -3086,6 +3086,41 @@ describe("global virtual store", () => {
     assertLayout();
   });
 
+  test("the dependency closure of a trusted file: folder dep stays project-local", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      join(packageDir, "local-pkg", "package.json"),
+      JSON.stringify({
+        name: "local-pkg",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-trusted-folder",
+        dependencies: { "local-pkg": "file:./local-pkg", "a-dep": "1.0.1" },
+        trustedDependencies: ["local-pkg"],
+      }),
+    );
+
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+    await runBunInstall(env, packageDir);
+
+    // A trusted folder dep's scripts run, so its deps must not be shared
+    // store symlinks the script could write through.
+    const noDepsEntry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(noDepsEntry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(noDepsEntry).isDirectory()).toBe(true);
+
+    // A dependency outside the trusted closure still shares the global store.
+    const aDepEntry = join(packageDir, "node_modules", ".bun", "a-dep@1.0.1");
+    expect(lstatSync(aDepEntry).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(aDepEntry)).toMatch(/links[\/\\]a-dep@1\.0\.1-[0-9a-f]{16}$/);
+  });
+
   test("concurrent installs into a cold global store both succeed", async () => {
     // Two `bun install` processes may race to create the same content-addressed
     // global entry; the loser sees EEXIST from clonefile/symlink/bin-link and

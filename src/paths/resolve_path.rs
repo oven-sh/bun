@@ -1766,6 +1766,7 @@ pub fn join_abs_string_buf_spill<'a, P: PlatformT>(
     spill: &'a mut Vec<u8>,
     parts: &[&[u8]],
 ) -> &'a [u8] {
+    debug_assert!(!matches!(P::P, Platform::Nt));
     let needed = join_abs_needed(cwd.len(), parts);
     let out: &'a mut [u8] = if needed <= buf.len() {
         buf

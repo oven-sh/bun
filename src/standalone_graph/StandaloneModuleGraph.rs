@@ -623,7 +623,10 @@ bitflags::bitflags! {
         const DISABLE_AUTOLOAD_BUNFIG       = 1 << 1;
         const DISABLE_AUTOLOAD_TSCONFIG     = 1 << 2;
         const DISABLE_AUTOLOAD_PACKAGE_JSON = 1 << 3;
-        // _padding: u28
+        /// Every file's `contents` lies in one run that no bytecode, module
+        /// info, name, or source map region overlaps (see `to_bytes`).
+        const SOURCE_TEXT_CONTIGUOUS        = 1 << 4;
+        // _padding: u27
     }
 }
 
@@ -819,6 +822,27 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
+/// The embedded bunfs key for an output file, relative to the prefix.
+///
+/// Windows: store the key with `/`. The template printer emits native
+/// `\` into `dest_path`, but `find_assume_standalone_path` normalizes
+/// lookups to `/`, so a `\` key would miss (ENOENT). `src/bundler/Chunk.rs`
+/// only normalizes a scratch copy, so we re-normalize here.
+fn module_dest_path(output_file: &OutputFile) -> std::borrow::Cow<'_, [u8]> {
+    let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
+    #[cfg(windows)]
+    {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        std::borrow::Cow::Owned(
+            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut buf).to_vec(),
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        std::borrow::Cow::Borrowed(dest_path)
+    }
+}
+
 pub(crate) fn to_bytes(
     prefix: &[u8],
     output_files: &[OutputFile],
@@ -876,9 +900,7 @@ pub(crate) fn to_bytes(
     string_builder.allocate()?;
 
     let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_count);
-
-    let mut source_map_header_list: Vec<u8> = Vec::new();
-    let mut source_map_string_list: Vec<u8> = Vec::new();
+    let mut module_files: Vec<&OutputFile> = Vec::with_capacity(module_count);
 
     for output_file in output_files {
         if !output_file.output_kind.is_file_in_standalone_mode() {
@@ -888,18 +910,6 @@ pub(crate) fn to_bytes(
         let options::OutputFileValue::Buffer { bytes: buf_bytes } = &output_file.value else {
             continue;
         };
-
-        let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
-
-        // Windows: store the key with `/`. The template printer emits native
-        // `\` into `dest_path`, but `find_assume_standalone_path` normalizes
-        // lookups to `/`, so a `\` key would miss (ENOENT). `src/bundler/Chunk.rs`
-        // only normalizes a scratch copy, so we re-normalize here.
-        #[cfg(windows)]
-        let mut dest_path_buf = PathBuffer::uninit();
-        #[cfg(windows)]
-        let dest_path: &[u8] =
-            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut dest_path_buf);
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
@@ -915,16 +925,10 @@ pub(crate) fn to_bytes(
                 //     (section_va + 8 + O) % 128 == 0
                 //     => O % 128 == 120
                 //
-                // - ELF (Linux): The module graph data is appended to the executable and
-                //   read into a heap-allocated buffer at runtime. The allocator provides
-                //   natural alignment, and there's no 8-byte section header offset.
-                //   However, using target_mod=120 is still safe because:
-                //   - If the buffer is 128-aligned: bytecode at offset 120 is at (128n + 120),
-                //     which when loaded at a 128-aligned address gives proper alignment.
-                //   - The extra 120 bytes of padding is acceptable overhead.
-                //
-                // This alignment strategy (target_mod=120) works for all platforms because
-                // it's the worst-case offset needed for the 8-byte header scenario.
+                // - ELF (Linux): the payload is mapped by the kernel as part of the
+                //   RW PT_LOAD (see exe_format/elf.rs) at a page-aligned address, also
+                //   preceded by the same 8-byte length header, so the same arithmetic
+                //   applies.
                 let bytecode = output_files[output_file.bytecode_index as usize]
                     .value
                     .as_slice();
@@ -978,6 +982,7 @@ pub(crate) fn to_bytes(
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
+                let dest_path = &*module_dest_path(output_file);
                 // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
                 // every `..` segment here so the on-disk dump can't escape
                 // `dump_code_dir` (the join would otherwise normalize `..` above it).
@@ -1017,23 +1022,10 @@ pub(crate) fn to_bytes(
             }
         }
 
-        // When there's bytecode, store the bytecode output file's path as bytecode_origin_path.
-        // This path was used to generate the bytecode cache and must match at runtime.
-        let bytecode_origin_path: StringPointer = if output_file.bytecode_index != u32::MAX {
-            string_builder
-                .append_count_z(&output_files[output_file.bytecode_index as usize].dest_path)
-        } else {
-            StringPointer::default()
-        };
-
-        let mut module = CompiledModuleGraphFile {
-            name: string_builder.fmt_append_count_z(format_args!(
-                "{}{}",
-                bstr::BStr::new(prefix),
-                bstr::BStr::new(dest_path)
-            )),
+        modules.push(CompiledModuleGraphFile {
+            name: StringPointer::default(),
             loader: output_file.loader,
-            contents: string_builder.append_count_z(buf_bytes),
+            contents: StringPointer::default(),
             // Latin1 lets the runtime wrap the mmapped section bytes in a
             // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
             // server-side JS, but `--banner`/`--footer`/hashbang and
@@ -1058,14 +1050,25 @@ pub(crate) fn to_bytes(
             },
             bytecode,
             module_info,
-            bytecode_origin_path,
+            bytecode_origin_path: StringPointer::default(),
             side: match output_file.side.unwrap_or(options::Side::Server) {
                 options::Side::Server => FileSide::Server,
                 options::Side::Client => FileSide::Client,
             },
             sourcemap: StringPointer::default(),
-        };
+        });
+        module_files.push(output_file);
+    }
 
+    // Region layout after the bytecode/module_info run above: source maps
+    // (unread until an error prints), then every file's source text as one run
+    // (`Flags::SOURCE_TEXT_CONTIGUOUS`, so `hint_source_pages_dont_need` can
+    // drop exactly it), then everything booting touches — names, origin paths,
+    // the module table — packed at the tail so startup faults in a few pages
+    // instead of one per embedded file.
+    let mut source_map_header_list: Vec<u8> = Vec::new();
+    let mut source_map_string_list: Vec<u8> = Vec::new();
+    for (module, output_file) in modules.iter_mut().zip(&module_files) {
         if output_file.source_map_index != u32::MAX {
             serialize_json_source_map_for_standalone(
                 &mut source_map_header_list,
@@ -1079,7 +1082,24 @@ pub(crate) fn to_bytes(
             source_map_header_list.clear();
             source_map_string_list.clear();
         }
-        modules.push(module);
+    }
+
+    for (module, output_file) in modules.iter_mut().zip(&module_files) {
+        module.contents = string_builder.append_count_z(output_file.value.as_slice());
+    }
+
+    for (module, output_file) in modules.iter_mut().zip(&module_files) {
+        module.name = string_builder.fmt_append_count_z(format_args!(
+            "{}{}",
+            bstr::BStr::new(prefix),
+            bstr::BStr::new(&*module_dest_path(output_file))
+        ));
+        // The bytecode cache was generated under the bytecode output file's
+        // path; the runtime must present exactly the same path to hit it.
+        if output_file.bytecode_index != u32::MAX {
+            module.bytecode_origin_path = string_builder
+                .append_count_z(&output_files[output_file.bytecode_index as usize].dest_path);
+        }
     }
 
     // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
@@ -1095,7 +1115,7 @@ pub(crate) fn to_bytes(
         modules_ptr: string_builder.append_count(modules_as_bytes),
         compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
         byte_count: string_builder.len,
-        flags,
+        flags: flags | Flags::SOURCE_TEXT_CONTIGUOUS,
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.
@@ -1119,6 +1139,25 @@ pub(crate) fn to_bytes(
         debug_assert_eq!(graph.files.count(), modules.len());
         graph.files.unlock_pointers();
         graph.dirs.unlock_pointers();
+
+        // `Flags::SOURCE_TEXT_CONTIGUOUS`: no other region may fall inside the
+        // source-text run, or the runtime's MADV_DONTNEED would drop it.
+        let range = |p: StringPointer| p.offset..p.offset + p.length;
+        let lo = modules.iter().map(|m| m.contents.offset).min().unwrap();
+        let hi = modules.iter().map(|m| range(m.contents).end).max().unwrap();
+        let others = modules.iter().flat_map(|m| {
+            [
+                m.bytecode,
+                m.module_info,
+                m.sourcemap,
+                m.name,
+                m.bytecode_origin_path,
+            ]
+        });
+        for p in others.chain([offsets.modules_ptr, offsets.compile_exec_argv_ptr]) {
+            let r = range(p);
+            debug_assert!(p.length == 0 || r.end <= lo || r.start >= hi);
+        }
     }
 
     // StringBuilder owns the buffer; hand it back without copying. `cap` may
@@ -2245,82 +2284,89 @@ impl StandaloneModuleGraph {
         }
     }
 
-    /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
-    /// unlikely to be accessed again after the entrypoint has been parsed.
-    /// The pages are clean file-backed COW, so any later read (lazy require,
-    /// stack-trace source lookup) faults back in transparently from the
-    /// executable on disk. Only applies when running as a compiled
-    /// standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
+    /// Hint to the kernel that the embedded source text is unlikely to be
+    /// accessed again after the entrypoint has been evaluated. The pages are
+    /// clean file-backed COW, so any later read (lazy require, stack-trace
+    /// source lookup, `Bun.embeddedFiles`) faults back in transparently from
+    /// the executable on disk. Only the contiguous source-text run written by
+    /// `to_bytes` is dropped: JSC keeps decoding function bodies out of the
+    /// bytecode regions for the life of the process, and dropping those turns
+    /// every first call into a page fault. Only applies when running as a
+    /// compiled standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
     /// skips the hint.
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     pub fn hint_source_pages_dont_need() {
-        #[cfg(windows)]
+        let Some(graph) = Self::get_ref() else {
+            return;
+        };
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
+            .unwrap_or(false)
         {
             return;
         }
+        let Some((start, end)) = graph.source_text_pages() else {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "hintSourcePagesDontNeed: no whole source-text page to drop"
+            );
+            return;
+        };
 
-        #[cfg(not(windows))]
-        {
-            let (base, len): (*mut u8, usize) = {
-                #[cfg(target_os = "macos")]
-                {
-                    match macho::get_data() {
-                        Some(b) => b,
-                        None => return,
-                    }
-                }
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                {
-                    match elf::get_data() {
-                        Some(b) => b,
-                        None => return,
-                    }
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-                {
-                    return;
-                }
-            };
-
-            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
-            {
-                if len == 0
-                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
-                        .get()
-                        .unwrap_or(false)
-                {
-                    return;
-                }
-
-                let page: usize = bun_alloc::page_size();
-                let start = (base as usize) & !(page - 1);
-                let end_unaligned = base as usize + len;
-                let end = (end_unaligned + page - 1) & !(page - 1);
-
-                // This is a best-effort hint, so call libc madvise directly and
-                // just log on failure rather than treating errors as fatal.
-                // SAFETY: start..end covers a mapped range of the executable image.
-                let rc = unsafe {
-                    libc::madvise(
-                        start as *mut core::ffi::c_void,
-                        end - start,
-                        libc::MADV_DONTNEED,
-                    )
-                };
-                if rc != 0 {
-                    bun_core::scoped_log!(
-                        StandaloneModuleGraph,
-                        "hintSourcePagesDontNeed: madvise failed errno={}",
-                        bun_sys::last_errno()
-                    );
-                    return;
-                }
-                bun_core::scoped_log!(
-                    StandaloneModuleGraph,
-                    "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
-                    end - start
-                );
-            }
+        // This is a best-effort hint, so call libc madvise directly and
+        // just log on failure rather than treating errors as fatal.
+        // SAFETY: start..end lies inside the mapped executable image, and
+        // MADV_DONTNEED neither reads nor writes through it.
+        let rc = unsafe {
+            libc::madvise(
+                start as *mut core::ffi::c_void,
+                end - start,
+                libc::MADV_DONTNEED,
+            )
+        };
+        if rc != 0 {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "hintSourcePagesDontNeed: madvise failed errno={}",
+                bun_sys::last_errno()
+            );
+        } else {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
+                end - start
+            );
         }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    pub fn hint_source_pages_dont_need() {}
+
+    /// The whole pages covered by the files' `contents` regions: `(start, end)`
+    /// rounded inward, or `None` when the run does not cover a full page or the
+    /// payload was not written with `Flags::SOURCE_TEXT_CONTIGUOUS` (an older
+    /// `bun build` interleaves bytecode with the source text).
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    fn source_text_pages(&self) -> Option<(usize, usize)> {
+        if !self.flags.contains(Flags::SOURCE_TEXT_CONTIGUOUS) {
+            return None;
+        }
+        let (mut lo, mut hi) = (usize::MAX, 0usize);
+        for file in self.files.values() {
+            let contents = file.contents.as_bytes();
+            if contents.is_empty() {
+                continue;
+            }
+            let start = contents.as_ptr() as usize;
+            lo = lo.min(start);
+            hi = hi.max(start + contents.len());
+        }
+        if lo >= hi {
+            return None;
+        }
+        let page = bun_alloc::page_size();
+        let start = (lo + page - 1) & !(page - 1);
+        let end = hi & !(page - 1);
+        (end > start).then_some((start, end))
     }
 }
 

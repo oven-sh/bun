@@ -81,7 +81,7 @@ use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
-use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
+use crate::webcore::file_sink::FileSink;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
@@ -472,10 +472,11 @@ pub(crate) fn run_task(
                 cast!(BundleV2DeferredBatchTask).run_on_js_thread();
             })?;
         }
-        // SAFETY: `cast_ptr!` yields the heap-allocated task; sole owner.
-        task_tag::FlushPendingFileSinkTask => unsafe {
-            FlushPendingFileSinkTask::run_from_js_thread(cast_ptr!(FlushPendingFileSinkTask));
-        },
+        task_tag::FlushPendingFileSinkTask => {
+            // SAFETY: tag identifies pointee; the queue entry holds the sink's
+            // `flush_task_ref` until this call (which may free it).
+            FileSink::run_flush_task(unsafe { bun_ptr::ThisPtr::new(cast_ptr!(FileSink)) });
+        }
         // `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::StreamPending => {
             StreamPending::run_from_js_thread(cast_ptr!(StreamPending));
@@ -767,6 +768,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
 
 use crate::webcore::blob::read_file::ReadFile;
 use crate::webcore::blob::write_file::WriteFile;
+use bun_core::IntrusiveField as _; // `io_poll` → owner for the `PollableTag` arms
 
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
 /// `bun_io`. The owner is recovered from the embedded `io_poll` field.
@@ -778,12 +780,12 @@ unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
+            let this = unsafe { &mut *ReadFile::from_field_ptr(poll) };
             this.on_ready();
         }
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
+            let this = unsafe { &mut *WriteFile::from_field_ptr(poll) };
             this.on_ready();
         }
         bun_io::PollableTag::Empty => {
@@ -807,20 +809,42 @@ unsafe fn __bun_io_pollable_on_io_error(
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
+            let this = unsafe { &mut *ReadFile::from_field_ptr(poll) };
             this.on_io_error(err);
         }
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
-            let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            // WriteFile::on_io_error already takes `*mut ()` (it
-            // self-recovers via the io_request path elsewhere); reuse that
-            // shape rather than reborrowing `&mut`.
-            WriteFile::on_io_error(this.cast(), err);
+            let this = unsafe { &mut *WriteFile::from_field_ptr(poll) };
+            this.on_io_error(err);
         }
         bun_io::PollableTag::Empty => {
             debug_assert!(false, "io::Poll on_io_error with Empty tag");
             let _ = err;
+        }
+    }
+}
+
+/// `bun_io::__bun_io_pollable_on_closed` body — declared `extern "Rust"` in
+/// `bun_io`: the io thread carried out the owner's `Action::Close`.
+///
+/// # Safety
+/// `poll` is the `io_poll` field of a live owner of type `tag`.
+#[unsafe(no_mangle)]
+unsafe fn __bun_io_pollable_on_closed(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
+    use crate::webcore::blob::FileCloser;
+    match tag {
+        bun_io::PollableTag::ReadFile => {
+            // SAFETY: per fn contract.
+            let this = unsafe { &mut *ReadFile::from_field_ptr(poll) };
+            ReadFile::on_io_request_closed(this);
+        }
+        bun_io::PollableTag::WriteFile => {
+            // SAFETY: per fn contract.
+            let this = unsafe { &mut *WriteFile::from_field_ptr(poll) };
+            WriteFile::on_io_request_closed(this);
+        }
+        bun_io::PollableTag::Empty => {
+            debug_assert!(false, "io::Poll on_closed with Empty tag");
         }
     }
 }
@@ -1265,7 +1289,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(windows)]
             unreachable!("posix-only tag");
         }
-        task_tag::FlushPendingFileSinkTask => release!(FlushPendingFileSinkTask),
+        task_tag::FlushPendingFileSinkTask => FileSink::release_flush_task(
+            // SAFETY: as `release!`; the queue entry holds the sink's `flush_task_ref`.
+            unsafe { bun_ptr::ThisPtr::new(task.ptr.cast::<FileSink>()) },
+        ),
         task_tag::RuntimeTranspilerStore => release!(RuntimeTranspilerStore),
         task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
         task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),

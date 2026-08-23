@@ -194,16 +194,13 @@ pub(crate) mod from_js_result {
 }
 
 impl<T: JsSinkAbi> JSSink<T> {
+    /// `object` becomes the wrapper's `m_sinkPtr`; its `finalize` gets it back.
     pub fn create_object(
         global: &crate::webcore::jsc::JSGlobalObject,
-        object: &mut T,
+        object: NonNull<T>,
         destructor: usize,
     ) -> crate::webcore::jsc::JSValue {
-        T::create_object_extern(
-            global,
-            std::ptr::from_mut::<T>(object).cast::<c_void>(),
-            destructor,
-        )
+        T::create_object_extern(global, object.as_ptr().cast::<c_void>(), destructor)
     }
 
     pub fn set_destroy_callback(value: crate::webcore::jsc::JSValue, callback: usize) {
@@ -298,14 +295,19 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     const START_TAG: Option<streams::StartTag> = None;
 
     fn memory_cost(&self) -> usize;
-    /// `${abi}__finalize`: the JS cell holding `this` as `m_sinkPtr` is giving
-    /// up its claim on the sink. Raw pointer, not `&mut self`: for
-    /// `ArrayBufferSink`, `FileSink` and `FetchRequestBodySink` that releases
-    /// the allocation, and freeing under a live reference argument is UB.
-    ///
-    /// # Safety
-    /// `this` is the cell's live sink and must not be used after the call.
-    unsafe fn finalize(this: *mut Self);
+    /// `${abi}__finalize`: the JS wrapper cell holding `this` as `m_sinkPtr`
+    /// is giving up its claim on the sink, and never uses it again. `ThisPtr`,
+    /// not `&mut self`: for `ArrayBufferSink`, `FileSink` and
+    /// `FetchRequestBodySink` that releases the allocation, and freeing under
+    /// a live reference argument is UB.
+    fn finalize(this: bun_ptr::ThisPtr<Self>);
+    /// `${abi}__controllerFinalize`: a `JSReadable*Controller` died still
+    /// attached to the sink (heap teardown; a live controller detaches first).
+    /// A sink whose controller path holds a different claim than its wrapper
+    /// releases that one here; the default treats both cells alike.
+    fn controller_finalize(this: bun_ptr::ThisPtr<Self>) {
+        Self::finalize(this)
+    }
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -332,10 +334,11 @@ pub trait JsSinkType: Sized + JsSinkAbi {
         unsafe { (*this).end(None) }
     }
 
-    fn construct(_this: &mut core::mem::MaybeUninit<Self>) {
+    /// Allocate the sink a new JS wrapper will own (its `finalize` releases it).
+    fn construct() -> NonNull<Self> {
         // Only reached when `HAS_CONSTRUCT = false` callers misroute; the
         // real `js_construct` short-circuits before this.
-        debug_assert!(!Self::HAS_CONSTRUCT, "JsSinkType::construct missing");
+        unreachable!("JsSinkType::construct missing for {}", Self::NAME);
     }
     fn get_pending_error(&mut self) -> Option<JSValue> {
         None
@@ -390,9 +393,9 @@ impl<T: JsSinkType> JSSink<T> {
     /// `JSSink.getThis` — recover `&mut JSSink<T>` from `callframe.this()` or
     /// throw the appropriate detached/cast-failed error.
     ///
-    /// Returns an unbounded `&'a mut`: the sink lives in the GC heap behind
-    /// the JS wrapper cell (allocated in `js_construct`, freed by codegen
-    /// `finalize`), so its lifetime is independent of `global`/`frame`. Host
+    /// Returns an unbounded `&'a mut`: the sink lives in its own heap
+    /// allocation behind the JS wrapper cell (allocated by `construct`, freed
+    /// by codegen `finalize`), so its lifetime is independent of `global`/`frame`. Host
     /// fns are single-threaded and synchronous — only one `&mut JSSink<T>` per
     /// `this` is live for the body of each host call.
     fn get_this<'a>(
@@ -424,12 +427,7 @@ impl<T: JsSinkType> JSSink<T> {
             return Err(global.throw_illegal_constructor());
         }
 
-        let mut this: Box<core::mem::MaybeUninit<T>> = Box::new(core::mem::MaybeUninit::uninit());
-        T::construct(&mut *this);
-        // SAFETY: JsSinkType::construct fully initializes `*this` (contract).
-        let this: Box<T> = unsafe { this.assume_init() };
-        let value = T::create_object_extern(global, bun_core::heap::into_raw(this).cast(), 0);
-        Ok(value)
+        Ok(Self::create_object(global, T::construct(), 0))
     }
 
     /// `${abi_name}__write` host-fn body.
@@ -602,15 +600,16 @@ impl<T: JsSinkType> JSSink<T> {
         result
     }
 
-    /// `${abi_name}__finalize` body.
-    ///
-    /// # Safety
-    /// As [`JsSinkType::finalize`].
+    /// `${abi_name}__finalize` body — see [`JsSinkType::finalize`].
     #[inline]
-    pub(crate) unsafe fn js_finalize(this: *mut T) {
-        debug_assert!(!this.is_null());
-        // SAFETY: the caller's contract is the same one.
-        unsafe { T::finalize(this) }
+    pub(crate) fn js_finalize(this: bun_ptr::ThisPtr<T>) {
+        T::finalize(this)
+    }
+
+    /// `${abi_name}__controllerFinalize` body — see [`JsSinkType::controller_finalize`].
+    #[inline]
+    pub(crate) fn js_controller_finalize(this: bun_ptr::ThisPtr<T>) {
+        T::controller_finalize(this)
     }
 
     /// `${abi_name}__controllerDetached` body — called from

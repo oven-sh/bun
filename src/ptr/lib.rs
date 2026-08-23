@@ -276,6 +276,13 @@ impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
     }
 }
 
+impl<T> From<ThisPtr<T>> for core::ptr::NonNull<T> {
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        p.0
+    }
+}
+
 impl<T: ?Sized, P> Copy for BackRef<T, P> {}
 impl<T: ?Sized, P> Clone for BackRef<T, P> {
     #[inline]

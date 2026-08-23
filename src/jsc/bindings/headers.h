@@ -478,6 +478,7 @@ BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__write);
 
 #endif
 CPP_DECL JSC::EncodedJSValue FileSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void* FileSink__fromJS(JSC::EncodedJSValue JSValue1);
 
 #ifdef __cplusplus
 
@@ -494,6 +495,7 @@ BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 #endif
 
 CPP_DECL JSC::EncodedJSValue FileSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void* FileSink__fromJS(JSC::EncodedJSValue JSValue1);
 
 #ifdef __cplusplus
 

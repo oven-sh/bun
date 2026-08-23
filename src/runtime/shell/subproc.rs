@@ -987,12 +987,13 @@ impl Writable {
                     if let StdioResult::Buffer(buf) = result {
                         // Ownership of the `Box<uv::Pipe>` transfers into the
                         // FileSink's writer.
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buf);
-                        let pipe = FileSink::create_with_pipe(event_loop, uv_pipe);
-                        if let bun_sys::Result::Err(_err) =
-                            pipe.writer.with_mut(|w| w.start_with_current_pipe())
-                        {
-                            return Err(WritableInitError::UnexpectedCreatingStdin);
+                        let pipe = FileSink::create_with_pipe(event_loop, buf);
+
+                        match pipe.writer.with_mut(|w| w.start_with_current_pipe()) {
+                            bun_sys::Result::Ok(()) => {}
+                            bun_sys::Result::Err(_err) => {
+                                return Err(WritableInitError::UnexpectedCreatingStdin);
+                            }
                         }
 
                         // TODO: uncoment this when is ready, commented because was not compiling

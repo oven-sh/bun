@@ -1775,13 +1775,11 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.event_loop.ref_keep_alive();
-        node_fs::async_::AsyncMkdirp::schedule(node_fs::async_::AsyncMkdirp {
-            completion: on_mkdirp_complete_concurrent,
-            completion_ctx: core::ptr::from_mut(self).cast::<()>(),
+        node_fs::async_::AsyncMkdirp::schedule(
+            CopyFileMkdirp(core::ptr::from_mut(self).cast()),
             path,
-            ticket: jsc::VirtualMachine::VirtualMachine::get().ticket(),
-            task: Default::default(),
-        });
+            jsc::VirtualMachine::VirtualMachine::get().ticket(),
+        );
     }
 
     fn on_mkdirp_complete(&mut self) {
@@ -1888,28 +1886,24 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     this.resolve_promise(this.written_bytes);
 }
 
+/// The `CopyFileWindows` an `AsyncMkdirp` reports back to.
 #[cfg(windows)]
-fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket: &jsc::Ticket) {
-    bun_sys::syslog!("mkdirp complete");
-    // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
-    // by `mkdirp` above; sole owner on this concurrent path.
-    let this = unsafe { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
-    debug_assert!(this.err.is_none());
-    this.err = match err_ {
-        bun_sys::Result::Err(e) => Some(e),
-        bun_sys::Result::Ok(()) => None,
-    };
-    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> jsc::JsResult<()>`.
-    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
-        // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
-        // do not touch `this` afterward.
-        unsafe { (*this).on_mkdirp_complete() };
-        Ok(())
+struct CopyFileMkdirp(*mut CopyFileWindows<'static>);
+
+#[cfg(windows)]
+impl node_fs::async_::MkdirpCompletion for CopyFileMkdirp {
+    fn on_mkdirp_done(self, result: bun_sys::Maybe<()>) {
+        bun_sys::syslog!("mkdirp complete");
+        // SAFETY: `self.0` is the heap-allocated `CopyFileWindows` handed to
+        // `AsyncMkdirp` by `mkdirp` above, back on its JS thread;
+        // `on_mkdirp_complete` may free it via `throw`, so it is not touched
+        // afterward.
+        unsafe {
+            debug_assert!((*self.0).err.is_none());
+            (*self.0).err = result.err();
+            (*self.0).on_mkdirp_complete();
+        }
     }
-    ticket.post(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
-    ));
 }
 
 // ───────────────────────────────────────────────────────────────────────────

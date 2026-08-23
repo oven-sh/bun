@@ -3288,7 +3288,11 @@ describe("global virtual store", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [strangerErr, strangerCode] = await Promise.all([stranger.stderr.text(), stranger.exited]);
+    const [, strangerErr, strangerCode] = await Promise.all([
+      stranger.stdout.text(),
+      stranger.stderr.text(),
+      stranger.exited,
+    ]);
     expect(strangerErr).toContain("Cannot find module");
     expect(strangerCode).not.toBe(0);
   });

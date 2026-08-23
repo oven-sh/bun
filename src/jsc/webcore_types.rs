@@ -138,7 +138,7 @@ pub struct Blob {
     pub ref_count: bun_ptr::RawRefCount,
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
-    /// Only used by `<input type="file">` / `File` (issue #10178).
+    /// This Blob's own name; `Dead` means the store's [`Self::get_file_name`] applies.
     pub name: bun_core::OwnedStringCell,
 }
 
@@ -429,8 +429,7 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
-    /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
+    /// The store's own name (`stored_name`, path, or S3 key); `None` when fd-backed or unnamed.
     pub fn get_file_name(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
@@ -595,8 +594,7 @@ pub mod store {
         pub len: SizeType,
         pub cap: SizeType,
         pub allocator: bun_alloc::StdAllocator,
-        /// Used by standalone module graph and the `File` constructor.
-        /// Heap-owned (or empty); freed by `Bytes`'s `Drop`.
+        /// Set only at store creation (names given later go in `Blob::name`); heap-owned or empty.
         pub stored_name: Box<[u8]>,
     }
 
@@ -694,14 +692,6 @@ pub mod store {
                 cap,
                 allocator,
                 stored_name: Box::default(),
-            }
-        }
-
-        #[inline]
-        pub fn init_empty_with_name(name: Box<[u8]>) -> Bytes {
-            Bytes {
-                stored_name: name,
-                ..Default::default()
             }
         }
 

@@ -307,6 +307,250 @@ test("#12894", () => {
   expect(new File([bunFile], "bar.txt").name).toBe("bar.txt");
 });
 
+describe("new File([blob], name) names only the new File", () => {
+  // A single-Blob `bits` shares the source's byte store instead of copying it.
+  // The name used to be written into that shared store, renaming the source
+  // (and every other Blob sharing the store) along with the new File.
+  //
+  // `.name` is cached on first read, so the source's name is always read after
+  // wrapping unless the test is about reading it before.
+  test.each([
+    ["a File", () => new File(["xyz"], "source.txt"), "source.txt"],
+    ["an empty File", () => new File([], "source.txt"), "source.txt"],
+    ["a Blob", () => new Blob(["xyz"]), undefined],
+    ["an empty Blob", () => new Blob([]), undefined],
+  ])("wrapping %s", async (_, makeSource, sourceName) => {
+    const source = makeSource();
+    const wrapped = new File([source], "wrapped.txt");
+    expect({
+      source: (source as File).name,
+      wrapped: wrapped.name,
+      wrappedBytes: await wrapped.text(),
+    }).toEqual({
+      source: sourceName,
+      wrapped: "wrapped.txt",
+      wrappedBytes: await source.text(),
+    });
+  });
+
+  test("wrapping a slice of a File", async () => {
+    const source = new File(["hello world"], "source.txt");
+    const wrapped = new File([source.slice(0, 5)], "wrapped.txt");
+    expect({ source: source.name, wrapped: wrapped.name, wrappedBytes: await wrapped.text() }).toEqual({
+      source: "source.txt",
+      wrapped: "wrapped.txt",
+      wrappedBytes: "hello",
+    });
+  });
+
+  test("every File in a chain of wrappers keeps its own name", () => {
+    const a = new File(["xyz"], "a.txt");
+    const b = new File([a], "b.txt");
+    const c = new File([b], "c.txt");
+    expect([a.name, b.name, c.name]).toEqual(["a.txt", "b.txt", "c.txt"]);
+  });
+
+  test("reading the source's name first does not hand it to the wrapper", () => {
+    const source = new File(["xyz"], "source.txt");
+    expect(source.name).toBe("source.txt");
+    const wrapped = new File([source], "wrapped.txt");
+    expect({ source: source.name, wrapped: wrapped.name }).toEqual({ source: "source.txt", wrapped: "wrapped.txt" });
+  });
+
+  test("structuredClone copies each File's own name", () => {
+    const source = new File(["xyz"], "source.txt");
+    const wrapped = new File([source], "wrapped.txt");
+    expect([structuredClone(source).name, structuredClone(wrapped).name]).toEqual(["source.txt", "wrapped.txt"]);
+  });
+
+  test("an empty name is reported as an empty string", () => {
+    expect([new File(["xyz"], "").name, new File([], "").name, new File([new Blob(["xyz"])], "").name]).toEqual([
+      "",
+      "",
+      "",
+    ]);
+  });
+
+  test("the name is converted as a USVString", async () => {
+    using dir = tempDir("file-name-usvstring", { "on-disk.txt": "xyz" });
+    const bunFile = Bun.file(path.join(String(dir), "on-disk.txt"));
+    expect([
+      new File(["xyz"], "a\uD800b").name,
+      new File([new Blob(["xyz"])], "a\uD800b").name,
+      new File([bunFile], "a\uD800b").name,
+      new File(["xyz"], "caf\u00e9 \u{1F600}").name,
+    ]).toEqual(["a\uFFFDb", "a\uFFFDb", "a\uFFFDb", "caf\u00e9 \u{1F600}"]);
+  });
+
+  test("blob: imports pick the loader from each File's own name, or from a Bun.file's path", async () => {
+    using dir = tempDir("blob-url-loader", { "on-disk.json": '{"onDisk":true}' });
+    const onDisk = Bun.file(path.join(String(dir), "on-disk.json"));
+    const source = new File(['{"a":1}'], "source.json");
+    const urls = [
+      URL.createObjectURL(source),
+      URL.createObjectURL(new File([source], "wrapped.txt")),
+      URL.createObjectURL(onDisk),
+      // A File wrapping a Bun.file() is named like any other File: the loader
+      // follows the name it was given, the bytes still come from the disk.
+      URL.createObjectURL(new File([onDisk], "wrapped-on-disk.txt")),
+    ];
+    try {
+      const modules = await Promise.all(urls.map(url => import(url)));
+      expect(modules.map(module => module.default)).toEqual([{ a: 1 }, '{"a":1}', { onDisk: true }, '{"onDisk":true}']);
+    } finally {
+      urls.forEach(url => URL.revokeObjectURL(url));
+    }
+  });
+
+  test("Bun.serve derives Content-Disposition from each File's own name, or from a Bun.file's path", async () => {
+    using dir = tempDir("file-name-content-disposition", { "on-disk.bin": "xyz" });
+    const bunFile = Bun.file(path.join(String(dir), "on-disk.bin"));
+    const source = new File(["xyz"], "source.zip", { type: "application/zip" });
+    const bodies: Record<string, Blob> = {
+      source,
+      wrapped: new File([source], "wrapped.zip", { type: "application/zip" }),
+      wrappedBunFile: new File([bunFile], "display.zip", { type: "application/zip" }),
+      bunFile,
+    };
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(bodies[new URL(req.url).pathname.slice(1)]),
+    });
+    const headers: Record<string, string | null> = {};
+    for (const key of Object.keys(bodies)) {
+      const res = await fetch(new URL(key, server.url));
+      headers[key] = res.headers.get("content-disposition");
+      expect(await res.text()).toBe("xyz");
+    }
+    expect(headers).toEqual({
+      source: 'filename="source.zip"',
+      wrapped: 'filename="wrapped.zip"',
+      wrappedBunFile: 'filename="display.zip"',
+      bunFile: 'filename="on-disk.bin"',
+    });
+  });
+
+  // FormData reads the entry's default filename from the blob at append() time
+  // as a zero-copy view. Renaming through the shared store freed the bytes that
+  // view pointed at, so the multipart body read freed memory. Spawned so that
+  // the ASAN report for that read fails this test instead of taking down the
+  // test run.
+  test("wrapping a File does not disturb a FormData entry made from it", async () => {
+    const name = "source-" + Buffer.alloc(64, "s").toString() + ".txt";
+    const script = `
+      const source = new File(["xyz"], ${JSON.stringify(name)});
+      const formData = new FormData();
+      formData.append("file", source);
+      for (let i = 0; i < 8; i++) {
+        new File([source], "wrapped-" + Buffer.alloc(64, String(i)).toString() + ".txt");
+      }
+      const body = await new Response(formData).text();
+      console.log(JSON.stringify({ entry: formData.get("file").name, body: body.match(/filename="([^"]*)"/)[1] }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      // ASAN builds may print a "WARNING: ASAN interferes ..." banner at startup.
+      stderr: stderr
+        .split("\n")
+        .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
+        .join("\n"),
+      exitCode,
+    }).toEqual({
+      stdout: JSON.stringify({ entry: name, body: name }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+describe("a File's name reaches other threads through an object URL as a private copy", () => {
+  // A name that has been used as a property key is an atom of the thread that
+  // did so, and the process aborts if the last reference to it is dropped on a
+  // different thread. The registry used to hand the File's own name string to
+  // whichever thread resolved the URL; here the worker holds the resolved Blob
+  // until the main thread has dropped everything else that referenced the name.
+  test.concurrent.each(["bytes", "Bun.file"])("File backed by %s", async backing => {
+    using dir = tempDir("blob-url-name-thread", { "on-disk.txt": "xyz" });
+    const bits =
+      backing === "bytes" ? `["xyz"]` : `[Bun.file(${JSON.stringify(path.join(String(dir), "on-disk.txt"))})]`;
+    const script = `
+      const workerURL = URL.createObjectURL(
+        new Blob(
+          [
+            \`
+              import { resolveObjectURL } from "node:buffer";
+              let held;
+              self.onmessage = ({ data }) => {
+                if (data.url) {
+                  held = resolveObjectURL(data.url);
+                  postMessage({ holdsName: held.name === data.name });
+                } else {
+                  held = undefined;
+                  Bun.gc(true);
+                  postMessage({ released: true });
+                }
+              };
+            \`,
+          ],
+          { type: "text/javascript" },
+        ),
+      );
+      const worker = new Worker(workerURL);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.onerror = event => reject(new Error(event.message));
+
+      let name = "name-" + process.pid;
+      ({})[name]; // used as a property key: the string is now an atom of this thread
+      let file = new File(${bits}, name);
+      let url = URL.createObjectURL(file);
+      worker.onmessage = ({ data }) => {
+        if ("holdsName" in data) {
+          console.log("worker holds the name:", data.holdsName);
+          // Drop every reference this thread has to the name (the structured
+          // clone sent to the worker is a separate string), so the worker's is
+          // the last one.
+          URL.revokeObjectURL(url);
+          file = url = name = undefined;
+          Bun.gc(true);
+          worker.postMessage({ release: true });
+        } else {
+          resolve();
+        }
+      };
+      worker.postMessage({ url, name });
+      await promise;
+      worker.terminate();
+      console.log("released on the worker");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      stderr: stderr
+        .split("\n")
+        .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
+        .join("\n"),
+      exitCode,
+    }).toEqual({
+      stdout: "worker holds the name: true\nreleased on the worker\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test("dupeWithContentType does not alias the source's allocated content_type", async () => {
   // Regression: #23015 refactored Blob to be ref-counted and moved
   // `setNotHeapAllocated()` before the `isHeapAllocated()` guard in

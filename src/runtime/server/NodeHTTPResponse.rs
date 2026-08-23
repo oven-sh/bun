@@ -2553,11 +2553,9 @@ impl NodeHTTPResponse {
         server: AnyServer,
         global_object: &JSGlobalObject,
         request: &mut uws_sys::Request,
-        is_ssl: bool,
         raw_response: uws::AnyResponse,
         upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
     ) -> (bun_ptr::RefPtr<NodeHTTPResponse>, JSValue, bool) {
-        let _ = is_ssl;
         let mut has_body = false;
         let request_ptr: *mut uws_sys::Request = request;
         let request_ref = &*request;

@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
@@ -597,6 +598,46 @@ describe("slice bounds are respected when streaming and serving", () => {
     const get = await fetch(`http://localhost:${server.port}/`);
     expect(get.headers.get("content-length")).toBe("4");
     expect(await get.text()).toBe("3456");
+  });
+});
+
+describe("a Blob sharing another Blob's bytes does not report them to the GC as newly allocated", () => {
+  const PAYLOAD = 1024 * 1024;
+  const VIEWS = 256;
+  const source = new Blob([new Uint8Array(PAYLOAD)]);
+  const bytes = new Uint8Array(PAYLOAD);
+  const formData = new FormData();
+  formData.append("f", source, "f.bin");
+
+  // JSC schedules a collection once the memory new wrappers report as allocated
+  // exceeds its allowance, which is at least 8 MiB right after a full GC. VIEWS
+  // wrappers that each report only their own struct stay far below that, so all
+  // of them are still alive afterwards. Wrappers that each report the whole
+  // PAYLOAD exceed it every few iterations, and only the last few survive.
+  async function blobsSurviving(make: () => unknown): Promise<number> {
+    Bun.gc(true);
+    const before = heapStats().objectTypeCounts.Blob ?? 0;
+    for (let i = 0; i < VIEWS; i++) await make();
+    return (heapStats().objectTypeCounts.Blob ?? 0) - before;
+  }
+
+  test.each([
+    ["blob.slice()", () => source.slice()],
+    ["new Blob([blob])", () => new Blob([source])],
+    ["formData.get()", () => formData.get("f")],
+    ["new Response(blob).blob()", () => new Response(source).blob()],
+    // The one Blob creation site outside the generated ones (JSDOMFile.cpp). It
+    // reports nothing today; whatever it reports must follow the same rule.
+    ["new File([blob], name)", () => new File([source], "f.bin")],
+  ])("%s", async (_, make) => {
+    expect(await blobsSurviving(make)).toBe(VIEWS);
+  });
+
+  test.each([
+    ["new Blob([bytes])", () => new Blob([bytes])],
+    ["new Response(bytes).blob()", () => new Response(bytes).blob()],
+  ])("%s copies the bytes and still reports them", async (_, make) => {
+    expect(await blobsSurviving(make)).toBeLessThan(VIEWS);
   });
 });
 

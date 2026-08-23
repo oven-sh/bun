@@ -28,7 +28,6 @@ extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructRender(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructRedirect(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
 
 bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
 {
@@ -209,8 +208,7 @@ public:
             instance->wrapInnerComponent(globalObject, vm, arg, responseOptions);
         }
 
-        auto size = Response__estimatedSize(ptr);
-        vm.heap.reportExtraMemoryAllocated(instance, size);
+        instance->reportExtraMemoryAllocated(vm);
 
         auto value = JSValue::encode(instance);
         RELEASE_AND_RETURN(scope, value);
@@ -235,8 +233,7 @@ public:
 
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto size = Response__estimatedSize(ptr);
-        vm.heap.reportExtraMemoryAllocated(instance, size);
+        instance->reportExtraMemoryAllocated(vm);
 
         RELEASE_AND_RETURN(scope, JSValue::encode(instance));
     }

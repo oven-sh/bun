@@ -55,6 +55,11 @@ function DOMJITName(fnName) {
   return `${fnName}WithoutTypeChecks`;
 }
 
+// Emitted once `instance->m_ctx` is set at every generated wrapper creation site.
+function reportExtraMemoryAllocated(obj: ClassDefinition) {
+  return obj.estimatedSize ? `instance->reportExtraMemoryAllocated(vm);` : "";
+}
+
 function argTypeName(arg) {
   return {
     ["bool"]: "bool",
@@ -575,13 +580,7 @@ ${
 ${
   obj.call
     ? `    RETURN_IF_EXCEPTION(scope, {});
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
+  ${reportExtraMemoryAllocated(obj)}
 
     RELEASE_AND_RETURN(scope, JSValue::encode(instance));`
     : ""
@@ -626,13 +625,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     instance->m_ctx = ptr;
     `) +
     `
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
+  ${reportExtraMemoryAllocated(obj)}
 
     auto value = JSValue::encode(instance);
     RELEASE_AND_RETURN(scope, value);
@@ -1046,6 +1039,13 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
   if (obj.estimatedSize) {
     externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
+    if (obj.newlyAllocatedSize) {
+      externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "newlyAllocatedSize")}(void* ptr);` + "\n";
+    }
+  } else if (obj.newlyAllocatedSize) {
+    throw new Error(
+      `${typeName}: 'newlyAllocatedSize' only replaces the allocation-time half of 'estimatedSize'; set 'estimatedSize: true' as well.`,
+    );
   }
 
   for (const a of [...Object.values(klass), ...Object.values(proto)]) {
@@ -1161,7 +1161,17 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
          * Memory cost of the object from Zig, without necessarily having a JS wrapper alive.
          */
         static size_t memoryCost(void* ptr);
-
+${
+  obj.estimatedSize
+    ? `
+        /**
+         * Call once per wrapper, after m_ctx is set. Reports estimatedSize, or
+         * newlyAllocatedSize when the class definition sets it.
+         */
+        void reportExtraMemoryAllocated(JSC::VM& vm);
+`
+    : ""
+}
         void* m_ctx { nullptr };
 
         ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr${obj.valuesArray ? ", WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray_" : ""})
@@ -1368,6 +1378,15 @@ size_t ${name}::memoryCost(void* ptr) {
   `;
   }
 
+  if (obj.estimatedSize) {
+    const sizeFn = symbolName(typeName, obj.newlyAllocatedSize ? "newlyAllocatedSize" : "estimatedSize");
+    output += `
+void ${name}::reportExtraMemoryAllocated(JSC::VM& vm) {
+  vm.heap.reportExtraMemoryAllocated(this, ${sizeFn}(m_ctx));
+}
+`;
+  }
+
   output += `
 
 size_t ${name}::estimatedSize(JSC::JSCell* cell, JSC::VM& vm) {
@@ -1524,13 +1543,7 @@ extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__cr
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
   ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
+  ${reportExtraMemoryAllocated(obj)}
   return JSValue::encode(instance);
 }
 
@@ -1545,13 +1558,7 @@ ${
     jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
   }
   ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTF::move(jsvalueArray));
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
+  ${reportExtraMemoryAllocated(obj)}
   return JSValue::encode(instance);
 }`
     : ""
@@ -1563,13 +1570,7 @@ ${
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
   ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
+  ${reportExtraMemoryAllocated(obj)}
   return JSValue::encode(instance);
 }`
     : ""
@@ -1586,13 +1587,7 @@ ${
     jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
   }
   ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTF::move(jsvalueArray)${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
+  ${reportExtraMemoryAllocated(obj)}
   return JSValue::encode(instance);
 }`
     : ""
@@ -1882,6 +1877,7 @@ function generateRust(
     noConstructor = false,
     overridesToJS = false,
     estimatedSize,
+    newlyAllocatedSize = false,
     call = false,
     memoryCost,
     values = [],
@@ -1941,6 +1937,13 @@ function generateRust(
   }
   if (estimatedSize) {
     thunk(symbolName(typeName, "estimatedSize"), `(this: &${T}) -> usize`, `    ${T}::estimated_size(this)`);
+    if (newlyAllocatedSize) {
+      thunk(
+        symbolName(typeName, "newlyAllocatedSize"),
+        `(this: &${T}) -> usize`,
+        `    ${T}::newly_allocated_size(this)`,
+      );
+    }
   }
   if (!memoryCost && !estimatedSize) {
     symbols.push(symbolName(typeName, "ZigStructSize"));

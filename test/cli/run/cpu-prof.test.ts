@@ -515,4 +515,38 @@ describe.concurrent("--cpu-prof", () => {
     expect(mdContent).toContain("# CPU Profile");
     expect(exitCode).toBe(0);
   });
+
+  // bun repl had the same defect as bun test: the flags parsed but the
+  // profiler never started.
+  test("bun repl --cpu-prof writes a profile", async () => {
+    using dir = tempDir("cpu-prof-bun-repl", {});
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "repl",
+        "--cpu-prof",
+        "--cpu-prof-name",
+        "repl-run.cpuprofile",
+        "-e",
+        "let out = 0; const end = performance.now() + 100; while (performance.now() < end) out += Math.sqrt(out + 1);",
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+
+    const profileContent = readFileSync(join(String(dir), "repl-run.cpuprofile"), "utf-8");
+    const profile = JSON.parse(profileContent);
+    expect(profile).toHaveProperty("nodes");
+    expect(profile).toHaveProperty("samples");
+    expect(Array.isArray(profile.nodes)).toBe(true);
+    expect(profile.nodes.length).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+  });
 });

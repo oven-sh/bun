@@ -130,6 +130,17 @@ impl ReplCommand {
         VirtualMachine::get().as_mut().is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
+        // `--cpu-prof*` / `--heap-prof*`: the profiles are written by the
+        // `on_exit()` calls in `ReplRunner::start`.
+        if ctx.runtime_options.cpu_prof.enabled || ctx.runtime_options.heap_prof.enabled {
+            // SAFETY: `vm` is the live process-lifetime VM on this thread;
+            // `run_with_api_lock` takes `&self` only, so the closure is the
+            // sole mutator.
+            unsafe { &*vm }.run_with_api_lock(|| {
+                crate::cli::run_command::start_profilers(unsafe { &mut *vm }, &*ctx);
+            });
+        }
+
         // Store VM reference in REPL (safe - no JS allocation)
         repl.vm = Some(VirtualMachine::get());
         repl.global = Some(VirtualMachine::get().global());

@@ -68,6 +68,46 @@ impl AnyTaskWithExtraContext {
         }
     }
 
+    /// Heap-allocates a task that owns `value`; when it runs it calls
+    /// `callback(value, extra)` and frees itself. The mini loop that receives
+    /// the returned pointer owns the allocation until then.
+    pub fn from_value<T: 'static>(
+        value: T,
+        callback: fn(T, *mut c_void),
+    ) -> NonNull<AnyTaskWithExtraContext> {
+        #[repr(C)]
+        struct Wrapper<T> {
+            any_task: AnyTaskWithExtraContext,
+            value: T,
+            callback: fn(T, *mut c_void),
+        }
+
+        fn function<T>(this: *mut (), extra: *mut ()) {
+            // SAFETY: `this` is the `ctx` set below: the heap `Wrapper<T>`, whose
+            // first (`repr(C)`) field is the task the loop just dequeued.
+            let that: Box<Wrapper<T>> = unsafe { bun_core::heap::take(this.cast::<Wrapper<T>>()) };
+            let Wrapper {
+                value, callback, ..
+            } = *that;
+            callback(value, extra.cast::<c_void>());
+        }
+
+        let task = bun_core::heap::into_raw(Box::new(Wrapper::<T> {
+            any_task: AnyTaskWithExtraContext {
+                callback: function::<T>,
+                ctx: None,
+                next: bun_threading::Link::new(),
+            },
+            value,
+            callback,
+        }));
+        // SAFETY: `task` was just produced by `into_raw`; valid and exclusive.
+        unsafe {
+            (*task).any_task.ctx = NonNull::new(task.cast::<()>());
+            NonNull::new_unchecked(core::ptr::addr_of_mut!((*task).any_task))
+        }
+    }
+
     /// Initializes `self` in place to call `callback(of, extra)`.
     // The unit context means the callee is effectively `fn(*T)` only; mapped
     // to `*mut ()` to keep the two-arg stored ABI uniform.

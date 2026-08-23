@@ -1326,8 +1326,9 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
     // `.vm` is set only when standalone-module-graph is active
     // (it gates the embedded-file `Bun.file()` lookups inside `node:fs`).
     // SAFETY: per fn contract.
-    let vm_field = if unsafe { &*vm }.standalone_module_graph.is_some() {
-        core::ptr::NonNull::new(vm)
+    let vm_ref: &VirtualMachine = unsafe { &*vm };
+    let vm_field = if vm_ref.standalone_module_graph.is_some() {
+        Some(bun_ptr::BackRef::new(vm_ref))
     } else {
         None
     };

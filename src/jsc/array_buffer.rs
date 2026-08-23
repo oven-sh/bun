@@ -960,6 +960,24 @@ impl MarkedArrayBuffer {
         }
     }
 
+    /// Take ownership of heap bytes (freed by `destroy`/`Drop`, or handed to
+    /// JSC by `to_node_buffer`/`to_js`). An empty slice yields [`Self::EMPTY`].
+    pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
+        if bytes.is_empty() {
+            return MarkedArrayBuffer {
+                buffer: ArrayBuffer {
+                    typed_array_type,
+                    ..ArrayBuffer::EMPTY
+                },
+                owns_buffer: false,
+            };
+        }
+        MarkedArrayBuffer {
+            buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
+            owns_buffer: true,
+        }
+    }
+
     pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
         owns_buffer: false,
         buffer: ArrayBuffer::EMPTY,

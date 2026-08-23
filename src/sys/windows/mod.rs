@@ -654,6 +654,45 @@ fn final_name_raw(h: HANDLE, flags: DWORD, buf: &mut [u16]) -> Option<usize> {
     }
 }
 
+/// [`GetFinalPathNameByHandleW`] (this module's, with the AppContainer
+/// fallback) over a slice: the length written, or the required length when
+/// `buf` is too small, or 0 with the thread's last error set.
+pub fn get_final_path_name_by_handle(fd: Fd, buf: &mut [u16], flags: DWORD) -> usize {
+    // SAFETY: `buf` is valid for writes of `buf.len()` u16s.
+    unsafe {
+        GetFinalPathNameByHandleW(fd.native(), buf.as_mut_ptr(), buf.len() as u32, flags) as usize
+    }
+}
+
+/// `GetFileAttributesW`: the attribute mask, or `INVALID_FILE_ATTRIBUTES` with
+/// the thread's last error set.
+#[inline]
+pub fn get_file_attributes(path: &bun_core::WStr) -> DWORD {
+    // SAFETY: `WStr` is NUL-terminated.
+    unsafe { externs::GetFileAttributesW(path.as_ptr()) }
+}
+
+/// `CopyFileW`; `false` on failure with the thread's last error set.
+#[inline]
+pub fn copy_file(src: &bun_core::WStr, dest: &bun_core::WStr, fail_if_exists: bool) -> bool {
+    // SAFETY: both `WStr`s are NUL-terminated.
+    unsafe { externs::CopyFileW(src.as_ptr(), dest.as_ptr(), BOOL::from(fail_if_exists)) != 0 }
+}
+
+/// `SetEndOfFile` at the handle's current position; `false` on failure.
+#[inline]
+pub fn set_end_of_file(fd: Fd) -> bool {
+    // SAFETY: by-value handle; the kernel validates it.
+    unsafe { externs::SetEndOfFile(fd.native()) != 0 }
+}
+
+/// `FlushFileBuffers`; `false` on failure.
+#[inline]
+pub fn flush_file_buffers(fd: Fd) -> bool {
+    // SAFETY: by-value handle; the kernel validates it.
+    unsafe { bun_windows_sys::kernel32::FlushFileBuffers(fd.native()) != 0 }
+}
+
 /// Attribute-only `CreateFileW` (0 access): exempt from share-mode arbitration
 /// and the smallest ACL surface — don't add access bits. `pathz` must be
 /// NUL-terminated; `FILE_FLAG_BACKUP_SEMANTICS` covers directories, harmless on files.

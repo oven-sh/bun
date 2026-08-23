@@ -35,7 +35,9 @@ describe("bun:sqlite", () => {
     db.query("select count(*) c from t").get();
     insert.run("b");
     // .iterate(): one span for the execution, not one per row fetched
-    expect([...db.query("SELECT name FROM t ORDER BY id").iterate()].length).toBe(2);
+    const it = db.prepare("SELECT name FROM t ORDER BY id");
+    expect([...it.iterate()].length).toBe(2);
+    it.finalize(); // (Windows: an open statement keeps the file locked past db.close())
     expect(() => db.query("SELECT * FROM missing").all()).toThrow();
     db.close();
     const got = await collect("bun.sqlite");

@@ -144,7 +144,11 @@ impl Drop for Process {
 
 /// The type a [`ProcessExitKind`] variant's `link_impl_ProcessExit!` was
 /// written for; implement it next to that macro call.
-pub trait ProcessExitOwner {
+///
+/// # Safety
+/// `KIND` must be the variant whose `link_impl_ProcessExit!` names `Self`:
+/// the exit dispatch casts the owner pointer back to that type.
+pub unsafe trait ProcessExitOwner {
     const KIND: ProcessExitKind;
 }
 

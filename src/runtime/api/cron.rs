@@ -1937,7 +1937,8 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
-impl spawn::ProcessExitOwner for CronRegisterJob {
+// SAFETY: `link_impl_ProcessExit!` above registers `CronRegister => CronRegisterJob`.
+unsafe impl spawn::ProcessExitOwner for CronRegisterJob {
     const KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRegister;
 }
 impl SpawnCmdTarget for CronRegisterJob {
@@ -1953,7 +1954,8 @@ impl SpawnCmdTarget for CronRegisterJob {
         &self.stderr_reader
     }
 }
-impl spawn::ProcessExitOwner for CronRemoveJob {
+// SAFETY: `link_impl_ProcessExit!` above registers `CronRemove => CronRemoveJob`.
+unsafe impl spawn::ProcessExitOwner for CronRemoveJob {
     const KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
 }
 impl SpawnCmdTarget for CronRemoveJob {

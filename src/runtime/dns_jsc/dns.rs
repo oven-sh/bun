@@ -1572,9 +1572,9 @@ pub mod internal {
         }
 
         fn waiting_index(&self, request: ThisPtr<Request>) -> Option<usize> {
-            self.waiting
-                .iter()
-                .position(|w| core::ptr::eq(w.request.as_const_ptr(), request.as_ptr().cast_const()))
+            self.waiting.iter().position(|w| {
+                core::ptr::eq(w.request.as_const_ptr(), request.as_ptr().cast_const())
+            })
         }
 
         fn add_waiter(&mut self, request: ThisPtr<Request>, owner: DNSRequestOwner) {

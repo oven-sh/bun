@@ -934,9 +934,8 @@ pub fn starts_with(self_: &[u8], str: &[u8]) -> bool {
     eql_long(&self_[0..str.len()], str, false)
 }
 
-/// Strips the `file:` scheme from an absolute file URL, returning the path
-/// bytes: `file:///p` and `file:/p` both denote the path `/p` (WHATWG). Does
-/// not percent-decode. Returns the input unchanged for anything else.
+/// Strips the `file:` scheme from an absolute file URL: `file:///p` and
+/// `file:/p` both give `/p` (WHATWG). No percent-decoding.
 pub fn strip_file_url_prefix(self_: &[u8]) -> &[u8] {
     if let Some(rest) = self_.strip_prefix(b"file://".as_slice()) {
         return rest;

@@ -1117,6 +1117,9 @@ describe("napi_value results from cc()-compiled C", () => {
         int returns_int(napi_env_t env) {
           return 42;
         }
+        void throws_from_void(napi_env_t env) {
+          napi_throw_error(env, 0, "thrown from void C");
+        }
       `,
       "fixture.js": /* js */ `
         import { cc } from "bun:ffi";
@@ -1130,6 +1133,7 @@ describe("napi_value results from cc()-compiled C", () => {
             throws_then_returns_null: { args: ["napi_env"], returns: "napi_value" },
             throws_then_returns_int: { args: ["napi_env"], returns: "int" },
             returns_int: { args: ["napi_env"], returns: "int" },
+            throws_from_void: { args: ["napi_env"], returns: "void" },
           },
         });
 
@@ -1148,6 +1152,7 @@ describe("napi_value results from cc()-compiled C", () => {
             string: symbols.returns_string(),
             thrownNull: caught(() => symbols.throws_then_returns_null()),
             thrownInt: caught(() => symbols.throws_then_returns_int()),
+            thrownVoid: caught(() => symbols.throws_from_void()),
             // The scheduled exception must not leak into the next call.
             afterThrow: caught(() => symbols.returns_int()),
           }),
@@ -1171,6 +1176,7 @@ describe("napi_value results from cc()-compiled C", () => {
         string: "hello",
         thrownNull: { threw: ["ERR_FROM_C", "thrown from C"] },
         thrownInt: { threw: [null, "thrown from int-returning C"] },
+        thrownVoid: { threw: [null, "thrown from void C"] },
         afterThrow: { returned: 42 },
       },
       exitCode: 0,

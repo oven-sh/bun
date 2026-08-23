@@ -1765,21 +1765,24 @@ impl UDPSocket {
         JSValue::js_number(uws::udp::Socket::opaque_mut(socket).bound_port() as f64)
     }
 
-    fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
-        let sockaddr: SocketAddress = match SocketAddress::init(address_bytes, port) {
-            Ok(sa) => sa,
-            Err(_) => return JSValue::UNDEFINED,
+    fn create_sock_addr(
+        global_this: &JSGlobalObject,
+        address_bytes: &[u8],
+        port: u16,
+    ) -> JsResult<JSValue> {
+        let Ok(sockaddr) = SocketAddress::init(address_bytes, port) else {
+            return Ok(JSValue::UNDEFINED);
         };
-        sockaddr.into_dto(global_this).unwrap_or(JSValue::UNDEFINED)
+        sockaddr.into_dto(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_address(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if this.closed.get() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         let Some(socket) = this.socket.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -1797,15 +1800,18 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_remote_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_remote_address(
+        this: &Self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         if this.closed.get() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         let Some(connect_info) = this.connect_info.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         let Some(socket) = this.socket.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -2390,7 +2396,7 @@ pub(crate) fn js_dgram_get_sock_name_fd(
                     .to_js(global),
             ));
         };
-        Ok(UDPSocket::create_sock_addr(global, bytes, port))
+        UDPSocket::create_sock_addr(global, bytes, port)
     }
     #[cfg(windows)]
     {

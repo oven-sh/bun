@@ -33,6 +33,7 @@ pub mod c {
 
     // ZSTD_EndDirective
     pub const ZSTD_e_continue: ZSTD_EndDirective = 0;
+    pub const ZSTD_e_end: ZSTD_EndDirective = 2;
 
     pub const ZSTD_reset_session_and_parameters: ZSTD_ResetDirective = 3;
 
@@ -838,8 +839,11 @@ impl CompressStream {
     /// One `ZSTD_compressStream2` call; `end` selects `ZSTD_e_end` over
     /// `ZSTD_e_continue`.
     pub fn step(&mut self, input: &[u8], out: &mut Vec<u8>, out_limit: usize, end: bool) -> Step {
-        // ZSTD_EndDirective: 0 = ZSTD_e_continue, 2 = ZSTD_e_end.
-        let directive: c::ZSTD_EndDirective = if end { 2 } else { c::ZSTD_e_continue };
+        let directive = if end {
+            c::ZSTD_e_end
+        } else {
+            c::ZSTD_e_continue
+        };
         stream_step(input, out, out_limit, |out_buf, in_buf| {
             // SAFETY: live CCtx; the buffers describe `input` and the spare window for this one call.
             unsafe { c::ZSTD_compressStream2(self.0.as_ptr(), out_buf, in_buf, directive) }

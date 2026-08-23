@@ -527,8 +527,8 @@ impl CompressionStreamCoder {
     }
 }
 
-/// A chunk's bytes for the pool thread: the pinned ArrayBuffer they live in,
-/// or an owned copy.
+/// A chunk's bytes for the pool thread: the pinned ArrayBuffer they live in
+/// (copied out there, off the JS thread), or a copy made up front.
 pub(crate) enum AsyncInput {
     Pinned(PinnedArrayBuffer),
     Owned(Vec<u8>),
@@ -543,12 +543,19 @@ impl AsyncInput {
         }
     }
 
-    /// Pool thread, under the job's ticket.
-    #[inline]
-    pub(crate) fn slice<'a>(&'a self, ticket: &bun_jsc::Ticket) -> &'a [u8] {
+    /// Pool thread, under the job's ticket: the bytes to feed the codec
+    /// (`snapshot` receives the copy of a pinned chunk).
+    pub(crate) fn bytes<'a>(
+        &'a self,
+        ticket: &bun_jsc::Ticket,
+        snapshot: &'a mut Vec<u8>,
+    ) -> &'a [u8] {
         match self {
-            Self::Pinned(pinned) => pinned.bytes(ticket),
-            Self::Owned(v) => v.as_slice(),
+            Self::Pinned(pinned) => {
+                *snapshot = pinned.to_vec(ticket);
+                snapshot
+            }
+            Self::Owned(v) => v,
         }
     }
 }
@@ -734,8 +741,11 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     type Js = CompressionAsyncJs;
 
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        // A pinned chunk is copied here, off the JS thread.
+        let mut snapshot = Vec::new();
+        let bytes = this.input.bytes(done.ticket(), &mut snapshot);
         let result = match &mut this.codec {
-            Some(codec) => codec.step(this.input.slice(done.ticket()), this.finish, &mut this.out),
+            Some(codec) => codec.step(bytes, this.finish, &mut this.out),
             None => Err(CodecError::Busy),
         };
         match result {

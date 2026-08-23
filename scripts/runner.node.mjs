@@ -277,6 +277,60 @@ if (isBuildkite) {
 
 let coresDir;
 
+/**
+ * The soft and hard RLIMIT_CORE of this process, as `ulimit` prints them
+ * ("0", "unlimited", or a byte count).
+ * @returns {{ soft: string, hard: string } | undefined}
+ */
+function getCoreFileSizeLimit() {
+  try {
+    const line = readFileSync("/proc/self/limits", "utf-8")
+      .split("\n")
+      .find(line => line.startsWith("Max core file size"));
+    const [, soft, hard] = /^Max core file size\s+(\S+)\s+(\S+)/.exec(line ?? "") ?? [];
+    if (soft && hard) {
+      return { soft, hard };
+    }
+  } catch {}
+  return undefined;
+}
+
+/**
+ * systemd starts the agent with a soft RLIMIT_CORE of 0 and a hard limit of
+ * infinity (its default for services). The glibc images inherit that, so a
+ * crashed test process writes no core even though kernel.core_pattern points
+ * at coresDir. Raise this process's soft limit to the hard limit; every test
+ * process inherits it. Returns the limit that is in effect afterwards.
+ * @returns {Promise<string | undefined>}
+ */
+async function raiseCoreFileSizeLimit() {
+  const before = getCoreFileSizeLimit();
+  if (!before || before.soft === "unlimited") {
+    return before?.soft;
+  }
+  if (before.hard === "0") {
+    console.warn("The hard core file size limit is 0, so crashed test processes will not dump core");
+    return before.soft;
+  }
+  if (before.soft === before.hard) {
+    return before.soft;
+  }
+  const prlimit = await spawnSafe({
+    command: "prlimit",
+    args: ["--pid", `${process.pid}`, `--core=${before.hard}:`],
+    stdout: () => {},
+    stderr: () => {},
+  });
+  const after = getCoreFileSizeLimit();
+  if (!prlimit.ok || !after || after.soft === before.soft) {
+    console.warn(
+      `Could not raise the core file size limit from ${before.soft} (hard limit ${before.hard}): ${prlimit.error}`,
+    );
+    return after?.soft ?? before.soft;
+  }
+  return after.soft;
+}
+
 if (options["coredump-upload"]) {
   // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
   const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
@@ -290,6 +344,7 @@ if (options["coredump-upload"]) {
   } else {
     throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
   }
+  console.log(`core file size limit: ${await raiseCoreFileSizeLimit()}`);
 }
 
 let remapPort = undefined;

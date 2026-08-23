@@ -551,7 +551,11 @@ impl ServerWebSocket {
                 let err_value = global_object.take_error(e);
                 if let Some((span, entered)) = otel {
                     drop(entered);
-                    crate::telemetry::websocket::end_message_thrown(span, global_object, err_value)?;
+                    crate::telemetry::websocket::end_message_thrown(
+                        span,
+                        global_object,
+                        err_value,
+                    )?;
                 }
                 return self
                     .handler()

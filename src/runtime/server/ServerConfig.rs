@@ -934,11 +934,29 @@ impl ServerConfig {
                             .map(|t| convert_file_system_router_type(&arena, t))
                             .collect();
 
+                    // Directories of the HTML entry points. `Framework::auto`
+                    // resolves `react` / `react-refresh` from these in addition
+                    // to the top-level directory, so detection works when the
+                    // packages live in a workspace package's `node_modules`
+                    // (the isolated linker layout).
+                    let mut html_entry_dirs: Vec<&[u8]> = Vec::new();
+                    for &bundle in init_ctx.dedupe_html_bundle_map.keys() {
+                        // SAFETY: the map's value holds a Route that refs the
+                        // bundle, so it stays alive for this scope.
+                        let path = unsafe { &(*bundle).path };
+                        if let Some(dir) = bun_paths::dirname(path) {
+                            if !html_entry_dirs.iter().any(|d| bun_core::strings::eql(d, dir)) {
+                                html_entry_dirs.push(dir);
+                            }
+                        }
+                    }
+
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = bb::Framework::auto(&arena, resolver, router_types)
-                        .map_err(|e| global.throw_error(e, "Framework::auto"))?;
+                    let framework =
+                        bb::Framework::auto(&arena, resolver, router_types, &html_entry_dirs)
+                            .map_err(|e| global.throw_error(e, "Framework::auto"))?;
 
                     let mut user_options = crate::bake::UserOptions {
                         arena,

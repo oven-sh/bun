@@ -939,8 +939,10 @@ impl ServerConfig {
                     // workspace package's react outside the top-level dir.
                     let mut html_entry_dirs: Vec<&[u8]> = Vec::new();
                     for &bundle in init_ctx.dedupe_html_bundle_map.keys() {
-                        // SAFETY: the map's value holds a Route that refs the
-                        // bundle, so it stays alive for this scope.
+                        // SAFETY: each key's bundle is kept alive by an
+                        // `AnyRoute::Html(RefPtr<Route>)` in `args.static_routes`
+                        // (`Route.bundle` is a `RefPtr<HTMLBundle>`), and
+                        // `static_routes` is not mutated before this loop.
                         let path = unsafe { &(*bundle).path };
                         if let Some(dir) = bun_paths::dirname(path) {
                             if !html_entry_dirs.iter().any(|d| strings::eql(d, dir)) {

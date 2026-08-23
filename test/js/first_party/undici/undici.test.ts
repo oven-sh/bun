@@ -243,7 +243,8 @@ describe("undici", () => {
               }),
             ),
         });
-        const { body } = await request(server.url.href);
+        const { body, headers } = await request(server.url.href);
+        expect(headers["content-length"]).toBeUndefined();
         expect(await body.dump({ limit: 1024 })).toBeNull();
         expect(body.destroyed).toBe(true);
       });

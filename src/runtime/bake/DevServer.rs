@@ -4171,7 +4171,14 @@ fn finalize_bundle_phases(
 
             // Only the first failure payload sent notifies the inspector.
             let mut notify_inspector = dev.inspector().is_some();
-            let mut release_after = Vec::new();
+            // Released on the error paths too (guard), but normally handed out
+            // so the final releases happen after this borrow.
+            let mut release_after =
+                scopeguard::guard(Vec::<crate::server::AnyRequestContext>::new(), |contexts| {
+                    for ctx in contexts {
+                        ctx.deref();
+                    }
+                });
             if current_bundle!().promise.strong.has_value() {
                 dev.set_current_bundle_route_states(route_bundle::State::PossibleBundlingFailures);
                 let global = dev.global();
@@ -4222,7 +4229,9 @@ fn finalize_bundle_phases(
                 )?;
             }
 
-            return Ok(BundleOutcome::Failed(release_after));
+            return Ok(BundleOutcome::Failed(scopeguard::ScopeGuard::into_inner(
+                release_after,
+            )));
         }
 
         if dev.bundling_failures.is_empty() {

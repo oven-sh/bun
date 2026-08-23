@@ -3295,7 +3295,14 @@ pub mod bv2_impl {
                     Ok(r) => r,
                     Err(err) => {
                         // The dev server handles these once `start_from_bake_dev_server`
-                        // returns (it is mid-borrow while this runs).
+                        // returns; handling them needs `&mut self`, which the dispatch
+                        // handle must not alias.
+                        // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
+                        let log = unsafe { &mut *(*transpiler).log };
+                        let mut taken = bun_ast::Log::init();
+                        taken.level = log.level;
+                        taken.clone_line_text = log.clone_line_text;
+                        core::mem::swap(&mut taken, log);
                         resolve_failures.push(EntryPointResolveFailure {
                             err,
                             graph: if flags.client() {
@@ -3304,11 +3311,7 @@ pub mod bv2_impl {
                                 bake::Graph::Server
                             },
                             abs_path: Box::from(&**abs_path),
-                            // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
-                            log: core::mem::replace(
-                                unsafe { &mut *(*transpiler).log },
-                                bun_ast::Log::init(),
-                            ),
+                            log: taken,
                         });
                         continue;
                     }
@@ -5423,9 +5426,8 @@ pub mod bv2_impl {
 
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
         /// Entry points that failed to resolve are returned for the dev server
-        /// to record (`DevServer::handle_parse_task_failure`) rather than
-        /// reported through the dispatch handle, because the dev server is
-        /// mid-borrow while this runs.
+        /// to record (`DevServer::handle_parse_task_failure`, which needs this
+        /// `BundleV2` mutably) rather than reported through the dispatch handle.
         pub fn start_from_bake_dev_server(
             &mut self,
             bake_entry_points: &bake_types::EntryPointList,

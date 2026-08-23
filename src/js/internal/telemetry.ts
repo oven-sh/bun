@@ -156,6 +156,7 @@ function runWithContext(ctx: any, fn: Function, thisArg: unknown, args: any[]) {
   }
 }
 
+const kBoundEmitter = Symbol("otel.boundEmitter");
 const contextManager = {
   active: activeContext,
   with(ctx: any, fn: Function, thisArg?: unknown, ...args: any[]) {
@@ -169,11 +170,13 @@ const contextManager = {
       ObjectDefineProperty(bound, "length", { configurable: true, value: target.length });
       return bound;
     }
-    if (target && typeof target.emit === "function") {
+    if (target && typeof target.emit === "function" && !target[kBoundEmitter]) {
+      // (like AbstractAsyncHooksContextManager: binding an emitter twice is a no-op)
       const emit = target.emit;
       target.emit = function (this: unknown, ...args: any[]) {
         return runWithContext(ctx, emit, this, args);
       };
+      target[kBoundEmitter] = true;
     }
     return target;
   },

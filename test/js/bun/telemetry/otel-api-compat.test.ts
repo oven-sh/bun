@@ -13,6 +13,7 @@ import {
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { EventEmitter } from "node:events";
 import http from "node:http";
 
 const spans: any[] = [];
@@ -100,6 +101,23 @@ describe("@opentelemetry/api", () => {
     expect(context.active().getValue(key)).toBeUndefined();
     span.end();
     await collect();
+  });
+
+  test("context.bind() on an EventEmitter is idempotent", () => {
+    const tracer = trace.getTracer("compat");
+    const span = tracer.startSpan("ee");
+    const ee = new EventEmitter();
+    const ctx = trace.setSpan(ROOT_CONTEXT, span);
+    context.bind(ctx, ee);
+    context.bind(ctx, ee);
+    const emit = ee.emit;
+    context.bind(ctx, ee);
+    expect(ee.emit).toBe(emit);
+    let seen;
+    ee.on("x", () => (seen = trace.getActiveSpan()));
+    ee.emit("x");
+    expect(seen).toBe(span);
+    span.end();
   });
 
   test("context.bind()", () => {

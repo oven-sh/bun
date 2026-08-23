@@ -46,7 +46,6 @@ struct Http3Request {
         }
     }
 
-    bool isAncient() { return false; }
     bool getYield() { return yield; }
     void setYield(bool y) { yield = y; }
 
@@ -56,7 +55,6 @@ struct Http3Request {
     std::string_view getQuery(std::string_view key) {
         return getDecodedQueryValue(key, query);
     }
-    std::string_view getCaseSensitiveMethod() { return method; }
 
     /* HttpRequest::getMethod() lowercases in place; we own no writable
      * buffer, so write into a per-request scratch instead. */

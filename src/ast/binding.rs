@@ -34,38 +34,9 @@ pub enum Tag {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `init` / `alloc` — a pair of small traits implemented for each payload
-// type pick the `B` variant; `Binding::init` / `Binding::alloc` stay
-// monomorphic per call-site.
+// `alloc` — a small trait implemented for each payload type picks the `B`
+// variant; `Binding::alloc` stays monomorphic per call-site.
 // ──────────────────────────────────────────────────────────────────────────
-
-pub trait BindingInit {
-    fn into_b(self) -> B;
-}
-impl BindingInit for StoreRef<crate::b::Identifier> {
-    #[inline]
-    fn into_b(self) -> B {
-        B::BIdentifier(self)
-    }
-}
-impl BindingInit for StoreRef<crate::b::Array> {
-    #[inline]
-    fn into_b(self) -> B {
-        B::BArray(self)
-    }
-}
-impl BindingInit for StoreRef<crate::b::Object> {
-    #[inline]
-    fn into_b(self) -> B {
-        B::BObject(self)
-    }
-}
-impl BindingInit for crate::b::Missing {
-    #[inline]
-    fn into_b(self) -> B {
-        B::BMissing(self)
-    }
-}
 
 pub trait BindingAlloc: Sized {
     fn alloc_into_b(self, bump: &Arena) -> B;
@@ -96,13 +67,6 @@ impl BindingAlloc for crate::b::Missing {
 }
 
 impl Binding {
-    #[inline]
-    pub fn init(t: impl BindingInit, loc: crate::Loc) -> Binding {
-        Binding {
-            loc,
-            data: t.into_b(),
-        }
-    }
     #[inline]
     pub fn alloc(bump: &Arena, t: impl BindingAlloc, loc: crate::Loc) -> Binding {
         Binding {

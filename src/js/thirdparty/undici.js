@@ -110,9 +110,7 @@ class BodyReadable extends ReadableFromWeb {
     return await this.#response.bytes();
   }
 
-  // Discards the body without buffering it, destroying the stream once `limit`
-  // bytes have been received. Mirrors undici's BodyReadable.dump():
-  // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/readable.js#L158-L199
+  // Port of https://github.com/nodejs/undici/blob/v6.21.3/lib/api/readable.js#L158-L199
   async dump(opts) {
     const signal = opts?.signal;
 

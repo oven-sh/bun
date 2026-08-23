@@ -530,14 +530,25 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
     return Bun::toStringRef(builder.toString());
 }
 
-// Node's ERR_INVALID_ARG_VALUE renders the value with `util.inspect` ('w'),
-// not `determineSpecificType` ("type string ('w')"). Expose the formatter the
-// C++ INVALID_ARG_VALUE overloads use so Rust-side error paths match exactly.
+// ERR_INVALID_ARG_VALUE inspects the value (not determineSpecificType) and keeps at most 128 chars of it:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1471-L1478
+static void appendInvalidArgValueReceived(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value)
+{
+    constexpr unsigned maxInspectedLength = 128;
+    const unsigned start = builder.length();
+    JSValueToStringSafe(globalObject, builder, value, true);
+    if (builder.length() - start > maxInspectedLength) {
+        builder.shrink(start + maxInspectedLength);
+        builder.append("..."_s);
+    }
+}
+
+// Rust-side ERR_INVALID_ARG_VALUE messages (JSGlobalObject::inspect_for_error_message).
 extern "C" BunString Bun__ErrorCode__inspectForErrorMessage(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     WTF::StringBuilder builder;
-    JSValueToStringSafe(globalObject, builder, JSValue::decode(value), true);
+    appendInvalidArgValueReceived(globalObject, builder, JSValue::decode(value));
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
     return Bun::toStringRef(builder.toString());
 }
@@ -1029,7 +1040,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     builder.append("' "_s);
     builder.append(reason);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value, true);
+    appendInvalidArgValueReceived(globalObject, builder, value);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
@@ -1049,7 +1060,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JS
     builder.append("' "_s);
     builder.append(reason);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value, true);
+    appendInvalidArgValueReceived(globalObject, builder, value);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s);
@@ -1069,7 +1080,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     builder.append("' "_s);
     builder.append(reason);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value, true);
+    appendInvalidArgValueReceived(globalObject, builder, value);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
@@ -1113,7 +1124,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
         }
     }
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value, true);
+    appendInvalidArgValueReceived(globalObject, builder, value);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
@@ -1191,8 +1202,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     builder.append("' "_s);
     builder.append(reason);
     builder.append(". Received "_s);
-
-    JSValueToStringSafe(globalObject, builder, value, true);
+    appendInvalidArgValueReceived(globalObject, builder, value);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
@@ -1685,7 +1695,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 
     if (reason.isUndefined()) {
         builder.append(" is invalid. Received "_s);
-        JSValueToStringSafe(globalObject, builder, value, true);
+        appendInvalidArgValueReceived(globalObject, builder, value);
         RETURN_IF_EXCEPTION(throwScope, {});
         return createError(globalObject, code, builder.toString());
     }
@@ -1699,7 +1709,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     builder.append(' ');
     builder.append(reasonView);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value, true);
+    appendInvalidArgValueReceived(globalObject, builder, value);
     RETURN_IF_EXCEPTION(throwScope, {});
     return createError(globalObject, code, builder.toString());
 }

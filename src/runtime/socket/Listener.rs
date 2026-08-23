@@ -1275,7 +1275,10 @@ impl Listener {
                         false,
                     ));
                     tls_ref.update_flags(|f| {
-                        f.set(SocketFlags::PAUSE_ON_CONNECT, socket_config.pause_on_connect)
+                        f.set(
+                            SocketFlags::PAUSE_ON_CONNECT,
+                            socket_config.pause_on_connect,
+                        )
                     });
                     TLSSocket::data_set_cached(
                         tls_ref.get_this_value(global),
@@ -1359,7 +1362,10 @@ impl Listener {
                     };
                     let tcp_ref = tcp;
                     tcp_ref.update_flags(|f| {
-                        f.set(SocketFlags::PAUSE_ON_CONNECT, socket_config.pause_on_connect)
+                        f.set(
+                            SocketFlags::PAUSE_ON_CONNECT,
+                            socket_config.pause_on_connect,
+                        )
                     });
                     tcp_ref.ref_();
                     TCPSocket::data_set_cached(

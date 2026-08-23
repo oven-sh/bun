@@ -244,7 +244,6 @@ public:
     JSC::JSObject* NetworkSink() { return m_JSNetworkSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NetworkSinkPrototype() const { return m_JSNetworkSinkClassStructure.prototypeInitializedOnMainThread(this); }
 
-
     JSC::Structure* FetchRequestBodySinkStructure() const { return m_JSFetchRequestBodySinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* FetchRequestBodySink() { return m_JSFetchRequestBodySinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue FetchRequestBodySinkPrototype() const { return m_JSFetchRequestBodySinkClassStructure.prototypeInitializedOnMainThread(this); }

@@ -44,14 +44,14 @@ void uws_h2_app_destroy(uws_h2_app_t* app) { delete (H2App*)app; }
 void uws_h2_app_close(uws_h2_app_t* app) { ((H2App*)app)->close(); }
 void uws_h2_app_clear_routes(uws_h2_app_t* app) { ((H2App*)app)->clearRoutes(); }
 
-#define H2_ROUTE(name, method)                                                                       \
-    void uws_h2_app_##name(uws_h2_app_t* app, const char* pattern, size_t pattern_len,               \
-        uws_h2_method_handler handler, void* user_data)                                              \
-    {                                                                                                \
-        if (handler == nullptr) return;                                                              \
+#define H2_ROUTE(name, method)                                                                         \
+    void uws_h2_app_##name(uws_h2_app_t* app, const char* pattern, size_t pattern_len,                 \
+        uws_h2_method_handler handler, void* user_data)                                                \
+    {                                                                                                  \
+        if (handler == nullptr) return;                                                                \
         ((H2App*)app)->method(h2sv(pattern, pattern_len), [handler, user_data](auto* res, auto* req) { \
-            handler((uws_h2_res_t*)res, (uws_h3_req_t*)req, user_data);                              \
-        });                                                                                          \
+            handler((uws_h2_res_t*)res, (uws_h3_req_t*)req, user_data);                                \
+        });                                                                                            \
     }
 H2_ROUTE(get, get)
 H2_ROUTE(post, post)

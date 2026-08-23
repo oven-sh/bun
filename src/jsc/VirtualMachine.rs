@@ -604,9 +604,11 @@ impl ExitHandler {
         // `process.on('exit')` handlers are user script (see `on_exit`).
         if vm.script_allowed() && !vm.exit_handler.skip_exit_listeners {
             let global = vm.global();
-            let _ = jsc::from_js_host_call_generic(global, || {
+            if let Err(err) = jsc::from_js_host_call_generic(global, || {
                 Process__dispatchOnExit(global, exit_code)
-            });
+            }) {
+                let _ = crate::task::report_error_or_terminate(global, err);
+            }
         }
         if vm.worker.is_none() {
             Bun__WebView__closeAllForTermination();

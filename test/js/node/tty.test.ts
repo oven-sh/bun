@@ -198,7 +198,10 @@ describe("ReadStream.prototype.setRawMode", () => {
     using dir = tempDir("tty-stdin-after-worker", {
       "worker.js": `
         const seen = {};
-        process.stdin.on("error", e => (seen.err = String(e)));
+        process.stdin.on("error", e => {
+          seen.err = String(e);
+          postMessage(seen);
+        });
         seen.isTTY = process.stdin.isTTY;
         process.stdin.setRawMode(true);
         seen.rawOn = process.stdin.isRaw;
@@ -220,17 +223,15 @@ describe("ReadStream.prototype.setRawMode", () => {
         worker.onmessage = async ({ data: fromWorker }) => {
           await worker.terminate();
           const main = {};
-          let reading = false;
           process.stdin.on("error", e => {
             main.err = String(e);
-            if (reading) report({ worker: fromWorker, main });
+            report({ worker: fromWorker, main });
           });
           main.isTTY = process.stdin.isTTY;
           process.stdin.setRawMode(true);
           main.rawOn = process.stdin.isRaw;
           process.stdin.setRawMode(false);
           main.rawOff = process.stdin.isRaw;
-          reading = true;
           process.stdin.once("data", d => {
             main.line = String(d).trim();
             report({ worker: fromWorker, main });

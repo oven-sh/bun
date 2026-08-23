@@ -144,7 +144,15 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
 
-    pub abs_path: Interned,
+    // Filled lazily by whichever thread first needs the absolute path (the
+    // resolver on a bundler thread, `Route::parse` on the JS thread). The fill
+    // happens under `mutex`; `has_abs_path` is the Release/Acquire publish
+    // flag that lets `abs_path()` stay lock-free, the same way `need_stat`
+    // publishes `cache`. A plain field was a data race: `Interned` is a
+    // two-word `(ptr, len)`, and a reader that saw the new `len` with the
+    // `EMPTY` pointer faulted inside `strings::last_index_of`.
+    abs_path: core::cell::Cell<Interned>,
+    has_abs_path: AtomicBool,
 }
 
 impl Entry {
@@ -188,15 +196,47 @@ impl Entry {
         self.dir
     }
 
-    /// `Interned` is `Copy`.
+    /// The cached absolute path, or `Interned::EMPTY` until a fill has been
+    /// published. Lock-free: the Acquire load pairs with the Release store in
+    /// [`set_abs_path`](Self::set_abs_path), so a reader either sees `EMPTY` or
+    /// the complete `(ptr, len)` pair, never a torn one.
     #[inline]
     pub fn abs_path(&self) -> Interned {
-        self.abs_path
+        if self.has_abs_path.load(Ordering::Acquire) {
+            self.abs_path.get()
+        } else {
+            Interned::EMPTY
+        }
     }
 
+    /// Publish the absolute path. Caller must hold `self.mutex` and must have
+    /// checked [`abs_path`](Self::abs_path) is still `EMPTY` under that lock:
+    /// a published value is never rewritten, which is what keeps the
+    /// lock-free reads in `abs_path()` sound.
     #[inline]
-    pub fn set_abs_path(&mut self, p: Interned) {
-        self.abs_path = p;
+    pub fn set_abs_path(&self, p: Interned) {
+        debug_assert!(!self.has_abs_path.load(Ordering::Relaxed));
+        self.abs_path.set(p);
+        self.has_abs_path.store(true, Ordering::Release);
+    }
+
+    /// Return the cached absolute path, computing and publishing it with
+    /// `fill` on first use. Double-checked on `self.mutex`, like
+    /// [`kind`](Self::kind): the fast path is the lock-free `abs_path()` read,
+    /// and when two threads race to fill the same entry only one `fill` runs.
+    /// `fill` must not touch this entry's `mutex`.
+    pub fn abs_path_or_fill(&self, fill: impl FnOnce() -> Interned) -> Interned {
+        if self.has_abs_path.load(Ordering::Acquire) {
+            return self.abs_path.get();
+        }
+        let _guard = self.mutex.lock_guard();
+        // Relaxed: every write happens under `mutex`, which we hold.
+        if self.has_abs_path.load(Ordering::Relaxed) {
+            return self.abs_path.get();
+        }
+        let p = fill();
+        self.set_abs_path(p);
+        p
     }
 
     /// Stat-on-first-use.
@@ -548,7 +588,8 @@ impl DirEntry {
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
+                addr_of_mut!((*p).abs_path).write(core::cell::Cell::new(Interned::EMPTY));
+                addr_of_mut!((*p).has_abs_path).write(AtomicBool::new(false));
                 p
             }
         };

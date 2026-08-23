@@ -166,6 +166,213 @@ const invalidCallback = (name: string) => ({
   message: `The "${name}" argument must be of type function. Received type number (1)`,
 });
 
+// Declared first: the runner hands out concurrency slots in declaration
+// order (5 under ASAN, 20 otherwise) and these are the slowest tests.
+describe.concurrent("in a subprocess", () => {
+  const wireFrames = path.join(import.meta.dir, "wire-frames.ts");
+  // The mock runs inside the child and is unref'd, so only the subscription
+  // under test can hold the child open. `notifyMany`, `dropConnections`,
+  // `sockets`, `pgNotificationResponse` and `sql` are in scope for `body`.
+  async function run(body: string, env: Record<string, string> = {}) {
+    using dir = tempDir("pg-listen-subprocess", {
+      "fixture.ts": `
+        import { SQL } from "bun";
+        import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgCommandComplete, pgNotificationResponse, pgReadFrontendMessages, pgRaw, pgInt32 } from ${JSON.stringify(wireFrames)};
+        const sockets = new Set();
+        const { port, server } = await listeningServer(socket => {
+          sockets.add(socket);
+          socket.unref();
+          let buffered = Buffer.alloc(0);
+          socket.once("data", () => {
+            socket.write(Buffer.concat([pgAuthenticationOk(), pgRaw("K", Buffer.concat([pgInt32(1), pgInt32(2)])), pgReadyForQuery()]));
+            socket.on("data", data => {
+              buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), (type, body) => {
+                if (type !== 0x51) return;
+                socket.write(Buffer.concat([pgCommandComplete(body.toString("utf8", 0, body.indexOf(" "))), pgReadyForQuery()]));
+              });
+            });
+          });
+          socket.on("close", () => sockets.delete(socket));
+        });
+        server.unref();
+        const notifyMany = frames => {
+          const blob = Buffer.concat(frames.map(([channel, payload]) => pgNotificationResponse(1, channel, payload)));
+          for (const socket of sockets) socket.write(blob);
+        };
+        const dropConnections = () => { for (const socket of sockets) socket.destroy(); };
+        const sql = new SQL("postgres://u@127.0.0.1:" + port + "/db", { max: 1 });
+        ${body}
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, ...env },
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout,
+      stderr: stderr
+        .split("\n")
+        .filter(line => line && !line.startsWith("WARNING: ASAN"))
+        .join("\n"),
+      exitCode,
+      signal: proc.signalCode,
+    };
+  }
+  const clean = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null });
+
+  test("a subscription keeps the process alive until it is removed", async () => {
+    const result = await run(`
+      const subscription = await sql.listen("ch", async payload => {
+        console.log("got " + payload);
+        await subscription.unlisten();
+        console.log("unlistened");
+      });
+      console.log("subscribed");
+      // Sent from an unref'd timer after top-level code finishes, so the
+      // subscription is the only thing keeping the process here.
+      setTimeout(() => notifyMany([["ch", "wake"]]), 20).unref();
+    `);
+    expect(result).toEqual(clean("subscribed\ngot wake\nunlistened\n"));
+  });
+
+  test("a dropped connection keeps the process alive through the backoff and reconnects", async () => {
+    const result = await run(`
+      let subscribes = 0;
+      const subscription = await sql.listen("ch", () => {}, () => {
+        if (++subscribes === 2) { console.log("reconnected"); subscription.unlisten(); }
+      });
+      console.log("subscribed");
+      dropConnections();
+    `);
+    expect(result).toEqual(clean("subscribed\nreconnected\n"));
+  });
+
+  test("sql.close() releases a subscription so the process exits", async () => {
+    const result = await run(`
+      await sql.listen("ch", () => {});
+      await sql.close();
+      console.log("closed");
+    `);
+    expect(result).toEqual(clean("closed\n"));
+  });
+
+  test("a throwing listener surfaces as uncaughtException; the channel's other listeners and later notifications are unaffected", async () => {
+    const result = await run(`
+      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+      const first = await sql.listen("ch", payload => {
+        console.log("first got " + payload);
+        if (payload === "bad") throw new Error("listener failed");
+      });
+      const second = await sql.listen("ch", payload => {
+        console.log("second got " + payload);
+        if (payload === "good") { first.unlisten(); second.unlisten(); }
+      });
+      notifyMany([["ch", "bad"], ["ch", "good"]]);
+    `);
+    expect(result).toEqual(
+      clean(
+        ["first got bad", "uncaught: listener failed", "second got bad", "first got good", "second got good", ""].join(
+          "\n",
+        ),
+      ),
+    );
+  });
+
+  test("a lone throwing listener surfaces as uncaughtException and later notifications still arrive", async () => {
+    const result = await run(`
+      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+      const subscription = await sql.listen("ch", payload => {
+        console.log("got " + payload);
+        if (payload === "bad") throw new Error("listener failed");
+        subscription.unlisten();
+      });
+      notifyMany([["ch", "bad"], ["ch", "good"]]);
+    `);
+    expect(result).toEqual(clean("got bad\nuncaught: listener failed\ngot good\n"));
+  });
+
+  test("a throwing onlisten surfaces as uncaughtException; listen() resolves and the reconnect is not retried", async () => {
+    // An empty stderr is the assertion that the reconnect sweep did not take
+    // the second throw for a failed LISTEN (which it warns about and retries).
+    const result = await run(`
+      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+      let calls = 0;
+      const subscription = await sql.listen("ch", () => {}, () => {
+        console.log("onlisten " + ++calls);
+        if (calls === 2) subscription.unlisten().then(() => console.log("unlistened"));
+        throw new Error("onlisten failed " + calls);
+      });
+      console.log("subscribed to " + subscription.channel);
+      dropConnections();
+    `);
+    expect(result).toEqual(
+      clean(
+        [
+          "onlisten 1",
+          "uncaught: onlisten failed 1",
+          "subscribed to ch",
+          "onlisten 2",
+          "uncaught: onlisten failed 2",
+          "unlistened",
+          "",
+        ].join("\n"),
+      ),
+    );
+  });
+
+  test("delivering many notifications retains nothing", async () => {
+    // Measured by RSS so a leaked native string backing (invisible to the JS
+    // heap) is caught. Each phase delivers its volume twice and reports the
+    // growth across the second pass: the first pass takes RSS to its steady
+    // state (the allocator keeps the GC's between-collection high-water mark
+    // of payload strings as free memory), after which a correct
+    // implementation shows roughly no growth and leaking one string per
+    // notification shows the pass's full payload volume.
+    //
+    // Bun.shrink() returns the heap's freed blocks to the OS at the next idle
+    // point; without it the reading drifts by up to 8 MiB from pass to pass.
+    const result = await run(
+      `
+      const channels = ["a", "b", "c", "d"];
+      let listener;
+      for (const channel of channels) await sql.listen(channel, payload => listener(payload));
+      const segment = (count, payload) => [count, Buffer.concat(Array.from({ length: count }, (_, i) => pgNotificationResponse(1, channels[i % 4], payload)))];
+      const deliver = ([count, blob]) => new Promise(done => {
+        let remaining = count;
+        listener = () => { if (--remaining === 0) done(); };
+        for (const socket of sockets) socket.write(blob);
+      });
+      const rss = async () => { Bun.gc(true); Bun.shrink(); await Bun.sleep(0); return process.memoryUsage.rss(); };
+      const measure = async (seg, rounds) => {
+        const pass = async () => { for (let i = 0; i < rounds; i++) await deliver(seg); };
+        await pass();
+        const base = await rss();
+        await pass();
+        return Math.round(((await rss()) - base) / 1024 / 1024);
+      };
+      // 256 KiB per segment, 96 segments = 24 MiB per pass.
+      const small = await measure(segment(256, Buffer.alloc(1024, 0x61).toString()), 96);
+      const large = await measure(segment(4, Buffer.alloc(64 * 1024, 0x62).toString()), 96);
+      console.log(JSON.stringify({ small, large }));
+      await sql.close();
+    `,
+      { ASAN_OPTIONS: "quarantine_size_mb=4:detect_leaks=0" },
+    );
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    const growth = JSON.parse(result.stdout);
+    // Steady state moves by a few MiB between passes; a leak adds ~24 MiB.
+    expect(growth).toEqual({ small: expect.any(Number), large: expect.any(Number) });
+    expect(growth.small, JSON.stringify(growth)).toBeLessThan(6);
+    expect(growth.large, JSON.stringify(growth)).toBeLessThan(6);
+  }, 30_000);
+});
+
 describe.concurrent("listen", () => {
   test("routes notifications to the channel's listener, in order", async () => {
     await using server = await mockServer();
@@ -489,7 +696,8 @@ describe.concurrent("unlisten", () => {
     const unlistening = subscription.unlisten();
     await server.untilQuery(queries => queries.includes('UNLISTEN "ch"'));
     server.dropConnections();
-    await expect(unlistening).resolves.toBeUndefined();
+    // Plain await: this continuation is inside the mock's data callback (see the reconnect suite).
+    expect(await unlistening).toBeUndefined();
     expect(server.queries).toEqual(['LISTEN "keep"', 'LISTEN "ch"', 'UNLISTEN "ch"']);
   });
 
@@ -685,8 +893,9 @@ describe.concurrent("reconnect", () => {
     await sql.listen("ch", got.resolve, repaired.after(2));
 
     // Plain awaits rather than expect().rejects: that one runs the event loop
-    // re-entrantly, and this code is still inside the dropped connection's
-    // data callback; on Windows the inner run frees the socket under it.
+    // re-entrantly (#33261), and this code is still inside the dropped
+    // connection's data callback; on Windows the inner run frees the socket
+    // under it (#39643).
     const outcome = (promise: Promise<unknown>) =>
       promise.then(
         () => "resolved",
@@ -724,7 +933,7 @@ describe.concurrent("close()", () => {
     await expect(pending).rejects.toMatchObject(connectionClosed);
     await server.untilClosed(1);
     await expect(sql.listen("ch", () => {})).rejects.toMatchObject(connectionClosed);
-    await expect(subscription.unlisten()).resolves.toBeUndefined();
+    expect(await subscription.unlisten()).toBeUndefined();
     expect(server.queries).toEqual(['LISTEN "ch"', 'LISTEN "pending"']);
   });
 
@@ -837,219 +1046,6 @@ describe.concurrent("notify()", () => {
     expect(server.queries).toEqual(["SELECT pg_notify($1, $2)"]);
     expect(server.liveConnections).toBe(1);
   });
-});
-
-describe.concurrent("in a subprocess", () => {
-  const wireFrames = path.join(import.meta.dir, "wire-frames.ts");
-  // The mock runs inside the child and is unref'd, so only the subscription
-  // under test can hold the child open. `notifyMany`, `dropConnections`,
-  // `sockets`, `pgNotificationResponse` and `sql` are in scope for `body`.
-  async function run(body: string, env: Record<string, string> = {}) {
-    using dir = tempDir("pg-listen-subprocess", {
-      "fixture.ts": `
-        import { SQL } from "bun";
-        import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgCommandComplete, pgNotificationResponse, pgReadFrontendMessages, pgRaw, pgInt32 } from ${JSON.stringify(wireFrames)};
-        const sockets = new Set();
-        const { port, server } = await listeningServer(socket => {
-          sockets.add(socket);
-          socket.unref();
-          let buffered = Buffer.alloc(0);
-          socket.once("data", () => {
-            socket.write(Buffer.concat([pgAuthenticationOk(), pgRaw("K", Buffer.concat([pgInt32(1), pgInt32(2)])), pgReadyForQuery()]));
-            socket.on("data", data => {
-              buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), (type, body) => {
-                if (type !== 0x51) return;
-                socket.write(Buffer.concat([pgCommandComplete(body.toString("utf8", 0, body.indexOf(" "))), pgReadyForQuery()]));
-              });
-            });
-          });
-          socket.on("close", () => sockets.delete(socket));
-        });
-        server.unref();
-        const notifyMany = frames => {
-          const blob = Buffer.concat(frames.map(([channel, payload]) => pgNotificationResponse(1, channel, payload)));
-          for (const socket of sockets) socket.write(blob);
-        };
-        const dropConnections = () => { for (const socket of sockets) socket.destroy(); };
-        const sql = new SQL("postgres://u@127.0.0.1:" + port + "/db", { max: 1 });
-        ${body}
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.ts"],
-      cwd: String(dir),
-      env: { ...bunEnv, ...env },
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return {
-      stdout,
-      stderr: stderr
-        .split("\n")
-        .filter(line => line && !line.startsWith("WARNING: ASAN"))
-        .join("\n"),
-      exitCode,
-      signal: proc.signalCode,
-    };
-  }
-  const clean = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null });
-
-  test("a subscription keeps the process alive until it is removed", async () => {
-    const result = await run(`
-      const subscription = await sql.listen("ch", async payload => {
-        console.log("got " + payload);
-        await subscription.unlisten();
-        console.log("unlistened");
-      });
-      console.log("subscribed");
-      // Sent from an unref'd timer after top-level code finishes, so the
-      // subscription is the only thing keeping the process here.
-      setTimeout(() => notifyMany([["ch", "wake"]]), 20).unref();
-    `);
-    expect(result).toEqual(clean("subscribed\ngot wake\nunlistened\n"));
-  });
-
-  test("a dropped connection keeps the process alive through the backoff and reconnects", async () => {
-    const result = await run(`
-      let subscribes = 0;
-      const subscription = await sql.listen("ch", () => {}, () => {
-        if (++subscribes === 2) { console.log("reconnected"); subscription.unlisten(); }
-      });
-      console.log("subscribed");
-      dropConnections();
-    `);
-    expect(result).toEqual(clean("subscribed\nreconnected\n"));
-  });
-
-  test("sql.close() releases a subscription so the process exits", async () => {
-    const result = await run(`
-      await sql.listen("ch", () => {});
-      await sql.close();
-      console.log("closed");
-    `);
-    expect(result).toEqual(clean("closed\n"));
-  });
-
-  test("a throwing listener surfaces as uncaughtException; the channel's other listeners and later notifications are unaffected", async () => {
-    const result = await run(`
-      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
-      const first = await sql.listen("ch", payload => {
-        console.log("first got " + payload);
-        if (payload === "bad") throw new Error("listener failed");
-      });
-      const second = await sql.listen("ch", payload => {
-        console.log("second got " + payload);
-        if (payload === "good") { first.unlisten(); second.unlisten(); }
-      });
-      notifyMany([["ch", "bad"], ["ch", "good"]]);
-    `);
-    expect(result).toEqual(
-      clean(
-        ["first got bad", "uncaught: listener failed", "second got bad", "first got good", "second got good", ""].join(
-          "\n",
-        ),
-      ),
-    );
-  });
-
-  test("a lone throwing listener surfaces as uncaughtException and later notifications still arrive", async () => {
-    const result = await run(`
-      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
-      const subscription = await sql.listen("ch", payload => {
-        console.log("got " + payload);
-        if (payload === "bad") throw new Error("listener failed");
-        subscription.unlisten();
-      });
-      notifyMany([["ch", "bad"], ["ch", "good"]]);
-    `);
-    expect(result).toEqual(clean("got bad\nuncaught: listener failed\ngot good\n"));
-  });
-
-  test("a throwing onlisten surfaces as uncaughtException; listen() resolves and the reconnect is not retried", async () => {
-    // An empty stderr is the assertion that the reconnect sweep did not take
-    // the second throw for a failed LISTEN (which it warns about and retries).
-    const result = await run(`
-      process.on("uncaughtException", err => console.log("uncaught: " + err.message));
-      let calls = 0;
-      const subscription = await sql.listen("ch", () => {}, () => {
-        console.log("onlisten " + ++calls);
-        if (calls === 2) subscription.unlisten().then(() => console.log("unlistened"));
-        throw new Error("onlisten failed " + calls);
-      });
-      console.log("subscribed to " + subscription.channel);
-      dropConnections();
-    `);
-    expect(result).toEqual(
-      clean(
-        [
-          "onlisten 1",
-          "uncaught: onlisten failed 1",
-          "subscribed to ch",
-          "onlisten 2",
-          "uncaught: onlisten failed 2",
-          "unlistened",
-          "",
-        ].join("\n"),
-      ),
-    );
-  });
-
-  test("delivering many notifications retains nothing", async () => {
-    // Measured by RSS so a leaked native string backing (invisible to the JS
-    // heap) is caught. Each phase delivers its volume twice and reports the
-    // growth across the second pass: the first pass takes RSS to its steady
-    // state (the allocator keeps the GC's between-collection high-water mark
-    // of payload strings as free memory), after which a correct
-    // implementation shows roughly no growth and leaking one string per
-    // notification shows the pass's full payload volume.
-    //
-    // Steady state still drifts by several MiB from pass to pass (the allocator
-    // hands freed pages back to the OS on its own schedule), so a reading at
-    // or above the bound is checked against one more pass: a leak grows again,
-    // drift does not.
-    const bound = 12; // MiB; a leak adds ~24 per pass
-    const result = await run(
-      `
-      const channels = ["a", "b", "c", "d"];
-      let listener;
-      for (const channel of channels) await sql.listen(channel, payload => listener(payload));
-      const segment = (count, payload) => [count, Buffer.concat(Array.from({ length: count }, (_, i) => pgNotificationResponse(1, channels[i % 4], payload)))];
-      const deliver = ([count, blob]) => new Promise(done => {
-        let remaining = count;
-        listener = () => { if (--remaining === 0) done(); };
-        for (const socket of sockets) socket.write(blob);
-      });
-      const rss = () => { Bun.gc(true); return process.memoryUsage.rss(); };
-      const measure = async (seg, rounds) => {
-        const pass = async () => { for (let i = 0; i < rounds; i++) await deliver(seg); };
-        await pass();
-        const base = rss();
-        const growthMiB = () => Math.round((rss() - base) / 1024 / 1024);
-        await pass();
-        let growth = growthMiB();
-        if (growth >= ${bound}) {
-          await pass();
-          growth = Math.min(growth, growthMiB());
-        }
-        return growth;
-      };
-      // 256 KiB per segment, 96 segments = 24 MiB per pass.
-      const small = await measure(segment(256, Buffer.alloc(1024, 0x61).toString()), 96);
-      const large = await measure(segment(4, Buffer.alloc(64 * 1024, 0x62).toString()), 96);
-      console.log(JSON.stringify({ small, large }));
-      await sql.close();
-    `,
-      { ASAN_OPTIONS: "quarantine_size_mb=4:detect_leaks=0" },
-    );
-    expect(result.stderr).toBe("");
-    expect(result.exitCode).toBe(0);
-    const growth = JSON.parse(result.stdout);
-    expect(growth).toEqual({ small: expect.any(Number), large: expect.any(Number) });
-    expect(growth.small, JSON.stringify(growth)).toBeLessThan(bound);
-    expect(growth.large, JSON.stringify(growth)).toBeLessThan(bound);
-  }, 30_000);
 });
 
 if (isDockerEnabled()) {

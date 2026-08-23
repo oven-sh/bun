@@ -229,6 +229,25 @@ describe("undici", () => {
         body.destroy();
       });
 
+      it("destroys the body past the limit when there is no Content-Length", async () => {
+        // A ReadableStream body is sent chunked, so the data handler is the
+        // only limit enforcement.
+        await using server = Bun.serve({
+          port: 0,
+          fetch: () =>
+            new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  controller.enqueue(Buffer.alloc(4096, "x"));
+                },
+              }),
+            ),
+        });
+        const { body } = await request(server.url.href);
+        expect(await body.dump({ limit: 1024 })).toBeNull();
+        expect(body.destroyed).toBe(true);
+      });
+
       it("marks an already-closed body as used", async () => {
         const { body } = await request(`${hostUrl}/get`);
         const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();

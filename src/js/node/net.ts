@@ -567,8 +567,7 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-// Node's readStop: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
-// A handle that is not reading does not hold the loop; a pending write still does (see unrefAfterDrain).
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
 function readStop(self, handle) {
   handle?.pause?.();
   // A socket over a generic duplex has no fd and never held the loop.
@@ -3385,8 +3384,7 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
-    // Node's handle is not reading yet at this point; ours is. A paused stream skips the read(0)
-    // below, so stop now, and again after the listeners if one of them paused. TLS reads to handshake.
+    // Ours already reads, Node's starts at the read(0) below: stop a paused plain socket now and re-check after the listeners.
     const pausedBeforeConnect = self.isPaused();
     if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
 

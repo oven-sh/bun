@@ -76,11 +76,7 @@ pub(crate) type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, Effec
 
 /// A logical route, for which layouts are looked up on after resolving a route.
 pub(crate) struct Route {
-    // Payload bytes borrow from the sibling `pattern_string_arena` field — a
-    // self-referential borrow Rust lifetimes cannot express, so it is detached
-    // to `'static` via `to_owned_part()` at insertion. See `to_owned_part` for
-    // the safety invariant (arena outlives every `Route`).
-    pub(crate) part: Part<'static>,
+    pub(crate) part: StoredPart,
     pub r#type: TypeIndex,
 
     pub(crate) parent: Option<RouteIndex>,
@@ -189,7 +185,7 @@ impl FrameworkRouter {
             debug_assert!(strings::has_prefix(&ty.abs_root, root));
 
             routes.push(Route {
-                part: Part::Text(b""),
+                part: StoredPart::EMPTY,
                 r#type: TypeIndex::init(u8::try_from(type_index).expect("int cast")),
                 parent: None,
                 next_sibling: None,
@@ -1071,7 +1067,7 @@ impl FrameworkRouter {
             'outer: loop {
                 let mut next = self.route_ptr(route_index).first_child;
                 while let Some(current) = next {
-                    if current_part.eql(&self.route_ptr(current).part) {
+                    if current_part.eql(&self.route_ptr(current).part.get()) {
                         match next_part(&mut static_it, &mut dynamic_it) {
                             None => break 'brk current, // found it!
                             Some(p) => current_part = p,
@@ -1087,10 +1083,7 @@ impl FrameworkRouter {
 
                 // Must add to this child
                 let mut new_route_index = self.new_route(Route {
-                    // SAFETY: `current_part` borrows from `pattern_string_arena`
-                    // (owned by `self`), which outlives every `Route` stored in
-                    // `self.routes`.
-                    part: unsafe { current_part.to_owned_part() },
+                    part: StoredPart::new(current_part),
                     r#type: ty,
                     parent: Some(route_index),
                     first_child: None,
@@ -1110,10 +1103,7 @@ impl FrameworkRouter {
                 // inserting routes simpler to implement, but could technically be avoided.
                 while let Some(next_part_val) = next_part(&mut static_it, &mut dynamic_it) {
                     let newer_route_index = self.new_route(Route {
-                        // SAFETY: `next_part_val` borrows from
-                        // `pattern_string_arena` (owned by `self`), which
-                        // outlives every `Route` stored in `self.routes`.
-                        part: unsafe { next_part_val.to_owned_part() },
+                        part: StoredPart::new(next_part_val),
                         r#type: ty,
                         parent: Some(new_route_index),
                         first_child: None,
@@ -1169,35 +1159,36 @@ impl FrameworkRouter {
     }
 }
 
-// `Part` stored in `Route` borrows from the router's own `pattern_string_arena`.
-// Rust cannot express that self-referential borrow, so `to_owned_part` detaches
-// the lifetime when storing into `Route`.
-impl<'a> Part<'a> {
-    /// Detach the borrow lifetime so this `Part` can be stored in `Route`.
-    ///
-    /// # Safety
-    /// Every payload slice must point into `FrameworkRouter::pattern_string_arena`
-    /// (or other storage that outlives the owning `FrameworkRouter`).
-    #[allow(unsafe_op_in_unsafe_fn)]
-    unsafe fn to_owned_part(self) -> Part<'static> {
-        // Variant-by-variant detach (no bitcast). `d` stays `unsafe fn` so a
-        // safe-signature wrapper does not hide the lifetime-widen.
-        #[inline(always)]
-        unsafe fn d(s: &[u8]) -> &'static [u8] {
-            // SAFETY: (`Interned::assume` — Population B, holder-backed) every
-            // payload slice points into `FrameworkRouter::pattern_string_arena`,
-            // which is owned by the `FrameworkRouter` and freed only on
-            // router drop/reset — strictly after every `Route` holding a
-            // `Part<'static>` is gone. NOT process-lifetime; a `'bump`
-            // parameter on `Part` would model this more precisely.
-            unsafe { bun_ptr::Interned::assume(s) }.as_bytes()
+/// A [`Part`] stored in a [`Route`]: the payload lives in the router's
+/// `pattern_string_arena` (both patterns handed to `insert` are backed by it),
+/// which outlives every `Route`.
+#[derive(Copy, Clone)]
+pub(crate) struct StoredPart {
+    tag: PartTag,
+    payload: bun_ptr::RawSlice<u8>,
+}
+
+impl StoredPart {
+    pub(crate) const EMPTY: StoredPart = StoredPart {
+        tag: PartTag::Text,
+        payload: bun_ptr::RawSlice::EMPTY,
+    };
+
+    fn new(part: Part<'_>) -> StoredPart {
+        StoredPart {
+            tag: part.tag(),
+            payload: bun_ptr::RawSlice::new(part.payload()),
         }
-        match self {
-            Part::Text(s) => Part::Text(d(s)),
-            Part::Param(s) => Part::Param(d(s)),
-            Part::CatchAllOptional(s) => Part::CatchAllOptional(d(s)),
-            Part::CatchAll(s) => Part::CatchAll(d(s)),
-            Part::Group(s) => Part::Group(d(s)),
+    }
+
+    pub(crate) fn get(&self) -> Part<'_> {
+        let payload = self.payload.slice();
+        match self.tag {
+            PartTag::Text => Part::Text(payload),
+            PartTag::Param => Part::Param(payload),
+            PartTag::CatchAllOptional => Part::CatchAllOptional(payload),
+            PartTag::CatchAll => Part::CatchAll(payload),
+            PartTag::Group => Part::Group(payload),
         }
     }
 }
@@ -1497,17 +1488,13 @@ impl FrameworkRouter {
         arena_state: &mut Arena,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
-        let fs = r.fs();
-        // SAFETY: BACKREF — `r.fs()` is the process-global FileSystem singleton; valid for the
-        // program lifetime. Resolver mutex serializes mutation. We hold a raw pointer (no borrow)
-        // so `r.read_dir_info_ignore_error(&mut self)` below does not conflict.
-        let fs_ref = unsafe { &*fs };
-        // SAFETY: `fs` is the non-null process-global FileSystem singleton (see above);
-        // `addr_of_mut!` only computes a field address without forming a reference.
-        let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
+        // The process-global singleton (what `r.fs()` points at); fetched
+        // statically so `r` stays free for the `read_dir_info_ignore_error`
+        // recursion below.
+        let fs_ref = bun_resolver::fs::FileSystem::get();
 
         {
-            // Note: `entries.data` is backed by `std::collections::HashMap`,
+            // Note: `DirEntry` is backed by `std::collections::HashMap`,
             // whose iteration order is unspecified. The route-tree child order
             // is this iteration order (see `insert`), and
             // `test/bake/framework-router.test.ts` snapshots it. Rebuild into a
@@ -1517,7 +1504,7 @@ impl FrameworkRouter {
             // re-insertion order is irrelevant.
             let mut zig_order: bun_collections::zig_hash_map::HashMap<
                 Box<[u8]>,
-                *mut bun_resolver::fs::Entry,
+                &bun_resolver::fs::Entry,
                 ZigStringHashContext,
             > = Default::default();
             {
@@ -1526,24 +1513,18 @@ impl FrameworkRouter {
                 // walk so the `read_dir_info_ignore_error` recursion can re-lock.
                 let _entries_lock = fs_ref.fs.entries_mutex.lock_guard();
                 if let Some(entries) = dir_info.get_entries_const() {
-                    for (k, &v) in entries.data.iter() {
-                        let _ = zig_order.put(Box::from(&**k), v);
+                    for (k, v) in entries.iter() {
+                        let _ = zig_order.put(Box::from(k), v);
                     }
                 }
             }
             let mut it = zig_order.iter();
             'outer: while let Some(entry) = it.next() {
-                let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
-                // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton
-                // (process lifetime); the lazy-stat rewrite in `kind()` below is
-                // serialized on the per-entry `Entry.mutex`.
-                let file = unsafe { &*file_ptr };
+                let file: &bun_resolver::fs::Entry = *entry.1;
                 let base = file.base();
-                // Note: reshaped for borrowck — fetch type fields fresh each iteration.
-                // SAFETY: `Entry::kind` mutates only the entry's lazily-cached kind; `file_ptr`
-                // is the unique live reference to this entry during the scan, and `fs_impl`
-                // points at the process-global FS implementation.
-                match unsafe { (*file_ptr).kind(&raw mut *fs_impl, false) } {
+                // The lazy-stat rewrite in `kind_with()` is serialized on the
+                // per-entry `Entry.mutex`.
+                match file.kind_with(&fs_ref.fs, false) {
                     bun_resolver::fs::EntryKind::Dir => {
                         let t = &self.types[t_index.get() as usize];
                         if t.ignore_underscores && base.starts_with(b"_") {
@@ -1913,7 +1894,11 @@ impl JSFrameworkRouter {
     fn route_to_json(&self, global: &JSGlobalObject, route_index: RouteIndex) -> JsResult<JSValue> {
         let route = self.router.route_ptr(route_index);
         let obj = JSValue::create_empty_object(global, 4);
-        obj.put(global, b"part", Self::part_to_js(global, &route.part)?);
+        obj.put(
+            global,
+            b"part",
+            Self::part_to_js(global, &route.part.get())?,
+        );
         obj.put(
             global,
             b"page",
@@ -1952,7 +1937,11 @@ impl JSFrameworkRouter {
     ) -> JsResult<JSValue> {
         let route = self.router.route_ptr(route_index);
         let obj = JSValue::create_empty_object(global, 4);
-        obj.put(global, b"part", Self::part_to_js(global, &route.part)?);
+        obj.put(
+            global,
+            b"part",
+            Self::part_to_js(global, &route.part.get())?,
+        );
         obj.put(
             global,
             b"page",

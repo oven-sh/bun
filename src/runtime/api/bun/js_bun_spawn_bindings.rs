@@ -448,8 +448,8 @@ fn spawn_maybe_sync(
 
         if args.is_object() {
             if let Some(argv0_) = args.get_truthy(global_this, "argv0")? {
-                let argv0_str = argv0_.get_zig_string(global_this)?;
-                if argv0_str.len > 0 {
+                let argv0_str = argv0_.to_bun_string(global_this)?;
+                if !argv0_str.is_empty() {
                     let owned = argv0_str.to_owned_slice_z();
                     // Check for null bytes in argv0 (security: prevent null byte injection)
                     if strings::index_of_char(owned.as_bytes(), 0).is_some() {
@@ -470,8 +470,8 @@ fn spawn_maybe_sync(
 
             // need to update `cwd` before searching for executable with `Which.which`
             if let Some(cwd_) = args.get_truthy(global_this, "cwd")? {
-                let cwd_str = cwd_.get_zig_string(global_this)?;
-                if cwd_str.len > 0 {
+                let cwd_str = cwd_.to_bun_string(global_this)?;
+                if !cwd_str.is_empty() {
                     cwd_owned = cwd_str.to_owned_slice_z();
                     // Check for null bytes in cwd (security: prevent null byte injection)
                     if strings::index_of_char(cwd_owned.as_bytes(), 0).is_some() {

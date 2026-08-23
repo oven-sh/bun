@@ -345,7 +345,8 @@ impl ServerWebSocket {
             return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", args[0]));
         }
 
-        let topic = args[0].to_slice(global_this)?;
+        let topic_js = args[0].to_js_string(global_this)?;
+        let topic = topic_js.to_slice(global_this);
 
         if topic.slice().is_empty() {
             return Err(
@@ -849,7 +850,7 @@ impl ServerWebSocket {
         // triggers GC, so both are converted (and their JSStrings held) before
         // the handler state is read.
         let topic_string = topic_value.to_js_string(global_this)?;
-        let topic_slice = topic_string.view(global_this).to_slice();
+        let topic_slice = topic_string.to_slice(global_this);
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publish requires a non-empty topic")));
         }
@@ -874,7 +875,7 @@ impl ServerWebSocket {
             (slice, Opcode::Binary)
         } else {
             let string = message_value.to_js_string(global_this)?;
-            message_slice = string.view(global_this).to_slice();
+            message_slice = string.to_slice(global_this);
             message_string = Some(string);
             (message_slice.slice(), Opcode::Text)
         };
@@ -912,7 +913,7 @@ impl ServerWebSocket {
         }
 
         let topic_string = topic_value.to_js_string(global_this)?;
-        let topic_slice = topic_string.view(global_this).to_slice();
+        let topic_slice = topic_string.to_slice(global_this);
 
         let compress = Self::parse_compress_arg(
             global_this,
@@ -926,7 +927,7 @@ impl ServerWebSocket {
         }
 
         let message_string = message_value.to_js_string(global_this)?;
-        let message_slice = message_string.view(global_this).to_slice();
+        let message_slice = message_string.to_slice(global_this);
 
         let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
@@ -966,7 +967,7 @@ impl ServerWebSocket {
         }
 
         let topic_string = topic_value.to_js_string(global_this)?;
-        let topic_slice = topic_string.view(global_this).to_slice();
+        let topic_slice = topic_string.to_slice(global_this);
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
         }
@@ -1097,8 +1098,7 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
-            let view = js_string.view(global_this);
-            let slice = view.to_slice();
+            let slice = js_string.to_slice(global_this);
 
             let buffer = slice.slice();
             let ret = send_status_to_js(
@@ -1142,8 +1142,7 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
-        let view = js_string.view(global_this);
-        let slice = view.to_slice();
+        let slice = js_string.to_slice(global_this);
 
         let buffer = slice.slice();
         let ret = send_status_to_js(

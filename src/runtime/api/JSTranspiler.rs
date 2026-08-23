@@ -210,14 +210,12 @@ impl Config {
                     }
 
                     names.push(prop.to_owned_slice().into());
-                    let mut val = ZigString::init(b"");
-                    property_value.to_zig_string(&mut val, global)?;
-                    if val.len == 0 {
-                        val = ZigString::init(b"\"\"");
-                    }
-                    let mut buf = Vec::new();
-                    write!(&mut buf, "{}", val).expect("unreachable");
-                    values.push(buf.into_boxed_slice());
+                    let val = property_value.to_bun_string(global)?;
+                    values.push(if val.is_empty() {
+                        Box::from(&b"\"\""[..])
+                    } else {
+                        val.to_owned_slice().into_boxed_slice()
+                    });
                 }
 
                 self.transform.define = Some(api::StringMap {
@@ -235,16 +233,11 @@ impl Config {
 
                 let toplevel_type = external.js_type();
                 if toplevel_type.is_string_like() {
-                    let mut zig_str = ZigString::init(b"");
-                    external.to_zig_string(&mut zig_str, global)?;
-                    if zig_str.len == 0 {
+                    let str = external.to_bun_string(global)?;
+                    if str.is_empty() {
                         break 'external;
                     }
-                    let mut single_external: Vec<Box<[u8]>> = Vec::with_capacity(1);
-                    let mut buf = Vec::new();
-                    write!(&mut buf, "{}", zig_str).expect("unreachable");
-                    single_external.push(buf.into_boxed_slice());
-                    self.transform.external = single_external;
+                    self.transform.external = vec![str.to_owned_slice().into_boxed_slice()];
                 } else if toplevel_type.is_array() {
                     let count = external.get_length(global)?;
                     if count == 0 {
@@ -260,14 +253,11 @@ impl Config {
                             )));
                         }
 
-                        let mut zig_str = ZigString::init(b"");
-                        entry.to_zig_string(&mut zig_str, global)?;
-                        if zig_str.len == 0 {
+                        let str = entry.to_bun_string(global)?;
+                        if str.is_empty() {
                             continue;
                         }
-                        let mut buf = Vec::new();
-                        write!(&mut buf, "{}", zig_str).expect("unreachable");
-                        externals.push(buf.into_boxed_slice());
+                        externals.push(str.to_owned_slice().into_boxed_slice());
                     }
 
                     self.transform.external = externals;
@@ -506,8 +496,8 @@ impl Config {
                             if !value.is_string() {
                                 continue;
                             }
-                            let str = value.get_zig_string(global)?;
-                            if str.len == 0 {
+                            let str = value.to_bun_string(global)?;
+                            if str.is_empty() {
                                 continue;
                             }
                             // The capacity bound is sized from UTF-16 code-unit
@@ -926,14 +916,13 @@ fn export_replacement_value(
     }
 
     if value.is_string() {
-        let zig_str = value.get_zig_string(global)?;
-        let mut buf = Vec::new();
-        write!(&mut buf, "{}", zig_str).expect("unreachable");
+        let str = value.to_bun_string(global)?;
+        let utf8 = str.to_utf8();
         // Bump-allocate so the bytes
         // live as long as the JSTranspiler arena that owns the resulting Expr;
         // `E::EString::init` erases the borrow to `'static` per the AST
         // crate's `Str` convention (see ast/E.rs).
-        let data = arena.alloc_slice_copy(&buf);
+        let data = arena.alloc_slice_copy(utf8.slice());
         return Ok(Some(Expr::init(
             bun_ast::E::EString::init(data),
             bun_ast::Loc::EMPTY,

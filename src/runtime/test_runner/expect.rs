@@ -8,7 +8,6 @@ use bun_jsc::{
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
-use bun_core::ZigString;
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
@@ -774,20 +773,17 @@ impl Expect {
 
         let arguments = call_frame.arguments();
 
-        let mut _msg: ZigString = ZigString::EMPTY;
-
-        if !arguments.is_empty() {
+        let message: bun_core::String = if !arguments.is_empty() {
             let value = arguments[0];
-            value.ensure_still_alive();
 
             if !value.is_string() {
                 return Err(global_this.throw_invalid_argument_type("pass", "message", "string"));
             }
 
-            value.to_zig_string(&mut _msg, global_this)?;
+            value.to_bun_string(global_this)?
         } else {
-            _msg = ZigString::from_bytes(b"passes by .pass() assertion");
-        }
+            bun_core::String::static_(b"passes by .pass() assertion")
+        };
 
         this.increment_expect_call_counter();
 
@@ -797,7 +793,7 @@ impl Expect {
         if not { pass = !pass; }
         if pass { return Ok(JSValue::UNDEFINED); }
 
-        let msg = _msg.to_slice();
+        let msg = message.to_utf8();
 
         if not {
             let signature = Self::get_signature("pass", "", true);
@@ -820,20 +816,17 @@ impl Expect {
 
         let arguments = call_frame.arguments();
 
-        let mut _msg: ZigString = ZigString::EMPTY;
-
-        if !arguments.is_empty() {
+        let message: bun_core::String = if !arguments.is_empty() {
             let value = arguments[0];
-            value.ensure_still_alive();
 
             if !value.is_string() {
                 return Err(global_this.throw_invalid_argument_type("fail", "message", "string"));
             }
 
-            value.to_zig_string(&mut _msg, global_this)?;
+            value.to_bun_string(global_this)?
         } else {
-            _msg = ZigString::from_bytes(b"fails by .fail() assertion");
-        }
+            bun_core::String::static_(b"fails by .fail() assertion")
+        };
 
         this.increment_expect_call_counter();
 
@@ -843,7 +836,7 @@ impl Expect {
         if not { pass = !pass; }
         if pass { return Ok(JSValue::UNDEFINED); }
 
-        let msg = _msg.to_slice();
+        let msg = message.to_utf8();
 
         let signature = Self::get_signature("fail", "", true);
         throw!(this, global_this, signature, "\n\n{}\n", bstr::BStr::new(msg.slice()))
@@ -1385,9 +1378,9 @@ impl Expect {
 
                 if !matcher_fn.js_type().is_function() {
                     let type_name = if matcher_fn.is_null() {
-                        bun_core::String::static_("null")
+                        bun_core::StringView::from_bytes(b"null")
                     } else {
-                        bun_core::String::init(matcher_fn.js_type_string(global_this).get_zig_string(global_this))
+                        matcher_fn.js_type_string(global_this).view(global_this)
                     };
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "expect.extend: `{}` is not a valid matcher. Must be a function, is \"{}\"",

@@ -328,7 +328,7 @@ pub(super) fn set_servername(
     }
 
     let slice: Box<[u8]> = server_name
-        .get_zig_string(global)?
+        .to_bun_string(global)?
         .to_owned_slice()
         .into_boxed_slice();
     // Drop replaces the old value.

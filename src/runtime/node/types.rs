@@ -4,7 +4,7 @@ use core::ffi::c_int;
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{WStr, ZStr, ZigString};
+use bun_core::{WStr, ZStr};
 use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
@@ -1488,12 +1488,8 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         // the example), specifies permissions for the group. The right-most
         // digit (5 in the example), specifies the permissions for others.
 
-        let mut zig_str = ZigString::EMPTY;
-        value.to_zig_string(&mut zig_str, ctx)?;
-        // `to_slice()` handles both storage forms: the 8-bit-only `slice()`
-        // would misread a UTF-16 buffer, and JSC can store pure-ASCII content
-        // 16-bit, so bitness cannot be used to pre-filter.
-        let utf8 = zig_str.to_slice();
+        let js_str = value.to_js_string(ctx)?;
+        let utf8 = js_str.to_slice(ctx);
         let slice = utf8.slice();
 
         // Node validates mode strings against /^[0-7]+$/ before parsing.
@@ -1626,10 +1622,11 @@ impl FileSystemFlags {
         // Node switches on the value with strict equality, so only primitive
         // strings can match; `new String("w")` and every other object throw.
         if val.is_string_literal() {
-            let str = val.get_zig_string(ctx)?;
+            let str_js = val.to_js_string(ctx)?;
+            let str = str_js.view(ctx);
             // The longest valid flag string is 3 bytes ("as+" etc).
-            if str.len >= 1 && str.len <= 3 {
-                let key_slice = str.to_slice();
+            if str.length() >= 1 && str.length() <= 3 {
+                let key_slice = str.to_utf8();
                 if let Some(flags) = FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied() {
                     return Ok(Some(FileSystemFlags(flags)));
                 }

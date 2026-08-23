@@ -592,9 +592,9 @@ impl JSGlobalObject {
         value: JSValue,
     ) -> JsError {
         let actual_type = if value.js_type().is_array() {
-            bun_core::ZigString::static_(b"array")
+            bun_core::StringView::from_bytes(b"array")
         } else {
-            value.js_type_string(self).get_zig_string(self)
+            value.js_type_string(self).view(self)
         };
         self.err(
             JscError::INVALID_ARG_TYPE,

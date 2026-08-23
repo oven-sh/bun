@@ -244,17 +244,18 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     global: &JSGlobalObject,
     chunk: JSValue,
 ) -> JSValue {
-    let Ok(str) = chunk.get_zig_string(global) else {
+    let Ok(js_str) = chunk.to_js_string(global) else {
         return JSValue::ZERO;
     };
+    let str = js_str.view(global);
     // SAFETY: `this` is the live encoder owned by the calling JS cell; driven
     // only from the JS thread, so `&*this` has no mutable alias. Taken after
     // the coercion so no user JS runs while the borrow is live.
     let this = unsafe { &*this };
-    if str.is_16bit() {
-        this.encode_utf16(global, str.utf16_slice_aligned())
+    if str.is_utf16() {
+        this.encode_utf16(global, str.utf16())
     } else {
-        this.encode_latin1(global, str.slice())
+        this.encode_latin1(global, str.latin1())
     }
 }
 
@@ -288,9 +289,10 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     sink_id: u8,
     sink_ptr: *mut core::ffi::c_void,
 ) -> JSValue {
-    let Ok(str) = chunk.get_zig_string(global) else {
+    let Ok(js_str) = chunk.to_js_string(global) else {
         return JSValue::ZERO;
     };
+    let str = js_str.view(global);
     // SAFETY: `this` is the live encoder owned by the calling JS cell; taken
     // after the coercion so no user JS runs while the borrow is live.
     let this = unsafe { &*this };
@@ -298,10 +300,10 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     // (theoretical) re-entrant encode-into-sink call cannot BorrowMut-panic.
     let mut buf = this.scratch.take();
     buf.clear();
-    let encoded = if str.is_16bit() {
-        this.encode_utf16_into(str.utf16_slice_aligned(), &mut buf)
+    let encoded = if str.is_utf16() {
+        this.encode_utf16_into(str.utf16(), &mut buf)
     } else {
-        this.encode_latin1_into(str.slice(), &mut buf)
+        this.encode_latin1_into(str.latin1(), &mut buf)
     };
     if encoded.is_err() {
         return global.throw_out_of_memory_value();

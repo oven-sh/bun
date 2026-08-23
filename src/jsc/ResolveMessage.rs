@@ -283,7 +283,7 @@ impl ResolveMessage {
                 return Ok(JSValue::NULL);
             }
 
-            let str = args[0].get_zig_string(global)?;
+            let str = args[0].to_bun_string(global)?;
             if str.eql_comptime(b"default") || str.eql_comptime(b"string") {
                 return Ok(this.to_string_fn(global));
             }

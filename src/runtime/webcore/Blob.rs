@@ -1997,8 +1997,8 @@ impl BlobExt for Blob {
         if let Some(content_type_) = args_iter.next_eat() {
             'inner: {
                 if content_type_.is_string() {
-                    let zig_str = content_type_.get_zig_string(global_this)?;
-                    let slicer = zig_str.to_slice();
+                    let content_type_js = content_type_.to_js_string(global_this)?;
+                    let slicer = content_type_js.to_slice(global_this);
                     let slice = slicer.slice();
                     if !is_valid_blob_type(slice) {
                         break 'inner;

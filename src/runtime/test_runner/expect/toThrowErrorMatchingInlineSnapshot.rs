@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
 use super::throw;
 use super::Expect;
@@ -29,13 +28,13 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     }
 
     let mut has_expected = false;
-    let mut expected_string: ZigString = ZigString::EMPTY;
+    let mut expected_string = bun_core::String::EMPTY;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
                 has_expected = true;
-                arguments[0].to_zig_string(&mut expected_string, global)?;
+                expected_string = arguments[0].to_bun_string(global)?;
             } else {
                 return throw!(
                     this,
@@ -56,7 +55,7 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     }
 
     // The returned slice owns its buffer and frees on Drop.
-    let expected = expected_string.to_slice();
+    let expected = expected_string.to_utf8();
 
     let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
 

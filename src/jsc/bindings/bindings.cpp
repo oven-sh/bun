@@ -3795,35 +3795,6 @@ JSC::EncodedJSValue ZigString__toValueGC(const ZigString* arg0, JSC::JSGlobalObj
     return JSC::JSValue::encode(JSC::jsString(arg1->vm(), Zig::toStringCopy(*arg0)));
 }
 
-void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, ZigString* arg1, JSC::JSGlobalObject* arg2)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-
-    // if (!value.isString()) {
-    //   arg1->len = 0;
-    //   arg1->ptr = nullptr;
-    //   return;
-    // }
-
-    auto* strValue = value.toStringOrNull(arg2);
-
-    if (!strValue) [[unlikely]] {
-        arg1->len = 0;
-        arg1->ptr = nullptr;
-        return;
-    }
-
-    auto str = strValue->value(arg2);
-
-    if (str->is8Bit()) {
-        arg1->ptr = str->span8().data();
-    } else {
-        arg1->ptr = Zig::taggedUTF16Ptr(str->span16().data());
-    }
-
-    arg1->len = str->length();
-}
-
 JSC::EncodedJSValue ZigString__external(const ZigString* arg0, JSC::JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))
 {
     ZigString str

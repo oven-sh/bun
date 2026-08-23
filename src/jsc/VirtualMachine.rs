@@ -1432,12 +1432,12 @@ impl VirtualMachine {
             let display = result
                 .to_error()
                 .unwrap_or(result)
-                .get_zig_string(global)
+                .to_bun_string(global)
                 .ok();
             match display {
-                Some(zs) => {
-                    let utf8 = zs.to_owned_slice();
-                    let _ = writer.write_all(utf8.as_slice());
+                Some(s) => {
+                    let utf8 = s.to_utf8();
+                    let _ = writer.write_all(utf8.slice());
                     let _ = writer.write_all(b"\n");
                 }
                 None => {

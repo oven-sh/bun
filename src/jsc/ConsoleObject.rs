@@ -2708,7 +2708,7 @@ pub mod formatter {
         }
 
         #[inline]
-        pub(crate) fn write_string(&mut self, str: &ZigString) {
+        pub(crate) fn write_string(&mut self, str: &bun_core::String) {
             self.print(format_args!("{str}"));
         }
 
@@ -3674,8 +3674,9 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let zstr = value.get_zig_string(self.global_this)?;
-            let out_str = zstr.slice();
+            let js = value.to_js_string(self.global_this)?;
+            let view = js.view(self.global_this);
+            let out_str = view.latin1();
             writer.add_for_new_line(out_str.len());
             writer.print(format_args!(
                 "{}{}n{}",
@@ -3709,12 +3710,12 @@ pub mod formatter {
                 let mut number_name = ZigString::EMPTY;
                 value.get_class_name(self.global_this, &mut number_name)?;
 
-                let mut number_value = ZigString::EMPTY;
-                value.to_zig_string(&mut number_value, self.global_this)?;
+                let number_js = value.to_js_string(self.global_this)?;
+                let number_value = number_js.view(self.global_this);
 
                 if number_name.slice() != b"Number" {
                     writer.add_for_new_line(
-                        number_name.len + number_value.len + "[Number ():]".len(),
+                        number_name.len + number_value.length() + "[Number ():]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
@@ -3729,7 +3730,7 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                writer.add_for_new_line(number_name.len + number_value.len + 4);
+                writer.add_for_new_line(number_name.len + number_value.length() + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
                     pf!("<r><yellow>"),
@@ -4116,12 +4117,13 @@ pub mod formatter {
             if value.is_cell() {
                 let mut bool_name = ZigString::EMPTY;
                 value.get_class_name(self.global_this, &mut bool_name)?;
-                let mut bool_value = ZigString::EMPTY;
-                value.to_zig_string(&mut bool_value, self.global_this)?;
+                let bool_js = value.to_js_string(self.global_this)?;
+                let bool_value = bool_js.view(self.global_this);
 
                 if bool_name.slice() != b"Boolean" {
-                    writer
-                        .add_for_new_line(bool_value.len + bool_name.len + "[Boolean (): ]".len());
+                    writer.add_for_new_line(
+                        bool_value.length() + bool_name.len + "[Boolean (): ]".len(),
+                    );
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
                         pf!("<r><yellow>"),
@@ -4134,7 +4136,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 }
-                writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
+                writer.add_for_new_line(bool_value.length() + "[Boolean: ]".len());
                 writer.print(format_args!(
                     "{}[Boolean: {}]{}",
                     pf!("<r><yellow>"),
@@ -5005,13 +5007,7 @@ pub mod formatter {
             writer.write_all(pf!("<r>").as_bytes());
             writer.write_all(b"<");
 
-            // Both arms of the `type` if/else below assign these, so deferred
-            // init avoids the dead-store warning.
             let mut needs_space: bool;
-            let mut tag_name_str = ZigString::init(b"");
-
-            // `ZigStringSlice` frees on `Drop`, so no explicit cleanup is
-            // needed.
             let tag_name_slice: bun_core::ZigStringSlice;
             let mut is_tag_kind_primitive = false;
 
@@ -5019,20 +5015,22 @@ pub mod formatter {
                 let _tag = Tag::get_advanced(type_value, self.global_this, tag_opts)?;
 
                 if _tag.cell == jsc::JSType::Symbol {
-                    // nothing
+                    tag_name_slice = bun_core::ZigStringSlice::EMPTY;
                 } else if _tag.cell.is_string_like() {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                    tag_name_slice = type_value.to_slice(self.global_this)?;
                     is_tag_kind_primitive = true;
                 } else if _tag.cell.is_object() || type_value.is_callable() {
+                    let mut tag_name_str = ZigString::init(b"");
                     type_value.get_name_property(self.global_this, &mut tag_name_str)?;
-                    if tag_name_str.len == 0 {
-                        tag_name_str = ZigString::init(b"NoName");
-                    }
+                    tag_name_slice = if tag_name_str.len == 0 {
+                        ZigString::init(b"NoName").to_slice()
+                    } else {
+                        tag_name_str.to_slice_clone()
+                    };
                 } else {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                    tag_name_slice = type_value.to_slice(self.global_this)?;
                 }
 
-                tag_name_slice = tag_name_str.to_slice();
                 needs_space = true;
             } else {
                 tag_name_slice = ZigString::init(b"unknown").to_slice();
@@ -5186,16 +5184,17 @@ pub mod formatter {
                             'print_children: {
                                 match tag.tag.tag() {
                                     Tag::String => {
-                                        let children_string =
-                                            children.get_zig_string(self.global_this)?;
-                                        if children_string.len == 0 {
+                                        let children_js =
+                                            children.to_js_string(self.global_this)?;
+                                        let children_string = children_js.view(self.global_this);
+                                        if children_string.is_empty() {
                                             break 'print_children;
                                         }
                                         if C {
                                             writer.write_all(pfmt!("<r>", true).as_bytes());
                                         }
                                         writer.write_all(b">");
-                                        if children_string.len < 128 {
+                                        if children_string.length() < 128 {
                                             writer.write_string(&children_string);
                                         } else {
                                             self.indent += 1;

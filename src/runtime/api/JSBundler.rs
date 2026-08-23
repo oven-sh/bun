@@ -11,7 +11,7 @@ use bun_bundler::options;
 use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
@@ -1075,20 +1075,19 @@ pub mod js_bundler {
                         )));
                     }
 
-                    let mut val = ZigString::init(b"");
-                    property_value.to_zig_string(&mut val, global_this)?;
-                    if val.len == 0 {
-                        val = ZigString::from_utf8(b"\"\"");
-                    }
-
+                    let val = property_value.to_bun_string(global_this)?;
                     let key = prop.to_owned_slice();
-
-                    // value is always cloned
-                    let value = val.to_slice();
+                    let value = val.to_utf8();
 
                     // .insert clones the value, but not the key
-                    this.define.insert(&key, value.slice())?;
-                    drop(value);
+                    this.define.insert(
+                        &key,
+                        if value.slice().is_empty() {
+                            b"\"\""
+                        } else {
+                            value.slice()
+                        },
+                    )?;
                 }
             }
 

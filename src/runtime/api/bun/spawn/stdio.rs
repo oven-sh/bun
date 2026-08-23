@@ -428,7 +428,7 @@ impl Stdio {
         }
 
         if value.is_string() {
-            let str = value.get_zig_string(global)?;
+            let str = value.to_bun_string(global)?;
             if str.eql_comptime(b"inherit") {
                 *out_stdio = Stdio::Inherit;
             } else if str.eql_comptime(b"ignore") {

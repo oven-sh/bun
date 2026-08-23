@@ -214,14 +214,11 @@ bun_core::comptime_string_map! {
     };
 }
 
-// The key may be a possibly-UTF-16 ZigString. Derive a UTF-8 view
-// first (`to_slice_fast` allocates only for 16-bit-backed strings) so
-// UTF-16-backed option strings like `compression: "16KB"` still match.
-fn lookup_zig_string<M: bun_core::comptime_string_map::ComptimeStringMap<Value = i32>>(
+fn lookup_string<M: bun_core::comptime_string_map::ComptimeStringMap<Value = i32>>(
     table: &M,
-    key: &bun_core::ZigString,
+    key: &bun_core::String,
 ) -> Option<i32> {
-    let utf8 = key.to_slice_fast();
+    let utf8 = key.to_utf8();
     table.lookup(utf8.slice()).copied()
 }
 
@@ -272,8 +269,8 @@ pub(crate) fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.get_zig_string(global_object)?;
-                    let Some(v) = lookup_zig_string(&COMPRESS_TABLE, &key) else {
+                    let key = compression.to_bun_string(global_object)?;
+                    let Some(v) = lookup_string(&COMPRESS_TABLE, &key) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "WebSocketServerContext expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
@@ -296,8 +293,8 @@ pub(crate) fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.get_zig_string(global_object)?;
-                    let Some(v) = lookup_zig_string(&DECOMPRESS_TABLE, &key) else {
+                    let key = compression.to_bun_string(global_object)?;
+                    let Some(v) = lookup_string(&DECOMPRESS_TABLE, &key) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));

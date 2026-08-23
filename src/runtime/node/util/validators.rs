@@ -1,16 +1,13 @@
 use core::fmt;
 
-use bun_core::ZigString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
-fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
+fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> bun_core::StringView<'_> {
     let js_type = value.js_type();
     if js_type.is_array() {
-        return ZigString::static_("array");
+        return bun_core::StringView::from_bytes(b"array");
     }
-    value
-        .js_type_string(global_object)
-        .get_zig_string(global_object)
+    value.js_type_string(global_object).view(global_object)
 }
 
 #[cold]

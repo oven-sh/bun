@@ -962,7 +962,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(verb) = obj.get(global_this, "verbose")? {
                     if verb.is_string() {
-                        if verb.get_zig_string(global_this)?.eql_comptime(b"curl") {
+                        if verb.to_bun_string(global_this)?.eql_comptime(b"curl") {
                             break 'extract_verbose http::HTTPVerboseLevel::Curl;
                         }
                     } else if verb.is_boolean() {

@@ -42,18 +42,15 @@ impl JSString {
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
-    pub fn get_zig_string(&self, global: &JSGlobalObject) -> ZigString {
-        let mut out = ZigString::init(b"");
-        self.to_zig_string(global, &mut out);
-        out
-    }
-
+    /// Borrows the string's characters; valid while `self` is reachable (keep the `&JSString` in a local).
     #[inline]
-    pub fn view(&self, global: &JSGlobalObject) -> ZigString {
-        self.get_zig_string(global)
+    pub fn view<'a>(&'a self, global: &JSGlobalObject) -> bun_core::StringView<'a> {
+        let mut z = ZigString::init(b"");
+        self.to_zig_string(global, &mut z);
+        bun_core::StringView::from_zig(z)
     }
 
-    /// doesn't always allocate
+    /// UTF-8 view of the characters; borrows when 8-bit ASCII, allocates otherwise. Same lifetime caveat as `view`.
     pub fn to_slice(&self, global: &JSGlobalObject) -> ZigStringSlice {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);

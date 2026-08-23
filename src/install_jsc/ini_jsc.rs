@@ -67,8 +67,7 @@ impl IniTestingAPIs {
                     continue;
                 }
 
-                let value_str = value.get_zig_string(global)?;
-                let slice = value_str.to_owned_slice();
+                let slice = value.to_bun_string(global)?.to_owned_slice();
 
                 envmap.put(
                     &keyslice,

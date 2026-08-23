@@ -853,13 +853,6 @@ impl JSValue {
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         bun_string_jsc::from_js(self, global)
     }
-    pub fn to_zig_string(
-        self,
-        out: &mut bun_core::ZigString,
-        global: &JSGlobalObject,
-    ) -> JsResult<()> {
-        host_fn::from_js_host_call_generic(global, || JSC__JSValue__toZigString(self, out, global))
-    }
     pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
         // `to_utf8()` takes its own ref (or owned alloc) so the slice survives
         // dropping the `to_bun_string` result.
@@ -1069,14 +1062,6 @@ impl JSValue {
         } else {
             None
         }
-    }
-    /// `JSValue.getZigString` — read a JS string into a `ZigString` view.
-    /// Convenience wrapper over [`JSValue::to_zig_string`] that returns the
-    /// out-param by value.
-    pub fn get_zig_string(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigString> {
-        let mut out = bun_core::ZigString::EMPTY;
-        self.to_zig_string(&mut out, global)?;
-        Ok(out)
     }
 }
 
@@ -2126,11 +2111,6 @@ unsafe extern "C" {
         this: JSValue,
         global: &JSGlobalObject,
     ) -> f64;
-    safe fn JSC__JSValue__toZigString(
-        this: JSValue,
-        out: &mut bun_core::ZigString,
-        global: &JSGlobalObject,
-    );
     safe fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;
     safe fn JSC__JSValue__isException(this: JSValue, vm: &crate::VM) -> bool;
     fn Bun__JSValue__call(

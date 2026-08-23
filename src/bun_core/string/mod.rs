@@ -651,7 +651,7 @@ impl String {
         if self.length() <= len {
             return StringView::new(self);
         }
-        StringView::of_zig(self.to_zig_string().trunc(len))
+        StringView::from_zig(self.to_zig_string().trunc(len))
     }
 
     /// `bun.String.substring` — borrowed slice from `start_index` to end.
@@ -664,14 +664,14 @@ impl String {
     pub fn substring_with_len(&self, start_index: usize, end_index: usize) -> StringView<'_> {
         match self.0.tag {
             Tag::ZigString | Tag::StaticZigString => {
-                StringView::of_zig(self.as_zig().substring_with_len(start_index, end_index))
+                StringView::from_zig(self.as_zig().substring_with_len(start_index, end_index))
             }
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
                 if w.is_8bit() {
-                    StringView::of_zig(ZigString::init(&w.latin1_slice()[start_index..end_index]))
+                    StringView::from_zig(ZigString::init(&w.latin1_slice()[start_index..end_index]))
                 } else {
-                    StringView::of_zig(ZigString::init_utf16(
+                    StringView::from_zig(ZigString::init_utf16(
                         &w.utf16_slice()[start_index..end_index],
                     ))
                 }
@@ -1165,10 +1165,10 @@ impl<'a> StringView<'a> {
     /// Borrow `bytes` (no copy); auto-tags UTF-8 if any byte is non-ASCII.
     #[inline]
     pub fn from_bytes(bytes: &'a [u8]) -> Self {
-        Self::of_zig(ZigString::from_bytes(bytes))
+        Self::from_zig(ZigString::from_bytes(bytes))
     }
     #[inline]
-    fn of_zig(z: ZigString) -> Self {
+    pub fn from_zig(z: ZigString) -> Self {
         Self(
             core::mem::ManuallyDrop::new(String::wrap_zig(Tag::ZigString, z)),
             core::marker::PhantomData,

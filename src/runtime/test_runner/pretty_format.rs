@@ -712,7 +712,7 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     }
 
     #[inline]
-    pub(crate) fn write_string(&mut self, str: ZigString) {
+    pub(crate) fn write_string(&mut self, str: &bun_core::String) {
         self.print(format_args!("{}", str));
     }
 
@@ -1109,8 +1109,8 @@ impl<'a> Formatter<'a> {
                     );
                 }
                 Tag::String => {
-                    let mut str = ZigString::init(b"");
-                    value.to_zig_string(&mut str, self.global_this)?;
+                    let js_str = value.to_js_string(self.global_this)?;
+                    let str = js_str.view(self.global_this).to_zig_string();
                     self.add_for_new_line(str.len);
 
                     if value.js_type() == JSType::StringObject
@@ -1194,7 +1194,7 @@ impl<'a> Formatter<'a> {
                             }
                         }
 
-                        writer.write_string(remaining);
+                        writer.print(format_args!("{}", remaining));
                         writer.write_all(b"\"");
 
                         if has_newline {
@@ -1251,8 +1251,9 @@ impl<'a> Formatter<'a> {
                     ));
                 }
                 Tag::BigInt => {
-                    let zig_str = value.get_zig_string(self.global_this)?;
-                    let out_str = zig_str.slice();
+                    let js_str = value.to_js_string(self.global_this)?;
+                    let view = js_str.view(self.global_this);
+                    let out_str = view.latin1();
                     self.add_for_new_line(out_str.len());
 
                     writer.print(format_args!(
@@ -1978,7 +1979,6 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"<");
 
                     let mut needs_space;
-                    let mut tag_name_str = ZigString::init(b"");
 
                     let tag_name_slice: ZigStringSlice;
                     let mut is_tag_kind_primitive = false;
@@ -1987,19 +1987,22 @@ impl<'a> Formatter<'a> {
                         let _tag = Tag::get(type_value, self.global_this)?;
 
                         if _tag.cell == JSType::Symbol {
+                            tag_name_slice = ZigStringSlice::EMPTY;
                         } else if _tag.cell.is_string_like() {
-                            type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                            tag_name_slice = type_value.to_slice(self.global_this)?;
                             is_tag_kind_primitive = true;
                         } else if _tag.cell.is_object() || type_value.is_callable() {
+                            let mut tag_name_str = ZigString::init(b"");
                             type_value.get_name_property(self.global_this, &mut tag_name_str)?;
-                            if tag_name_str.len == 0 {
-                                tag_name_str = ZigString::init(b"NoName");
-                            }
+                            tag_name_slice = if tag_name_str.len == 0 {
+                                ZigString::init(b"NoName").to_slice()
+                            } else {
+                                tag_name_str.to_slice_clone()
+                            };
                         } else {
-                            type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                            tag_name_slice = type_value.to_slice(self.global_this)?;
                         }
 
-                        tag_name_slice = tag_name_str.to_slice();
                         needs_space = true;
                     } else {
                         tag_name_slice = ZigString::init(b"unknown").to_slice();
@@ -2157,9 +2160,11 @@ impl<'a> Formatter<'a> {
                                     'print_children: {
                                         match tag.tag {
                                             Tag::String => {
+                                                let children_js =
+                                                    children.to_js_string(self.global_this)?;
                                                 let children_string =
-                                                    children.get_zig_string(self.global_this)?;
-                                                if children_string.len == 0 {
+                                                    children_js.view(self.global_this);
+                                                if children_string.is_empty() {
                                                     break 'print_children;
                                                 }
                                                 if ENABLE_ANSI_COLORS {
@@ -2169,15 +2174,15 @@ impl<'a> Formatter<'a> {
                                                 }
 
                                                 writer.write_all(b">");
-                                                if children_string.len < 128 {
-                                                    writer.write_string(children_string);
+                                                if children_string.length() < 128 {
+                                                    writer.write_string(&children_string);
                                                 } else {
                                                     self.indent += 1;
                                                     writer.write_all(b"\n");
                                                     self.write_indent(writer.ctx)
                                                         .expect("unreachable");
                                                     self.indent = self.indent.saturating_sub(1);
-                                                    writer.write_string(children_string);
+                                                    writer.write_string(&children_string);
                                                     writer.write_all(b"\n");
                                                     self.write_indent(writer.ctx)
                                                         .expect("unreachable");

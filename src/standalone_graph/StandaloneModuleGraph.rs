@@ -993,7 +993,8 @@ pub(crate) fn to_bytes(
         return Ok(Vec::new());
     }
 
-    string_builder.cap += (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
+    string_builder.cap +=
+        (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
     string_builder.cap += TRAILER.len();
     string_builder.cap += 16;
     string_builder.cap += size_of::<Offsets>();
@@ -1238,7 +1239,8 @@ pub(crate) fn to_bytes(
     // source text just to hash it. Only for Latin-1 contents, which are handed to JSC as-is.
     let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
     for (module, output_file) in modules.iter().zip(&module_files) {
-        let hash = if module.encoding == Encoding::Latin1 && output_file.loader.is_javascript_like() {
+        let hash = if module.encoding == Encoding::Latin1 && output_file.loader.is_javascript_like()
+        {
             wtf_latin1_string_hash(output_file.value.as_slice())
         } else {
             0

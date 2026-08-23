@@ -1349,7 +1349,12 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         /* A later HEADERS on an open stream is the trailer section: it must
          * end the stream, and trailers aren't surfaced. */
         if (existing->remoteClosed) { streamError(streamId, existing, http2::ERR_STREAM_CLOSED); return true; }
-        if (!endStream) { streamError(streamId, existing, http2::ERR_PROTOCOL_ERROR); return true; }
+        bool badTrailer = !endStream || tooLarge;
+        for (size_t i = 0; !badTrailer && i < list.size(); i++) {
+            const us_quic_header_t &h = list[i];
+            badTrailer = h.name[0] == ':' || !http2::validFieldName(h.name, h.name_len) || !http2::validFieldValue(h.value, h.value_len);
+        }
+        if (badTrailer) { streamError(streamId, existing, http2::ERR_PROTOCOL_ERROR); return true; }
         existing->remoteClosed = true;
         if (existing->declaredContentLength >= 0 && existing->receivedBodyBytes != (uint64_t) existing->declaredContentLength) {
             streamError(streamId, existing, http2::ERR_PROTOCOL_ERROR);

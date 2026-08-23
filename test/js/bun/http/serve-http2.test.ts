@@ -124,6 +124,7 @@ type Fixture = {
 };
 
 let bigFileDir: ReturnType<typeof tempDir> | undefined;
+afterAll(() => bigFileDir?.[Symbol.dispose]());
 function bigFilePath() {
   if (!bigFileDir) {
     bigFileDir = tempDir("serve-http2", { "big.bin": Buffer.alloc(3 * 1024 * 1024 + 17, "0123456789") });
@@ -575,6 +576,16 @@ for (const secure of [true, false]) {
       expect(decodeStatus(h.payload)).toBe(201);
       const d = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload.length > 0);
       expect(d.payload.toString()).toBe("part1-part2");
+      raw.close();
+    });
+
+    test("pseudo-header in request trailers → RST_STREAM PROTOCOL_ERROR", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      await raw.waitFor(f => f.type === T.SETTINGS);
+      raw.headers(1, baseHeaders("/echo", "POST"), F.END_HEADERS);
+      raw.write(frame(T.DATA, 0, 1, Buffer.from("body")));
+      raw.headers(1, [[":path", "/x"]], F.END_HEADERS | F.END_STREAM);
+      expect(await raw.rst(1)).toBe(1);
       raw.close();
     });
 

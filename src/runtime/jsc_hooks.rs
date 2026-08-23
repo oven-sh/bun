@@ -3130,6 +3130,7 @@ fn transpile_source_code_inner(
                         tag,
                         bytecode_cache,
                         bytecode_cache_size,
+                        bytecode_cache_is_static: !bytecode_cache.is_null(), // compile-cache blobs are retired, never freed
                         ..Default::default()
                     }));
                 }
@@ -3433,6 +3434,7 @@ fn transpile_source_code_inner(
                     tag,
                     bytecode_cache,
                     bytecode_cache_size,
+                    bytecode_cache_is_static: !bytecode_cache.is_null(), // compile-cache blobs are retired, never freed
                     ..Default::default()
                 }));
             }

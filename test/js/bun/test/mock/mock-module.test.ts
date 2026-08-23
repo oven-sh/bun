@@ -245,6 +245,21 @@ test("mocking a builtin applies to require() like it does to import()", async ()
   expect(require("querystring")).toBe(imported);
 });
 
+test("mocking a builtin by its node: name applies to require() in both spellings", () => {
+  mock.module("node:punycode", () => ({ encode: () => "mocked" }));
+
+  expect(require("node:punycode").encode("x")).toBe("mocked");
+  expect(require("punycode").encode("x")).toBe("mocked");
+});
+
+test("mocking a builtin with __esModule returns the default export from require()", () => {
+  const defaultExport = { start: () => "mocked" };
+  mock.module("node:repl", () => ({ __esModule: true, default: defaultExport }));
+
+  expect(require("node:repl")).toBe(defaultExport);
+  expect(require("repl")).toBe(defaultExport);
+});
+
 test("outside of bun test, a node: mock applies to require() unless a builtin has that name", async () => {
   using dir = tempDir("mock-module-node-prefix", {
     "index.ts": `

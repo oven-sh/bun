@@ -294,6 +294,7 @@ using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
+${classes.map(name => `extern "C" void ${name}__controllerFinalize(void* sinkPtr);`).join("\n")}
 
 const ClassInfo JSReadableSinkControllerBase::s_info = { "ReadableSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableSinkControllerBase) };
 `;
@@ -647,7 +648,7 @@ ${controller}::~${controller}()
 
     if (m_sinkPtr) {
         ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
-        ${name}__finalize(m_sinkPtr);
+        ${name}__controllerFinalize(m_sinkPtr);
     }
 }
 
@@ -1164,7 +1165,7 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 `;
 
     // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from
-    // JS${name}::~JS${name}, ~JSReadable${name}Controller and ${name}__doClose.
+    // JS${name}::~JS${name} and ${name}__doClose.
     // C++ caller null-checks `m_sinkPtr` / `ptr` before calling. `*mut`, not
     // `&mut`: this call may free the sink (see `JsSinkType::finalize`).
     symbols.push(`${name}__finalize`);
@@ -1172,7 +1173,19 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${name}__finalize(this: *mut ${name}) {
     // SAFETY: C++ hands over its live \`m_sinkPtr\` once and never uses it again.
-    unsafe { ${JSSinkT}::js_finalize(this) }
+    ${JSSinkT}::js_finalize(unsafe { bun_ptr::ThisPtr::new(this) })
+}
+
+`;
+
+    // extern "C" void ${name}__controllerFinalize(void* sinkPtr) — called from
+    // ~JSReadable${name}Controller when the controller dies still attached.
+    symbols.push(`${name}__controllerFinalize`);
+    templ += `#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ${name}__controllerFinalize(this: *mut ${name}) {
+    // SAFETY: as \`__finalize\`: the controller's live \`m_sinkPtr\`, handed over once.
+    ${JSSinkT}::js_controller_finalize(unsafe { bun_ptr::ThisPtr::new(this) })
 }
 
 `;

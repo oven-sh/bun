@@ -1131,4 +1131,76 @@ describe("spawn stdin ReadableStream", () => {
     expect(writerDone).toBe(true);
     expect(exitCode).toBe(0);
   });
+  // A worker that goes away while a ReadableStream is still being pumped into
+  // a subprocess's stdin FileSink — either terminated mid-pump or exiting on
+  // its own with the pump backpressured —
+  // must release every ref the sink holds (the JS pump's, the pending write's
+  // keep-alive, the subprocess's) exactly once: no native sink outlives the
+  // worker and nothing touches a freed one (ASAN).
+  test("worker teardown with a pending ReadableStream pump frees the FileSink exactly once", async () => {
+    using dir = tempDir("filesink-worker-teardown", {
+      "main.js": /* js */ `
+        const { Worker, isMainThread, workerData, parentPort } = require("worker_threads");
+        const { fileSinkInternals } = require("bun:internal-for-testing");
+        if (!isMainThread) {
+          const mode = workerData;
+          let signalled = false;
+          const signal = () => {
+            if (!signalled) parentPort.postMessage("pumping");
+            signalled = true;
+          };
+          // "idle": the pump's first pull never resolves. Otherwise: 1 MiB chunks
+          // into a child that never reads, so a write goes pending.
+          const stream = new ReadableStream({
+            pull(c) {
+              if (mode === "idle") {
+                signal();
+                return new Promise(() => {});
+              }
+              c.enqueue(new Uint8Array(1 << 20));
+              signal();
+            },
+          });
+          // A child that never reads stdin; short-lived, since a terminated
+          // worker does not get to kill it.
+          const proc = Bun.spawn({
+            cmd: [process.execPath, "-e", "setTimeout(() => {}, 2000)"],
+            env: process.env,
+            stdin: stream,
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          void proc.stdin;
+          process.on("exit", () => proc.kill());
+          parentPort.on("message", () => process.exit(0));
+        } else {
+          const baseline = fileSinkInternals.liveCount();
+          for (const mode of ["idle", "backpressure"]) {
+            for (const how of ["terminate", "exit"]) {
+              const w = new Worker(__filename, { workerData: mode });
+              await new Promise(resolve => w.once("message", resolve));
+              if (how === "terminate") await w.terminate();
+              else {
+                w.postMessage("exit");
+                await new Promise(resolve => w.once("exit", resolve));
+              }
+            }
+          }
+          Bun.gc(true);
+          console.log("delta", fileSinkInternals.liveCount() - baseline);
+        }
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("delta 0");
+    expect(exitCode).toBe(0);
+  });
 });

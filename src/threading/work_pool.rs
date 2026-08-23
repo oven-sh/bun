@@ -38,6 +38,32 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     }
 }
 
+/// An [`IntrusiveWorkTask`] the pool re-enters through its embedded [`Task`]
+/// while something else owns the allocation. [`work_task_for`] builds the
+/// `Task` whose callback recovers the owner and calls this.
+pub trait WorkTaskHandler: IntrusiveWorkTask {
+    /// Pool thread. Whoever scheduled the embedded task left the owner alone
+    /// until this runs, so `self` is the only access to it.
+    fn run_work_task(&mut self);
+}
+
+/// The intrusive [`Task`] for a `T` that handles it itself: schedule
+/// `&raw mut owner.task` after storing this there.
+pub fn work_task_for<T: WorkTaskHandler>() -> Task {
+    /// # Safety
+    /// Only installed by [`work_task_for`], so `task` is the `Task` embedded
+    /// in a live `T` that was handed to [`WorkPool::schedule`] and is not
+    /// otherwise accessed until this returns.
+    unsafe fn run<T: WorkTaskHandler>(task: *mut Task) {
+        // SAFETY: fn contract.
+        unsafe { &mut *T::from_task_ptr(task) }.run_work_task();
+    }
+    Task {
+        node: Default::default(),
+        callback: run::<T>,
+    }
+}
+
 /// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
 /// (`Box<Self>`). [`WorkPool::schedule_owned`] performs the `Box` →
 /// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers

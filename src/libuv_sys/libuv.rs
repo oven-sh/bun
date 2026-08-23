@@ -1924,9 +1924,18 @@ impl fs_t {
     #[inline]
     pub fn deinit(&mut self) {
         self.assert_initialized();
-        // SAFETY: `self` was passed to a `uv_fs_*` call (assert above).
-        unsafe { uv_fs_req_cleanup(self) };
+        self.cleanup();
         self.assert_cleaned_up();
+    }
+
+    /// `uv_fs_req_cleanup`: frees whatever libuv allocated for the last
+    /// `uv_fs_*` call on this request (idempotent; a no-op on a zeroed or
+    /// already-cleaned request).
+    #[inline]
+    pub fn cleanup(&mut self) {
+        // SAFETY: `self` is a valid `uv_fs_t` (zeroed, in use, or completed);
+        // libuv only reads/frees its own bookkeeping fields.
+        unsafe { uv_fs_req_cleanup(self) };
     }
     #[inline]
     fn assert_initialized(&self) {

@@ -20,8 +20,6 @@ use bun_collections::ByteVecExt as _;
 use bun_core;
 use bun_core::String as BunString;
 use bun_io as io;
-#[cfg(not(windows))]
-use bun_io::FileAction;
 #[cfg(windows)]
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
 use bun_jsc::event_loop::EventLoop;
@@ -36,7 +34,7 @@ use bun_sys::Stat;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 use bun_sys::{self, Fd};
-use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
+use bun_threading::{WorkPool, WorkPoolTask};
 
 bun_output::declare_scope!(WriteFile, hidden);
 bun_output::declare_scope!(ReadFile, hidden);
@@ -219,8 +217,15 @@ pub type ReadFileTask = bun_jsc::Completion<ReadFile>;
 unsafe impl Send for ReadFile {}
 
 impl bun_jsc::JobContext for ReadFile {
-    const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
+    /// A read parked on a pipe/tty that never becomes readable is the one
+    /// state this job can be stuck in; ending that wait fails the read with
+    /// ECANCELED through the usual close path.
+    const PARKED_REQUEST: Option<bun_jsc::job::ParkedRequestOffset<Self>> = if cfg!(windows) {
+        None
+    } else {
+        Some(bun_jsc::job::ParkedRequestOffset::INLINE)
+    };
     /// Where the bytes go: completed by `then`, or cancelled (its `Drop`) when the job comes
     /// back to a VM that is no longer running script and is released unrun.
     type Js = ReadFileCompletionFns;
@@ -235,19 +240,6 @@ impl bun_jsc::JobContext for ReadFile {
         cx: &bun_jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         ReadFile::then(this, completion, cx.global())
-    }
-    /// A read parked on a pipe/tty that never becomes readable is the one
-    /// state this job can be stuck in; end that wait (the read fails with
-    /// ECANCELED through the usual close path).
-    #[cfg(not(windows))]
-    unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract; `io_parking` is atomic, and a `true` means no
-        // other thread touches `io_request` until it is queued again here.
-        unsafe {
-            if (*this).io_parking.cancel() {
-                io::IoRequestLoop::schedule(&mut (*this).io_request);
-            }
-        }
     }
 }
 
@@ -290,9 +282,9 @@ pub struct ReadFile {
     #[cfg(not(windows))]
     pub(crate) io_task: Option<ReadFileTask>,
     pub(crate) io_poll: io::Poll,
-    pub(crate) io_request: io::Request,
-    #[cfg(not(windows))]
-    pub(crate) io_parking: super::IoParking,
+    /// The io-loop wait request and who owns this job while it may be parked
+    /// (see [`io::ParkedRequest`]).
+    pub(crate) io: io::ParkedRequest,
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
     pub(crate) close_after_io: bool,
@@ -300,7 +292,30 @@ pub struct ReadFile {
 }
 
 bun_threading::intrusive_work_task!(ReadFile, task);
-bun_io::intrusive_io_request!(ReadFile, io_request);
+bun_io::intrusive_io_request!(ReadFile, parked io);
+bun_io::poll_owner!(ReadFile, io_poll, ReadFile);
+
+/// The pool re-enters a `ReadFile` through `task` after the io loop reports
+/// its fd readable (or errored), and after its poll is closed.
+impl bun_threading::WorkTaskHandler for ReadFile {
+    fn run_work_task(&mut self) {
+        self.update();
+    }
+}
+
+#[cfg(not(windows))]
+impl io::IoRequestHandler for ReadFile {
+    /// io thread: the wait request `wait_for_readable` queued was popped.
+    fn on_io_request(&mut self) -> io::Action<'_> {
+        bloblog!("ReadFile.onRequestReadable");
+        if !self.io.arm() {
+            self.fail_cancelled();
+            return self.close_action();
+        }
+        let fd = self.opened_fd;
+        io::Action::Readable(io::FileAction::new(self, fd))
+    }
+}
 
 // The default methods on the FileOpener/FileCloser traits provide the bodies.
 impl FileOpener for ReadFile {
@@ -374,20 +389,12 @@ impl ReadFile {
             read_eof: false,
             size: 0,
             buffer: Vec::new(),
-            task: WorkPoolTask {
-                node: Default::default(),
-                callback: Self::do_read_loop_task,
-            },
+            task: bun_threading::work_task_for::<Self>(),
             system_error: None,
             errno: None,
             io_task: None,
             io_poll: io::Poll::default(),
-            io_request: io::Request {
-                next: bun_threading::Link::new(),
-                callback: Self::on_request_readable,
-                scheduled: false,
-            },
-            io_parking: super::IoParking::new(),
+            io: io::ParkedRequest::new(io::io_request_callback::<Self>()),
             could_block: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
@@ -395,25 +402,19 @@ impl ReadFile {
         Ok(read_file)
     }
 
-    #[cfg(not(windows))]
-    pub(crate) const IO_TAG: io::Tag = io::Tag::ReadFile;
-
     pub fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
         #[cfg(not(windows))]
-        if !self.io_parking.fire() {
+        if !self.io.fire() {
             return;
         }
-        self.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_read_loop_task,
-        };
+        self.task = bun_threading::work_task_for::<Self>();
         // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
         if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
-            self.close_after_io = self.io_request.scheduled;
+            self.close_after_io = self.io.request().scheduled;
         }
 
         WorkPool::schedule(&raw mut self.task);
@@ -422,55 +423,20 @@ impl ReadFile {
     pub(crate) fn on_io_error(&mut self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
         #[cfg(not(windows))]
-        if !self.io_parking.fire() {
+        if !self.io.fire() {
             return;
         }
         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
-        self.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_read_loop_task,
-        };
+        self.task = bun_threading::work_task_for::<Self>();
         // On kqueue platforms we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
         if bun_core::Environment::IS_KQUEUE {
             // unless pending IO has been scheduled in-between.
-            self.close_after_io = self.io_request.scheduled;
+            self.close_after_io = self.io.request().scheduled;
         }
         WorkPool::schedule(&raw mut self.task);
-    }
-
-    /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), &sys::Error)` shape.
-    #[cfg(not(windows))]
-    fn on_io_error_thunk(ctx: *mut (), err: &bun_sys::Error) {
-        // SAFETY: ctx is `self as *mut ReadFile` set in on_request_readable below.
-        unsafe { (*ctx.cast::<ReadFile>()).on_io_error(err) }
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn on_request_readable(request: &mut io::Request) -> io::Action<'_> {
-        bloblog!("ReadFile.onRequestReadable");
-        request.scheduled = false;
-        // SAFETY: request points to ReadFile.io_request (intrusive field); recover parent via offset_of.
-        let this: &mut ReadFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(
-                ReadFile,
-                io_request,
-                std::ptr::from_mut::<io::Request>(request)
-            ))
-        };
-        if !this.io_parking.arm() {
-            this.fail_cancelled();
-            return <Self as crate::webcore::blob::FileCloser>::schedule_close(request);
-        }
-        io::Action::Readable(FileAction {
-            on_error: Self::on_io_error_thunk,
-            ctx: std::ptr::from_mut::<ReadFile>(this).cast::<()>(),
-            fd: this.opened_fd,
-            poll: &mut this.io_poll,
-            tag: ReadFile::IO_TAG,
-        })
     }
 
     /// The wait was cancelled (io thread: while parked — the close path that
@@ -491,14 +457,15 @@ impl ReadFile {
     #[cfg(not(windows))]
     pub(crate) fn wait_for_readable(&mut self) {
         bloblog!("ReadFile.waitForReadable");
-        if !self.io_parking.park() {
+        if !self.io.park() {
             self.fail_cancelled();
             return self.on_finish();
         }
         self.close_after_io = true;
-        self.io_request
-            .store_callback_seq_cst(Self::on_request_readable);
-        io::IoRequestLoop::schedule(&mut self.io_request);
+        self.io
+            .request()
+            .store_callback_seq_cst(io::io_request_callback::<Self>());
+        io::IoRequestLoop::schedule(self.io.request());
     }
 
     /// Pick the read target: `buffer`'s spare capacity if it is at least as
@@ -791,15 +758,6 @@ impl ReadFile {
         self.do_read_loop();
     }
 
-    fn do_read_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-        // `&mut self.task` (intrusive) registered in `on_writable`/`init`;
-        // recover parent.
-        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
-
-        this.update();
-    }
-
     #[cfg(not(windows))]
     fn do_read_loop(&mut self) {
         #[cfg(not(windows))]
@@ -982,7 +940,6 @@ impl<'a> FileOpener for ReadFileUV<'a> {
 
 #[cfg(windows)]
 impl<'a> FileCloser for ReadFileUV<'a> {
-    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -1000,22 +957,19 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     fn close_after_io(&self) -> bool {
         false
     }
+    fn set_close_after_io(&mut self, _: bool) {
+        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
+    }
     fn state(&self) -> &AtomicU8 {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn io_request(&mut self) -> Option<&mut bun_io::Request> {
         None
     }
-    fn io_poll(&mut self) -> &mut bun_io::Poll {
-        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
-    }
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
-    fn schedule_close(_: &mut bun_io::Request) -> bun_io::Action<'_> {
-        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
-    }
-    fn on_close_io_request(_: *mut bun_jsc::WorkPoolTask) {
+    unsafe fn schedule_close(_: &mut bun_io::Request) -> bun_io::Action<'_> {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
 }

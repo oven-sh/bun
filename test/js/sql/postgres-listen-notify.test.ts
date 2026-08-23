@@ -1026,13 +1026,14 @@ describe.concurrent("in a subprocess", () => {
         const pass = async () => { for (let i = 0; i < rounds; i++) await deliver(seg); };
         await pass();
         const base = rss();
+        const growthMiB = () => Math.round((rss() - base) / 1024 / 1024);
         await pass();
-        let growth = (rss() - base) / 1024 / 1024;
+        let growth = growthMiB();
         if (growth >= ${bound}) {
           await pass();
-          growth = Math.min(growth, (rss() - base) / 1024 / 1024);
+          growth = Math.min(growth, growthMiB());
         }
-        return Math.round(growth);
+        return growth;
       };
       // 256 KiB per segment, 96 segments = 24 MiB per pass.
       const small = await measure(segment(256, Buffer.alloc(1024, 0x61).toString()), 96);

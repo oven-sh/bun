@@ -33,6 +33,22 @@ describeWithContainer(
       expect(result[0].age).toBe(30);
     });
 
+    test("insert helper: a row getter that throws rejects the query with that error", async () => {
+      await using sql = new SQL({ ...getOptions(), max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text)`;
+      const boom = new Error("row getter");
+      const row = {
+        id: 1,
+        get name() {
+          throw boom;
+        },
+      };
+      expect(async () => await sql`INSERT INTO ${sql(random_name)} ${sql(row)}`).toThrow(boom);
+      expect(async () => await sql`INSERT INTO ${sql(random_name)} ${sql([row], "id", "name")}`).toThrow(boom);
+      expect(await sql`SELECT count(*) AS n FROM ${sql(random_name)}`).toEqual([{ n: 0 }]);
+    });
+
     test("insert into with select helper with IN", async () => {
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");

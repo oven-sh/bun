@@ -1061,7 +1061,7 @@ it.concurrent(
     }
     rejectAsync(new Error("late failure"));
     resolveInvalid({ loader: "object", exports: 7 });
-    setTimeout(() => console.log("still alive"), 0);
+    setImmediate(() => console.log("still alive"));
   `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
@@ -1100,7 +1100,7 @@ it.concurrent("require() of an already-rejected plugin module promise throws its
       () => console.log("import did not reject"),
       e => console.log("import rejected:", e.message),
     );
-    setTimeout(() => console.log("still alive"), 0);
+    setImmediate(() => console.log("still alive"));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],

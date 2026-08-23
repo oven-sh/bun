@@ -36,22 +36,18 @@ pub struct Framework {
 /// rendered HTML page, asset, source map response); released on drop. The
 /// `StaticRoute::on*` handlers take their own ref per in-flight response, so
 /// the route itself may outlive this handle.
-pub(crate) struct StaticRouteRef(bun_ptr::BackRef<StaticRoute, bun_ptr::Mut>);
+pub(crate) struct StaticRouteRef(bun_ptr::RefPtr<StaticRoute>);
 
 impl StaticRouteRef {
     pub(crate) fn init_from_any_blob(blob: AnyBlob, options: InitFromBytesOptions<'_>) -> Self {
-        let route = StaticRoute::init_from_any_blob(blob, options);
-        // SAFETY: `route` is the fresh `heap::into_raw` allocation (non-null,
-        // write provenance) carrying one ref, which this handle owns until
-        // `Drop` releases it, so the pointee outlives the `BackRef`.
-        Self(unsafe { bun_ptr::BackRef::from_raw_mut(route) })
+        Self(StaticRoute::init_from_any_blob(blob, options))
     }
 
-    /// For the `StaticRoute::on*` handlers, which take the route as the
-    /// `*mut` they register as uws userdata.
+    /// For the `StaticRoute::on*` handlers, which register the route as uws
+    /// userdata.
     #[inline]
-    pub(crate) fn as_ptr(&self) -> *mut StaticRoute {
-        self.0.as_ptr()
+    pub(crate) fn this_ptr(&self) -> bun_ptr::ThisPtr<StaticRoute> {
+        self.0.this_ptr()
     }
 }
 
@@ -59,14 +55,14 @@ impl core::ops::Deref for StaticRouteRef {
     type Target = StaticRoute;
     #[inline]
     fn deref(&self) -> &StaticRoute {
-        self.0.get()
+        &self.0
     }
 }
 
 impl Drop for StaticRouteRef {
     #[inline]
     fn drop(&mut self) {
-        <StaticRoute as bun_ptr::CellRefCounted>::deref_nn(self.0.into());
+        self.0.deref();
     }
 }
 
@@ -142,12 +138,9 @@ impl RouteBundle {
 #[derive(Clone, Copy)]
 pub(crate) enum UnresolvedIndex {
     Framework(framework_router::RouteIndex),
-    /// BACKREF: `getOrPutRouteBundle` writes
-    /// `dev_server_id` back through this pointer and `.initRef(html)` takes
-    /// its own ref when stored. Carried as a raw mutable pointer (not `&`/
-    /// `&mut`) so the writeback doesn't require a `&const → &mut` cast and
-    /// the borrow doesn't conflict with `&mut DevServer`.
-    Html(*mut HTMLBundleRoute),
+    /// `getOrPutRouteBundle` writes `dev_server_id` back through this and
+    /// takes its own ref when stored.
+    Html(bun_ptr::ThisPtr<HTMLBundleRoute>),
 }
 
 pub struct RouteBundle {

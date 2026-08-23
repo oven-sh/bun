@@ -560,6 +560,28 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("uv_timer_t started from inside a JS timer callback, next to a JS timer", async () => {
+    // The timer heap is being drained while the addon arms its timers, as
+    // when an addon's constructor runs from a setTimeout callback. The three
+    // timers fire in an order that depends on the scheduler, so the events
+    // are compared as a set.
+    const { stdout, stderr, exitCode } = await runInChild(`
+      setTimeout(() => {
+        console.log(JSON.stringify(addon.testTimer(report)));
+        addon.testTimerRepeat(report);
+        setTimeout(() => console.log("js timer"), 10);
+      }, 1);
+    `);
+    expect(stderr).toBe("");
+    const { state, events } = stateAndEvents(stdout);
+    expect(state).toEqual({ typeIsTimer: 1, isActive: 1, hasRef: 1, dueIn: expect.any(Number), repeat: 0 });
+    const lines = (s: string) => s.trimEnd().split("\n");
+    expect(lines(events).sort()).toEqual(
+      [...lines(oneShotTimerEvents), ...lines(repeatingTimerEvents), "js timer"].sort(),
+    );
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a uv_timer_t in a Worker fires on the Worker's loop", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`
       const { Worker } = require("node:worker_threads");

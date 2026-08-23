@@ -4496,9 +4496,8 @@ pub struct NodeFS {
     /// the heap allocated buffer on the NodeFS struct
     pub(crate) sync_error_buf: PathBuffer, // must be align_of::<u16>()-aligned — enforced via #[repr(C)] + field order, see above
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
-    /// The VM whose script asked for this operation (the `node:fs` binding's
-    /// own VM, or the VM a pool job serves). A read-until-EOF loop stops at
-    /// the next chunk once that VM stops. `None` for the internal callers.
+    /// The VM this operation serves: a read-until-EOF loop stops at the next
+    /// chunk once it stops. `None` for the internal callers.
     pub(crate) vm_handle: Option<bun_jsc::VmHandle>,
 }
 
@@ -6891,13 +6890,9 @@ impl NodeFS {
         }
     }
 
-    /// Between two reads of a read-until-EOF loop: does anyone still want the
-    /// bytes? Not once the caller's `signal` aborted, and not once the VM this
-    /// read serves has been asked to stop (`worker.terminate()`,
-    /// `process.exit()`). A pipe or a device has no EOF to reach, and the
-    /// worker's teardown waits for the pool job, so the loop has to give up
-    /// on its own. Node stops at the same point: it issues one request per
-    /// chunk, and a stopping environment runs no continuation.
+    /// Between two reads: nobody wants the bytes once the caller's `signal`
+    /// aborted or the VM this read serves was asked to stop. A pipe or a
+    /// device has no EOF, and the worker's teardown waits for this loop.
     fn read_abandoned(&self, args: &args::ReadFile) -> bool {
         args.aborted()
             || self

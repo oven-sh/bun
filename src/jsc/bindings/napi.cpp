@@ -3418,8 +3418,7 @@ extern "C" bool NapiEnv__hasPendingException(napi_env env)
     return scope.exception() != nullptr;
 }
 
-// bun:ffi cc() wrappers call this once the compiled function returns, since
-// napi_throw* only schedules the exception on the env.
+// Called by the wrapper bun:ffi cc() generates, after the compiled function returns.
 extern "C" bool NapiEnv__throwPendingException(napi_env env)
 {
     if (env->throwPendingException()) {

@@ -337,6 +337,12 @@ devTestGroup("shared dev server", {}, test => {
     // with `swapRemoveAt`, which moves the last entry into the first slot.
     // The second CSS file's `path_map` entry must be patched to the new slot
     // so the next edit does not read past the end of the asset array.
+    //
+    // The case controls that order itself: it appends `first.css`, then
+    // `second.css`, then frees `first.css` before anything else is appended,
+    // so `second.css` is the entry that moves. Entries from earlier cases sit
+    // at lower indices, and CSS roots are keyed by path, so sharing the server
+    // does not change which entry moves.
     files: {
       "asset-index/first.html": emptyHtmlFile({
         styles: ["first.css"],

@@ -35,11 +35,10 @@ describe("bun:sqlite", () => {
     db.query("select count(*) c from t").get();
     insert.run("b");
     // .iterate(): one span for the execution, not one per row fetched
-    const it = db.prepare("SELECT name FROM t ORDER BY id");
-    expect([...it.iterate()].length).toBe(2);
-    it.finalize(); // (Windows: an open statement keeps the file locked past db.close())
+    expect([...db.prepare("SELECT name FROM t ORDER BY id").iterate()].length).toBe(2);
     expect(() => db.query("SELECT * FROM missing").all()).toThrow();
-    db.close();
+    // close(true) finalizes the outstanding prepare() statements so Windows can delete the file.
+    db.close(true);
     const got = await collect("bun.sqlite");
     expect(got.map(s => [s.name, s.kind, s.attributes["db.query.text"], s.status.code])).toEqual([
       ["CREATE app.db", 2, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)", 0],
@@ -59,6 +58,19 @@ describe("bun:sqlite", () => {
     expect(got[6].attributes["db.response.status_code"]).toBe("SQLITE_ERROR");
     expect(got[6].events[0]).toMatchObject({ name: "exception", attributes: { "exception.type": "SQLITE_ERROR" } });
     expect(got[6].status.message).toContain("no such table");
+  });
+
+  test("attributeValueLengthLimit applies to db.query.text", async () => {
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { sqlite: "always" },
+      limits: { attributeValueLengthLimit: 10 },
+    });
+    const db = new Database(":memory:");
+    db.query("select 1 as a_rather_long_column_name").get();
+    db.close();
+    const [q] = await collect("bun.sqlite");
+    expect(q.attributes["db.query.text"]).toBe("select 1 a");
   });
 
   test("nested under the active span and captureDbStatement: false", async () => {

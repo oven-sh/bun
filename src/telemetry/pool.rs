@@ -277,6 +277,9 @@ impl Slot {
         let mut w = SpanWriter::begin(out, &self.stub, &self.name, self.kind, end_ns);
         w.trace_state(&self.trace_state);
         w.raw(&self.attrs);
+        // (begin-time attributes above were truncated by push_attribute; end-time
+        // ones written by `extra` — db.query.text etc. — get the same limit)
+        w.limit_values(rt::limits().attribute_value_length);
         extra(&mut w);
         w.raw(&self.extra);
         if self.dropped_attrs != 0 {

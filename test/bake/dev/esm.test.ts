@@ -89,7 +89,7 @@ devTest("live bindings through export from", {
   },
   test: liveBindingTest.test,
 });
-devTest("live bindings through export star", {
+devTest("live bindings through export star (#29747)", {
   framework: minimalFramework,
   files: {
     "state.ts": `
@@ -102,8 +102,7 @@ devTest("live bindings through export star", {
       export * from './state';
     `,
     "routes/index.ts": `
-      import { increment } from '../state';
-      import { value } from '../proxy';
+      import { increment, value } from '../proxy';
       export default function(req, meta) {
         increment();
         return new Response('State: ' + value);
@@ -111,6 +110,287 @@ devTest("live bindings through export star", {
     `,
   },
   test: liveBindingTest.test,
+});
+devTest("live bindings through export star namespace read", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export let count = 0;
+      export function increment() { count++; }
+    `,
+    "barrel.ts": `
+      export * from './lib';
+    `,
+    "index.ts": `
+      import * as barrel from './barrel';
+      barrel.increment();
+      if (barrel.count !== 1) {
+        console.log("FAIL: expected 1, got " + barrel.count);
+      } else {
+        console.log("PASS");
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star with direct export precedence", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export const x = "from-lib";
+      export const y = "lib-y";
+    `,
+    "barrel.ts": `
+      export * from './lib';
+      export const x = "from-barrel";
+    `,
+    "index.ts": `
+      import { x, y } from './barrel';
+      if (x !== "from-barrel") { console.log("FAIL x: " + x); }
+      else if (y !== "lib-y") { console.log("FAIL y: " + y); }
+      else console.log("PASS");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star does not forward 'default'", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export default "DEFAULT";
+      export const x = 1;
+    `,
+    "barrel.ts": `
+      export * from './lib';
+    `,
+    "index.ts": `
+      import * as barrel from './barrel';
+      if ("default" in barrel) { console.log("FAIL: 'default' should not be re-exported"); }
+      else if (barrel.x !== 1) { console.log("FAIL x: " + barrel.x); }
+      else console.log("PASS");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star chain (barrel -> barrel -> lib) preserves live bindings", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export let count = 0;
+      export function increment() { count++; }
+    `,
+    "mid.ts": `
+      export * from './lib';
+    `,
+    "top.ts": `
+      export * from './mid';
+    `,
+    "index.ts": `
+      import * as barrel from './top';
+      barrel.increment();
+      barrel.increment();
+      if (barrel.count === 2) console.log("PASS");
+      else console.log("FAIL: expected 2, got " + barrel.count);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star tolerates circular star re-exports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "a.ts": `
+      export * from './b';
+      export const aVal = "A";
+    `,
+    "b.ts": `
+      export * from './a';
+      export const bVal = "B";
+    `,
+    "index.ts": `
+      import * as a from './a';
+      import * as b from './b';
+      // Loading must not throw during the circular star-export setup, and
+      // after both modules finish, each side sees the other's direct export.
+      if (a.aVal === "A" && a.bVal === "B" && b.aVal === "A" && b.bVal === "B") {
+        console.log("PASS");
+      } else {
+        console.log("FAIL: " + JSON.stringify({
+          aVal_on_a: a.aVal, bVal_on_a: a.bVal,
+          aVal_on_b: b.aVal, bVal_on_b: b.bVal,
+        }));
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star through require() (sync loader) circular", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "a.ts": `
+      export * from './b';
+      export const aVal = "A";
+    `,
+    "b.ts": `
+      export * from './a';
+      export const bVal = "B";
+    `,
+    "index.ts": `
+      const a = require('./a');
+      const b = require('./b');
+      if (a.aVal === "A" && a.bVal === "B" && b.aVal === "A" && b.bVal === "B") {
+        console.log("PASS");
+      } else {
+        console.log("FAIL: " + JSON.stringify({
+          aVal_on_a: a.aVal, bVal_on_a: a.bVal,
+          aVal_on_b: b.aVal, bVal_on_b: b.bVal,
+        }));
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export * as ns from preserves live bindings across HMR", {
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var value = 0;
+      export function increment() {
+        value++;
+      }
+    `,
+    "proxy.ts": `
+      export * as ns from './state';
+    `,
+    "routes/index.ts": `
+      import { ns } from '../proxy';
+      export default function(req, meta) {
+        ns.increment();
+        return new Response('State: ' + ns.value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("State: 1");
+    await dev.fetch("/").equals("State: 2");
+    await dev.write(
+      "state.ts",
+      `
+        export var value = 100;
+        export function increment() { value--; }
+      `,
+    );
+    // After the hot update replaces state.ts's exports object, proxy.ns
+    // must see the new object, and the properties on it must still
+    // live-bind.
+    await dev.fetch("/").equals("State: 99");
+    await dev.fetch("/").equals("State: 98");
+  },
+});
+devTest("export star from a builtin module on the server", {
+  framework: minimalFramework,
+  files: {
+    "proxy.ts": `
+      export * from "node:path";
+    `,
+    "routes/index.ts": `
+      import { basename } from '../proxy';
+      export default function(req, meta) {
+        return new Response('name: ' + basename('/a/b.txt'));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("name: b.txt");
+  },
+});
+devTest("export star through a CommonJS module", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.cts": `
+      module.exports = { fromCjs: "cjs-value" };
+    `,
+    "barrel.ts": `
+      export * from './lib.cts';
+    `,
+    "index.ts": `
+      import { fromCjs } from './barrel';
+      if (fromCjs === "cjs-value") console.log("PASS");
+      else console.log("FAIL: " + fromCjs);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("an arrow function component export stays a fast refresh boundary", {
+  // The exports object exposes non-function-declaration exports through
+  // getters. isReactRefreshBoundary must read through them, or a module
+  // that exports an arrow component stops self-accepting and every edit
+  // causes a full page reload. The mock mirrors the real react-refresh
+  // runtime: isLikelyComponentType is true only for functions, never for
+  // the exports object itself.
+  files: {
+    "node_modules/react-refresh/runtime.js": /* js */ `
+      exports.performReactRefresh = () => console.log("performReactRefresh");
+      exports.injectIntoGlobalHook = () => {};
+      exports.isLikelyComponentType = t => typeof t === "function" && /^[A-Z]/.test(t.name || "");
+      exports.register = () => {};
+      exports.createSignatureFunctionForTransform = () => fn => fn;
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "App.tsx": `
+      export const App = () => "version 1";
+    `,
+    "index.ts": `
+      import { App } from './App';
+      globalThis.renderApp = () => App();
+      console.log(App());
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("version 1");
+    // App.tsx exports only a component, so it self-accepts. The update must
+    // apply in place; the harness fails on a full page reload.
+    await dev.patch("App.tsx", { find: "version 1", replace: "version 2" });
+    await c.expectMessage("performReactRefresh");
+    expect(await c.js`return globalThis.renderApp()`).toBe("version 2");
+  },
 });
 devTest("cyclic import with a top-level read (#40248)", {
   files: {

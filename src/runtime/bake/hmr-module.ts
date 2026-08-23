@@ -360,8 +360,9 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     const exportsBefore = mod.exports;
     gen.next();
     if (mod.exports === exportsBefore) mod.exports = {};
+    const lateStars = mergeStarExports(mod, stars);
     const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
-    mergeStarExports(mod, stars);
+    if (lateStars) mergeLateStarExports(mod, lateStars);
     mod.imports = depsList.map(getEsmExports);
     gen.next();
     mod.imports = depsList;
@@ -494,11 +495,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
     // Two-phase load. See the comment in `loadModuleSync`.
     let gen: ModuleLoadGenerator;
+    let lateStars: Id[] | null;
     try {
       gen = load(mod) as ModuleLoadGenerator;
       const exportsBefore = mod.exports;
       gen.next();
       if (mod.exports === exportsBefore) mod.exports = {};
+      lateStars = mergeStarExports(mod, stars);
     } catch (e) {
       mod.state = State.Error;
       mod.failure = e;
@@ -513,7 +516,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
     return isAsync
       ? Promise.all(list).then(
-          list => finishTwoPhaseLoad(mod, gen, stars, list),
+          list => finishTwoPhaseLoad(mod, gen, lateStars, list),
           e => {
             mod.state = State.Error;
             mod.failure = e;
@@ -523,7 +526,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       : finishTwoPhaseLoad(
           mod,
           gen,
-          stars,
+          lateStars,
           list as HMRModule[], // no promises as by assert above
         );
   }
@@ -560,9 +563,9 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
 
 /** Evaluation half of a two-phase load. The generator was already resumed
  * once (instantiation), and the dependencies finished loading. */
-function finishTwoPhaseLoad(mod: HMRModule, gen: ModuleLoadGenerator, stars: Id[], modules: HMRModule[]) {
+function finishTwoPhaseLoad(mod: HMRModule, gen: ModuleLoadGenerator, lateStars: Id[] | null, modules: HMRModule[]) {
   try {
-    mergeStarExports(mod, stars);
+    if (lateStars) mergeLateStarExports(mod, lateStars);
     const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
     mod.imports = modules.map(getEsmExports);
     gen.next();
@@ -579,24 +582,99 @@ function finishTwoPhaseLoad(mod: HMRModule, gen: ModuleLoadGenerator, stars: Id[
 }
 
 /** Implements `export * from`, from the star-import list of the module
- * tuple. Every export of the dependency except "default" that the module
- * does not declare itself is re-exported. A getter keeps the binding live,
- * and tolerates a dependency that is still evaluating in an import cycle. */
-function mergeStarExports(mod: HMRModule, stars: Id[]) {
-  if (stars.length === 0) return;
+ * tuple. Runs in the instantiate phase, before the dependencies load, so a
+ * module in an import cycle sees the star re-exported names. The names of an
+ * ESM dependency come from the static export list in the unloaded module
+ * registry. Every name except "default" that the module does not declare
+ * itself is re-exported through a getter, which keeps the binding live.
+ *
+ * Returns the ids whose export names are not statically known (CommonJS
+ * modules, and chains through them). The loader merges those after the
+ * dependencies load, in `mergeLateStarExports`. */
+function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
+  if (stars.length === 0) return null;
   const exp = mod.exports;
-  // Snapshot the module's own keys so that a later star dependency can
-  // overwrite a key added by an earlier one (matching object spread order),
-  // while the module's own exports always win.
+  // The module's own exports always win. Snapshot them so a later star
+  // dependency can overwrite a key added by an earlier one (matching the
+  // last-wins order of the object spread this replaces).
   const ownKeys = new Set(Object.keys(exp));
+  let lateIds: Id[] | null = null;
+
+  const defineForward = (starId: Id, key: string) => {
+    if (key === "default" || ownKeys.has(key)) return;
+    Object.defineProperty(exp, key, {
+      // HMRModule instances are mutated across hot updates, never replaced,
+      // so resolving through the registry reads the latest exports.
+      get: () => {
+        const m = registry.get(starId);
+        return m && getEsmExports(m)[key];
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  };
+
   for (const starId of stars) {
-    // HMRModule instances are mutated across hot updates, never replaced, so
-    // capturing the module keeps the getter pointed at the latest exports.
+    const unloaded = unloadedModuleRegistry[starId];
+    if (Array.isArray(unloaded)) {
+      // ESM: collect the export names of the dependency and of its own
+      // `export *` chain. The walk is seeded with this module's id so a
+      // circular star re-export does not forward a name back to its only
+      // concrete provider (that getter would recurse forever).
+      const visited = new Set<Id>([mod.id, starId]);
+      const queue: Id[] = [starId];
+      let sawDynamic = false;
+      while (queue.length > 0) {
+        const next = unloadedModuleRegistry[queue.shift()!];
+        if (!Array.isArray(next)) {
+          // A nested star through a CommonJS module: its names are only
+          // known after it runs, so re-merge this dependency late.
+          sawDynamic = true;
+          continue;
+        }
+        for (const key of next[ESMProps.exports]) {
+          defineForward(starId, key);
+        }
+        for (const nested of next[ESMProps.stars]) {
+          if (!visited.has(nested)) {
+            visited.add(nested);
+            queue.push(nested);
+          }
+        }
+      }
+      if (sawDynamic) (lateIds ??= []).push(starId);
+    } else if (typeof unloaded === "function") {
+      // CommonJS: the export names are only known after the module runs.
+      (lateIds ??= []).push(starId);
+    } else if (registry.get(starId)) {
+      // A synthetic module (`registerSynthetic`), already loaded.
+      (lateIds ??= []).push(starId);
+    } else if (side === "server") {
+      // A builtin, for example `export * from "node:path"` on the server.
+      const ns = mod.builtin(starId);
+      for (const key of Object.keys(ns)) {
+        if (key === "default" || ownKeys.has(key)) continue;
+        Object.defineProperty(exp, key, {
+          get: () => ns[key],
+          enumerable: true,
+          configurable: true,
+        });
+      }
+    }
+  }
+  return lateIds;
+}
+
+/** Second half of `mergeStarExports`, after the dependencies load. Only adds
+ * names the static merge could not define. */
+function mergeLateStarExports(mod: HMRModule, lateIds: Id[]) {
+  const exp = mod.exports;
+  for (const starId of lateIds) {
     const starMod = registry.get(starId);
     if (!starMod) continue;
     const ns = getEsmExports(starMod);
     for (const key of Object.keys(ns)) {
-      if (key === "default" || ownKeys.has(key)) continue;
+      if (key === "default" || Object.prototype.hasOwnProperty.call(exp, key)) continue;
       Object.defineProperty(exp, key, {
         get: () => getEsmExports(starMod)[key],
         enumerable: true,
@@ -1030,12 +1108,17 @@ function isReactRefreshBoundary(esmExports): boolean {
   let areAllExportsComponents = true;
   for (const key in esmExports) {
     hasExports = true;
-    const desc = Object.getOwnPropertyDescriptor(esmExports, key);
-    if (desc && desc.get) {
-      // Don't invoke getters as they may have side effects.
+    // Every getter on this object is generated by the HMR runtime itself
+    // (the module wrapper's `get x() { return x }`, or the star re-export
+    // merge), so reading it has no side effects. The read can still throw,
+    // for a binding in its temporal dead zone during an import cycle; such
+    // a module is not a component boundary.
+    let exportValue;
+    try {
+      exportValue = esmExports[key];
+    } catch {
       return false;
     }
-    const exportValue = esmExports[key];
     if (!isLikelyComponentType(exportValue)) {
       areAllExportsComponents = false;
     }

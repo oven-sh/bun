@@ -416,11 +416,7 @@ impl<'a> Scanner<'a> {
                     Ok(s) => s,
                     Err(_) => bun_core::out_of_memory(),
                 };
-                let abs_path = Interned::from_static(stored);
-                {
-                    let _entry_guard = entry.mutex.lock_guard();
-                    entry.set_abs_path(abs_path);
-                }
+                let abs_path = entry.abs_path_or_fill(|| Interned::from_static(stored));
                 self.test_files.push(abs_path);
             }
         }

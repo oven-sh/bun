@@ -1017,3 +1017,22 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
     });
   });
 });
+
+it("object loader: an error thrown by a getter on the exports object rejects the require()", () => {
+  const boom = new Error("boom");
+  plugin({
+    name: "object loader with throwing __esModule",
+    setup(build) {
+      build.module("object-loader-throwing-esmodule", () => ({
+        exports: {
+          get __esModule() {
+            throw boom;
+          },
+          a: 1,
+        },
+        loader: "object",
+      }));
+    },
+  });
+  expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
+});

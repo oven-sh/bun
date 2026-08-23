@@ -30,6 +30,11 @@ test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
 # TODO: jsc
 test/js/bun/jsonl/jsonl-parse.test.ts
 
+# X509Certificate toLegacyObject → computeInfoAccess pushes onto a JSArray in a
+# loop without checking (JSX509Certificate.cpp); reached from a TLS peer
+# certificate. The tests only run with service-bus credentials, so CI-only.
+test/js/third_party/@azure/service-bus/azure-service-bus.test.ts
+
 # JSC JSONP fast path (Interpreter::executeProgram doGet lambda) does an
 # unchecked getPropertySlot/getValue pair; only throwable through
 # NodeVMGlobalObject's overridden getOwnPropertySlot. Needs a WebKit-side fix.

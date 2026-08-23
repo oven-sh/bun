@@ -680,5 +680,21 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       c.received[0].body.resourceSpans[0].resource.attributes.map((a: any) => [a.key, Object.values(a.value)[0]]),
     );
     expect(attrs["service.name"]).toBe("from-bunfig");
+
+    // OTEL_* environment wins over bunfig, including service.name via OTEL_RESOURCE_ATTRIBUTES
+    using c2 = collector();
+    await using proc2 = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, OTEL_EXPORTER_OTLP_ENDPOINT: c2.url, OTEL_RESOURCE_ATTRIBUTES: "service.name=from-env" },
+      stderr: "pipe",
+    });
+    const [, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+    expect(stderr2).toBe("");
+    expect(exitCode2).toBe(0);
+    const attrs2 = Object.fromEntries(
+      c2.received[0].body.resourceSpans[0].resource.attributes.map((a: any) => [a.key, Object.values(a.value)[0]]),
+    );
+    expect(attrs2["service.name"]).toBe("from-env");
   });
 });

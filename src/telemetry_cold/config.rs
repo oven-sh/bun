@@ -184,10 +184,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     {
         enabled = false;
     }
-    if let Some(b) = bunfig {
-        c.service_name.clone_from(&b.service_name);
-    }
-
+    // service.name: OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES > bunfig.
     if let Some(v) = get("OTEL_SERVICE_NAME") {
         let v = s(&v);
         if !v.is_empty() {
@@ -206,6 +203,11 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             }
         }
         c.resource_attributes.retain(|(k, _)| k != "service.name");
+    }
+    if c.service_name.is_none() {
+        if let Some(b) = bunfig {
+            c.service_name.clone_from(&b.service_name);
+        }
     }
 
     if let Some(name) = get("OTEL_TRACES_SAMPLER") {

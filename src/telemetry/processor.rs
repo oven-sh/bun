@@ -213,7 +213,6 @@ impl Processor {
         }
     }
 
-    /// Drop every exporter except those bound to a VM other than `owner`.
     /// Add `new`; with `replace_owner`, first drop every exporter not owned by
     /// another VM — in the same write, so a concurrent `export()` never sees
     /// an empty list in between.

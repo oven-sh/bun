@@ -72,7 +72,7 @@ inline uint64_t telemetryTimeInputToNs(JSValue v)
 // @opentelemetry/api SpanKind (INTERNAL 0 … CONSUMER 4); anything else is INTERNAL.
 // Stored and passed to Rust as-is; bun_telemetry::SpanKind::from_api is the only conversion.
 // api SpanKind number, or "internal" | "server" | "client" | "producer" | "consumer".
-ALWAYS_INLINE uint8_t telemetryApiKind(JSGlobalObject* globalObject, JSValue v)
+ALWAYS_INLINE uint8_t telemetryApiKind(JSValue v)
 {
     if (v.isInt32())
         return v.asInt32() >= 0 && v.asInt32() <= 4 ? static_cast<uint8_t>(v.asInt32()) : 0;

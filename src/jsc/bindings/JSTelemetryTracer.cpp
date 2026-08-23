@@ -181,7 +181,7 @@ static JSTelemetrySpan* tracerStartSpan(Zig::GlobalObject* globalObject, JSTelem
 
     TelemetrySpanStub stub;
     Bun__Telemetry__stubStart(globalObject, &stub, parentCell ? &parentCell->m_stub : nullptr, telemetryTimeInputToNs(startTime));
-    auto* span = JSTelemetrySpan::create(vm, globalObject, stub, tracer->m_scope, telemetryApiKind(globalObject, kind), name, 0);
+    auto* span = JSTelemetrySpan::create(vm, globalObject, stub, tracer->m_scope, telemetryApiKind(kind), name, 0);
     inheritPropagation(vm, globalObject, span, 0, parentCell);
 
     if (attributes.isObject()) {
@@ -583,7 +583,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryStartInstrumentSpan, (JSGlobalObject * lexic
     if (!instrument.isInt32() || !name.isString())
         return JSValue::encode(jsUndefined());
     BunString n = telemetryBorrow(asString(name));
-    return Bun__Telemetry__startInstrumentSpan(globalObject, static_cast<uint32_t>(instrument.asInt32()), &n, telemetryApiKind(globalObject, callFrame->argument(2)));
+    return Bun__Telemetry__startInstrumentSpan(globalObject, static_cast<uint32_t>(instrument.asInt32()), &n, telemetryApiKind(callFrame->argument(2)));
 }
 
 // propagationHeaders(span) → [traceparent?, tracestate?, baggage?], honouring OTEL_PROPAGATORS.

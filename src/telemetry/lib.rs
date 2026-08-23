@@ -39,7 +39,6 @@ pub struct Local {
     pub http_templates: http_record::Cache,
     /// PRNG for span/trace ids; seeded lazily from `bun_core::fast_random`.
     pub rng: span::IdRng,
-    /// Reused transcoding buffers for the JS span ABI: [key, value, name/misc].
     /// Reused transcode buffers: [0..3] for attribute key/value/array bytes, [3] for the span name.
     pub scratch: [Vec<u8>; 4],
 }

@@ -3044,7 +3044,10 @@ describe("global virtual store", () => {
       }),
     );
 
-    await runBunInstall(bunEnv, packageDir);
+    // CI exports BUN_INSTALL_CACHE_DIR, which overrides bunfig's `cache`. Pin
+    // it so the `links/` assertions below look at this test's own store.
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+    await runBunInstall(env, packageDir);
 
     // A trusted package's lifecycle script can write through the package's
     // dep symlinks (the npm `bun` wrapper's postinstall renames the platform
@@ -3079,7 +3082,7 @@ describe("global virtual store", () => {
     // `meta.hasInstallScript` isn't serialised in `bun.lock`, so a warm
     // install must reach the same layout from trustedDependencies alone.
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
     assertLayout();
   });
 

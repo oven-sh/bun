@@ -1,4 +1,5 @@
 #include "EncodeURIComponent.h"
+#include <wtf/HexNumber.h>
 
 // from JSGlobalObjectFunctions.cpp
 

@@ -2,7 +2,7 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
-use core::mem::size_of;
+use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -349,8 +349,10 @@ pub enum Encoding {
     Binary = 0,
     #[default]
     Latin1 = 1,
-    // Not used yet.
-    Utf8 = 2,
+    /// Little-endian UTF-16 code units at an even section offset. Reuses the
+    /// value of the never-written `Utf8` variant so an older runtime reads it
+    /// through its plain-copy arm, not as an invalid discriminant.
+    Utf16 = 2,
 }
 
 #[repr(u8)]
@@ -483,8 +485,15 @@ pub struct File {
 }
 
 impl File {
+    /// A text import stored as a string body by `encode_text_module`.
+    pub fn is_text_module(&self) -> bool {
+        self.loader == Loader::Text
+    }
+
     pub fn appears_in_embedded_files_array(&self) -> bool {
-        self.side == FileSide::Client || !self.loader.is_javascript_like()
+        // A text module's bytes are not the file's UTF-8.
+        !self.is_text_module()
+            && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
     pub fn stat(&self) -> Stat {
@@ -502,14 +511,31 @@ impl File {
     }
 
     pub fn to_wtf_string(&mut self) -> BunString {
+        if self.contents.is_empty() {
+            return BunString::EMPTY;
+        }
         if self.wtf_string.is_empty() {
             match self.encoding {
-                Encoding::Binary | Encoding::Utf8 => {
+                Encoding::Binary => {
                     self.wtf_string = BunString::clone_utf8(self.contents.as_bytes());
                 }
                 Encoding::Latin1 => {
                     self.wtf_string =
                         BunString::create_static_external(self.contents.as_bytes(), true);
+                }
+                Encoding::Utf16 => {
+                    let bytes = self.contents.as_bytes();
+                    debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
+                    #[expect(
+                        clippy::cast_ptr_alignment,
+                        reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
+                    )]
+                    // SAFETY: even byte count at a 2-byte-aligned offset of a
+                    // section that is never freed.
+                    let units = unsafe {
+                        core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+                    };
+                    self.wtf_string = BunString::create_static_external_utf16(units);
                 }
             }
         }
@@ -822,6 +848,47 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
+/// A text import the bundler emitted as an asset (`Loader::Text` arm of
+/// `ParseTask` in compile mode). The runtime aliases its bytes as a string.
+fn is_text_module_output(output_file: &OutputFile) -> bool {
+    output_file.loader == Loader::Text && output_file.output_kind == options::OutputKind::Asset
+}
+
+/// Writes `utf8` as a `WTF::StringImpl` body: 8-bit when ASCII, else UTF-16
+/// at an even offset so the runtime can alias a `char16_t*` (the same split
+/// as `String::clone_utf8`). `to_bytes` reserves `2 * utf8.len() + 4` bytes.
+fn encode_text_module(
+    string_builder: &mut bun_core::StringBuilder,
+    utf8: &[u8],
+) -> (StringPointer, Encoding) {
+    // Invalid UTF-8 becomes U+FFFD, as with `TextDecoder`.
+    let units = match strings::to_utf16_alloc(utf8, false, false) {
+        Ok(None) => return (string_builder.append_count_z(utf8), Encoding::Latin1),
+        Ok(Some(units)) => units,
+        Err(_) => bun_alloc::out_of_memory(),
+    };
+    if !string_builder.len.is_multiple_of(align_of::<u16>()) {
+        string_builder.writable()[0] = 0;
+        string_builder.len += 1;
+    }
+    let start = string_builder.len;
+    let byte_len = units.len() * 2;
+    // SAFETY: a `u8` view over initialized `u16`s is in bounds and aligned.
+    let bytes = unsafe { core::slice::from_raw_parts(units.as_ptr().cast::<u8>(), byte_len) };
+    let dst = string_builder.writable();
+    dst[..byte_len].copy_from_slice(bytes);
+    dst[byte_len] = 0;
+    dst[byte_len + 1] = 0;
+    string_builder.len += byte_len + 2;
+    (
+        StringPointer {
+            offset: start as u32,
+            length: byte_len as u32,
+        },
+        Encoding::Utf16,
+    )
+}
+
 /// The embedded bunfs key for an output file, relative to the prefix.
 ///
 /// Windows: store the key with `/`. The template printer emits native
@@ -853,7 +920,12 @@ pub(crate) fn to_bytes(
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
 
-    let mut entry_point_id: Option<usize> = None;
+    let is_entry_point = |output_file: &OutputFile| {
+        output_file.output_kind == options::OutputKind::EntryPoint
+            && (output_file.side.is_none() || output_file.side == Some(options::Side::Server))
+    };
+
+    let mut has_entry_point = false;
     let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
     for output_file in output_files {
@@ -872,22 +944,19 @@ pub(crate) fn to_bytes(
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
             } else {
-                if entry_point_id.is_none() {
-                    if output_file.side.is_none() || output_file.side == Some(options::Side::Server)
-                    {
-                        if output_file.output_kind == options::OutputKind::EntryPoint {
-                            entry_point_id = Some(module_count);
-                        }
-                    }
-                }
+                has_entry_point |= is_entry_point(output_file);
 
                 string_builder.count_z(bytes);
+                if is_text_module_output(output_file) {
+                    // UTF-16 worst case: 2 bytes per byte, padding, 2-byte NUL.
+                    string_builder.cap += bytes.len() + 3;
+                }
                 module_count += 1;
             }
         }
     }
 
-    if module_count == 0 || entry_point_id.is_none() {
+    if module_count == 0 || !has_entry_point {
         return Ok(Vec::new());
     }
 
@@ -901,6 +970,9 @@ pub(crate) fn to_bytes(
 
     let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_count);
     let mut module_files: Vec<&OutputFile> = Vec::with_capacity(module_count);
+    let mut entry_point_id: Option<usize> = None;
+    // `Graph::from_bytes` keys files by path; a repeat would shift `entry_point_id`.
+    let mut seen_paths: StringArrayHashMap<()> = StringArrayHashMap::new();
 
     for output_file in output_files {
         if !output_file.output_kind.is_file_in_standalone_mode() {
@@ -910,6 +982,17 @@ pub(crate) fn to_bytes(
         let options::OutputFileValue::Buffer { bytes: buf_bytes } = &output_file.value else {
             continue;
         };
+
+        // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
+        if seen_paths
+            .get_or_put(&module_dest_path(output_file))?
+            .found_existing
+        {
+            continue;
+        }
+        if entry_point_id.is_none() && is_entry_point(output_file) {
+            entry_point_id = Some(modules.len());
+        }
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
@@ -1085,7 +1168,12 @@ pub(crate) fn to_bytes(
     }
 
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
-        module.contents = string_builder.append_count_z(output_file.value.as_slice());
+        if is_text_module_output(output_file) {
+            (module.contents, module.encoding) =
+                encode_text_module(&mut string_builder, output_file.value.as_slice());
+        } else {
+            module.contents = string_builder.append_count_z(output_file.value.as_slice());
+        }
     }
 
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
@@ -1110,8 +1198,11 @@ pub(crate) fn to_bytes(
             modules.len() * size_of::<CompiledModuleGraphFile>(),
         )
     };
+    let Some(entry_point_id) = entry_point_id else {
+        return Ok(Vec::new());
+    };
     let offsets = Offsets {
-        entry_point_id: entry_point_id.unwrap() as u32,
+        entry_point_id: entry_point_id as u32,
         modules_ptr: string_builder.append_count(modules_as_bytes),
         compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
         byte_count: string_builder.len,

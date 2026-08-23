@@ -193,6 +193,19 @@ describe.concurrent("DOMException formats as an error", () => {
     expect(inspected).toContain("DataError");
     expect(inspected).not.toContain("INDEX_SIZE_ERR");
   });
+
+  test("DOMException as a non-enumerable error cause is printed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'throw new Error("outer", { cause: new DOMException("inner", "AbortError") });'],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: outer");
+    expect(stderr).toContain("AbortError: inner");
+    expect(stderr).not.toContain("INDEX_SIZE_ERR");
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe("observable properties", () => {

@@ -6413,7 +6413,9 @@ impl VirtualMachine {
             if !saw_cause {
                 let key = bun_core::String::static_("cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
-                    if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
+                    if cause.is_cell()
+                        && (cause.js_type() == JSType::ErrorInstance || cause.is_dom_exception())
+                    {
                         cause.protect();
                         errors_to_append.push(cause);
                     }

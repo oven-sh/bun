@@ -205,7 +205,7 @@ pub mod event_loop_delay_monitor;
 
 /// `clearTimeout(id)` lookup table: the object's `Drop` removes its entry, so
 /// every `BackRef` in here points at a live timer.
-pub(crate) type IdMap<T> = ArrayHashMap<i32, BackRef<T, bun_ptr::Mut>>;
+pub(crate) type IdMap<T> = ArrayHashMap<i32, BackRef<T, bun_ptr::Root>>;
 
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
 #[derive(Default)]

@@ -196,7 +196,6 @@ describe.if(isWindows && canBuildNodeAddons())("uv_default_loop", () => {
     queueWork: (cb: (ranWork: number) => void) => void;
     defaultLoopIsNapiLoop: () => boolean;
   };
-  let addonPath: string = "";
 
   beforeAll(async () => {
     const files = {
@@ -226,8 +225,7 @@ describe.if(isWindows && canBuildNodeAddons())("uv_default_loop", () => {
     };
     const tempdir = tempDirWithFiles("uv-default-loop", files);
     await Bun.$`${bunExe()} i`.env(bunEnv).cwd(tempdir);
-    addonPath = path.join(tempdir, "build/Release/default_loop.node");
-    addon = require(addonPath);
+    addon = require(path.join(tempdir, "build/Release/default_loop.node"));
     // The MSBuild compile of the addon overruns the default 5s hook timeout.
   }, 300_000);
 

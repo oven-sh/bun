@@ -173,8 +173,9 @@ describe.concurrent("DOMException formats as an error", () => {
     expect(stdout).toBe("");
     expect(stderr).toContain("AbortError");
     expect(stderr).toContain("aborted");
-    // The abort reason carries a .stack, and the frame must print.
-    expect(stderr).toMatch(/at .*\[eval\]/);
+    // The abort reason carries a .stack, and its frame must print after
+    // the header.
+    expect(stderr).toMatch(/AbortError: The operation was aborted\.[\s\S]*^\s+at .*\[eval\]/m);
     expect(stderr).not.toContain("INDEX_SIZE_ERR");
     expect(exitCode).toBe(0);
   });

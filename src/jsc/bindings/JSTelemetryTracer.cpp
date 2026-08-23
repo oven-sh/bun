@@ -163,14 +163,16 @@ static JSTelemetrySpan* tracerStartSpan(Zig::GlobalObject* globalObject, JSTelem
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSValue parent = jsUndefined();
-    if (isRoot) {
-        parent = jsNull();
-    } else if (!context.isUndefined()) {
+    if (!context.isUndefined()) {
+        // `root: true` only drops the context's span as parent; its other values
+        // (baggage) still become active.
         auto [span, extras] = unpackContext(globalObject, context);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        parent = span.isUndefinedOrNull() ? jsNull() : span;
+        parent = isRoot || span.isUndefinedOrNull() ? jsNull() : span;
         if (extrasOut)
             *extrasOut = extras;
+    } else if (isRoot) {
+        parent = jsNull();
     } else if (!explicitParent.isUndefined()) {
         parent = explicitParent;
     }

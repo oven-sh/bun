@@ -214,9 +214,20 @@ impl Processor {
     }
 
     /// Drop every exporter except those bound to a VM other than `owner`.
-    pub fn clear_exporters(&self, owner: usize) {
+    /// Add `new`; with `replace_owner`, first drop every exporter not owned by
+    /// another VM — in the same write, so a concurrent `export()` never sees
+    /// an empty list in between.
+    pub fn install_exporters(&self, replace_owner: Option<usize>, new: Vec<Arc<dyn Exporter>>) {
+        let Some(owner) = replace_owner else {
+            self.exporters.write().extend(new);
+            return;
+        };
         let keep = |e: &Arc<dyn Exporter>| e.owner().is_some_and(|o| o != owner);
-        self.exporters.write().retain(keep);
+        {
+            let mut list = self.exporters.write();
+            list.retain(keep);
+            list.extend(new);
+        }
         let mut retries = self.retries.lock();
         let (kept, dropped): (Vec<_>, Vec<_>) = core::mem::take(&mut *retries)
             .into_iter()

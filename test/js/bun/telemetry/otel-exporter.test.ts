@@ -655,7 +655,10 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const stats = JSON.parse(stdout.trim());
-    // 5 spans, each exported once: one exporter, however the starts interleaved.
+    // 5 spans, each exported once: one exporter, however the starts interleaved
+    // (a start() that replaces exporters swaps the list atomically, so a
+    // concurrent export never finds it empty).
+    expect(stats.spansDropped).toBe(0);
     expect(stats.spansExported).toBe(5);
     expect(stats.exportsSucceeded).toBe(c.received.length);
     expect(c.spans().length).toBe(5);

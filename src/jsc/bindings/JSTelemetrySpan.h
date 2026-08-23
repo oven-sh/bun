@@ -31,7 +31,7 @@ public:
         Name = 2,
         // null | JSArray [name, time (TimeInput | epoch ms), flatAttributes | null, …]
         Events = 3,
-        // null | JSArray [traceIdHex, spanIdHex, traceFlags, flatAttributes | null, …]
+        // null | JSArray [traceIdHex, spanIdHex, traceFlags, flatAttributes | null, traceState, …] (stride 5)
         Links = 4,
         // int32 @opentelemetry/api SpanStatusCode (UNSET 0, OK 1, ERROR 2)
         StatusCode = 5,

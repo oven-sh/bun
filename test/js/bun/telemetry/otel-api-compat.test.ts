@@ -268,6 +268,27 @@ describe("@opentelemetry/api", () => {
     await collect();
   });
 
+  test("extract() onto a foreign api Context without baggage, then getBaggage / root spans keep the context's baggage", async () => {
+    // api's own ROOT_CONTEXT (BaseContext), not Bun's
+    const { ROOT_CONTEXT: apiRoot } = require("@opentelemetry/api");
+    const ctx = propagation.extract(apiRoot, {
+      traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+    });
+    expect(propagation.getBaggage(ctx)).toBeUndefined();
+    expect(trace.getSpanContext(ctx)?.traceId).toBe("0af7651916cd43dd8448eb211c80319c");
+    const withBag = propagation.setBaggage(ctx, propagation.createBaggage({ a: { value: "1" } }));
+    const tracer = trace.getTracer("compat");
+    let inside: string | undefined, parent: string | undefined;
+    tracer.startActiveSpan("r", { root: true }, withBag, span => {
+      inside = propagation.getActiveBaggage()?.getEntry("a")?.value;
+      parent = (span as any).parentSpanId;
+      span.end();
+    });
+    expect(inside).toBe("1");
+    expect(parent).toBeFalsy();
+    await collect();
+  });
+
   test("propagation.inject() inside a request handler forwards the baggage the request carried in", async () => {
     using server = Bun.serve({
       port: 0,

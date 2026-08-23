@@ -772,9 +772,8 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
         let Local {
             batch, scratch: sc, ..
         } = &mut *lo;
-        // The name borrows scratch[2] for the whole encode; attribute keys/values use [0]/[1]/[2'].
-        let mut name_buf = core::mem::take(&mut sc[2]);
-        let name = utf8(&desc.name, &mut name_buf);
+        let [sc @ .., name_buf] = sc;
+        let name = utf8(&desc.name, name_buf);
         batch::record(batch, ScopeId(desc.scope), &mut |buf: &mut Vec<u8>| {
             let mut w = SpanWriter::begin(buf, stub, name, SpanKind::from_api(desc.kind), end_ns);
             if !desc.trace_state.is_empty() {
@@ -816,7 +815,6 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
             }
             w.finish();
         });
-        sc[2] = name_buf;
     }
     super::after_record(global);
 }
@@ -902,6 +900,7 @@ pub extern "C" fn Bun__Telemetry__nativeSetAttributes(
     let lim = limits();
     let Some(mut l) = local(global) else { return };
     let Local { pool, scratch, .. } = &mut *l;
+    let [scratch @ .., _] = scratch;
     each_attr(
         attrs.items(),
         attrs,

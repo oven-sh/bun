@@ -80,9 +80,9 @@ class BunContext {
   #span: any;
   #extras: Map<symbol, unknown> | undefined;
 
-  constructor(span?: any, extras?: Map<symbol, unknown>) {
+  constructor(span?: any, extras?: Map<symbol, unknown> | null) {
     this.#span = span;
-    this.#extras = extras;
+    this.#extras = extras ?? undefined;
   }
 
   getValue(key: symbol): unknown {
@@ -97,15 +97,15 @@ class BunContext {
   setValue(key: symbol, value: unknown): BunContext {
     if (key === SPAN_KEY) return new BunContext(toNativeSpan(value), this.#extras);
     const m = new Map(this.#extras);
-    m.set(key, value);
+    m.$set(key, value);
     return new BunContext(this.#span, m);
   }
 
   deleteValue(key: symbol): BunContext {
     if (key === SPAN_KEY) return new BunContext(undefined, this.#extras);
-    if (!this.#extras?.has(key)) return this;
+    if (this.#extras === undefined || !this.#extras.$has(key)) return this;
     const m = new Map(this.#extras);
-    m.delete(key);
+    m.$delete(key);
     return new BunContext(this.#span, m.size ? m : undefined);
   }
 
@@ -139,7 +139,7 @@ function unpackContext(ctx: any): [any, Map<symbol, unknown> | null | undefined]
     if ($isMap(values)) {
       let extras: Map<symbol, unknown> | undefined;
       for (const [k, v] of values) {
-        if (k !== SPAN_KEY) (extras ??= new Map()).set(k, v);
+        if (k !== SPAN_KEY) (extras ??= new Map()).$set(k, v);
       }
       return [span, extras ?? null];
     }
@@ -214,10 +214,10 @@ function getTracer(name?: string, version?: string): Tracer {
   name = name ? name + "" : "";
   // NUL cannot appear in a package name, so "a@1" + undefined ≠ "a" + "1".
   const key = version ? name + "\0" + version : name;
-  let t = tracers.get(key);
+  let t = tracers.$get(key);
   if (!t) {
     t = createTracer(createScope(name, version), name, version === undefined ? undefined : version + "");
-    tracers.set(key, t);
+    tracers.$set(key, t);
   }
   return t;
 }
@@ -236,7 +236,7 @@ class Baggage {
     this.#entries = entries ?? new Map();
   }
   getEntry(key: string) {
-    const e = this.#entries.get(key);
+    const e = this.#entries.$get(key);
     return e ? { ...e } : undefined;
   }
   getAllEntries() {
@@ -244,17 +244,17 @@ class Baggage {
   }
   setEntry(key: string, entry: { value: string }) {
     const m = new Map(this.#entries);
-    m.set(key, entry);
+    m.$set(key, entry);
     return new Baggage(m);
   }
   removeEntry(key: string) {
     const m = new Map(this.#entries);
-    m.delete(key);
+    m.$delete(key);
     return new Baggage(m);
   }
   removeEntries(...keys: string[]) {
     const m = new Map(this.#entries);
-    for (const k of keys) m.delete(k);
+    for (const k of keys) m.$delete(k);
     return new Baggage(m);
   }
   clear() {
@@ -293,7 +293,7 @@ function parseBaggage(header: string): Baggage | undefined {
 
 /** W3C `baggage` header for the Baggage in an active-slot extras Map, or "" (used natively). */
 function baggageHeaderFromExtras(extras: unknown): string {
-  const bag = $isMap(extras) ? (extras as Map<symbol, unknown>).get(BAGGAGE_KEY) : undefined;
+  const bag = $isMap(extras) ? (extras as Map<symbol, unknown>).$get(BAGGAGE_KEY) : undefined;
   return bag != null && typeof (bag as any).getAllEntries === "function" ? serializeBaggage(bag) : "";
 }
 
@@ -442,21 +442,21 @@ class TraceState {
     return m;
   }
   get(key: string): string | undefined {
-    return this.#entries().get(key);
+    return this.#entries().$get(key);
   }
   set(key: string, value: string): TraceState {
     const next = new TraceState();
     const m = new Map<string, string>();
-    m.set(key, value); // a modified key moves to the front
+    m.$set(key, value); // a modified key moves to the front
     // W3C: at most 32 members; the oldest fall off (as @opentelemetry/api does).
-    for (const [k, v] of this.#entries()) if (k !== key && m.size < 32) m.set(k, v);
+    for (const [k, v] of this.#entries()) if (k !== key && m.size < 32) m.$set(k, v);
     next.#map = m;
     return next;
   }
   unset(key: string): TraceState {
     const next = new TraceState();
     const m = new Map(this.#entries());
-    m.delete(key);
+    m.$delete(key);
     next.#map = m;
     return next;
   }

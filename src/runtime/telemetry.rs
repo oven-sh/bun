@@ -334,7 +334,15 @@ pub fn init_for_vm(global: &JSGlobalObject) {
 #[optimize(size)]
 pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry_cold::Config) -> Result<(), Vec<u8>> {
     let otlp_exporters = exporter::OtlpHttpExporter::from_configs(&cfg.otlp_exporters)?;
-    configure_with(global, cfg, otlp_exporters);
+    configure_with(
+        global,
+        cfg,
+        otlp_exporters
+            .into_iter()
+            .map(|e| e as Arc<dyn bun_telemetry::processor::Exporter>)
+            .collect(),
+        None,
+    );
     Ok(())
 }
 
@@ -343,7 +351,8 @@ pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry_cold::Config) -> R
 fn configure_with(
     global: &JSGlobalObject,
     cfg: &bun_telemetry_cold::Config,
-    otlp_exporters: Vec<Arc<exporter::OtlpHttpExporter>>,
+    mut exporters: Vec<Arc<dyn bun_telemetry::processor::Exporter>>,
+    replace_owner: Option<usize>,
 ) {
     let vm = global.bun_vm();
     let p = processor();
@@ -389,12 +398,10 @@ fn configure_with(
             os_version: os_version.to_utf8().slice(),
         });
     p.set_resource(resource);
-    for x in otlp_exporters {
-        p.add_exporter(x);
-    }
     if cfg.console_exporter {
-        p.add_exporter(Arc::new(exporter::ConsoleExporter));
+        exporters.push(Arc::new(exporter::ConsoleExporter));
     }
+    p.install_exporters(replace_owner, exporters);
     bun_telemetry::rt::install(bun_telemetry::rt::Hooks {
         active_span: |g| span::active_ptr(g),
         local: local_hook,
@@ -706,32 +713,38 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             return Err(global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&e))));
         }
     };
-    if replaces_exporters {
-        processor().clear_exporters(core::ptr::from_ref(vm_state_or_init(global)) as usize);
+    let mut new_exporters: Vec<Arc<dyn bun_telemetry::processor::Exporter>> = Vec::new();
+    if replaces_exporters || !configured() {
+        new_exporters.extend(
+            otlp.into_iter()
+                .map(|e| e as Arc<dyn bun_telemetry::processor::Exporter>),
+        );
+    }
+    let replace_owner = if replaces_exporters {
         if let Some(s) = vm_state(global) {
             exporter::JsExporter::detach_all_for_vm(s);
         }
-    } else if configured() {
-        // No exporters given: keep the pipeline that env/bunfig/an earlier
-        // start() already set up rather than adding the env-derived ones again.
-        cfg.console_exporter = false;
-    }
-    configure_with(
-        global,
-        &cfg,
-        if replaces_exporters || !configured() {
-            otlp
-        } else {
-            Vec::new()
-        },
-    );
+        Some(core::ptr::from_ref(vm_state_or_init(global)) as usize)
+    } else {
+        if configured() {
+            // No exporters given: keep the pipeline that env/bunfig/an earlier
+            // start() already set up rather than adding the env-derived ones again.
+            cfg.console_exporter = false;
+        }
+        None
+    };
     if !js_exporters.is_empty() {
         let s = vm_state_or_init(global);
-        for e in js_exporters {
-            s.js_exporters.borrow_mut().push(Arc::clone(&e));
-            processor().add_exporter(e);
+        for e in &js_exporters {
+            s.js_exporters.borrow_mut().push(Arc::clone(e));
         }
+        new_exporters.extend(
+            js_exporters
+                .into_iter()
+                .map(|e| e as Arc<dyn bun_telemetry::processor::Exporter>),
+        );
     }
+    configure_with(global, &cfg, new_exporters, replace_owner);
     drop(configuring);
     install_api_global(global);
     Ok(JSValue::UNDEFINED)

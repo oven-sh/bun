@@ -28,7 +28,11 @@ impl JSString {
         JSValue::from_cell(self)
     }
 
-    pub(crate) fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) -> JsResult<()> {
+    pub(crate) fn to_zig_string(
+        &self,
+        global: &JSGlobalObject,
+        zig_str: &mut ZigString,
+    ) -> JsResult<()> {
         // SAFETY: `zig_str` is a live out-parameter for the duration of the call.
         unsafe { crate::cpp::JSC__JSString__toZigString(self, global, zig_str) }
     }

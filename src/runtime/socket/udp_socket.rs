@@ -1529,7 +1529,9 @@ impl UDPSocket {
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
                 // SAFETY: to_js_string returned non-null on success path.
-                payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this)?;
+                payload_str = payload_arg
+                    .to_js_string(global_this)?
+                    .to_slice(global_this)?;
                 break 'brk payload_str.slice();
             } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(

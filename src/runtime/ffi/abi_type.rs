@@ -260,8 +260,7 @@ impl fmt::Display for ToJSFormatter<'_> {
             None => match self.tag {
                 ABIType::Void => Ok(()),
                 ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
-                // A NULL napi_value is `undefined`, as in Node. Its raw bits are the
-                // empty JSValue, which JS code must never see.
+                // NULL is `undefined`, as in Node; its raw bits would be the empty JSValue.
                 ABIType::NapiValue => write!(
                     writer,
                     "({sym} ? ((EncodedJSValue) {{.asNapiValue = {sym} }}) : ValueUndefined)",

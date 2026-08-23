@@ -2226,8 +2226,6 @@ impl Function {
         writer.write_all(b"    ")?;
 
         if self.needs_handle_scope() {
-            // napi_throw* only schedules the exception on the env. Node throws it
-            // when the native function returns; this wrapper is that return.
             writer.write_all(
                 b"  NapiHandleScope__close(&Bun__thisFFIModuleNapiEnv, handleScope);\n\
                   \x20   if (NapiEnv__throwPendingException(&Bun__thisFFIModuleNapiEnv)) return 0;\n",

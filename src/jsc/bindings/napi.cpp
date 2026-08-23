@@ -3418,11 +3418,8 @@ extern "C" bool NapiEnv__hasPendingException(napi_env env)
     return scope.exception() != nullptr;
 }
 
-// The wrapper that bun:ffi cc() compiles around a function with a napi_env
-// calls this after the function returns. napi_throw* only schedules the
-// exception on the env; Node throws it when the native function returns, and
-// this is that return. True means an exception is pending and the wrapper
-// hands JSC the empty value instead of a result.
+// bun:ffi cc() wrappers call this once the compiled function returns, since
+// napi_throw* only schedules the exception on the env.
 extern "C" bool NapiEnv__throwPendingException(napi_env env)
 {
     if (env->throwPendingException()) {

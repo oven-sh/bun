@@ -37,7 +37,7 @@ pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 
 // LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as
 // `super::dev_server_body`). The struct definitions are owned there so impl
-// blocks and `container_of` submodules name a single type. Re-export so
+// blocks and submodules name a single type. Re-export so
 // `crate::bake::dev_server::DevServer` (the public path used by `server/`,
 // `dispatch.rs`, …) resolves to that one struct.
 pub use super::dev_server_body::{

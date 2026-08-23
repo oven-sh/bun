@@ -1758,9 +1758,8 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     Some(&buf[..len])
 }
 
-/// [`join_abs_string_buf`] into `buf` when the result fits, otherwise into
-/// `spill` (grown as needed, untouched in the common case): the caller-buffer
-/// form of [`join_abs_string_spill`], cf. [`join_z_buf_spill`].
+/// Caller-buffer form of [`join_abs_string_spill`] (cf. [`join_z_buf_spill`]):
+/// into `buf` when the result fits, otherwise into `spill`, grown as needed.
 pub fn join_abs_string_buf_spill<'a, P: PlatformT>(
     cwd: &'a [u8],
     buf: &'a mut [u8],

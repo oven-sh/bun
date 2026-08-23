@@ -227,8 +227,11 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
  * keeps it open for as long as the uv_close below is deferred. */
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
   uv_poll_t *h = p->uv_p;
-  if (!h || h->type != UV_POLL || p->stopped) return;
+  if (!h || p->stopped) return;
   p->stopped = 1;
+  /* Never registered: libuv has not seen the handle, so there is nothing to
+   * close. The flag still keeps the poll from being started later. */
+  if (h->type != UV_POLL) return;
   /* Disarm first: a completion this or an inner run has already dequeued must
    * not reach poll_cb for a socket that is now on the closed list. */
   uv_poll_stop(h);
@@ -256,15 +259,16 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
                  ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
+  /* A stopped poll cannot be started again (see us_poll_stop). */
+  if (p->stopped) {
+    errno = -UV_EBADF;
+    return UV_EBADF;
+  }
   if (h->type == UV_POLL) {
     /* Already registered. Initializing it again would wipe the in-flight AFD
      * requests and the loop's list links out from under libuv, and the next
-     * completion would land in a handle libuv no longer tracks. A stopped poll
-     * cannot be restarted; a live one only changes its mask. */
-    if (p->stopped) {
-      errno = -UV_EBADF;
-      return UV_EBADF;
-    }
+     * completion would land in a handle libuv no longer tracks. A live poll
+     * only changes its mask. */
     uv_poll_start(h, events | UV_DISCONNECT, poll_cb);
     return 0;
   }

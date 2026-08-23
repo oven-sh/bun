@@ -211,7 +211,9 @@ test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures th
 // format characters, 7 characters of commit, two VLQs of feature bits, then
 // one frame per VLQ (an offset in bun; a leading 1 introduces a name length,
 // the name, and an offset in that image; `_` is unknown; `=` is JS) until a
-// VLQ of 0 ends the list.
+// VLQ of 0 ends the list. A frame in bun's own image decodes with the object
+// `<bun>`: the encoder writes names from `[A-Za-z0-9._-]` only, so no image
+// (not even an executable named `bun`) can decode to that.
 function decodeTraceFrames(payload: string): { object: string; address: number }[] {
   const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   let i = 3 + 7;
@@ -234,7 +236,7 @@ function decodeTraceFrames(payload: string): { object: string; address: number }
     }
     let address = vlq();
     if (address === 0) return frames;
-    let object = "bun";
+    let object = "<bun>";
     if (address === 1) {
       const length = vlq();
       object = payload.slice(i, i + length);
@@ -309,7 +311,7 @@ test.if(isPosix)("the uploaded trace string names the image of a frame outside b
   expect(frames[0].address).toBeGreaterThan(0);
   // The callers of strlen are still bun's own frames, encoded as such: the
   // executable must not be mistaken for a foreign image, under any name.
-  expect(frames.some(frame => frame.object === "bun")).toBe(true);
+  expect(frames.some(frame => frame.object === "<bun>")).toBe(true);
   expect(frames.map(frame => frame.object)).not.toContain(path.basename(bunExe()));
   expect(exitCode).not.toBe(0);
 });

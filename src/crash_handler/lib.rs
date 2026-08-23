@@ -1588,8 +1588,7 @@ mod draft {
         }
     }
 
-    /// A fault this close to the faulting SP is a guard-page hit, not a stray
-    /// dereference. Same heuristic as the sanitizers' stack-overflow detector.
+    /// A fault this close to SP is a guard-page hit (same heuristic as the sanitizers).
     #[cfg(unix)]
     const STACK_OVERFLOW_SP_SLOP: usize = 0x10000;
 

@@ -142,8 +142,7 @@ pub(crate) mod js_bindings {
                     crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
                 );
             }
-            // JSC's wasm-fault handler replaced Bun's at VM init without
-            // `SA_ONSTACK`; re-arm so the guard-page fault is deliverable.
+            // Re-arm over JSC's wasm-fault handler, which lacks `SA_ONSTACK`.
             crash_handler::reset_on_posix();
             // `ulimit -s unlimited` on CI: cap so recursion hits a guard page.
             // SAFETY: get/setrlimit take valid pointers.

@@ -582,6 +582,14 @@ impl JSGlobalObject {
         .throw()
     }
 
+    /// JS `typeof`, or `"array"` for arrays.
+    pub fn type_name_of(&self, value: JSValue) -> bun_core::StringView<'_> {
+        if value.js_type().is_array() {
+            return bun_core::StringView::static_(b"array");
+        }
+        value.js_type_string(self)
+    }
+
     /// `validators.throwErrInvalidArgType` —
     /// `The "<name>" property must be of type <expected>, got <actual>`
     /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
@@ -591,11 +599,7 @@ impl JSGlobalObject {
         expected_type: &str,
         value: JSValue,
     ) -> JsError {
-        let actual_type = if value.js_type().is_array() {
-            bun_core::StringView::from_bytes(b"array")
-        } else {
-            value.js_type_string(self).view(self)
-        };
+        let actual_type = self.type_name_of(value);
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
@@ -637,16 +641,14 @@ impl JSGlobalObject {
         typename: &[u8],
         value: JSValue,
     ) -> JsError {
-        // `ZigStringSlice` is RAII: `Owned` frees
-        // its `Vec<u8>`, `WTF` derefs the backing `WTFStringImpl` in `Drop`.
-        let ty_str = value.js_type_string(self).to_slice(self);
+        let ty_str = value.js_type_string(self);
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
                 "The \"{}\" property must be of type {}. Received {}",
                 bstr::BStr::new(field),
                 bstr::BStr::new(typename),
-                bstr::BStr::new(ty_str.slice())
+                ty_str
             ),
         )
         .throw()

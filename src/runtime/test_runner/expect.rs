@@ -793,11 +793,9 @@ impl Expect {
         if not { pass = !pass; }
         if pass { return Ok(JSValue::UNDEFINED); }
 
-        let msg = message.to_utf8();
-
         if not {
             let signature = Self::get_signature("pass", "", true);
-            return throw!(this, global_this, signature, "\n\n{}\n", bstr::BStr::new(msg.slice()));
+            return throw!(this, global_this, signature, "\n\n{}\n", message);
         }
 
         // should never reach here
@@ -836,10 +834,8 @@ impl Expect {
         if not { pass = !pass; }
         if pass { return Ok(JSValue::UNDEFINED); }
 
-        let msg = message.to_utf8();
-
         let signature = Self::get_signature("fail", "", true);
-        throw!(this, global_this, signature, "\n\n{}\n", bstr::BStr::new(msg.slice()))
+        throw!(this, global_this, signature, "\n\n{}\n", message)
     }
 }
 
@@ -1378,9 +1374,9 @@ impl Expect {
 
                 if !matcher_fn.js_type().is_function() {
                     let type_name = if matcher_fn.is_null() {
-                        bun_core::StringView::from_bytes(b"null")
+                        bun_core::StringView::static_(b"null")
                     } else {
-                        matcher_fn.js_type_string(global_this).view(global_this)
+                        matcher_fn.js_type_string(global_this)
                     };
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "expect.extend: `{}` is not a valid matcher. Must be a function, is \"{}\"",
@@ -1412,7 +1408,7 @@ impl Expect {
                 let wrapper_fn = unsafe {
                     Bun__JSWrappingFunction__create(
                         global_this,
-                        &raw const *matcher_name,
+                        &matcher_name,
                         host_fn_ptr,
                         matcher_fn,
                     )
@@ -2077,8 +2073,8 @@ impl Expect {
 
         let mut pass = value.is_string();
         if pass {
-            let value_string = value.to_slice_or_null(global)?;
-            let expected_string = expected.to_slice_or_null(global)?;
+            let value_string = value.to_slice(global)?;
+            let expected_string = expected.to_slice(global)?;
             pass = expected_string.slice().is_empty()
                 || pred(value_string.slice(), expected_string.slice());
         }
@@ -3217,7 +3213,7 @@ fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> O
 unsafe extern "C" {
     fn Bun__JSWrappingFunction__create(
         global_this: *const JSGlobalObject,
-        symbol_name: *const bun_core::String,
+        symbol_name: &bun_core::String,
         // C++: `Bun::NativeFunctionPtr` — a bare `EncodedJSValue (*)(JSGlobalObject*, CallFrame*)`.
         // Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,

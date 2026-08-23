@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use bun_core::comptime_string_map::ComptimeStringMap as _;
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
@@ -214,14 +215,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-fn lookup_string<M: bun_core::comptime_string_map::ComptimeStringMap<Value = i32>>(
-    table: &M,
-    key: &bun_core::String,
-) -> Option<i32> {
-    let utf8 = key.to_utf8();
-    table.lookup(utf8.slice()).copied()
-}
-
 pub(crate) fn on_create(
     global_object: &JSGlobalObject,
     object: JSValue,
@@ -269,8 +262,8 @@ pub(crate) fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.to_bun_string(global_object)?;
-                    let Some(v) = lookup_string(&COMPRESS_TABLE, &key) else {
+                    let key = compression.to_slice(global_object)?;
+                    let Some(&v) = COMPRESS_TABLE.lookup(key.slice()) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "WebSocketServerContext expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
@@ -293,8 +286,8 @@ pub(crate) fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.to_bun_string(global_object)?;
-                    let Some(v) = lookup_string(&DECOMPRESS_TABLE, &key) else {
+                    let key = compression.to_slice(global_object)?;
+                    let Some(&v) = DECOMPRESS_TABLE.lookup(key.slice()) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));

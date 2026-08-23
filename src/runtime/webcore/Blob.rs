@@ -1997,8 +1997,9 @@ impl BlobExt for Blob {
         if let Some(content_type_) = args_iter.next_eat() {
             'inner: {
                 if content_type_.is_string() {
-                    let content_type_js = content_type_.to_js_string(global_this)?;
-                    let slicer = content_type_js.to_slice(global_this);
+                    let (_content_type_js, content_type_js_view) =
+                        content_type_.to_js_string_view(global_this)?;
+                    let slicer = content_type_js_view.to_utf8();
                     let slice = slicer.slice();
                     if !is_valid_blob_type(slice) {
                         break 'inner;
@@ -3268,15 +3269,8 @@ impl BlobExt for Blob {
                             // buffers instead — regardless of `MOVE`.
                             return Ok(artifact.blob.dupe());
                         } else {
-                            // Dispatch on the `ZigStringSlice` variant to detect an
-                            // owned (heap) slice. Pass
-                            // `is_all_ascii = false` here (the slice came from
-                            // an arbitrary DOMWrapper coercion, not a known-ASCII
-                            // source) and *fall through* — no `return` — for a
-                            // non-owned (i.e. empty) slice, letting
-                            // the joiner path below handle it.
-                            let sliced = current.to_slice_clone(global)?;
-                            if matches!(sliced, ZigStringSlice::Owned(_)) {
+                            let sliced = current.to_slice(global)?;
+                            if !sliced.slice().is_empty() {
                                 return Ok(Blob::init_with_all_ascii(
                                     sliced.into_vec(),
                                     global,
@@ -3388,7 +3382,7 @@ impl BlobExt for Blob {
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    let sliced = item.to_slice_clone(global)?;
+                                    let sliced = item.to_slice(global)?;
                                     could_have_non_ascii =
                                         could_have_non_ascii || sliced.is_allocated();
                                     joiner.push_cloned(sliced.slice());
@@ -3413,7 +3407,7 @@ impl BlobExt for Blob {
                                         }
                                         continue;
                                     } else {
-                                        let sliced = item.to_slice_clone(global)?;
+                                        let sliced = item.to_slice(global)?;
                                         could_have_non_ascii =
                                             could_have_non_ascii || sliced.is_allocated();
                                         joiner.push_cloned(sliced.slice());
@@ -3421,7 +3415,7 @@ impl BlobExt for Blob {
                                     }
                                 }
                                 _ => {
-                                    let sliced = item.to_slice_clone(global)?;
+                                    let sliced = item.to_slice(global)?;
                                     could_have_non_ascii =
                                         could_have_non_ascii || sliced.is_allocated();
                                     joiner.push_cloned(sliced.slice());
@@ -3440,7 +3434,7 @@ impl BlobExt for Blob {
                         // free this Blob's Store before `done()`, so always copy.
                         joiner.push_cloned(blob.shared_view());
                     } else {
-                        let sliced = current.to_slice_clone(global)?;
+                        let sliced = current.to_slice(global)?;
                         could_have_non_ascii = could_have_non_ascii || sliced.is_allocated();
                         joiner.push_cloned(sliced.slice());
                     }

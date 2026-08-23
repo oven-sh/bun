@@ -84,8 +84,6 @@ pub mod source_provider;
 pub mod url_search_params;
 #[path = "WTF.rs"]
 pub mod wtf;
-#[path = "ZigErrorType.rs"]
-pub mod zig_error_type;
 #[path = "ZigStackFrameCode.rs"]
 pub mod zig_stack_frame_code;
 #[path = "ZigStackFramePosition.rs"]

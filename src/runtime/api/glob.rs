@@ -376,10 +376,7 @@ impl Glob {
             )));
         }
 
-        let pat_str: Box<[u8]> = pat_arg
-            .to_slice_clone(global_this)?
-            .into_vec()
-            .into_boxed_slice();
+        let pat_str: Box<[u8]> = pat_arg.to_slice(global_this)?.into_vec().into_boxed_slice();
 
         Ok(Box::new(Glob {
             pattern: pat_str,

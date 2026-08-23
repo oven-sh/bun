@@ -16,7 +16,9 @@ use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, ThreadSafe, Unprotect};
+use bun_jsc::{
+    EventLoopHandle, JSGlobalObject, JSValue, JsResult, StringJsc as _, ThreadSafe, Unprotect,
+};
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
@@ -2388,7 +2390,6 @@ mod _async_tasks {
                     );
                     match res {
                         Err(err) => {
-                            entries.clear();
                             {
                                 let _lock = self.pending_err_mutex.lock_guard();
                                 if self.pending_err.is_none() {
@@ -4337,9 +4338,7 @@ pub enum StringOrUndefined {
 impl StringOrUndefined {
     fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            StringOrUndefined::String(s) => {
-                bun_jsc::bun_string_jsc::into_js(core::mem::take(s), global_object)
-            }
+            StringOrUndefined::String(s) => core::mem::take(s).into_js(global_object),
             StringOrUndefined::None => Ok(JSValue::UNDEFINED),
         }
     }
@@ -6243,12 +6242,7 @@ impl NodeFS {
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         loop {
             let current = match iterator.next() {
-                Err(err) => {
-                    // The caller owns the Vec; drain it on error so the caller's
-                    // `T::into_readdir` never sees stale entries.
-                    entries.clear();
-                    return Err(err.with_path(args.path.slice()));
-                }
+                Err(err) => return Err(err.with_path(args.path.slice())),
                 Ok(None) => break,
                 Ok(Some(ent)) => ent,
             };
@@ -6301,10 +6295,7 @@ impl NodeFS {
 
         loop {
             let current = match iterator.next() {
-                Err(err) => {
-                    entries.clear();
-                    return Err(err.with_path(args.path.slice()));
-                }
+                Err(err) => return Err(err.with_path(args.path.slice())),
                 Ok(None) => break,
                 Ok(Some(ent)) => ent,
             };
@@ -6736,15 +6727,13 @@ impl NodeFS {
         if recursive && flavor == Flavor::Sync {
             let mut buf_to_pass = PathBuffer::uninit();
             let mut entries: Vec<T> = Vec::new();
-            return match Self::readdir_with_entries_recursive_sync::<T>(
+            return Self::readdir_with_entries_recursive_sync::<T>(
                 &mut buf_to_pass,
                 args,
                 path,
                 &mut entries,
-            ) {
-                Err(err) => Err(err),
-                Ok(()) => Ok(T::into_readdir(entries)),
-            };
+            )
+            .map(|()| T::into_readdir(entries));
         }
 
         if recursive {
@@ -6773,10 +6762,8 @@ impl NodeFS {
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
         let mut entries: Vec<T> = Vec::new();
-        match Self::readdir_with_entries::<T>(args, fd, path, &mut entries) {
-            Err(err) => Err(err),
-            Ok(()) => Ok(T::into_readdir(entries)),
-        }
+        Self::readdir_with_entries::<T>(args, fd, path, &mut entries)
+            .map(|()| T::into_readdir(entries))
     }
 
     /// Caller has already checked `is_bun_standalone_file_path(path)`.

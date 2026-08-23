@@ -208,7 +208,6 @@ type StringifyResult<T> = Result<T, StringifyError>;
 enum Space {
     Minified,
     Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
     Str(bun_core::String),
 }
 

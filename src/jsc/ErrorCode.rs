@@ -44,9 +44,7 @@ impl GlobalObjectRef for crate::JSGlobalObject {
 
 type ErrorCodeInt = u16;
 
-/// `Bun::ErrorCode` in C++. Modelled as a newtype-over-`u16` so the same type
-/// can also carry the legacy sentinels (`PARSER_ERROR` / `JS_ERROR_OBJECT`)
-/// without an exhaustive-match obligation.
+/// `Bun::ErrorCode` in C++.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ErrorCode(pub ErrorCodeInt);
@@ -61,14 +59,6 @@ include!(concat!(env!("BUN_CODEGEN_DIR"), "/ErrorCode.generated.rs"));
 // Do NOT add constants here with discriminants ≥ Self::COUNT (e.g.
 // `ERR_SYSTEM_ERROR`): `Bun__createErrorWithCode` indexes `errors[COUNT]`
 // unchecked. Codes outside ErrorCode.ts go on `SystemError.code` as a literal.
-
-// ──────────────────────────────────────────────────────────────────────────
-// Legacy anyerror-wrapper sentinels.
-// ──────────────────────────────────────────────────────────────────────────
-impl ErrorCode {
-    pub(crate) const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
-    pub const JS_ERROR_OBJECT: ErrorCodeInt = 0xFFFD;
-}
 
 impl ErrorCode {
     /// Node `error.code` string (e.g. `"ERR_INVALID_ARG_TYPE"`).
@@ -161,14 +151,5 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
         JSPromise::rejected_promise(global, v).to_js()
     }
 }
-
-// C++ compares parser-error sentinels against these exported statics
-// (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`, headers-handwritten.h).
-
-#[unsafe(no_mangle)]
-static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
-
-#[unsafe(no_mangle)]
-static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
 
 // ported from: src/jsc/bindings/ErrorCode.ts

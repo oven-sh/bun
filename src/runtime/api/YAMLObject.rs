@@ -65,7 +65,6 @@ struct Stringifier {
 enum Space {
     Minified,
     Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
     Str(bun_core::String),
 }
 
@@ -201,9 +200,6 @@ impl Stringifier {
             space: Space::init(global, space_value)?,
         })
     }
-
-    // deinit: all fields have Drop (`space: Space::Str` holds an
-    // `bun_core::String`); no explicit impl needed.
 
     fn find_anchors_and_aliases(
         &mut self,

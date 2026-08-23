@@ -746,12 +746,7 @@ impl RuntimeTranspilerCache {
         }
         let mut reader = bun_io::FixedBufferStream::new(&metadata_bytes_buf[0..metadata_bytes]);
 
-        let mut entry = Entry {
-            metadata: Metadata::default(),
-            output_code: BunString::empty(),
-            sourcemap: Box::default(),
-            esm_record: Box::default(),
-        };
+        let mut entry = Entry::default();
         entry.metadata.decode(&mut reader)?;
         if entry.metadata.input_hash != input_hash
             || entry.metadata.input_byte_length != input_stat_size

@@ -395,7 +395,6 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    use bun_jsc::StringJsc as _;
     let [jsval] = callframe.arguments_as_array::<1>();
     if callframe.arguments_count() < 1 {
         return Err(global_this.throw(format_args!("shell escape expected at least 1 argument")));
@@ -416,7 +415,7 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
                 bstr::BStr::new(bunstr.byte_slice()),
             )));
         }
-        return BunString::clone_utf8(&outbuf[..]).into_js(global_this);
+        return bun_string_jsc::create_utf8_for_js(global_this, &outbuf);
     }
 
     Ok(jsval)
@@ -751,11 +750,10 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
         2,
         Default::default(),
     );
-    let mut str = bun_core::ZigString::init(b"nodejs.util.inspect.custom");
     fun.put(
         global_object,
         b"custom",
-        JSValue::symbol_for(global_object, &mut str),
+        JSValue::symbol_for(global_object, b"nodejs.util.inspect.custom"),
     );
     fun.put(
         global_object,
@@ -2087,7 +2085,7 @@ pub(crate) mod environment_variables {
         let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
         match vm.env_loader().get(name_slice.slice()) {
-            Some(val) => bun_core::StringView::from_bytes(val),
+            Some(val) => bun_core::StringView::borrow_utf8(val),
             None => bun_core::StringView::DEAD,
         }
     }

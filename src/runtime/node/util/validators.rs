@@ -2,14 +2,6 @@ use core::fmt;
 
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
-fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> bun_core::StringView<'_> {
-    let js_type = value.js_type();
-    if js_type.is_array() {
-        return bun_core::StringView::from_bytes(b"array");
-    }
-    value.js_type_string(global_object).view(global_object)
-}
-
 #[cold]
 pub(crate) fn throw_err_invalid_arg_value(
     global_this: &JSGlobalObject,
@@ -40,7 +32,7 @@ pub(crate) fn throw_err_invalid_arg_type(
     expected_type: &str,
     value: JSValue,
 ) -> JsError {
-    let actual_type = get_type_name(global_this, value);
+    let actual_type = global_this.type_name_of(value);
     throw_err_invalid_arg_type_with_message(
         global_this,
         format_args!(
@@ -392,7 +384,7 @@ pub(crate) fn validate_array(
     min_length: Option<i32>,
 ) -> JsResult<()> {
     if !value.js_type().is_array() {
-        let actual_type = get_type_name(global_this, value);
+        let actual_type = global_this.type_name_of(value);
         return Err(throw_err_invalid_arg_type_with_message(
             global_this,
             format_args!(

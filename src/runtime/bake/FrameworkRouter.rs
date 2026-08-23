@@ -2035,7 +2035,7 @@ impl JSFrameworkRouter {
         let mut rendered: Vec<u8> = Vec::new();
         part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
             .expect("ByteFmtWriter is infallible");
-        bun_core::String::clone_utf8(&rendered).into_js(global)
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &rendered)
     }
 
     pub(crate) fn file_id_to_js(

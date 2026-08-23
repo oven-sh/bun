@@ -52,12 +52,6 @@ pub struct ResolvedSource {
 #[derive(Default)]
 pub struct ModuleInfo(Option<core::ptr::NonNull<c_void>>);
 
-impl From<Box<ModuleInfoDeserialized>> for ModuleInfo {
-    fn from(b: Box<ModuleInfoDeserialized>) -> Self {
-        Self(Some(bun_core::heap::into_raw_nn(b).cast()))
-    }
-}
-
 impl From<Option<Box<ModuleInfoDeserialized>>> for ModuleInfo {
     fn from(b: Option<Box<ModuleInfoDeserialized>>) -> Self {
         Self(b.map(|b| bun_core::heap::into_raw_nn(b).cast()))
@@ -121,10 +115,7 @@ impl Bytecode {
 impl Drop for Bytecode {
     fn drop(&mut self) {
         if self.owned && !self.ptr.is_null() {
-            // SAFETY: `owned` ⇒ `heap::into_raw(Box<[u8]>)` of `len` bytes.
-            drop(unsafe {
-                bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(self.ptr, self.len))
-            });
+            ResolvedSource__freeBytecode(self.ptr);
         }
     }
 }

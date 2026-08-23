@@ -244,10 +244,9 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     global: &JSGlobalObject,
     chunk: JSValue,
 ) -> JSValue {
-    let Ok(js_str) = chunk.to_js_string(global) else {
+    let Ok((_js_str, str)) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
     };
-    let str = js_str.view(global);
     // SAFETY: `this` is the live encoder owned by the calling JS cell; driven
     // only from the JS thread, so `&*this` has no mutable alias. Taken after
     // the coercion so no user JS runs while the borrow is live.
@@ -289,10 +288,9 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     sink_id: u8,
     sink_ptr: *mut core::ffi::c_void,
 ) -> JSValue {
-    let Ok(js_str) = chunk.to_js_string(global) else {
+    let Ok((_js_str, str)) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
     };
-    let str = js_str.view(global);
     // SAFETY: `this` is the live encoder owned by the calling JS cell; taken
     // after the coercion so no user JS runs while the borrow is live.
     let this = unsafe { &*this };

@@ -346,9 +346,7 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
         auto* prevImpl = (*previousPath)->tryGetValueImpl();
         if (prevImpl && (prevImpl == path.impl.wtf || WTF::equal(prevImpl, path.impl.wtf))) {
             pathValue = *previousPath;
-
-            // Decrement the ref count of the previous path
-            auto pathString = path.transferToWTFString();
+            path.deref();
         }
     }
 

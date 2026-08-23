@@ -9,7 +9,6 @@
 
 #ifndef HEADERS_HANDWRITTEN
 #define HEADERS_HANDWRITTEN
-typedef uint16_t ZigErrorCode;
 typedef struct VirtualMachine VirtualMachine;
 // exists to make headers.h happy
 typedef struct CppWebSocket CppWebSocket;
@@ -96,21 +95,9 @@ typedef struct BunString {
 
 } BunString;
 
-typedef struct ZigErrorType {
-    ZigErrorCode code;
-    JSC::EncodedJSValue value;
-} ZigErrorType;
-typedef union ErrorableZigStringResult {
-    ZigString value;
-    ZigErrorType err;
-} ErrorableZigStringResult;
-typedef struct ErrorableZigString {
-    ErrorableZigStringResult result;
-    bool success;
-} ErrorableZigString;
 typedef union ErrorableStringResult {
     BunString value;
-    ZigErrorType err;
+    JSC::EncodedJSValue err;
 } ErrorableStringResult;
 typedef struct ErrorableString {
     ErrorableStringResult result;
@@ -144,7 +131,7 @@ static_assert(sizeof(ResolvedSource) == 136, "ResolvedSource layout is mirrored 
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
-    ZigErrorType err;
+    JSC::EncodedJSValue err;
 } ErrorableResolvedSourceResult;
 extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized* info);
 extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
@@ -364,8 +351,6 @@ typedef struct {
 #include "SyntheticModuleType.h"
 
 extern "C" const char* Bun__userAgent;
-
-extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
 

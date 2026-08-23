@@ -516,14 +516,11 @@ impl SocketAddress {
     /// that will not be around for very long. `createDTO` is even faster, but
     /// requires callers to already have a presentation-formatted address.
     pub(crate) fn into_dto(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        self.address();
-        let port = self.port();
-        let is_v6 = self.family() == AF::INET6;
         Ok(JSSocketAddressDTO__create(
             global,
-            self._presentation.take().into_js(global)?,
-            port,
-            is_v6,
+            self.address().to_js(global)?,
+            self.port(),
+            self.family() == AF::INET6,
         ))
     }
 

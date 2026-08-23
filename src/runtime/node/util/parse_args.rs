@@ -1,7 +1,7 @@
 use core::fmt;
 use std::borrow::Cow;
 
-use bun_core::{String, ZigString};
+use bun_core::{String, StringView, ZigString};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
@@ -497,9 +497,9 @@ fn parse_option_definitions<'a>(
             option.long_name,
             <&'static str>::from(option.r#type),
             if !option.short_name.is_empty() {
-                &option.short_name as &dyn fmt::Display
+                StringView::new(&option.short_name)
             } else {
-                &"none"
+                StringView::static_(b"none")
             },
             option.multiple as u8,
             if option.default_value.is_some() {
@@ -986,7 +986,6 @@ fn parse_args_impl(
         validators::validate_object(global, config_options, "options", Default::default())?;
         Some(bun_jsc::JSPropertyIterator::init(
             global,
-            // SAFETY: validateObject ensures it's an object
             config_options.get_object().unwrap(),
             bun_jsc::JSPropertyIteratorOptions::new(false, true),
         )?)

@@ -815,7 +815,7 @@ pub mod js_bundler {
             if let Some(entry_points) = entry_points_opt {
                 let mut iter = entry_points.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice_or_null(global_this)?;
+                    let slice = entry_point.to_slice(global_this)?;
                     this.entry_points.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -844,13 +844,13 @@ pub mod js_bundler {
 
             if let Some(conditions_value) = config.get_truthy(global_this, "conditions")? {
                 if conditions_value.is_string() {
-                    let slice = conditions_value.to_slice_or_null(global_this)?;
+                    let slice = conditions_value.to_slice(global_this)?;
                     this.conditions.insert(slice.slice())?;
                     drop(slice);
                 } else if conditions_value.js_type().is_array() {
                     let mut iter = conditions_value.array_iterator(global_this)?;
                     while let Some(entry_point) = iter.next()? {
-                        let slice = entry_point.to_slice_or_null(global_this)?;
+                        let slice = entry_point.to_slice(global_this)?;
                         this.conditions.insert(slice.slice())?;
                         drop(slice);
                     }
@@ -934,7 +934,7 @@ pub mod js_bundler {
             if let Some(externals) = config.get_own_array(global_this, "external")? {
                 let mut iter = externals.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice_or_null(global_this)?;
+                    let slice = entry_point.to_slice(global_this)?;
                     this.external.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -955,7 +955,7 @@ pub mod js_bundler {
                     if allow_unresolved_val.get_length(global_this)? > 0 {
                         let mut iter = allow_unresolved_val.array_iterator(global_this)?;
                         while let Some(entry) = iter.next()? {
-                            let slice = entry.to_slice_or_null(global_this)?;
+                            let slice = entry.to_slice(global_this)?;
                             this.allow_unresolved
                                 .as_mut()
                                 .unwrap()
@@ -969,7 +969,7 @@ pub mod js_bundler {
             if let Some(drops) = config.get_own_array(global_this, "drop")? {
                 let mut iter = drops.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice_or_null(global_this)?;
+                    let slice = entry.to_slice(global_this)?;
                     this.drop.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -978,7 +978,7 @@ pub mod js_bundler {
             if let Some(features) = config.get_own_array(global_this, "features")? {
                 let mut iter = features.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice_or_null(global_this)?;
+                    let slice = entry.to_slice(global_this)?;
                     this.features.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -987,7 +987,7 @@ pub mod js_bundler {
             if let Some(optimize_imports) = config.get_own_array(global_this, "optimizeImports")? {
                 let mut iter = optimize_imports.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice_or_null(global_this)?;
+                    let slice = entry.to_slice(global_this)?;
                     this.optimize_imports.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -1452,15 +1452,13 @@ pub mod js_bundler {
             resolve.value = ResolveValue::NoMatch;
         } else {
             let global = bv2_plugin(resolve.bv2).global_object();
-            // `to_slice_clone` already heap-allocates; `into_vec` moves that
-            // buffer out instead of allocating a second copy.
             let path = path_value
-                .to_slice_clone(global)
+                .to_slice(global)
                 .expect("Unexpected: path is not a string")
                 .into_vec()
                 .into_boxed_slice();
             let namespace = namespace_value
-                .to_slice_clone(global)
+                .to_slice(global)
                 .expect("Unexpected: namespace is not a string")
                 .into_vec()
                 .into_boxed_slice();

@@ -2001,13 +2001,12 @@ fn console_print_runtime_object<'a, 'f>(
     formatter: &'a mut bun_jsc::Formatter<'f>,
     writer: &'a mut dyn bun_io::Write,
     value: JSValue,
-    name_buf: &'a [u8; 512],
     enable_ansi_colors: bool,
 ) -> JsResult<bool> {
     if enable_ansi_colors {
-        console_print_runtime_object_inner::<true>(formatter, writer, value, name_buf)
+        console_print_runtime_object_inner::<true>(formatter, writer, value)
     } else {
-        console_print_runtime_object_inner::<false>(formatter, writer, value, name_buf)
+        console_print_runtime_object_inner::<false>(formatter, writer, value)
     }
 }
 
@@ -2015,7 +2014,6 @@ fn console_print_runtime_object_inner<const C: bool>(
     formatter: &mut bun_jsc::Formatter<'_>,
     writer_: &mut dyn bun_io::Write,
     value: JSValue,
-    name_buf: &[u8; 512],
 ) -> JsResult<bool> {
     use crate::api::BuildArtifact;
     use crate::api::archive::Archive;
@@ -2167,12 +2165,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         // `W: bun_io::Write` bound via the blanket `impl Write for &mut W`.
         let mut sink: &mut dyn bun_io::Write = &mut *writer_;
         let mut wrapped = WrappedWriter::new(&mut sink);
-        if JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(
-            formatter,
-            &mut wrapped,
-            name_buf,
-            value,
-        )? {
+        if JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(formatter, &mut wrapped, value)? {
             return Ok(true);
         }
     }
@@ -2223,8 +2216,8 @@ fn note_compile_cache_parse_failure(
 /// → `js_printer::print` → `ResolvedSource`.
 ///
 /// # Safety
-/// `jsc_vm` is the live per-thread VM; `ret` is a valid out-param;
-/// `args.extra`, when non-null, points at a live [`TranspileExtra`].
+/// `jsc_vm` is the live per-thread VM; `args.extra`, when non-null, points at
+/// a live [`TranspileExtra`].
 unsafe fn transpile_source_code(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
@@ -2969,10 +2962,10 @@ fn transpile_source_code_inner(
                         bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized::create_from_cached_record(
                             &entry.esm_record,
                         )
-                        .into()
                     } else {
-                        ModuleInfo::default()
-                    };
+                        None
+                    }
+                    .into();
                     let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
                     // Node compile cache hook (transpiler-cache-hit path); must
                     // read `output_code` before it is consumed below. UTF-16
@@ -3240,9 +3233,7 @@ fn transpile_source_code_inner(
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
-                    if let Some(bytecode) = node_compile_cache_blob {
-                        resolved_source.bytecode_cache = bytecode;
-                    }
+                    resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
                     return Ok(resolved_source);
                 }
 
@@ -3784,7 +3775,7 @@ fn get_hardcoded_module(
 /// `Bun__fetchBuiltinModule` export wrapper.
 ///
 /// # Safety
-/// `jsc_vm` is the live per-thread VM; `out` is a valid out-param.
+/// `jsc_vm` is the live per-thread VM.
 unsafe fn fetch_builtin_module(
     jsc_vm: *mut VirtualMachine,
     global: *mut JSGlobalObject,
@@ -3901,10 +3892,10 @@ export default db;
                 module_info: if !module_info.is_empty() {
                     bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
                         ::create_from_cached_record(module_info)
-                        .into()
                 } else {
-                    ModuleInfo::default()
-                },
+                    None
+                }
+                .into(),
                 is_commonjs_module: file.module_format == ModuleFormat::Cjs,
                 ..ResolvedSource::default()
             });
@@ -4325,9 +4316,7 @@ unsafe fn transpile_file(
                 )
                 .to_js();
             // SAFETY: per fn contract — `ret` is a valid out-param.
-            unsafe {
-                *ret = ErrorableResolvedSource::err(js);
-            }
+            unsafe { ret.write(ErrorableResolvedSource::err(js)) };
             return ptr::null_mut();
         }
     };
@@ -4361,11 +4350,11 @@ unsafe fn transpile_file(
                 CustomLoader::Custom(strong) => {
                     // SAFETY: `ret` is a valid out-param per fn contract.
                     unsafe {
-                        *ret = ErrorableResolvedSource::ok(ResolvedSource {
+                        ret.write(ErrorableResolvedSource::ok(ResolvedSource {
                             cjs_custom_extension_index: strong.get(),
                             tag: ResolvedSourceTag::CommonJsCustomExtension,
                             ..Default::default()
-                        });
+                        }));
                     }
                     return ptr::null_mut();
                 }
@@ -4502,11 +4491,11 @@ unsafe fn transpile_file(
                                 // SAFETY: `ret` is a valid out-param per fn
                                 // contract.
                                 unsafe {
-                                    *ret = ErrorableResolvedSource::ok(ResolvedSource {
+                                    ret.write(ErrorableResolvedSource::ok(ResolvedSource {
                                         cjs_custom_extension_index: strong.get(),
                                         tag: ResolvedSourceTag::CommonJsCustomExtension,
                                         ..Default::default()
-                                    });
+                                    }));
                                 }
                                 return ptr::null_mut();
                             }
@@ -4578,7 +4567,7 @@ unsafe fn transpile_file(
     match transpile_source_code_inner(jsc_vm, &args, &raw mut extra) {
         Ok(resolved) => {
             // SAFETY: per fn contract — `ret` is a valid out-param.
-            unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+            unsafe { ret.write(ErrorableResolvedSource::ok(resolved)) };
             promise.cast::<c_void>()
         }
         Err(crate::Error::AsyncModule) => {
@@ -4592,7 +4581,7 @@ unsafe fn transpile_file(
                 transpile_error_value(global_ref, specifier, referrer, &mut log, err)
             {
                 // SAFETY: per fn contract — `ret` is a valid out-param.
-                unsafe { *ret = ErrorableResolvedSource::err(value) };
+                unsafe { ret.write(ErrorableResolvedSource::err(value)) };
             }
             ptr::null_mut()
         }
@@ -4735,7 +4724,7 @@ unsafe fn transpile_virtual_module(
     match transpile_source_code_inner(jsc_vm, &args, &raw mut extra) {
         Ok(resolved) => {
             // SAFETY: per fn contract — `ret` is a valid out-param.
-            unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+            unsafe { ret.write(ErrorableResolvedSource::ok(resolved)) };
             bun_analytics::features::virtual_modules
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             true
@@ -4747,7 +4736,7 @@ unsafe fn transpile_virtual_module(
                 transpile_error_value(global_ref, specifier, referrer, &mut log, err)
             {
                 // SAFETY: per fn contract — `ret` is a valid out-param.
-                unsafe { *ret = ErrorableResolvedSource::err(value) };
+                unsafe { ret.write(ErrorableResolvedSource::err(value)) };
             }
             true
         }

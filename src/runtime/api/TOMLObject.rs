@@ -558,11 +558,9 @@ impl<'a> Stringifier<'a> {
     // ── errors ─────────────────────────────────────────────────────────────
 
     fn err_null_value(&mut self, global: &'a JSGlobalObject, key: &BunString) -> StringifyError {
-        let key_utf8 = key.to_owned_slice();
         global
             .throw(format_args!(
-                "TOML cannot represent null (key '{}'); remove the key or use a sentinel value",
-                bstr::BStr::new(&key_utf8)
+                "TOML cannot represent null (key '{key}'); remove the key or use a sentinel value",
             ))
             .into()
     }

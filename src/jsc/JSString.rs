@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
-use crate::{JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
+use crate::{JSGlobalObject, JSValue};
+use bun_core::StringView;
 use bun_core::zig_string::Slice as ZigStringSlice;
 
 bun_opaque::opaque_ffi! {
@@ -9,20 +9,8 @@ bun_opaque::opaque_ffi! {
     pub struct JSString;
 }
 
-// NOTE: the C++ side may mutate through several of these `*JSString` /
-// `*JSGlobalObject` params, but the C ABI does not distinguish `*const T` from `*mut T`. We
-// intentionally declare them `*const` here — matching the convention in
-// JSGlobalObject.rs / JSValue.rs — so that callers can pass `&self` / `&global`
-// directly without an `as *const _ as *mut _` cast. `JSString` and
-// `JSGlobalObject` are opaque zero-sized handles in Rust, so a shared `&` borrow
-// covers zero bytes and C++ mutating the underlying GC cell does not violate
-// Rust's aliasing rules.
 unsafe extern "C" {
-    safe fn JSC__JSString__toZigString(
-        this: &JSString,
-        global: &JSGlobalObject,
-        zig_str: &mut ZigString,
-    );
+    safe fn JSC__JSString__view<'a>(this: &'a JSString, global: &JSGlobalObject) -> StringView<'a>;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
     safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
@@ -33,10 +21,6 @@ impl JSString {
         JSValue::from_cell(self)
     }
 
-    pub(crate) fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
-        JSC__JSString__toZigString(self, global, zig_str)
-    }
-
     pub fn ensure_still_alive(&self) {
         // Keep the cell pointer observable to the GC's conservative stack scan.
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
@@ -44,33 +28,15 @@ impl JSString {
 
     /// Borrows the string's characters; valid while `self` is reachable (keep the `&JSString` in a local).
     #[inline]
-    pub fn view<'a>(&'a self, global: &JSGlobalObject) -> bun_core::StringView<'a> {
-        let mut z = ZigString::init(b"");
-        self.to_zig_string(global, &mut z);
-        bun_core::StringView::from_zig(z)
+    pub fn view(&self, global: &JSGlobalObject) -> StringView<'_> {
+        JSC__JSString__view(self, global)
     }
 
-    /// UTF-8 view of the characters; borrows when 8-bit ASCII, allocates otherwise. Same lifetime caveat as `view`.
+    /// UTF-8 of the characters; borrows when 8-bit ASCII, allocates
+    /// otherwise. Same lifetime caveat as [`view`](Self::view).
     pub fn to_slice(&self, global: &JSGlobalObject) -> ZigStringSlice {
-        let mut str = ZigString::init(b"");
-        self.to_zig_string(global, &mut str);
-        str.to_slice()
+        self.view(global).to_utf8()
     }
-
-    // `to_slice_clone` always allocates
-    // an owned UTF-8 copy so the result outlives the GC'd JSString. Returning
-    // `to_slice()` here (a borrow that may alias JSC-owned memory) would hand
-    // callers a use-after-free once the cell is collected.
-
-    pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
-        let mut str = ZigString::init(b"");
-        self.to_zig_string(global, &mut str);
-        Ok(str.to_slice_clone())
-    }
-
-    // `to_slice_z` guarantees a trailing NUL
-    // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
-    // expects one reads past the buffer end.
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
         // SAFETY: `self`/`global_object` are valid opaque GC-cell handles; `iter`

@@ -2597,7 +2597,7 @@ impl DevServer {
         let mut params: framework_router::MatchedParams = Default::default();
         let url_bunstr = match &req {
             // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
-            SavedRequestUnion::Stack(r) => bun_core::StringView::from_bytes((**r).url()),
+            SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
             SavedRequestUnion::Saved(data) => {
                 // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
                 bun_core::StringView::new(unsafe { (*data.request).url.get() })

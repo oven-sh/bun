@@ -81,7 +81,7 @@ const _: () = {
 /// `finalize`, so stay plain.
 #[repr(C)]
 pub struct Request {
-    pub(crate) url: bun_ptr::JsCell<bun_core::String>,
+    pub(crate) url: JsCell<BunString>,
 
     headers: JsCell<Option<HeadersRef>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —

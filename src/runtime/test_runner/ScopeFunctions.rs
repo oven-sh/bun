@@ -531,13 +531,9 @@ fn get_description(
     }
 
     if description.is_class(global) {
-        // upstream `JSValue::get_class_name` writes into an out-param
-        // ZigString instead of returning one. Adapt locally rather than
-        // touching bun_jsc.
-        let mut description_class_name = bun_core::ZigString::EMPTY;
-        description.get_class_name(global, &mut description_class_name)?;
+        let description_class_name = description.get_class_name(global)?;
 
-        if description_class_name.len > 0 {
+        if !description_class_name.is_empty() {
             return Ok(description_class_name.to_owned_slice());
         }
 

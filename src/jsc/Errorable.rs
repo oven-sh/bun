@@ -1,10 +1,8 @@
 use core::mem::ManuallyDrop;
 
 use crate::JSValue;
-use crate::error_code::ErrorCode;
-use crate::zig_error_type::ZigErrorType;
 
-/// C++ `Errorable*` (headers-handwritten.h): `{ union { T value; ZigErrorType err; }; bool success; }`.
+/// C++ `Errorable*` (headers-handwritten.h): `{ union { T value; EncodedJSValue err; }; bool success; }`.
 /// Owns `value` when `success`; the frame that declares it (Rust or C++) is
 /// responsible for dropping it, and consumers take fields out by transfer.
 #[repr(C)]
@@ -16,7 +14,7 @@ pub struct Errorable<T> {
 #[repr(C)]
 pub union Result<T> {
     pub value: ManuallyDrop<T>,
-    pub err: ZigErrorType,
+    pub err: JSValue,
 }
 
 impl<T> Errorable<T> {
@@ -32,12 +30,7 @@ impl<T> Errorable<T> {
     /// `value` is the JS error to throw/reject with.
     pub fn err(value: JSValue) -> Self {
         Self {
-            result: Result {
-                err: ZigErrorType {
-                    code: ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    value,
-                },
-            },
+            result: Result { err: value },
             success: false,
         }
     }

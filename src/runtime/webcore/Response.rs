@@ -310,7 +310,6 @@ impl Response {
         }
     }
 
-    /// Takes ownership (+1) of `status_text`.
     #[inline]
     pub(crate) fn set_init(&self, method: Method, status_code: u16, status_text: BunString) {
         self.init.with_mut(|init| {
@@ -336,7 +335,6 @@ impl Response {
         &self.init.get().status_text
     }
 
-    /// Takes ownership (+1) of `url`.
     #[inline]
     pub(crate) fn set_url(&self, url: BunString) {
         self.url.set(url);
@@ -1011,7 +1009,6 @@ impl Response {
         // SAFETY: see `construct_json`.
         let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
-        // url_string drops (derefs the WTF string) at scope exit
         let url_string: BunString;
         let response: Response = 'brk: {
             let response = Response {
@@ -1280,8 +1277,6 @@ impl Init {
             status_code: 200,
             ..Default::default()
         };
-        // Init's drop glue on `result` (HeadersRef + bun_core::String)
-        // handles cleanup on `?` below
 
         if !response_init.is_cell() {
             return Ok(None);

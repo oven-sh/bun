@@ -225,7 +225,7 @@ pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
         return Err(JsError::OutOfMemory);
     }
 
-    into_js(String::clone_utf8(&buf), global)
+    create_utf8_for_js(global, &buf)
 }
 
 #[bun_jsc::host_fn]
@@ -250,7 +250,7 @@ pub fn js_escape_reg_exp_for_package_name_matching(
         return Err(JsError::OutOfMemory);
     }
 
-    into_js(String::clone_utf8(&buf), global)
+    create_utf8_for_js(global, &buf)
 }
 
 // ── unicode TestingAPIs ─────────────────────────────────────────────────────

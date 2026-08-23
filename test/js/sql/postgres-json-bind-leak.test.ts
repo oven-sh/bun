@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "node:path";
 
-const fixture = path.join(import.meta.dir, "postgres-json-bind-leak-fixture.ts");
+const fixture = path.join(import.meta.dir, "postgres-json-bind-leak.fixture.ts");
 
 // https://github.com/oven-sh/bun/issues/40102
 test("json/jsonb bind parameter does not leak the stringified payload", async () => {

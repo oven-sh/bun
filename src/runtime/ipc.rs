@@ -14,7 +14,7 @@ use bun_jsc as jsc;
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task};
 use bun_sys::Fd;
 use bun_sys::FdExt;
 #[cfg(windows)]
@@ -1400,9 +1400,8 @@ impl SendQueue {
             let warning =
                 BunString::static_(b"Handle did not reach the receiving process correctly");
             let warning_name = BunString::static_(b"SentHandleNotReceivedWarning");
-            if let Ok(warning_js) = bun_jsc::bun_string_jsc::into_js(warning, global) {
-                if let Ok(warning_name_js) = bun_jsc::bun_string_jsc::into_js(warning_name, global)
-                {
+            if let Ok(warning_js) = warning.into_js(global) {
+                if let Ok(warning_name_js) = warning_name.into_js(global) {
                     let _ = global.emit_warning(
                         warning_js,
                         warning_name_js,
@@ -1999,7 +1998,7 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
             return None;
         }
     };
-    let hex = jsc::JSString::opaque_ref(info_value.as_string()).to_slice(global);
+    let hex = info_value.as_string().to_slice(global);
     let expected = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
     let mut info = vec![0u8; expected];
     let decoded = strings::decode_hex_to_bytes_truncate(&mut info, hex.slice());

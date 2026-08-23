@@ -64,8 +64,7 @@ fn colors_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<node_asse
         if !v.is_string() {
             return Ok(Vec::new());
         }
-        let s = v.to_bun_string(global)?;
-        Ok(s.to_utf8_without_ref().slice().to_vec())
+        Ok(v.to_bun_string(global)?.to_owned_slice())
     };
     Ok(node_assert::Colors {
         green: get("green")?,

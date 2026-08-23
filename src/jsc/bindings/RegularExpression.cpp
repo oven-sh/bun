@@ -27,14 +27,6 @@ extern "C" int Yarr__RegularExpression__matchedLength(RegularExpression* re)
 {
     return re->matchedLength();
 }
-extern "C" int Yarr__RegularExpression__searchRev(RegularExpression* re, const BunString* string)
-{
-    return re->searchRev(string->toWTFString(BunString::ZeroCopy));
-}
-// extern "C" int Yarr__RegularExpression__match(RegularExpression* re, BunString string, int32_t start, int32_t* matchLength)
-// {
-//     return re->match(string.toWTFString(BunString::ZeroCopy), start, matchLength);
-// }
 extern "C" int Yarr__RegularExpression__matches(RegularExpression* re, const BunString* string)
 {
     return re->match(string->toWTFString(BunString::ZeroCopy), 0, 0);

@@ -1422,8 +1422,8 @@ where
             )));
         }
 
-        let topic_js = topic_value.to_js_string(global)?;
-        let topic = topic_js.to_slice(global);
+        let (_topic_js, topic_js_view) = topic_value.to_js_string_view(global)?;
+        let topic = topic_js_view.to_utf8();
 
         if topic.slice().is_empty() {
             return Ok(JSValue::js_number(0.0));
@@ -1497,8 +1497,8 @@ where
         }
         // Converting `message_value` can run user JS / GC; the JSString keeps the
         // topic bytes alive across it.
-        let topic_string = topic_value.to_js_string(global)?;
-        let topic = topic_string.to_slice(global);
+        let (topic_string, topic_string_view) = topic_value.to_js_string_view(global)?;
+        let topic = topic_string_view.to_utf8();
         // jsc.JSValue
         let message_value = iter
             .next_eat()
@@ -1645,9 +1645,9 @@ where
         {
             (slice, uws_sys::Opcode::Binary)
         } else {
-            let js_str = message_value.to_js_string(global)?;
+            let (js_str, view) = message_value.to_js_string_view(global)?;
             js_string = Some(js_str);
-            string_slice = js_str.to_slice(global);
+            string_slice = view.to_utf8();
             (string_slice.slice(), uws_sys::Opcode::Text)
         };
 

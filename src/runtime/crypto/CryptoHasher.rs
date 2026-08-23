@@ -259,9 +259,9 @@ impl CryptoHasher {
             if !string_value.is_string_literal() {
                 return Err(global.throw_invalid_arguments(format_args!("Expected string")));
             }
-            string_value.to_js_string(global)?
+            string_value.to_js_string_view(global)?
         };
-        let algorithm = algorithm_js.to_slice(global);
+        let algorithm = algorithm_js.1.to_utf8();
 
         // Node.BlobOrStringOrBuffer
         let Some(input_arg) = next_eat() else {
@@ -483,8 +483,8 @@ impl CryptoHasher {
             return Err(global.throw_invalid_arguments(format_args!("algorithm must be a string")));
         }
 
-        let algorithm_js = algorithm_name.to_js_string(global)?;
-        let algorithm = algorithm_js.to_slice(global);
+        let (_algorithm_js, algorithm_js_view) = algorithm_name.to_js_string_view(global)?;
+        let algorithm = algorithm_js_view.to_utf8();
         if algorithm.slice().is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }

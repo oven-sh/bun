@@ -580,13 +580,11 @@ impl ExitHandler {
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
     ) -> bun_core::StringView<'_> {
-        bun_core::StringView::from_bytes(
-            if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
-                MAIN_FILE_NAME
-            } else {
-                vm.main()
-            },
-        )
+        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
+            bun_core::StringView::static_(MAIN_FILE_NAME)
+        } else {
+            bun_core::StringView::borrow_utf8(vm.main())
+        }
     }
 
     #[unsafe(no_mangle)]
@@ -2170,7 +2168,6 @@ pub struct RuntimeHooks {
         formatter: &'a mut crate::console_object::Formatter<'f>,
         writer: &'a mut dyn bun_io::Write,
         value: JSValue,
-        name_buf: &'a [u8; 512],
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
     /// Applies `--compile`-baked runtime flags to the
@@ -5602,10 +5599,8 @@ impl VirtualMachine {
                     {
                         continue;
                     }
-                    // Note: `frames[j] = frame`. `ZigStackFrame` impls
-                    // `Drop` so `copy_within` is unavailable; swap instead —
-                    // the discarded tail past `j` is never read after we
-                    // truncate `frames_len` below.
+                    // Swap rather than overwrite: the discarded tail past `j`
+                    // still owns its strings and is released with the Holder.
                     frames_buf.swap(j, i);
                     j += 1;
                 }
@@ -5909,11 +5904,6 @@ impl VirtualMachine {
         );
 
         drop(source_code_slice);
-        // `exception_holder.deinit`
-        // releases the WTFString refs (`name`/`message`/stack-frame
-        // `function_name`/`source_url`/source-line bodies) populated by
-        // `JSC__JSValue__toZigException`. Skipping this leaks ~1 KB/error and
-        // OOMs the inspect-error-leak test.
         exception_holder.deinit(self);
         result
     }
@@ -6744,9 +6734,7 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";
     if reason_str.is_string() {
-        // SAFETY: `as_string()` returns a non-null `*mut JSString` when
-        // `is_string()` is true; `view()` borrows it for the `write!` below.
-        let view = unsafe { (*reason_str.as_string()).view(global_object) };
+        let view = reason_str.as_string().view(global_object);
         return global_object
             .err(
                 crate::ErrorCode::ERR_UNHANDLED_REJECTION,

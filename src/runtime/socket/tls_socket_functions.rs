@@ -939,7 +939,7 @@ pub(crate) fn export_keying_material(
         return Err(global.throw(format_args!("Expected label to be a string")));
     }
 
-    let label = label_arg.to_slice_or_null(global)?;
+    let label = label_arg.to_slice(global)?;
     let label_slice = label.slice();
 
     // Converting `context` can run user JS (toString / Symbol.toPrimitive)

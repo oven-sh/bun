@@ -2196,20 +2196,15 @@ pub mod formatter {
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
                 if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
                     // React 18 and below
-                    let mut react_element_legacy = ZigString::init(b"react.element");
-                    // For React 19 - https://github.com/oven-sh/bun/issues/17223
-                    let mut react_element_transitional =
-                        ZigString::init(b"react.transitional.element");
-                    let mut react_fragment = ZigString::init(b"react.fragment");
-
                     if typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_element_legacy),
+                        JSValue::symbol_for(global_this, b"react.element"),
                         global_this,
                     )? || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_element_transitional),
+                        // For React 19 - https://github.com/oven-sh/bun/issues/17223
+                        JSValue::symbol_for(global_this, b"react.transitional.element"),
                         global_this,
                     )? || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_fragment),
+                        JSValue::symbol_for(global_this, b"react.fragment"),
                         global_this,
                     )? {
                         return Ok(TagResult {
@@ -3177,13 +3172,12 @@ pub mod formatter {
     fn get_object_name(
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<Option<ZigString>> {
-        let mut name_str = ZigString::init(b"");
-        value.get_class_name(global_this, &mut name_str)?;
+    ) -> JsResult<Option<bun_core::String>> {
+        let name_str = value.get_class_name(global_this)?;
         if !name_str.eql_comptime(b"Object") {
             return Ok(Some(name_str));
         } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
-            return Ok(Some(ZigString::static_("[Object: null prototype]")));
+            return Ok(Some(bun_core::String::static_("[Object: null prototype]")));
         }
         Ok(None)
     }
@@ -3674,8 +3668,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let js = value.to_js_string(self.global_this)?;
-            let view = js.view(self.global_this);
+            let (_js, view) = value.to_js_string_view(self.global_this)?;
             let out_str = view.latin1();
             writer.add_for_new_line(out_str.len());
             writer.print(format_args!(
@@ -3707,15 +3700,13 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut number_name = ZigString::EMPTY;
-                value.get_class_name(self.global_this, &mut number_name)?;
+                let number_name = value.get_class_name(self.global_this)?;
 
-                let number_js = value.to_js_string(self.global_this)?;
-                let number_value = number_js.view(self.global_this);
+                let (_number_js, number_value) = value.to_js_string_view(self.global_this)?;
 
-                if number_name.slice() != b"Number" {
+                if !number_name.eql_comptime(b"Number") {
                     writer.add_for_new_line(
-                        number_name.len + number_value.length() + "[Number ():]".len(),
+                        number_name.length() + number_value.length() + "[Number ():]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
@@ -3730,7 +3721,7 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                writer.add_for_new_line(number_name.len + number_value.length() + 4);
+                writer.add_for_new_line(number_name.length() + number_value.length() + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
                     pf!("<r><yellow>"),
@@ -3830,8 +3821,8 @@ pub mod formatter {
             let description = value.get_description(self.global_this);
             writer.add_for_new_line("Symbol".len());
 
-            if description.len > 0 {
-                writer.add_for_new_line(description.len + "()".len());
+            if !description.is_empty() {
+                writer.add_for_new_line(description.length() + "()".len());
                 writer.print(format_args!(
                     "{}Symbol({}){}",
                     pfmt!("<r><blue>", C),
@@ -4115,14 +4106,12 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut bool_name = ZigString::EMPTY;
-                value.get_class_name(self.global_this, &mut bool_name)?;
-                let bool_js = value.to_js_string(self.global_this)?;
-                let bool_value = bool_js.view(self.global_this);
+                let bool_name = value.get_class_name(self.global_this)?;
+                let (_bool_js, bool_value) = value.to_js_string_view(self.global_this)?;
 
-                if bool_name.slice() != b"Boolean" {
+                if !bool_name.eql_comptime(b"Boolean") {
                     writer.add_for_new_line(
-                        bool_value.length() + bool_name.len + "[Boolean (): ]".len(),
+                        bool_value.length() + bool_name.length() + "[Boolean (): ]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
@@ -4528,13 +4517,7 @@ pub mod formatter {
             // formatted `value`; otherwise we fall through to the generic
             // object printer below.
             if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-                // The hook only ever
-                // seeds a `ZigString` that `get_class_name` immediately
-                // overwrites with JSC-owned bytes, so a shared zero buffer is
-                // sufficient and keeps 512B off every recursive frame.
-                static NAME_BUF: [u8; 512] = [0; 512];
-                let handled =
-                    (hooks.console_print_runtime_object)(self, writer_, value, &NAME_BUF, C)?;
+                let handled = (hooks.console_print_runtime_object)(self, writer_, value, C)?;
                 if handled {
                     return Ok(());
                 }
@@ -5020,12 +5003,11 @@ pub mod formatter {
                     tag_name_slice = type_value.to_slice(self.global_this)?;
                     is_tag_kind_primitive = true;
                 } else if _tag.cell.is_object() || type_value.is_callable() {
-                    let mut tag_name_str = ZigString::init(b"");
-                    type_value.get_name_property(self.global_this, &mut tag_name_str)?;
-                    tag_name_slice = if tag_name_str.len == 0 {
-                        ZigString::init(b"NoName").to_slice()
+                    let name = type_value.get_name_property(self.global_this)?;
+                    tag_name_slice = if name.is_empty() {
+                        bun_core::ZigStringSlice::from_utf8_never_free(b"NoName")
                     } else {
-                        tag_name_str.to_slice_clone()
+                        name.to_utf8()
                     };
                 } else {
                     tag_name_slice = type_value.to_slice(self.global_this)?;
@@ -5033,7 +5015,7 @@ pub mod formatter {
 
                 needs_space = true;
             } else {
-                tag_name_slice = ZigString::init(b"unknown").to_slice();
+                tag_name_slice = bun_core::ZigStringSlice::from_utf8_never_free(b"unknown");
                 needs_space = true;
             }
 
@@ -5184,9 +5166,8 @@ pub mod formatter {
                             'print_children: {
                                 match tag.tag.tag() {
                                     Tag::String => {
-                                        let children_js =
-                                            children.to_js_string(self.global_this)?;
-                                        let children_string = children_js.view(self.global_this);
+                                        let (_children_js, children_string) =
+                                            children.to_js_string_view(self.global_this)?;
                                         if children_string.is_empty() {
                                             break 'print_children;
                                         }

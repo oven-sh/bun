@@ -355,16 +355,14 @@ pub fn on_reject_entry_point_result(
 /// `NodeModuleModule._stat(path) -> i32` (0=file, 1=dir, -ENOENT otherwise).
 ///
 /// # Safety
-/// `arg_str` and `out` must be valid C++ stack locals.
+/// `out` must be a valid C++ stack local.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     _global: *mut JSGlobalObject,
-    arg_str: *const bun_core::String,
+    arg_str: &bun_core::String,
     out: *mut i32,
 ) -> bool {
-    // SAFETY: `arg_str` is a live `bun.String` (C++ stack local); `out` is a
-    // valid out-param.
-    let s = unsafe { (*arg_str).to_utf8() };
+    let s = arg_str.to_utf8();
     // SAFETY: `out` is a valid C++ stack out-param.
     unsafe { *out = bun_jsc::node_module_module::stat(s.slice()) };
     true
@@ -373,18 +371,15 @@ unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
 /// `BunObject.braces(input, options) -> JSValue`.
 ///
 /// # Safety
-/// `arg_input` and `arg_options` must be valid C++ stack locals.
+/// `arg_options` must be a valid C++ stack local.
 // HOST_EXPORT(bindgen_BunObject_dispatchBraces1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bindgen_bunobject_dispatch_braces(
     global: &JSGlobalObject,
-    arg_input: *const bun_core::String,
+    input: &bun_core::String,
     arg_options: *const crate::api::bun_object::r#gen::BracesOptions,
 ) -> JSValue {
-    // SAFETY: `arg_input`/`arg_options` are valid C++ stack locals; the C++
-    // caller retains ownership of the string.
-    let input = unsafe { &*arg_input };
     // SAFETY: `arg_options` points to a `BracesOptions` on the C++ caller's stack.
     let opts = unsafe { *arg_options };
     bun_jsc::host_fn::to_js_host_call(global, || {
@@ -417,19 +412,17 @@ pub fn bindgen_bunobject_dispatch_gc(
 /// (highlighter.test.ts internal).
 ///
 /// # Safety
-/// `arg_code`, `arg_formatter`, and `out` must be valid C++ stack locals.
+/// `arg_formatter` and `out` must be valid C++ stack locals.
 // HOST_EXPORT(bindgen_Fmt_jsc_dispatchFmtString1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bindgen_fmt_jsc_dispatch_fmt_string(
     global: &JSGlobalObject,
-    arg_code: *const bun_core::String,
+    arg_code: &bun_core::String,
     arg_formatter: *const bun_jsc::fmt_jsc::js_bindings::Formatter,
     out: *mut bun_core::String,
 ) -> bool {
-    // SAFETY: `arg_code`/`arg_formatter`/`out` are valid C++ stack locals
-    // (see GeneratedBindings.cpp call site).
-    let code = unsafe { (*arg_code).to_utf8() };
+    let code = arg_code.to_utf8();
     // SAFETY: `arg_formatter` points to a `Formatter` on the C++ caller's stack.
     let formatter = unsafe { *arg_formatter };
     bindgen_out(

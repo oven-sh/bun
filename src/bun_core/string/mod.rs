@@ -1,13 +1,9 @@
-//! `bun_core::string` (formerly the `bun_string` crate) — `bun.String` and
-//! friends.
+//! `bun_core::string` — `bun.String` and friends.
 //!
 //! `String` is the FFI-compatible 5-variant tagged union shared with C++
 //! (`BunString` in `src/jsc/bindings/BunString.cpp`). `ZigString` is the
 //! pointer-tagged borrowed view; `ZigStringSlice` is the owned-or-borrowed
 //! UTF-8 byte slice.
-//!
-//! Merged into `bun_core` to break the `bun_core ↔ bun_string` dep edge;
-//! the `bun_string` crate is now a thin re-export shim over this module.
 
 pub use crate::w;
 
@@ -218,6 +214,7 @@ impl String {
     }
     /// `clone_utf8(other)`, unless `other` is byte-equal to `self`, in which
     /// case another ref to `self`.
+    #[inline]
     pub fn create_if_different(&self, other: &[u8]) -> Self {
         if self.eql_utf8(other) {
             return self.clone();
@@ -647,6 +644,7 @@ impl String {
     /// `bun.String.trunc` — clamp to `len` code units. Borrows `self`'s
     /// storage; for `WTFStringImpl` longer than `len` this is a `ZigString`
     /// view into the impl's buffer.
+    #[inline]
     pub fn trunc(&self, len: usize) -> StringView<'_> {
         if self.length() <= len {
             return StringView::new(self);
@@ -1162,17 +1160,43 @@ impl<'a> StringView<'a> {
             core::marker::PhantomData,
         )
     }
-    /// Borrow `bytes` (no copy); auto-tags UTF-8 if any byte is non-ASCII.
+    /// Borrow `bytes` (no copy); scans and tags UTF-8 if any byte is non-ASCII.
     #[inline]
     pub fn from_bytes(bytes: &'a [u8]) -> Self {
         Self::from_zig(ZigString::from_bytes(bytes))
     }
+    /// Borrow `bytes` as UTF-8 (no copy, no scan).
     #[inline]
-    pub fn from_zig(z: ZigString) -> Self {
+    pub fn borrow_utf8(bytes: &'a [u8]) -> Self {
+        Self::from_zig(ZigString::init_utf8(bytes))
+    }
+    /// `'static` ASCII/Latin-1 literal (no scan).
+    #[inline]
+    pub const fn static_(bytes: &'static [u8]) -> StringView<'static> {
+        StringView(
+            core::mem::ManuallyDrop::new(String(bun_alloc::String {
+                tag: Tag::StaticZigString,
+                value: StringImpl {
+                    zig_string: bun_alloc::ZigString::init(bytes),
+                },
+            })),
+            core::marker::PhantomData,
+        )
+    }
+    #[inline]
+    fn from_zig(z: ZigString) -> Self {
         Self(
             core::mem::ManuallyDrop::new(String::wrap_zig(Tag::ZigString, z)),
             core::marker::PhantomData,
         )
+    }
+}
+impl StringView<'_> {
+    /// UTF-8 bytes of the view. Unlike [`String::to_utf8`] this never takes a
+    /// ref (a view owns nothing); borrows for ASCII, allocates otherwise.
+    #[inline]
+    pub fn to_utf8(&self) -> ZigStringSlice {
+        self.0.to_utf8_without_ref()
     }
 }
 impl core::ops::Deref for StringView<'_> {

@@ -1403,16 +1403,15 @@ void JSCommonJSModule::evaluate(
     auto& vm = JSC::getVM(globalObject);
 
     if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
-        auto string = source.source_code.toWTFString(BunString::ZeroCopy);
+        auto string = source.source_code.transferToWTFString();
         auto trimStart = string.find('\n');
         if (trimStart != WTF::notFound) {
-            auto wrapped = makeString(
+            string = makeString(
                 globalObject->m_moduleWrapperStart,
                 string.substring(trimStart, string.length() - trimStart - 4),
                 globalObject->m_moduleWrapperEnd);
-            string = source.source_code.transferToWTFString();
-            source.source_code = Bun::toStringRef(wrapped);
         }
+        source.source_code = Bun::toStringRef(string);
     }
 
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);

@@ -10,7 +10,7 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     fn generateCachedModuleByteCodeFromSourceCode(
-        source_provider_url: *const BunString,
+        source_provider_url: &BunString,
         input_code: *const u8,
         input_source_code_size: usize,
         output_byte_code: *mut Option<NonNull<u8>>,
@@ -19,7 +19,7 @@ unsafe extern "C" {
     ) -> bool;
 
     fn generateCachedCommonJSProgramByteCodeFromSourceCode(
-        source_provider_url: *const BunString,
+        source_provider_url: &BunString,
         input_code: *const u8,
         input_source_code_size: usize,
         output_byte_code: *mut Option<NonNull<u8>>,

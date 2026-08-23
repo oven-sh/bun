@@ -121,7 +121,7 @@ JSValue resolveAndFetchBuiltinModule(
 
 JSValue fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
-    BunString* specifier,
+    const BunString* specifier,
     ErrorableResolvedSource* res);
 
 } // namespace Bun

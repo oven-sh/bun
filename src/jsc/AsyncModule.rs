@@ -162,19 +162,16 @@ impl AsyncModule {
         jsc::mark_binding();
         let mut errorable = match result {
             Ok(resolved_source) => ErrorableResolvedSource::ok(resolved_source),
-            Err(e) => {
-                if e == crate::CrateError::JSError {
-                    ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown))
-                } else {
-                    ErrorableResolvedSource::err(crate::virtual_machine::process_fetch_log(
-                        global_this,
-                        specifier,
-                        referrer,
-                        log,
-                        e,
-                    ))
-                }
-            }
+            Err(
+                crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_)),
+            ) => ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown)),
+            Err(e) => ErrorableResolvedSource::err(crate::virtual_machine::process_fetch_log(
+                global_this,
+                specifier,
+                referrer,
+                log,
+                e,
+            )),
         };
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
@@ -649,33 +646,17 @@ impl AsyncModule {
         this.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
-            Ok(rs) => ErrorableResolvedSource::ok(rs),
-            Err(
-                crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_)),
-            ) => ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown)),
-            Err(err) => ErrorableResolvedSource::err(crate::virtual_machine::process_fetch_log(
-                global_this,
-                &BunString::init(ZigString::init(this.specifier())),
-                &BunString::init(ZigString::init(this.referrer())),
-                &mut log,
-                err,
-            )),
-        };
-        let mut errorable = errorable;
-        // log dropped at scope exit (defer log.deinit()).
-
-        let spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
-        let ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
-        jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(
-                global_this,
-                this.promise.get().unwrap(),
-                &mut errorable,
-                &spec,
-                &ref_,
-            )
-        })
+        let result = this.resume_loading_module(&mut log);
+        let spec = BunString::borrow_utf8(this.specifier());
+        let referrer = BunString::borrow_utf8(this.referrer());
+        Self::fulfill(
+            global_this,
+            this.promise.get().unwrap(),
+            result,
+            &spec,
+            &referrer,
+            &mut log,
+        )
     }
 
     // Never returns Err: the `write!`s below go into a `Vec<u8>` and their

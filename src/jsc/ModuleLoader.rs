@@ -302,22 +302,14 @@ unsafe extern "C" fn Bun__transpileFile(
 unsafe extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
     global_object: *mut JSGlobalObject,
-    specifier: *const bun_core::String,
-    referrer: *const bun_core::String,
-    ret: *mut ErrorableResolvedSource,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
+    ret: &mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
-    // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM and
-    // `global_object` is the live JS-thread global. JSC never passes null.
-    let (jsc_vm, global_object, specifier, referrer, ret) = unsafe {
-        (
-            &mut *jsc_vm,
-            NonNull::new_unchecked(global_object),
-            &*specifier,
-            &*referrer,
-            &mut *ret,
-        )
-    };
+    // SAFETY: `jsc_vm` is the live per-thread VM and `global_object` is the
+    // live JS-thread global. JSC never passes null.
+    let (jsc_vm, global_object) = unsafe { (&mut *jsc_vm, NonNull::new_unchecked(global_object)) };
     match fetch_builtin_module(jsc_vm, global_object, specifier, referrer) {
         Some(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
@@ -379,7 +371,7 @@ unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
             ..ResolvedSource::default()
         };
         // SAFETY: C++ passed a valid out-param.
-        unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+        unsafe { ret.write(ErrorableResolvedSource::ok(resolved)) };
         return true;
     }
     let Some(alias) = bun_aliases_get(spec_utf8.slice()) else {
@@ -396,7 +388,7 @@ unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
         return false;
     };
     // SAFETY: C++ passed a valid out-param.
-    unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+    unsafe { ret.write(ErrorableResolvedSource::ok(resolved)) };
     true
 }
 

@@ -671,6 +671,18 @@ describe("Server", () => {
         done();
       },
     }));
+    test("returning an Error from message() is not treated as a throw", (done, connect) => ({
+      open(ws) {
+        ws.send("trigger");
+      },
+      message(ws) {
+        queueMicrotask(() => done());
+        return new Error("returned, not thrown");
+      },
+      error(error) {
+        done(error);
+      },
+    }));
     for (const hook of ["ping", "pong", "close"] as const) {
       test(`${hook} handler that throws passes its error to error()`, done => {
         const thrown = new Error(`${hook} threw`);

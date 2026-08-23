@@ -452,10 +452,8 @@ impl ServerWebSocket {
             result: Ok(JSValue::ZERO),
         };
         ws.cork(&mut corker, Corker::run);
-        let result = corker
-            .result
-            .unwrap_or_else(|e| global_object.take_exception(e));
-        if let Some(err_value) = result.to_error() {
+        if let Err(e) = corker.result {
+            let err_value = global_object.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onOpen exception");
 
             let mut closed_here = false;
@@ -532,19 +530,15 @@ impl ServerWebSocket {
         };
 
         ws.cork(&mut corker, Corker::run);
-        let result = corker
-            .result
-            .unwrap_or_else(|e| global_object.take_exception(e));
-
-        if result.is_empty_or_undefined_or_null() {
-            return Ok(());
-        }
-
-        if let Some(err_value) = result.to_error() {
-            return self
-                .handler()
-                .run_error_callback(on_error, global_object, err_value);
-        }
+        let result = match corker.result {
+            Ok(result) => result,
+            Err(e) => {
+                let err_value = global_object.take_error(e);
+                return self
+                    .handler()
+                    .run_error_callback(on_error, global_object, err_value);
+            }
+        };
 
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
@@ -595,11 +589,8 @@ impl ServerWebSocket {
             };
             let _loop_guard = vm.enter_event_loop_scope();
             self.websocket().cork(&mut corker, Corker::run);
-            let result = corker
-                .result
-                .unwrap_or_else(|e| global_object.take_exception(e));
-
-            if let Some(err_value) = result.to_error() {
+            if let Err(e) = corker.result {
+                let err_value = global_object.take_error(e);
                 handler.run_error_callback(on_error, global_object, err_value)?;
             }
         }

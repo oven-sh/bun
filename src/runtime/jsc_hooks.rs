@@ -1181,8 +1181,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // SAFETY: per fn contract.
     #[cfg(unix)]
     timer_all().drain_timers(unsafe { &*vm });
-    #[cfg(not(unix))]
-    let _ = state;
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };

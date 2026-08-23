@@ -525,9 +525,11 @@ impl File {
                 }
                 Encoding::Utf16 => {
                     let bytes = self.contents.as_bytes();
-                    // `to_bytes` pads to an even offset and the section base is
-                    // page-aligned (the 128-byte bytecode alignment relies on it).
-                    debug_assert!(bytes.as_ptr().addr() % align_of::<u16>() == 0);
+                    debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
+                    #[expect(
+                        clippy::cast_ptr_alignment,
+                        reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
+                    )]
                     // SAFETY: even byte count at a 2-byte-aligned offset of a
                     // section that is never freed.
                     let units = unsafe {
@@ -881,7 +883,7 @@ fn encode_text_module(
             Encoding::Latin1,
         );
     }
-    if string_builder.len % align_of::<u16>() != 0 {
+    if !string_builder.len.is_multiple_of(align_of::<u16>()) {
         string_builder.writable()[0] = 0;
         string_builder.len += 1;
     }
@@ -889,8 +891,8 @@ fn encode_text_module(
     let byte_len = units.len() * 2;
     let dst = string_builder.writable();
     // Every `--compile` target is little-endian, whatever the build host is.
-    for (dst, unit) in dst.chunks_exact_mut(2).zip(units.iter()) {
-        dst.copy_from_slice(&unit.to_le_bytes());
+    for (dst, unit) in dst.as_chunks_mut::<2>().0.iter_mut().zip(units.iter()) {
+        *dst = unit.to_le_bytes();
     }
     dst[byte_len] = 0;
     dst[byte_len + 1] = 0;

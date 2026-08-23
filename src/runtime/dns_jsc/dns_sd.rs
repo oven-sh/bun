@@ -233,8 +233,9 @@ pub(crate) enum InflightRequest {
 /// An in-flight query: its request plus the subordinate ref, which lives and
 /// dies on this (the connection's) thread.
 pub(crate) struct Inflight {
-    request: InflightRequest,
+    /// Declared (so dropped) before `request`, the reply context it points at.
     sd_ref: Option<sd::Query>,
+    request: InflightRequest,
 }
 
 impl InflightRequest {

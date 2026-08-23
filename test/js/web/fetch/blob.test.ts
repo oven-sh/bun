@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
@@ -121,6 +121,161 @@ test("blob: can be fetched", async () => {
   expect(async () => {
     await fetch(url);
   }).toThrow();
+});
+
+// https://w3c.github.io/FileAPI/#blob-url-resolve: lookup uses the URL serialized
+// with the exclude-fragment flag, and a blob: URL that misses the store is a
+// network error. Either way, a blob: URL must never reach the HTTP/DNS stack.
+// Before this was fixed, the "with fragment"/"with query"/"not a UUID" cases
+// below fell through to the remote path and attempted a DNS lookup for host
+// "blob" (getaddrinfo ENOTFOUND blob).
+test("blob: fetch with a fragment resolves from the store; any other blob: URL rejects without touching the network", async () => {
+  // Sentinel proxy: if fetch ever hands a blob: URL to the HTTP client, the
+  // request lands here. The test asserts this stays at zero.
+  let proxyHits = 0;
+  using sentinel = Bun.serve({
+    port: 0,
+    fetch() {
+      proxyHits++;
+      return new Response("leaked to network");
+    },
+  });
+  const proxy = sentinel.url.href;
+
+  const blob = new Blob(["payload"], { type: "video/mp4" });
+  const url = URL.createObjectURL(blob);
+  try {
+    // Fragment is excluded from the store lookup.
+    const withFragment = await fetch(url + "#t=10", { proxy });
+    expect(withFragment.headers.get("Content-Type")).toBe("video/mp4");
+    expect(withFragment.url).toBe(url);
+    expect(await withFragment.text()).toBe("payload");
+
+    const emptyFragment = await fetch(url + "#", { proxy });
+    expect(emptyFragment.url).toBe(url);
+    expect(await emptyFragment.text()).toBe("payload");
+
+    // Blob URL store misses: reject with TypeError (as Node does), and never
+    // fall through to the HTTP client.
+    const assertStoreMiss = async (u: string) => {
+      let err: unknown;
+      try {
+        await fetch(u, { proxy });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(TypeError);
+    };
+
+    // Query is part of the serialization (not excluded), so this is a miss.
+    await assertStoreMiss(url + "?x=1");
+    await assertStoreMiss(url + "?x=1#frag");
+    // Not a registered UUID.
+    await assertStoreMiss("blob:00000000-0000-0000-0000-000000000000#frag");
+    // Not a UUID at all.
+    await assertStoreMiss("blob:not-a-uuid");
+    await assertStoreMiss("blob:http://example.com/whatever");
+
+    expect(proxyHits).toBe(0);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
+// https://fetch.spec.whatwg.org/#scheme-fetch, blob scheme
+describe("blob: scheme fetch", () => {
+  const body = "hello-7420";
+  let url: string;
+  beforeAll(() => {
+    url = URL.createObjectURL(new Blob([body], { type: "video/mp4" }));
+  });
+  afterAll(() => URL.revokeObjectURL(url));
+
+  test("sets Content-Length and Content-Type", async () => {
+    const r = await fetch(url);
+    expect({
+      status: r.status,
+      statusText: r.statusText,
+      contentLength: r.headers.get("Content-Length"),
+      contentType: r.headers.get("Content-Type"),
+    }).toEqual({
+      status: 200,
+      statusText: "OK",
+      contentLength: String(body.length),
+      contentType: "video/mp4",
+    });
+    expect(await r.text()).toBe(body);
+  });
+
+  test("rejects any method other than GET", async () => {
+    for (const method of ["POST", "PUT", "DELETE", "HEAD", "PATCH", "OPTIONS"]) {
+      expect(async () => await fetch(url, { method })).toThrow(TypeError);
+    }
+  });
+
+  test.each([
+    ["bytes=2-5", 206, "bytes 2-5/10", "llo-"],
+    ["bytes=2-", 206, "bytes 2-9/10", "llo-7420"],
+    ["bytes=-3", 206, "bytes 7-9/10", "420"],
+    ["bytes=0-0", 206, "bytes 0-0/10", "h"],
+    ["bytes=2-999", 206, "bytes 2-9/10", "llo-7420"],
+    ["bytes=0-9", 206, "bytes 0-9/10", body],
+  ])("Range: %s", async (header, status, contentRange, expectedBody) => {
+    const r = await fetch(url, { headers: { Range: header } });
+    expect({
+      status: r.status,
+      statusText: r.statusText,
+      contentRange: r.headers.get("Content-Range"),
+      contentLength: r.headers.get("Content-Length"),
+      contentType: r.headers.get("Content-Type"),
+    }).toEqual({
+      status,
+      statusText: "Partial Content",
+      contentRange,
+      contentLength: String(expectedBody.length),
+      contentType: "video/mp4",
+    });
+    expect(await r.text()).toBe(expectedBody);
+  });
+
+  test.each(["bytes=999-", "garbage", "bytes=5-2", "bytes=1-3, 5-7", "bytes=-0"])(
+    "rejects invalid/unsatisfiable Range: %s",
+    async header => {
+      expect(async () => await fetch(url, { headers: { Range: header } })).toThrow(TypeError);
+    },
+  );
+
+  test("resolves a file-backed blob's size before Content-Length/Range", async () => {
+    using dir = tempDir("blob-scheme-file", { "x.bin": "hello" });
+    const file = Bun.file(path.join(String(dir), "x.bin"));
+
+    for (const [blob, body] of [
+      [file, "hello"],
+      [file.slice(3), "lo"],
+      [file.slice(1, 4), "ell"],
+    ] as const) {
+      const url = URL.createObjectURL(blob);
+      try {
+        const full = await fetch(url);
+        expect(full.headers.get("Content-Length")).toBe(String(body.length));
+        expect(await full.text()).toBe(body);
+
+        const part = await fetch(url, { headers: { Range: "bytes=-1" } });
+        expect({
+          status: part.status,
+          contentLength: part.headers.get("Content-Length"),
+          contentRange: part.headers.get("Content-Range"),
+        }).toEqual({
+          status: 206,
+          contentLength: "1",
+          contentRange: `bytes ${body.length - 1}-${body.length - 1}/${body.length}`,
+        });
+        expect(await part.text()).toBe(body.at(-1));
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+  });
 });
 
 test("blob: URL has Content-Type", async () => {

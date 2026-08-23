@@ -68,13 +68,19 @@ public:
         h->prev = h->next = nullptr;
     }
     void runTickHooks() {
+        /* A hook may run a nested loop iteration; hooks are not re-entered
+         * from it — the outer walk resumes and they run again next tick. */
+        if (tickRunning) return;
+        tickRunning = true;
         for (TickHook *h = tickHead; h; h = tickCursor) {
             tickCursor = h->next;
             h->onTick(h);
         }
+        tickRunning = false;
     }
 private:
     TickHook *tickHead = nullptr, *tickTail = nullptr, *tickCursor = nullptr;
+    bool tickRunning = false;
 
     /* Cork data: two independent slots so a nested cork (e.g. a resumed async
      * request writing while the outer request is still corked) doesn't force

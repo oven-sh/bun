@@ -212,7 +212,11 @@ describe.concurrent("DOMException formats as an error", () => {
 
   test("DOMException as an enumerable error cause prints once", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", 'const e = new Error("outer"); e.cause = new DOMException("inner", "AbortError"); throw e;'],
+      cmd: [
+        bunExe(),
+        "-e",
+        'const e = new Error("outer"); e.cause = new DOMException("inner", "AbortError"); throw e;',
+      ],
       env: bunEnv,
       stderr: "pipe",
     });

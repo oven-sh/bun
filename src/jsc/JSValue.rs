@@ -852,7 +852,7 @@ impl JSValue {
     pub fn to_js_string_view<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let mut view = bun_core::StringView::EMPTY;
         crate::call_null_is_throw(global, || {
-            JSC__JSValue__toStringAndView(self, global, &mut view)
+            JSC__JSValue__toJSStringView(self, global, &mut view)
         })
         .map(|p| JSStringView::new(JSString::opaque_ref(p.as_ptr()), view))
     }
@@ -2082,7 +2082,7 @@ unsafe extern "C" {
         value: JSValue,
     );
     safe fn JSC__JSValue__toStringOrNull(this: JSValue, global: &JSGlobalObject) -> *mut JSString;
-    safe fn JSC__JSValue__toStringAndView<'a>(
+    safe fn JSC__JSValue__toJSStringView<'a>(
         this: JSValue,
         global: &'a JSGlobalObject,
         view: &mut bun_core::StringView<'a>,

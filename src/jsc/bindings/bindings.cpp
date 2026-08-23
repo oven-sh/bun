@@ -4934,7 +4934,7 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
 
 /// `toStringOrNull` + a borrowed view of its characters in one call. The view
 /// aliases the returned JSString's StringImpl.
-extern "C" JSC::JSString* JSC__JSValue__toStringAndView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view)
+extern "C" JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
     auto* str = JSC::JSValue::decode(JSValue0).toStringOrNull(global);

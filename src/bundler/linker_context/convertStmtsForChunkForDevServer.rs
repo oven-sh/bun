@@ -338,7 +338,9 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
 pub(crate) fn is_two_phase_esm(ast: &JSAst<'_>) -> bool {
     ast.exports_kind == bun_ast::ExportsKind::Esm
         && ast.top_level_await_keyword.is_empty()
-        && !ast.flags.contains(crate::bundled_ast::Flags::HAS_LAZY_EXPORT)
+        && !ast
+            .flags
+            .contains(crate::bundled_ast::Flags::HAS_LAZY_EXPORT)
 }
 
 /// Matches the `hmr.exports = { ... }` statement that

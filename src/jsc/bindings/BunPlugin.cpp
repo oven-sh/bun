@@ -7,7 +7,6 @@
 #include "helpers.h"
 #include "ZigGlobalObject.h"
 
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -427,12 +426,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSModuleMock, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSModuleMock.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSModuleMock = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSModuleMock.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSModuleMock = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSModuleMock, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSModuleMock, m_subspaceForJSModuleMock));
     }
 
     void finishCreation(JSC::VM&);
@@ -463,7 +457,7 @@ JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject
 
 Structure* JSModuleMock::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
@@ -504,7 +498,7 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 }
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
-extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -562,13 +556,12 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         if (url.isValid() && url.protocolIsFile()) {
             auto fromString = url.fileSystemPath();
             BunString from = Bun::toString(fromString);
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
-            if (topExceptionScope.exception()) {
-                (void)topExceptionScope.tryClearException();
-            }
+            // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
+            // while resolving (e.g. by an onResolve plugin) propagates.
+            auto result = JSValue::decode(Bun__resolveSyncWithSourceIfExists(globalObject, JSValue::encode(specifierString), &from, true));
+            RETURN_IF_EXCEPTION(scope, );
 
-            if (result && result.isString()) {
+            if (result.isString()) {
                 auto* specifierStr = result.toString(globalObject);
                 if (specifierStr->length() > 0) {
                     specifierString = specifierStr;
@@ -659,15 +652,21 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
+                            // Read every export before overriding any, so a throwing getter leaves the
+                            // namespace untouched.
+                            MarkedArgumentBuffer values;
+                            values.ensureCapacity(names.size());
                             for (auto& name : names) {
-                                // consistent with regular esm handling code
-                                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                                 JSValue value = object->get(globalObject, name);
-                                if (scope.exception()) [[unlikely]] {
-                                    (void)scope.tryClearException();
-                                    value = jsUndefined();
-                                }
-                                moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                                RETURN_IF_EXCEPTION(scope, {});
+                                values.append(value);
+                            }
+                            if (values.hasOverflowed()) [[unlikely]] {
+                                throwOutOfMemoryError(globalObject, scope);
+                                return {};
+                            }
+                            for (size_t i = 0; i < names.size(); ++i) {
+                                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
 
@@ -979,13 +978,8 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(globalObject);
-    global->onLoadPlugins.fileNamespace.clear();
-    global->onResolvePlugins.fileNamespace.clear();
-    global->onLoadPlugins.groups.clear();
-    global->onResolvePlugins.namespaces.clear();
-
-    delete global->onLoadPlugins.virtualModules;
-    global->onLoadPlugins.virtualModules = nullptr;
+    global->onLoadPlugins.clear();
+    global->onResolvePlugins.clear();
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

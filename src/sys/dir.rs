@@ -44,6 +44,7 @@ impl Dir {
     pub fn fd(&self) -> Fd {
         self.fd
     }
+    /// Wraps the `Fd::cwd()` sentinel, which `Drop` skips.
     #[inline]
     pub fn cwd() -> Self {
         Self { fd: Fd::cwd() }

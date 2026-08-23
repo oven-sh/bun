@@ -2,8 +2,8 @@
  * Rust build step — cargo as a ninja edge.
  *
  * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`;
- * the leaf crate is `src/bun_bin` (`crate-type = ["staticlib"]`). One
- * `cargo build -p bun_bin` produces `libbun_rust.a` containing the entire
+ * the leaf crate is `src/runtime` (`bun_runtime`, `crate-type = ["staticlib"]`).
+ * One `cargo build -p bun_runtime` produces `libbun_runtime.a` containing the entire
  * Rust crate graph plus libstd, with `main` exported `#[no_mangle] extern "C"`.
  *
  * Cargo's own incremental compilation handles per-file tracking; our ninja
@@ -26,7 +26,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { bunExeName, type Abi, type Arch, type Config, type OS } from "./config.ts";
+import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeCpuTargetFlags } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
@@ -197,14 +197,14 @@ function rustTargetDir(cfg: Config): string {
 }
 
 /**
- * Absolute path to `libbun_rust.a` (or `bun_rust.lib` on Windows).
+ * Absolute path to `libbun_runtime.a` (or `bun_runtime.lib` on Windows).
  *
  * `--target` is always passed, so cargo's output layout is
- * `<target-dir>/<triple>/<profile>/<libPrefix>bun_rust<libSuffix>`.
+ * `<target-dir>/<triple>/<profile>/<libPrefix>bun_runtime<libSuffix>`.
  */
 export function rustLibPath(cfg: Config): string {
   const { subdir } = cargoProfile(cfg);
-  return resolve(rustTargetDir(cfg), rustTarget(cfg), subdir, `${cfg.libPrefix}bun_rust${cfg.libSuffix}`);
+  return resolve(rustTargetDir(cfg), rustTarget(cfg), subdir, `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -230,7 +230,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const stream = `${cfg.jsRuntime} ${q(streamPath)} rust`;
 
-  // Cargo build for `bun_bin`. Runs from repo root (workspace `Cargo.toml`
+  // Cargo build for `bun_runtime`. Runs from repo root (workspace `Cargo.toml`
   // lives there). Env passed via stream.ts `--env=K=V`.
   //
   // `--console`: cargo has its own progress bar / colour; pool=console gives
@@ -238,7 +238,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // the staticlib when nothing changed.
   n.rule("rust_build", {
     command: `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
-    description: "cargo bun_bin → $label",
+    description: "cargo bun_runtime → $label",
     pool: "console",
     restat: true,
   });
@@ -330,7 +330,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
       `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
     n.rule("rust_build_cross", {
       command: hostWin ? `cmd /c "${chain}"` : chain,
-      description: "cargo bun_bin → $label ($rust_target_arg)",
+      description: "cargo bun_runtime → $label ($rust_target_arg)",
       pool: "console",
       restat: true,
     });
@@ -392,7 +392,7 @@ export interface CargoInvocation {
 }
 
 /**
- * Compute the cargo command line + environment for `cargo build -p bun_bin`.
+ * Compute the cargo command line + environment for `cargo build -p bun_runtime`.
  * Pure function of `cfg`; does no I/O.
  */
 export function cargoBuildInvocation(cfg: Config): CargoInvocation {
@@ -404,7 +404,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // ─── Build args ───
   const args: string[] = [
     "-p",
-    "bun_bin",
+    "bun_runtime",
     "--lib",
     "--target-dir",
     targetDir,
@@ -426,6 +426,14 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
     //          visible instead of stopping at the std boundary.
     args.push(cargoBuildStdArg);
+    if (cfg.release && !cfg.asan) {
+      // Cargo's default build-std feature set is `panic-unwind,backtrace,default`.
+      // `backtrace` links std's symbolizer (gimli, addr2line, miniz_oxide,
+      // rustc-demangle, ~200 KB on linux-x64) for `std::backtrace` and the
+      // default panic hook; bun installs its own panic hook and symbolizes
+      // crash traces out of process, so nothing reads it.
+      args.push("-Zbuild-std-features=panic-unwind,default");
+    }
   }
 
   // ─── rustflags ───
@@ -435,7 +443,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // the targets where bun links as a position-dependent ET_EXEC. With the
   // default `pic`, every Rust `&'static [T]` / `&'static str` / vtable is a
   // GOT-relative reference and the constant ends up in `.data.rel.ro` (RW
-  // segment, eagerly faulted) instead of `.rodata`; libbun_rust.a alone
+  // segment, eagerly faulted) instead of `.rodata`; libbun_runtime.a alone
   // contributes ~561 KiB of `.data.rel.ro` that the Zig binary placed in
   // shareable read-only pages. `static` lets rustc emit absolute references
   // and the constants land in `.rodata`. This is a *target* RUSTFLAG: with
@@ -446,7 +454,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
     rustflags.push("-Crelocation-model=static");
   }
-  // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
+  // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
   // Parallel frontend: rustc's default is single-threaded for parse / macro
@@ -583,7 +591,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     rustflags.push(`-Cprofile-use=${cfg.pgoUse}`);
   }
   // Force lld for any target link rustc itself performs. None exists today
-  // (`bun_bin` is a staticlib with no link step; `lol_html` is a plain rlib
+  // (`bun_runtime` is a staticlib with no link step; `lol_html` is a plain rlib
   // path dep), so this is defensive — see the Windows note below. The
   // default `cc` driver picks BFD `/usr/bin/ld`, which doesn't match the
   // semantics the C/C++ object set assumes (and, under `-Clinker-plugin-lto`,
@@ -597,7 +605,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // Not on Windows: the per-target linker there is `link.exe` / `lld-link.exe`
   // (see `CARGO_TARGET_*_LINKER` below), which take `/X` args, not the GCC/clang
   // `-fuse-ld=`. RUSTFLAGS only reach *target* crates when `--target` is given,
-  // and the `bun_bin` staticlib has no link step, so it's normally dead — but
+  // and the `bun_runtime` staticlib has no link step, so it's normally dead — but
   // if a target cdylib ever appears it'd fail with "could not open '-fuse-ld=lld'".
   if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   // Keep the clang driver quiet about link args that don't apply to a given
@@ -676,7 +684,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     CC: cfg.cc,
     CXX: cfg.cxx,
     AR: cfg.ar,
-    // Per-target linker. The `bun_bin` artifact is a staticlib (no link step);
+    // Per-target linker. The `bun_runtime` artifact is a staticlib (no link step);
     // what actually gets linked are HOST executables/dylibs in the dep graph
     // (build scripts, proc-macros) — and on a native build, `--target` is the
     // host triple, so this env var sets *their* linker too.
@@ -913,7 +921,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       cwd: cfg.cwd,
       args: quoteArgs(args, hostWin),
       ...(useCrossRule ? { rust_target_arg: tier3 ? "" : `--target ${triple}` } : {}),
-      label: `${cfg.libPrefix}bun_rust${cfg.libSuffix}`,
+      label: `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`,
       env: Object.entries(env)
         .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
         .join(" "),
@@ -955,7 +963,7 @@ export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]):
     { hint: "Install the pinned rust toolchain (rustup show active-toolchain), or build with --lto=off" },
   );
   const llvmBin = join(cfg.rustSysroot, "lib", "rustlib", cfg.host.rustTriple, "bin");
-  const out = resolve(cfg.buildDir, "bun_rust.lto.o");
+  const out = resolve(cfg.buildDir, "bun_runtime.lto.o");
   n.build({
     outputs: [out],
     rule: "rust_lto_fix",
@@ -964,11 +972,6 @@ export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]):
     vars: { llvm_bin: llvmBin, ar: cfg.ar },
   });
   return [out, ...rustObjects];
-}
-
-/** `${buildDir}/${exe}.linker-map` — lld's `-Wl,-Map=` output (see flags.ts). */
-export function linkerMapPath(cfg: Config): string {
-  return join(cfg.buildDir, `${bunExeName(cfg)}.linker-map`);
 }
 
 /**

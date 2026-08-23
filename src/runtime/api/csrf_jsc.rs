@@ -177,7 +177,6 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
                 csrf::Error::TokenCreationFailed => {
                     global.throw(format_args!("Failed to create CSRF token"))
                 }
-                _ => global.throw(format_args!("{err} Failed to generate CSRF token")),
             });
         }
     };

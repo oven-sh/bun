@@ -96,12 +96,7 @@ pub type GenString = bun_core::String;
 /// `release_gen_val_array_buffer` in the owning containers' `Drop` impls.
 pub type GenArrayBuffer = *mut JSCArrayBuffer;
 
-/// `bun.bun_js.webcore.Blob.Ref` — adopted `*mut Blob` (the codegen `m_ctx`
-/// payload). LAYERING: `webcore::Blob` lives in `bun_runtime` (a dependent of
-/// this crate); the bindgen extern struct only ever stores the raw pointer
-/// (filled by C++ `bindgenConvertJSTo*`), so it stays erased as `*mut c_void`
-/// here and is cast to `*mut bun_runtime::webcore::Blob` by the consumer in
-/// `bun_runtime::api::bun::spawn::stdio::convert_from_extern`.
+/// The codegen `m_ctx` `*mut webcore::Blob`, erased: `Blob` lives in `bun_runtime`.
 pub type GenBlob = *mut core::ffi::c_void;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -977,7 +972,7 @@ macro_rules! impl_js_class_via_generated {
 
 /// Expands to a `pub mod $mod` containing the standard `.classes.ts` codegen
 /// surface for a JS wrapper class: `from_js` / `from_js_direct` / `from_js_ref`
-/// / `to_js` / `to_js_unchecked` / `dangerously_set_ptr` / `get_constructor`,
+/// / `to_js` / `to_js_unchecked` / `get_constructor`,
 /// plus a cached-accessor pair per listed property.
 ///
 /// One impl, generated once — see
@@ -1039,9 +1034,7 @@ macro_rules! js_class_module {
             // to a non-null `*mut`). `__from_js*` only type-check the encoded
             // value and return the stored `m_ctx` pointer (or null) — the C++
             // side never dereferences `Payload`, so there is no Rust-side
-            // precondition. `__dangerously_set_ptr` keeps `unsafe`
-            // because it installs `ptr` into a GC cell whose finalizer will
-            // later free it (deferred deref → ownership precondition).
+            // precondition.
             $crate::jsc_abi_extern! {
                 #[allow(improper_ctypes)]
                 {
@@ -1053,8 +1046,6 @@ macro_rules! js_class_module {
                     safe fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                     #[link_name = concat!($TypeName, "__getConstructor")]
                     safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
-                    #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
-                    fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
                 }
             }
 
@@ -1106,20 +1097,6 @@ macro_rules! js_class_module {
             #[inline]
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
                 __get_constructor(global)
-            }
-
-            /// Detach (`ptr = null`) or replace the wrapped native pointer on
-            /// an existing JS wrapper. Returns `false` if `value` is not (a
-            /// subclass of) the wrapper type.
-            ///
-            /// # Safety
-            /// Caller must ensure the previous `m_ctx` is finalized exactly
-            /// once elsewhere — the C++ side overwrites without freeing.
-            #[inline]
-            pub unsafe fn dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool {
-                // SAFETY: `value` is a valid encoded JSValue; the C++ side
-                // type-checks before writing `m_ctx`.
-                unsafe { __dangerously_set_ptr(value, ptr) }
             }
         }
     };

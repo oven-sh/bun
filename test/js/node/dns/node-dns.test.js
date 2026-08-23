@@ -619,6 +619,43 @@ describe("test invalid arguments", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/39550
+// Node treats a third argument as the callback: query(name, options, callback).
+describe("a third argument shifts the callback", () => {
+  const resolvers = [
+    ["dns.resolve4", dns.resolve4],
+    ["dns.resolve6", dns.resolve6],
+    ["dns.resolveAny", dns.resolveAny],
+    ["dns.resolveCname", dns.resolveCname],
+    ["dns.resolveCaa", dns.resolveCaa],
+    ["dns.resolveMx", dns.resolveMx],
+    ["dns.resolveNaptr", dns.resolveNaptr],
+    ["dns.resolveNs", dns.resolveNs],
+    ["dns.resolvePtr", dns.resolvePtr],
+    ["dns.resolveSoa", dns.resolveSoa],
+    ["dns.resolveSrv", dns.resolveSrv],
+    ["dns.resolveTxt", dns.resolveTxt],
+    ["dns.reverse", dns.reverse],
+  ];
+
+  it.each(resolvers)("%s throws when the third argument is not a function", (_, fn) => {
+    expect(() => fn("localhost", () => {}, "ignored-value")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('The "callback" argument must be of type function'),
+      }),
+    );
+  });
+
+  it.each(resolvers.filter(([name]) => name !== "dns.reverse"))(
+    "%s accepts an options argument before the callback",
+    (_, fn, done) => {
+      // The overlong name fails locally, so the callback runs without network access.
+      fn(Buffer.alloc(2000, "a").toString(), {}, () => done());
+    },
+  );
+});
+
 describe("dns.lookupService", () => {
   it.each([
     ["1.1.1.1", 53, ["one.one.one.one", "domain"]],

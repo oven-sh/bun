@@ -363,7 +363,6 @@ test/bake/dev/server-sourcemap.test.ts
 # Watcher Thread
 test/bake/dev-and-prod.test.ts
 test/bake/dev/bundle.test.ts
-test/bake/dev/css.test.ts
 test/bake/dev/esm.test.ts
 test/bake/dev/hot.test.ts
 test/bake/dev/react-spa.test.ts

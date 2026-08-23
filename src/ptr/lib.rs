@@ -22,6 +22,8 @@
 // `cow_slice::CowSlice<u8>`.
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
+mod js_cell;
+pub use js_cell::JsCell;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the
@@ -157,11 +159,6 @@ impl<T: ?Sized> BackRef<T, Mut> {
         // liveness/alignment; `Mut` records write provenance.
         unsafe { self.0.as_mut() }
     }
-
-    #[inline]
-    pub const fn shared(self) -> BackRef<T, Shared> {
-        BackRef(self.0, core::marker::PhantomData)
-    }
 }
 
 impl<T, P> BackRef<T, P> {
@@ -196,6 +193,33 @@ impl<T: ?Sized, P> BackRef<T, P> {
         // SAFETY: BackRef invariant — pointee outlives holder; non-null,
         // aligned, dereferenceable.
         unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T: AnyRefCounted> BackRef<T, Mut>
+where
+    T::DestructorCtx: Default,
+{
+    /// View the pointee as a [`ThisPtr`] for the refcounted-dispatch entry
+    /// points that take one. Safe under the `BackRef` invariant: the pointee is
+    /// live for as long as this back-reference is held, which is exactly
+    /// [`ThisPtr::new`]'s precondition; `Mut` records that the pointer carries
+    /// the allocation's root provenance (it came from a `ThisPtr`), so the
+    /// callee may release refs through it.
+    #[inline]
+    pub fn this_ptr(&self) -> ThisPtr<T> {
+        // SAFETY: BackRef invariant — pointee is live and non-null.
+        unsafe { ThisPtr::new(self.0.as_ptr()) }
+    }
+}
+
+impl<T> From<ThisPtr<T>> for BackRef<T, Mut> {
+    /// Record a dispatch-time [`ThisPtr`] as a back-reference. The holder takes
+    /// on the `BackRef` invariant: it must drop/clear this before the pointee
+    /// can be freed.
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        BackRef(p.0, core::marker::PhantomData)
     }
 }
 
@@ -710,12 +734,6 @@ impl<T> DetachablePtr<T> {
     #[inline]
     pub fn is_detached(&self) -> bool {
         self.0.get().is_null()
-    }
-
-    /// Recover the raw pointer (for forwarding / identity checks).
-    #[inline]
-    pub fn as_ptr(&self) -> *mut T {
-        self.0.get()
     }
 
     /// Load the parked `&mut T`, or `None` if detached.

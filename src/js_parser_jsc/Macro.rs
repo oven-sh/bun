@@ -427,7 +427,7 @@ impl Macro {
             // CLI-path macro VM uses the caller's log sink and env loader.
 
             // JSC needs to be initialized if building from CLI
-            jsc::initialize(false);
+            jsc::initialize(jsc::InitializeOptions::default());
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 log: Some(NonNull::from(&mut *log)),
@@ -520,7 +520,7 @@ impl From<MacroError> for Error {
             MacroError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             MacroError::ToJs(e) => e.into(),
             MacroError::Js(JsError::OutOfMemory) => crate::Error::Alloc(bun_alloc::AllocError),
-            MacroError::Js(JsError::Thrown) => crate::Error::JSError,
+            MacroError::Js(JsError::Thrown | JsError::Terminated) => crate::Error::JSError,
         }
     }
 }

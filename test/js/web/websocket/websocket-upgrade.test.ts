@@ -2,6 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createHash } from "node:crypto";
 
+// harness's isIPv6() looks for IPv6 interface addresses and is hardcoded false
+// on BuildKite Linux; all the IPv6 test below needs is a loopback bind.
+function hasIPv6Loopback() {
+  try {
+    Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } }).stop(true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe("WebSocket upgrade", () => {
   // https://github.com/oven-sh/bun/issues/2896
   // BUN_CONFIG_WS_HANDSHAKE_TIMEOUT=1: uSockets sweeps every 4 s, so the
@@ -73,6 +84,41 @@ describe("WebSocket upgrade", () => {
       upgrade: "websocket",
     });
 
+    ws.close();
+  });
+
+  // RFC 9110 §7.2: Host carries the port whenever it is not the scheme default,
+  // for an IPv6 literal too. The Host writer used to take the colons inside the
+  // brackets for a port and send `Host: [::1]`.
+  test.concurrent.skipIf(!hasIPv6Loopback())("Host carries the port for an IPv6 literal", async () => {
+    const received = Promise.withResolvers<string | null>();
+    await using server = Bun.serve({
+      hostname: "::1",
+      port: 0,
+      fetch(request, server) {
+        const host = request.headers.get("host");
+        if (server.upgrade(request)) {
+          received.resolve(host);
+          return;
+        }
+        received.reject(new Error("upgrade failed"));
+        return new Response("upgrade failed", { status: 500 });
+      },
+      websocket: {
+        open(ws) {
+          ws.close();
+        },
+        message() {},
+      },
+    });
+
+    const opened = Promise.withResolvers<void>();
+    const ws = new WebSocket(`ws://[::1]:${server.port}/`);
+    ws.addEventListener("open", () => opened.resolve());
+    ws.addEventListener("error", opened.reject);
+    await opened.promise;
+
+    expect(await received.promise).toBe(`[::1]:${server.port}`);
     ws.close();
   });
 

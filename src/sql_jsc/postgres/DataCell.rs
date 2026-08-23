@@ -20,12 +20,20 @@ bun_core::declare_scope!(PostgresDataCell, visible);
 
 fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     let len = hex.len() / 2;
-    let mut buf = vec![0u8; len].into_boxed_slice();
-    // errdefer free(buf) → Box drops on `?`
-
-    let written = bun_core::decode_hex_to_bytes(&mut buf, hex)
-        .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-    let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
+    let mut buf: Vec<u8> = Vec::new();
+    buf.try_reserve_exact(len)
+        .map_err(|_| AnyPostgresError::OutOfMemory)?;
+    // SAFETY: the decoder only writes into the spare bytes and returns how many it filled.
+    let written = unsafe {
+        bun_core::vec::fill_spare(&mut buf, 0, |spare| {
+            match bun_core::decode_hex_to_bytes(&mut spare[..len], hex) {
+                Ok(written) => (written, Ok(written)),
+                Err(_) => (0, Err(AnyPostgresError::InvalidByteSequence)),
+            }
+        })
+    }?;
+    // `SQLDataCell::deinit` frees this as a `Box<[u8]>` of exactly `written` bytes.
+    let ptr = bun_core::heap::into_raw(buf.into_boxed_slice()).cast::<u8>();
 
     Ok(SQLDataCell {
         tag: Tag::Bytea,
@@ -207,7 +215,6 @@ fn parse_array(
                 | types::Tag::date_array => {
                     let date_str = &slice[1..current_idx];
                     let mut str = BunString::init(date_str);
-                    // defer str.deref() → Drop on BunString
                     array.push(SQLDataCell::date(
                         crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
                             .map_err(crate::jsc::js_error_to_postgres)?,
@@ -778,7 +785,7 @@ fn from_bytes(
                 Ok(SQLDataCell::float8(parse_binary_float8(bytes)?))
             } else {
                 Ok(SQLDataCell::float8(
-                    bun_core::parse_double(bytes).unwrap_or(f64::NAN),
+                    bun_core::fmt::parse_f64(bytes).unwrap_or(f64::NAN),
                 ))
             }
         }
@@ -787,7 +794,7 @@ fn from_bytes(
                 Ok(SQLDataCell::float8(parse_binary_float4(bytes)? as f64))
             } else {
                 Ok(SQLDataCell::float8(
-                    bun_core::parse_double(bytes).unwrap_or(f64::NAN),
+                    bun_core::fmt::parse_f64(bytes).unwrap_or(f64::NAN),
                 ))
             }
         }

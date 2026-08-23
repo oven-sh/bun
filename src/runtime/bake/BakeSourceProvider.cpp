@@ -146,26 +146,4 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
   return JSC::JSValue::encode(moduleNamespace->get(global, property));
 }
 
-extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* global, BunString virtualPathName, BunString source) {
-  auto& vm = JSC::getVM(global);
-  auto scope = DECLARE_THROW_SCOPE(vm);
-
-  String string = virtualPathName.toWTFString();
-  JSC::JSString* key = JSC::jsString(vm, string);
-  JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
-  JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
-    global,
-    source.toWTFString(),
-    origin,
-    WTF::move(string),
-    WTF::TextPosition(),
-    JSC::SourceProviderSourceType::Module
-  ));
-
-  global->moduleLoader()->provideFetch(global, JSC::Identifier::fromString(vm, key->getString(global)), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(sourceCode));
-  RETURN_IF_EXCEPTION(scope, {});
-
-  return JSC::JSValue::encode(key);
-}
-
 } // namespace Bake

@@ -1,7 +1,7 @@
 use core::sync::atomic::Ordering;
 
 use bun_ast::Source;
-use bun_collections::DynamicBitSet;
+use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
@@ -57,7 +57,9 @@ pub fn install_with_manager(
 
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.
-    if !manager.env().has_http_proxy() {
+    if !manager.env().has_http_proxy()
+        && manager.options.offline != crate::package_manager_real::options::OfflineMode::Offline
+    {
         // And don't try to resolve DNS if it's an IP address.
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
@@ -233,6 +235,17 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
+                // Which workspaces asked for a self-contained node_modules is a property
+                // of their manifests, not of the dependency graph: mirror the freshly
+                // parsed manifests whether or not anything else changed, so the copy
+                // loaded from bun.lock never goes stale.
+                manager
+                    .lockfile
+                    .self_contained_workspaces
+                    .clear_retaining_capacity();
+                for key in lockfile.self_contained_workspaces.keys() {
+                    manager.lockfile.self_contained_workspaces.put(*key, ())?;
+                }
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
                 }
@@ -326,7 +339,7 @@ pub fn install_with_manager(
                         let mut v = Vec::new();
                         lf.overrides.append_overridden_name_hashes(&mut v);
                         lockfile.overrides.append_overridden_name_hashes(&mut v);
-                        v.sort_unstable();
+                        index_sort::sort_slice_unstable_by(&mut v, |a, b| a.cmp(b));
                         v.dedup();
                         v
                     };
@@ -417,7 +430,6 @@ pub fn install_with_manager(
                             lf.workspace_versions.insert(*key, version);
                         }
                     }
-
                     // Update patched dependencies
                     {
                         for (key, value) in lockfile.patched_dependencies.iter() {
@@ -519,7 +531,9 @@ pub fn install_with_manager(
                             .lockfile
                             .overrides
                             .append_catalog_valued_name_hashes(&mut catalog_overridden);
-                        catalog_overridden.sort_unstable();
+                        index_sort::sort_slice_unstable_by(&mut catalog_overridden, |a, b| {
+                            a.cmp(b)
+                        });
                         catalog_overridden.dedup();
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
@@ -2019,7 +2033,7 @@ fn refresh_children_of_named(
             })
             .collect()
     };
-    package_ids.sort_unstable();
+    index_sort::sort_indices_unstable(&mut package_ids, &mut |a, b| a.cmp(&b));
     package_ids.dedup();
     if package_ids.is_empty() {
         return Ok(Vec::new());

@@ -961,11 +961,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       await checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
     it("hands the addon the thrown value via napi_get_and_clear_last_exception", async () => {
-      const out = await checkSameOutput("test_napi_run_script_last_exception", [
+      // 9 = napi_generic_failure; 6 = napi_object, 3 = napi_number
+      let out = await checkSameOutput("test_napi_run_script_last_exception", [
         "(()=>{ throw new TypeError('oops'); })()",
       ]);
-      // 9 = napi_generic_failure, 6 = napi_object
       expect(out).toContain("status=9 typeof=6 is_error=1");
+      out = await checkSameOutput("test_napi_run_script_last_exception", ["(()=>{ throw 42; })()"]);
+      expect(out).toContain("status=9 typeof=3 is_error=0");
     });
     it("cannot see locals from around its invocation", async () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code

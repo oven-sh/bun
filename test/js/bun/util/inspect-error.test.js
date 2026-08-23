@@ -165,11 +165,7 @@ describe.concurrent("DOMException formats as an error", () => {
 
   test("console.error(abort reason) prints an error", async () => {
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        "const ac = new AbortController(); ac.abort(); console.error(ac.signal.reason);",
-      ],
+      cmd: [bunExe(), "-e", "const ac = new AbortController(); ac.abort(); console.error(ac.signal.reason);"],
       env: bunEnv,
       stderr: "pipe",
     });

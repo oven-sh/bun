@@ -634,6 +634,10 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     } else {
         table_printer.print_table::<false>(&mut array)?;
     }
+    // print_table() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
+    if global_this.has_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
 
     // writer.flush(): Vec<u8> writer is unbuffered; nothing to flush.
 
@@ -691,6 +695,10 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         &mut array,
         format_options,
     )?;
+    // format2() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
+    if global_this.has_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
     // writer.flush(): Vec<u8> is unbuffered.
 
     // we are going to always clone to keep things simple for now

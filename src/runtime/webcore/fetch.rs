@@ -1197,6 +1197,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     .unwrap_or_default();
 
+    // HTTPRequestBody::from_js() throws without returning Err; see Blob::from_dom_form_data
+    if global_this.has_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
+
     // headers: Headers | undefined;
     headers = 'extract_headers: {
         // Releases the +1 from `create_from_js` on every exit path.

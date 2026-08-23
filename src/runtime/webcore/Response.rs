@@ -1219,6 +1219,11 @@ impl Response {
         // error returns below release the extracted body payload.
         let body = scopeguard::guard(body, |b| b.reset());
 
+        // extract() throws without returning Err; see Blob::from_dom_form_data
+        if global_this.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
+
         // Perform the only remaining fallible op BEFORE heap-allocating:
         // doing it on stack locals lets `?` trigger the scopeguard and
         // `init`'s drop glue and avoids leaking the heap allocation entirely.

@@ -1229,6 +1229,11 @@ impl Request {
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
+
+                // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
+                if global_this.has_exception() {
+                    bail!(Err(JsError::Thrown));
+                }
             }
 
             if !fields.contains(Fields::Url) {

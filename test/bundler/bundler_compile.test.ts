@@ -913,9 +913,8 @@ describe("bundler", () => {
   });
 
   // A text import in a compiled executable is embedded as a string body
-  // (Latin-1 when every code point fits, UTF-16LE otherwise) that the runtime
-  // hands back without a parse or a copy, instead of a JS module with a string
-  // literal. The same source also checks `require()`, `import()`, and that
+  // (8-bit when ASCII, UTF-16LE otherwise) that the runtime hands back without
+  // a parse or a copy, instead of a JS module with a string literal. The same source also checks `require()`, `import()`, and that
   // `Bun.embeddedFiles` keeps listing only real assets.
   // Buffers: `files` strings go through dedent(), which would trim them.
   const textImportFiles = {
@@ -967,7 +966,7 @@ describe("bundler", () => {
       // The embedded bytes are the string body itself.
       const encoded = {
         "ascii.txt": Buffer.from(expected.ascii, "latin1"),
-        "latin1.txt": Buffer.from(expected.latin1, "latin1"),
+        "latin1.txt": Buffer.from(expected.latin1, "utf16le"),
         "wide.txt": Buffer.from(expected.wide, "utf16le"),
         "empty.txt": Buffer.alloc(0),
         "invalid.txt": Buffer.from(expected.invalid, "utf16le"),

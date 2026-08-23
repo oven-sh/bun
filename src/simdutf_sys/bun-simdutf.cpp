@@ -42,13 +42,6 @@ simdutf__convert_utf8_to_utf16le_with_errors(const char* buf, size_t len,
     return { res.error, res.count };
 }
 
-SIMDUTFResult simdutf__convert_utf16le_to_latin1_with_errors(const char16_t* buf, size_t len,
-    char* latin1_output)
-{
-    auto res = simdutf::convert_utf16le_to_latin1_with_errors(buf, len, latin1_output);
-    return { res.error, res.count };
-}
-
 SIMDUTFResult simdutf__convert_utf16le_to_utf8_with_errors(const char16_t* buf,
     size_t len,
     char* utf8_buffer)

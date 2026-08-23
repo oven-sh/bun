@@ -851,37 +851,19 @@ fn is_text_module_output(output_file: &OutputFile) -> bool {
     output_file.loader == Loader::Text && output_file.output_kind == options::OutputKind::Asset
 }
 
-/// Writes `utf8` as a `WTF::StringImpl` body: Latin-1 when every code point
-/// fits, else UTF-16 at an even offset so the runtime can alias a `char16_t*`.
-/// `to_bytes` reserves `2 * utf8.len() + 4` bytes for it.
+/// Writes `utf8` as a `WTF::StringImpl` body: 8-bit when ASCII, else UTF-16
+/// at an even offset so the runtime can alias a `char16_t*` (the same split
+/// as `String::clone_utf8`). `to_bytes` reserves `2 * utf8.len() + 4` bytes.
 fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
 ) -> (StringPointer, Encoding) {
-    if strings::first_non_ascii(utf8).is_none() {
-        return (string_builder.append_count_z(utf8), Encoding::Latin1);
-    }
     // Invalid UTF-8 becomes U+FFFD, as with `TextDecoder`.
     let units = match strings::to_utf16_alloc(utf8, false, false) {
+        Ok(None) => return (string_builder.append_count_z(utf8), Encoding::Latin1),
         Ok(Some(units)) => units,
-        Ok(None) => unreachable!("non-ASCII input always converts"),
         Err(_) => bun_alloc::out_of_memory(),
     };
-    let start = string_builder.len;
-    if let Some(latin1) =
-        strings::try_convert_utf16_to_latin1_in_buffer(string_builder.writable(), &units)
-    {
-        let len = latin1.len();
-        string_builder.writable()[len] = 0;
-        string_builder.len += len + 1;
-        return (
-            StringPointer {
-                offset: start as u32,
-                length: len as u32,
-            },
-            Encoding::Latin1,
-        );
-    }
     if !string_builder.len.is_multiple_of(align_of::<u16>()) {
         string_builder.writable()[0] = 0;
         string_builder.len += 1;

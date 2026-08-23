@@ -41,11 +41,6 @@ unsafe extern "C" {
         len: usize,
         utf16_output: *mut u16,
     ) -> SIMDUTFResult;
-    pub(crate) fn simdutf__convert_utf16le_to_latin1_with_errors(
-        buf: *const u16,
-        len: usize,
-        latin1_output: *mut u8,
-    ) -> SIMDUTFResult;
     pub fn simdutf__convert_utf16le_to_utf8_with_errors(
         buf: *const u16,
         len: usize,
@@ -145,26 +140,6 @@ pub mod convert {
                             input.len(),
                             output.as_mut_ptr(),
                         )
-                    }
-                }
-            }
-            pub mod latin1 {
-                use super::*;
-                pub mod with_errors {
-                    use super::*;
-                    /// Fails with `TOO_LARGE` at the first unit above U+00FF.
-                    /// `output` needs `input.len()` bytes.
-                    pub fn le(input: &[u16], output: &mut [u8]) -> SIMDUTFResult {
-                        debug_assert!(output.len() >= input.len());
-                        // SAFETY: one output byte per input unit; the caller
-                        // provides `input.len()` bytes.
-                        unsafe {
-                            simdutf__convert_utf16le_to_latin1_with_errors(
-                                input.as_ptr(),
-                                input.len(),
-                                output.as_mut_ptr(),
-                            )
-                        }
                     }
                 }
             }

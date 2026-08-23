@@ -2872,7 +2872,9 @@ impl DevServer {
         if any {
             w.extend_from_slice(b"  ");
         }
-        w.extend_from_slice(b"], [], [], () => {}, false],\n");
+        // The load function is a generator like every non-async ESM module:
+        // the runtime resumes it once to instantiate and once to evaluate.
+        w.extend_from_slice(b"], [], [], function* () {}, false],\n");
 
         // Avoid-recloning if it is was moved to the heap
         Ok(array.into_boxed_slice())

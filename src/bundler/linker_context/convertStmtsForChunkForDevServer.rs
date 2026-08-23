@@ -24,30 +24,43 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 /// that the HMR runtime can decode. This encoding is low on JS objects and
 /// indentation.
 ///
+/// An ESM module without top-level await is printed as a generator function
+/// so that the HMR runtime can link it in the two phases of the ECMAScript
+/// module link. The `hmr.exports = { ... }` assignment (extracted into
+/// `exports_assignment` here) and a `yield` statement go before everything
+/// else: the first resume instantiates the module (hoisted function
+/// declarations and the exports object with its getters exist after it), and
+/// the second resume evaluates the body. This way a module in an import cycle
+/// reads a live namespace object instead of `null`.
+///
 /// 1 ┃ "module/esm": [ [
 ///   ┃   'module_1', 1, "add",
 ///   ┃   'module_2', 2, "mul", "div",
 ///   ┃   'module_3', 0, // bare or import star
-///     ], [ "default" ], [], (hmr) => {
-/// 2 ┃   var [module_1, module_2, module_3] = hmr.imports;
-///   ┃   hmr.onUpdate = [
+///     ], [ "default" ], [], function* (hmr) {
+/// 2 ┃   hmr.exports = { get default() { ... } };
+///   ┃   yield;
+/// 3 ┃   var [module_1, module_2, module_3] = hmr.imports;
+///   ┃   hmr.updateImport = [
 ///   ┃     (module) => (module_1 = module),
 ///   ┃     (module) => (module_2 = module),
 ///   ┃     (module) => (module_3 = module),
 ///   ┃   ];
 ///
-/// 3 ┃   console.log("my module", module_1.add(1, module_2.mul(2, 3));
-///   ┃   module.exports = {
-///   ┃     default: module_3.something(module_2.div),
-///   ┃   };
+/// 4 ┃   console.log("my module", module_1.add(1, module_2.mul(2, 3));
 ///     }, false ],
 ///        ----- "is the module async?"
+///
+/// A module with top-level await keeps the one-phase form, `async (hmr) =>
+/// {...}` with the exports assignment at the end of the body, because a
+/// generator cannot suspend on `await`.
 pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     c: &mut LinkerContext,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
     bump: &'bump Bump,
     ast: &mut JSAst<'_>,
+    exports_assignment: &mut Option<Stmt>,
 ) -> Result<(), AllocError> {
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
@@ -237,7 +250,13 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     stmts.append(StmtListWhich::OutsideWrapperPrefix, *stmt);
                 }
             }
-            _ => stmts.append(StmtListWhich::InsideWrapperSuffix, *stmt),
+            _ => {
+                if is_two_phase_esm(ast) && is_hmr_exports_assignment(stmt, hmr_api_ref) {
+                    *exports_assignment = Some(*stmt);
+                } else {
+                    stmts.append(StmtListWhich::InsideWrapperSuffix, *stmt);
+                }
+            }
         }
     }
 
@@ -311,4 +330,32 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     }
 
     Ok(())
+}
+
+/// An ESM module without top-level await is printed as a generator and linked
+/// in two phases. Lazy-export ASTs are excluded: the dev server's incremental
+/// graph prints them through the CommonJS-shaped `SLazyExport` special case.
+pub(crate) fn is_two_phase_esm(ast: &JSAst<'_>) -> bool {
+    ast.exports_kind == bun_ast::ExportsKind::Esm
+        && ast.top_level_await_keyword.is_empty()
+        && !ast.flags.contains(crate::bundled_ast::Flags::HAS_LAZY_EXPORT)
+}
+
+/// Matches the `hmr.exports = { ... }` statement that
+/// `ConvertESMExportsForHmr::finalize` appends to the module body.
+fn is_hmr_exports_assignment(stmt: &Stmt, hmr_api_ref: bun_ast::Ref) -> bool {
+    let StmtData::SExpr(st) = &stmt.data else {
+        return false;
+    };
+    let bun_ast::ExprData::EBinary(bin) = st.value.data else {
+        return false;
+    };
+    if bin.op != js_ast::OpCode::BinAssign {
+        return false;
+    }
+    let bun_ast::ExprData::EDot(dot) = bin.left.data else {
+        return false;
+    };
+    dot.name == b"exports"
+        && matches!(dot.target.data, bun_ast::ExprData::EIdentifier(id) if id.ref_.eql(hmr_api_ref))
 }

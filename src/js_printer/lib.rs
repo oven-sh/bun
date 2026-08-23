@@ -6737,9 +6737,18 @@ pub(crate) mod __gated_printer {
                 }
                 self.print(b"], ");
 
-                // Print the code
-                if !ast.top_level_await_keyword.is_empty() {
+                // Print the code. A module without top-level await is a
+                // generator: the HMR runtime resumes it once to instantiate
+                // (hoisted declarations and the exports object) and once to
+                // evaluate the body, so an import cycle reads a live
+                // namespace object. A generator cannot suspend on `await`,
+                // so a module with top-level await keeps the one-phase
+                // async form.
+                let is_async = !ast.top_level_await_keyword.is_empty();
+                if is_async {
                     self.print(b"async");
+                } else {
+                    self.print(b"function*");
                 }
                 self.print_fn_args(
                     Some(func.open_parens_loc),
@@ -6747,7 +6756,11 @@ pub(crate) mod __gated_printer {
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
                 );
-                self.print(b" => {\n");
+                self.print(if is_async {
+                    b" => {\n".as_slice()
+                } else {
+                    b" {\n".as_slice()
+                });
                 self.indent();
                 self.print_block_body(slice_of(func.body.stmts));
                 self.unindent();
@@ -6755,7 +6768,7 @@ pub(crate) mod __gated_printer {
                 self.print(b"}, ");
 
                 // Print isAsync
-                self.print(if !ast.top_level_await_keyword.is_empty() {
+                self.print(if is_async {
                     b"true".as_slice()
                 } else {
                     b"false".as_slice()

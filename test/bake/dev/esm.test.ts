@@ -89,29 +89,92 @@ devTest("live bindings through export from", {
   },
   test: liveBindingTest.test,
 });
-// devTest("live bindings through export star", {
-//   framework: minimalFramework,
-//   files: {
-//     "state.ts": `
-//       export var value = 0;
-//       export function increment() {
-//         value++;
-//       }
-//     `,
-//     "proxy.ts": `
-//       export * from './state';
-//     `,
-//     "routes/index.ts": `
-//       import { increment } from '../state';
-//       import { live } from '../proxy';
-//       export default function(req, meta) {
-//         increment();
-//         return new Response('State: ' + live);
-//       }
-//     `,
-//   },
-//   test: liveBindingTest.test,
-// });
+devTest("live bindings through export star", {
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var value = 0;
+      export function increment() {
+        value++;
+      }
+    `,
+    "proxy.ts": `
+      export * from './state';
+    `,
+    "routes/index.ts": `
+      import { increment } from '../state';
+      import { value } from '../proxy';
+      export default function(req, meta) {
+        increment();
+        return new Response('State: ' + value);
+      }
+    `,
+  },
+  test: liveBindingTest.test,
+});
+devTest("cyclic import with a top-level read (#40248)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/entry.js"],
+    }),
+    "entry.js": `
+      import { describe } from "./b.js";
+
+      export function name() {
+        return "entry";
+      }
+
+      console.log(describe());
+    `,
+    "b.js": `
+      import { name } from "./entry.js";
+
+      export function describe() {
+        return "b sees " + name();
+      }
+
+      // entry.js is still evaluating here. This is the cyclic read.
+      export const eager = describe();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("b sees entry");
+  },
+});
+devTest("cyclic import reads a star re-export at the top level", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/entry.js"],
+    }),
+    "entry.js": `
+      import { greet } from "./barrel.js";
+
+      export function name() {
+        return "entry";
+      }
+
+      console.log(greet());
+    `,
+    "barrel.js": `
+      export * from "./impl.js";
+    `,
+    "impl.js": `
+      import { name } from "./entry.js";
+
+      export function greet() {
+        return "hello " + name();
+      }
+
+      // entry.js is still evaluating here. This is the cyclic read.
+      export const eager = greet();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("hello entry");
+  },
+});
 devTest("export { x as y }", {
   framework: minimalFramework,
   files: {

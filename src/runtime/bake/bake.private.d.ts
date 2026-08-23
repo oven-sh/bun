@@ -47,9 +47,12 @@ declare type UnloadedESM = [
   deps: EncodedDependencyArray,
   exportKeys: string[],
   starImports: Id[],
-  load: (mod: import("./hmr-module").HMRModule) => Promise<void>,
+  /** A generator when `isAsync` is false (two-phase load: instantiate, then
+   * evaluate), an async function when `isAsync` is true (one-phase load). */
+  load: (mod: import("./hmr-module").HMRModule) => ModuleLoadGenerator | Promise<void>,
   isAsync: boolean,
 ];
+declare type ModuleLoadGenerator = Generator<void, void, void>;
 declare type EncodedDependencyArray = (string | number)[];
 declare type UnloadedCommonJS = (
   hmr: import("./hmr-module").HMRModule,

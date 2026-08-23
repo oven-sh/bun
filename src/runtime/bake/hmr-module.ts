@@ -330,7 +330,12 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         throw e;
       }
     }
-    const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
+    const {
+      [ESMProps.imports]: deps,
+      [ESMProps.stars]: stars,
+      [ESMProps.load]: load,
+      [ESMProps.isAsync]: isAsync,
+    } = loadOrEsmModule;
     if (isAsync) {
       throw new AsyncImportError(id);
     }
@@ -346,12 +351,20 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.importers.add(importer);
     }
 
-    const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
+    // Two-phase load. The load function is a generator: the first resume
+    // instantiates the module (hoisted function declarations and the
+    // `hmr.exports` object exist after it), the second resume evaluates the
+    // body. Instantiation happens before the dependencies load, so a module
+    // in an import cycle reads this module's namespace object, not `null`.
+    const gen = load(mod) as ModuleLoadGenerator;
     const exportsBefore = mod.exports;
-    mod.imports = depsList.map(getEsmExports);
-    load(mod);
-    mod.imports = depsList;
+    gen.next();
     if (mod.exports === exportsBefore) mod.exports = {};
+    const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
+    mergeStarExports(mod, stars);
+    mod.imports = depsList.map(getEsmExports);
+    gen.next();
+    mod.imports = depsList;
     mod.cjs = null;
     mod.state = State.Loaded;
   }
@@ -431,7 +444,12 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         throw e;
       }
     }
-    const [deps /* exports */ /* stars */, , , load /* isAsync */] = loadOrEsmModule;
+    const {
+      [ESMProps.imports]: deps,
+      [ESMProps.stars]: stars,
+      [ESMProps.load]: load,
+      [ESMProps.isAsync]: selfIsAsync,
+    } = loadOrEsmModule;
 
     if (!mod) {
       mod = new HMRModule(id, false);
@@ -445,6 +463,47 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
 
+    if (selfIsAsync) {
+      // A module with top-level await keeps the one-phase form: its load
+      // function is an async function, because a generator cannot suspend
+      // on `await`.
+      const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
+      DEBUG.ASSERT(
+        isAsync //
+          ? list.some(x => x instanceof Promise)
+          : list.every(x => x instanceof HMRModule),
+      );
+
+      // Running finishLoadModuleAsync synchronously when there are no promises is
+      // not a performance optimization but a behavioral correctness issue.
+      return isAsync
+        ? Promise.all(list).then(
+            list => finishLoadModuleAsync(mod, load, list),
+            e => {
+              mod.state = State.Error;
+              mod.failure = e;
+              throw e;
+            },
+          )
+        : finishLoadModuleAsync(
+            mod,
+            load,
+            list as HMRModule[], // no promises as by assert above
+          );
+    }
+
+    // Two-phase load. See the comment in `loadModuleSync`.
+    let gen: ModuleLoadGenerator;
+    try {
+      gen = load(mod) as ModuleLoadGenerator;
+      const exportsBefore = mod.exports;
+      gen.next();
+      if (mod.exports === exportsBefore) mod.exports = {};
+    } catch (e) {
+      mod.state = State.Error;
+      mod.failure = e;
+      throw e;
+    }
     const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
     DEBUG.ASSERT(
       isAsync //
@@ -452,31 +511,31 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         : list.every(x => x instanceof HMRModule),
     );
 
-    // Running finishLoadModuleAsync synchronously when there are no promises is
-    // not a performance optimization but a behavioral correctness issue.
     return isAsync
       ? Promise.all(list).then(
-          list => finishLoadModuleAsync(mod, load, list),
+          list => finishTwoPhaseLoad(mod, gen, stars, list),
           e => {
             mod.state = State.Error;
             mod.failure = e;
             throw e;
           },
         )
-      : finishLoadModuleAsync(
+      : finishTwoPhaseLoad(
           mod,
-          load,
+          gen,
+          stars,
           list as HMRModule[], // no promises as by assert above
         );
   }
 }
 
+/** One-phase load of a module with top-level await. */
 function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
   try {
     const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
     const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
-    const p = load(mod);
+    const p = load(mod) as Promise<void> | undefined;
     mod.imports = modules;
     if (p) {
       return p.then(() => {
@@ -496,6 +555,54 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
     mod.state = State.Error;
     mod.failure = e;
     throw e;
+  }
+}
+
+/** Evaluation half of a two-phase load. The generator was already resumed
+ * once (instantiation), and the dependencies finished loading. */
+function finishTwoPhaseLoad(mod: HMRModule, gen: ModuleLoadGenerator, stars: Id[], modules: HMRModule[]) {
+  try {
+    mergeStarExports(mod, stars);
+    const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
+    mod.imports = modules.map(getEsmExports);
+    gen.next();
+    mod.imports = modules;
+    mod.cjs = null;
+    mod.state = State.Loaded;
+    if (shouldPatchImporters) patchImporters(mod);
+    return mod;
+  } catch (e) {
+    mod.state = State.Error;
+    mod.failure = e;
+    throw e;
+  }
+}
+
+/** Implements `export * from`, from the star-import list of the module
+ * tuple. Every export of the dependency except "default" that the module
+ * does not declare itself is re-exported. A getter keeps the binding live,
+ * and tolerates a dependency that is still evaluating in an import cycle. */
+function mergeStarExports(mod: HMRModule, stars: Id[]) {
+  if (stars.length === 0) return;
+  const exp = mod.exports;
+  // Snapshot the module's own keys so that a later star dependency can
+  // overwrite a key added by an earlier one (matching object spread order),
+  // while the module's own exports always win.
+  const ownKeys = new Set(Object.keys(exp));
+  for (const starId of stars) {
+    // HMRModule instances are mutated across hot updates, never replaced, so
+    // capturing the module keeps the getter pointed at the latest exports.
+    const starMod = registry.get(starId);
+    if (!starMod) continue;
+    const ns = getEsmExports(starMod);
+    for (const key of Object.keys(ns)) {
+      if (key === "default" || ownKeys.has(key)) continue;
+      Object.defineProperty(exp, key, {
+        get: () => getEsmExports(starMod)[key],
+        enumerable: true,
+        configurable: true,
+      });
+    }
   }
 }
 

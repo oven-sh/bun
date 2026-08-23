@@ -674,27 +674,28 @@ impl Framework {
                     .collect()
                 };
 
-                let ignore_dirs: Vec<Cow<'static, [u8]>> =
-                    if let Some(exts_js) = fsr_opts.get(global, "ignoreDirs")? {
-                        'exts: {
-                            if exts_js.is_array() {
-                                let mut it_2 = array.array_iterator(global)?;
-                                let mut dirs = Vec::with_capacity(len as usize);
-                                while let Some(array_item) = it_2.next()? {
-                                    dirs.push(Cow::Owned(
-                                        array_item.to_utf8(global)?.slice().to_vec(),
-                                    ));
-                                }
-                                break 'exts dirs;
+                let ignore_dirs: Vec<Cow<'static, [u8]>> = if let Some(exts_js) =
+                    fsr_opts.get(global, "ignoreDirs")?
+                {
+                    'exts: {
+                        if exts_js.is_array() {
+                            let mut it_2 = exts_js.array_iterator(global)?;
+                            let mut dirs = Vec::with_capacity(exts_js.get_length(global)? as usize);
+                            while let Some(array_item) = it_2.next()? {
+                                dirs.push(Cow::Owned(
+                                    array_item.to_utf8(global)?.slice().to_vec(),
+                                ));
                             }
+                            break 'exts dirs;
+                        }
 
-                            return Err(global.throw_invalid_arguments(format_args!(
+                        return Err(global.throw_invalid_arguments(format_args!(
                             "'ignoreDirs' must be an array of strings or \"*\" for all extensions"
                         )));
-                        }
-                    } else {
-                        vec![Cow::Borrowed(b".git"), Cow::Borrowed(b"node_modules")]
-                    };
+                    }
+                } else {
+                    vec![Cow::Borrowed(b".git"), Cow::Borrowed(b"node_modules")]
+                };
 
                 file_system_router_types.push(FileSystemRouterType {
                     root: Cow::Owned(root),

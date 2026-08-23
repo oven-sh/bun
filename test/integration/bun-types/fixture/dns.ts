@@ -15,7 +15,10 @@ expectType(Bun.dns.getCacheStats()).is<{
   totalCount: number;
 }>();
 
+expectType(Bun.dns.ADDRCONFIG).is<number>();
+expectType(Bun.dns.ALL).is<number>();
 expectType(Bun.dns.V4MAPPED).is<number>();
+expectType(Bun.dns.lookup("example.com")).is<Promise<Bun.DNSLookup[]>>();
 expectType(bun_dns.prefetch("bun.sh")).is<void>();
 
 // resolve() overloads per record type

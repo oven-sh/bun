@@ -2290,8 +2290,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             word_start: self.word_start,
             j: self.j,
             delimit_quote: false,
-            // reshaped for borrowck — move the exclusive borrow into the sublexer
-            // and restore it in continue_from_sublexer (avoids aliased &mut).
             string_refs: self.string_refs,
             jsobjs_len: self.jsobjs_len,
         };

@@ -209,16 +209,13 @@ pub(crate) mod js_bindings {
         bun_core::out_of_memory();
     }
 
-    /// Fails a real infallible allocation. `outOfMemory` covers the explicit
-    /// `AllocError` path.
+    /// Fails a real infallible allocation; `outOfMemory` covers the explicit `AllocError` path.
     #[bun_jsc::host_fn]
     fn js_alloc_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
-        // Above any 64-bit address space (mimalloc returns null even with
-        // overcommit), below `isize::MAX` (no capacity overflow panic).
+        // Above any 64-bit address space (null even with overcommit), below `isize::MAX` (no capacity panic).
         const SIZE: usize = 1 << 62;
-        // ASAN's allocator aborts on an oversized request instead of
-        // returning null.
+        // ASAN's allocator aborts on an oversized request instead of returning null.
         if Environment::ENABLE_ASAN {
             std::alloc::handle_alloc_error(core::alloc::Layout::from_size_align(SIZE, 1).unwrap());
         }

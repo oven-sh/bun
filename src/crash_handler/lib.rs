@@ -1738,10 +1738,7 @@ mod draft {
         std::alloc::set_alloc_error_hook(rust_alloc_error_hook);
     }
 
-    /// Reports a failed infallible allocation (`Vec` growth, `Box::new`) as
-    /// out of memory before std aborts, with the allocating frames still on
-    /// the stack. A hook, not a null check in `GlobalAlloc`: a null return is
-    /// also how `try_reserve` reports failure. Must not allocate.
+    /// Not a null check in `GlobalAlloc`: `try_reserve` reports failure with null too. Must not allocate.
     #[cold]
     #[inline(never)]
     fn rust_alloc_error_hook(layout: core::alloc::Layout) {

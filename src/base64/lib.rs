@@ -99,6 +99,20 @@ pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -
     wrote
 }
 
+/// [`decode_lenient`] appended to `out` (reserving the worst case,
+/// [`decode_lenient_len`], itself); returns the number of bytes appended.
+pub fn decode_lenient_append(out: &mut Vec<u8>, source: &[u8], is_urlsafe: bool) -> usize {
+    let len = decode_lenient_len(source.len());
+    // SAFETY: the decoders behind `decode_lenient` only write the destination,
+    // and report how many leading bytes they initialized (`<= len`).
+    unsafe {
+        bun_core::vec::fill_spare(out, len, |spare| {
+            let wrote = decode_lenient(&mut spare[..len], source, is_urlsafe);
+            (wrote, wrote)
+        })
+    }
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeAllocError {
     #[error("DecodingFailed")]
@@ -132,6 +146,11 @@ pub fn encode_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
             (written, written)
         })
     }
+}
+
+/// [`encode_url_safe`] appended to `out` (reserving the room itself); returns the number of bytes appended.
+pub fn encode_url_safe_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
+    encode_append_impl(out, source, true)
 }
 
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> {

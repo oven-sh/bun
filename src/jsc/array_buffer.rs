@@ -162,7 +162,57 @@ impl ArrayBuffer {
     // require('buffer').kMaxLength.
     // keep in sync with Bun::Buffer::kMaxLength
     pub const MAX_SIZE: c_uint = c_uint::MAX;
+}
 
+/// An `ArrayBuffer`'s (or view's) bytes for a pool [`Job`](crate::Job) to
+/// read: the buffer is pinned (it cannot be detached or transferred, and —
+/// being non-resizable or a growable `SharedArrayBuffer` — cannot move or
+/// shrink) and its cell GC-protected until this is dropped. Like
+/// [`ThreadSafe`](crate::node_path::ThreadSafe), it is made on the JS thread
+/// and released there when the job comes back; in between, the job reads the
+/// bytes under its [`Ticket`](crate::Ticket) (proof the heap is still alive).
+pub struct PinnedArrayBuffer(ArrayBuffer);
+
+// SAFETY: the only off-thread operation is `bytes`, which demands a `Ticket`
+// (VM alive) and reads memory that is pinned in place and protected for as
+// long as `self` lives; `Drop` releases pin/protect only on a JS thread (see
+// there) and is a leak, not a race, anywhere else.
+unsafe impl Send for PinnedArrayBuffer {}
+
+impl PinnedArrayBuffer {
+    /// Pin and protect `value` if it is an `ArrayBuffer` or view whose bytes
+    /// stay put while pinned; `None` otherwise (not a buffer, or a resizable
+    /// non-shared one, whose `resize()` can decommit pages regardless of the pin).
+    pub fn pin(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        let buffer = value.as_pinned_arraybuffer(global)?;
+        if buffer.resizable && !buffer.shared {
+            buffer.unpin();
+            return None;
+        }
+        buffer.value.protect();
+        Some(Self(buffer))
+    }
+
+    /// The bytes, from any thread that holds a job's ticket.
+    #[inline]
+    pub fn bytes<'a>(&'a self, _vm_alive: &crate::Ticket) -> &'a [u8] {
+        self.0.byte_slice()
+    }
+}
+
+impl Drop for PinnedArrayBuffer {
+    fn drop(&mut self) {
+        // Pin count and the protected-values table belong to the JS thread. A
+        // job always comes back to its VM's thread to drop this; a thread with
+        // no VM (nothing else should hold one) leaks the pin instead of racing.
+        if crate::virtual_machine::VirtualMachine::get_or_null().is_some() {
+            self.0.unpin();
+            self.0.value.unprotect();
+        }
+    }
+}
+
+impl ArrayBuffer {
     // 4 MB or so is pretty good for mmap()
     const MMAP_THRESHOLD: usize = 1024 * 1024 * 4;
 

@@ -110,6 +110,8 @@ interface Param {
   callExpr: string;
   /** `&[T]` param: the C signature carries a trailing `name_len: usize` */
   extraLen?: boolean;
+  /** `SinkHandle` param: the C signature is `(name_id: u8, name: *mut c_void)` */
+  sinkId?: boolean;
 }
 
 interface Export {
@@ -130,7 +132,12 @@ const markerRe = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(
 // a small balanced-paren scanner because params routinely span lines.
 const fnHeadRe = /^\s*pub\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
-function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean } {
+function ptrify(ty: string): {
+  cTy: string;
+  deref: (n: string) => string;
+  extraLen?: boolean;
+  sinkId?: boolean;
+} {
   ty = ty.trim();
   // `&[T]` — C passes `(const T* name, size_t name_len)`; the thunk rebuilds
   // the slice (null/0 → empty).
@@ -144,9 +151,32 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
         `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice(${n}, ${n}_len) }\n    }`,
     };
   }
-  // Other slice shapes (`&mut [T]`, `&'a [T]`) and `&str` are NOT FFI-safe; reject.
+  // `&mut [T]` — C passes `(T* name, size_t name_len)`, a buffer nothing
+  // else reads or writes for the duration of the call (null/0 → empty).
+  const sliceMut = /^&mut\s*\[\s*([^;]+?)\s*\]$/.exec(ty);
+  if (sliceMut) {
+    const elem = sliceMut[1].trim();
+    return {
+      cTy: `*mut ${elem}`,
+      extraLen: true,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller passes \`${n}_len\` live, unaliased elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice_mut(${n}, ${n}_len) }\n    }`,
+    };
+  }
+  // Other slice shapes (`&'a [T]`) and `&str` are NOT FFI-safe; reject.
   if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
-    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
+    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\`/\`&mut [T]\` or (ptr, len)`);
+  }
+  // `SinkHandle` — C passes the `(uint8_t id, void* ptr)` pair a
+  // `JSTransformStream` holds for its attached native sink (`m_nativeSinkId`,
+  // `m_nativeSinkPtr`); the thunk resolves it to the typed handle.
+  if (/^(?:crate::webcore::)?SinkHandle$/.test(ty)) {
+    return {
+      cTy: `*mut c_void`,
+      sinkId: true,
+      deref: n =>
+        `match ::core::ptr::NonNull::new(${n}) {\n        // SAFETY: C++ caller passes a live JSSink of type \`${n}_id\`, valid for the call.\n        Some(p) => unsafe { crate::webcore::sink::sink_handle_from_id(${n}_id, p) },\n        None => crate::webcore::SinkHandle::None,\n    }`,
+    };
   }
   // `&mut T` / `&T` — keep as a reference in the thunk signature. `&T` and
   // `*const T` (resp. `&mut T`/`*mut T`) are ABI-identical for `extern "C"`
@@ -197,8 +227,8 @@ function parseParams(list: string, where: string): Param[] {
       // and intentionally documentary — keep it.
       if (name === "_") name = `_a${i}`;
       const ty = raw.slice(colon + 1).trim();
-      const { cTy, deref, extraLen } = ptrify(ty);
-      return { raw, name, ty, cTy, callExpr: deref(name), extraLen };
+      const { cTy, deref, extraLen, sinkId } = ptrify(ty);
+      return { raw, name, ty, cTy, callExpr: deref(name), extraLen, sinkId };
     });
 }
 
@@ -490,13 +520,21 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
 }`;
     }
     case "generic": {
-      for (const p of e.params)
-        if (p.extraLen && e.params.some(q => q.name === `${p.name}_len`))
+      for (const p of e.params) {
+        const extra = p.extraLen ? `${p.name}_len` : p.sinkId ? `${p.name}_id` : null;
+        if (extra && e.params.some(q => q.name === extra))
           throw new Error(
-            `${loc}: slice param \`${p.name}\` needs a synthesized \`${p.name}_len\`, which collides with an existing param`,
+            `${loc}: param \`${p.name}\` needs a synthesized \`${extra}\`, which collides with an existing param`,
           );
+      }
       const sig = e.params
-        .map(p => (p.extraLen ? `${p.name}: ${p.cTy}, ${p.name}_len: usize` : `${p.name}: ${p.cTy}`))
+        .map(p =>
+          p.extraLen
+            ? `${p.name}: ${p.cTy}, ${p.name}_len: usize`
+            : p.sinkId
+              ? `${p.name}_id: u8, ${p.name}: ${p.cTy}`
+              : `${p.name}: ${p.cTy}`,
+        )
         .join(", ");
       // Bind each ref-deref once so the call site is clean (and so a
       // `JsResult` body doesn't deref `global` twice).

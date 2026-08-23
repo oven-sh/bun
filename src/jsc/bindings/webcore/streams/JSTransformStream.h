@@ -57,8 +57,8 @@ public:
     // ClearAlgorithms defers the eager free to the arm's epilogue instead.
     bool m_nativeStateInUse : 1 { false };
     bool m_nativeStateReleasePending : 1 { false };
-    // An off-thread codec step holds the coder; ClearAlgorithms / runNativeArm must defer
-    // the free until the step's JS-thread completion clears this.
+    // An off-thread codec step has the coder's state; ClearAlgorithms / runNativeArm must defer
+    // the free until the step's JS-thread completion hands it back and clears this.
     bool m_asyncCodecInFlight : 1 { false };
     // The chunk behind m_codecPromise runs its steps on the thread pool.
     bool m_codecChunkOffThread : 1 { false };

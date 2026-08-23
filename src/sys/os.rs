@@ -83,20 +83,35 @@ impl<'a> InterfaceAddress<'a> {
         Some(unsafe { Address::init_posix(self.0.ifa_addr) })
     }
 
-    /// The netmask, tagged with the entry's family: BSD kernels can report a
-    /// mask whose own `sa_family` is `AF_UNSPEC` (libuv reads it by the
-    /// address's family too).
+    /// The netmask, read and tagged by the entry's *address* family, as libuv
+    /// does: BSD kernels report masks whose own `sa_family` is `AF_UNSPEC`
+    /// (and whose `sa_len` may be shorter than the full sockaddr, the missing
+    /// tail meaning zero bits).
     pub fn netmask(self) -> Option<Address> {
         if self.0.ifa_netmask.is_null() {
             return None;
         }
-        // SAFETY: as for `address`, for `ifa_netmask`.
-        let mut mask = unsafe { Address::init_posix(self.0.ifa_netmask) };
-        if mask.family() == libc::AF_UNSPEC {
-            if let Some(family) = self.family() {
-                mask.any.ss_family = family as _;
-            }
-        }
+        let family = self.family()?;
+        let want = match family {
+            libc::AF_INET6 => core::mem::size_of::<libc::sockaddr_in6>(),
+            libc::AF_INET => core::mem::size_of::<libc::sockaddr_in>(),
+            _ => core::mem::size_of::<libc::sockaddr>(),
+        };
+        // SAFETY: getifaddrs(3) stores each entry's netmask in the list's block
+        // with room for a sockaddr of the entry's address family (libuv copies
+        // `sizeof(sockaddr_in6)` from it for AF_INET6 entries); on the BSDs
+        // `sa_len` says how much of it the kernel filled in.
+        let mask = unsafe {
+            let src = self.0.ifa_netmask;
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            let len = want.min(usize::from((*src).sa_len));
+            #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+            let len = want;
+            let mut any: libc::sockaddr_storage = core::mem::zeroed();
+            core::ptr::copy_nonoverlapping(src.cast::<u8>(), (&raw mut any).cast::<u8>(), len);
+            any.ss_family = family as _;
+            Address { any }
+        };
         Some(mask)
     }
 

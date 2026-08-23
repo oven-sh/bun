@@ -11,3 +11,7 @@ workspace = true
 
 [dependencies]
 bun_core.workspace = true
+bun_opaque.workspace = true
+bun_ptr.workspace = true
+bun_boringssl_sys.workspace = true
+bun_uws_sys.workspace = true

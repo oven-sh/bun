@@ -1,7 +1,6 @@
 //! Native implementation of `node:quic` (reference: node/src/quic/*, v26.3.0).
 
 pub mod endpoint;
-pub(crate) mod ffi;
 pub mod session;
 pub mod stream;
 pub mod tls;

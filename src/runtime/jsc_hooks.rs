@@ -1737,6 +1737,9 @@ pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
 }
 
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
+    // The browser children were killed by `Bun__WebView__closeAllForTermination`;
+    // release their process handles while this VM's poll store is still alive.
+    with_webview_hosts(crate::webview::Hosts::release_all);
     stop_active_handles(vm, StopReason::VmTeardown)
 }
 

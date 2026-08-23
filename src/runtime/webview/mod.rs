@@ -22,6 +22,15 @@ pub(crate) struct Hosts {
     pub(crate) webkit: HostSlot<host_process::HostProcess>,
 }
 
+impl Hosts {
+    /// VM teardown's stop phase: drop every host (detaching its exit handler
+    /// and releasing its `Process`) while the VM's poll store is still alive.
+    pub(crate) fn release_all(&self) {
+        self.chrome.release_all();
+        self.webkit.release_all();
+    }
+}
+
 /// One kind of host: the published instance and the retired ones whose exit
 /// has not arrived yet. Owns them; their exit handlers get a `ThisPtr` back.
 pub(crate) struct HostSlot<T> {
@@ -61,6 +70,11 @@ impl<T> HostSlot<T> {
         Some(this)
     }
 
+    fn release_all(&self) {
+        drop(self.current.replace(None));
+        drop(self.retired.replace(Vec::new()));
+    }
+
     /// Hand `this` host (published or retired) back to the caller.
     pub(crate) fn take(&self, this: ThisPtr<T>) -> Option<OwnedThis<T>> {
         let is = |host: &OwnedThis<T>| core::ptr::eq(host.this_ptr().as_ptr(), this.as_ptr());
@@ -71,15 +85,5 @@ impl<T> HostSlot<T> {
             let i = retired.iter().position(is)?;
             Some(retired.swap_remove(i))
         })
-    }
-}
-
-impl<T> Drop for HostSlot<T> {
-    /// VM teardown: the children were killed by
-    /// `Bun__WebView__closeAllForTermination` and their exits can no longer be
-    /// delivered here; leave the handles to process exit, as before.
-    fn drop(&mut self) {
-        let _ = core::mem::ManuallyDrop::new(self.current.replace(None));
-        let _ = core::mem::ManuallyDrop::new(self.retired.replace(Vec::new()));
     }
 }

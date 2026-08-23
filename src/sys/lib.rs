@@ -2618,9 +2618,7 @@ mod posix_impl {
     /// is rewritten in place; returns the length of the resulting path (the
     /// bytes before the NUL). The error carries no path.
     pub fn mkdtemp(template: &mut [u8]) -> Maybe<usize> {
-        let nul = template
-            .iter()
-            .position(|&b| b == 0)
+        let nul = bun_core::strings::index_of_char_usize(template, 0)
             .expect("mkdtemp template must be NUL-terminated");
         // SAFETY: `template[..=nul]` is a writable NUL-terminated C string;
         // mkdtemp(3) rewrites the `XXXXXX` suffix in place and never grows it.

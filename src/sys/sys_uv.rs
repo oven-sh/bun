@@ -366,7 +366,7 @@ pub fn realpath<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a [u8]> {
 /// The error carries no path.
 pub fn mkdtemp(template: &mut [u8]) -> Result<usize> {
     assert!(
-        template.contains(&0),
+        bun_core::strings::contains_char(template, 0),
         "mkdtemp template must be NUL-terminated"
     );
     let mut req = FsReq::new();

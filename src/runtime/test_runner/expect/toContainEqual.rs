@@ -1,32 +1,7 @@
-use core::ffi::c_void;
-
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::{get_signature, throw, Expect};
-
-struct ExpectedEntry<'a> {
-    global_this: &'a JSGlobalObject,
-    expected: JSValue,
-    pass: &'a mut bool,
-}
-
-extern "C" fn deep_equals_iterator(
-    _: *mut VM,
-    _: &JSGlobalObject,
-    entry_: *mut c_void,
-    item: JSValue,
-) {
-    // SAFETY: `entry_` is `&mut ExpectedEntry` passed through `for_each` below; non-null by contract.
-    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
-    let Ok(eq) = item.jest_deep_equals(entry.expected, entry.global_this) else {
-        return;
-    };
-    if eq {
-        *entry.pass = true;
-        // PERF: break out of the `forEach` when a match is found
-    }
-}
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -80,16 +55,15 @@ pub(crate) fn to_contain_equal(
             };
         }
     } else if value.is_iterable(global)? {
-        let mut expected_entry = ExpectedEntry {
-            global_this: global,
-            expected,
-            pass: &mut pass,
-        };
-        value.for_each(
-            global,
-            (&raw mut expected_entry).cast::<c_void>(),
-            deep_equals_iterator,
-        )?;
+        value.for_each_iter(global, |global, item| {
+            let Ok(eq) = item.jest_deep_equals(expected, global) else {
+                return;
+            };
+            if eq {
+                pass = true;
+                // PERF: break out of the `forEach` when a match is found
+            }
+        })?;
     } else {
         return Err(global.throw(format_args!(
             "Received value must be an array type, or both received and expected values must be strings."

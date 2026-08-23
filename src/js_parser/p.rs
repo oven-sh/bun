@@ -8683,6 +8683,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// it (e.g. via `assume_init`); on `Err`, `*out` is left untouched.
     /// Taking `&mut MaybeUninit<Self>` (vs the previous `*mut Self`) makes the
     /// alignment/writability precondition a type guarantee, so this fn is safe.
+    /// Heap-construct a parser over `lexer`, logging to the `Log` the lexer was
+    /// created with. For the few off-hot-path callers (e.g. inline snapshot
+    /// rewriting) that want an owned parser rather than [`init`](Self::init)'s
+    /// in-place protocol.
+    pub fn new_boxed(
+        arena: &'a Bump,
+        source: &'a bun_ast::Source,
+        define: &'a Define,
+        lexer: js_lexer::Lexer<'a>,
+        opts: ParserOptions<'a>,
+    ) -> Result<Box<Self>, crate::Error> {
+        let mut slot: Box<core::mem::MaybeUninit<Self>> = Box::new_uninit();
+        let log = lexer.log;
+        Self::init(&mut slot, arena, log, source, define, lexer, opts)?;
+        // SAFETY: `init` returned `Ok`, so `*slot` is fully initialized.
+        Ok(unsafe { slot.assume_init() })
+    }
+
     pub fn init(
         out: &mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,

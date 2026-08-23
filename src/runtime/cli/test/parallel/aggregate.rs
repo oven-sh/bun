@@ -16,7 +16,8 @@ use crate::test_runner::execution::Result as TestResult;
 /// serial run would have written.
 pub(crate) fn replay_test_records(coord: &mut Coordinator) {
     let files = core::mem::take(&mut coord.test_records);
-    let Some(junit) = coord.reporter.reporters.junit.as_deref_mut() else {
+    let mut junit_slot = coord.reporter.reporters.junit.borrow_mut();
+    let Some(junit) = junit_slot.as_deref_mut() else {
         return;
     };
     for (idx, file) in files.iter().enumerate() {

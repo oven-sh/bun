@@ -2448,6 +2448,64 @@ impl JSValue {
     ) -> JsResult<()> {
         self.for_each(global, ctx, callback)
     }
+    /// [`for_each`](Self::for_each) with a Rust closure as the per-element
+    /// callback (the closure is the context C++ round-trips).
+    pub fn for_each_iter<F>(self, global: &JSGlobalObject, mut f: F) -> JsResult<()>
+    where
+        F: FnMut(&JSGlobalObject, JSValue),
+    {
+        extern "C" fn trampoline<F: FnMut(&JSGlobalObject, JSValue)>(
+            _: *mut crate::VM,
+            global: &JSGlobalObject,
+            ctx: *mut c_void,
+            next: JSValue,
+        ) {
+            // SAFETY: `ctx` is the `&mut F` passed to `for_each` below; C++
+            // invokes this synchronously within that call, once per element.
+            let f = unsafe { &mut *ctx.cast::<F>() };
+            f(global, next);
+        }
+        self.for_each(
+            global,
+            core::ptr::from_mut(&mut f).cast::<c_void>(),
+            trampoline::<F>,
+        )
+    }
+    /// [`for_each_property`](Self::for_each_property) /
+    /// [`for_each_property_ordered`](Self::for_each_property_ordered) with a Rust
+    /// closure `(global, key, value, is_symbol, is_private_symbol)` as the
+    /// per-property callback.
+    pub fn for_each_property_iter<F>(
+        self,
+        global: &JSGlobalObject,
+        ordered: bool,
+        mut f: F,
+    ) -> JsResult<()>
+    where
+        F: FnMut(&JSGlobalObject, &bun_core::EncodedSlice, JSValue, bool, bool),
+    {
+        extern "C" fn trampoline<
+            F: FnMut(&JSGlobalObject, &bun_core::EncodedSlice, JSValue, bool, bool),
+        >(
+            global: &JSGlobalObject,
+            ctx: *mut c_void,
+            key: *mut bun_core::EncodedSlice,
+            value: JSValue,
+            is_symbol: bool,
+            is_private_symbol: bool,
+        ) {
+            // SAFETY: `ctx` is the `&mut F` passed below and `key` a live
+            // `EncodedSlice` C++ owns for the callback; both calls are synchronous.
+            let (f, key) = unsafe { (&mut *ctx.cast::<F>(), &*key) };
+            f(global, key, value, is_symbol, is_private_symbol);
+        }
+        let ctx = core::ptr::from_mut(&mut f).cast::<c_void>();
+        if ordered {
+            self.for_each_property_ordered(global, ctx, trampoline::<F>)
+        } else {
+            self.for_each_property(global, ctx, trampoline::<F>)
+        }
+    }
     /// `JSValue.forEachProperty` — enumerate own props,
     /// invoking `callback` per (key, value, is_symbol, is_private_symbol).
     ///

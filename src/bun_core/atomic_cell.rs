@@ -582,6 +582,85 @@ impl<T: Default> Default for ThreadCell<T> {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ThreadBound<T>
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A `static`-friendly slot for a `Copy` value that only the thread which
+/// stored it can read back. [`get`](Self::get) on any other thread returns
+/// `None`, and the owner check is a release-mode branch (one TLS load of a
+/// never-reused per-thread token) — that check, not a comment, is what makes
+/// the `Sync` impl sound for `!Sync` payloads such as a `&'static` to
+/// thread-affine state.
+pub struct ThreadBound<T: Copy> {
+    owner: AtomicU64,
+    value: UnsafeCell<Option<T>>,
+}
+
+// SAFETY: `value` is only ever read or written by the thread recorded in
+// `owner` (checked on every access, in all build modes); every other thread
+// observes only the atomic `owner` word.
+unsafe impl<T: Copy> Sync for ThreadBound<T> {}
+
+impl<T: Copy> Default for ThreadBound<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Copy> ThreadBound<T> {
+    pub const fn new() -> Self {
+        Self {
+            owner: AtomicU64::new(0),
+            value: UnsafeCell::new(None),
+        }
+    }
+
+    /// A process-unique token for the calling thread (never 0, never reused
+    /// by a later thread, unlike OS thread ids).
+    #[inline]
+    fn current() -> u64 {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        #[thread_local]
+        static TOKEN: core::cell::Cell<u64> = core::cell::Cell::new(0);
+        let t = TOKEN.get();
+        if t != 0 {
+            return t;
+        }
+        let t = NEXT.fetch_add(1, Ordering::Relaxed);
+        TOKEN.set(t);
+        t
+    }
+
+    /// The stored value, if the calling thread is the one that stored it.
+    #[inline]
+    pub fn get(&self) -> Option<T> {
+        if self.owner.load(Ordering::Acquire) != Self::current() {
+            return None;
+        }
+        // SAFETY: this thread is the owner; no other thread touches `value`.
+        unsafe { *self.value.get() }
+    }
+
+    /// Store `value`, binding the slot to the calling thread on first use.
+    /// Panics if a different thread already owns the slot.
+    pub fn set(&self, value: Option<T>) {
+        let me = Self::current();
+        match self
+            .owner
+            .compare_exchange(0, me, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => {}
+            Err(prev) if prev == me => {}
+            Err(prev) => {
+                panic!("ThreadBound: thread {me} tried to set a slot owned by thread {prev}")
+            }
+        }
+        // SAFETY: this thread is (now) the owner; no other thread touches `value`.
+        unsafe { *self.value.get() = value };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1848,16 +1848,15 @@ impl ShellExecEnv {
         // Only `OLDPWD` is gated on `!in_init`;
         // `PWD` is written unconditionally so the very first env (built during
         // `init()` with `in_init = true`) still exports the resolved cwd.
-        // Note: reshaped for borrowck — materialize the EnvStr (which
-        // erases the slice lifetime into a packed ptr) before taking
-        // `&mut self.export_env`.
+        // The cwd buffers are rewritten by the next `cd`, so the env holds
+        // copies.
         use crate::shell::env_str::EnvStr;
         if !in_init {
-            let oldpwd = EnvStr::init_slice(self.prev_cwd());
+            let oldpwd = EnvStr::dupe_ref_counted(self.prev_cwd());
             self.export_env
                 .insert(EnvStr::init_slice(b"OLDPWD"), oldpwd);
         }
-        let pwd = EnvStr::init_slice(self.cwd());
+        let pwd = EnvStr::dupe_ref_counted(self.cwd());
         self.export_env.insert(EnvStr::init_slice(b"PWD"), pwd);
 
         Ok(())
@@ -1865,8 +1864,6 @@ impl ShellExecEnv {
 
     /// Routes `label = value` into an env map depending on where the
     /// assignment appeared (`FOO=1 cmd` → cmd-local, bare `FOO=1` → shell).
-    /// NOTE: `EnvMap::insert` `.ref()`s the value, so callers should deref
-    /// `value` after the call.
     pub(crate) fn assign_var(
         &mut self,
         label: crate::shell::env_str::EnvStr,
@@ -1884,14 +1881,15 @@ impl ShellExecEnv {
     /// `cd` with no args / `~` expansion never sees a null.
     pub(crate) fn get_homedir(&self) -> crate::shell::env_str::EnvStr {
         use crate::shell::env_str::EnvStr;
-        let key = if cfg!(windows) {
-            EnvStr::init_slice(b"USERPROFILE")
+        let key: &[u8] = if cfg!(windows) {
+            b"USERPROFILE"
         } else {
-            EnvStr::init_slice(b"HOME")
+            b"HOME"
         };
         self.shell_env
             .get(key)
             .or_else(|| self.export_env.get(key))
+            .cloned()
             .unwrap_or_else(|| {
                 EnvStr::init_slice(if bun_core::env::IS_ANDROID {
                     b"/data/local/tmp"

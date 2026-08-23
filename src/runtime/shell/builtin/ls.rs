@@ -512,15 +512,15 @@ impl ShellLsTask {
         let mtime = bun_sys::stat_mtime(stat);
         let time_str = format_time(mtime.sec, self.now_secs);
 
-        // SAFETY: `format_permissions` only writes ASCII bytes (`r`/`w`/`x`/`s`/`S`/`t`/`T`/`-`).
-        let perms_str = unsafe { core::str::from_utf8_unchecked(&perms) };
-        // SAFETY: `format_time` only writes ASCII bytes (month abbrevs, digits, spaces, `:`).
-        let time_s = unsafe { core::str::from_utf8_unchecked(&time_str) };
+        self.output.push(file_type);
+        self.output.extend_from_slice(&perms);
         let _ = write!(
             self.output,
-            "{}{} {:>3} {:>5} {:>5} {:>8} {} ",
-            file_type as char, perms_str, nlink, uid, gid, size, time_s,
+            " {:>3} {:>5} {:>5} {:>8} ",
+            nlink, uid, gid, size
         );
+        self.output.extend_from_slice(&time_str);
+        self.output.push(b' ');
         self.output.extend_from_slice(name);
         self.output.push(b'\n');
     }

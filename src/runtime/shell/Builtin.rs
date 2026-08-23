@@ -158,7 +158,7 @@ macro_rules! shell_builtins {
 
             /// Hoisted dispatch for the `onIOWriterChunk` callback. `seq != 0`
             /// names a parked [`OutputTask`](crate::shell::interpreter::OutputTask)
-            /// chunk of an ls/mkdir/touch/cp.
+            /// chunk of an ls/mkdir/touch/cp, or one of rm's numbered chunks.
             pub fn on_io_writer_chunk(
                 interp: &Interpreter,
                 cmd: NodeId,
@@ -174,8 +174,8 @@ macro_rules! shell_builtins {
                         Kind::Mkdir => OutputTask::<Mkdir>::on_chunk(interp, cmd, seq, written, err),
                         Kind::Touch => OutputTask::<Touch>::on_chunk(interp, cmd, seq, written, err),
                         Kind::Cp => OutputTask::<Cp>::on_chunk(interp, cmd, seq, written, err),
-                        // rm numbers its verbose chunks only so that each is
-                        // called back.
+                        // rm numbers its verbose and error chunks only so that
+                        // each is called back.
                         Kind::Rm => crate::shell::builtins::rm::Rm::on_io_writer_chunk(interp, cmd, written, err),
                         other => unreachable!("{} queues no numbered chunks", other.as_str()),
                     };

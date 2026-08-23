@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
+import { parseStringPromise } from "xml2js";
 
 test("coverage crash", () => {
   using dir = tempDir("cov", {
@@ -130,7 +131,36 @@ covered();
   expect(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8")).toContain("SF:demo.ts");
   const xml = readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8");
   expect(xml).toContain('filename="demo.ts"');
-  expect(xml).toContain("<!DOCTYPE coverage SYSTEM \"http://cobertura.sourceforge.net/xml/coverage-04.dtd\">");
+  expect(xml).toContain('<!DOCTYPE coverage SYSTEM "http://cobertura.sourceforge.net/xml/coverage-04.dtd">');
+});
+
+test("cobertura xml follows the coverage-04.dtd hierarchy", async () => {
+  using dir = tempDir("cov", {
+    "src/a.ts": `export const a = 1;\n`,
+    "a.test.ts": `
+import { test, expect } from "bun:test";
+import { a } from "./src/a";
+test("a", () => expect(a).toBe(1));
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "cobertura"], {
+    cwd: dir,
+    env: { ...bunEnv },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  // coverage (sources?, packages); packages (package*); package (classes);
+  // classes (class*); class (methods, lines)
+  const parsed = await parseStringPromise(readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8"));
+  const packages = parsed.coverage.packages[0].package;
+  expect(packages.length).toBeGreaterThan(0);
+  const classes = packages.flatMap((pkg: any) => pkg.classes[0].class);
+  expect(classes.map((cls: any) => cls.$.filename)).toContain("src/a.ts");
+  for (const cls of classes) {
+    expect(cls.methods).toHaveLength(1);
+    expect(cls.lines).toHaveLength(1);
+    expect(cls.$["line-rate"]).toMatch(/^\d\.\d{4}$/);
+  }
+  expect(result.exitCode).toBe(0);
 });
 
 test("cobertura coverage reporter escapes special characters in paths", () => {
@@ -142,14 +172,11 @@ export function covered() {
 covered();
 `,
   });
-  const result = Bun.spawnSync(
-    [bunExe(), "test", "--coverage", "--coverage-reporter", "cobertura", "./foo&bar.ts"],
-    {
-      cwd: dir,
-      env: { ...bunEnv },
-      stdio: ["inherit", "inherit", "inherit"],
-    },
-  );
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "cobertura", "./foo&bar.ts"], {
+    cwd: dir,
+    env: { ...bunEnv },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
   expect(result.exitCode).toBe(0);
   const xml = readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8");
   expect(xml).toContain("foo&amp;bar.ts");

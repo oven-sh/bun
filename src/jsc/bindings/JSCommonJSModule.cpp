@@ -1458,6 +1458,8 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
+        // This branch never creates a SourceProvider, which is what would take the blob.
+        Zig::freeOwnedBytecodeCache(source);
         if (!compileFunction) {
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;

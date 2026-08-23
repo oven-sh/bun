@@ -127,6 +127,9 @@ typedef struct ResolvedSource {
     uint32_t tag;
     bool needsDeref;
     bool already_bundled;
+    // bytecode_cache is a Rust Box<[u8]> the holder must free (see ResolvedSource.rs);
+    // unset for blobs borrowed from the Node compile cache or a standalone executable.
+    bool bytecode_cache_needs_free;
     // -- Bytecode cache fields --
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;

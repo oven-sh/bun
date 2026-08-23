@@ -9,7 +9,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 // say `webcore::ReadableStream` / `webcore::body::Value`.
 use crate::webcore;
 use crate::webcore::blob::store::Data as StoreData;
-use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
+use crate::webcore::node_types::PathOrFileDescriptor;
 
 // `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
 // keep `process` leaf; `subprocess` re-exports it).
@@ -56,7 +56,9 @@ pub enum Stdio {
     Ignore,
     Fd(Fd),
     Dup2(Dup2),
-    Path(PathLike),
+    /// A file blob given as stdio: the child opens this path itself. Owned,
+    /// because the blob it came from may be gone before spawn reads it.
+    Path(Box<[u8]>),
     Blob(webcore::blob::Any),
     ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Memfd(Fd),
@@ -301,9 +303,7 @@ impl Stdio {
             Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
             #[cfg(windows)]
             Self::Memfd(_) => panic!("This should never happen"),
-            Self::Path(pathlike) => {
-                SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
-            }
+            Self::Path(path) => SpawnOptionsStdio::Path(core::mem::take(path)),
             Self::Inherit => SpawnOptionsStdio::Inherit,
             Self::Ignore => SpawnOptionsStdio::Ignore,
         };
@@ -632,7 +632,7 @@ impl Stdio {
                             return Ok(());
                         }
                         PathOrFileDescriptor::Path(ref path) => {
-                            *self = Stdio::Path(path.clone());
+                            *self = Stdio::Path(Box::from(path.slice()));
                             return Ok(());
                         }
                     }

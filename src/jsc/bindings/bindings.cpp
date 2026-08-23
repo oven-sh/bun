@@ -3631,6 +3631,49 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
         buf->unpin();
 }
 
+// Hold the backing store itself rather than the JS object: one ref + one pin on
+// the `JSC::ArrayBuffer` (refcounted, not a GC cell). The wrapper may then be
+// collected while the bytes stay allocated and in place, and releasing touches
+// no JSCell — so a native holder with no root to lean on, destroyed from a GC
+// finalizer (a Blob store) or at an async op's completion, can release inline.
+// This VM's thread only: the refcount is not atomic (the Rust holder,
+// `PinnedArrayBuffer`, posts an off-thread release back here).
+//
+// Unlike `pinStorage`, a bufferless view is given its ArrayBuffer here
+// (OversizeTypedArray: adopted in place, no byte copy) because there is no
+// caller root keeping the view alive. `out_ptr`/`out_len` are the view's byte
+// range, read after that so they point into the storage the ArrayBuffer owns.
+CPP_DECL JSC::ArrayBuffer* JSC__JSValue__retainPinnedArrayBuffer(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
+{
+    auto value = JSC::JSValue::decode(v);
+    JSC::ArrayBuffer* buf = nullptr;
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        buf = jb->impl();
+        if (!buf || buf->isDetached())
+            return nullptr;
+        *out_ptr = static_cast<const uint8_t*>(buf->data());
+        *out_len = buf->byteLength();
+    } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value); view && !view->isDetached()) {
+        buf = view->possiblySharedBuffer();
+        if (!buf)
+            return nullptr;
+        *out_ptr = static_cast<const uint8_t*>(view->vector());
+        *out_len = view->byteLength();
+    } else {
+        return nullptr;
+    }
+    buf->ref();
+    if (!buf->isShared())
+        buf->pin();
+    return buf;
+}
+CPP_DECL void JSC__ArrayBuffer__releasePinned(JSC::ArrayBuffer* buf)
+{
+    if (!buf->isShared())
+        buf->unpin();
+    buf->deref();
+}
+
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data

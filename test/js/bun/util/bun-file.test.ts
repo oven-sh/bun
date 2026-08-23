@@ -110,6 +110,77 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
   expect(caught.stack).toContain("at async caller");
 });
 
+test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async () => {
+  // The file store used to protect() the path's JS buffer and never release
+  // it, and unpinned it from the Blob's GC destructor (touching a JS cell
+  // mid-sweep). Now it holds the backing store directly: the blobs and the
+  // buffers are both collectable, and reads still see the path.
+  await using dir = tempDir("bun-file-buffer-path-gc", {
+    "hello.txt": "hello",
+    "run.js": `
+      const { join } = require("path");
+      const { heapStats } = require("bun:jsc");
+      const existing = join(process.argv[2], "hello.txt");
+      // A Buffer over 1000 bytes starts out without an ArrayBuffer behind it. Pad
+      // with "./" by hand (join() would normalize it away) to just past that,
+      // staying under macOS's 1024-byte PATH_MAX. Not on Windows: Bun.write hands
+      // libuv the raw path, and 1000 un-normalized chars is past MAX_PATH there.
+      const pad = process.platform === "win32" ? "" : Buffer.alloc(Math.ceil((1004 - process.argv[2].length) / 2) * 2, "./").toString();
+      const longDir = process.argv[2] + "/" + pad;
+      const existingLong = longDir + "hello.txt";
+      const protectedBefore = heapStats().protectedObjectCount;
+      const uint8Before = heapStats().objectTypeCounts.Uint8Array ?? 0;
+      for (let i = 0; i < 2000; i++) {
+        Bun.file(Buffer.from(join(process.argv[2], "missing-" + i)));
+        Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-u8-" + i)));
+        Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-ab-" + i)).buffer);
+        if (i % 8 === 0) Bun.file(Buffer.from(longDir + "no-" + (i % 10)));
+      }
+      const keep = [
+        Bun.file(Buffer.from(existing)),
+        Bun.file(new TextEncoder().encode(existing)),
+        Bun.file(new TextEncoder().encode(existing).buffer),
+        Bun.file(Buffer.from(existingLong)),
+      ];
+      Bun.gc(true);
+      Bun.gc(true);
+      const stats = heapStats();
+      // The threadpool open/copy paths read the store's path off the JS thread.
+      await Bun.write(Bun.file(Buffer.from(longDir + "sub/out.txt")), Buffer.alloc(300 * 1024, "x").toString());
+      await Bun.write(Bun.file(new TextEncoder().encode(longDir + "copy.txt")), keep[3]);
+      console.log(JSON.stringify({
+        longPathBytes: pad === "" || (Buffer.from(existingLong).length > 1000 && Buffer.from(existingLong).length < 1024),
+        exists: await Promise.all(keep.map(f => f.exists())),
+        text: await Promise.all(keep.map(f => f.text())),
+        written: [(await Bun.file(longDir + "sub/out.txt").text()).length, await Bun.file(longDir + "copy.txt").text()],
+        missing: await Bun.file(Buffer.from(join(process.argv[2], "missing-0"))).exists(),
+        leakedProtects: stats.protectedObjectCount - protectedBefore > 100,
+        leakedBuffers: (stats.objectTypeCounts.Uint8Array ?? 0) - uint8Before > 100,
+      }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.js"), dir],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    longPathBytes: true,
+    exists: [true, true, true, true],
+    text: ["hello", "hello", "hello", "hello"],
+    written: [300 * 1024, "hello"],
+    missing: false,
+    leakedProtects: false,
+    leakedBuffers: false,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async () => {
   // When a file starts with EF BB BF, the BOM is stripped before parsing and
   // the temporary read buffer is freed. Previously the *post-strip* slice was

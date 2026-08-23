@@ -1191,7 +1191,7 @@ impl PathLikeExt for PathLike {
                     return Err(err);
                 }
 
-                arguments.protect_eat();
+                arguments.eat();
                 Ok(Some(Self::Buffer(buffer)))
             }
 
@@ -1208,7 +1208,7 @@ impl PathLikeExt for PathLike {
                     return Err(err);
                 }
 
-                arguments.protect_eat();
+                arguments.eat();
                 Ok(Some(Self::Buffer(buffer)))
             }
 

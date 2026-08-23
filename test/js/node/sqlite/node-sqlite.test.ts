@@ -29,6 +29,23 @@ const sqliteHasLoadExtension = (() => {
   }
 })();
 
+// Environment for children that must fail loudly under ASAN on a use-after-free.
+// Malloc=1 routes bmalloc through the system heap so ASAN sees every JSC
+// allocation. WebKit stubs that heap out on Windows (RELEASE_BASSERT_NOT_REACHED),
+// so the child would trap at JSC init before running any test code; Windows has
+// no ASAN lane anyway. The CI runner sets detect_leaks=1 on ASAN lanes, and with
+// the whole JSC heap in system malloc LSan spends seconds walking it at exit, so
+// leak detection is off here: these children assert a clean exit and their
+// stdout, not a leak report. symbolize=0 so a pre-fix ASAN abort exits promptly
+// instead of waiting on llvm-symbolizer.
+const systemMallocEnv: NodeJS.Dict<string> = isWindows
+  ? bunEnv
+  : {
+      ...bunEnv,
+      Malloc: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+    };
+
 test("node:sqlite is a built-in module", () => {
   expect(isBuiltin("node:sqlite")).toBe(true);
   // Like node:test, node:sqlite is only available with the node: prefix.
@@ -754,10 +771,7 @@ describe("DatabaseSync.prototype.function()", () => {
           console.log(JSON.stringify({ rows: rows.length, calls: n, isOpen: db.isOpen }));
         `,
       ],
-      // Malloc=1 forces bmalloc's SystemHeap so ASAN catches a regression.
-      // WebKit stubs that heap out on Windows (RELEASE_BASSERT_NOT_REACHED),
-      // so the child would trap at JSC init before running any test code.
-      env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
+      env: systemMallocEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -791,10 +805,7 @@ describe("DatabaseSync.prototype.function()", () => {
           console.log(JSON.stringify({ isOpen: db.isOpen, err, haveStmt: !!stmt }));
         `,
         ],
-        // Malloc=1 forces bmalloc's SystemHeap so ASAN catches a regression.
-        // WebKit stubs that heap out on Windows (RELEASE_BASSERT_NOT_REACHED),
-        // so the child would trap at JSC init before running any test code.
-        env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
+        env: systemMallocEnv,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1199,7 +1210,7 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
             }
           `,
         ],
-        env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
+        env: systemMallocEnv,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1760,12 +1771,13 @@ test.skipIf(!sqliteHasSession)("deserialize() frees open sessions instead of orp
   // Symbol.dispose on a stale session is a silent no-op (no
   // double-free of the already-deleted handle).
   expect(() => session[Symbol.dispose]()).not.toThrow();
-  // DB is still usable and a fresh session works.
+  // DB is still usable and a fresh session works: it records only the insert
+  // made while it was attached (16 bytes: table header + one INSERT record).
   expect(db.isOpen).toBe(true);
   db.exec("INSERT INTO t VALUES (1)");
   const fresh = db.createSession();
   db.exec("INSERT INTO t VALUES (2)");
-  expect(fresh.changeset().length).toBeGreaterThan(0);
+  expect(fresh.changeset()).toHaveLength(16);
   fresh.close();
   db.close();
   Bun.gc(true);
@@ -2165,11 +2177,12 @@ describe("GC lifetime", () => {
       }
       Bun.gc(true);
       // The next entry point sweeps the orphaned native sessions; the
-      // connection keeps working and a fresh session records normally.
+      // connection keeps working and a fresh session records normally: one
+      // two-column INSERT is a 20-byte changeset.
       db.exec("INSERT INTO t VALUES (1, 'x')");
       const fresh = db.createSession();
       db.exec("INSERT INTO t VALUES (2, 'y')");
-      expect(fresh.changeset().length).toBeGreaterThan(0);
+      expect(fresh.changeset()).toHaveLength(20);
       fresh.close();
       db.close();
     },
@@ -2181,6 +2194,8 @@ describe("GC lifetime", () => {
     const session = db.createSession();
     const stmt = db.prepare("SELECT COUNT(*) AS n FROM t");
     db.exec("INSERT INTO t VALUES (1, 'a')");
+    const recorded = session.changeset();
+    expect(recorded).toHaveLength(20);
 
     const other = new DatabaseSync(":memory:");
     other.exec("CREATE TABLE o (x INTEGER)");
@@ -2197,7 +2212,7 @@ describe("GC lifetime", () => {
     // statements before deserializing), but the session keeps its recorded
     // history because the connection was never touched.
     expect(() => stmt.get()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
-    expect(session.changeset().length).toBeGreaterThan(0);
+    expect(session.changeset()).toEqual(recorded);
     expect(db.prepare("SELECT COUNT(*) AS n FROM t").get()!.n).toBe(1);
     session.close();
     db.close();
@@ -2415,15 +2430,18 @@ test.concurrent("worker-owned unclosed database is checkpointed on worker exit",
 describe("GC stress", () => {
   // Interleave Bun.gc(true) with the mutations that race visitChildren, so
   // a marker-vs-mutator lock miss is loud under ASAN rather than flaky.
-  // Every Bun.gc(true) is a full collection and sweep of the whole test
-  // process (about 20 ms on a debug+ASAN build), so the loops run 100
-  // rounds: enough to cycle every state below many times (the LRU rotation
-  // has period 8) at about 2 s per test on debug+ASAN.
+  // Bun.gc(true) is a full synchronous collection and sweep of the whole test
+  // process: 20 to 50 ms per call on a debug+ASAN build depending on the core
+  // count. The loops are sized to stay under the 5 s default timeout on a
+  // 2-core debug+ASAN box (under 3 s there). Round count does not add detection
+  // power here: the collection is synchronous, so every round is the same
+  // deterministic check, and 50 rounds still cycle every state below several
+  // times (the LRU rotation has period 8).
   test("re-registering db.function() while GC runs concurrently", () => {
     const db = new DatabaseSync(":memory:");
     db.function("f", () => -1);
     const stmt = db.prepare("SELECT f() AS v");
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 50; i++) {
       db.function("f", () => i);
       Bun.gc(true);
       expect(stmt.get().v).toBe(i);
@@ -2434,7 +2452,7 @@ describe("GC stress", () => {
   test("TagStore LRU churn under GC pressure", () => {
     const db = new DatabaseSync(":memory:");
     const sql = db.createTagStore(4);
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 50; i++) {
       // Rotate the SQL text so the LRU inserts/evicts every iteration.
       const j = i % 8;
       const v = sql.get(["SELECT ", ` + ${j} AS v`], i).v;
@@ -2464,7 +2482,7 @@ describe("GC stress", () => {
   test.skipIf(!sqliteHasSession)("session churn under GC pressure (finalizer ordering)", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 50; i++) {
       const s = db.createSession();
       Bun.gc(true);
       // Nothing was written while the session was attached.

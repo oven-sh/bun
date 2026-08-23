@@ -1201,7 +1201,8 @@ describe("napi_value results from cc()-compiled C", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
-    expect({ results, stderr, exitCode }).toMatchObject({
+    // stderr is in the received object so a failure shows it; it is not asserted.
+    expect({ results, stderr }).toMatchObject({
       results: {
         nullValue: ["undefined", true],
         string: "hello",
@@ -1210,8 +1211,8 @@ describe("napi_value results from cc()-compiled C", () => {
         thrownVoid: { threw: [null, "thrown from void C"] },
         afterThrow: { returned: 42 },
       },
-      exitCode: 0,
     });
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -5275,6 +5275,86 @@ it("Http2Stream pull-mode read() after pause() replenishes the receive window", 
   }
 });
 
+// setLocalWindowSize() grows the connection-level receive window only (nghttp2's
+// nghttp2_session_set_local_window_size with stream id 0). It used to also raise the local
+// SETTINGS_INITIAL_WINDOW_SIZE without sending a SETTINGS frame, so every new stream waited for
+// half of the raised window before replenishing while the peer still stopped at the 64 KiB it
+// was actually told: any body larger than that stalled forever.
+describe("setLocalWindowSize() and bodies larger than the initial stream window", () => {
+  const PAYLOAD = 2 * 1024 * 1024;
+  const WINDOW = 1 << 24;
+
+  it("server session: receives a POST body larger than the stream window", async () => {
+    const server = http2.createServer();
+    const { promise, resolve, reject } = Promise.withResolvers();
+    let serverSession;
+    server.on("session", session => {
+      serverSession = session;
+      session.setLocalWindowSize(WINDOW);
+    });
+    server.on("stream", stream => {
+      let received = 0;
+      stream.on("data", chunk => (received += chunk.length));
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end();
+        resolve(received);
+      });
+      stream.on("error", reject);
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      client.on("error", reject);
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.on("error", reject);
+      req.end(Buffer.alloc(PAYLOAD, "x"));
+      expect(await promise).toBe(PAYLOAD);
+      expect({
+        effectiveLocalWindowSize: serverSession.state.effectiveLocalWindowSize,
+        initialWindowSize: serverSession.localSettings.initialWindowSize,
+      }).toEqual({
+        effectiveLocalWindowSize: WINDOW,
+        initialWindowSize: http2.getDefaultSettings().initialWindowSize,
+      });
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it("client session: receives a response body larger than the stream window", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end(Buffer.alloc(PAYLOAD, "y"));
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      client.setLocalWindowSize(WINDOW);
+      const req = client.request({ ":path": "/" });
+      req.on("error", reject);
+      let received = 0;
+      req.on("data", chunk => (received += chunk.length));
+      req.on("end", () => resolve(received));
+      expect(await promise).toBe(PAYLOAD);
+      expect({
+        effectiveLocalWindowSize: client.state.effectiveLocalWindowSize,
+        initialWindowSize: client.localSettings.initialWindowSize,
+      }).toEqual({
+        effectiveLocalWindowSize: WINDOW,
+        initialWindowSize: http2.getDefaultSettings().initialWindowSize,
+      });
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+});
+
 // The outbound cork buffer is thread-local across every Http2Session. Interleaving
 // respond()/write() across two sessions used to let the second session's corked
 // HEADERS be prepended to the first session's multi-frame DATA batch and sent to

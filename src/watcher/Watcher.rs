@@ -240,6 +240,7 @@ impl Watcher {
         let spawn = || {
             std::thread::Builder::new()
                 .name("FileWatcher".into())
+                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
                 .spawn(move || {
                     // SAFETY: Watcher outlives the thread; shutdown()
                     // coordinates teardown via `running`/`close_descriptors`

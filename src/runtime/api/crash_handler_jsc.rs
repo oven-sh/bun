@@ -23,6 +23,7 @@ pub(crate) mod js_bindings {
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
+            ("stackOverflow", __jsc_host_js_stack_overflow),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -123,6 +124,29 @@ pub(crate) mod js_bindings {
             return js_segfault(_global, _frame);
         }
         #[allow(unreachable_code)]
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// Recurses until the calling thread runs out of native stack. The fault
+    /// lands on the guard page, so the kernel can only deliver it on an
+    /// alternate signal stack: this exercises that the active SIGSEGV handler
+    /// has `SA_ONSTACK` and that the thread (main or worker) registered one.
+    #[bun_jsc::host_fn]
+    fn js_stack_overflow(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+
+        #[inline(never)]
+        #[allow(unconditional_recursion)]
+        fn recurse(depth: usize) -> usize {
+            let mut frame = [0u8; 1024];
+            frame[depth % frame.len()] = depth as u8;
+            core::hint::black_box(&mut frame);
+            // `frame` is read after the call, so this is not a tail call and
+            // every level keeps its own frame alive.
+            recurse(depth + 1) + usize::from(frame[0])
+        }
+
+        core::hint::black_box(recurse(0));
         Ok(JSValue::UNDEFINED)
     }
 

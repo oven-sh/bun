@@ -634,7 +634,8 @@ mod draft {
         Trap(usize),
         /// Windows-only
         DatatypeMisalignment,
-        /// Windows-only
+        /// Windows: `EXCEPTION_STACK_OVERFLOW`. POSIX: a SIGSEGV/SIGBUS whose
+        /// fault address is next to the stack pointer (the guard page).
         StackOverflow,
 
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
@@ -648,11 +649,13 @@ mod draft {
         /// been printed. Signal-originated crashes re-raise the original
         /// fault so the parent process (and core-dump analyzers) see the
         /// real cause instead of a misleading SIGILL/SIGTRAP from a trap
-        /// instruction; everything else (panics, OOM) uses SIGABRT.
+        /// instruction; everything else (panics, OOM) uses SIGABRT. On POSIX a
+        /// `StackOverflow` is a guard-page SIGSEGV that
+        /// `handle_segfault_posix` classified.
         #[cfg(unix)]
         fn terminal_signal(&self) -> c_int {
             match self {
-                CrashReason::SegmentationFault(_) => libc::SIGSEGV,
+                CrashReason::SegmentationFault(_) | CrashReason::StackOverflow => libc::SIGSEGV,
                 CrashReason::IllegalInstruction(_) => libc::SIGILL,
                 CrashReason::BusError(_) => libc::SIGBUS,
                 CrashReason::FloatingPointError(_) => libc::SIGFPE,
@@ -661,7 +664,6 @@ mod draft {
                 | CrashReason::Panic(_)
                 | CrashReason::Unreachable
                 | CrashReason::DatatypeMisalignment
-                | CrashReason::StackOverflow
                 | CrashReason::ZigError(_)
                 | CrashReason::OutOfMemory => libc::SIGABRT,
             }
@@ -989,13 +991,19 @@ mod draft {
                                     }
                                 }
                             }
-                            #[cfg(any(
-                                target_os = "macos",
-                                target_os = "linux",
-                                target_os = "android",
-                                target_os = "freebsd"
-                            ))]
-                            { /* no-op */ }
+                            #[cfg(unix)]
+                            {
+                                let mut name_buf = [0u8; 64];
+                                let name = bun_core::current_thread_name(&mut name_buf);
+                                let written = if name.is_empty() {
+                                    write!(writer, "(thread {})", bun_threading::current_thread_id())
+                                } else {
+                                    write!(writer, "({})", bstr::BStr::new(name))
+                                };
+                                if written.is_err() {
+                                    abort();
+                                }
+                            }
                         }
 
                         if writer.write_all(b": ").is_err() {
@@ -1491,27 +1499,57 @@ mod draft {
         ARCH_DISPLAY_STRING,
     );
 
-    /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
-    /// handler. Seeds the frame-pointer walk from the faulting frame. Returns
-    /// `None` on arch/OS combos we don't have register offsets for (the caller
-    /// then falls back to a current-stack capture).
+    /// Registers of the faulting frame, read from the `ucontext_t` the kernel
+    /// hands the signal handler.
     #[cfg(unix)]
-    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize)> {
+    #[derive(Clone, Copy)]
+    struct FaultRegisters {
+        pc: usize,
+        fp: usize,
+        sp: usize,
+    }
+
+    #[cfg(unix)]
+    impl FaultRegisters {
+        /// A fault at an address just past the stack pointer is the guard page:
+        /// the thread ran out of stack. Below `sp` covers a `push`/`call` and
+        /// the x86-64 red zone. Above `sp` covers a frame that was allocated in
+        /// one step and then written to, and stack probes.
+        fn is_stack_overflow(self, fault_addr: usize) -> bool {
+            const BELOW: usize = 4096;
+            const ABOVE: usize = 256 * 1024;
+            fault_addr >= self.sp.saturating_sub(BELOW) && fault_addr < self.sp.saturating_add(ABOVE)
+        }
+    }
+
+    /// Extract the faulting frame's registers from the `ucontext_t` the
+    /// kernel hands the signal handler. `pc`/`fp` seed the frame-pointer walk
+    /// from the faulting frame. Returns `None` on arch/OS combos we don't have
+    /// register offsets for (the caller then falls back to a current-stack
+    /// capture).
+    #[cfg(unix)]
+    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<FaultRegisters> {
         debug_assert!(!ctx.is_null());
         let uc = ctx.cast::<libc::ucontext_t>().cast_const();
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            let pc = mc.gregs[libc::REG_RIP as usize] as usize;
-            let fp = mc.gregs[libc::REG_RBP as usize] as usize;
-            Some((pc, fp))
+            Some(FaultRegisters {
+                pc: mc.gregs[libc::REG_RIP as usize] as usize,
+                fp: mc.gregs[libc::REG_RBP as usize] as usize,
+                sp: mc.gregs[libc::REG_RSP as usize] as usize,
+            })
         }
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            Some((mc.pc as usize, mc.regs[29] as usize))
+            Some(FaultRegisters {
+                pc: mc.pc as usize,
+                fp: mc.regs[29] as usize,
+                sp: mc.sp as usize,
+            })
         }
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1520,7 +1558,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
+            Some(FaultRegisters {
+                pc: (*mc).__ss.__rip as usize,
+                fp: (*mc).__ss.__rbp as usize,
+                sp: (*mc).__ss.__rsp as usize,
+            })
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1529,7 +1571,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
+            Some(FaultRegisters {
+                pc: (*mc).__ss.__pc as usize,
+                fp: (*mc).__ss.__fp as usize,
+                sp: (*mc).__ss.__sp as usize,
+            })
         }
         #[cfg(not(any(
             all(target_os = "linux", target_arch = "x86_64"),
@@ -1548,9 +1594,15 @@ mod draft {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
+        let registers = fault_context_from_ucontext(ctx);
 
         crash_handler(
             match sig {
+                libc::SIGSEGV | libc::SIGBUS
+                    if registers.is_some_and(|r| r.is_stack_overflow(addr)) =>
+                {
+                    CrashReason::StackOverflow
+                }
                 libc::SIGSEGV => CrashReason::SegmentationFault(addr),
                 libc::SIGILL => CrashReason::IllegalInstruction(addr),
                 libc::SIGBUS => CrashReason::BusError(addr),
@@ -1560,11 +1612,44 @@ mod draft {
                 // we do not register this handler for other signals
                 _ => unreachable!(),
             },
-            match fault_context_from_ucontext(ctx) {
-                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+            match registers {
+                Some(FaultRegisters { pc, fp, .. }) => TraceSeed::Fault { pc, fp },
                 None => TraceSeed::None,
             },
         );
+    }
+
+    /// JSC's `WTF::SignalHandlers::finalize()` (run by the first `VM`
+    /// construction) re-registers SIGSEGV and SIGBUS for the JIT with
+    /// `sa_flags = SA_SIGINFO` only, and chains to the previous handler for
+    /// faults it does not own. Without `SA_ONSTACK` the kernel cannot deliver
+    /// a guard-page fault (a native stack overflow): the faulting thread has
+    /// no stack left for the signal frame, so the default action runs and the
+    /// process dies with no report. Put the flag back on whatever handler is
+    /// installed now. The handler function does not care which stack it runs
+    /// on.
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__keepSignalHandlersOnAltStack() {
+        for signal in bun_core::CRASH_HANDLER_SIGNALS {
+            let mut current: libc::sigaction = bun_core::ffi::zeroed();
+            // SAFETY: a null `act` only queries; `current` is a valid out-pointer.
+            if unsafe { libc::sigaction(signal, core::ptr::null(), &raw mut current) } != 0 {
+                continue;
+            }
+            if current.sa_sigaction == libc::SIG_DFL
+                || current.sa_sigaction == libc::SIG_IGN
+                || current.sa_flags & libc::SA_ONSTACK != 0
+            {
+                continue;
+            }
+            current.sa_flags |= libc::SA_ONSTACK;
+            // SAFETY: `current` is the disposition the kernel just returned,
+            // with one flag added; a null `oldact` is permitted.
+            unsafe {
+                libc::sigaction(signal, &raw const current, core::ptr::null_mut());
+            }
+        }
     }
 
     #[cfg(unix)]
@@ -1597,10 +1682,14 @@ mod draft {
 
                 // SAFETY: stack points to a valid static buffer
                 if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
-                    act_.sa_flags |= libc::SA_ONSTACK;
                     // SAFETY: single global; only mutated during signal-handler setup
                     DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
                 }
+            }
+            // Every re-install (not only the first) must keep the flag, or a
+            // later `reset_on_posix()` silently drops stack overflow reports.
+            if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
+                act_.sa_flags |= libc::SA_ONSTACK;
             }
         }
 

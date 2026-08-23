@@ -957,26 +957,47 @@ describe.skipIf(isWindows)("terminate() stops a readFile of a FIFO that never en
         const { Worker } = require("node:worker_threads");
         const fifo = ${JSON.stringify(fifo)};
         require("node:child_process").execFileSync("mkfifo", [fifo]);
-        // Both ends are held here: the worker's open() does not block, and its read() never sees EOF.
-        const fd = fs.openSync(fifo, "r+");
+        // Both ends are held here, so the worker's open() does not block and its read() never sees
+        // EOF. The writes go through a non-blocking end: this loop must stay free to run the
+        // worker's 'exit' and the terminate() settlement whatever the worker does with the pipe.
+        const hold = fs.openSync(fifo, "r+");
+        const out = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const write = (buf, off) => {
+          try {
+            return fs.writeSync(out, buf, off);
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+            return 0;
+          }
+        };
         const w = new Worker(
           'const fs = require("node:fs"); const { parentPort, workerData: fifo } = require("node:worker_threads");' +
           'parentPort.postMessage("reading"); ${read}',
           { eval: true, workerData: fifo },
         );
         w.on("error", e => { console.error("worker error:", e); process.exit(1); });
+        w.on("exit", code => console.log("exit", code));
         w.on("message", async m => {
-          if (m !== "reading") { console.log("unexpected:", m); process.exit(1); }
-          // A blocking write of more than the pipe holds returns once the worker's read loop has
-          // drained the rest, so the worker is inside that loop, blocked in read(), from here on.
+          console.log(m);
+          if (m !== "reading") process.exit(1);
+          // More bytes than the pipe holds only go through once the worker's read loop has drained
+          // the rest, so from here on the worker is inside that loop, blocked in read().
           const chunk = Buffer.alloc(${fed}, 0x78);
-          for (let off = 0; off < chunk.length; ) off += fs.writeSync(fd, chunk, off);
+          for (let off = 0; off < chunk.length; ) {
+            const n = write(chunk, off);
+            if (n === 0) await Bun.sleep(1);
+            off += n;
+          }
+          console.log("fed");
           // Keep the data flowing: the loop can only notice the stop when a read returns.
-          const feed = setInterval(() => fs.writeSync(fd, "x"), 1);
-          const code = await w.terminate();
+          const x = Buffer.from("x");
+          const feed = setInterval(() => write(x, 0), 1);
+          // A watchdog, not a wait: the unfixed build never settles terminate(), and the test is
+          // more useful failing on this line than on its timeout.
+          const code = await Promise.race([w.terminate(), Bun.sleep(${timeout / 2}).then(() => "hung")]);
           clearInterval(feed);
-          fs.closeSync(fd);
           console.log("terminated", code);
+          process.exit(code === "hung" ? 2 : 0);
         });
       `,
         ],
@@ -986,7 +1007,7 @@ describe.skipIf(isWindows)("terminate() stops a readFile of a FIFO that never en
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout).toBe("terminated 1\n");
+      expect(stdout).toBe("reading\nfed\nexit 1\nterminated 1\n");
       expect(exitCode).toBe(0);
     },
     timeout,

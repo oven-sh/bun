@@ -494,18 +494,32 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     using dir = tempDir("fs-abort-readfile-fifo", {});
     const fifo = join(String(dir), "fifo");
     mkfifo(fifo, 0o666);
-    // Both ends are held here: the pool thread's open() does not block, and its read() never sees EOF.
-    const fd = fs.openSync(fifo, "r+");
+    // Both ends are held here, so the pool thread's open() does not block and its read() never sees
+    // EOF. The writes go through a non-blocking end, so this thread is never stuck on a full pipe.
+    const hold = fs.openSync(fifo, "r+");
+    const out = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+    const write = (buf, off) => {
+      try {
+        return fs.writeSync(out, buf, off);
+      } catch (e) {
+        if (e.code !== "EAGAIN") throw e;
+        return 0;
+      }
+    };
     try {
       const ac = new AbortController();
       const reason = new Error("stop");
       const promise = fsPromises.readFile(fifo, { signal: ac.signal });
-      // A blocking write of more than the pipe holds returns once the read loop has drained the rest,
-      // so the read is in flight, blocked on the next chunk, from here on.
+      // More bytes than the pipe holds only go through once the read loop has drained the rest, so
+      // from here on the read is in flight, blocked on the next chunk.
       const chunk = Buffer.alloc(192 * 1024, 0x78);
-      for (let off = 0; off < chunk.length; ) off += fs.writeSync(fd, chunk, off);
+      for (let off = 0; off < chunk.length; ) {
+        const n = write(chunk, off);
+        if (n === 0) await Bun.sleep(1);
+        off += n;
+      }
       ac.abort(reason);
-      fs.writeSync(fd, "x");
+      write(Buffer.from("x"), 0);
       expect.assertions(4);
       try {
         await promise;
@@ -513,7 +527,8 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
         expectNodeAbortError(err, reason);
       }
     } finally {
-      fs.closeSync(fd);
+      fs.closeSync(out);
+      fs.closeSync(hold);
     }
   });
 

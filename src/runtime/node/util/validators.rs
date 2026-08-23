@@ -3,7 +3,7 @@ use core::fmt;
 use bun_core::ZigString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
-pub(crate) fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
+fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();
     if js_type.is_array() {
         return ZigString::static_("array");
@@ -54,7 +54,7 @@ pub(crate) fn throw_err_invalid_arg_type(
 }
 
 #[cold]
-pub(crate) fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
+fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
     global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
 }
 
@@ -70,25 +70,6 @@ fn throw_range_error_msg(
         jsc::RangeErrorOptions {
             field_name: name.as_bytes(),
             msg,
-            ..Default::default()
-        },
-    )
-}
-
-#[inline]
-fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
-    global_this: &JSGlobalObject,
-    value: V,
-    name: &str,
-    min: i64,
-    max: i64,
-) -> JsError {
-    global_this.throw_range_error(
-        value,
-        jsc::RangeErrorOptions {
-            field_name: name.as_bytes(),
-            min,
-            max,
             ..Default::default()
         },
     )
@@ -135,12 +116,12 @@ pub(crate) fn validate_integer(
     let num = value.as_number();
 
     if num < min || num > max {
-        return Err(throw_range_error_min_max(
+        return Err(throw_range_error(
             global_this,
-            num,
-            name,
-            min as i64,
-            max as i64,
+            format_args!(
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
+                name, min, max, num
+            ),
         ));
     }
 
@@ -165,7 +146,10 @@ pub(crate) fn validate_int32(
             value,
         ));
     }
-    if !value.is_any_int() {
+    let num = value.as_number();
+    // Number.isInteger semantics like Node's validateInt32: -0 and integral doubles
+    // outside the int52 range are integers; the range check below rejects out-of-range.
+    if !num.is_finite() || num.fract() != 0.0 {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
@@ -176,14 +160,13 @@ pub(crate) fn validate_int32(
             ),
         ));
     }
-    let num = value.as_number();
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if num < (min as f64) || num > (max as f64) {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
                 name,
                 min,
                 max,
@@ -208,7 +191,8 @@ pub(crate) fn validate_uint32(
             value,
         ));
     }
-    if !value.is_any_int() {
+    let num = value.as_number();
+    if !num.is_finite() || num.fract() != 0.0 {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
@@ -219,15 +203,14 @@ pub(crate) fn validate_uint32(
             ),
         ));
     }
-    let num: i64 = value.as_int52();
-    let min: i64 = if greater_than_zero { 1 } else { 0 };
-    let max: i64 = i64::from(u32::MAX);
+    let min: f64 = if greater_than_zero { 1.0 } else { 0.0 };
+    let max: f64 = f64::from(u32::MAX);
     if num < min || num > max {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
                 name,
                 min,
                 max,
@@ -337,15 +320,15 @@ bitflags::bitflags! {
 
 impl ValidateObjectOptions {
     #[inline]
-    pub(crate) fn allow_nullable(self) -> bool {
+    fn allow_nullable(self) -> bool {
         self.contains(Self::ALLOW_NULLABLE)
     }
     #[inline]
-    pub(crate) fn allow_array(self) -> bool {
+    fn allow_array(self) -> bool {
         self.contains(Self::ALLOW_ARRAY)
     }
     #[inline]
-    pub(crate) fn allow_function(self) -> bool {
+    fn allow_function(self) -> bool {
         self.contains(Self::ALLOW_FUNCTION)
     }
 }

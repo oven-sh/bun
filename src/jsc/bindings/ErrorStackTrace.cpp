@@ -182,27 +182,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         stackTrace.shrink(stackTraceLimit);
 }
 
-JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue)
-{
-    const WTF::Vector<JSC::StackFrame>* jscStackTrace = nullptr;
-
-    JSC::Exception* currentException = DECLARE_TOP_EXCEPTION_SCOPE(vm).exception();
-    if (currentException && currentException->value() == thrownValue) {
-        jscStackTrace = &currentException->stack();
-    } else {
-        JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(thrownValue);
-        if (error) {
-            jscStackTrace = error->stackTrace();
-        }
-    }
-
-    if (!jscStackTrace) {
-        return JSCStackTrace();
-    }
-
-    return fromExisting(vm, *jscStackTrace);
-}
-
 static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
 {
     if (!codeBlock->ownerExecutable()) {
@@ -213,57 +192,9 @@ static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
     return !Zig::sourceURL(source).isEmpty();
 }
 
-JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
-    : m_vm(vm)
-    , m_codeBlock(nullptr)
-    , m_bytecodeIndex(JSC::BytecodeIndex())
-    , m_sourceURL()
-    , m_functionName()
-    , m_isWasmFrame(false)
-    , m_isAsync(false)
-    , m_sourcePositionsState(SourcePositionsState::NotCalculated)
-{
-    m_callee = visitor->callee().asCell();
-    m_callFrame = visitor->callFrame();
-
-    if (auto* codeBlock = visitor->codeBlock()) {
-        auto codeType = codeBlock->codeType();
-        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
-            m_isFunctionOrEval = true;
-        }
-    }
-
-    // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
-    if (visitor->isNativeCalleeFrame()) {
-        auto* nativeCallee = visitor->callee().asNativeCallee();
-        switch (nativeCallee->category()) {
-        case NativeCallee::Category::Wasm: {
-            m_wasmFunctionIndexOrName = visitor->wasmFunctionIndexOrName();
-            m_isWasmFrame = true;
-            break;
-        }
-        case NativeCallee::Category::InlineCache: {
-            break;
-        }
-        }
-    } else if (auto* codeBlock = visitor->codeBlock()) {
-        auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
-        if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
-            m_codeBlock = codeBlock;
-            m_bytecodeIndex = visitor->bytecodeIndex();
-        }
-    }
-
-    if (!m_bytecodeIndex && visitor->hasLineAndColumnInfo()) {
-        auto lineColumn = visitor->computeLineAndColumn();
-        m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
-        m_sourcePositionsState = SourcePositionsState::Calculated;
-    }
-}
-
 JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     : m_vm(vm)
-    , m_callFrame(nullptr)
+    , m_stackFrame(&frame)
     , m_codeBlock(nullptr)
     , m_bytecodeIndex(JSC::BytecodeIndex())
     , m_sourceURL()
@@ -521,12 +452,7 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
         return String();
     }
 
-    auto* jsExecutable = function->jsExecutable();
-    if (!jsExecutable) {
-        return String();
-    }
-
-    return Zig::sourceURL(jsExecutable->source());
+    return Zig::sourceURL(function->jsExecutable()->source());
 }
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
@@ -539,12 +465,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        auto* jsExecutable = uncheckedDowncast<JSC::FunctionExecutable>(executable);
-        if (!jsExecutable) {
-            return String();
-        }
-
-        return jsExecutable->ecmaName().string();
+        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string();
     }
 
     return String();
@@ -590,17 +511,12 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         if (functionName.isEmpty()) {
             if (jstype == JSC::JSFunctionType) {
                 auto* function = uncheckedDowncast<JSC::JSFunction>(object);
-                if (function) {
-                    functionName = function->nameWithoutGC(vm);
-                    if (functionName.isEmpty() && !function->isHostFunction()) {
-                        functionName = function->jsExecutable()->ecmaName().string();
-                    }
+                functionName = function->nameWithoutGC(vm);
+                if (functionName.isEmpty() && !function->isHostFunction()) {
+                    functionName = function->jsExecutable()->ecmaName().string();
                 }
             } else if (jstype == JSC::InternalFunctionType) {
-                auto* function = uncheckedDowncast<JSC::InternalFunction>(object);
-                if (function) {
-                    functionName = function->name();
-                }
+                functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
             }
         }
     }
@@ -661,22 +577,17 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                 // Lastly, try type-specific properties.
                 if (jstype == JSC::JSFunctionType) {
                     auto* function = uncheckedDowncast<JSC::JSFunction>(object);
-                    if (function) {
-                        auto str = function->nameWithoutGC(vm);
-                        if (str.isEmpty() && !function->isHostFunction()) {
-                            setTypeFlagsIfNecessary();
-                            return function->jsExecutable()->ecmaName().string();
-                        }
+                    auto str = function->nameWithoutGC(vm);
+                    if (str.isEmpty() && !function->isHostFunction()) {
                         setTypeFlagsIfNecessary();
-                        return str;
+                        return function->jsExecutable()->ecmaName().string();
                     }
+                    setTypeFlagsIfNecessary();
+                    return str;
                 } else if (jstype == JSC::InternalFunctionType) {
-                    auto* function = uncheckedDowncast<JSC::InternalFunction>(object);
-                    if (function) {
-                        auto str = function->name();
-                        setTypeFlagsIfNecessary();
-                        return str;
-                    }
+                    auto str = uncheckedDowncast<JSC::InternalFunction>(object)->name();
+                    setTypeFlagsIfNecessary();
+                    return str;
                 }
             }
         }
@@ -743,6 +654,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 }
 }
 
+// Weak-referenced by JSC::ErrorInstance::finalizeUnconditionally in vendor/WebKit.
 extern "C" void Bun__errorInstance__finalize(void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);

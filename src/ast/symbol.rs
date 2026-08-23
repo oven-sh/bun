@@ -25,7 +25,13 @@ pub struct Symbol {
     /// mode, re-exported symbols are collapsed using MergeSymbols() and renamed
     /// symbols from other files that end up at this symbol must be able to tell
     /// if it has a namespace alias.
-    pub namespace_alias: Option<G::NamespaceAlias>,
+    ///
+    /// Boxed: this is `None` for the overwhelming majority of symbols, so we
+    /// pay 8 bytes inline instead of ~32. `AstBox` so the header lives in the
+    /// same spill heap as the rest of the per-file AST and is reclaimed on
+    /// reset (`Symbol` is held in `ArenaVec<'a, Symbol>`; `Drop` is not
+    /// guaranteed to run).
+    pub namespace_alias: Option<bun_alloc::AstBox<G::NamespaceAlias>>,
 
     /// Used by the parser for single pass parsing.
     ///
@@ -73,18 +79,9 @@ pub struct Symbol {
     /// Do not use this directly. Use `nestedScopeSlot()` instead.
     pub nested_scope_slot: u32,
 
-    pub did_keep_name: bool,
-
-    pub must_start_with_capital_letter_for_jsx: bool,
-
     /// The kind of symbol. This is used to determine how to print the symbol
     /// and how to deal with conflicts, renaming, etc.
     pub kind: Kind,
-
-    /// Certain symbols must not be renamed or minified. For example, the
-    /// "arguments" variable is declared by the runtime for every function.
-    /// Renaming can also break any identifier used inside a "with" statement.
-    pub must_not_be_renamed: bool,
 
     /// We automatically generate import items for property accesses off of
     /// namespace imports. This lets us remove the expensive namespace imports
@@ -105,69 +102,53 @@ pub struct Symbol {
     /// undefined, which this status is also used for.
     pub import_item_status: ImportItemStatus,
 
-    /// --- Not actually used yet -----------------------------------------------
-    /// Sometimes we lower private symbols even if they are supported. For example,
-    /// consider the following TypeScript code:
-    ///
-    ///   class Foo {
-    ///     #foo = 123
-    ///     bar = this.#foo
-    ///   }
-    ///
-    /// If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
-    /// must use assignment semantics instead of define semantics. We can compile
-    /// that to this code:
-    ///
-    ///   class Foo {
-    ///     constructor() {
-    ///       this.#foo = 123;
-    ///       this.bar = this.#foo;
-    ///     }
-    ///     #foo;
-    ///   }
-    ///
-    /// However, we can't do the same for static fields:
-    ///
-    ///   class Foo {
-    ///     static #foo = 123
-    ///     static bar = this.#foo
-    ///   }
-    ///
-    /// Compiling these static fields to something like this would be invalid:
-    ///
-    ///   class Foo {
-    ///     static #foo;
-    ///   }
-    ///   Foo.#foo = 123;
-    ///   Foo.bar = Foo.#foo;
-    ///
-    /// Thus "#foo" must be lowered even though it's supported. Another case is
-    /// when we're converting top-level class declarations to class expressions
-    /// to avoid the TDZ and the class shadowing symbol is referenced within the
-    /// class body:
-    ///
-    ///   class Foo {
-    ///     static #foo = Foo
-    ///   }
-    ///
-    /// This cannot be converted into something like this:
-    ///
-    ///   var Foo = class {
-    ///     static #foo;
-    ///   };
-    ///   Foo.#foo = Foo;
-    ///
-    /// --- Not actually used yet -----------------------------------------------
-    pub private_symbol_must_be_lowered: bool,
-
-    pub remove_overwritten_function_declaration: bool,
-
-    /// Used in HMR to decide when live binding code is needed.
-    pub has_been_assigned_to: bool,
+    /// Packed boolean state — see [`SymbolFlags`].
+    pub flags: SymbolFlags,
 }
 
-// The size of `Symbol` is not load-bearing (no FFI, no serialization), so
-// there is intentionally no layout assert here.
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
+    pub struct SymbolFlags: u8 {
+        const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
+
+        /// Certain symbols must not be renamed or minified. For example, the
+        /// "arguments" variable is declared by the runtime for every function.
+        /// Renaming can also break any identifier used inside a "with" statement.
+        const MUST_NOT_BE_RENAMED = 1 << 2;
+
+        const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
+
+        /// Used in HMR to decide when live binding code is needed.
+        const HAS_BEEN_ASSIGNED_TO = 1 << 5;
+    }
+}
+
+macro_rules! symbol_flag_accessors {
+    ($($getter:ident, $setter:ident => $flag:ident;)*) => {
+        impl Symbol {
+            $(
+                #[inline]
+                pub fn $getter(&self) -> bool {
+                    self.flags.contains(SymbolFlags::$flag)
+                }
+                #[inline]
+                pub fn $setter(&mut self, v: bool) {
+                    self.flags.set(SymbolFlags::$flag, v)
+                }
+            )*
+        }
+    };
+}
+
+symbol_flag_accessors! {
+    must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
+    must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
+    remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
+    has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
+}
+
+const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);
+const _: () = assert!(core::mem::size_of::<Symbol>() <= 48);
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
@@ -181,14 +162,9 @@ impl Default for Symbol {
             use_count_estimate: 0,
             chunk_index: AtomicU32::new(INVALID_CHUNK_INDEX),
             nested_scope_slot: INVALID_NESTED_SCOPE_SLOT,
-            did_keep_name: true,
-            must_start_with_capital_letter_for_jsx: false,
             kind: Kind::Other,
-            must_not_be_renamed: false,
             import_item_status: ImportItemStatus::None,
-            private_symbol_must_be_lowered: false,
-            remove_overwritten_function_declaration: false,
-            has_been_assigned_to: false,
+            flags: SymbolFlags::empty(),
         }
     }
 }
@@ -230,7 +206,7 @@ impl Symbol {
     pub fn slot_namespace(&self) -> SlotNamespace {
         let kind = self.kind;
 
-        if kind == Kind::Unbound || self.must_not_be_renamed {
+        if kind == Kind::Unbound || self.must_not_be_renamed() {
             return SlotNamespace::MustNotBeRenamed;
         }
 
@@ -341,18 +317,18 @@ pub enum Kind {
 
 impl Kind {
     #[inline]
-    pub fn is_private(self) -> bool {
+    pub(crate) fn is_private(self) -> bool {
         (self as u8) >= (Kind::PrivateField as u8)
             && (self as u8) <= (Kind::PrivateStaticGetSetPair as u8)
     }
 
     #[inline]
-    pub fn is_hoisted(self) -> bool {
+    pub(crate) fn is_hoisted(self) -> bool {
         matches!(self, Kind::Hoisted | Kind::HoistedFunction)
     }
 
     #[inline]
-    pub fn is_hoisted_or_function(self) -> bool {
+    pub(crate) fn is_hoisted_or_function(self) -> bool {
         matches!(
             self,
             Kind::Hoisted | Kind::HoistedFunction | Kind::GeneratorOrAsyncFunction
@@ -378,11 +354,11 @@ pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
 pub type NestedList = Vec<Vec<Symbol>>;
 
 impl Symbol {
-    pub fn merge_contents_with(&mut self, old: &mut Symbol) {
+    pub(crate) fn merge_contents_with(&mut self, old: &mut Symbol) {
         self.use_count_estimate += old.use_count_estimate;
-        if old.must_not_be_renamed {
+        if old.must_not_be_renamed() {
             self.original_name = old.original_name;
-            self.must_not_be_renamed = true;
+            self.set_must_not_be_renamed(true);
         }
 
         // TODO: MustStartWithCapitalLetterForJSX
@@ -403,6 +379,7 @@ pub struct Map {
 
 impl Map {
     // Debug-only dump of the symbol table.
+    #[cfg(debug_assertions)]
     pub fn dump(&self) {
         for (i, symbols) in self.symbols_for_source.iter().enumerate() {
             bun_core::prettyln!("\n\n-- Source ID: {} ({} symbols) --\n", i, symbols.len(),);
@@ -447,7 +424,7 @@ impl Map {
         }
 
         impl Iterator<'_> {
-            pub(crate) fn next(&mut self, ref_: Ref) {
+            fn next(&mut self, ref_: Ref) {
                 let symbol = self.map.get_const(ref_).unwrap();
                 // Thread-confinement invariant: a top-level symbol's
                 // declarations are all assigned to one chunk, so any prior
@@ -552,7 +529,7 @@ impl Map {
         // non-null source index and a non-SourceContentsSlice tag was emitted
         // by the parser as an index into this table (`declare_symbol` /
         // `new_symbol` write `inner_index = symbols.len()` then push) or
-        // minted by the linker (`LinkerGraph::generate_symbol`, which appends
+        // minted by the linker (`LinkerGraph::generate_new_symbol`, which appends
         // to the same per-source Vec). Both indices are therefore in-bounds.
         // The bundler never fabricates Refs from untrusted input.
         //
@@ -566,14 +543,6 @@ impl Map {
             debug_assert!(idx < (*inner).len());
             &*(*inner).as_ptr().add(idx)
         })
-    }
-
-    pub fn init(source_count: usize) -> Map {
-        let mut v: NestedList = Vec::with_capacity(source_count);
-        v.resize_with(source_count, Vec::new);
-        Map {
-            symbols_for_source: v,
-        }
     }
 
     // Takes ownership of `list` and boxes it into a one-element NestedList.
@@ -602,25 +571,6 @@ impl Map {
         let src = ref_.source_index() as usize;
         let idx = ref_.inner_index() as usize;
         self.symbols_for_source.get_mut(src)?.get_mut(idx)
-    }
-
-    pub fn get_with_link(&self, ref_: Ref) -> Option<*mut Symbol> {
-        let symbol_ptr = self.get(ref_)?;
-        // Read `link` through the safe shared accessor (same indices as `get`);
-        // the raw `*mut` is only forwarded to the caller, never derefed here.
-        let symbol = self.get_const(ref_)?;
-        if symbol.has_link() {
-            return Some(self.get(symbol.link.get()).unwrap_or(symbol_ptr));
-        }
-        Some(symbol_ptr)
-    }
-
-    pub fn get_with_link_const(&self, ref_: Ref) -> Option<&Symbol> {
-        let symbol = self.get_const(ref_)?;
-        if symbol.has_link() {
-            return Some(self.get_const(symbol.link.get()).unwrap_or(symbol));
-        }
-        Some(symbol)
     }
 
     pub fn follow_all(&mut self) {
@@ -666,7 +616,7 @@ impl Map {
         // writers of `Symbol::link` are (a) the default `Ref::NONE`
         // (tag=Invalid — rejected by `is_valid()` above), (b) `merge()`,
         // which stores a Ref that came from `declare_symbol` / `new_symbol` /
-        // `LinkerGraph::generate_symbol`, and (c) prior `follow()` path
+        // `LinkerGraph::generate_new_symbol`, and (c) prior `follow()` path
         // compression, which stores a `root` that itself satisfied (b). All
         // such refs satisfy the in-bounds contract (see `get_const`):
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
@@ -722,11 +672,11 @@ impl Symbol {
         kind.is_function()
     }
     #[inline]
-    pub fn is_kind_hoisted(kind: Kind) -> bool {
+    pub(crate) fn is_kind_hoisted(kind: Kind) -> bool {
         kind.is_hoisted()
     }
     #[inline]
-    pub fn is_kind_hoisted_or_function(kind: Kind) -> bool {
+    pub(crate) fn is_kind_hoisted_or_function(kind: Kind) -> bool {
         kind.is_hoisted_or_function()
     }
     #[inline]

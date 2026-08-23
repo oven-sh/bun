@@ -7,8 +7,8 @@ use bun_alloc::ArenaVecExt as _;
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
 #[derive(Default)]
 pub struct FallbackHandler {
-    pub color: Option<usize>,
-    pub text_shadow: Option<usize>,
+    pub(crate) color: Option<usize>,
+    pub(crate) text_shadow: Option<usize>,
     // The remaining fallback fields are not implemented yet.
     // filter: Option<usize>,
     // backdrop_filter: Option<usize>,
@@ -29,11 +29,9 @@ impl FallbackHandler {
 
         let arena = dest.bump();
 
-        // The generic-trait surface (`DeepClone`/`IsCompatible`/`get_fallbacks`
-        // on `SmallList<TextShadow,1>`) is still partially gated, so each
-        // (field, Property variant) pair is expanded via a macro that takes
-        // per-type closures for those three ops. This lets each payload type
-        // use its own inherent methods until the trait lattice un-gates.
+        // Each (field, Property variant) pair is expanded via a macro that
+        // takes per-type closures for `DeepClone`/`IsCompatible`/`get_fallbacks`,
+        // letting each payload type use its own inherent methods.
         macro_rules! handle_unprefixed {
             (
                 $self_field:ident,

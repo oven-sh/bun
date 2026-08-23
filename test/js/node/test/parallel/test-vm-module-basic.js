@@ -37,22 +37,22 @@ const util = require('util');
 
 (async () => {
   const m = new SourceTextModule(`
-    global.vmResultFoo = "foo";
-    global.vmResultTypeofProcess = Object.prototype.toString.call(process);
+    globalThis.vmResultFoo = "foo";
+    globalThis.vmResultTypeofProcess = Object.prototype.toString.call(process);
   `);
   await m.link(common.mustNotCall());
   await m.evaluate();
-  assert.strictEqual(global.vmResultFoo, 'foo');
-  assert.strictEqual(global.vmResultTypeofProcess, '[object process]');
-  delete global.vmResultFoo;
-  delete global.vmResultTypeofProcess;
+  assert.strictEqual(globalThis.vmResultFoo, 'foo');
+  assert.strictEqual(globalThis.vmResultTypeofProcess, '[object process]');
+  delete globalThis.vmResultFoo;
+  delete globalThis.vmResultTypeofProcess;
 })().then(common.mustCall());
 
 (async () => {
   const m = new SourceTextModule('while (true) {}');
   await m.link(common.mustNotCall());
   await m.evaluate({ timeout: 500 })
-    .then(() => assert(false), () => {});
+    .then(() => assert.fail(), () => {});
 })().then(common.mustCall());
 
 // Check the generated identifier for each module
@@ -87,10 +87,7 @@ const util = require('util');
   for (const value of [null, { __proto__: null }, SourceTextModule.prototype]) {
     assert.throws(
       () => m[util.inspect.custom].call(value),
-      {
-        code: 'ERR_INVALID_ARG_TYPE',
-        message: /The "this" argument must be an instance of Module/,
-      },
+      { code: 'ERR_INVALID_THIS' },
     );
   }
 }
@@ -102,7 +99,7 @@ const util = require('util');
   assert.strictEqual(
     util.inspect(m),
     `SyntheticModule {
-  status: 'unlinked',
+  status: 'linked',
   identifier: 'vm:module(0)',
   context: { foo: 'bar' }
 }`
@@ -130,7 +127,7 @@ const util = require('util');
 // Check to throws invalid exportNames
 {
   assert.throws(() => new SyntheticModule(undefined, () => {}, {}), {
-    message: 'The "exportNames" argument must be of type ' + // modified from Node.js
+    message: 'The "exportNames" argument must be an ' +
         'Array of unique strings.' +
         ' Received undefined',
     name: 'TypeError'
@@ -169,13 +166,13 @@ const util = require('util');
   const module = new SyntheticModule([], () => {});
   module.link(() => {});
   const f = compileFunction('return import("x")', [], {
-    importModuleDynamically(specifier, referrer) {
+    importModuleDynamically: common.mustCall((specifier, referrer) => {
       assert.strictEqual(specifier, 'x');
       assert.strictEqual(referrer, f);
       return module;
-    },
+    }),
   });
   f().then((ns) => {
     assert.strictEqual(ns, module.namespace);
-  });
+  }).then(common.mustCall());
 }

@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 
-use crate::sizes;
 use crate::{JSGlobalObject, JSValue};
 
 bun_opaque::opaque_ffi! {
@@ -9,36 +8,6 @@ bun_opaque::opaque_ffi! {
 }
 
 impl JSUint8Array {
-    pub fn ptr(&self) -> *mut u8 {
-        // SAFETY: `self` points at a live JSUint8Array cell; the typed-array vector
-        // pointer lives at a fixed byte offset computed by the C++ codegen
-        // (`crate::sizes`). `byte_add` preserves pointer provenance.
-        unsafe {
-            std::ptr::from_ref::<Self>(self)
-                .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_VECTOR)
-                .cast::<*mut u8>()
-                .read()
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        // SAFETY: same invariant as `ptr()` — fixed byte offset into the JSUint8Array
-        // cell where the typed-array length is stored.
-        unsafe {
-            std::ptr::from_ref::<Self>(self)
-                .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_LENGTH)
-                .cast::<usize>()
-                .read()
-        }
-    }
-
-    pub fn slice(&mut self) -> &mut [u8] {
-        // Note: detached/empty JSUint8Array has ptr=null, len=0;
-        // `ffi::slice_mut` tolerates `(null, 0)` so no extra guard.
-        // SAFETY: JSC guarantees `ptr()` is valid for `len()` bytes while the cell is alive.
-        unsafe { bun_core::ffi::slice_mut(self.ptr(), self.len()) }
-    }
-
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);
     /// ownership is transferred to the returned JS Uint8Array.
     // The global allocator IS mimalloc, so `Box<[u8]>` encodes that ownership.

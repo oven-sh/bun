@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "demo.test.ts": `class Y {
   #hello
 }`,
@@ -21,7 +21,7 @@ test("coverage crash", () => {
 });
 
 test("lcov coverage reporter", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "demo2.ts": `
 import { Y } from "./demo1";
 
@@ -58,7 +58,7 @@ export class Y {
 });
 
 test("coverage excludes node_modules directory", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "node_modules/pi/index.js": `
     export const pi = 3.14;
     `,
@@ -81,7 +81,7 @@ test("coverage excludes node_modules directory", () => {
 });
 
 test("coveragePathIgnorePatterns - single pattern string", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "ignore-me.ts"
@@ -141,7 +141,7 @@ Ran 1 test across 1 file."
 });
 
 test("coveragePathIgnorePatterns - partial coverage without nan", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "ignore-me.ts"
@@ -206,7 +206,7 @@ Ran 1 test across 1 file."
 });
 
 test("coveragePathIgnorePatterns - array of patterns", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = ["utils/**", "*.config.ts"]
@@ -271,7 +271,7 @@ Ran 1 test across 1 file."
 });
 
 test("coveragePathIgnorePatterns - glob patterns", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = ["**/*.spec.ts", "test-utils/**"]
@@ -340,7 +340,7 @@ Ran 1 test across 2 files."
 });
 
 test("coveragePathIgnorePatterns - lcov reporter", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "ignore-me.ts"
@@ -409,7 +409,7 @@ end_of_record"
 });
 
 test("coveragePathIgnorePatterns - invalid config type", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = 123
@@ -448,7 +448,7 @@ Invalid Bunfig: failed to load bunfig"
 });
 
 test("coveragePathIgnorePatterns - invalid array item", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = ["valid-pattern", 123]
@@ -487,7 +487,7 @@ Invalid Bunfig: failed to load bunfig"
 });
 
 test("coveragePathIgnorePatterns - empty array", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = []
@@ -540,7 +540,7 @@ Ran 1 test across 1 file."
 });
 
 test("coveragePathIgnorePatterns - ignore all files", () => {
-  const dir = tempDirWithFiles("cov", {
+  using dir = tempDir("cov", {
     "bunfig.toml": `
 [test]
 coveragePathIgnorePatterns = "**"
@@ -588,4 +588,56 @@ All files  |    0.00 |    0.00 |
 Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/39930
+// One worker executes count(), the other only imports the module. The
+// import-only worker reports the unexecuted function's whole line range
+// (blank line 5 included) as executable with zero hits. The merge must not
+// let that over-approximation mark the fully executed function as
+// partially covered.
+test("--parallel merges line coverage across workers", async () => {
+  using dir = tempDir("cov-parallel-merge", {
+    "subject.ts": `await Bun.sleep(100);
+
+export default function count(values: string[]) {
+  const count = values.length;
+
+  return count;
+}
+`,
+    "execute.test.ts": `
+import { expect, test } from "bun:test";
+import count from "./subject.ts";
+
+test("executes the function", () => {
+  expect(count(["first", "second"])).toBe(2);
+});
+`,
+    "importOnly.test.ts": `
+import { expect, test } from "bun:test";
+import count from "./subject.ts";
+
+test("only imports the function", () => {
+  expect(typeof count).toBe("function");
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
+  expect(record).toBeDefined();
+  // Blank line 5 is only "executable" in the worker that never ran count().
+  expect(record).not.toContain("DA:5,");
+  expect(record).toMatch(/LF:4\nLH:4\n/);
+
+  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(exitCode).toBe(0);
 });

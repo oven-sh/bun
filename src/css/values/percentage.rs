@@ -9,7 +9,7 @@ use core::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Percentage {
-    pub v: CSSNumber,
+    pub(crate) v: CSSNumber,
 }
 
 impl Percentage {
@@ -69,7 +69,7 @@ impl Percentage {
         self.add(other)
     }
 
-    pub(crate) fn add(self, rhs: Percentage) -> Percentage {
+    fn add(self, rhs: Percentage) -> Percentage {
         Percentage { v: self.v + rhs.v }
     }
 
@@ -85,7 +85,7 @@ impl Percentage {
         css::signfns::sign_f32(self.v)
     }
 
-    pub(crate) fn try_sign(self) -> Option<f32> {
+    fn try_sign(self) -> Option<f32> {
         Some(self.sign())
     }
 

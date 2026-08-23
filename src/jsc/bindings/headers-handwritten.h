@@ -3,6 +3,8 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ArgList.h"
+#include <wtf/Noncopyable.h>
+#include <wtf/Vector.h>
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN
@@ -67,8 +69,6 @@ typedef struct BunString {
 
     // If it's not a WTFStringImpl, this does nothing
     inline void deref();
-
-    static size_t utf8ByteLength(const WTF::String&);
 
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
@@ -135,7 +135,7 @@ typedef struct ResolvedSource {
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
 } ResolvedSource;
-static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
+inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
     ZigErrorType err;
@@ -160,19 +160,19 @@ typedef struct SystemError {
 typedef void* ArrayBufferSink;
 
 typedef uint8_t BunPluginTarget;
-const BunPluginTarget BunPluginTargetBun = 0;
-const BunPluginTarget BunPluginTargetBrowser = 1;
-const BunPluginTarget BunPluginTargetNode = 2;
-const BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
+inline constexpr BunPluginTarget BunPluginTargetBun = 0;
+inline constexpr BunPluginTarget BunPluginTargetBrowser = 1;
+inline constexpr BunPluginTarget BunPluginTargetNode = 2;
+inline constexpr BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
 
 typedef uint8_t ZigStackFrameCode;
-const ZigStackFrameCode ZigStackFrameCodeNone = 0;
-const ZigStackFrameCode ZigStackFrameCodeEval = 1;
-const ZigStackFrameCode ZigStackFrameCodeModule = 2;
-const ZigStackFrameCode ZigStackFrameCodeFunction = 3;
-const ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
-const ZigStackFrameCode ZigStackFrameCodeWasm = 5;
-const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeNone = 0;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeEval = 1;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeModule = 2;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeFunction = 3;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeWasm = 5;
+inline constexpr ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
 extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
@@ -240,69 +240,48 @@ typedef struct ZigException {
 } ZigException;
 
 typedef uint8_t JSErrorCode;
-const JSErrorCode JSErrorCodeError = 0;
-const JSErrorCode JSErrorCodeEvalError = 1;
-const JSErrorCode JSErrorCodeRangeError = 2;
-const JSErrorCode JSErrorCodeReferenceError = 3;
-const JSErrorCode JSErrorCodeSyntaxError = 4;
-const JSErrorCode JSErrorCodeTypeError = 5;
-const JSErrorCode JSErrorCodeURIError = 6;
-const JSErrorCode JSErrorCodeAggregateError = 7;
-const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
-const JSErrorCode JSErrorCodeStackOverflow = 253;
-const JSErrorCode JSErrorCodeUserErrorCode = 254;
+inline constexpr JSErrorCode JSErrorCodeError = 0;
+inline constexpr JSErrorCode JSErrorCodeEvalError = 1;
+inline constexpr JSErrorCode JSErrorCodeRangeError = 2;
+inline constexpr JSErrorCode JSErrorCodeReferenceError = 3;
+inline constexpr JSErrorCode JSErrorCodeSyntaxError = 4;
+inline constexpr JSErrorCode JSErrorCodeTypeError = 5;
+inline constexpr JSErrorCode JSErrorCodeURIError = 6;
+inline constexpr JSErrorCode JSErrorCodeAggregateError = 7;
+inline constexpr JSErrorCode JSErrorCodeOutOfMemoryError = 8;
+inline constexpr JSErrorCode JSErrorCodeStackOverflow = 253;
+inline constexpr JSErrorCode JSErrorCodeUserErrorCode = 254;
 
 // Must be kept in sync with Loader in src/options_types/schema.rs
 typedef uint8_t BunLoaderType;
-const BunLoaderType BunLoaderTypeNone = 254;
-const BunLoaderType BunLoaderTypeJSX = 1;
-const BunLoaderType BunLoaderTypeJS = 2;
-const BunLoaderType BunLoaderTypeTS = 3;
-const BunLoaderType BunLoaderTypeTSX = 4;
-const BunLoaderType BunLoaderTypeCSS = 5;
-const BunLoaderType BunLoaderTypeFILE = 6;
-const BunLoaderType BunLoaderTypeJSON = 7;
-const BunLoaderType BunLoaderTypeJSONC = 8;
-const BunLoaderType BunLoaderTypeTOML = 9;
-const BunLoaderType BunLoaderTypeWASM = 10;
-const BunLoaderType BunLoaderTypeNAPI = 11;
-const BunLoaderType BunLoaderTypeYAML = 19;
-const BunLoaderType BunLoaderTypeMD = 20;
+inline constexpr BunLoaderType BunLoaderTypeNone = 254;
+inline constexpr BunLoaderType BunLoaderTypeJSX = 1;
+inline constexpr BunLoaderType BunLoaderTypeJS = 2;
+inline constexpr BunLoaderType BunLoaderTypeTS = 3;
+inline constexpr BunLoaderType BunLoaderTypeTSX = 4;
+inline constexpr BunLoaderType BunLoaderTypeCSS = 5;
+inline constexpr BunLoaderType BunLoaderTypeFILE = 6;
+inline constexpr BunLoaderType BunLoaderTypeJSON = 7;
+inline constexpr BunLoaderType BunLoaderTypeJSONC = 8;
+inline constexpr BunLoaderType BunLoaderTypeTOML = 9;
+inline constexpr BunLoaderType BunLoaderTypeWASM = 10;
+inline constexpr BunLoaderType BunLoaderTypeNAPI = 11;
+inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
+inline constexpr BunLoaderType BunLoaderTypeMD = 21;
+inline constexpr BunLoaderType BunLoaderTypeXML = 22;
 
 #pragma mark - Stream
 
 typedef uint8_t Encoding;
-const Encoding Encoding__utf8 = 0;
-const Encoding Encoding__ucs2 = 1;
-const Encoding Encoding__utf16le = 2;
-const Encoding Encoding__latin1 = 3;
-const Encoding Encoding__ascii = 4;
-const Encoding Encoding__base64 = 5;
-const Encoding Encoding__base64url = 6;
-const Encoding Encoding__hex = 7;
-const Encoding Encoding__buffer = 8;
-
-typedef uint8_t WritableEvent;
-const WritableEvent WritableEvent__Close = 0;
-const WritableEvent WritableEvent__Drain = 1;
-const WritableEvent WritableEvent__Error = 2;
-const WritableEvent WritableEvent__Finish = 3;
-const WritableEvent WritableEvent__Pipe = 4;
-const WritableEvent WritableEvent__Unpipe = 5;
-const WritableEvent WritableEvent__Open = 6;
-const WritableEvent WritableEventUser = 254;
-
-typedef uint8_t ReadableEvent;
-
-const ReadableEvent ReadableEvent__Close = 0;
-const ReadableEvent ReadableEvent__Data = 1;
-const ReadableEvent ReadableEvent__End = 2;
-const ReadableEvent ReadableEvent__Error = 3;
-const ReadableEvent ReadableEvent__Pause = 4;
-const ReadableEvent ReadableEvent__Readable = 5;
-const ReadableEvent ReadableEvent__Resume = 6;
-const ReadableEvent ReadableEvent__Open = 7;
-const ReadableEvent ReadableEventUser = 254;
+inline constexpr Encoding Encoding__utf8 = 0;
+inline constexpr Encoding Encoding__ucs2 = 1;
+inline constexpr Encoding Encoding__utf16le = 2;
+inline constexpr Encoding Encoding__latin1 = 3;
+inline constexpr Encoding Encoding__ascii = 4;
+inline constexpr Encoding Encoding__base64 = 5;
+inline constexpr Encoding Encoding__base64url = 6;
+inline constexpr Encoding Encoding__hex = 7;
+inline constexpr Encoding Encoding__buffer = 8;
 
 #ifndef STRING_POINTER
 #define STRING_POINTER
@@ -329,7 +308,6 @@ extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
 extern "C" void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
-extern "C" void BunString__toWTFString(BunString*);
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
@@ -357,6 +335,7 @@ typedef struct {
     uint8_t cell_type;
     bool shared;
     bool resizable;
+    bool pinned;
 } Bun__ArrayBuffer;
 
 #include "SyntheticModuleType.h"
@@ -406,11 +385,6 @@ extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
 
-// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
-// Only keep the ones still exported from native code
-extern "C" const char* Bun__versions_uws;
-extern "C" const char* Bun__versions_usockets;
-
 extern "C" const char* Bun__version_sha;
 
 extern "C" void ZigString__freeGlobal(const unsigned char* ptr, size_t len);
@@ -424,12 +398,10 @@ extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF8(const char16_t* ptr, size
 extern "C" JSC::EncodedJSValue Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
 extern "C" JSC::EncodedJSValue Bun__encoding__constructFromUTF16(void*, const char16_t* ptr, size_t len, Encoding encoding);
 
-extern "C" void Bun__EventLoop__runCallback1(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1);
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
-extern "C" void Bun__EventLoop__runCallback3(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 
 /// @note throws a JS exception and returns false if a stack overflow occurs
-template<bool isStrict, bool enableAsymmetricMatchers>
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
 /**
@@ -496,6 +468,39 @@ ALWAYS_INLINE void BunString::deref()
         this->impl.wtf->deref();
     }
 }
+
+namespace Bun {
+
+// Frames built here for Bun__remapStackFramePositions, which may swap in a freshly allocated source_url; frames behind ZigStackTrace::frames_ptr are released by Rust instead.
+class OwnedZigStackFrames {
+    WTF_MAKE_NONCOPYABLE(OwnedZigStackFrames);
+
+public:
+    explicit OwnedZigStackFrames(size_t count)
+        : m_frames(count)
+    {
+    }
+
+    ~OwnedZigStackFrames()
+    {
+        for (ZigStackFrame& frame : m_frames) {
+            frame.function_name.deref();
+            frame.source_url.deref();
+        }
+    }
+
+    ZigStackFrame& operator[](size_t index) { return m_frames[index]; }
+
+    void remap(void* bunVM)
+    {
+        Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size());
+    }
+
+private:
+    WTF::Vector<ZigStackFrame, 8> m_frames;
+};
+
+} // namespace Bun
 
 #define CLEAR_IF_EXCEPTION(scope__) (void)scope__.tryClearException();
 

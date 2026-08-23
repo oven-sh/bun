@@ -125,7 +125,7 @@ describe("bundler", () => {
     },
     run: {
       // Namespace import only gets the CJS exports as-is, no default wrapper
-      stdout: '{"foo":"foo","bar":"bar"}',
+      stdout: '{"bar":"bar","foo":"foo"}',
     },
   });
 
@@ -465,7 +465,7 @@ describe("bundler", () => {
     },
     run: {
       // Star import gets the exports as-is, no wrapper
-      stdout: '{"named":"named","default":"default","__esModule":true}',
+      stdout: '{"__esModule":true,"default":"default","named":"named"}',
     },
   });
 
@@ -489,6 +489,112 @@ describe("bundler", () => {
       // Default gets entire module, named import gets specific function
       // Both reference the same function
       stdout: '{"hasMap":true,"same":true}',
+    },
+  });
+
+  // ============================================================================
+  // Nullish module.exports: __toESM must not pass null/undefined to
+  // Object.getOwnPropertyNames or the bundle throws at import time.
+  // ============================================================================
+
+  // Test 24: module.exports = null, format=esm
+  itBundled("cjs/__toESM_module_exports_null", {
+    files: {
+      "/entry.js": /* js */ `
+        import z from "./z.cjs";
+        console.log("z is", z);
+      `,
+      "/z.cjs": /* js */ `
+        module.exports = null;
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "z is null",
+    },
+  });
+
+  // Test 25: module.exports = null, format=cjs
+  itBundled("cjs/__toESM_module_exports_null_format_cjs", {
+    files: {
+      "/entry.js": /* js */ `
+        import z from "./z.cjs";
+        console.log("z is", z);
+      `,
+      "/z.cjs": /* js */ `
+        module.exports = null;
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: {
+      stdout: "z is null",
+    },
+  });
+
+  // Test 26: module.exports = undefined
+  itBundled("cjs/__toESM_module_exports_undefined", {
+    files: {
+      "/entry.js": /* js */ `
+        import u from "./u.cjs";
+        console.log("u is", u);
+      `,
+      "/u.cjs": /* js */ `
+        module.exports = undefined;
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "u is undefined",
+    },
+  });
+
+  // ============================================================================
+  // The __commonJS wrapper must be a regular function (not an arrow) so a
+  // top-level `arguments` reference in a CJS body has a binding in ESM output.
+  // ============================================================================
+
+  // Test 27: top-level `arguments` inside a CJS module
+  itBundled("cjs/__commonJS_top_level_arguments", {
+    files: {
+      "/entry.js": /* js */ `
+        import tag from "./args.cjs";
+        console.log(tag);
+      `,
+      "/args.cjs": /* js */ `
+        module.exports = Object.prototype.toString.call(arguments);
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "[object Arguments]",
+    },
+  });
+
+  // Test 28: export * from an external package whose module.exports is null.
+  // CJS output emits __reExport(exports, require("ext"), module.exports) with
+  // the raw require() result, so __reExport itself must tolerate null.
+  itBundled("cjs/__reExport_external_null_module_exports", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "ext";
+        console.log("loaded ok");
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": /* js */ `module.exports = null;`,
+    },
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    run: {
+      stdout: "loaded ok",
     },
   });
 });

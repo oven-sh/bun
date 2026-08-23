@@ -128,37 +128,6 @@ impl JSObject {
         self.to_js().get(global, prop.as_ref())
     }
 
-    #[inline]
-    pub fn put(
-        &self,
-        global: &JSGlobalObject,
-        key: impl AsRef<[u8]>,
-        value: JSValue,
-    ) -> JsResult<()> {
-        self.to_js().put(global, key.as_ref(), value);
-        Ok(())
-    }
-
-    #[inline]
-    pub fn put_all_from_struct<T: JSValueFields>(
-        &self,
-        global: &JSGlobalObject,
-        properties: &T,
-    ) -> JsResult<()> {
-        // Types hand-implement `JSValueFields`. Each field must already be a
-        // JSValue — there is NO `fromAny` encoding here (unlike `create`).
-        // Hence a separate trait from `PojoFields` that yields raw JSValues
-        // without conversion.
-        properties.put_fields(|name, value| self.put(global, name, value))
-    }
-
-    /// When the GC sees a JSValue referenced in the stack, it knows not to free it.
-    /// This mimics the implementation in JavaScriptCore's C++.
-    #[inline]
-    pub fn ensure_still_alive(&self) {
-        core::hint::black_box(std::ptr::from_ref::<Self>(self));
-    }
-
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live
     /// `JSCell*`) that remains valid for the duration of the call.
@@ -232,7 +201,10 @@ impl JSObject {
     }
 
     /// This will not call getters or be observable from JavaScript.
-    pub fn get_code_property_vm_inquiry(&mut self, global: &JSGlobalObject) -> Option<JSValue> {
+    pub(crate) fn get_code_property_vm_inquiry(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> Option<JSValue> {
         let v = Bun__JSObject__getCodePropertyVMInquiry(global, self);
         if v.is_empty() {
             return None;
@@ -263,7 +235,7 @@ impl Default for ExternColumnIdentifier {
 }
 
 impl ExternColumnIdentifier {
-    pub fn string(&mut self) -> Option<&mut BunString> {
+    pub(crate) fn string(&mut self) -> Option<&mut BunString> {
         match self.tag {
             // SAFETY: tag == 2 means `value.name` is the active union field.
             2 => Some(unsafe { &mut *self.value.name }),
@@ -280,7 +252,7 @@ impl Drop for ExternColumnIdentifier {
     }
 }
 
-pub(crate) type InitializeCallback =
+type InitializeCallback =
     extern "C" fn(ctx: *mut c_void, obj: *mut JSObject, global: &JSGlobalObject);
 
 /// Object-initializer contract: implement `create` on your context type and
@@ -336,15 +308,4 @@ pub trait PojoFields {
         global: &JSGlobalObject,
         put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
     ) -> JsResult<()>;
-}
-
-/// Compile-time field enumeration for structs whose fields are **already**
-/// `JSValue` (each field is passed
-/// straight to `put()` with no `fromAny` encoding).
-///
-/// Separate from [`PojoFields`] because that trait encodes; this one does not.
-pub trait JSValueFields {
-    /// Invoke `put(field_name, self.<field>)` once per struct field. Fields are
-    /// `JSValue` and forwarded as-is.
-    fn put_fields(&self, put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>) -> JsResult<()>;
 }

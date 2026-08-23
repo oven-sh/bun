@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunExe, tempDirWithFiles } from "harness";
+import { bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("bun build --target bun should support non-ascii source", async () => {
@@ -12,7 +12,7 @@ test("bun build --target bun should support non-ascii source", async () => {
     console.log(JSON.stringify({\u{6211}}));
   `,
   };
-  const source = tempDirWithFiles("source", files);
+  await using source = tempDir("source", files);
 
   $.throws(true);
   await $`${bunExe()} build --target bun ${join(source, "index.js")} --outfile ${join(source, "bundle.js")}`;

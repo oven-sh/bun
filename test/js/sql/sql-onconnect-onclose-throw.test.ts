@@ -11,9 +11,23 @@
 // port and the synchronous-failure scenario never dials, so those run
 // everywhere. Each scenario runs in a subprocess because the throwing
 // callback is reported as a process-level uncaughtException.
+//
+// The AsyncLocalStorage section at the end of the file covers the other
+// property of the same two callback invocations: they run in the async
+// context the SQL instance was created in (see that section's comment).
 
+import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
+import path from "node:path";
+import { closedPort } from "./wire-frames";
+
+// Fixtures that need closedPort() / neverAnsweringServer() run them in the
+// spawned subprocess (not the test process) by importing ./wire-frames via
+// this absolute path, so the bind→close→connect window is not widened by
+// the subprocess spawn.
+const wireFramesPath = path.join(import.meta.dir, "wire-frames.ts");
 
 async function runFixture(code: string, env: Record<string, string> = {}) {
   using dir = tempDir("sql-throwing-hooks", { "fixture.ts": code });
@@ -69,6 +83,37 @@ if (isDockerEnabled()) {
       expect(stdout).toBe('query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n');
       expect(exitCode).toBe(0);
     });
+
+    // PostgresSQLQuery.do_run refs the connection's poll_ref KeepAlive (a
+    // two-state flag, not a counter). When do_run returns early with a
+    // synchronous error before enqueueing — here a boxed Boolean binding
+    // rejected inside Signature::generate — the poll_ref must not be left
+    // Active, or the event loop stays pinned and the process never exits. The
+    // setImmediate forces do_run onto a later turn so on_data's epilogue
+    // doesn't mask the leak.
+    test("a synchronous do_run failure does not pin the event loop", async () => {
+      await container.ready;
+      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+      const fixture = /* ts */ `
+const sql = new Bun.SQL({
+  url: process.env.FIXTURE_URL,
+  max: 1,
+  idleTimeout: 0,
+  maxLifetime: 0,
+  connectionTimeout: 30,
+});
+await sql.connect();
+await new Promise(r => setImmediate(r));
+const err = await sql\`SELECT \${new Boolean(true)}\`.catch(e => e);
+console.log("rejected:" + (err?.code ?? err?.name ?? String(err)));
+`;
+      const { stdout, stderr, exitCode } = await runFixture(fixture, { FIXTURE_URL: url });
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "rejected:ERR_INVALID_ARG_TYPE\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
   });
 
   describeWithContainer("mysql", { image: "mysql_plain" }, container => {
@@ -90,29 +135,24 @@ if (isDockerEnabled()) {
   });
 }
 
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // A port with nothing listening on it, so the connection is refused. Refused
 // connections fail fast (not retried), so the throwing onclose fires on the
-// first attempt; without the fix the pending query is never rejected.
-const closedPort = /* ts */ `
-const net = require("net");
-function closedPort() {
-  return new Promise(resolve => {
-    const server = net.createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const port = server.address().port;
-      server.close(() => resolve(port));
-    });
-  });
-}
-`;
-
+// first attempt; without the fix the pending query is never rejected. The
+// fixture allocates the closed port itself (same as forcedCloseFixture below)
+// so the bind→close→connect window is not widened by the subprocess spawn,
+// during which the concurrent forcedCloseFixture tests are issuing bind(0).
 function refusedConnectionFixture(adapter: "postgres" | "mysql") {
   const url = adapter === "postgres" ? "postgres://postgres@127.0.0.1:" : "mysql://root@127.0.0.1:";
   const db = adapter === "postgres" ? "/postgres" : "/db";
-  return (
-    closedPort +
-    /* ts */ `
+  return /* ts */ `
 import { SQL } from "bun";
+import { closedPort } from ${JSON.stringify(wireFramesPath)};
 process.on("uncaughtException", err => console.log("uncaught:", err.message));
 const port = await closedPort();
 const sql = new SQL({
@@ -130,31 +170,22 @@ try {
   console.log("query rejected:", err.code);
 }
 process.exit(0);
-`
-  );
+`;
 }
 
-test.concurrent(
-  "postgres: a throwing onclose callback still rejects pending queries when the connection is refused",
-  async () => {
-    const { stdout, exitCode } = await runFixture(refusedConnectionFixture("postgres"));
-    expect(stdout).toBe(
-      "onclose: ERR_POSTGRES_CONNECTION_REFUSED\nuncaught: boom from onclose\nquery rejected: ERR_POSTGRES_CONNECTION_REFUSED\n",
-    );
-    expect(exitCode).toBe(0);
-  },
-);
-
-test.concurrent(
-  "mysql: a throwing onclose callback still rejects pending queries when the connection is refused",
-  async () => {
-    const { stdout, exitCode } = await runFixture(refusedConnectionFixture("mysql"));
-    expect(stdout).toBe(
-      "onclose: ERR_MYSQL_CONNECTION_REFUSED\nuncaught: boom from onclose\nquery rejected: ERR_MYSQL_CONNECTION_REFUSED\n",
-    );
-    expect(exitCode).toBe(0);
-  },
-);
+for (const [adapter, refusedCode] of [
+  ["postgres", "ERR_POSTGRES_CONNECTION_REFUSED"],
+  ["mysql", "ERR_MYSQL_CONNECTION_REFUSED"],
+] as const) {
+  test.concurrent(
+    `${adapter}: a throwing onclose callback still rejects pending queries when the connection is refused`,
+    async () => {
+      const { stdout, exitCode } = await runFixture(refusedConnectionFixture(adapter));
+      expect(stdout).toBe(`onclose: ${refusedCode}\nuncaught: boom from onclose\nquery rejected: ${refusedCode}\n`);
+      expect(exitCode).toBe(0);
+    },
+  );
+}
 
 // When createConnection fails synchronously (here: a password function that
 // throws), onclose used to be invoked while the adapter was still filling
@@ -198,37 +229,30 @@ process.exit(0);
   expect(exitCode).toBe(0);
 });
 
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // The forced-close path (#32095) and the throwing-callback path (#32037) meet
-// in the pool connection's close handler: the user's onclose runs first and
-// may throw, and the bookkeeping that follows it must still settle the
-// promise returned by close(). A server that accepts the TCP connection but
-// never answers keeps the connection mid-handshake, and connectionTimeout: 0
-// disables the connect timer, so close() is the only teardown path; if the
-// throw skipped the bookkeeping these fixtures would never print "closed".
-const neverAnsweringServer = /* ts */ `
-const net = require("net");
-function neverAnsweringServer() {
-  return new Promise(resolveListening => {
-    const first = Promise.withResolvers();
-    const server = net.createServer(socket => {
-      socket.unref();
-      first.resolve();
-    });
-    server.unref();
-    server.listen(0, "127.0.0.1", () => {
-      resolveListening({ port: server.address().port, accepted: first.promise });
-    });
-  });
-}
-`;
-
+// in the pool connection's close handler: the bookkeeping that settles the
+// promise returned by close() must run even when a user callback throws. A
+// server that accepts the TCP connection but never answers keeps the
+// connection mid-handshake, and connectionTimeout: 0 disables the connect
+// timer, so close() is the only teardown path; if the bookkeeping were
+// skipped these fixtures would never print "closed". Since #39940 a slot
+// that never completed its handshake fired no onconnect, so the forced close
+// skips its onclose too; the throwing onclose stays installed to pin that it
+// is not invoked. The mock server lives in the fixture process (it must
+// observe `accepted` before forcing close) and is imported from ./wire-frames
+// by absolute path.
 function forcedCloseFixture(adapter: "postgres" | "mysql") {
   const url = adapter === "postgres" ? "postgres://postgres@127.0.0.1:" : "mysql://root@127.0.0.1:";
   const db = adapter === "postgres" ? "/postgres" : "/db";
-  return (
-    neverAnsweringServer +
-    /* ts */ `
+  return /* ts */ `
 import { SQL } from "bun";
+import { neverAnsweringServer } from ${JSON.stringify(wireFramesPath)};
 process.on("uncaughtException", err => console.log("uncaught:", err.message));
 const { port, accepted } = await neverAnsweringServer();
 const sql = new SQL({
@@ -246,8 +270,7 @@ await sql.close({ timeout: "0" });
 console.log("closed");
 console.log("query rejected:", (await queryError).code);
 process.exit(0);
-`
-  );
+`;
 }
 
 for (const [adapter, closedCode] of [
@@ -255,13 +278,115 @@ for (const [adapter, closedCode] of [
   ["mysql", "ERR_MYSQL_CONNECTION_CLOSED"],
 ] as const) {
   test.concurrent(
-    `${adapter}: a throwing onclose does not prevent forced close() from resolving mid-handshake`,
+    `${adapter}: forced close() mid-handshake resolves and skips onclose for the never-connected slot`,
     async () => {
       const { stdout, exitCode } = await runFixture(forcedCloseFixture(adapter));
-      expect(stdout).toBe(
-        `onclose: ${closedCode}\nuncaught: boom from onclose\nclosed\nquery rejected: ${closedCode}\n`,
-      );
+      expect(stdout).toBe(`closed\nquery rejected: ${closedCode}\n`);
       expect(exitCode).toBe(0);
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AsyncLocalStorage. onconnect/onclose used to run in whatever context the
+// native callback happened to fire in: none for a socket event (onconnect, a
+// refused or dropped connection), or the close() caller's when a plaintext
+// connection closes synchronously inside close(). They now run in the context
+// the SQL instance was created in: pool connections are opened by whichever
+// query happens to need one (and re-opened on retry) and closed by close(),
+// idle timeouts or the server, so no other context is well defined. Every
+// pool below is driven from a context other than the one it was created in,
+// so an implementation that inherits the caller's context fails these too.
+// ---------------------------------------------------------------------------
+
+const als = new AsyncLocalStorage<string>();
+
+type HookEvent = [hook: "onconnect" | "onclose", store: string | undefined];
+
+/**
+ * `new SQL(...)` inside `als.run(createdIn)` (outside any store when `createdIn` is
+ * undefined), recording the store each hook observes when it fires.
+ */
+function poolCreatedIn(createdIn: string | undefined, url: string) {
+  const events: HookEvent[] = [];
+  const options = {
+    url,
+    max: 1,
+    onconnect() {
+      events.push(["onconnect", als.getStore()]);
+    },
+    onclose() {
+      events.push(["onclose", als.getStore()]);
+    },
+  };
+  const create = () => new SQL(options);
+  const sql = createdIn === undefined ? als.exit(create) : als.run(createdIn, create);
+  return { sql, events };
+}
+
+// describeWithContainer skips itself when no postgres service is reachable, so
+// this block needs no isDockerEnabled() guard.
+describeWithContainer("postgres: AsyncLocalStorage", { image: "postgres_plain" }, container => {
+  test("onconnect and onclose observe the store each pool was created in, not the caller's", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    const a = poolCreatedIn("created-a", url);
+    const b = poolCreatedIn("created-b", url);
+    try {
+      await als.run("caller", () => Promise.all([a.sql.connect(), b.sql.connect()]));
+    } finally {
+      await als.run("caller", () => Promise.all([a.sql.close(), b.sql.close()]));
+    }
+    expect({ a: a.events, b: b.events }).toStrictEqual({
+      a: [
+        ["onconnect", "created-a"],
+        ["onclose", "created-a"],
+      ],
+      b: [
+        ["onconnect", "created-b"],
+        ["onclose", "created-b"],
+      ],
+    });
+  });
+
+  test("a pool created outside any store does not inherit the caller's store", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    const { sql, events } = poolCreatedIn(undefined, url);
+    try {
+      await als.run("caller", () => sql.connect());
+    } finally {
+      await als.run("caller", () => sql.close());
+    }
+    expect(events).toStrictEqual([
+      ["onconnect", undefined],
+      ["onclose", undefined],
+    ]);
+  });
+});
+
+// Fault-injection test (a refused connection), see the DO NOT COPY THIS PATTERN
+// note above: anything a real server can produce belongs in describeWithContainer.
+// A refused connection reaches onclose through the connect-failure path rather
+// than through close(), and since nothing has to be listening it also covers
+// the mysql adapter.
+for (const [adapter, scheme, refusedCode] of [
+  ["postgres", "postgres://postgres@127.0.0.1:", "ERR_POSTGRES_CONNECTION_REFUSED"],
+  ["mysql", "mysql://root@127.0.0.1:", "ERR_MYSQL_CONNECTION_REFUSED"],
+] as const) {
+  test.concurrent(
+    `${adapter}: onclose for a refused connection observes the store the pool was created in`,
+    async () => {
+      const { sql, events } = poolCreatedIn("created-in", `${scheme}${await closedPort()}/db`);
+      let code: string | undefined;
+      try {
+        await als.run("caller", () => sql.connect());
+      } catch (err) {
+        code = (err as { code?: string }).code;
+      } finally {
+        await sql.close();
+      }
+      expect({ code, events }).toStrictEqual({ code: refusedCode, events: [["onclose", "created-in"]] });
     },
   );
 }

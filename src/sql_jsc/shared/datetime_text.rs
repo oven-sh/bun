@@ -14,31 +14,46 @@
 /// Components of a parsed wall-clock timestamp.
 #[derive(Default, Clone, Copy)]
 pub struct DateTimeText {
-    pub year: u16,
-    pub month: u8,
-    pub day: u8,
-    pub hour: u8,
-    pub minute: u8,
-    pub second: u8,
+    pub(crate) year: u16,
+    pub(crate) month: u8,
+    pub(crate) day: u8,
+    pub(crate) hour: u8,
+    pub(crate) minute: u8,
+    pub(crate) second: u8,
     /// Fractional seconds right-padded to microseconds (`.5` → 500_000).
-    pub microsecond: u32,
+    pub(crate) microsecond: u32,
+}
+
+/// Whether the 10-byte date-only form (`YYYY-MM-DD`) parses, or only the full
+/// date-and-time shape does.
+#[derive(Clone, Copy)]
+enum TimePart {
+    Optional,
+    Required,
+}
+
+/// Which bytes may separate the date from the time.
+#[derive(Clone, Copy)]
+enum Separator {
+    Space,
+    SpaceOrT,
 }
 
 /// MySQL DATE/DATETIME/TIMESTAMP text. Accepts the 10-byte date-only form
 /// (`YYYY-MM-DD`) and either `' '` or `'T'` as the date/time separator.
-pub fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, true, true)
+pub(crate) fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
+    parse(text, TimePart::Optional, Separator::SpaceOrT)
 }
 
 /// Postgres `timestamp` (WITHOUT TIME ZONE) text. Requires the full
 /// `YYYY-MM-DD HH:MM:SS[.ffffff]` shape — anything else (date-only, `'T'`
 /// separator, `infinity`, BC dates, 5+ digit years) returns `None` so the
 /// caller can fall back to `Date.parse`.
-pub fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, false, false)
+pub(crate) fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
+    parse(text, TimePart::Required, Separator::Space)
 }
 
-fn parse(text: &[u8], allow_date_only: bool, allow_t_separator: bool) -> Option<DateTimeText> {
+fn parse(text: &[u8], time_part: TimePart, separator: Separator) -> Option<DateTimeText> {
     fn parse_u(bytes: &[u8]) -> Option<u32> {
         if bytes.is_empty() {
             return None;
@@ -63,10 +78,16 @@ fn parse(text: &[u8], allow_date_only: bool, allow_t_separator: bool) -> Option<
         ..Default::default()
     };
     if text.len() == 10 {
-        return if allow_date_only { Some(result) } else { None };
+        return match time_part {
+            TimePart::Optional => Some(result),
+            TimePart::Required => None,
+        };
     }
 
-    let separator_ok = text[10] == b' ' || (allow_t_separator && text[10] == b'T');
+    let separator_ok = match separator {
+        Separator::Space => text[10] == b' ',
+        Separator::SpaceOrT => text[10] == b' ' || text[10] == b'T',
+    };
     if text.len() < 19 || !separator_ok || text[13] != b':' || text[16] != b':' {
         return None;
     }

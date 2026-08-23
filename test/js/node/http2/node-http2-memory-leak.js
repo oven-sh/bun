@@ -20,6 +20,10 @@ function getHeapStats() {
   }
 }
 const gc = globalThis.gc || globalThis.Bun?.gc || (() => {});
+const rss =
+  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 const sleep = dur => new Promise(resolve => setTimeout(resolve, dur));
 const ASAN_MULTIPLIER = process.env.ASAN_OPTIONS ? 1 / 10 : 1;
 
@@ -97,7 +101,7 @@ async function main() {
     await sleep(10);
     gc(true);
     // take a baseline
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     // run requests
     await runRequests(ITERATIONS);
@@ -105,7 +109,7 @@ async function main() {
     await sleep(10);
 
     // take an end snapshot
-    const end = process.memoryUsage.rss();
+    const end = rss();
 
     const delta = end - baseline;
     const deltaMegaBytes = (delta / 1024 / 1024) | 0;

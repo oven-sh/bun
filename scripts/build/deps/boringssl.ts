@@ -22,9 +22,9 @@
 
 import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
-import { depSourceDir } from "../source.ts";
+import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1";
+const BORINGSSL_COMMIT = "2288897e2e716330490893d226b4f079f9da9e0c";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -48,6 +48,13 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
+        // The fork (oven-sh/boringssl#11) binds OPENSSL_memory_* as plain externs
+        // on every object format, not just as ELF weak symbols, and routes the
+        // sites upstream keeps on libc malloc (TLS record buffers, error queue,
+        // thread-local tables) through OPENSSL_system_*; src/boringssl/lib.rs
+        // defines all of them. Off under ASAN so BoringSSL stays on the
+        // intercepted libc heap instead of mimalloc.
+        ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
           WIN32_LEAN_AND_MEAN: true,
@@ -77,6 +84,10 @@ export const boringssl: Dependency = {
         "-gcv8",
         `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", cfg.host.os === "windows")}`,
       ],
+      // With the hooks on, nothing in BoringSSL may allocate from libc any
+      // more (mem.cc's fallback is dead code the compiler drops); under ASAN
+      // the fallbacks are live and libc is the point.
+      ...(!cfg.asan && { forbidUndefined: { symbols: LIBC_ALLOCATION_SYMBOLS } }),
     };
     return spec;
   },
@@ -131,7 +142,7 @@ const CRYPTO_SRCS = [
   "crypto/evp/evp.cc", "crypto/evp/evp_asn1.cc", "crypto/evp/evp_ctx.cc", "crypto/evp/evp_kem.cc",
   "crypto/evp/p_dh.cc", "crypto/evp/p_dsa.cc", "crypto/evp/p_ec.cc", "crypto/evp/p_ed25519.cc",
   "crypto/evp/p_hkdf.cc", "crypto/evp/p_mldsa.cc", "crypto/evp/p_mlkem.cc", "crypto/evp/p_rsa.cc",
-  "crypto/evp/p_x25519.cc", "crypto/evp/pbkdf.cc", "crypto/evp/print.cc", "crypto/evp/scrypt.cc",
+  "crypto/evp/p_x25519.cc", "crypto/evp/p_xwing.cc", "crypto/evp/pbkdf.cc", "crypto/evp/print.cc", "crypto/evp/scrypt.cc",
   "crypto/evp/sign.cc", "crypto/ex_data.cc", "crypto/fipsmodule/fips_shared_support.cc",
   "crypto/fuzzer_mode.cc", "crypto/hpke/hpke.cc", "crypto/hrss/hrss.cc", "crypto/kyber/kyber.cc",
   "crypto/lhash/lhash.cc", "crypto/md4/md4.cc", "crypto/md5/md5.cc", "crypto/mem.cc",
@@ -143,7 +154,7 @@ const CRYPTO_SRCS = [
   "crypto/pkcs8/pkcs8_x509.cc", "crypto/poly1305/poly1305.cc", "crypto/poly1305/poly1305_arm.cc",
   "crypto/poly1305/poly1305_vec.cc", "crypto/pool/pool.cc", "crypto/rand/deterministic.cc",
   "crypto/rand/fork_detect.cc", "crypto/rand/forkunsafe.cc", "crypto/rand/getentropy.cc",
-  "crypto/rand/ios.cc", "crypto/rand/passive.cc", "crypto/rand/rand.cc", "crypto/rand/trusty.cc",
+  "crypto/rand/ios.cc", "crypto/rand/rand.cc", "crypto/rand/trusty.cc",
   "crypto/rand/urandom.cc", "crypto/rand/windows.cc", "crypto/rc4/rc4.cc", "crypto/refcount.cc",
   "crypto/ripemd/ripemd.cc", "crypto/rsa/rsa_asn1.cc", "crypto/rsa/rsa_crypt.cc",
   "crypto/rsa/rsa_extra.cc", "crypto/rsa/rsa_print.cc", "crypto/sha/sha1.cc",

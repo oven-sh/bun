@@ -16,7 +16,7 @@ const { duplexPair } = require('stream');
   const [ clientSide, serverSide ] = duplexPair();
   server.emit('connection', serverSide);
 
-  const client = http2.connect('http://127.0.0.1:80', {
+  const client = http2.connect('http://localhost:80', {
     createConnection: common.mustCall(() => clientSide)
   });
 

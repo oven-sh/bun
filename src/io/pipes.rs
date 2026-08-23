@@ -15,7 +15,7 @@ pub enum PollOrFd {
 }
 
 impl PollOrFd {
-    pub fn tag_name(&self) -> &'static str {
+    pub(crate) fn tag_name(&self) -> &'static str {
         match self {
             PollOrFd::Poll(_) => "poll",
             PollOrFd::Fd(_) => "fd",
@@ -23,13 +23,13 @@ impl PollOrFd {
         }
     }
 
-    pub fn set_owner(&mut self, owner: Owner) {
+    pub(crate) fn set_owner(&mut self, owner: Owner) {
         if let PollOrFd::Poll(poll) = self {
             poll.set_owner(owner);
         }
     }
 
-    pub fn get_fd(&self) -> Fd {
+    pub(crate) fn get_fd(&self) -> Fd {
         match self {
             PollOrFd::Closed => Fd::INVALID,
             PollOrFd::Fd(fd) => *fd,
@@ -44,7 +44,7 @@ impl PollOrFd {
         }
     }
 
-    pub fn get_poll_mut(&mut self) -> Option<FilePollRef> {
+    pub(crate) fn get_poll_mut(&mut self) -> Option<FilePollRef> {
         match self {
             PollOrFd::Poll(poll) => Some(*poll),
             _ => None,
@@ -122,7 +122,7 @@ impl PollOrFd {
         }
     }
 
-    pub fn close<F>(&mut self, ctx: Option<*mut c_void>, on_close_fn: Option<F>)
+    pub(crate) fn close<F>(&mut self, ctx: Option<*mut c_void>, on_close_fn: Option<F>)
     where
         F: FnOnce(*mut c_void),
     {
@@ -140,9 +140,45 @@ pub enum ReadState {
     /// Neither EOF nor EAGAIN
     Progress,
 
-    /// Received a 0-byte read
+    /// Received a 0-byte read, or the reader's limit or byte budget is used up: nothing more will be read
     Eof,
 
     /// Received an EAGAIN
     Drained,
+}
+
+/// One delivery from a `BufferedReader`. The variant says who owns the bytes, so a consumer never has to work that out from the pointer.
+pub enum Chunk<'a> {
+    /// The loop's shared scratch: gone once `on_read_chunk` returns. Copy what you keep.
+    Scratch(&'a [u8]),
+    /// The reader's own buffer, which it clears and reuses after the call. Copy what you keep, or `take()` it when moving beats copying.
+    Buffer(&'a mut Vec<u8>),
+    /// The reader is finished with these bytes (EOF, limit, error, budget): yours to move.
+    Owned(Vec<u8>),
+}
+
+impl Chunk<'_> {
+    /// The bytes as an owned `Vec`, moving rather than copying where the variant allows.
+    pub fn take(self) -> Vec<u8> {
+        match self {
+            Chunk::Scratch(bytes) => bytes.to_vec(),
+            Chunk::Buffer(buffer) => core::mem::take(buffer),
+            Chunk::Owned(buffer) => buffer,
+        }
+    }
+
+    pub fn is_owned(&self) -> bool {
+        matches!(self, Chunk::Owned(_))
+    }
+}
+
+impl core::ops::Deref for Chunk<'_> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Chunk::Scratch(bytes) => bytes,
+            Chunk::Buffer(buffer) => buffer,
+            Chunk::Owned(buffer) => buffer,
+        }
+    }
 }

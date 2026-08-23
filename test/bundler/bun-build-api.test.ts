@@ -1,8 +1,19 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isASAN,
+  isDebug,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tempDirWithFilesAnon,
+} from "harness";
 import path, { join } from "path";
+import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -57,7 +68,7 @@ describe("Bun.build", () => {
     expect(build.outputs).toHaveLength(2);
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
-    expect([build.outputs[0].path]).toRun("world\n");
+    expect(await bunRun(build.outputs[0].path)).toSpawn("world");
   });
 
   test("passing undefined doesnt segfault", () => {
@@ -203,6 +214,94 @@ describe("Bun.build", () => {
     }
   });
 
+  // Runs in a child because the unfixed behavior was a process abort: the
+  // disabled entry point was dropped without an error and the linker ran with
+  // zero entry points.
+  test.concurrent("an entry point disabled by the package.json browser field is a build error", async () => {
+    using dir = tempDir("build-entry-point-disabled-by-browser-field", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./entry.js": false } }),
+      "entry.js": `console.log("entry");`,
+      "build.mjs": `
+        const returned = await Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false });
+        let thrown;
+        try {
+          await Bun.build({ entrypoints: ["./entry.js"], target: "browser" });
+        } catch (e) {
+          thrown = {
+            isAggregateError: e instanceof AggregateError,
+            errors: e.errors.map(error => ({ name: error.name, level: error.level, position: error.position, message: error.message })),
+          };
+        }
+        console.log(JSON.stringify({
+          returned: {
+            success: returned.success,
+            outputs: returned.outputs.length,
+            logs: returned.logs.map(log => ({ name: log.name, level: log.level, position: log.position, message: log.message })),
+          },
+          thrown,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const message = {
+      name: "BuildMessage",
+      level: "error",
+      position: null,
+      message: '"./entry.js" is disabled due to "browser" field in package.json (entry point)',
+    };
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      returned: { success: false, outputs: 0, logs: [message] },
+      thrown: { isAggregateError: true, errors: [message] },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an entry point too long for a path buffer is reported like any other missing one", async () => {
+    // Resolving it failed without logging anything, so the build went on
+    // with the entry point silently dropped: a successful build when another
+    // entry point was given, a crash in the linker when it was the only one.
+    // Runs in a child so the crash shows up as a failed assertion.
+    using dir = tempDir("build-api-long-entrypoint", { "valid.js": "console.log(1);" });
+    const fixture = /* ts */ `
+      // Longer than the path buffer on every platform, Windows included.
+      const long = Buffer.alloc(100_000, "a").toString();
+      const report = async (entrypoints: string[]) => {
+        const { success, outputs, logs } = await Bun.build({ entrypoints, throw: false });
+        return { success, outputs: outputs.length, logs: logs.map(log => [log.name, log.message]) };
+      };
+      console.log(JSON.stringify({
+        alone: await report([long]),
+        withValidEntryPoint: await report(["./valid.js", long]),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const notFound = {
+      success: false,
+      outputs: 0,
+      logs: [["BuildMessage", `ModuleNotFound resolving "${Buffer.alloc(100_000, "a").toString()}" (entry point)`]],
+    };
+    expect(JSON.parse(stdout)).toEqual({ alone: notFound, withValidEntryPoint: notFound });
+    expect(exitCode).toBe(0);
+  });
+
   test("returns output files", async () => {
     Bun.gc(true);
     const build = await Bun.build({
@@ -316,6 +415,44 @@ describe("Bun.build", () => {
     expect(map.loader).toBe("file");
     expect(map.sourcemap).toBe(null);
     Bun.gc(true);
+  });
+
+  test("BuildArtifact sourcemap is traced from the owner, not rooted separately", async () => {
+    // `.sourcemap` is the wrapper's `m_sourcemap` WriteBarrier slot (visited in
+    // visitChildren); it must not also be held by a Strong root.
+    using dir = tempDir("build-artifact-sourcemap-gc", {
+      "index.js": "export const x = 1;\n",
+      "run.js": `
+        const { heapStats } = require("bun:jsc");
+        const result = await Bun.build({
+          entrypoints: ["./index.js"],
+          sourcemap: "external",
+          outdir: ".",
+        });
+        const entry = result.outputs[0];
+        const map = result.outputs[1];
+        console.log(JSON.stringify({
+          sourcemapIsMap: entry.sourcemap === map,
+          inspectShowsSourcemap: Bun.inspect(entry).includes("sourcemap: BuildArtifact (sourcemap)"),
+          protectedBuildArtifact: heapStats().protectedObjectTypeCounts.BuildArtifact ?? 0,
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      sourcemapIsMap: true,
+      inspectShowsSourcemap: true,
+      protectedBuildArtifact: 0,
+    });
+    expect(exitCode).toBe(0);
   });
 
   // test("BuildArtifact properties splitting", async () => {
@@ -445,6 +582,49 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  // https://github.com/oven-sh/bun/issues/33099
+  // A package reached through a symlinked node_modules entry caches its file
+  // descriptor in the resolver. A second in-process Bun.build() used to reuse a
+  // descriptor the first build had already closed, failing with EBADF. The test
+  // host must also import the package so its fd is cached before the builds run.
+  test.concurrent.skipIf(isWindows)(
+    "repeated in-process builds of a symlinked package do not reuse a closed fd",
+    async () => {
+      using dir = tempDir("build-symlink-fd-cache", {
+        "vendor/pkg/package.json": `{"name":"pkg","version":"1.0.0","type":"module","exports":"./index.js"}`,
+        "vendor/pkg/index.js": `export const value = 1;\n`,
+        "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
+        "repro.test.ts": `
+        import { it } from "bun:test";
+        import { value } from "pkg";
+        void value;
+        it("builds", async () => {
+          for (let i = 1; i <= 3; i++) {
+            const result = await Bun.build({ entrypoints: ["./entry.ts"] });
+            if (!result.success) {
+              throw new AggregateError(result.logs, "build " + i + " failed");
+            }
+          }
+          console.log("ALL_BUILDS_OK");
+        });
+      `,
+      });
+      mkdirSync(join(String(dir), "node_modules"), { recursive: true });
+      symlinkSync("../vendor/pkg", join(String(dir), "node_modules", "pkg"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "repro.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("ALL_BUILDS_OK");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
@@ -455,6 +635,42 @@ describe("Bun.build", () => {
     expect(x.logs[0].message).toMatch(/ModuleNotFound/);
     expect(x.logs[0].name).toBe("BuildMessage");
     expect(x.logs[0].position).toEqual(null);
+  });
+
+  test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {
+    // A TOML dotted header builds an object nested arbitrarily deep without
+    // recursing in the parser, so the printer's recursion guard is the first
+    // thing to hit it. The printed part used to be silently dropped, leaving
+    // a corrupt bundle and success: true.
+    using dir = tempDir("build-api-deep-toml", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "deep.toml")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.outputs).toHaveLength(0);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
+    expect(x.logs[0].name).toBe("BuildMessage");
+  });
+
+  test.concurrent("reports a module that fails to print once across entrypoints", async () => {
+    // Without code splitting the failing file is printed once per entry
+    // chunk; the error is still per-file, like parse errors.
+    using dir = tempDir("build-api-deep-toml-multi", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+      "a.js": `import d from "./deep.toml"; console.log(d);`,
+      "b.js": `import d from "./deep.toml"; console.log(Object.keys(d));`,
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "a.js"), join(String(dir), "b.js")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
   });
 
   test.concurrent("warnings do not fail a build", async () => {
@@ -909,6 +1125,46 @@ describe.concurrent("sourcemap boolean values", () => {
   });
 });
 
+describe.concurrent("sourcemap positions", () => {
+  // Source-map columns count UTF-16 code units. Tokens after the first
+  // non-ASCII character on a line (Latin-1, astral, CJK) must still map to
+  // their exact original column.
+  test("original columns after non-ASCII characters on the same line", async () => {
+    const source = [
+      `export function a1() { throw new Error("A"); } export const za = "e";`,
+      `export const zb = "é"; export function b1() { throw new Error("B"); }`,
+      `export const zc = "🎉"; export function c1() { throw new Error("C"); }`,
+      `export const zd = "汉字 wörld"; export function d1() { throw new Error("D"); }`,
+      ``,
+    ].join("\n");
+    const dir = tempDirWithFiles("build-sourcemap-unicode-columns", { "in.ts": source });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "in.ts")],
+      outdir: join(dir, "out"),
+      sourcemap: "external",
+    });
+    expect(build.success).toBe(true);
+
+    const generated = await build.outputs.find(o => o.kind === "entry-point")!.text();
+    const map = await build.outputs.find(o => o.kind === "sourcemap")!.json();
+
+    // 1-based line, 0-based UTF-16 column: the convention `source-map` uses on
+    // both sides of originalPositionFor.
+    const lineColumn = (text: string, index: number) => {
+      const before = text.slice(0, index);
+      return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+    };
+
+    await SourceMapConsumer.with(map, null, consumer => {
+      for (const token of ['new Error("A")', 'new Error("B")', 'new Error("C")', 'new Error("D")']) {
+        const { line, column } = consumer.originalPositionFor(lineColumn(generated, generated.indexOf(token)));
+        expect({ token, line, column }).toEqual({ token, ...lineColumn(source, source.indexOf(token)) });
+      }
+    });
+  });
+});
+
 const originalCwd = process.cwd() + "";
 
 describe("tsconfig option", () => {
@@ -1212,6 +1468,7 @@ test.skipIf(!isDebug && !isASAN)(
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
       "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
       "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
@@ -1222,10 +1479,10 @@ test.skipIf(!isDebug && !isASAN)(
         }
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 8; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
     });
@@ -1290,6 +1547,7 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
     "entry.js": entry,
     "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           // No identifier minification → NumberRenamer path (not MinifyRenamer).
@@ -1303,10 +1561,10 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
         // steady-state so the measured window only reflects per-build retention.
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 20; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
   });
@@ -1391,3 +1649,157 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+// A module shared by several entry points is printed once per chunk, and those
+// prints run in parallel on the thread pool against the same AST. The printer
+// used to flatten `"a" + "b" + "c"` ropes in place, through the `StoreRef`, so
+// one thread's write of `data` / `next = None` raced every other thread's read
+// of the same node. Observed results on the unfixed printer: the tail printed
+// twice ("abcbc"), the tail dropped ("a"), or a crash on a torn `next` pointer
+// (a `Bus error` / `Segmentation fault` at a 4 GiB aligned address).
+//
+// The race needs many chunks printing many ropes at the same time, so this
+// builds 64 entry points over one module with 400 folded ropes, twice, and
+// checks every folded string in every output. With the in-place flatten the
+// first build corrupts hundreds of strings on a 16 core machine.
+//
+// Needs an explicit timeout: two real 64-entry bundles on a debug build take
+// well over bun:test's 5s default.
+test("Bun.build does not corrupt folded string ropes shared across chunks", async () => {
+  const ENTRIES = 64;
+  const ROPES = 400;
+  const ROUNDS = 2;
+  let shared = "export function helper(...a) { return a; }\n";
+  for (let i = 0; i < ROPES; i++) {
+    // The rope is a call argument inside an arrow body, the shape the printer
+    // crashed on in the field. It folds only with `minify.syntax`.
+    shared +=
+      `export const fn${i} = helper("first${i}", () => { const q = ${i}; ` +
+      `helper(q, "alpha-${i}-" + "beta-" + "gamma-" + "delta-${i}"); return q; });\n`;
+  }
+  const files: Record<string, string> = { "shared.js": shared };
+  for (let i = 0; i < ENTRIES; i++) {
+    files[`entry${i}.js`] = `import * as s from "./shared.js";\nconsole.log(s, ${i});\n`;
+  }
+  files["run.ts"] = `
+    import { join } from "node:path";
+    const dir = process.argv[2];
+    const entrypoints = Array.from({ length: ${ENTRIES} }, (_, i) => join(dir, "entry" + i + ".js"));
+    let bad = 0;
+    for (let round = 0; round < ${ROUNDS}; round++) {
+      const res = await Bun.build({ entrypoints, minify: { syntax: true }, target: "bun" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const output of res.outputs) {
+        const text = await output.text();
+        for (let i = 0; i < ${ROPES}; i++) {
+          const expected = '"alpha-' + i + '-beta-gamma-delta-' + i + '"';
+          if (!text.includes(expected)) {
+            bad++;
+            if (bad <= 5) {
+              const actual = text.match(new RegExp('"alpha-' + i + '-[^"]*"'));
+              console.log("BAD round " + round + " " + output.path + " expected " + expected + " got " + actual?.[0]);
+            }
+          }
+        }
+      }
+    }
+    console.log("DONE " + bad);
+  `;
+  const dir = tempDirWithFiles("bun-build-rope-print-race", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), dir],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("DONE 0");
+  expect(exitCode).toBe(0);
+}, 180_000);
+
+test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
+  // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
+  // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used
+  // to leak through as \v / \x07 and break JSON.parse on the .map file.
+  const controls = Array.from({ length: 0x20 }, (_, i) => String.fromCharCode(i)).join("");
+  const source = `/* ctrl: [${controls}] */\nexport const x = 1;\n`;
+  using dir = tempDir("sourcemap-json-ctrl", { "in.js": source });
+
+  const res = await Bun.build({
+    entrypoints: [join(String(dir), "in.js")],
+    sourcemap: "external",
+    outdir: String(dir),
+  });
+  expect(res.success).toBe(true);
+
+  const map = res.outputs.find(o => o.kind === "sourcemap")!;
+  const text = await map.text();
+  expect(text).not.toMatch(/\\v|\\x[0-9A-Fa-f]{2}/);
+  const parsed = JSON.parse(text);
+  expect(parsed.sourcesContent[0]).toBe(source);
+});
+
+// Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
+// own tasks, so any unrelated pool work extended the build by its full duration — a
+// node:fs read parked on a FIFO nobody writes made every later build hang forever.
+test.skipIf(isWindows)(
+  "Bun.build does not wait for unrelated thread-pool work",
+  async () => {
+    using dir = tempDir("build-pool-wait", {
+      "a.ts": `import { b } from "./b"; import "./s.css"; console.log(b);`,
+      "b.ts": `export const b = 1;`,
+      "s.css": `body { color: red }`,
+      "run.js": `
+      const { join } = require("path");
+      const dir = process.argv[2];
+      const fs = require("fs");
+      const fifo = join(dir, "fifo");
+      require("child_process").execFileSync("mkfifo", [fifo]);
+      await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      let readDone = false, readErr;
+      // a pool thread blocks opening/reading the FIFO
+      const readFinished = new Promise((resolve) => fs.readFile(fifo, (err) => { readErr = err; readDone = true; resolve(); }));
+      // A non-blocking write-open of a FIFO only succeeds once a reader has it open, so this both
+      // waits for the pool thread to be in there and, by staying open without writing, keeps it
+      // parked in read() until we close it below.
+      let writer;
+      for (const deadline = Date.now() + 10_000; ; ) {
+        try { writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); break; } catch (e) {
+          if (e.code !== "ENXIO" || Date.now() > deadline) throw e;
+          await Bun.sleep(5);
+        }
+      }
+      // Release the pool thread after 5 s regardless, so a regression shows up as readDone
+      // being true below rather than as the whole test hanging until its timeout.
+      let closed = false;
+      const closeWriter = () => { if (!closed) { closed = true; fs.closeSync(writer); } };
+      setTimeout(closeWriter, 5000).unref();
+      const t = performance.now();
+      const result = await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      const elapsed = performance.now() - t;
+      // readDone must still be false: the build finished before the release of the FIFO reader,
+      // i.e. it did not wait for that unrelated pool task. elapsed is diagnostic only.
+      console.error("second build took " + Math.round(elapsed) + " ms");
+      console.log(result.success, result.outputs.length > 0, readDone);
+      closeWriter(); // EOF for the reader: let the pool thread go before exiting
+      await readFinished;
+      console.log(readDone, readErr ? readErr.code : "ok");
+      process.exit(0);
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js", String(dir)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toStartWith("second build took ");
+    expect(stdout).toBe("true true false\ntrue ok\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

@@ -40,15 +40,6 @@ const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
   : () => {};
 
 /**
- * Can be set in fast development environments to improve iteration time.
- * In CI/Windows it appears that sometimes these tests dont wait enough
- * for things to happen, so the extra delay reduces flakiness.
- *
- * Needs much more investigation.
- */
-const fastBatches = !!process.env.BUN_DEV_SERVER_FAST_BATCHES;
-
-/**
  * Set to `ALL` to run all stress tests for 10 minutes each.
  * Set to a filter to run a specific filter for 10 minutes.
  */
@@ -142,6 +133,10 @@ export interface DevServerTest {
    * Only run this test.
    */
   only?: boolean;
+  /**
+   * Extra environment variables for the spawned dev-server process.
+   */
+  env?: Record<string, string>;
 }
 
 let interactive = false;
@@ -295,6 +290,8 @@ export class Dev extends EventEmitter {
     const initWait = this.#waitForSyncEvent(WatchSynchronization.Started);
     this.socket!.send("H");
     await initWait;
+    // An ack a client still owes for an earlier build must not count for this batch.
+    await Promise.all([...this.connectedClients].map(client => client.drainAcks()));
 
     let hasSeenFiles = true;
     let seenFiles: PromiseWithResolvers<void>;
@@ -329,10 +326,9 @@ export class Dev extends EventEmitter {
         } else if (wantsHmrEvent) {
           await Promise.race([seenFiles.promise]);
         }
-        if (!fastBatches) {
-          // Wait an extra delay to avoid double-triggering events.
-          await Bun.sleep(300);
-        }
+        // One Bun.write can surface as several watcher events (notably on
+        // Windows); let them coalesce so releasing the batch bundles once.
+        await Bun.sleep(50);
 
         dev.off("watch_synchronization", onSeenFiles);
 
@@ -464,8 +460,7 @@ export class Dev extends EventEmitter {
       function cleanupAndResolve() {
         verboseSynchronization("Cleaning up and resolving");
         cleanup();
-        if (fastBatches) resolve();
-        else setTimeout(resolve, 250);
+        resolve();
       }
       function onPanic() {
         cleanup();
@@ -476,22 +471,32 @@ export class Dev extends EventEmitter {
       }
       dev.output.on("panic", onPanic);
       const disposes = new Set<() => void>();
+      function maybeResolve() {
+        // `>=` (not `===`): if the caller did unsynchronized writes before
+        // this batch, straggler received-hmr-event IPCs from those bundles
+        // can arrive after this listener is registered and push clientWaits
+        // past connectedClients.size. Strict equality would then never match.
+        if (seenMainEvent && clientWaits >= dev.connectedClients.size) {
+          cleanupAndResolve();
+        }
+      }
       for (const client of dev.connectedClients) {
         const socketEventHandler = () => {
           verboseSynchronization("Client received event");
           clientWaits++;
-          // `>=` (not `===`): if the caller did unsynchronized writes before
-          // this batch, straggler received-hmr-event IPCs from those bundles
-          // can arrive after this listener is registered and push clientWaits
-          // past connectedClients.size. Strict equality would then never match.
-          if (seenMainEvent && clientWaits >= dev.connectedClients.size) {
-            client.off("received-hmr-event", socketEventHandler);
-            cleanupAndResolve();
-          }
+          maybeResolve();
+        };
+        // A client that crashes applying the update never acks; reject so the
+        // failure surfaces at the dev.write() call instead of timing out.
+        const exitHandler = (code: number | string) => {
+          cleanup();
+          reject(clientExitedWhile("applying hot update", code));
         };
         client.on("received-hmr-event", socketEventHandler);
+        client.on("exit", exitHandler);
         disposes.add(() => {
           client.off("received-hmr-event", socketEventHandler);
+          client.off("exit", exitHandler);
         });
       }
       async function onEvent(kind: WatchSynchronization) {
@@ -543,7 +548,7 @@ export class Dev extends EventEmitter {
       this.output.on("panic", onPanic);
       if (this.nodeEnv === "development") {
         try {
-          await client.output.waitForLine(hmrClientInitRegex);
+          await client.waitForPageLoad();
         } catch (e) {
           this.output.off("panic", onPanic);
           try {
@@ -814,6 +819,11 @@ expect(node, "test will fail if this is not node").not.toBe(process.execPath);
 
 const danglingProcesses = new Set<Subprocess>();
 
+function clientExitedWhile(activity: string, code: number | string): Error {
+  const reason = exitCodeMapStrings[code];
+  return new Error(`Client exited while ${activity}${reason ? `: ${reason}` : ` (${code})`}`);
+}
+
 /**
  * Controls a subprocess that uses happy-dom as a lightweight browser. It is
  * sandboxed in a separate process because happy-dom is a terrible mess to work
@@ -830,6 +840,8 @@ export class Client extends EventEmitter {
   expectingReload = false;
   hmr = false;
   webSocketMessagesAllowed = true;
+  /** Every `received-hmr-event` ack so far, counted before any listener runs. */
+  acksReceived = 0;
 
   constructor(
     url: string,
@@ -851,6 +863,7 @@ export class Client extends EventEmitter {
       env: bunEnv,
       serialization: "json",
       ipc: (message, subprocess) => {
+        if (message.type === "received-hmr-event") this.acksReceived++;
         this.emit(message.type, ...message.args);
       },
       onExit: (subprocess, exitCode, signalCode, error) => {
@@ -888,11 +901,109 @@ export class Client extends EventEmitter {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       await maybeWaitInteractive("hard-reload");
       if (this.exited) throw new Error("Client is not running.");
+      if (!this.hmr) {
+        this.#proc.send({ type: "hard-reload" });
+        return;
+      }
+      await this.drainAcks();
+      const loaded = this.waitForPageLoad();
       this.#proc.send({ type: "hard-reload" });
+      await loaded;
+      await this.expectErrorOverlay(options.errors ?? []);
+    });
+  }
 
-      if (this.hmr) {
-        await this.output.waitForLine(hmrClientInitRegex);
-        await this.expectErrorOverlay(options.errors ?? []);
+  /**
+   * Resolves once the page that is loading has connected its HMR socket and
+   * the fixture has acked the load, which it does after every stylesheet is
+   * loaded. Register it before the load starts.
+   */
+  async waitForPageLoad(): Promise<void> {
+    const acked = this.#nextAck("loading the page", (isWindows ? 10_000 : 5_000) * WAIT_MULTIPLIER);
+    await Promise.all([this.output.waitForLine(hmrClientInitRegex), acked]);
+  }
+
+  /**
+   * Resolves once every ack the client still owes for builds that are already
+   * done has arrived, so none of them counts for the batch that starts next.
+   * The server also publishes to clients outside a batch: a fetch that
+   * re-bundles a failing route, or a page load that bundles a new route.
+   */
+  async drainAcks(): Promise<void> {
+    // A production page has no HMR socket and never acks.
+    if (!this.hmr) return;
+    // The fixture answers with every ack it has sent or still owes. Acks are
+    // counted as they arrive, so one that lands before this continuation runs
+    // is not lost.
+    const target = await this.#request<number>("ping", "pong", [], "draining its acks");
+    while (this.acksReceived < target) {
+      await this.#nextAck("draining its acks");
+    }
+  }
+
+  /** The next `received-hmr-event` ack. Rejects if the client exits or the timeout passes first. */
+  #nextAck(waitingFor: string, timeout = 2000 * WAIT_MULTIPLIER): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (this.exited) return reject(clientExitedWhile(waitingFor, this.exitCode ?? "unknown"));
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off("received-hmr-event", onAck);
+        this.off("exit", onExit);
+      };
+      const onAck = () => {
+        cleanup();
+        resolve();
+      };
+      const onExit = (code: number | string) => {
+        cleanup();
+        reject(clientExitedWhile(waitingFor, code));
+      };
+      const timer = setTimeout(
+        () => {
+          cleanup();
+          reject(new Error(`Timeout waiting for the client's ack while ${waitingFor}`));
+        },
+        interactive ? interactive_timeout : timeout,
+      );
+      this.once("received-hmr-event", onAck);
+      this.once("exit", onExit);
+    });
+  }
+
+  /** Sends a request to client-fixture.mjs and returns its reply. Rejects if the client exits first. */
+  #request<T>(type: string, replyType: string, args: unknown[], waitingFor: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (this.exited) return reject(new Error("Client is not running."));
+      const messageId = Math.random().toString(36).slice(2);
+      const replyEvent = `${replyType}-${messageId}`;
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off(replyEvent, onReply);
+        this.off("exit", onExit);
+      };
+      const onReply = (result: { value?: T; error?: string }) => {
+        cleanup();
+        if (result.error) reject(new Error(result.error));
+        else resolve(result.value as T);
+      };
+      const onExit = (code: number | string) => {
+        cleanup();
+        reject(clientExitedWhile(waitingFor, code));
+      };
+      const timer = setTimeout(
+        () => {
+          cleanup();
+          reject(new Error(`Timeout waiting for the client while ${waitingFor}`));
+        },
+        interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER,
+      );
+      this.once(replyEvent, onReply);
+      this.once("exit", onExit);
+      try {
+        this.#proc.send({ type, args: [messageId, ...args] });
+      } catch (e) {
+        cleanup();
+        reject(e);
       }
     });
   }
@@ -909,6 +1020,25 @@ export class Client extends EventEmitter {
     });
   }
 
+  /**
+   * Waits until the element's innerHTML is `text`. For DOM that a framework
+   * commits in a later task than the update the client acked.
+   */
+  expectElemText(selector: string, text: string): Promise<void> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const last = await this.js<string | null>`
+        const deadline = Date.now() + ${interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER};
+        let last = document.querySelector(${selector})?.innerHTML ?? null;
+        while (last !== ${text} && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          last = document.querySelector(${selector})?.innerHTML ?? null;
+        }
+        return last;
+      `;
+      expect(last).toBe(text);
+    });
+  }
+
   elemsText(selector: string): Promise<string[]> {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       const elems = await this.js<
@@ -922,11 +1052,15 @@ export class Client extends EventEmitter {
     if (activeClient === this) {
       activeClient = null;
     }
+    const wasRunning = this.#proc.exitCode === null && this.#proc.signalCode === null;
     try {
       this.#proc.send({ type: "exit" });
     } catch (e) {}
     await this.#proc.exited;
-    if (this.exitCode !== null && this.exitCode !== "0") {
+    // `exited` settles before `onExit` runs. Wait for it so `exitCode` is set
+    // and the `exit` listeners have removed this client from `connectedClients`.
+    if (!this.exited) await EventEmitter.once(this, "exit");
+    if (this.exitCode !== 0 && !(await this.#abortedInTeardown(wasRunning))) {
       let code;
       if (exitCodeMapStrings[this.exitCode]) {
         code = ": " + JSON.stringify(exitCodeMapStrings[this.exitCode]);
@@ -939,6 +1073,18 @@ export class Client extends EventEmitter {
       throw new Error(`Client sent ${this.messages.length} unread messages: ${JSON.stringify(this.messages, null, 2)}`);
     }
     this.output[Symbol.dispose]();
+  }
+
+  /**
+   * Node on Windows sometimes aborts inside its own teardown after the exit the
+   * harness requested (a `uv_async_send` on a closing handle). The fixture never
+   * exits with 3 or 9 itself, so that abort is a clean exit.
+   */
+  async #abortedInTeardown(exitWasRequested: boolean): Promise<boolean> {
+    if (!isWindows || !exitWasRequested || (this.exitCode !== 3 && this.exitCode !== 9)) return false;
+    // The assertion is on stderr; let both pipes drain before reading the lines.
+    if (this.output.closes < 2) await EventEmitter.once(this.output, "close");
+    return this.output.lines.some(line => line.includes("UV_HANDLE_CLOSING"));
   }
 
   expectReload(cb: () => Promise<void>) {
@@ -1042,59 +1188,37 @@ export class Client extends EventEmitter {
   expectErrorOverlay(errors: ErrorSpec[], caller: string | null = null) {
     return withAnnotatedStack(caller ?? snapshotCallerLocationMayFail(), async () => {
       this.suppressInteractivePrompt = true;
-      let retries = 0;
-      let hasVisibleModal = false;
-      while (retries < 5) {
-        hasVisibleModal = await this.js`document.querySelector("bun-hmr")?.style.display === "block"`;
-        if (hasVisibleModal) break;
-        await Bun.sleep(200);
-        retries++;
+      let hasVisibleModal: boolean;
+      try {
+        hasVisibleModal = await this.#hasVisibleErrorOverlay();
+        // A build error is on the page before the signals the harness awaits: the
+        // served HTML on a page load, or the "e" message that precedes the update
+        // ack. Only a runtime error reaches the overlay later (after a report
+        // round trip), so poll only while an expected error has not shown up yet.
+        const deadline = Date.now() + 1000 * WAIT_MULTIPLIER;
+        while (errors.length > 0 && !hasVisibleModal && Date.now() < deadline) {
+          await Bun.sleep(200);
+          hasVisibleModal = await this.#hasVisibleErrorOverlay();
+        }
+      } finally {
+        this.suppressInteractivePrompt = false;
       }
-      this.suppressInteractivePrompt = false;
-      if (errors && errors.length > 0) {
-        if (!hasVisibleModal) {
-          await maybeWaitInteractive("expectErrorOverlay");
-          throw new Error("Expected errors, but none found");
-        }
-
-        // Create unique message ID for this evaluation
-        const messageId = Math.random().toString(36).slice(2);
-
-        // Send the evaluation request and wait for response
-        this.#proc.send({
-          type: "get-errors",
-          args: [messageId],
-        });
-
-        const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
-
-        if (result.error) {
-          throw new Error(result.error);
-        }
-        const actualErrors = result.value;
-        const expectedErrors = [...errors].sort();
-        expect(actualErrors).toEqual(expectedErrors);
-      } else {
-        if (hasVisibleModal) {
-          // Create unique message ID for this evaluation
-          const messageId = Math.random().toString(36).slice(2);
-
-          // Send the evaluation request and wait for response
-          this.#proc.send({
-            type: "get-errors",
-            args: [messageId],
-          });
-
-          const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
-
-          if (result.error) {
-            throw new Error(result.error);
-          }
-          const actualErrors = result.value;
-          expect(actualErrors).toEqual([]);
-        }
+      if (!hasVisibleModal) {
+        if (errors.length === 0) return;
+        await maybeWaitInteractive("expectErrorOverlay");
+        throw new Error("Expected errors, but none found");
       }
+      expect(await this.readErrorOverlay()).toEqual([...errors].sort());
     });
+  }
+
+  #hasVisibleErrorOverlay(): Promise<boolean> {
+    return this.js<boolean>`document.querySelector("bun-hmr")?.style.display === "block"`;
+  }
+
+  /** The messages the error overlay shows, sorted. Empty when there is no overlay. */
+  readErrorOverlay(): Promise<string[]> {
+    return this.#request<string[]>("get-errors", "get-errors-result", [], "reading the error overlay");
   }
 
   getStringMessage(): Promise<string> {
@@ -1439,8 +1563,21 @@ if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
 }
 
-// Create a cache directory for React dependencies
-const reactCacheDir = path.join(tempDir, ".react-cache");
+// react-server-dom-bun's only published build was compiled against this react build. RSC
+// packages only pair with the exact react they were built for, so pin all three instead of
+// tracking the daily-moving `experimental` dist-tag (whose 2026-07-01 build broke the suite).
+const REACT_EXPERIMENTAL_VERSION = "0.0.0-experimental-603e6108-20241029";
+// Bun.$ expands an array into separate escaped arguments, so both install sites share it.
+const REACT_INSTALL_PACKAGES = [
+  `react@${REACT_EXPERIMENTAL_VERSION}`,
+  `react-dom@${REACT_EXPERIMENTAL_VERSION}`,
+  "react-server-dom-bun",
+  `react-refresh@${REACT_EXPERIMENTAL_VERSION}`,
+];
+
+// Cache the installed React packages, keyed on the pinned build so a stale cache under a
+// persistent BUN_DEV_SERVER_TEST_TEMP is repopulated whenever the pin changes.
+const reactCacheDir = path.join(tempDir, `.react-cache-${REACT_EXPERIMENTAL_VERSION}`);
 if (!fs.existsSync(reactCacheDir)) {
   fs.mkdirSync(reactCacheDir, { recursive: true });
 }
@@ -1471,7 +1608,7 @@ async function installReactWithCache(root: string) {
     }
   } else {
     // Install fresh and populate cache
-    await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
+    await Bun.$`${bunExe()} i --linker=hoisted ${REACT_INSTALL_PACKAGES} && ${bunExe()} install --linker=hoisted`
       .cwd(root)
       .env({ ...bunEnv })
       .throws(true);
@@ -1520,7 +1657,7 @@ export async function ensureReactCache(): Promise<void> {
 
         try {
           // Install React packages
-          await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
+          await Bun.$`${bunExe()} i --linker=hoisted ${REACT_INSTALL_PACKAGES} && ${bunExe()} install --linker=hoisted`
             .cwd(tempInstallDir)
             .env({ ...bunEnv })
             .throws(true);
@@ -1958,6 +2095,7 @@ function testImpl<T extends DevServerTest>(
           // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
+          ...options.env,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],

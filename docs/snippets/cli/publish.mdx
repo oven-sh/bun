@@ -7,13 +7,13 @@ bun publish dist
 ### Publishing Options
 
 <ParamField path="--access" type="string">
-  The `--access` flag can be used to set the access level of the package being published. The access level can be one of `public` or `restricted`. Unscoped packages are always public, and attempting to publish an unscoped package with `--access restricted` will result in an error.
+  Set the access level of the package being published, either `public` or `restricted`. Unscoped packages are always public; publishing an unscoped package with `--access restricted` is an error.
 
 ```sh terminal icon="terminal"
 bun publish --access public
 ```
 
-`--access` can also be set in the `publishConfig` field of your `package.json`.
+You can also set `--access` in the `publishConfig` field of your `package.json`.
 
 ```json package.json icon="file-json"
 {
@@ -32,7 +32,7 @@ Set the tag of the package version being published. By default, the tag is `late
 bun publish --tag alpha
 ```
 
-`--tag` can also be set in the `publishConfig` field of your `package.json`.
+You can also set `--tag` in the `publishConfig` field of your `package.json`.
 
 ```json package.json icon="file-json"
 {
@@ -44,13 +44,17 @@ bun publish --tag alpha
 
 </ParamField>
 
-<ParamField path="--dry-run=<val>" type="string">
-The `--dry-run` flag can be used to simulate the publish process without actually publishing the package. This is useful for verifying the contents of the published package without actually publishing the package.
+<ParamField path="--dry-run" type="boolean">
+Simulate the publish process without publishing the package, to verify its contents first.
 
 ```sh
 bun publish --dry-run
 ```
 
+</ParamField>
+
+<ParamField path="--tolerate-republish" type="boolean">
+  `bun publish` exits with code 0 instead of 1 when the version being published already exists in the registry.
 </ParamField>
 
 <ParamField path="--gzip-level" type="string" default="9">
@@ -60,7 +64,7 @@ bun publish --dry-run
 
 <ParamField path="--auth-type" type="string" default="web">
 
-If you have 2FA enabled for your npm account, `bun publish` will prompt you for a one-time password. This can be done through a browser or the CLI. The `--auth-type` flag can be used to tell the npm registry which method you prefer. The possible values are `web` and `legacy`, with `web` being the default.
+If you have 2FA enabled for your npm account, `bun publish` prompts you for a one-time password, either through a browser or the CLI. `--auth-type` tells the npm registry which method you prefer: `web` (the default) or `legacy`.
 
 ```sh terminal icon="terminal"
 bun publish --auth-type legacy
@@ -72,17 +76,17 @@ Enter OTP: 123456
 
 </ParamField>
 
-<ParamField path="--otp" type="string" default="web">
+<ParamField path="--otp" type="string">
 
-Provide a one-time password directly to the CLI. If the password is valid, this will skip the extra prompt for a one-time password before publishing. Example usage:
+Provide a one-time password directly to the CLI. A valid password skips the extra one-time password prompt before publishing.
 
 ```sh terminal icon="terminal"
 bun publish --otp 123456
 ```
 
 <Note>
-  `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable which can be used when publishing in github actions
-  or automated workflows.
+  `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable, so you can publish from GitHub Actions or other
+  automated workflows.
 </Note>
 
 </ParamField>
@@ -92,7 +96,8 @@ bun publish --otp 123456
 #### Custom Registry
 
 <ParamField path="--registry" type="string">
-  Specify registry URL, overriding .npmrc and bunfig.toml
+  Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables. A registry configured
+  for the package's scope (`@scope:registry=` in .npmrc or `[install.scopes]` in bunfig.toml) still takes precedence.
 </ParamField>
 
 ```bash
@@ -120,7 +125,7 @@ bun publish --cafile ./ca-cert.pem
 
 </CodeGroup>
 
-### Publishing Options
+### General Options
 
 #### Dependency Management
 
@@ -147,8 +152,8 @@ bun publish --cafile ./ca-cert.pem
 </ParamField>
 
 <Note>
-  **Lifecycle Scripts** — When providing a pre-built tarball, lifecycle scripts (prepublishOnly, prepack, etc.) are not
-  executed. Scripts only run when Bun packs the package itself.
+  **Lifecycle Scripts** — When you publish a pre-built tarball, Bun does not run lifecycle scripts such as
+  `prepublishOnly` and `prepack`; they only run when Bun packs the package itself.
 </Note>
 
 #### File Management
@@ -168,15 +173,16 @@ bun publish --cafile ./ca-cert.pem
 #### Performance
 
 <ParamField path="--backend" type="string">
-  Platform optimizations: `clonefile` (default), `hardlink`, `symlink`, or `copyfile`
+  Platform optimizations: `clonefile` (default on macOS), `hardlink` (default on Linux and Windows), `symlink`, or
+  `copyfile`
 </ParamField>
 
 <ParamField path="--network-concurrency" type="number" default="48">
   Maximum concurrent network requests
 </ParamField>
 
-<ParamField path="--concurrent-scripts" type="number" default="5">
-  Maximum concurrent lifecycle scripts
+<ParamField path="--concurrent-scripts" type="number">
+  Maximum concurrent lifecycle scripts (default: 2x CPU cores)
 </ParamField>
 
 #### Output Control

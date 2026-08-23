@@ -40,11 +40,6 @@ export type Field =
   | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
   | ({
-      accessor: { getter: string; setter: string };
-      cache?: true | string;
-      this?: boolean;
-    } & PropertyAttribute)
-  | ({
       fn: string;
 
       /**
@@ -92,15 +87,12 @@ export class ClassDefinition {
    */
   name: string;
   /**
-   * Which language implements the native side of this class.
+   * Legacy. All classes emit implementer thunks into `generated_classes.rs`;
+   * this field is accepted for backward compatibility but has no effect.
    *
-   * The C++ wrapper output (`ZigGeneratedClasses.{h,cpp}`) is byte-identical
-   * regardless of this flag — it only selects whether the implementer thunks
-   * land in `ZigGeneratedClasses.zig` or `generated_classes.rs`.
-   *
-   * @default "zig"
+   * @default "rust"
    */
-  lang?: "zig" | "rust";
+  lang?: "rust";
   /**
    * Fully-qualified Rust path of the native struct backing this class, e.g.
    * `crate::webcore::request::Request`. The codegen emits
@@ -156,47 +148,41 @@ export class ClassDefinition {
    */
   forBind?: boolean;
   /**
+   * Parent of the generated prototype object. "Error" puts Error.prototype in
+   * the chain so instances satisfy `instanceof Error`. Default: Object.prototype.
+   */
+  prototypeBase?: "Error";
+  /**
    * ## IMPORTANT
    * You _must_ free the pointer to your native class!
    *
    * Example for pointers only owned by JavaScript classes:
-   * ```zig
-   * pub const NativeClass = struct {
+   * ```rust
+   * impl NativeClass {
+   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+   *         // do stuff
+   *         Ok(Box::new(NativeClass {
+   *             // ...
+   *         }))
+   *     }
    *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
-   *     // do stuff
-   *     return bun.new(NativeClass, .{
-   *       // ...
-   *     });
-   *   }
-   *
-   *   fn finalize(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   * };
+   *     pub fn finalize(self: Box<Self>) {
+   *         // free allocations owned by this class; Box drop frees the struct itself.
+   *     }
+   * }
    * ```
    * Example with ref counting:
-   * ```
-   * pub const RefCountedNativeClass = struct {
-   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-   *   pub const ref = RefCount.ref;
-   *   pub const deref = RefCount.deref;
+   * ```rust
+   * impl RefCountedNativeClass {
+   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<*mut Self> {
+   *         // do stuff; refcount starts at 1
+   *         Ok(Self::new(...).into_raw())
+   *     }
    *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
-   *     // do stuff
-   *     return bun.new(NativeClass, .{
-   *       // ...
-   *     });
-   *   }
-   *
-   *   fn deinit(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   *
-   *   pub const finalize = deref; // GC will deref, which can free if no references are left.
-   * };
+   *     pub fn finalize(&mut self) {
+   *         self.deref(); // GC drops its ref; frees when the count hits zero.
+   *     }
+   * }
    * ```
    * @todo remove this and require all classes to implement `finalize`.
    */
@@ -210,10 +196,6 @@ export class ClassDefinition {
    * properties and methods on the prototype.
    */
   proto: Record<string, Field>;
-  /**
-   * Properties and methods attached to the instance itself.
-   */
-  own: Record<string, string>;
   values?: string[];
   /**
    * When true, the class will accept a MarkedArgumentBuffer* to create a
@@ -229,15 +211,15 @@ export class ClassDefinition {
   final?: boolean;
 
   /**
-   * Class has an `estimatedSize` function that reports external allocations to GC.
+   * Class has an `estimated_size` function that reports external allocations to GC.
    * Called from any thread.
    *
    * When `true`, classes should have a method with this signature:
-   * ```zig
-   * pub fn estimatedSize(this: *@This()) usize;
+   * ```rust
+   * pub fn estimated_size(&self) -> usize;
    * ```
    *
-   * Report `@sizeOf(@this())` as well as any external allocations.
+   * Report `size_of::<Self>()` as well as any external allocations.
    */
   estimatedSize?: boolean;
   /**
@@ -252,42 +234,19 @@ export class ClassDefinition {
   memoryCost?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
-  supportsObjectCreate?: boolean;
-
-  getInternalProperties?: boolean;
-
-  custom?: Record<string, CustomField>;
 
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
 
-  callbacks?: Record<string, string>;
-
   constructor(options: Partial<ClassDefinition>) {
     this.name = options.name ?? "";
     this.klass = options.klass ?? {};
     this.proto = options.proto ?? {};
-    this.own = options.own ?? {};
 
     Object.assign(this, options);
   }
-
-  hasOwnProperties() {
-    for (const key in this.own) {
-      return true;
-    }
-
-    return false;
-  }
-}
-
-export interface CustomField {
-  header?: string;
-  extraHeaderIncludes?: string[];
-  impl?: string;
-  type?: string;
 }
 
 /**
@@ -298,7 +257,6 @@ export function define(
   {
     klass = {},
     proto = {},
-    own = {},
     values = [],
     overridesToJS = false,
     estimatedSize = false,
@@ -325,7 +283,6 @@ export function define(
     estimatedSize,
     structuredClone,
     values,
-    own: own || {},
     klass: Object.fromEntries(
       Object.entries(klass)
         .sort(([a], [b]) => a.localeCompare(b))

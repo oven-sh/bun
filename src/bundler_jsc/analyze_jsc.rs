@@ -13,13 +13,11 @@ use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID
 use bun_bundler::analyze_transpiled_module as analyze;
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
+extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     global_object: &JSGlobalObject,
     vm: &VM,
     module_key: &IdentifierArray,
     source_code: &SourceCode,
-    declared_variables: &mut VariableEnvironment,
-    lexical_variables: &mut VariableEnvironment,
     res: &ModuleInfoDeserialized,
 ) -> *mut JSModuleRecord {
     // Ownership of `res` stays with the caller; this function only reads it.
@@ -42,14 +40,15 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     let identifier_count = strings_lens.len();
     let is_valid_string_id =
         |id: StringID| (id.0 as usize) < identifier_count || id.0 >= StringID::STAR_NAMESPACE.0;
-    if !buffer.iter().copied().all(is_valid_string_id)
-        || !requested_modules_keys
-            .iter()
-            .copied()
-            .all(is_valid_string_id)
+    let is_valid_fetch_parameters =
+        |v: u32| (v as usize) < identifier_count || v >= RequestedModuleValue::Json.0;
+    if !requested_modules_keys
+        .iter()
+        .copied()
+        .all(is_valid_string_id)
         || !requested_modules_values
             .iter()
-            .all(|&v| (v.0 as usize) < identifier_count || v.0 >= RequestedModuleValue::Json.0)
+            .all(|&v| is_valid_fetch_parameters(v.0))
     {
         return core::ptr::null_mut();
     }
@@ -77,23 +76,24 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     {
         let mut i: usize = 0;
         for &k in record_kinds.iter() {
-            if i + k.len().unwrap_or(0) > buffer.len() {
+            let Ok(len) = k.len() else {
+                return core::ptr::null_mut();
+            };
+            if i + len > buffer.len() {
                 return core::ptr::null_mut();
             }
-            match k {
-                RecordKind::DeclaredVariable => declared_variables.add(vm, identifiers, buffer[i]),
-                RecordKind::LexicalVariable => lexical_variables.add(vm, identifiers, buffer[i]),
-                RecordKind::ImportInfoSingle
-                | RecordKind::ImportInfoSingleTypeScript
-                | RecordKind::ImportInfoNamespace
-                | RecordKind::ImportInfoNamespaceDefer
-                | RecordKind::ExportInfoIndirect
-                | RecordKind::ExportInfoLocal
-                | RecordKind::ExportInfoNamespace
-                | RecordKind::ExportInfoStar => {}
-                _ => return core::ptr::null_mut(),
+            let fp_slots = k.trailing_fetch_parameters_slots();
+            if !buffer[i..i + len - fp_slots]
+                .iter()
+                .copied()
+                .all(is_valid_string_id)
+                || !buffer[i + len - fp_slots..i + len]
+                    .iter()
+                    .all(|s| is_valid_fetch_parameters(s.0))
+            {
+                return core::ptr::null_mut();
             }
-            i += k.len().expect("unreachable"); // handled above
+            i += len;
         }
     }
 
@@ -102,8 +102,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         vm,
         module_key,
         source_code,
-        declared_variables,
-        lexical_variables,
         res.flags.contains_import_meta(),
         res.flags.is_typescript(),
         res.flags.has_tla(),
@@ -159,12 +157,12 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 unreachable!(); // handled above
             }
             match k {
-                RecordKind::DeclaredVariable | RecordKind::LexicalVariable => {}
                 RecordKind::ImportInfoSingle => module_record.add_import_entry_single(
                     identifiers,
                     buffer[i + 1],
                     buffer[i + 2],
                     buffer[i],
+                    analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
                 ),
                 RecordKind::ImportInfoSingleTypeScript => module_record
                     .add_import_entry_single_type_script(
@@ -172,12 +170,14 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                         buffer[i + 1],
                         buffer[i + 2],
                         buffer[i],
+                        analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
                     ),
                 RecordKind::ImportInfoNamespace => module_record.add_import_entry_namespace(
                     identifiers,
                     buffer[i + 1],
                     buffer[i + 2],
                     buffer[i],
+                    analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
                 ),
                 RecordKind::ImportInfoNamespaceDefer => module_record
                     .add_import_entry_namespace_defer(
@@ -185,26 +185,42 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                         buffer[i + 1],
                         buffer[i + 2],
                         buffer[i],
+                        analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
                     ),
                 RecordKind::ExportInfoIndirect => {
+                    let ty =
+                        analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type();
                     if buffer[i + 1] == StringID::STAR_NAMESPACE {
-                        module_record.add_namespace_export(identifiers, buffer[i], buffer[i + 2])
+                        module_record.add_namespace_export(
+                            identifiers,
+                            buffer[i],
+                            buffer[i + 2],
+                            ty,
+                        )
                     } else {
                         module_record.add_indirect_export(
                             identifiers,
                             buffer[i],
                             buffer[i + 1],
                             buffer[i + 2],
+                            ty,
                         )
                     }
                 }
                 RecordKind::ExportInfoLocal => {
                     module_record.add_local_export(identifiers, buffer[i], buffer[i + 1])
                 }
-                RecordKind::ExportInfoNamespace => {
-                    module_record.add_namespace_export(identifiers, buffer[i], buffer[i + 1])
-                }
-                RecordKind::ExportInfoStar => module_record.add_star_export(identifiers, buffer[i]),
+                RecordKind::ExportInfoNamespace => module_record.add_namespace_export(
+                    identifiers,
+                    buffer[i],
+                    buffer[i + 1],
+                    analyze::FetchParameters(buffer[i + 2].0).to_script_fetch_parameters_type(),
+                ),
+                RecordKind::ExportInfoStar => module_record.add_star_export(
+                    identifiers,
+                    buffer[i],
+                    analyze::FetchParameters(buffer[i + 1].0).to_script_fetch_parameters_type(),
+                ),
                 _ => unreachable!(), // handled above
             }
             i += k.len().expect("unreachable"); // handled above
@@ -215,30 +231,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 }
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────
-
-bun_opaque::opaque_ffi! { pub struct VariableEnvironment; }
-unsafe extern "C" {
-    fn JSC__VariableEnvironment__add(
-        environment: *mut VariableEnvironment,
-        vm: *const VM,
-        identifier_array: *mut IdentifierArray,
-        identifier_index: StringID,
-    );
-}
-impl VariableEnvironment {
-    // Forwards `identifier_array` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline]
-    pub fn add(
-        &mut self,
-        vm: &VM,
-        identifier_array: *mut IdentifierArray,
-        identifier_index: StringID,
-    ) {
-        // SAFETY: self is a valid &mut VariableEnvironment from C++; identifier_array is live (scopeguard).
-        unsafe { JSC__VariableEnvironment__add(self, vm, identifier_array, identifier_index) }
-    }
-}
 
 bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
 unsafe extern "C" {
@@ -254,21 +246,21 @@ unsafe extern "C" {
 }
 impl IdentifierArray {
     #[inline]
-    pub fn create(len: usize) -> *mut IdentifierArray {
+    pub(crate) fn create(len: usize) -> *mut IdentifierArray {
         // SAFETY: FFI call; C++ side allocates.
         unsafe { JSC__IdentifierArray__create(len) }
     }
     /// # Safety
     /// `identifier_array` must be a pointer previously returned by `create` and not yet destroyed.
     #[inline]
-    pub unsafe fn destroy(identifier_array: *mut IdentifierArray) {
+    pub(crate) unsafe fn destroy(identifier_array: *mut IdentifierArray) {
         // SAFETY: caller contract — `identifier_array` came from `create` and has not been destroyed.
         unsafe { JSC__IdentifierArray__destroy(identifier_array) }
     }
     /// # Safety
     /// `this` must be live; `n` must be in-bounds for the array's length.
     #[inline]
-    pub unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
+    pub(crate) unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
         // SAFETY: caller contract — `this` is live, `n` is in bounds; `str_` is a valid slice for the call.
         unsafe { JSC__IdentifierArray__setFromUtf8(this, n, vm, str_.as_ptr(), str_.len()) }
     }
@@ -284,8 +276,6 @@ unsafe extern "C" {
         vm: *const VM,
         module_key: *const IdentifierArray,
         source_code: *const SourceCode,
-        declared_variables: *mut VariableEnvironment,
-        lexical_variables: *mut VariableEnvironment,
         has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
@@ -297,6 +287,7 @@ unsafe extern "C" {
         export_name: StringID,
         import_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn JSC_JSModuleRecord__addLocalExport(
         module_record: *mut JSModuleRecord,
@@ -309,11 +300,13 @@ unsafe extern "C" {
         identifier_array: *mut IdentifierArray,
         export_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn JSC_JSModuleRecord__addStarExport(
         module_record: *mut JSModuleRecord,
         identifier_array: *mut IdentifierArray,
         module_name: StringID,
+        module_request_type: u8,
     );
 
     fn JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
@@ -354,6 +347,7 @@ unsafe extern "C" {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn JSC_JSModuleRecord__addImportEntrySingleTypeScript(
         module_record: *mut JSModuleRecord,
@@ -361,6 +355,7 @@ unsafe extern "C" {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn JSC_JSModuleRecord__addImportEntryNamespace(
         module_record: *mut JSModuleRecord,
@@ -368,6 +363,7 @@ unsafe extern "C" {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn JSC_JSModuleRecord__addImportEntryNamespaceDefer(
         module_record: *mut JSModuleRecord,
@@ -375,17 +371,16 @@ unsafe extern "C" {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
 }
 impl JSModuleRecord {
     #[inline]
-    pub(crate) fn create(
+    fn create(
         global_object: &JSGlobalObject,
         vm: &VM,
         module_key: &IdentifierArray,
         source_code: &SourceCode,
-        declared_variables: &mut VariableEnvironment,
-        lexical_variables: &mut VariableEnvironment,
         has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
@@ -397,8 +392,6 @@ impl JSModuleRecord {
                 vm,
                 module_key,
                 source_code,
-                declared_variables,
-                lexical_variables,
                 has_import_meta,
                 is_typescript,
                 has_tla,
@@ -416,6 +409,7 @@ trait JSModuleRecordExt {
         export_name: StringID,
         import_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn add_local_export(
         self,
@@ -428,8 +422,14 @@ trait JSModuleRecordExt {
         ia: *mut IdentifierArray,
         export_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
-    fn add_star_export(self, ia: *mut IdentifierArray, module_name: StringID);
+    fn add_star_export(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        module_request_type: u8,
+    );
     fn add_requested_module_null_attributes_ptr(
         self,
         ia: *mut IdentifierArray,
@@ -467,6 +467,7 @@ trait JSModuleRecordExt {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn add_import_entry_single_type_script(
         self,
@@ -474,6 +475,7 @@ trait JSModuleRecordExt {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn add_import_entry_namespace(
         self,
@@ -481,6 +483,7 @@ trait JSModuleRecordExt {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
     fn add_import_entry_namespace_defer(
         self,
@@ -488,6 +491,7 @@ trait JSModuleRecordExt {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     );
 }
 impl JSModuleRecordExt for *mut JSModuleRecord {
@@ -500,10 +504,18 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         export_name: StringID,
         import_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
-            JSC_JSModuleRecord__addIndirectExport(self, ia, export_name, import_name, module_name)
+            JSC_JSModuleRecord__addIndirectExport(
+                self,
+                ia,
+                export_name,
+                import_name,
+                module_name,
+                module_request_type,
+            )
         }
     }
     #[inline]
@@ -522,14 +534,28 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         ia: *mut IdentifierArray,
         export_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
-        unsafe { JSC_JSModuleRecord__addNamespaceExport(self, ia, export_name, module_name) }
+        unsafe {
+            JSC_JSModuleRecord__addNamespaceExport(
+                self,
+                ia,
+                export_name,
+                module_name,
+                module_request_type,
+            )
+        }
     }
     #[inline]
-    fn add_star_export(self, ia: *mut IdentifierArray, module_name: StringID) {
+    fn add_star_export(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        module_request_type: u8,
+    ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
-        unsafe { JSC_JSModuleRecord__addStarExport(self, ia, module_name) }
+        unsafe { JSC_JSModuleRecord__addStarExport(self, ia, module_name, module_request_type) }
     }
     #[inline]
     fn add_requested_module_null_attributes_ptr(
@@ -608,10 +634,18 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
-            JSC_JSModuleRecord__addImportEntrySingle(self, ia, import_name, local_name, module_name)
+            JSC_JSModuleRecord__addImportEntrySingle(
+                self,
+                ia,
+                import_name,
+                local_name,
+                module_name,
+                module_request_type,
+            )
         }
     }
     #[inline]
@@ -621,6 +655,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
@@ -630,6 +665,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 import_name,
                 local_name,
                 module_name,
+                module_request_type,
             )
         }
     }
@@ -640,6 +676,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
@@ -649,6 +686,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 import_name,
                 local_name,
                 module_name,
+                module_request_type,
             )
         }
     }
@@ -659,6 +697,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         local_name: StringID,
         module_name: StringID,
+        module_request_type: u8,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
@@ -668,6 +707,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 import_name,
                 local_name,
                 module_name,
+                module_request_type,
             )
         }
     }

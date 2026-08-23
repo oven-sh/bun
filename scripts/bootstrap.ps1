@@ -1,4 +1,4 @@
-# Version: 20
+# Version: 22
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -8,7 +8,13 @@
 
 # If you need to make a change to this script, such as upgrading a dependency,
 # increment the version comment to indicate that a new image should be built.
-# Otherwise, the existing image will be retroactively updated.
+# Then, on a PR (image bakes are disabled on main):
+#   1. Put `[build windows images]` in the commit subject to bake throwaway
+#      images and run CI against them.
+#   2. Once green, change the subject to `[publish windows images]` and push
+#      again to bake the real `-vN` image tag.
+#   3. Merge after the publish run finishes so main never waits on a bake.
+# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.mjs.
 
 param (
   [Parameter(Mandatory = $false)]
@@ -215,9 +221,9 @@ function Install-Git {
 }
 
 function Install-NodeJs {
-  # Pin to match the ABI version Bun expects (NODE_MODULE_VERSION 137).
-  # Latest Node (25.x) uses ABI 141 which breaks node-gyp tests.
-  $nodejsVersion = "24.3.0"
+  # Pin to match the ABI version Bun expects (NODE_MODULE_VERSION 147).
+  # A mismatched Node ABI breaks node-gyp tests.
+  $nodejsVersion = "26.3.0"
   Install-Scoop-Package "nodejs@$nodejsVersion" -Command node
 
   # Seed node-gyp's cache so napi tests don't re-download headers + node.lib
@@ -808,7 +814,6 @@ function Prefetch-Build-Deps {
   } finally {
     Pop-Location
   }
-  Remove-Item -Recurse -Force $cloneDir
 
   # Read-only: download.ts only ever copies FROM here, and a writable baked
   # input is something a misbehaving job could corrupt for later jobs on the
@@ -816,6 +821,38 @@ function Prefetch-Build-Deps {
   & attrib +R "$prefetchDir\*" /S /D
 
   Set-Env "BUN_BUILD_PREFETCH_DIR" $prefetchDir
+
+  # Warm a shared `bun install` download cache so every test shard's
+  # `bun install` (root + test/) hits disk instead of npm. Keyed by
+  # name@version, so a test/package.json bump after the bake just misses for
+  # that one package. Left writable: bun install extracts new tarballs into the
+  # cache dir itself, so a read-only cache would fail on the first unseen
+  # package rather than fall through. The agent runs as SYSTEM, which can
+  # write here by default.
+  $installCacheDir = "C:\bun-install-cache"
+  New-Item -ItemType Directory -Force -Path $installCacheDir | Out-Null
+  $env:BUN_INSTALL_CACHE_DIR = $installCacheDir
+  try {
+    foreach ($dir in @($cloneDir, (Join-Path $cloneDir "test"))) {
+      Push-Location $dir
+      try { & bun install --ignore-scripts } finally { Pop-Location }
+      if ($LASTEXITCODE -ne 0) { throw "bun install in $dir failed" }
+    }
+    Set-Env "BUN_INSTALL_CACHE_DIR" $installCacheDir
+  } catch {
+    Write-Output "warning: bun install prefetch failed; baking without warm install cache: $_"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $installCacheDir
+  } finally {
+    Remove-Item Env:\BUN_INSTALL_CACHE_DIR -ErrorAction SilentlyContinue
+  }
+
+  # The installs leave ~2 GB of node_modules in the clone (test/ uses the
+  # isolated linker); cmd's rmdir handles the junctions/deep paths that
+  # Remove-Item -Recurse trips over. Redirect inside cmd so 5.1's
+  # NativeCommandError-under-Stop quirk never sees stderr. The clone lives
+  # under $env:TEMP so a leftover is wiped at sysprep anyway.
+  & cmd /c "rmdir /s /q `"$cloneDir`" 2>nul"
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
 }
 
 if ($CI) {

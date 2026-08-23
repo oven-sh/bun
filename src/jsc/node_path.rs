@@ -46,12 +46,18 @@ pub struct ThreadSafe<T: Unprotect>(T);
 
 impl<T: Unprotect> ThreadSafe<T> {
     /// Wrap an **already-protected** `T`. Use when the protect was taken
-    /// elsewhere (e.g. inside `from_js_maybe_async(.., is_async=true)`).
+    /// elsewhere (e.g. inside `from_js_maybe_async(.., Flavor::Async, ..)`).
     #[inline]
     pub fn adopt(value: T) -> Self {
         Self(value)
     }
 }
+
+// SAFETY: this is what the type asserts — the JS-backed views inside `T` are
+// GC-protected for as long as it is held, so a pool job may read them (under
+// its `Ticket`, which keeps the VM alive); the job comes back to the JS
+// thread, where this is dropped and the protection released.
+unsafe impl<T: Unprotect> Send for ThreadSafe<T> {}
 
 impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {
     type Target = T;
@@ -71,7 +77,13 @@ impl<T: Unprotect> core::ops::DerefMut for ThreadSafe<T> {
 impl<T: Unprotect> Drop for ThreadSafe<T> {
     #[inline]
     fn drop(&mut self) {
-        self.0.unprotect();
+        // The same argument types serve mini-loop threads (the shell's `cp` via
+        // `ShellAsyncCpTask`, `bun exec`), which have no VM and never protected
+        // anything; only a JS thread has a protection to release. A JS VM's job
+        // always comes back to its own thread to drop this (its VM waits for it).
+        if crate::virtual_machine::VirtualMachine::get_or_null().is_some() {
+            self.0.unprotect();
+        }
         // `self.0: T` drops next (field drop after `Drop::drop`).
     }
 }
@@ -182,7 +194,7 @@ impl PathLike {
         }
     }
 
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         match self {
             Self::String(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),
@@ -212,14 +224,6 @@ impl PathLike {
             }
             Self::String(_) | Self::ThreadsafeString(_) | Self::EncodedSlice(_) => {}
         }
-    }
-
-    /// Consuming `to_thread_safe()`: protect any JS-backed buffer and return a
-    /// guard that unprotects on drop.
-    #[inline]
-    pub fn into_thread_safe(mut self) -> ThreadSafe<Self> {
-        self.to_thread_safe();
-        ThreadSafe::adopt(self)
     }
 }
 
@@ -278,25 +282,10 @@ impl PathOrFileDescriptorSerializeTag {
 
 impl PathOrFileDescriptor {
     #[inline]
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Self::Fd(_) => b"",
-            Self::Path(p) => p.slice(),
-        }
-    }
-
-    #[inline]
     pub fn to_thread_safe(&mut self) {
         if let Self::Path(p) = self {
             p.to_thread_safe();
         }
-    }
-
-    /// Consuming `to_thread_safe()` — see [`PathLike::into_thread_safe`].
-    #[inline]
-    pub fn into_thread_safe(mut self) -> ThreadSafe<Self> {
-        self.to_thread_safe();
-        ThreadSafe::adopt(self)
     }
 
     #[inline]
@@ -356,16 +345,6 @@ impl PathOrFileDescriptor {
         match self {
             Self::Fd(fd) => *fd,
             Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on Path variant"),
-        }
-    }
-
-    pub fn hash(&self) -> u64 {
-        match self {
-            Self::Path(path) => bun_wyhash::hash(path.slice()),
-            // `Fd` is `#[repr(transparent)]` over its backing integer (`i32`
-            // on posix, `u64` on Windows), so hashing `fd.0.to_ne_bytes()` is
-            // byte-identical to the previous raw `from_raw_parts` reinterpret.
-            Self::Fd(fd) => bun_wyhash::hash(&fd.0.to_ne_bytes()),
         }
     }
 }

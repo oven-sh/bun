@@ -116,15 +116,12 @@ pub(crate) fn get_credentials_with_options(
                         if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
                             let utf8 = str.to_utf8();
                             let endpoint = utf8.slice();
-                            let url = URL::parse(endpoint);
-                            let normalized_endpoint = url.host_with_path();
-                            if !normalized_endpoint.is_empty() {
-                                new_credentials.credentials.endpoint =
-                                    Box::<[u8]>::from(normalized_endpoint);
+                            if let Some(parsed) = URL::parse_s3_endpoint(endpoint) {
+                                new_credentials.credentials.endpoint = parsed.host_with_path;
 
                                 // Default to https://
                                 // Only use http:// if the endpoint specifically starts with 'http://'
-                                new_credentials.credentials.insecure_http = url.is_http();
+                                new_credentials.credentials.insecure_http = parsed.is_http;
 
                                 new_credentials.changed_credentials = true;
                             } else if !endpoint.is_empty() {
@@ -168,7 +165,7 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.changed_credentials = true;
             }
 
-            if let Some(page_size) = opts.get_optional_int::<i64>(global_object, "pageSize")? {
+            if let Some(page_size) = opts.get_optional::<i64>(global_object, "pageSize")? {
                 if page_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
                     || page_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
                 {
@@ -185,7 +182,7 @@ pub(crate) fn get_credentials_with_options(
                     new_credentials.options.part_size = page_size as u64;
                 }
             }
-            if let Some(part_size) = opts.get_optional_int::<i64>(global_object, "partSize")? {
+            if let Some(part_size) = opts.get_optional::<i64>(global_object, "partSize")? {
                 if part_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
                     || part_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
                 {
@@ -203,7 +200,7 @@ pub(crate) fn get_credentials_with_options(
                 }
             }
 
-            if let Some(queue_size) = opts.get_optional_int::<i32>(global_object, "queueSize")? {
+            if let Some(queue_size) = opts.get_optional::<i32>(global_object, "queueSize")? {
                 if queue_size < 1 {
                     return Err(global_object.throw_range_error(
                         queue_size as i64,
@@ -218,7 +215,7 @@ pub(crate) fn get_credentials_with_options(
                 }
             }
 
-            if let Some(retry) = opts.get_optional_int::<i32>(global_object, "retry")? {
+            if let Some(retry) = opts.get_optional::<i32>(global_object, "retry")? {
                 if !(0..=255).contains(&retry) {
                     return Err(global_object.throw_range_error(
                         retry as i64,

@@ -12,9 +12,9 @@ pub struct FontPaletteValuesRule {
     /// The name of the font palette.
     pub name: DashedIdent,
     /// Declarations in the `@font-palette-values` rule.
-    pub properties: ArrayList<FontPaletteValuesProperty>,
+    pub(crate) properties: ArrayList<FontPaletteValuesProperty>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl FontPaletteValuesRule {
@@ -80,9 +80,6 @@ pub enum FontPaletteValuesProperty {
 
 impl FontPaletteValuesRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // `FontPaletteValuesProperty`'s variant-walk lands when its enum body
-        // un-gates (properties::{font, custom}); the gated stub above panics
-        // with the blocker named.
         Self {
             name: self.name.deep_clone(bump),
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
@@ -92,7 +89,7 @@ impl FontPaletteValuesRule {
 }
 
 impl FontPaletteValuesProperty {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             FontPaletteValuesProperty::FontFamily(f) => {
                 dest.write_str("font-family")?;
@@ -110,14 +107,14 @@ impl FontPaletteValuesProperty {
                 css::to_css::from_list(o.as_slice(), dest)
             }
             FontPaletteValuesProperty::Custom(custom) => {
-                dest.write_str(custom.name.as_str())?;
+                custom.name.to_css(dest)?;
                 dest.delim(b':', false)?;
                 custom.value.to_css(dest, true)
             }
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         match self {
             Self::FontFamily(f) => Self::FontFamily(f.deep_clone(bump)),
             Self::BasePalette(b) => Self::BasePalette(b.deep_clone(bump)),
@@ -133,13 +130,13 @@ impl FontPaletteValuesProperty {
 /// property in an `@font-palette-values` rule.
 pub struct OverrideColors {
     /// The index of the color within the palette to override.
-    pub index: u16,
+    pub(crate) index: u16,
     /// The replacement color.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
 }
 
 impl OverrideColors {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<OverrideColors> {
+    fn parse(input: &mut css::Parser) -> css::Result<OverrideColors> {
         use crate::css_values::number::CSSIntegerFns;
         let index = CSSIntegerFns::parse(input)?;
         // Palette entry indices are stored as u16; reject negatives and values
@@ -156,14 +153,14 @@ impl OverrideColors {
         Ok(OverrideColors { index, color })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::number::CSSIntegerFns;
         CSSIntegerFns::to_css(i32::from(self.index), dest)?;
         dest.write_char(b' ')?;
         self.color.to_css(dest)
     }
 
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             index: self.index,
             color: self.color.deep_clone(bump),
@@ -190,7 +187,7 @@ pub enum BasePalette {
 }
 
 impl BasePalette {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BasePalette> {
+    fn parse(input: &mut css::Parser) -> css::Result<BasePalette> {
         use crate::css_values::number::CSSIntegerFns;
         if let Ok(i) = input.try_parse(CSSIntegerFns::parse) {
             // Palette indices are stored as u16; reject negatives and values
@@ -210,7 +207,7 @@ impl BasePalette {
         }}
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::number::CSSIntegerFns;
         match self {
             BasePalette::Light => dest.write_str("light"),
@@ -219,7 +216,7 @@ impl BasePalette {
         }
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         match self {
             Self::Light => Self::Light,
             Self::Dark => Self::Dark,

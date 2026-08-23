@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("namespace imports should not inherit from Object.prototype", async () => {
-  const dir = tempDirWithFiles("namespace-pollution", {
+  await using dir = tempDir("namespace-pollution", {
     "mod.mjs": `export const value = "original";`,
     "test.mjs": `
       import * as mod from './mod.mjs';

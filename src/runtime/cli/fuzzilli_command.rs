@@ -15,7 +15,7 @@ pub(crate) struct FuzzilliCommand;
 
 impl FuzzilliCommand {
     #[cold]
-    pub(crate) fn exec(_ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(_ctx: Command::Context) -> Result<(), crate::Error> {
         // The dispatch site (`cli/mod.rs`) already gates on `ENABLE_FUZZILLI`, so
         // this body is unreachable when the flag is off; bail loudly if a caller
         // ever invokes it anyway.

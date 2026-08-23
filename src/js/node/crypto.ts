@@ -50,11 +50,12 @@ const {
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
-  pbkdf2: _pbkdf2,
+  pbkdf2,
   pbkdf2Sync,
   timingSafeEqual,
   randomInt,
   randomUUID,
+  randomUUIDv7,
   randomBytes,
   randomFillSync,
   randomFill,
@@ -65,11 +66,21 @@ const {
   getHashes,
   scrypt,
   scryptSync,
-} = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
+  argon2: _argon2,
+  argon2Sync: _argon2Sync,
+} = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
 
-const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
+const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
-const { validateString } = require("internal/validators");
+const {
+  validateFunction,
+  validateInteger,
+  validateObject,
+  validateOneOf,
+  validateString,
+  validateUint32,
+} = require("internal/validators");
+const { deprecate } = require("internal/util/deprecate");
 
 const kHandle = Symbol("kHandle");
 
@@ -101,28 +112,13 @@ var Buffer = globalThis.Buffer;
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function getArrayBufferOrView(buffer, name, encoding?) {
-  if (buffer instanceof KeyObject) {
-    if (buffer.type !== "secret") {
-      const error = new TypeError(
-        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
-      );
-      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
-      throw error;
-    }
-    buffer = buffer.export();
-  }
   if (isAnyArrayBuffer(buffer)) return buffer;
   if (typeof buffer === "string") {
     if (encoding === "buffer") encoding = "utf8";
     return Buffer.from(buffer, encoding);
   }
   if (!isArrayBufferView(buffer)) {
-    var error = new TypeError(
-      `ERR_INVALID_ARG_TYPE: The "${name}" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received ` +
-        buffer,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw $ERR_INVALID_ARG_TYPE(name, ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"], buffer);
   }
   return buffer;
 }
@@ -152,25 +148,6 @@ var _subtle = webcrypto.subtle;
 crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
-
-// TODO: move this to zig
-function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  if (typeof digest === "function") {
-    callback = digest;
-    digest = undefined;
-  }
-
-  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
-  if (callback) {
-    promise.then(
-      result => callback(null, result),
-      err => callback(err),
-    );
-    return;
-  }
-
-  promise.then(() => {});
-}
 
 crypto_exports.pbkdf2 = pbkdf2;
 crypto_exports.pbkdf2Sync = pbkdf2Sync;
@@ -284,7 +261,7 @@ Object.assign(Hash.prototype, {
   },
 });
 
-crypto_exports.Hash = Hash;
+crypto_exports.Hash = deprecate(Hash, "crypto.Hash constructor is deprecated.", "DEP0179");
 crypto_exports.createHash = function createHash(algorithm, options) {
   return new Hash(algorithm, options);
 };
@@ -318,7 +295,7 @@ Object.assign(Hmac.prototype, {
   },
 });
 
-crypto_exports.Hmac = Hmac;
+crypto_exports.Hmac = deprecate(Hmac, "crypto.Hmac constructor is deprecated.", "DEP0181");
 crypto_exports.createHmac = function createHmac(hmac, key, options) {
   return new Hmac(hmac, key, options);
 };
@@ -330,6 +307,100 @@ crypto_exports.randomFill = randomFill;
 crypto_exports.randomFillSync = randomFillSync;
 crypto_exports.randomBytes = randomBytes;
 crypto_exports.randomUUID = randomUUID;
+crypto_exports.randomUUIDv7 = randomUUIDv7;
+
+const kArgon2Types = { __proto__: null, argon2d: 0, argon2i: 1, argon2id: 2 };
+
+// Node's argon2 path rejects KeyObject and throws node-formatted
+// ERR_INVALID_ARG_TYPE, unlike the local `getArrayBufferOrView` above.
+function getArgon2BufferSource(buffer, name) {
+  if (isAnyArrayBuffer(buffer)) return buffer;
+  if (typeof buffer === "string") return Buffer.from(buffer, "utf8");
+  if (!isArrayBufferView(buffer)) {
+    throw $ERR_INVALID_ARG_TYPE(name, ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"], buffer);
+  }
+  return buffer;
+}
+
+// Mirrors `check()` in node's lib/internal/crypto/argon2.js, except a
+// wrong-typed secret/associatedData names the property (node passes no name
+// there and trips ERR_INTERNAL_ASSERTION on it).
+function checkArgon2(algorithm, parameters) {
+  validateString(algorithm, "algorithm");
+  validateOneOf(algorithm, "algorithm", ["argon2d", "argon2i", "argon2id"]);
+  const type = kArgon2Types[algorithm];
+
+  validateObject(parameters, "parameters");
+
+  const { parallelism, tagLength, memory, passes } = parameters;
+  const MAX_POSITIVE_UINT_32 = 2 ** 32 - 1;
+
+  const message = getArgon2BufferSource(parameters.message, "parameters.message");
+  validateInteger(message.byteLength, "parameters.message.byteLength", 0, MAX_POSITIVE_UINT_32);
+
+  const nonce = getArgon2BufferSource(parameters.nonce, "parameters.nonce");
+  validateInteger(nonce.byteLength, "parameters.nonce.byteLength", 8, MAX_POSITIVE_UINT_32);
+
+  validateInteger(parallelism, "parameters.parallelism", 1, 2 ** 24 - 1);
+  validateInteger(tagLength, "parameters.tagLength", 4, MAX_POSITIVE_UINT_32);
+  validateInteger(memory, "parameters.memory", 8 * parallelism, MAX_POSITIVE_UINT_32);
+  validateUint32(passes, "parameters.passes", true);
+
+  let secret = parameters.secret;
+  if (secret === undefined) {
+    secret = new Uint8Array(0);
+  } else {
+    secret = getArgon2BufferSource(secret, "parameters.secret");
+    validateInteger(secret.byteLength, "parameters.secret.byteLength", 0, MAX_POSITIVE_UINT_32);
+  }
+
+  let associatedData = parameters.associatedData;
+  if (associatedData === undefined) {
+    associatedData = new Uint8Array(0);
+  } else {
+    associatedData = getArgon2BufferSource(associatedData, "parameters.associatedData");
+    validateInteger(associatedData.byteLength, "parameters.associatedData.byteLength", 0, MAX_POSITIVE_UINT_32);
+  }
+
+  return { message, nonce, secret, associatedData, tagLength, passes, parallelism, memory, type };
+}
+
+crypto_exports.argon2 = function argon2(algorithm, parameters, callback) {
+  parameters = checkArgon2(algorithm, parameters);
+
+  validateFunction(callback, "callback");
+
+  _argon2(
+    parameters.message,
+    parameters.nonce,
+    parameters.parallelism,
+    parameters.tagLength,
+    parameters.memory,
+    parameters.passes,
+    parameters.secret,
+    parameters.associatedData,
+    parameters.type,
+    (err, result) => {
+      if (err !== undefined) return callback(err);
+      callback(null, result);
+    },
+  );
+};
+crypto_exports.argon2Sync = function argon2Sync(algorithm, parameters) {
+  parameters = checkArgon2(algorithm, parameters);
+
+  return _argon2Sync(
+    parameters.message,
+    parameters.nonce,
+    parameters.parallelism,
+    parameters.tagLength,
+    parameters.memory,
+    parameters.passes,
+    parameters.secret,
+    parameters.associatedData,
+    parameters.type,
+  );
+};
 
 crypto_exports.checkPrime = checkPrime;
 crypto_exports.checkPrimeSync = checkPrimeSync;
@@ -348,7 +419,7 @@ Object.defineProperty(crypto_exports, "fips", {
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
-    value: randomBytes,
+    value: deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
     enumerable: false,
     configurable: true,
   });
@@ -364,6 +435,7 @@ crypto_exports.DiffieHellman = DiffieHellman;
 
 crypto_exports.diffieHellman = diffieHellman;
 
+ECDH.prototype.setPublicKey = deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031");
 crypto_exports.ECDH = ECDH;
 crypto_exports.createECDH = function createECDH(curve) {
   return new ECDH(curve);

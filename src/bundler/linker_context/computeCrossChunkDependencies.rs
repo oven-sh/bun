@@ -1,7 +1,7 @@
 use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::{ArrayHashMap, VecExt, index_sort};
 
 use crate::LinkerContext;
 use crate::js_meta;
@@ -11,7 +11,7 @@ use crate::{
     RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
-pub fn compute_cross_chunk_dependencies(
+pub(crate) fn compute_cross_chunk_dependencies(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
 ) -> Result<(), bun_alloc::AllocError> {
@@ -28,7 +28,6 @@ pub fn compute_cross_chunk_dependencies(
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
         })
         .collect();
-    // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
 
     {
         // Constructed on the stack and dropped at scope end.
@@ -83,7 +82,7 @@ pub fn compute_cross_chunk_dependencies(
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
 }
 
-pub(crate) struct CrossChunkDependencies<'a, 'bump> {
+struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
     // `BackRef` — the same `[Chunk]` slice is also iterated mutably by
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
@@ -124,7 +123,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     // membership — debug-asserted in `assign_chunk_index`).
     // Reads `ctx`/`chunks`/SoA columns shared. Never forms `&mut
     // LinkerContext` (`ctx` is a `BackRef`, deref'd to `&`).
-    pub(crate) fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
+    fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
         let deps = self;
         // `ctx` / `chunks` are `BackRef`s into `LinkerContext` / the caller's chunk
         // slice, valid for the link pass (see note on the struct fields).
@@ -419,7 +418,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // of hash calculation.
         if chunk_metas[chunk_index].dynamic_imports.count() > 0 {
             let dynamic_chunk_indices = chunk_metas[chunk_index].dynamic_imports.keys_mut();
-            dynamic_chunk_indices.sort_unstable();
+            index_sort::sort_slice_unstable_by(dynamic_chunk_indices, |a, b| a.cmp(b));
 
             let chunk = &mut chunks[chunk_index];
             // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
@@ -443,7 +442,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug_assert!(chunk_metas.len() == chunks.len());
         let mut r = renamer::ExportRenamer::init();
-        // defer r.deinit() — handled by Drop
         debug!("Generating cross-chunk exports");
 
         let mut stable_ref_list: Vec<StableRef> = Vec::new();
@@ -494,7 +492,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                         clause_items.push(bun_ast::ClauseItem {
                             name: bun_ast::LocRef {
-                                ref_: Some(ref_),
+                                ref_,
                                 loc: bun_ast::Loc::EMPTY,
                             },
                             alias,
@@ -536,7 +534,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
-        // defer list.deinit() — handled by Drop
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
@@ -579,7 +576,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         for item in cross_chunk_import.sorted_import_items.slice() {
                             clauses.push(bun_ast::ClauseItem {
                                 name: bun_ast::LocRef {
-                                    ref_: Some(item.r#ref),
+                                    ref_: item.r#ref,
                                     loc: bun_ast::Loc::EMPTY,
                                 },
                                 alias: bun_ast::StoreStr::new(item.export_alias.as_ref()),
@@ -619,8 +616,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
     Ok(())
 }
-
-pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
 
 // `Format` is the bundler output-format enum (Esm/Cjs/Iife/...);
 // aliased so callsites read as `c.options.output_format`.

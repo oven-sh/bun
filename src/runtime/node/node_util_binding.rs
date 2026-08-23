@@ -9,8 +9,7 @@ use bun_dotenv::env_loader as envloader;
 
 #[bun_jsc::host_fn]
 pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = frame.arguments();
     if arguments.is_empty() {
         return Err(global.throw_not_enough_arguments("internalErrorName", 1, arguments.len()));
     }
@@ -21,6 +20,24 @@ pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) ->
     }
     let mut fmtstring = BunString::create_format(format_args!("Unknown system error {}", err_int));
     fmtstring.transfer_to_js(global)
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn internal_error_entries(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    // Flat [code, name, code, name, ...] pairs — libuv's full error table for
+    // this target. Consumed by node:util's getSystemErrorMap().
+    let entries = UV_E::ENTRIES;
+    JSValue::create_array_from_iter(global, 0..entries.len() * 2, |i| {
+        let (code, name) = entries[i / 2];
+        if i % 2 == 0 {
+            Ok(JSValue::js_number_from_int32(code))
+        } else {
+            BunString::static_(name).to_js(global)
+        }
+    })
 }
 
 #[bun_jsc::host_fn]
@@ -37,6 +54,49 @@ pub(crate) fn enobufs_error_code(
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
     Ok(JSValue::js_number_from_int32(-UV_E::NOBUFS))
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn uv_translate_sys_error(
+    _global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let arg = frame.arguments_as_array::<1>()[0];
+    if !arg.is_number() {
+        return Ok(JSValue::js_number_from_int32(-UV_E::INVAL));
+    }
+    let n = arg.to_int32();
+    if n <= 0 {
+        return Ok(JSValue::js_number_from_int32(n));
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: pure translation function.
+        let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(n) };
+        return Ok(JSValue::js_number_from_int32(if uv_err != 0 {
+            uv_err
+        } else {
+            -UV_E::INVAL
+        }));
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(JSValue::js_number_from_int32(-n))
+    }
+}
+
+/// libuv's ECANCELED code (`uv_udp_send` requests cancelled by close). Not a
+/// JS-side literal (unlike EBADF/EINVAL, ECANCELED's number differs across the
+/// POSIX platforms: Linux 125, Darwin 89, FreeBSD 85; synthetic -4081 on
+/// Windows), and NOT `process.binding("uv")` either: that binding negates the
+/// compiling host's <errno.h> value, which on Windows is the CRT's 105, not
+/// libuv's -4081. `UV_E` is the one table that is libuv-correct everywhere.
+#[bun_jsc::host_fn]
+pub(crate) fn ecanceled_error_code(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number_from_int32(-UV_E::CANCELED))
 }
 
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
@@ -122,15 +182,22 @@ fn split(
     bun_string_jsc::to_js_array(global, OwnedString::as_raw_slice(&lines))
 }
 
-pub(crate) struct SplitNewlineIterator<'a, T> {
+struct SplitNewlineIterator<'a, T> {
     buffer: &'a [T],
     index: Option<usize>,
 }
 
 impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     /// Returns a slice of the next field, or null if splitting is complete.
-    pub(crate) fn next(&mut self) -> Option<&'a [T]> {
+    fn next(&mut self) -> Option<&'a [T]> {
         let start = self.index?;
+
+        // A lookbehind split emits no trailing empty field when the input ends
+        // with '\n' (but "" still splits to [""]).
+        if start == self.buffer.len() && start != 0 {
+            self.index = None;
+            return None;
+        }
 
         if let Some(delim_start) = self.buffer[start..]
             .iter()
@@ -164,22 +231,19 @@ pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> 
 }
 
 #[bun_jsc::host_fn]
-pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let content = frame.argument(0);
     validators::validate_string(global, content, "content")?;
 
-    // `validate_string` above guarantees `content.is_string()`, so
-    // `as_string()` returns a non-null live JSString*. `JSString` is an
-    // `opaque_ffi!` ZST handle; `opaque_ref` is the centralised deref proof.
-    let str = bun_jsc::JSString::opaque_ref(content.as_string()).to_slice(global);
+    // `validate_string` accepts StringObject, so coerce to a primitive JSString
+    // before slicing.
+    let str = content.to_js_string(global)?.to_slice(global);
 
-    let mut map = envloader::Map::init();
-    let mut p = envloader::Loader::init(&mut map);
+    let mut p = envloader::Loader::init();
     p.load_from_string::<true, false>(str.slice())?;
-    drop(p);
 
-    let obj = JSValue::create_empty_object(global, map.count());
-    for (k, v) in map.iter() {
+    let obj = JSValue::create_empty_object(global, p.map.map.count());
+    for (k, v) in p.map.map.iter() {
         obj.put(
             global,
             ZigString::init_utf8(k),

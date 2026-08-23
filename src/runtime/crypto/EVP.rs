@@ -9,8 +9,8 @@ use crate::jsc::JSGlobalObject;
 pub struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
     // FFI: BoringSSL EVP_MD singletons are static for the process lifetime.
-    pub md: *const boringssl::EVP_MD,
-    pub algorithm: Algorithm,
+    md: *const boringssl::EVP_MD,
+    algorithm: Algorithm,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -126,6 +126,8 @@ bun_core::comptime_string_map! {
         b"sha3-512" => Algorithm::Sha3_512,
         b"shake128" => Algorithm::Shake128,
         b"shake256" => Algorithm::Shake256,
+        b"shake-128" => Algorithm::Shake128,
+        b"shake-256" => Algorithm::Shake256,
         b"ripemd160" => Algorithm::Ripemd160,
         b"blake2b256" => Algorithm::Blake2b256,
         b"blake2b512" => Algorithm::Blake2b512,
@@ -154,23 +156,22 @@ bun_core::comptime_string_map! {
 // b"rsa-sha512" => .@"RSA-SHA512",
 // b"rsa-ripemd160" => .@"RSA-RIPEMD160",
 
-/// Case-sensitive name → `Algorithm`.
-pub(crate) fn lookup(bytes: &[u8]) -> Option<Algorithm> {
-    ALGORITHM_MAP.get(bytes).copied()
-}
-
-/// ASCII-case-insensitive `lookup`.
+/// ASCII-case-insensitive name → `Algorithm`.
 pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
     ALGORITHM_MAP.get_ascii_case_insensitive(bytes).copied()
 }
 
 impl EVP {
+    pub fn algorithm(&self) -> Algorithm {
+        self.algorithm
+    }
+
     /// # Safety
     /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton) and
     /// `engine` must be either null or a valid `ENGINE` pointer.
     // Forwards `md`/`engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn init(
+    pub(crate) fn init(
         algorithm: Algorithm,
         md: *const boringssl::EVP_MD,
         engine: *mut boringssl::ENGINE,
@@ -205,7 +206,7 @@ impl EVP {
     /// `engine` must be either null or a valid `ENGINE` pointer.
     // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn hash(
+    pub(crate) fn hash(
         &mut self,
         engine: *mut boringssl::ENGINE,
         input: &[u8],
@@ -233,7 +234,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub fn r#final<'a>(
+    pub(crate) fn r#final<'a>(
         &mut self,
         engine: *mut boringssl::ENGINE,
         output: &'a mut [u8],
@@ -253,7 +254,7 @@ impl EVP {
         &mut output[..outsize as usize]
     }
 
-    pub fn update(&mut self, input: &[u8]) {
+    pub(crate) fn update(&mut self, input: &[u8]) {
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx is
         // initialized; input.as_ptr() is valid for input.len() bytes.
         unsafe {
@@ -263,7 +264,7 @@ impl EVP {
         }
     }
 
-    pub fn size(&self) -> u16 {
+    pub(crate) fn size(&self) -> u16 {
         // SAFETY: FFI into BoringSSL; self.ctx was initialized in init() and is valid for
         // the lifetime of EVP.
         unsafe { boringssl::EVP_MD_CTX_size(&raw const self.ctx) as u16 }
@@ -271,7 +272,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
+    pub(crate) fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
         boringssl::ERR_clear_error();
         // SAFETY: self.md is a static singleton; caller upholds `engine`.
         let mut new = EVP::init(self.algorithm, self.md, engine);
@@ -285,7 +286,7 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
+    pub(crate) fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
         if let Some(algorithm) = lookup_ignore_case(name) {
             if let Some(md) = algorithm.md() {
                 // `Algorithm::md()` lives in `bun_sha_hmac`
@@ -309,7 +310,7 @@ impl EVP {
         None
     }
 
-    pub fn by_name(name: &ZigString, global: &JSGlobalObject) -> Option<EVP> {
+    pub(crate) fn by_name(name: &ZigString, global: &JSGlobalObject) -> Option<EVP> {
         let name_str = name.to_slice();
         // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
         // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
@@ -339,8 +340,3 @@ impl Drop for EVP {
 }
 
 pub(crate) type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
-
-// The `crypto::EVP` re-export (module alias) lets `crypto::EVP::pbkdf2` /
-// `crypto::EVP::PBKDF2` resolve through this module.
-pub use super::pbkdf2;
-pub use super::pbkdf2 as PBKDF2;

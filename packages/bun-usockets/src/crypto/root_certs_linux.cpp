@@ -1,6 +1,7 @@
 #ifndef _WIN32
 #ifndef __APPLE__
 
+#include "libusockets.h"
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,7 +106,7 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
   
   // If SSL_CERT_DIR is set, load from each directory (colon-separated)
   if (ssl_cert_dir && strlen(ssl_cert_dir) > 0) {
-    char* dir_copy = strdup(ssl_cert_dir);
+    char* dir_copy = us_strdup(ssl_cert_dir);
     if (dir_copy) {
       char* token = strtok(dir_copy, ":");
       while (token != NULL) {
@@ -115,7 +116,7 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
         }
         token = strtok(NULL, ":");
       }
-      free(dir_copy);
+      us_free(dir_copy);
     }
   }
   

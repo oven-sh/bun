@@ -100,7 +100,7 @@ impl InternalSocket {
         matches!(self, InternalSocket::Detached)
     }
     #[inline]
-    pub fn is_named_pipe(&self) -> bool {
+    pub(crate) fn is_named_pipe(&self) -> bool {
         #[cfg(windows)]
         return matches!(self, InternalSocket::Pipe(_));
         #[cfg(not(windows))]
@@ -197,9 +197,6 @@ pub struct NewSocketHandler<const IS_SSL: bool> {
 
 pub type SocketTCP = NewSocketHandler<false>;
 pub type SocketTLS = NewSocketHandler<true>;
-/// snake-case aliases (match `AnySocket` variant names).
-pub type SocketTcp = NewSocketHandler<false>;
-pub type SocketTls = NewSocketHandler<true>;
 /// Alias used by `http`, `ipc`, `websocket_client` — same type, less ceremony.
 pub type SocketHandler<const SSL: bool> = NewSocketHandler<SSL>;
 
@@ -258,6 +255,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── state queries ───────────────────────────────────────────────────────
 
+    /// Raw-TCP write that also reports a fatal send error as the positive
+    /// errno of the failed `send()` (0 = none); non-Connected and TLS-wrapped
+    /// sockets fall back to the plain write (no fatal signal).
+    pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
+        on_socket!(self.socket;
+            connected s => s.write_check_error(data),
+            duplex d => (d.encode_and_write(data), 0),
+            pipe p => (p.encode_and_write(data), 0),
+            else => (0, 0),
+        )
+    }
+
     pub fn is_closed(&self) -> bool {
         on_socket!(self.socket;
             connected s => s.is_closed(),
@@ -311,6 +320,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Raw `getaddrinfo(3)` return code for a pending connect whose name
+    /// lookup failed; 0 otherwise (a connect failure past name resolution, or
+    /// any non-connecting handle). A different namespace from
+    /// [`Self::get_error`] (errno).
+    pub fn dns_error(&self) -> i32 {
+        match self.socket {
+            InternalSocket::Connecting(c) => conn(c).get_dns_error(),
+            _ => 0,
+        }
+    }
+
     // ── lifecycle ───────────────────────────────────────────────────────────
 
     pub fn close(&self, code: CloseCode) {
@@ -320,6 +340,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             detached => {},
             duplex d => d.close(),
             pipe p => p.close(),
+        )
+    }
+
+    /// The JS wrapper that owns this socket is being finalized: whatever the
+    /// close below unwinds must not reach back into JS objects.
+    pub fn prepare_for_finalize(&self) {
+        on_socket!(self.socket;
+            connected _s => {},
+            connecting _c => {},
+            detached => {},
+            duplex d => d.abandon_js_side(),
+            pipe _p => {},
         )
     }
 
@@ -371,6 +403,38 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::UpgradedDuplex(_) | InternalSocket::Pipe => self.write(data),
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
         }
+    }
+
+    /// Vectored raw write: one writev on real sockets; sequential raw writes on
+    /// transports without an fd (duplex/pipe). Plain-TCP callers only — raw
+    /// writes bypass TLS framing.
+    pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> i32 {
+        on_socket!(self.socket;
+            connected s => s.raw_writev(iov),
+            duplex d => {
+                let mut total: i32 = 0;
+                for v in iov {
+                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
+                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
+                    let w = d.raw_write(slice);
+                    if w > 0 { total += w; }
+                    if w < slice.len() as i32 { break; }
+                }
+                total
+            },
+            pipe p => {
+                let mut total: i32 = 0;
+                for v in iov {
+                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
+                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
+                    let w = p.raw_write(slice);
+                    if w > 0 { total += w; }
+                    if w < slice.len() as i32 { break; }
+                }
+                total
+            },
+            else => 0,
+        )
     }
 
     /// Bypass TLS — raw bytes to the fd even on a TLS socket.
@@ -440,9 +504,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── flow control / sockopts ─────────────────────────────────────────────
 
+    /// A connect that has not completed yet is left alone (like the
+    /// `connecting` arm): the open re-arms reads, so latching a pause here
+    /// would only make the next real `pause()` a no-op.
     pub fn pause_stream(&self) -> bool {
         on_socket!(self.socket;
-            connected s => { s.pause(); true },
+            connected s => if s.is_established() { s.pause(); true } else { false },
             connecting _c => false,
             detached => true,
             duplex _d => false, // TODO: pause/resume upgraded duplex
@@ -452,7 +519,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     pub fn resume_stream(&self) -> bool {
         on_socket!(self.socket;
-            connected s => { s.resume(); true },
+            connected s => if s.is_established() { s.resume(); true } else { false },
             connecting _c => false,
             detached => true,
             duplex _d => false, // TODO: pause/resume upgraded duplex
@@ -477,22 +544,60 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    // ── TLS ─────────────────────────────────────────────────────────────────
-
-    /// Kick TLS open (ClientHello / accept) on an already-connected socket.
-    pub fn start_tls(&self, is_client: bool) {
-        if let InternalSocket::Connected(s) = self.socket {
-            sock(s).open(is_client, None);
+    /// Set the IP type-of-service. Returns 0 on success or a negative errno;
+    /// non-TCP sockets (pipes, duplexes, not-yet-connected) report -EBADF (-9)
+    /// the way Node's no-handle fallback does.
+    pub fn set_tos(&self, tos: i32) -> i32 {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).set_tos(tos),
+            _ => -9,
         }
     }
+
+    /// Get the IP type-of-service (>= 0) or a negative errno.
+    pub fn get_tos(&self) -> i32 {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).get_tos(),
+            _ => -9,
+        }
+    }
+
+    /// Resume a handshake suspended by an asynchronous SNICallback. The ctx
+    /// reference is consumed (freed here when the socket is no longer a real
+    /// connected socket).
+    pub fn sni_resolve(&self, ctx: *mut crate::SslCtx, error: bool) {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).sni_resolve(ctx, error),
+            _ => {
+                // The socket is gone; release the reference the caller handed us.
+                if !ctx.is_null() {
+                    // SAFETY: the caller passed an owned SSL_CTX reference.
+                    unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+                }
+            }
+        }
+    }
+
+    // ── TLS ─────────────────────────────────────────────────────────────────
 
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        if !IS_SSL {
+        // A connecting socket has no `SSL` yet (its native handle is a
+        // sentinel, not a pointer).
+        if !IS_SSL || matches!(self.socket, InternalSocket::Connecting(_)) {
             return None;
         }
         self.get_native_handle().map(|h| h.cast())
+    }
+
+    /// The socket's `SSL` handle as a borrow (`SSL` is a zero-sized opaque,
+    /// so this is the safe spelling of [`ssl`](Self::ssl)).
+    #[inline]
+    pub fn ssl_mut(&self) -> Option<&mut bun_boringssl_sys::SSL> {
+        self.ssl()
+            .filter(|p| !p.is_null())
+            .map(bun_opaque::opaque_deref_mut)
     }
 
     /// `*SSL` when `IS_SSL`, raw fd-as-ptr otherwise. Type-erased to
@@ -518,7 +623,23 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    // ── ext / group / fd ────────────────────────────────────────────────────
+    // ── ext / fd ────────────────────────────────────────────────────────────
+
+    /// Clear the `Option<NonNull<Owner>>` ext slot written by
+    /// [`connect_group`](Self::connect_group), returning whether it still held
+    /// the owner. Used when the owner tears the socket down itself and must
+    /// reclaim the ref the slot represented.
+    pub fn take_ext_owner<Owner>(&self) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => {
+                sock(s).ext::<Option<NonNull<Owner>>>().take().is_some()
+            }
+            InternalSocket::Connecting(s) => {
+                conn(s).ext::<Option<NonNull<Owner>>>().take().is_some()
+            }
+            _ => false,
+        }
+    }
 
     /// Typed ext storage. `None` for non-uSockets transports.
     pub fn ext<T>(&self) -> Option<*mut T> {
@@ -533,17 +654,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// Group this socket is linked into. `None` for non-uSockets transports.
-    pub fn group(&self) -> Option<*mut SocketGroup> {
-        match self.socket {
-            InternalSocket::Connected(s) => {
-                Some(std::ptr::from_mut::<SocketGroup>(sock(s).group()))
-            }
-            InternalSocket::Connecting(s) => Some(conn(s).group()),
-            _ => None,
-        }
-    }
-
     /// Underlying fd. Same fd regardless of TLS — read directly off the poll.
     #[inline]
     pub fn fd(&self) -> Fd {
@@ -553,42 +663,32 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    pub fn local_port(&self) -> i32 {
+    pub fn local_port(&self) -> Option<u16> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).local_port(),
-            _ => 0,
+            _ => None,
         }
     }
 
-    pub fn remote_port(&self) -> i32 {
+    pub fn remote_port(&self) -> Option<u16> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).remote_port(),
-            _ => 0,
+            _ => None,
         }
     }
 
     pub fn local_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
         match self.socket {
-            InternalSocket::Connected(s) => match sock(s).local_address(buf) {
-                Ok(v) => Some(v),
-                Err(e) => bun_core::Output::panic(format_args!(
-                    "Failed to get socket's local address: {}",
-                    e.name()
-                )),
-            },
+            // getsockname() can fail (EBADF/ENOTCONN/…) on a socket the OS
+            // closed or reset underneath us; callers treat that as "no address".
+            InternalSocket::Connected(s) => sock(s).local_address(buf).ok(),
             _ => None,
         }
     }
 
     pub fn remote_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
         match self.socket {
-            InternalSocket::Connected(s) => match sock(s).remote_address(buf) {
-                Ok(v) => Some(v),
-                Err(e) => bun_core::Output::panic(format_args!(
-                    "Failed to get socket's remote address: {}",
-                    e.name()
-                )),
-            },
+            InternalSocket::Connected(s) => sock(s).remote_address(buf).ok(),
             _ => None,
         }
     }
@@ -624,13 +724,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             socket: InternalSocket::UpgradedDuplex(d),
         }
     }
-    #[cfg(windows)]
-    #[inline]
-    pub fn from_named_pipe(p: *mut WindowsNamedPipe) -> Self {
-        Self {
-            socket: InternalSocket::Pipe(p),
-        }
-    }
 
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
     /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`.
@@ -650,6 +743,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             None,
             ext_size,
             handle.native() as LIBUS_SOCKET_DESCRIPTOR,
+            0,
             is_ipc,
         );
         if raw.is_null() {
@@ -710,7 +804,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // layout — NOT `Option<*mut Owner>` (16 bytes, discriminant-first),
         // which would hand the trampoline `1` instead of the owner pointer.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
-        match g.connect(kind, ssl_ctx, host_z, port, opts, ext_size) {
+        match g.connect(kind, ssl_ctx, host_z, port, None, opts, ext_size) {
             ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             ConnectResult::Socket(s) => {
                 *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
@@ -817,9 +911,9 @@ mod sock_c {
 pub enum ConnectError {
     FailedToOpenSocket,
 }
-impl From<ConnectError> for bun_core::Error {
+impl From<ConnectError> for crate::Error {
     fn from(_: ConnectError) -> Self {
-        bun_core::err!("FailedToOpenSocket")
+        crate::Error::FailedToOpenSocket
     }
 }
 
@@ -849,34 +943,11 @@ macro_rules! any_socket_forward {
 
 impl AnySocket {
     #[inline]
-    pub fn is_ssl(&self) -> bool {
-        matches!(self, AnySocket::SocketTls(_))
-    }
-    #[inline]
     pub fn socket(&self) -> &InternalSocket {
         match self {
             AnySocket::SocketTcp(s) => &s.socket,
             AnySocket::SocketTls(s) => &s.socket,
         }
-    }
-    #[inline]
-    pub fn ext<T>(&self) -> Option<*mut T> {
-        match self {
-            AnySocket::SocketTcp(s) => s.ext::<T>(),
-            AnySocket::SocketTls(s) => s.ext::<T>(),
-        }
-    }
-    #[inline]
-    pub fn terminate(&self) {
-        self.close(CloseCode::failure)
-    }
-    #[inline]
-    pub fn group(&self) -> *mut SocketGroup {
-        match self {
-            AnySocket::SocketTcp(s) => s.group(),
-            AnySocket::SocketTls(s) => s.group(),
-        }
-        .unwrap()
     }
 
     any_socket_forward! {
@@ -888,7 +959,7 @@ impl AnySocket {
         fn set_timeout(&self, seconds: c_uint);
         fn shutdown(&self);
         fn shutdown_read(&self);
-        fn local_port(&self) -> i32;
+        fn local_port(&self) -> Option<u16>;
         fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

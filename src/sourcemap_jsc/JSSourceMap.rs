@@ -7,23 +7,23 @@ use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
-use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
+use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 // generate-classes.ts does not emit Rust accessors yet, so the
 // `to_js`/cached-setter helpers below forward to the codegen-emitted C++
 // symbols by hand.
 pub struct JSSourceMap {
-    pub sourcemap: Arc<ParsedSourceMap>,
-    pub sources: Box<[bstring::String]>,
-    pub names: Box<[bstring::String]>,
+    pub(crate) sourcemap: Arc<ParsedSourceMap>,
+    pub(crate) sources: Box<[bstring::String]>,
+    pub(crate) names: Box<[bstring::String]>,
 }
 
 /// TODO: when we implement --enable-source-map CLI flag, set this to true.
 // Mutable global; AtomicBool for safe mutation.
-pub(crate) static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
+static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
 #[bun_jsc::host_fn(export = "Bun__JSSourceMap__find")]
-pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // Node.js doesn't enable source maps by default.
     // In Bun, we do use them for almost all files since we transpile almost all files
     // If we enable this by default, we don't have a `payload` object since we don't internally create one.
@@ -157,15 +157,15 @@ impl JSSourceMap {
         );
 
         let mapping_list = match parse_result {
-            ParseResult::Success(parsed) => parsed,
-            ParseResult::Fail(fail) => {
+            Ok(parsed) => parsed,
+            Err(fail) => {
                 if let Some(loc) = fail.loc.to_nullable() {
                     return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("{} at {}", BStr::new(fail.msg), loc.start),
+                        format_args!("{} at {}", fail.err.message(), loc.start),
                     )));
                 }
                 return Err(global.throw_value(
-                    global.create_syntax_error_instance(format_args!("{}", BStr::new(fail.msg))),
+                    global.create_syntax_error_instance(format_args!("{}", fail.err.message())),
                 ));
             }
         };
@@ -267,6 +267,9 @@ impl JSSourceMap {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let [line_number, column_number] = get_line_column(global, frame)?;
+        if line_number < 0 || column_number < 0 {
+            return Ok(JSValue::create_empty_object(global, 0));
+        }
 
         let Some(mapping) = this.sourcemap.find_mapping(
             Ordinal::from_zero_based(line_number),
@@ -296,6 +299,9 @@ impl JSSourceMap {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let [line_number, column_number] = get_line_column(global, frame)?;
+        if line_number < 0 || column_number < 0 {
+            return Ok(JSValue::create_empty_object(global, 0));
+        }
 
         let Some(mapping) = this.sourcemap.find_mapping(
             Ordinal::from_zero_based(line_number),

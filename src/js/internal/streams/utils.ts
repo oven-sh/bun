@@ -125,16 +125,6 @@ function isWritableFinished(stream, strict) {
   return !!(wState.finished || (strict === false && wState.ended === true && wState.length === 0));
 }
 
-// Have been push(null):d.
-function isReadableEnded(stream) {
-  if (!isReadableNodeStream(stream)) return null;
-  if (stream.readableEnded === true) return true;
-  const rState = stream._readableState;
-  if (!rState || rState.errored) return false;
-  if (typeof rState?.ended !== "boolean") return null;
-  return rState.ended;
-}
-
 // Have emitted 'end'.
 function isReadableFinished(stream, strict?) {
   if (!isReadableNodeStream(stream)) return null;
@@ -183,8 +173,9 @@ function isWritableErrored(stream) {
     return null;
   }
 
-  if (stream.writableErrored) {
-    return stream.writableErrored;
+  const writableErrored = stream.writableErrored;
+  if (writableErrored) {
+    return writableErrored;
   }
 
   return stream._writableState?.errored ?? null;
@@ -195,8 +186,9 @@ function isReadableErrored(stream) {
     return null;
   }
 
-  if (stream.readableErrored) {
-    return stream.readableErrored;
+  const readableErrored = stream.readableErrored;
+  if (readableErrored) {
+    return readableErrored;
   }
 
   return stream._readableState?.errored ?? null;
@@ -207,8 +199,9 @@ function isClosed(stream) {
     return null;
   }
 
-  if (typeof stream.closed === "boolean") {
-    return stream.closed;
+  const closed = stream.closed;
+  if (typeof closed === "boolean") {
+    return closed;
   }
 
   const wState = stream._writableState;
@@ -218,8 +211,9 @@ function isClosed(stream) {
     return wState?.closed || rState?.closed;
   }
 
-  if (typeof stream._closed === "boolean" && isOutgoingMessage(stream)) {
-    return stream._closed;
+  const _closed = stream._closed;
+  if (typeof _closed === "boolean" && isOutgoingMessage(stream)) {
+    return _closed;
   }
 
   return null;
@@ -278,21 +272,16 @@ export default {
   isDestroyed,
   kIsDestroyed,
   isDisturbed,
-  kIsDisturbed,
   isErrored,
-  kIsErrored,
   isReadable,
-  kIsReadable,
   kIsClosedPromise,
   kControllerErrorFunction,
-  kIsWritable,
   isClosed,
   isDuplexNodeStream,
   isFinished,
   isIterable,
   isReadableNodeStream,
   isReadableStream,
-  isReadableEnded,
   isReadableFinished,
   isReadableErrored,
   isNodeStream,
@@ -304,7 +293,6 @@ export default {
   isWritableFinished,
   isWritableErrored,
   isServerRequest,
-  isServerResponse,
   willEmitClose,
   isTransformStream,
   kState,

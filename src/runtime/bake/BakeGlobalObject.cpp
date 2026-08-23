@@ -38,7 +38,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 
         if (!keyString) {
             auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
-            promise->reject(vm, global, JSC::createError(global, "import() requires a string"_s));
+            promise->reject(vm, JSC::createError(global, "import() requires a string"_s));
             return promise;
         }
 
@@ -94,7 +94,7 @@ static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->rejectAsHandled(vm, globalObject, value);
+    promise->rejectAsHandled(vm, value);
     return promise;
 }
 
@@ -102,7 +102,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->fulfill(vm, globalObject, value);
+    promise->fulfill(vm, value);
     return promise;
 }
 
@@ -248,7 +248,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();
-    WebCore::JSVMClientData::create(&vm, bunVM);
+    WebCore::JSVMClientData::create(&vm, bunVM, /* worker */ nullptr);
 
     JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
     Bake::GlobalObject* global = Bake::GlobalObject::create(
@@ -261,25 +261,9 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     JSC::gcProtect(global);
 
     global->setConsole(console);
-    global->setStackTraceLimit(10); // Node.js defaults to 10
     global->isThreadLocalDefaultGlobalObject = true;
 
-    // if (shouldDisableStopIfNecessaryTimer) {
     vm.heap.disableStopIfNecessaryTimer();
-    // }
-
-    // if you process.nextTick on a microtask we need thsi
-    // TODO: it segfaults! process.nextTick is scoped out for now i guess!
-    // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
-    // vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
-    //   if (auto nextTickQueue = global->m_nextTickQueue.get()) {
-    //     global->resetOnEachMicrotaskTick();
-    //     // Bun::JSNextTickQueue *queue =
-    //     //     uncheckedDowncast<Bun::JSNextTickQueue>(nextTickQueue);
-    //     // queue->drain(vm, global);
-    //     return;
-    //   }
-    // });
 
     return global;
 }

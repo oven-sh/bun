@@ -18,7 +18,7 @@ bun_opaque::opaque_ffi! {
 }
 
 impl WeakImpl {
-    pub(crate) fn init(
+    fn init(
         global_this: &JSGlobalObject,
         value: JSValue,
         ref_type: WeakRefType,
@@ -40,7 +40,7 @@ impl WeakImpl {
     /// [`WeakImpl::destroy`] before releasing the slot — so any
     /// `NonNull<WeakImpl>` reachable here is a live C++ `JSC::Weak` handle.
     /// Same contract as [`crate::strong::Impl::get`].
-    pub(crate) fn get(this: NonNull<WeakImpl>) -> JSValue {
+    fn get(this: NonNull<WeakImpl>) -> JSValue {
         Bun__WeakRef__get(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
@@ -48,11 +48,11 @@ impl WeakImpl {
     ///
     /// Safe for the same reason as [`WeakImpl::get`] — the handle is live by
     /// construction; `clear` is idempotent and does not invalidate `this`.
-    pub(crate) fn clear(this: NonNull<WeakImpl>) {
+    fn clear(this: NonNull<WeakImpl>) {
         Bun__WeakRef__clear(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
-    pub(crate) unsafe fn destroy(this: NonNull<WeakImpl>) {
+    unsafe fn destroy(this: NonNull<WeakImpl>) {
         // SAFETY: `this` is a live WeakImpl handle; consumed here.
         unsafe { Bun__WeakRef__delete(this.as_ptr()) }
     }
@@ -78,7 +78,6 @@ unsafe extern "C" {
 
 pub struct Weak<T> {
     r#ref: Option<NonNull<WeakImpl>>,
-    global_this: Option<crate::GlobalRef>,
     _ctx: PhantomData<*mut T>,
 }
 
@@ -86,24 +85,22 @@ impl<T> Default for Weak<T> {
     fn default() -> Self {
         Self {
             r#ref: None,
-            global_this: None,
             _ctx: PhantomData,
         }
     }
 }
 
 impl<T> Weak<T> {
-    pub fn init() -> Self {
-        Self::default()
-    }
-
-    pub fn call(&mut self, args: &[JSValue]) -> JSValue {
-        let Some(function) = self.try_swap() else {
-            return JSValue::ZERO;
-        };
-        function
-            .call(&self.global_this.unwrap(), JSValue::UNDEFINED, args)
-            .unwrap_or(JSValue::ZERO)
+    /// A weak handle with no finalize callback. `get()` reads `None` from the
+    /// moment GC reaps the referent, before any sweep runs cell destructors.
+    pub fn create_passive(value: JSValue, global_this: &JSGlobalObject) -> Self {
+        if value.is_empty() {
+            return Self::default();
+        }
+        Self {
+            r#ref: Some(WeakImpl::init(global_this, value, WeakRefType::None, None)),
+            _ctx: PhantomData,
+        }
     }
 
     pub fn create(
@@ -120,14 +117,12 @@ impl<T> Weak<T> {
                     ref_type,
                     Some(NonNull::from(ctx).cast::<c_void>()),
                 )),
-                global_this: Some(global_this.into()),
                 _ctx: PhantomData,
             };
         }
 
         Self {
             r#ref: None,
-            global_this: Some(global_this.into()),
             _ctx: PhantomData,
         }
     }
@@ -142,36 +137,8 @@ impl<T> Weak<T> {
         Some(result)
     }
 
-    pub fn swap(&mut self) -> JSValue {
-        let Some(r#ref) = self.r#ref else {
-            return JSValue::ZERO;
-        };
-        let result = WeakImpl::get(r#ref);
-        if result.is_empty() {
-            return JSValue::ZERO;
-        }
-
-        WeakImpl::clear(r#ref);
-        result
-    }
-
-    pub fn has(&self) -> bool {
-        let Some(r#ref) = self.r#ref else {
-            return false;
-        };
-        !WeakImpl::get(r#ref).is_empty()
-    }
-
-    pub fn try_swap(&mut self) -> Option<JSValue> {
-        let result = self.swap();
-        if result.is_empty() {
-            return None;
-        }
-
-        Some(result)
-    }
-
-    pub fn clear(&mut self) {
+    /// Clears the C++ slot; `self` keeps the (now empty) handle, so a shared ref suffices.
+    pub fn clear(&self) {
         let Some(r#ref) = self.r#ref else {
             return;
         };

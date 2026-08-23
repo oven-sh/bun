@@ -18,6 +18,7 @@ import {
   emitEvent,
   fullReload,
   loadModuleAsync,
+  onEvent,
   onServerSideReload,
   replaceModules,
   setRefreshRuntime,
@@ -349,6 +350,7 @@ testingHook?.({
   configureSourceMapGCSize,
   clearDisconnectedSourceMaps,
   getKnownSourceMaps,
+  onEvent,
 });
 
 try {

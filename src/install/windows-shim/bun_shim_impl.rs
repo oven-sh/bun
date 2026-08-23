@@ -217,7 +217,6 @@ pub enum FailReason {
     NoDirname,
     CouldNotOpenShim,
     CouldNotReadShim,
-    InvalidShimDataSize,
     ShimNotFound,
     CreateProcessFailed,
     /// When encountering this outside of standalone mode, you should fallback
@@ -232,14 +231,13 @@ pub enum FailReason {
 }
 
 impl FailReason {
-    pub(crate) const fn get_format_template(self) -> &'static str {
+    const fn get_format_template(self) -> &'static str {
         match self {
             FailReason::NoDirname => "could not find node_modules path",
 
             FailReason::ShimNotFound => "could not find bin metadata file",
             FailReason::CouldNotOpenShim => "could not open bin metadata file",
             FailReason::CouldNotReadShim => "could not read bin metadata",
-            FailReason::InvalidShimDataSize => "bin metadata is corrupt (size)",
             FailReason::InvalidShimValidation => "bin metadata is corrupt (validate)",
             FailReason::InvalidShimBounds => "bin metadata is corrupt (bounds)",
             // The difference between these two is that one is with a shebang (#!/usr/bin/env node) and
@@ -263,7 +261,7 @@ impl FailReason {
     }
 
     #[inline]
-    pub(crate) fn write(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
+    fn write(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(writer, "{self}")
     }
 }
@@ -339,7 +337,7 @@ impl core::fmt::Display for FailReason {
     }
 }
 
-pub fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
+pub(crate) fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     // SAFETY: NtWriteFile is given a valid handle and a buffer that lives for the call.
     let rc = unsafe {
@@ -421,7 +419,7 @@ const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as
 
 // This is used for CreateProcessW's lpCommandLine
 // "The maximum length of this string is 32,767 characters, including the Unicode terminating null character."
-pub(crate) const BUF2_U16_LEN: usize = 32767 + 1;
+const BUF2_U16_LEN: usize = 32767 + 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, ConstParamTy)]
 pub(crate) enum LauncherMode {
@@ -1570,7 +1568,7 @@ impl FromBunRunContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
     #[inline]
-    pub(crate) fn base_path_slice(&self) -> &[u16] {
+    fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `try_startup_from_bun_js` (run_command.rs) sets
         // `base_path`/`base_path_len` from a live `[u16]` buffer it owns for
         // the duration of the call. Borrow tied to `&self`.
@@ -1635,21 +1633,21 @@ pub fn try_startup_from_bun_js(context: FromBunRunContext) {
 
 pub struct FromBunShellContext {
     /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
-    pub base_path: *mut u16,
-    pub base_path_len: usize,
+    pub(crate) base_path: *mut u16,
+    pub(crate) base_path_len: usize,
     /// Command line arguments which does NOT include the bin name:
     /// like '--port 3000 --config ./config.json'
-    pub arguments: *mut u16,
-    pub arguments_len: usize,
+    pub(crate) arguments: *mut u16,
+    pub(crate) arguments_len: usize,
     /// Handle to the successfully opened metadata file
-    pub handle: HANDLE,
+    pub(crate) handle: HANDLE,
     /// Was --bun passed?
-    pub force_use_bun: bool,
+    pub(crate) force_use_bun: bool,
     /// A pointer to memory needed to store the command line.
     /// Kept as a raw pointer so the
     /// `BunCtx` impl (which only sees `&Self`) can hand out a writable pointer without
     /// laundering provenance through a shared reborrow of `&mut [_; N]`.
-    pub buf: *mut FromBunShellContextBuf,
+    pub(crate) buf: *mut FromBunShellContextBuf,
 }
 
 pub(crate) type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
@@ -1658,7 +1656,7 @@ impl FromBunShellContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
     #[inline]
-    pub(crate) fn base_path_slice(&self) -> &[u16] {
+    fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `read_without_launch` sets `base_path`/`base_path_len`
         // from a live `[u16]` buffer it owns for the duration of the call.
         // Borrow tied to `&self`.

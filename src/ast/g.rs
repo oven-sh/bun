@@ -10,7 +10,6 @@ use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, 
 /// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
 /// re-export the enum + set type here.
 pub use crate::flags::Function as FnFlags;
-pub use crate::flags::FunctionSet as FnFlagsSet;
 
 // All `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
@@ -131,15 +130,6 @@ pub struct ClassStaticBlock {
     pub loc: crate::Loc,
 }
 
-impl Default for ClassStaticBlock {
-    fn default() -> Self {
-        Self {
-            stmts: bun_alloc::AstAlloc::vec(),
-            loc: crate::Loc::default(),
-        }
-    }
-}
-
 pub struct Property {
     /// This is used when parsing a pattern that uses default values:
     ///
@@ -202,7 +192,7 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Property, bun_alloc::AllocError> {
@@ -280,7 +270,7 @@ pub struct Fn {
     // This was originally nullable, but doing so I believe caused a miscompilation
     // Specifically, the body was always null.
     pub body: FnBody,
-    pub arguments_ref: Option<Ref>,
+    pub arguments_ref: Ref,
 
     pub flags: flags::FunctionSet,
 
@@ -297,7 +287,7 @@ impl Default for Fn {
                 loc: crate::Loc::EMPTY,
                 stmts: StmtNodeList::EMPTY,
             },
-            arguments_ref: None,
+            arguments_ref: Ref::NONE,
             flags: flags::FUNCTION_NONE,
             return_ts_metadata: TypeScript::Metadata::MNone,
         }
@@ -305,7 +295,7 @@ impl Default for Fn {
 }
 
 impl Fn {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Fn, bun_alloc::AllocError> {
@@ -353,7 +343,7 @@ impl Default for Arg {
 }
 
 impl Arg {
-    pub fn deep_clone(
+    pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Arg, bun_alloc::AllocError> {

@@ -12,23 +12,23 @@ use crate::ssl_config::SSLConfig;
 
 #[derive(Default)]
 pub struct PendingConnect {
-    pub hostname: Box<[u8]>,
-    pub port: u16,
+    pub(crate) hostname: Box<[u8]>,
+    pub(crate) port: u16,
     // Compared by pointer identity only, never derefed/freed here; lifetime-erased.
-    pub ssl_config: Option<NonNull<SSLConfig>>,
+    pub(crate) ssl_config: Option<NonNull<SSLConfig>>,
     /// Whether the client that initiated this in-flight TLS connect requested
     /// `rejectUnauthorized`. The eventual `ClientSession` records this as
     /// `established_with_reject_unauthorized`; mirroring it here lets the
     /// coalescing path apply the same strictness guard *before* the session
     /// exists, so a strict caller never waits on a connect started by a lax one.
-    pub reject_unauthorized: bool,
-    pub host_header_hash: u64,
+    pub(crate) reject_unauthorized: bool,
+    pub(crate) host_header_hash: u64,
     // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
-    pub waiters: Vec<NonNull<HTTPClient<'static>>>,
+    pub(crate) waiters: Vec<NonNull<HTTPClient<'static>>>,
 }
 
 impl PendingConnect {
-    pub fn new(init: Self) -> Box<Self> {
+    pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
 
@@ -41,11 +41,11 @@ impl PendingConnect {
     /// borrow. Routes through the crate-wide
     /// [`HTTPClient::from_erased_backref`] accessor.
     #[inline]
-    pub fn waiter_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
+    pub(crate) fn waiter_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
         HTTPClient::from_erased_backref(p)
     }
 
-    pub fn matches(
+    pub(crate) fn matches(
         &self,
         hostname: &[u8],
         port: u16,
@@ -63,7 +63,10 @@ impl PendingConnect {
     /// the list owns `Box<Self>` — `swap_remove` would otherwise drop the very
     /// allocation `&mut self` borrows from (UAF). Caller holds the returned
     /// Box until scope exit.
-    pub fn unregister_from(this: *const Self, ctx: &mut NewHTTPContext<true>) -> Option<Box<Self>> {
+    pub(crate) fn unregister_from(
+        this: *const Self,
+        ctx: &mut NewHTTPContext<true>,
+    ) -> Option<Box<Self>> {
         let list = &mut ctx.pending_h2_connects;
         // reshaped for borrowck (was `for + swapRemove + return`)
         list.iter()

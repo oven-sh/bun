@@ -18,7 +18,7 @@ const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
   init: initMySQL,
-} = $zig("mysql.zig", "createBinding") as MySQLDotZig;
+} = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
 function wrapError(error: Error | MySQLErrorOptions) {
   if (Error.isError(error)) {
@@ -182,6 +182,9 @@ class MySQLAdapter
   }
 
   escapeIdentifier(str: string) {
+    if (str.includes("\0")) {
+      throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
+    }
     return "`" + str.replaceAll("`", "``") + "`";
   }
 

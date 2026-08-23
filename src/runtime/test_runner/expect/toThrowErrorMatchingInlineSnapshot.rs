@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 
+use super::throw;
 use super::Expect;
 
 pub(crate) fn to_throw_error_matching_inline_snapshot(
@@ -12,18 +13,18 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old::<2>();
-    let arguments: &[JSValue] = _arguments.slice();
+    let arguments: &[JSValue] = frame.arguments();
 
     this.increment_expect_call_counter();
 
     let not = this.flags.get().not();
     if not {
         let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"),
+            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n",
         );
     }
 
@@ -36,18 +37,20 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
                 has_expected = true;
                 arguments[0].to_zig_string(&mut expected_string, global)?;
             } else {
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     "",
-                    format_args!("\n\nMatcher error: Expected first argument to be a string\n"),
+                    "\n\nMatcher error: Expected first argument to be a string\n",
                 );
             }
         }
         _ => {
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 "",
-                format_args!("\n\nMatcher error: Expected zero or one arguments\n"),
+                "\n\nMatcher error: Expected zero or one arguments\n",
             );
         }
     }
@@ -67,10 +70,11 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     )?;
     let Some(value) = this.fn_to_err_string_or_undefined(global, received)? else {
         let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", false);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\n<b>Matcher error<r>: Received function did not throw\n"),
+            "\n\n<b>Matcher error<r>: Received function did not throw\n",
         );
     };
 

@@ -1,11 +1,10 @@
-use bstr::ByteSlice;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::{Expect, get_signature};
+use super::{Expect, get_signature, throw};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_include_repeated(
+    pub(crate) fn to_include_repeated(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -15,8 +14,7 @@ impl Expect {
         let this = self.post_match_guard(global);
 
         let this_value = frame.this();
-        let arguments_ = frame.arguments_old::<2>();
-        let arguments = arguments_.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 2 {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -74,7 +72,7 @@ impl Expect {
         }
 
         // Non-overlapping occurrence count.
-        let actual_count = expect_string_as_str.find_iter(sub_string_as_str).count();
+        let actual_count = bun_core::strings::count(expect_string_as_str, sub_string_as_str);
         let mut pass = actual_count == count_as_num as usize;
 
         if not {
@@ -100,74 +98,68 @@ impl Expect {
         if not {
             if count_as_num == 0 {
                 let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    format_args!(
-                        concat!("\n\n", "Expected to include: <green>{}<r> \n", "Received: <red>{}<r>\n"),
-                        substring_fmt,
-                        expect_string_fmt
-                    ),
+                    concat!("\n\n", "Expected to include: <green>{}<r> \n", "Received: <red>{}<r>\n"),
+                    substring_fmt,
+                    expect_string_fmt,
                 );
             } else if count_as_num == 1 {
                 let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    format_args!(
-                        concat!("\n\n", "Expected not to include: <green>{}<r> \n", "Received: <red>{}<r>\n"),
-                        substring_fmt,
-                        expect_string_fmt
-                    ),
+                    concat!("\n\n", "Expected not to include: <green>{}<r> \n", "Received: <red>{}<r>\n"),
+                    substring_fmt,
+                    expect_string_fmt,
                 );
             } else {
                 let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    format_args!(
-                        concat!("\n\n", "Expected not to include: <green>{}<r> <green>{}<r> times \n", "Received: <red>{}<r>\n"),
-                        substring_fmt,
-                        times_fmt,
-                        expect_string_fmt
-                    ),
+                    concat!("\n\n", "Expected not to include: <green>{}<r> <green>{}<r> times \n", "Received: <red>{}<r>\n"),
+                    substring_fmt,
+                    times_fmt,
+                    expect_string_fmt,
                 );
             }
         }
 
         if count_as_num == 0 {
             let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
-            this.throw(
+            throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    concat!("\n\n", "Expected to not include: <green>{}<r>\n", "Received: <red>{}<r>\n"),
-                    substring_fmt,
-                    expect_string_fmt
-                ),
+                concat!("\n\n", "Expected to not include: <green>{}<r>\n", "Received: <red>{}<r>\n"),
+                substring_fmt,
+                expect_string_fmt,
             )
         } else if count_as_num == 1 {
             let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
-            this.throw(
+            throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    concat!("\n\n", "Expected to include: <green>{}<r>\n", "Received: <red>{}<r>\n"),
-                    substring_fmt,
-                    expect_string_fmt
-                ),
+                concat!("\n\n", "Expected to include: <green>{}<r>\n", "Received: <red>{}<r>\n"),
+                substring_fmt,
+                expect_string_fmt,
             )
         } else {
             let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
-            this.throw(
+            throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    concat!("\n\n", "Expected to include: <green>{}<r> <green>{}<r> times \n", "Received: <red>{}<r>\n"),
-                    substring_fmt,
-                    times_fmt,
-                    expect_string_fmt
-                ),
+                concat!("\n\n", "Expected to include: <green>{}<r> <green>{}<r> times \n", "Received: <red>{}<r>\n"),
+                substring_fmt,
+                times_fmt,
+                expect_string_fmt,
             )
         }
     }

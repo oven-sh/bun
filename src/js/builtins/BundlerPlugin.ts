@@ -17,7 +17,7 @@ interface BundlerPlugin {
   /** Binding to `JSBundlerPlugin__onResolveAsync` */
   onResolveAsync(internalID, a, b, c): void;
   /** Binding to `JSBundlerPlugin__addError` */
-  addError(internalID: number, error: any, which: number): void;
+  addError(internalID: number, error: any): void;
   addFilter(filter, namespace, number): void;
   generateDeferPromise(id: number): Promise<void>;
   promises: Array<Promise<any>> | undefined;
@@ -378,8 +378,9 @@ export function runSetupFunction(
       setupResult = $peekPromiseSettledValue(setupResult);
     } else {
       return setupResult.$then(() => {
-        if (is_last && self.promises !== undefined && self.promises.length > 0) {
-          const awaitAll = Promise.all(self.promises);
+        let selfPromises;
+        if (is_last && (selfPromises = self.promises) !== undefined && selfPromises.length > 0) {
+          const awaitAll = Promise.all(selfPromises);
           return awaitAll.$then(processSetupResult);
         }
         return processSetupResult();
@@ -387,8 +388,9 @@ export function runSetupFunction(
     }
   }
 
-  if (is_last && this.promises !== undefined && this.promises.length > 0) {
-    const awaitAll = Promise.all(this.promises);
+  let pendingPromises;
+  if (is_last && (pendingPromises = this.promises) !== undefined && pendingPromises.length > 0) {
+    const awaitAll = Promise.all(pendingPromises);
     return awaitAll.$then(processSetupResult);
   }
 
@@ -489,7 +491,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     promiseResult.then(
       () => {},
       e => {
-        this.addError(internalID, e, 0);
+        this.addError(internalID, e);
       },
     );
   }
@@ -581,7 +583,7 @@ export function runOnLoadPlugins(
     promiseResult.then(
       () => {},
       e => {
-        this.addError(internalID, e, 1);
+        this.addError(internalID, e);
       },
     );
   }

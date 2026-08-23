@@ -101,7 +101,7 @@ test(
   },
   {
     onConstructorFailure: error => {
-      expect(error.message).toContain("BoringSSL error:0900006e:PEM routines:OPENSSL_internal:NO_START_LINE");
+      expect(error.message).toContain("error:0900006e:PEM routines:OPENSSL_internal:NO_START_LINE");
     },
   },
 );
@@ -128,6 +128,7 @@ test("basic + websocket + upgrade", {
       expectType<typeof ws>().is<Bun.ServerWebSocket<undefined>>();
       ws.send(message);
       expectType(message).is<string | Buffer<ArrayBuffer>>();
+      expectType(ws.binaryType).is<"nodebuffer" | "arraybuffer" | "uint8array" | "blob" | undefined>();
     },
   },
 

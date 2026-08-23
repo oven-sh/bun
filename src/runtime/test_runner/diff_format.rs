@@ -8,12 +8,12 @@ use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
 #[derive(Default)]
 pub struct DiffFormatter<'a> {
-    pub received_string: Option<&'a [u8]>,
-    pub expected_string: Option<&'a [u8]>,
-    pub received: Option<JSValue>,
-    pub expected: Option<JSValue>,
+    pub(crate) received_string: Option<&'a [u8]>,
+    pub(crate) expected_string: Option<&'a [u8]>,
+    pub(crate) received: Option<JSValue>,
+    pub(crate) expected: Option<JSValue>,
     pub global_this: Option<&'a JSGlobalObject>,
-    pub not: bool,
+    pub(crate) not: bool,
 }
 
 impl<'a> fmt::Display for DiffFormatter<'a> {
@@ -92,7 +92,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
 /// the `extern "C"` symbol resolves the same at link time regardless of which
 /// crate defines it.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__renderDiff(
+extern "C" fn zig__renderDiff(
     expected_ptr: *const core::ffi::c_char,
     expected_len: usize,
     received_ptr: *const core::ffi::c_char,

@@ -126,7 +126,7 @@ pub struct Class {
 }
 
 pub struct If {
-    pub test_: ExprNodeIndex,
+    pub test: ExprNodeIndex,
     pub yes: StmtNodeIndex,
     pub no: Option<StmtNodeIndex>,
 }
@@ -134,7 +134,7 @@ pub struct If {
 pub struct For {
     /// May be a SConst, SLet, SVar, or SExpr
     pub init: Option<StmtNodeIndex>, // = None
-    pub test_: Option<ExprNodeIndex>,  // = None
+    pub test: Option<ExprNodeIndex>,   // = None
     pub update: Option<ExprNodeIndex>, // = None
     pub body: StmtNodeIndex,
 }
@@ -156,11 +156,11 @@ pub struct ForOf {
 
 pub struct DoWhile {
     pub body: StmtNodeIndex,
-    pub test_: ExprNodeIndex,
+    pub test: ExprNodeIndex,
 }
 
 pub struct While {
-    pub test_: ExprNodeIndex,
+    pub test: ExprNodeIndex,
     pub body: StmtNodeIndex,
 }
 
@@ -174,12 +174,12 @@ pub struct Try {
     pub body_loc: crate::Loc,
     pub body: StmtNodeList,
 
-    pub catch_: Option<Catch>,    // = None
+    pub catch: Option<Catch>,     // = None
     pub finally: Option<Finally>, // = None
 }
 
 pub struct Switch {
-    pub test_: ExprNodeIndex,
+    pub test: ExprNodeIndex,
     pub body_loc: crate::Loc,
     pub cases: StoreSlice<Case>, // arena-owned
 }
@@ -203,9 +203,9 @@ pub struct Import {
     /// the imported file. In this case StarLoc is nil. The NamespaceRef is used
     /// when converting this module to a CommonJS module.
     pub namespace_ref: Ref,
-    pub default_name: Option<LocRef>,      // = None
-    pub items: StoreSlice<ClauseItem>,     // arena-owned; = &[]
-    pub star_name_loc: Option<crate::Loc>, // = None
+    pub default_name: Option<LocRef>,  // = None
+    pub items: StoreSlice<ClauseItem>, // arena-owned; = &[]
+    pub star_name_loc: crate::Loc,     // = Loc::EMPTY
     pub import_record_index: u32,
     pub is_single_line: bool, // = false
     /// "import defer * as ns from 'path'" — the TC39 Deferred Module Evaluation
@@ -220,7 +220,7 @@ impl Default for Import {
             namespace_ref: Ref::NONE,
             default_name: None,
             items: StoreSlice::EMPTY,
-            star_name_loc: None,
+            star_name_loc: crate::Loc::EMPTY,
             import_record_index: u32::MAX,
             is_single_line: false,
             phase_defer: false,
@@ -241,11 +241,7 @@ pub struct Local {
     pub kind: Kind,         // = Kind::KVar
     pub decls: G::DeclList, // = .{}
     pub is_export: bool,    // = false
-    /// The TypeScript compiler doesn't generate code for "import foo = bar"
-    /// statements where the import is never used.
-    pub was_ts_import_equals: bool, // = false
-
-    pub was_commonjs_export: bool, // = false
+    pub origin: LocalOrigin,
 }
 
 impl Default for Local {
@@ -254,8 +250,7 @@ impl Default for Local {
             kind: Kind::default(),
             decls: bun_alloc::AstAlloc::vec(),
             is_export: false,
-            was_ts_import_equals: false,
-            was_commonjs_export: false,
+            origin: LocalOrigin::Normal,
         }
     }
 }
@@ -271,7 +266,28 @@ impl Local {
         }
         self.kind == other.kind
             && self.is_export == other.is_export
-            && self.was_commonjs_export == other.was_commonjs_export
+            && self.origin.is_commonjs_export() == other.origin.is_commonjs_export()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum LocalOrigin {
+    #[default]
+    Normal,
+    /// From TS `import x = ...`; dropped if unused (matches tsc).
+    TsImportEquals,
+    /// From rewritten `exports.x = ...`.
+    CommonJsExport,
+}
+
+impl LocalOrigin {
+    #[inline]
+    pub fn is_ts_import_equals(self) -> bool {
+        matches!(self, Self::TsImportEquals)
+    }
+    #[inline]
+    pub fn is_commonjs_export(self) -> bool {
+        matches!(self, Self::CommonJsExport)
     }
 }
 
@@ -293,10 +309,6 @@ pub enum Kind {
 impl Kind {
     pub fn is_using(self) -> bool {
         matches!(self, Kind::KUsing | Kind::KAwaitUsing)
-    }
-
-    pub fn is_reassignable(self) -> bool {
-        matches!(self, Kind::KVar | Kind::KLet)
     }
 }
 

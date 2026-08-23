@@ -28,9 +28,9 @@ public:
         auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
         auto* zigGlobalObject = uncheckedDowncast<::Zig::GlobalObject>(globalObject);
         auto specifier = Bun::toString(provider->sourceURL());
-        provider->m_globalObject = zigGlobalObject;
+        provider->m_bunVM = zigGlobalObject->bunVM();
         provider->m_specifier = specifier;
-        Bun__addDevServerSourceProvider(zigGlobalObject->bunVM(), provider.ptr(), &specifier);
+        Bun__addDevServerSourceProvider(provider->m_bunVM, provider.ptr(), &specifier);
         return provider;
     }
 
@@ -61,13 +61,16 @@ private:
 
     ~DevServerSourceProvider()
     {
-        if (m_globalObject) {
-            Bun__removeDevServerSourceProvider(m_globalObject->bunVM(), this, &m_specifier);
+        if (m_bunVM) {
+            Bun__removeDevServerSourceProvider(m_bunVM, this, &m_specifier);
         }
     }
 
     MiString m_sourceMapJSON;
-    Zig::GlobalObject* m_globalObject;
+    // The Rust VirtualMachine, captured at creation. Not the GC-allocated
+    // Zig::GlobalObject: this destructor runs from JSC sweep, by which point
+    // the global object cell may already have been swept.
+    void* m_bunVM { nullptr };
     BunString m_specifier;
 };
 

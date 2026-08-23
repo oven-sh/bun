@@ -7,7 +7,7 @@ use bun_core::String as BunString;
 use bun_paths::resolve_path;
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
+extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     global_object: &JSGlobalObject,
     input: BunString,
 ) -> BunString {

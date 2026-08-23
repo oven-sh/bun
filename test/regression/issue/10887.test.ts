@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("does not segfault", () => {
-  const dir = tempDirWithFiles("10887", {
+  using dir = tempDir("10887", {
     "index.ts": `
       function deco() {
         console.log('deco init');

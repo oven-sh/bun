@@ -4,43 +4,45 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
-    // Set provisionally in `on_create`; the server overwrites it on
-    // adoption. LIFETIMES.tsv = JSC_BORROW — the global outlives the context.
-    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    pub handler: Handler,
+    pub(crate) handler: Handler,
 
-    pub max_payload_length: u32, // default 16MB
-    pub max_lifetime: u16,
-    pub idle_timeout: u16, // default 2 minutes
-    pub compression: i32,
-    pub backpressure_limit: u32, // default 16MB
-    pub send_pings_automatically: bool,
-    pub reset_idle_timeout_on_send: bool,
-    pub close_on_backpressure_limit: bool,
+    pub(crate) max_payload_length: u32, // default 16MB
+    pub(crate) max_lifetime: u16,
+    pub(crate) idle_timeout: u16, // default 2 minutes
+    pub(crate) compression: i32,
+    pub(crate) backpressure_limit: u32, // default 16MB
+    pub(crate) send_pings_automatically: bool,
+    pub(crate) reset_idle_timeout_on_send: bool,
+    pub(crate) close_on_backpressure_limit: bool,
 }
 
 pub struct Handler {
-    pub on_open: JSValue,
-    pub on_message: JSValue,
+    pub(crate) on_open: JSValue,
+    pub(crate) on_message: JSValue,
     pub on_close: JSValue,
-    pub on_drain: JSValue,
-    pub on_error: JSValue,
-    pub on_ping: JSValue,
-    pub on_pong: JSValue,
+    pub(crate) on_drain: JSValue,
+    pub(crate) on_error: JSValue,
+    pub(crate) on_ping: JSValue,
+    pub(crate) on_pong: JSValue,
 
-    pub app: Option<*mut c_void>,
+    pub(crate) app: Option<*mut c_void>,
+    /// Type-erased backref to the owning `NewServer`, set alongside `app`
+    /// in `set_routes` (so it is in place before any socket can upgrade and
+    /// refreshed whenever a reload installs a new context).
+    /// `ServerWebSocket::init` reads it to write the server JS wrapper into the
+    /// per-socket `m_server` traced slot (keeping the wrapper, and the `m_ws*`
+    /// handler slots it carries, reachable while any socket is connected), and
+    /// `ServerWebSocket` open/close events route the live-socket accounting
+    /// through it.
+    pub(crate) server: Option<super::AnyServer>,
 
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
-    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    /// Mutated through `&Handler` (the field is owned by
-    /// `ServerConfig.websocket` and only ever touched on the JS thread), so
-    /// it's a `Cell`.
-    pub active_connections: core::cell::Cell<usize>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
 
     /// used by publish()
-    pub flags: HandlerFlags,
+    pub(crate) flags: HandlerFlags,
 }
 
 bitflags::bitflags! {
@@ -57,54 +59,54 @@ impl Handler {
     /// `global_object` is a `BackRef` set by the server before any websocket
     /// connection exists; the global outlives every `ServerWebSocket`.
     #[inline]
-    pub fn global_object(&self) -> &JSGlobalObject {
+    pub(crate) fn global_object(&self) -> &JSGlobalObject {
         self.global_object.get()
     }
 
     /// `vm` is a `BackRef`; the VM is `'static` per LIFETIMES.tsv (set in
     /// `from_js`).
     #[inline]
-    pub fn vm(&self) -> &VirtualMachine {
+    pub(crate) fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
 
-    #[inline]
-    pub fn active_connections_saturating_add(&self, n: usize) {
-        self.active_connections
-            .set(self.active_connections.get().saturating_add(n));
-    }
-
-    /// See `active_connections_saturating_add`.
-    #[inline]
-    pub fn active_connections_saturating_sub(&self, n: usize) {
-        self.active_connections
-            .set(self.active_connections.get().saturating_sub(n));
-    }
-
-    pub fn run_error_callback(
+    /// Route an error a websocket handler produced to the `error` handler (a
+    /// top-level call: what it throws is reported and the handler goes on), or
+    /// — with none — to the uncaught-exception path. `Err` is only a termination
+    /// pending from the preceding callback.
+    ///
+    /// `on_error` must be copied to a stack local by the caller before any
+    /// user JS runs: a re-entrant `ws.close()` on the last socket of a stopped
+    /// server can downgrade the wrapper (the sole GC root for `wsOnError`)
+    /// mid-handler, so a fresh `self.on_error` read after user JS could be a
+    /// freed cell.
+    pub(crate) fn run_error_callback(
         &self,
-        vm: &VirtualMachine,
+        on_error: JSValue,
         global_object: &JSGlobalObject,
         error_value: JSValue,
-    ) {
-        let on_error = self.on_error;
+    ) -> JsResult<()> {
+        // Termination raised inside the preceding callback.call() cannot be
+        // cleared; it is the caller's `Err`, not an error to hand to `error`.
+        if global_object.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
         if !on_error.is_empty_or_undefined_or_null() {
-            let _ = on_error
-                .call(global_object, JSValue::UNDEFINED, &[error_value])
-                .map_err(|err| self.global_object.report_active_exception_as_unhandled(err));
-            return;
+            // A top-level call of its own: what `error` throws is reported here.
+            global_object.bun_vm().event_loop_mut().run_callback(
+                on_error,
+                global_object,
+                JSValue::UNDEFINED,
+                &[error_value],
+            );
+            return Ok(());
         }
 
-        // VirtualMachine is the
-        // process-lifetime singleton (LIFETIMES.tsv = STATIC) and is only touched on the JS
-        // thread; `uncaught_exception` needs `&mut` to bump counters / set flags. Derive the
-        // mutable pointer from the stored BackRef (== `vm`) rather than casting the
-        // shared ref, which rustc's invalid_reference_casting lint rejects.
-        let _ = vm;
-        let mut vm_ref = self.vm;
-        // SAFETY: process-lifetime singleton; sole `&mut` on the JS thread.
-        let vm_mut = unsafe { vm_ref.get_mut() };
-        let _ = vm_mut.uncaught_exception(global_object, error_value, false);
+        let _ =
+            VirtualMachine::get()
+                .as_mut()
+                .uncaught_exception(global_object, error_value, false);
+        Ok(())
     }
 
     pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {
@@ -117,9 +119,9 @@ impl Handler {
             on_ping: JSValue::ZERO,
             on_pong: JSValue::ZERO,
             app: None,
+            server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
-            active_connections: core::cell::Cell::new(0),
             flags: HandlerFlags::empty(),
         };
 
@@ -143,9 +145,10 @@ impl Handler {
                         key
                     )));
                 }
-                let cb = value.with_async_context_if_needed(global_object);
-                *field = cb;
-                cb.ensure_still_alive();
+                // Raw value — async-context wrapping is deferred to
+                // `NewServer::write_ws_handler_slots` so the wrapped fn is
+                // rooted by the wrapper's WriteBarrier slot immediately.
+                *field = value;
                 if i > 0 {
                     // anything other than "error" is considered valid.
                     valid = true;
@@ -161,34 +164,10 @@ impl Handler {
             "WebSocketServerContext expects a message handler"
         )))
     }
-
-    pub fn protect(&self) {
-        self.on_open.protect();
-        self.on_message.protect();
-        self.on_close.protect();
-        self.on_drain.protect();
-        self.on_error.protect();
-        self.on_ping.protect();
-        self.on_pong.protect();
-    }
-
-    pub fn unprotect(&self) {
-        if self.vm.is_shutting_down() {
-            return;
-        }
-
-        self.on_open.unprotect();
-        self.on_message.unprotect();
-        self.on_close.unprotect();
-        self.on_drain.unprotect();
-        self.on_error.unprotect();
-        self.on_ping.unprotect();
-        self.on_pong.unprotect();
-    }
 }
 
 impl WebSocketServerContext {
-    pub fn to_behavior(&self) -> uws::WebSocketBehavior {
+    pub(crate) fn to_behavior(&self) -> uws::WebSocketBehavior {
         uws::WebSocketBehavior {
             max_payload_length: self.max_payload_length,
             idle_timeout: self.idle_timeout,
@@ -200,14 +179,6 @@ impl WebSocketServerContext {
             close_on_backpressure_limit: self.close_on_backpressure_limit,
             ..Default::default()
         }
-    }
-
-    pub fn protect(&self) {
-        self.handler.protect();
-    }
-
-    pub fn unprotect(&self) {
-        self.handler.unprotect();
     }
 }
 
@@ -259,11 +230,8 @@ pub(crate) fn on_create(
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {
     // Construct the struct with the handler and explicit defaults up front.
-    // The top-level `global_object` is provisionally set to the param; the
-    // server overwrites it after `on_create` returns anyway.
     let handler = Handler::from_js(global_object, object)?;
     let mut server = WebSocketServerContext {
-        global_object: bun_ptr::BackRef::new(global_object),
         handler,
         max_payload_length: 1024 * 1024 * 16, // 16MB
         max_lifetime: 0,
@@ -428,6 +396,5 @@ pub(crate) fn on_create(
         }
     }
 
-    server.protect();
     Ok(server)
 }

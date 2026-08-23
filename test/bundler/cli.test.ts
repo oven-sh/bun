@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -18,48 +18,47 @@ describe.concurrent(
       );
     });
 
+    async function testCompile(outfile: string) {
+      const { exited } = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          path.join(import.meta.dir, "./fixtures/trivial/index.js"),
+          "--compile",
+          "--outfile",
+          outfile,
+        ],
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      expect(await exited).toBe(0);
+    }
+    async function testExec(outfile: string) {
+      const { exited, stderr } = Bun.spawn({
+        cmd: [outfile],
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "pipe",
+      });
+      expect(await stderr.text()).toBeEmpty();
+      expect(await exited).toBe(0);
+    }
+    async function testCompileAndExec(relativeOutfile: string) {
+      const baseDir = tmpdirSync();
+      const outfile = path.join(baseDir, relativeOutfile);
+      await testCompile(outfile);
+      await testExec(outfile);
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    }
+
+    test("generating a standalone binary with --outfile", async () => {
+      await testCompileAndExec(path.join("bun-build-outfile", "index.exe"));
+    });
+
+    // https://github.com/oven-sh/bun/issues/4195
     test("generating a standalone binary in nested path, issue #4195", async () => {
-      async function testCompile(outfile: string) {
-        const { exited } = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "build",
-            path.join(import.meta.dir, "./fixtures/trivial/index.js"),
-            "--compile",
-            "--outfile",
-            outfile,
-          ],
-          env: bunEnv,
-          stdout: "inherit",
-          stderr: "inherit",
-        });
-        expect(await exited).toBe(0);
-      }
-      async function testExec(outfile: string) {
-        const { exited, stderr } = Bun.spawn({
-          cmd: [outfile],
-          env: bunEnv,
-          stdout: "inherit",
-          stderr: "pipe",
-        });
-        expect(await stderr.text()).toBeEmpty();
-        expect(await exited).toBe(0);
-      }
-      const tmpdir = tmpdirSync();
-      {
-        const baseDir = `${tmpdir}/bun-build-outfile-${Date.now()}`;
-        const outfile = path.join(baseDir, "index.exe");
-        await testCompile(outfile);
-        await testExec(outfile);
-        fs.rmSync(baseDir, { recursive: true, force: true });
-      }
-      {
-        const baseDir = `${tmpdir}/bun-build-outfile2-${Date.now()}`;
-        const outfile = path.join(baseDir, "b/u/n", "index.exe");
-        await testCompile(outfile);
-        await testExec(outfile);
-        fs.rmSync(baseDir, { recursive: true, force: true });
-      }
+      await testCompileAndExec(path.join("bun-build-outfile2", "b/u/n", "index.exe"));
     });
 
     test("works with utf8 bom", async () => {
@@ -465,4 +464,451 @@ test("multi-entry build writes each entry point into the output directory", asyn
   const b = await Bun.file(path.join(String(dir), "dist", "b.js")).text();
   expect(a).toContain('"A"');
   expect(b).toContain('"B"');
+});
+
+// https://github.com/oven-sh/bun/issues/9859
+describe.concurrent("--no-bundle with --outdir", () => {
+  test("writes a single entry point", async () => {
+    using dir = tempDir("no-bundle-outdir-single", {
+      "src/app.tsx": `export const App = () => <div>app</div>;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/app.tsx", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("app.js");
+    expect(exitCode).toBe(0);
+
+    const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
+    expect(out).toContain("jsx");
+    expect(out).toContain("app");
+  });
+
+  test("writes multiple entry points", async () => {
+    using dir = tempDir("no-bundle-outdir-multi", {
+      "src/main.tsx": `import { App } from "./app";\nexport const Main = () => <div><App /></div>;\n`,
+      "src/app.tsx": `export const App = () => <div>app</div>;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/main.tsx", "./src/app.tsx", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("main.js");
+    expect(stdout).toContain("app.js");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "dist")).sort()).toEqual(["app.js", "main.js"]);
+
+    const main = await Bun.file(path.join(String(dir), "dist", "main.js")).text();
+    const app = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
+    expect(main).toContain('from "./app"');
+    expect(app).toContain("app");
+  });
+
+  test("preserves nested directory structure relative to the source root", async () => {
+    using dir = tempDir("no-bundle-outdir-nested", {
+      "src/main.ts": `export const main = 1;\n`,
+      "src/nested/deep.ts": `export const deep = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/main.ts", "./src/nested/deep.ts", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const main = await Bun.file(path.join(String(dir), "dist", "main.js")).text();
+    const deep = await Bun.file(path.join(String(dir), "dist", "nested", "deep.js")).text();
+    expect(main).toContain("main");
+    expect(deep).toContain("deep");
+    expect(stdout).toContain("main.js");
+    expect(stdout).toContain("nested/deep.js");
+  });
+
+  test("creates nested directories for a single entry point with --root", async () => {
+    using dir = tempDir("no-bundle-outdir-root", {
+      "src/nested/deep.ts": `export const deep = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--root=.", "./src/nested/deep.ts", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const deep = await Bun.file(path.join(String(dir), "dist", "src", "nested", "deep.js")).text();
+    expect(deep).toContain("deep");
+    expect(stdout).toContain("src/nested/deep.js");
+  });
+
+  test("writes entry points that share a subdirectory under --root", async () => {
+    using dir = tempDir("no-bundle-outdir-shared-subdir", {
+      "src/a.ts": `export const a = 1;\n`,
+      "src/b.ts": `export const b = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--root=.", "./src/a.ts", "./src/b.ts", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("src/a.js");
+    expect(stdout).toContain("src/b.js");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "dist"), { recursive: true }).sort()).toEqual([
+      "src",
+      path.join("src", "a.js"),
+      path.join("src", "b.js"),
+    ]);
+  });
+
+  test("rejects two entry points that map to the same output path", async () => {
+    using dir = tempDir("no-bundle-outdir-collision", {
+      "src/app.ts": `export const a = 1;\n`,
+      "src/app.js": `export const b = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/app.ts", "./src/app.js", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "error: Multiple files share the same output path
+        ./app.js:
+          from input src/app.ts
+          from input src/app.js
+
+
+      note: entry naming is '[dir]/[name].[ext]', consider adding '[hash]' to make filenames unique"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+
+    expect(fs.existsSync(path.join(String(dir), "dist", "app.js"))).toBe(false);
+  });
+
+  test.each([
+    ["browser", []],
+    ["bun", ["--target=bun"]],
+    ["node", ["--target=node"]],
+  ])("fills [target] in --entry-naming with %s", async (expected, targetArgs) => {
+    using dir = tempDir("no-bundle-outdir-target", {
+      "app.ts": `export const app = 1;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--no-bundle",
+        ...targetArgs,
+        "./app.ts",
+        "--outdir=dist",
+        "--entry-naming",
+        "[target]/[name].[ext]",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain(`${expected}/app.js`);
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "dist"))).toEqual([expected]);
+    expect(fs.readdirSync(path.join(String(dir), "dist", expected))).toEqual(["app.js"]);
+  });
+
+  test("respects --entry-naming", async () => {
+    using dir = tempDir("no-bundle-outdir-naming", {
+      "src/app.ts": `export const app = 1;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/app.ts", "--outdir=dist", "--entry-naming", "[name].mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("app.mjs");
+    expect(exitCode).toBe(0);
+
+    const out = await Bun.file(path.join(String(dir), "dist", "app.mjs")).text();
+    expect(out).toContain("app");
+  });
+
+  test("fills [hash] in --entry-naming with distinct values per entry", async () => {
+    using dir = tempDir("no-bundle-outdir-hash", {
+      "a.ts": `export const a = 1;\n`,
+      "b.ts": `export const b = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--no-bundle",
+        "./a.ts",
+        "./b.ts",
+        "--outdir=dist",
+        "--entry-naming",
+        "[name]-[hash].[ext]",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const files = fs.readdirSync(path.join(String(dir), "dist")).sort();
+    expect(files).toHaveLength(2);
+    expect(files[0]).toMatch(/^a-[0-9a-z]+\.js$/);
+    expect(files[1]).toMatch(/^b-[0-9a-z]+\.js$/);
+    expect(stdout).toContain(files[0]);
+    expect(stdout).toContain(files[1]);
+  });
+
+  test("names outputs by loader: js for transpiled data, css for the css loader", async () => {
+    using dir = tempDir("no-bundle-outdir-loaders", {
+      "config.toml": `key = 1\n`,
+      "data.yaml": `key: 2\n`,
+      "style.css": `.x { color: red; }\n`,
+      "theme.pcss": `.y { color: blue; }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--no-bundle",
+        "./config.toml",
+        "./data.yaml",
+        "./style.css",
+        "./theme.pcss",
+        "--loader",
+        ".pcss:css",
+        "--outdir=dist",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "dist")).sort()).toEqual([
+      "config.js",
+      "data.js",
+      "style.css",
+      "theme.css",
+    ]);
+    expect(stdout).toContain("config.js");
+    expect(stdout).toContain("data.js");
+    expect(stdout).toContain("style.css");
+    expect(stdout).toContain("theme.css");
+    expect(stdout).not.toMatch(/\.css\s+0 /);
+  });
+
+  test("does not escape --outdir when an entry point is outside --root", async () => {
+    using dir = tempDir("no-bundle-outdir-escape", {
+      "src/a.ts": `export const a = 1;\n`,
+      "other/b.ts": `export const b = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--root=src", "./src/a.ts", "./other/b.ts", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.existsSync(path.join(String(dir), "other", "b.js"))).toBe(false);
+    const b = await Bun.file(path.join(String(dir), "dist", "_.._", "other", "b.js")).text();
+    expect(b).toContain("b");
+    expect(stdout).toContain("_.._/other/b.js");
+  });
+
+  // https://github.com/oven-sh/bun/issues/5206
+  test("transpiles bare entry points in place with --outdir .", async () => {
+    using dir = tempDir("no-bundle-outdir-in-place", {
+      "a.ts": `console.log("hello world!" as string);\n`,
+      "b.ts": `console.log("foo bar baz" as string);\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.ts", "b.ts", "--no-bundle", "--outdir", "."],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("a.js");
+    expect(stdout).toContain("b.js");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(String(dir)).sort()).toEqual(["a.js", "a.ts", "b.js", "b.ts"]);
+    expect(await Bun.file(path.join(String(dir), "a.js")).text()).toContain('console.log("hello world!")');
+    expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('console.log("foo bar baz")');
+  });
+});
+
+describe("CLI argument error messages", () => {
+  test("--format with an unrecognized value echoes the value back", async () => {
+    using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--format=commonjs", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining('--format: "commonjs"'),
+    });
+    expect(stderr).toContain("'esm', 'cjs', or 'iife'");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--loader without a ':' separator names the flag and the bad token", async () => {
+    using dir = tempDir("build-loader-err", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--loader", "text", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("--loader");
+    expect(stderr).toContain('"text"');
+    expect(stderr).toContain(".ext:loader");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--define without a separator names the flag and shows an example", async () => {
+    using dir = tempDir("build-define-err", { "in.js": "console.log(FOO)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--define", "FOO", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("--define");
+    expect(stderr).toContain('"FOO"');
+    expect(stderr).toContain("key=value");
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("modules that fail to print", () => {
+  // A TOML dotted header builds an object nested arbitrarily deep without
+  // recursing in the parser, so the printer's recursion guard is the first
+  // thing to hit it. The build must fail instead of emitting truncated
+  // output with exit code 0.
+  const deepToml = "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n";
+
+  test("bun build fails instead of emitting a truncated bundle", async () => {
+    using dir = tempDir("build-deep-toml", { "deep.toml": deepToml });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "deep.toml"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Maximum call stack size exceeded while generating code for this file");
+    expect(stderr).toContain("deep.toml");
+    // No partial bundle: the printer used to bail mid-print and emit only
+    // the trailing export stub.
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun build --no-bundle fails instead of emitting empty output", async () => {
+    using dir = tempDir("build-deep-toml-nb", { "deep.toml": deepToml });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "deep.toml"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Maximum call stack size exceeded while generating code for "');
+    expect(stderr).toContain("deep.toml");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun build fails instead of emitting a truncated stylesheet when CSS cannot be generated", async () => {
+    // `composes` on a non-simple selector makes the CSS printer fail; the
+    // whole stylesheet body used to be dropped while the build exited 0.
+    using dir = tempDir("build-css-print-err", {
+      "styles.module.css": ".b { color: blue }\n.a .c { composes: b; color: red }\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "styles.module.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Failed to generate CSS for this file");
+    expect(stderr).toContain("styles.module.css");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });

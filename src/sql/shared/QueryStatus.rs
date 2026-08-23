@@ -14,9 +14,3 @@ pub enum Status {
     /// The query failed
     Fail,
 }
-
-impl Status {
-    pub fn is_running(self) -> bool {
-        (self as u8) > (Status::Pending as u8) && (self as u8) < (Status::Success as u8)
-    }
-}

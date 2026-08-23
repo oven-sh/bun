@@ -8,7 +8,7 @@ use bun_core::String as BunString;
 use bun_paths::strings;
 use bun_url::URL as ZigURL;
 
-use crate::schema_api as api;
+use crate::exception_list;
 use crate::{ZigStackFrameCode, ZigStackFramePosition};
 
 /// Represents a single frame in a stack trace
@@ -37,43 +37,32 @@ impl ZigStackFrame {
     /// the array elements are then later dropped by Rust when `Holder` itself
     /// drops. A `Drop` impl would deref the same `WTF::StringImpl` a second
     /// time (UAF). Explicit `deinit` only.
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         self.function_name.deref();
         self.source_url.deref();
     }
 
-    pub fn to_api(
+    pub(crate) fn snapshot(
         &self,
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
-    ) -> Result<api::StackFrame, bun_alloc::AllocError> {
-        let mut frame: api::StackFrame = api::StackFrame::default();
-        if !self.function_name.is_empty() {
-            let slicer = self.function_name.to_utf8();
-            // TODO: Memory leak? `frame.function_name` may have just been allocated by this
-            // function, but it doesn't seem like we ever free it. Changing to `toUTF8Owned` would
-            // make the ownership clearer, but would also make the memory leak worse without an
-            // additional free.
-            frame.function_name = Box::<[u8]>::from(slicer.slice());
-        }
-
+    ) -> exception_list::StackFrame {
+        let mut file = Vec::<u8>::new();
         if !self.source_url.is_empty() {
-            let mut buf = Vec::<u8>::new();
             write!(
-                &mut buf,
+                &mut file,
                 "{}",
-                self.source_url_formatter(root_path, origin, true, false)
+                self.source_url_formatter(root_path, origin, LineColumn::Exclude, false)
             )
             .expect("Vec<u8> write is infallible");
-            frame.file = buf.into_boxed_slice();
         }
 
-        frame.position = self.position;
-        // api::StackFrameScope is a #[repr(transparent)] u8 newtype with the same
-        // discriminants as ZigStackFrameCode.
-        frame.scope = api::StackFrameScope(self.code_type.0);
-
-        Ok(frame)
+        exception_list::StackFrame {
+            function_name: Box::from(self.function_name.to_utf8().slice()),
+            file: file.into_boxed_slice(),
+            position: self.position,
+            code_type: self.code_type,
+        }
     }
 
     pub const ZERO: ZigStackFrame = ZigStackFrame {
@@ -86,6 +75,23 @@ impl ZigStackFrame {
         jsc_stack_frame_index: -1,
     };
 
+    /// The frame's source as a report that lists files relative to `dir` (the JUnit
+    /// reporter, the GitHub Actions annotation) prints it.
+    ///
+    /// Only an absolute path is made relative. A source URL that is not a path (a
+    /// `data:` or `blob:` URL, `node:fs`, the name from a `//# sourceURL=` comment)
+    /// is printed as-is, like [`SourceURLFormatter`] prints it. `relative` normalizes
+    /// its operands in fixed path buffers, so a source URL that is too long to be a
+    /// path is printed as-is too.
+    ///
+    /// The relative form lives in `relative`'s thread-local buffer until the next call.
+    pub fn relative_source_url<'a>(dir: &[u8], source_url: &'a [u8]) -> &'a [u8] {
+        if !bun_paths::is_absolute(source_url) || source_url.len() >= bun_paths::MAX_PATH_BYTES {
+            return source_url;
+        }
+        bun_paths::resolve_path::relative(dir, source_url)
+    }
+
     pub fn name_formatter(&self, enable_color: bool) -> NameFormatter {
         NameFormatter {
             function_name: self.function_name,
@@ -95,16 +101,16 @@ impl ZigStackFrame {
         }
     }
 
-    pub fn source_url_formatter<'a>(
+    pub(crate) fn source_url_formatter<'a>(
         &self,
         root_path: &'a [u8],
         origin: Option<&'a ZigURL<'a>>,
-        exclude_line_column: bool,
+        line_column: LineColumn,
         enable_color: bool,
     ) -> SourceURLFormatter<'a> {
         SourceURLFormatter {
             source_url: self.source_url,
-            exclude_line_column,
+            line_column,
             origin,
             root_path,
             position: self.position,
@@ -114,14 +120,21 @@ impl ZigStackFrame {
     }
 }
 
+/// Whether [`SourceURLFormatter`] appends the frame's `:line:column` to the source URL.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum LineColumn {
+    Include,
+    Exclude,
+}
+
 pub struct SourceURLFormatter<'a> {
-    pub source_url: BunString,
-    pub position: ZigStackFramePosition,
-    pub enable_color: bool,
-    pub origin: Option<&'a ZigURL<'a>>,
-    pub exclude_line_column: bool,
-    pub remapped: bool,
-    pub root_path: &'a [u8],
+    pub(crate) source_url: BunString,
+    pub(crate) position: ZigStackFramePosition,
+    pub(crate) enable_color: bool,
+    pub(crate) origin: Option<&'a ZigURL<'a>>,
+    pub(crate) line_column: LineColumn,
+    pub(crate) remapped: bool,
+    pub(crate) root_path: &'a [u8],
 }
 
 impl<'a> fmt::Display for SourceURLFormatter<'a> {
@@ -175,7 +188,8 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             }
         }
 
-        if !source_slice.is_empty()
+        if self.line_column == LineColumn::Include
+            && !source_slice.is_empty()
             && (self.position.line.is_valid() || self.position.column.is_valid())
         {
             if self.enable_color {
@@ -189,7 +203,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             f.write_str(Output::pretty_fmt!("<r>", true))?;
         }
 
-        if !self.exclude_line_column {
+        if self.line_column == LineColumn::Include {
             if self.position.line.is_valid() && self.position.column.is_valid() {
                 if self.enable_color {
                     write!(
@@ -224,10 +238,10 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
 }
 
 pub struct NameFormatter {
-    pub function_name: BunString,
-    pub code_type: ZigStackFrameCode,
-    pub enable_color: bool,
-    pub is_async: bool,
+    pub(crate) function_name: BunString,
+    pub(crate) code_type: ZigStackFrameCode,
+    pub(crate) enable_color: bool,
+    pub(crate) is_async: bool,
 }
 
 impl fmt::Display for NameFormatter {

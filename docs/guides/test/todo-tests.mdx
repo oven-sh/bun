@@ -4,18 +4,18 @@ sidebarTitle: Todo tests
 mode: center
 ---
 
-To remind yourself to write a test later, use the `test.todo` function. There's no need to provide a test implementation.
+To remind yourself to write a test later, use the `test.todo` function. An implementation isn't required.
 
-```ts test.ts icon="/icons/typescript.svg"
-import { test, expect } from "bun:test";
+```ts test.test.ts icon="/icons/typescript.svg"
+import { test } from "bun:test";
 
 // write this later
-test.todo("unimplemented feature");
+test.todo("parses durations like 1h30m");
 ```
 
 ---
 
-The output of `bun test` indicates how many `todo` tests were encountered.
+The `bun test` output reports the number of `todo` tests.
 
 ```sh terminal icon="terminal"
 bun test
@@ -23,45 +23,71 @@ bun test
 
 ```txt
 test.test.ts:
-✓ add [0.03ms]
-✓ multiply [0.02ms]
-✎ unimplemented feature
+✎ parses durations like 1h30m
 
- 2 pass
+ 0 pass
  1 todo
  0 fail
- 2 expect() calls
-Ran 3 tests across 1 files. [74.00ms]
+Ran 1 test across 1 file. [6.00ms]
 ```
 
 ---
 
-Optionally, you can provide a test implementation.
+You can also write the test before the code it tests exists. Here `parseDuration` is still a stub, and the todo test records what it should eventually do. `bun test` reports this test as `todo` too, without running its body.
 
-```ts
+```ts test.test.ts icon="/icons/typescript.svg"
 import { test, expect } from "bun:test";
 
-test.todo("unimplemented feature", () => {
-  expect(Bun.isAwesome()).toBe(true);
+// Not written yet; the todo test below says what it should do.
+function parseDuration(input: string): number {
+  throw new Error("not implemented");
+}
+
+test.todo("parses durations like 1h30m", () => {
+  expect(parseDuration("1h30m")).toBe(5400);
 });
 ```
 
 ---
 
-If an implementation is provided, it will not be run unless the `--todo` flag is passed. If the `--todo` flag is passed, the test will be executed and _expected to fail_ by test runner! If a todo test passes, the `bun test` run will return a non-zero exit code to signal the failure.
+Pass `--todo` to run the bodies of todo tests. A todo test is _expected to fail_: while `parseDuration` is unimplemented, Bun prints the error, still counts the test as `todo`, and exits with code `0`.
 
 ```sh terminal icon="terminal"
 bun test --todo
 ```
 
 ```txt
-my.test.ts:
-✗ unimplemented feature
-  ^ this test is marked as todo but passes. Remove `.todo` or check that test is correct.
+test.test.ts:
+1 | import { test, expect } from "bun:test";
+2 |
+3 | // Not written yet; the todo test below says what it should do.
+4 | function parseDuration(input: string): number {
+5 |   throw new Error("not implemented");
+                                       ^
+error: not implemented
+      at parseDuration (/path/to/test.test.ts:5:36)
+      at <anonymous> (/path/to/test.test.ts:9:10)
+✎ parses durations like 1h30m [0.16ms]
+
+ 0 pass
+ 1 todo
+ 0 fail
+Ran 1 test across 1 file. [5.00ms]
+```
+
+---
+
+Once you implement `parseDuration` and the body passes, `bun test --todo` reports the test as a failure and exits with a non-zero code. That is the signal to remove `.todo` and turn it into a regular test.
+
+```txt
+test.test.ts:
+✗ parses durations like 1h30m [0.19ms]
+  ^ this test is marked as todo but passes. Remove `.todo` if tested behavior now works
 
  0 pass
  1 fail
  1 expect() calls
+Ran 1 test across 1 file. [5.00ms]
 $ echo $?
 1 # this is the exit code of the previous command
 ```
@@ -71,4 +97,4 @@ $ echo $?
 See also:
 
 - [Skip a test](/guides/test/skip-tests)
-- [Docs > Test runner > Writing tests](/test/writing-tests)
+- [Writing tests](/test/writing-tests)

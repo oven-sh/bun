@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
@@ -35,14 +36,15 @@ pub struct Capture {
     // BACKREF: raw pointer to a capture buffer owned by the shell interpreter.
     // The shell keeps the buffer alive for the lifetime
     // of the spawned process; this struct never frees it.
-    pub buf: *mut Vec<u8>,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) buf: *mut Vec<u8>,
 }
 
 /// Payload of `Stdio::Dup2`.
 #[derive(Clone, Copy)]
 pub struct Dup2 {
     pub out: StdioKind,
-    pub to: StdioKind,
+    pub(crate) to: StdioKind,
 }
 
 // Constructed/matched in many other files (subprocess, shell); boxing `Blob`
@@ -59,43 +61,49 @@ pub enum Stdio {
     ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Memfd(Fd),
     Pipe,
+    /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
+    /// stored as `ExtraPipe::UnownedFd` so `Subprocess::finalize_streams`
+    /// never closes it; the caller reads the fd from `.stdio[i]` and is
+    /// responsible for closing it. Used by `node:child_process` which wraps
+    /// extra `"pipe"` slots in `net.connect({fd})` (usockets then owns the
+    /// fd). Only valid at indices >= 3.
+    SocketFd,
     Ipc,
     ReadableStream(webcore::ReadableStream),
 }
 
 // These live at module scope and callers reference them as `stdio::Result` etc.
 
-pub enum ResultT<T> {
+pub(crate) enum ResultT<T> {
     Result(T),
     Err(ToSpawnOptsError),
 }
 
-pub type Result = ResultT<SpawnOptionsStdio>;
+pub(crate) type Result = ResultT<SpawnOptionsStdio>;
 
-pub enum ToSpawnOptsError {
+pub(crate) enum ToSpawnOptsError {
     StdinUsedAsOut,
     OutUsedAsStdin,
     BlobUsedAsOut,
-    UvPipe(sys::E),
 }
 
 impl ToSpawnOptsError {
-    pub fn to_str(&self) -> &'static [u8] {
+    pub(crate) fn to_str(&self) -> &'static [u8] {
         match self {
             Self::StdinUsedAsOut => b"Stdin cannot be used for stdout or stderr",
             Self::OutUsedAsStdin => b"Stdout and stderr cannot be used for stdin",
             Self::BlobUsedAsOut => b"Blobs are immutable, and cannot be used for stdout/stderr",
-            Self::UvPipe(_) => panic!("TODO"),
         }
     }
 
-    pub fn throw_js(&self, global: &JSGlobalObject) -> jsc::JsError {
+    pub(crate) fn throw_js(&self, global: &JSGlobalObject) -> jsc::JsError {
         global.throw(format_args!("{}", bstr::BStr::new(self.to_str())))
     }
 }
 
 impl Stdio {
-    pub fn byte_slice(&self) -> &[u8] {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn byte_slice(&self) -> &[u8] {
         match self {
             // SAFETY: `buf` is a live backref owned by the caller (shell); the
             // returned slice borrows `self` and the caller guarantees the
@@ -107,10 +115,9 @@ impl Stdio {
         }
     }
 
-    pub fn can_use_memfd(&self, is_sync: bool, has_max_buffer: bool) -> bool {
+    pub(crate) fn can_use_memfd(&self) -> bool {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let _ = (is_sync, has_max_buffer);
             return false;
         }
 
@@ -118,12 +125,13 @@ impl Stdio {
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) | Self::ArrayBuffer(_) => true,
-            Self::Pipe => is_sync && !has_max_buffer,
+            // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
+            // grandchild still writing after the child exits would be lost.
             _ => false,
         }
     }
 
-    pub fn use_memfd(&mut self, index: u32) -> bool {
+    pub(crate) fn use_memfd(&mut self, index: u32) -> bool {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = index;
@@ -194,7 +202,7 @@ impl Stdio {
         }
     }
 
-    pub fn to_sync(&mut self, i: u32) {
+    pub(crate) fn to_sync(&mut self, i: u32) {
         // Piping an empty stdin doesn't make sense
         if i == 0 && matches!(self, Self::Pipe) {
             *self = Self::Ignore;
@@ -204,7 +212,7 @@ impl Stdio {
     /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
     /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
     /// via `heap::take`) or free it with `close_and_destroy`.
-    pub fn as_spawn_option(&mut self, i: i32) -> Result {
+    pub(crate) fn as_spawn_option(&mut self, i: i32) -> Result {
         // `SpawnOptionsStdio` is already a cfg-gated alias to PosixStdio /
         // WindowsStdio; only three variant *constructors* differ in arity
         // between targets, so spell those per-cfg and share the rest.
@@ -227,13 +235,13 @@ impl Stdio {
 
         let result = match self {
             Self::Blob(blob) => 'brk: {
-                let fd = FdStdio::from_int(i).unwrap().fd();
+                let fd = FdStdio::from_int(i).map(FdStdio::fd);
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
                         if let StoreData::File(ref file) = store.data {
                             match file.pathlike {
                                 PathOrFileDescriptor::Fd(store_fd) => {
-                                    if store_fd == fd {
+                                    if Some(store_fd) == fd {
                                         break 'brk SpawnOptionsStdio::Inherit;
                                     }
 
@@ -281,6 +289,12 @@ impl Stdio {
             Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
                 buffer()
             }
+            #[cfg(not(windows))]
+            Self::SocketFd => SpawnOptionsStdio::SocketFd,
+            // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
+            // to transfer), so `socket-fd` behaves identically to `pipe` there.
+            #[cfg(windows)]
+            Self::SocketFd => buffer(),
             Self::Ipc => ipc(),
             Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
             #[cfg(not(windows))]
@@ -296,7 +310,7 @@ impl Stdio {
         ResultT::Result(result)
     }
 
-    pub fn is_piped(&self) -> bool {
+    pub(crate) fn is_piped(&self) -> bool {
         match self {
             Self::Capture(_)
             | Self::ArrayBuffer(_)
@@ -306,6 +320,10 @@ impl Stdio {
             Self::Ipc => cfg!(windows),
             _ => false,
         }
+    }
+
+    pub fn borrows_caller_fd(&self) -> bool {
+        matches!(self, Self::Fd(_))
     }
 
     fn extract_body_value(
@@ -361,7 +379,11 @@ impl Stdio {
                             "ReadableStream cannot be used for stderr yet. For now, do .stderr"
                         )));
                     }
-                    _ => unreachable!(),
+                    _ => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "ReadableStream cannot be used for stdio[{i}] yet"
+                        )));
+                    }
                 }
 
                 let stream_value = body.to_readable_stream(global)?;
@@ -387,7 +409,7 @@ impl Stdio {
         Ok(())
     }
 
-    pub fn extract(
+    pub(crate) fn extract(
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,
         i: i32,
@@ -413,6 +435,20 @@ impl Stdio {
                 *out_stdio = Stdio::Ignore;
             } else if str.eql_comptime(b"pipe") || str.eql_comptime(b"overlapped") {
                 *out_stdio = Stdio::Pipe;
+            } else if str.eql_comptime(b"socket-fd") {
+                if i < 3 {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "stdio: 'socket-fd' is only supported at indices >= 3"
+                    )));
+                }
+                if is_sync {
+                    // Bun.spawnSync's result has no .stdio, so the caller
+                    // could never receive the fd it's supposed to own.
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "stdio: 'socket-fd' cannot be used with spawnSync"
+                    )));
+                }
+                *out_stdio = Stdio::SocketFd;
             } else if str.eql_comptime(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
@@ -491,7 +527,11 @@ impl Stdio {
                 0 => b"stdin",
                 1 => b"stdout",
                 2 => b"stderr",
-                _ => unreachable!(),
+                _ => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "ReadableStream cannot be used for stdio[{i}] yet"
+                    )));
+                }
             };
 
             if is_sync {
@@ -523,6 +563,12 @@ impl Stdio {
                 return Ok(());
             }
 
+            if i == 1 || i == 2 {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "ArrayBufferView cannot be used for stdout/stderr yet"
+                )));
+            }
+
             let copied_value =
                 jsc::array_buffer::ArrayBuffer::create_buffer(global, array_buffer.byte_slice())?;
             let copied = copied_value
@@ -540,20 +586,20 @@ impl Stdio {
         )))
     }
 
-    pub fn extract_blob(
+    pub(crate) fn extract_blob(
         &mut self,
         global: &JSGlobalObject,
         blob: webcore::blob::Any,
         i: i32,
     ) -> JsResult<()> {
-        let fd = FdStdio::from_int(i).unwrap().fd();
+        let fd = FdStdio::from_int(i).map(FdStdio::fd);
 
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {
                     match file.pathlike {
                         PathOrFileDescriptor::Fd(store_fd) => {
-                            if store_fd == fd {
+                            if Some(store_fd) == fd {
                                 *self = Stdio::Inherit;
                             } else {
                                 // TODO: is this supposed to be `store.data.file.pathlike.fd`?
@@ -600,10 +646,18 @@ impl Stdio {
             )));
         }
 
-        // Instead of writing an empty blob, lets just make it /dev/null
+        // Nothing to write: treat an empty blob the same as "ignore"
+        // (/dev/null at fds 0-2, left closed at extra slots).
         if blob.fast_size() == 0 {
             *self = Stdio::Ignore;
             return Ok(());
+        }
+
+        if i != 0 {
+            // The parent-side writer that pumps Blob bytes into the child's
+            // pipe (`Writable::Buffer` / memfd) is only wired up for stdin.
+            return Err(global
+                .throw_invalid_arguments(format_args!("Blob cannot be used for stdio[{i}] yet")));
         }
 
         *self = Stdio::Blob(blob);

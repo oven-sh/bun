@@ -21,7 +21,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
-    pub fn apply_repl_transforms<'bump>(
+    pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
@@ -37,12 +37,30 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             total_stmts_count += part.stmts.len();
         }
 
+        // A prologue "use strict" was consumed into module-scope strict mode and dropped, but
+        // node's repl still evaluates the directive as a string expression. Reinject it at the
+        // front, like the CJS wrapper's preserve_strict_mode.
+        let reinject_strict = self.module_scope().strict_mode
+            == js_ast::StrictModeKind::ExplicitStrictMode
+            && !(!parts.is_empty()
+                && !parts[0].stmts.is_empty()
+                && matches!(parts[0].stmts[0].data, StmtData::SDirective(_)));
+        total_stmts_count += usize::from(reinject_strict);
+
         if total_stmts_count == 0 {
             return Ok(());
         }
 
         // Collect all statements into a single array
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
+        if reinject_strict {
+            all_stmts.push(self.s(
+                S::Directive {
+                    value: b"use strict".into(),
+                },
+                self.module_scope_directive_loc,
+            ));
+        }
         for part in parts.iter() {
             for stmt in part.stmts.iter() {
                 all_stmts.push(*stmt);
@@ -133,7 +151,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Hoist as: var funcName;
                     // Inner: this.funcName = funcName; function funcName() {}
                     if let Some(name_loc) = func.func.name {
-                        let name_ref = name_loc.ref_.expect("infallible: ref bound");
+                        let name_ref = name_loc.ref_;
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -198,7 +216,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Hoist as: var ClassName; (use var so it persists to vm context)
                     // Inner: ClassName = class ClassName {}
                     if let Some(name_loc) = class.class.class_name {
-                        let name_ref = name_loc.ref_.expect("infallible: ref bound");
+                        let name_ref = name_loc.ref_;
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -276,7 +294,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
                     let import_items: &[bun_ast::ClauseItem] = import_data.items.slice();
 
-                    if import_data.star_name_loc.is_some() {
+                    if !import_data.star_name_loc.is_empty() {
                         // import * as X from 'mod' -> var X = await import('mod')
                         hoisted_stmts.push(self.s(
                             S::Local {
@@ -320,7 +338,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     } else if let Some(default_name) = import_data.default_name {
                         // import X from 'mod' -> var X = (await import('mod')).default
                         // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
-                        let default_ref = default_name.ref_.expect("infallible: ref bound");
+                        let default_ref = default_name.ref_;
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -507,8 +525,15 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         ));
         let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
-        // Update parts
-        if !parts.is_empty() {
+        // Update parts. Input consisting solely of a consumed "use strict"
+        // prologue arrives with no parts at all — create one so the
+        // reinjected directive's IIFE isn't dropped.
+        if parts.is_empty() {
+            parts.push(js_ast::Part {
+                stmts: bun_ast::StoreSlice::new_mut(final_slice),
+                ..Default::default()
+            });
+        } else {
             parts[0].stmts = bun_ast::StoreSlice::new_mut(final_slice);
             parts.truncate(1);
         }
@@ -574,7 +599,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
         // For each named import: var name; name = __ns.originalName;
         for item in import_items.iter() {
-            let item_ref = item.name.ref_.expect("infallible: ref bound");
+            let item_ref = item.name.ref_;
             hoisted_stmts.push(self.s(
                 S::Local {
                     kind: S::Kind::KVar,

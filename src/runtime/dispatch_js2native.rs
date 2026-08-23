@@ -1,7 +1,7 @@
 //! `crate::dispatch::js2native` — flat re-export landing pad for the
-//! `JS2Zig__*` thunks emitted into `generated_js2native.rs`.
+//! `JS2Rust__*` thunks emitted into `generated_js2native.rs`.
 //!
-//! `src/codegen/generate-js2native.ts::rustTarget()` routes every `$zig(...)`
+//! `src/codegen/generate-js2native.ts::rustTarget()` routes every `$rust(...)`
 //! call site whose source file lives **outside** `src/runtime/` through
 //! `crate::dispatch::js2native::<mangled>` instead of the file's own crate
 //! path. `bun_runtime` is the highest-tier crate (already depends on every
@@ -20,10 +20,8 @@ pub use bun_sql_jsc::mysql::create_binding as sql_jsc_mysql_create_binding;
 pub use bun_sql_jsc::postgres::create_binding as sql_jsc_postgres_create_binding;
 
 // The real body already lives in this crate.
-pub use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
+pub(crate) use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
 
-pub use bun_install_jsc::dependency_jsc::dependency_from_js as install_dependency_from_js;
-pub use bun_install_jsc::dependency_jsc::tag_infer_from_js as install_dependency_version_tag_infer_from_js;
 pub use bun_install_jsc::hosted_git_info_jsc::js_from_url as install_hosted_git_info_testing_ap_is_js_from_url;
 pub use bun_install_jsc::hosted_git_info_jsc::js_parse_url as install_hosted_git_info_testing_ap_is_js_parse_url;
 pub use bun_install_jsc::install_binding::bun_install_js_bindings::generate as install_jsc_install_binding_bun_install_js_bindings_generate;
@@ -40,9 +38,6 @@ pub use bun_jsc::bindgen_test::get_bindgen_test_functions as jsc_bindgen_test_ge
 pub use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
 pub use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks;
 pub use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting as jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing;
-// `emit_handle_ipc_message` is implemented in this crate (`ipc_host.rs`)
-// because it dereferences `Subprocess`, a runtime type.
-pub use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_message;
 
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_escape_reg_exp;
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
@@ -58,6 +53,7 @@ pub use bun_sourcemap_jsc::internal_jsc::testing_to_vlq as sourcemap_internal_so
 
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sigaction_layout as sys_sys_testing_ap_is_sigaction_layout;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sys_error_name_from_libuv as sys_error_testing_ap_is_sys_error_name_from_libuv;
+pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_nt_status_to_e as sys_sys_testing_ap_is_translate_nt_status_to_e;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_testing_ap_is_translate_uv_error_to_e;
 
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
@@ -94,6 +90,6 @@ pub use css::test_with_options as css_jsc_css_internals_test_with_options;
 // `LinearFifo` has no JSC consumer of its own; this `bun:internal-for-testing`
 // probe lives in `bun_runtime` (which depends on both `bun_collections` and
 // `bun_jsc`) rather than inventing a JSC edge into the collections crate.
-pub use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
+pub(crate) use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
 
 // ported from: generated_js2native.rs

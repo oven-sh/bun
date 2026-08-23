@@ -102,11 +102,21 @@ pub(super) trait RequestCtx<const SSL: bool, const DEBUG: bool>:
     fn should_render_missing(&self) -> bool;
     fn render_missing(&self);
     fn to_async(&self, req: &mut Self::Req, request_object: &Request);
-    /// `to_async`, or just its abort-handler arming when the `Request` is gone.
-    fn arm_async(&self, req: &mut Self::Req, request: &crate::webcore::request::WeakRef) {
-        match request.peek() {
+    /// The heap `Request`, while the context still holds it.
+    fn request(&self) -> Option<&Request>;
+    /// `to_async` (which also detaches the stack request), or just its
+    /// abort-handler arming when the `Request` is gone.
+    fn arm_async(&self, req: &mut Self::Req) {
+        match self.request() {
             Some(request) => self.to_async(req, request),
             None => self.set_abort_handler(),
+        }
+    }
+    /// Detach the borrowed stack request from the heap `Request` so the JS
+    /// object never dangles a pointer past the uWS frame it borrowed.
+    fn detach_uws_request(&self) {
+        if let Some(request) = self.request() {
+            request.request_context.get().detach_request();
         }
     }
     fn set_abort_handler(&self);
@@ -185,6 +195,10 @@ macro_rules! impl_request_ctx {
             #[inline]
             fn to_async(&self, req: &mut Self::Req, ro: &Request) {
                 Self::to_async(self, std::ptr::from_mut(req).cast(), ro)
+            }
+            #[inline]
+            fn request(&self) -> Option<&Request> {
+                self.request_weakref.get().peek()
             }
             #[inline]
             fn set_abort_handler(&self) {
@@ -2753,9 +2767,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         response_value: JSValue,
     ) {
         let ctx = prepared.ctx.get();
-        // uWS request will not live longer than this function
-        let _detach_guard = super::DetachRequestOnDrop(&prepared.request);
-
+        // The uWS request will not live longer than this function: on every
+        // exit below it is detached from the `Request`.
         ctx.on_response(self, prepared.js_request, response_value);
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
@@ -2763,18 +2776,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx.set_defer_deinit(None);
 
         if should_deinit_context.get() {
+            ctx.detach_uws_request();
             ctx.deinit();
             return;
         }
 
         if ctx.should_render_missing() {
+            ctx.detach_uws_request();
             ctx.render_missing();
             return;
         }
 
         // The request is asynchronous, and all information from `req` must be copied
         // since the provided uws.Request will be re-used for future requests (stack allocated).
-        ctx.arm_async(req, &prepared.request);
+        ctx.arm_async(req);
         prepared.js_request.ensure_still_alive();
     }
 
@@ -2900,7 +2915,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             expects_body,
         );
         let ctx: &Ctx = prepared.ctx.get();
-        let Some(request_object) = prepared.request() else {
+        let Some(request_object) = ctx.request() else {
             unreachable!("just created");
         };
 
@@ -3053,11 +3068,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Some(signal.ref_()),
                 body_hive,
             )));
-        let request = request_weak.clone();
         ctx.set_request_weakref(request_weak);
         PreparedRequestFor {
             js_request: JSValue::ZERO,
-            request,
             request_ptr,
             ctx: ctx_ref,
         }
@@ -3159,7 +3172,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let ctx = prepared.ctx.get();
         ctx.upgrade_context
             .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
-        let Some(request_object) = prepared.request() else {
+        let Some(request_object) = ctx.request_weakref.get().peek() else {
             unreachable!("just created");
         };
 
@@ -3173,24 +3186,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
-        // uWS request will not live longer than this function
-        let _detach_guard = super::DetachRequestOnDrop(&prepared.request);
-
+        // The uWS request will not live longer than this function: on every
+        // exit below it is detached from the `Request`.
         ctx.on_response(server, args[0], response_value);
 
         ctx.defer_deinit_until_callback_completes.set(None);
 
         if should_deinit_context.get() {
+            RequestCtx::detach_uws_request(ctx);
             ctx.deinit();
             return;
         }
 
         if ctx.should_render_missing() {
+            RequestCtx::detach_uws_request(ctx);
             ctx.render_missing();
             return;
         }
 
-        ctx.arm_async(req, &prepared.request);
+        ctx.arm_async(req);
         args[0].ensure_still_alive();
     }
 

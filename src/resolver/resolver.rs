@@ -2821,16 +2821,11 @@ impl<'a> Resolver<'a> {
 
                 match dir_info.get_parent() {
                     Some(p) => {
-                        // A module inside the isolated linker's global virtual
-                        // store realpaths into `<cache>/links/<entry>/`, so
-                        // the walk is about to leave the entry for the shared
-                        // cache and would never see the project's hidden
-                        // hoisted layer (`node_modules/.bun/node_modules`).
-                        // Jump to that layer instead, exactly where a
-                        // project-local entry's walk would reach it, so
-                        // packages the project installs stay resolvable and
-                        // the cache's own ancestors are never consulted
-                        // before the project.
+                        // Leaving a global-store entry for the shared cache:
+                        // jump to the project's hidden hoisted layer instead,
+                        // the directory a project-local entry's walk reaches
+                        // next, so packages the project installs stay
+                        // resolvable from the store.
                         if !tried_store_fallback
                             && is_global_store_entry_dir(dir_info.abs_path, p.abs_path)
                         {
@@ -3344,16 +3339,12 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    /// The isolated linker's hidden hoisted layer for the project this
-    /// process runs in: the `node_modules/.bun` directory (it holds the
-    /// fallback at `node_modules/.bun/node_modules`) of the nearest ancestor
-    /// of `top_level_dir`, including `top_level_dir` itself, whose store
-    /// links `entry_dir`. A global-store entry is shared, so the hoisted
-    /// layer of a project that does not link it must not answer for it.
+    /// The `node_modules/.bun` directory of the nearest ancestor of
+    /// `top_level_dir` whose store links `entry_dir`. The link check keeps a
+    /// project that does not use the shared entry from answering for it.
     fn store_hoisted_fallback_dir_info(&mut self, entry_dir: &[u8]) -> Option<DirInfoRef> {
         let entry_name = bun_paths::basename(entry_dir);
-        // Strip the `-<16 hex entry hash>` suffix to get the store key, the
-        // name of the project-side `node_modules/.bun/<store key>` symlink.
+        // The project-side link is named without the `-<16 hex>` hash suffix.
         let store_key = &entry_name[..entry_name.len().checked_sub(17)?];
 
         let mut dir: &[u8] = self.fs_ref().top_level_dir;
@@ -6824,22 +6815,17 @@ fn is_dot_slash(path: &[u8]) -> bool {
     }
 }
 
-/// Whether `dir`, whose parent is `parent_dir`, is an entry of the isolated
-/// linker's global virtual store: `<cache>/links/<entry>`. The project's
-/// `node_modules/.bun/<store key>` symlinks point there, so a module's
-/// realpath escapes the project. The resolver cannot ask `bun_install` for
-/// the configured cache directory (that would be a dependency cycle), so it
-/// recognizes the layout structurally.
+/// Is `dir` (with parent `parent_dir`) a global virtual store entry,
+/// `<cache>/links/<entry>`? Recognized structurally: the resolver cannot ask
+/// `bun_install` for the cache directory (dependency cycle).
 fn is_global_store_entry_dir(dir: &[u8], parent_dir: &[u8]) -> bool {
     bun_paths::basename(parent_dir) == b"links"
         && is_global_store_entry_name(bun_paths::basename(dir))
 }
 
-/// Whether `dir` is a project root whose store links the global entry
-/// `entry_name`: `<dir>/node_modules/.bun/<store_key>` is a link whose
-/// target's last component is `entry_name`. The entry hash in the name pins
-/// the resolved dependency closure, so a matching link from another cache
-/// still names identical content.
+/// Does `<dir>/node_modules/.bun/<store_key>` link a target whose last
+/// component is `entry_name`? The hash in `entry_name` pins the dependency
+/// closure, so a match from another cache names identical content.
 fn project_store_links_entry(dir: &[u8], store_key: &[u8], entry_name: &[u8]) -> bool {
     use bun_core::ZStr;
     use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};

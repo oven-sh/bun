@@ -1,13 +1,12 @@
 // TODO:
 // - Write tests for errors
 // - Write tests for Promise
-// - Write tests for Promise rejection
-// - Write tests for pending promise when a module already exists
 // - Write test for export * from
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -212,4 +211,121 @@ test("onResolve plugin errors surface from mock.module; an unresolvable specifie
   } finally {
     Bun.plugin.clearAll();
   }
+});
+
+// A pending factory promise is only reachable when the module is already in the
+// registry, and the failure mode when it regresses is a spinning hang rather than a
+// failed assertion — so these run out of process behind a kill deadline instead of
+// hanging this file.
+// Must fire before the per-test timeout below, so a regression fails the `hung`
+// assertion rather than timing out and orphaning a spinning subprocess. Debug and
+// ASAN builds spawn far slower than release, so the bound scales with them.
+const HANG_DEADLINE_MS = isASAN ? 60_000 : isDebug ? 30_000 : 10_000;
+const TEST_TIMEOUT_MS = HANG_DEADLINE_MS + 15_000;
+
+async function runMockFile(files: Record<string, string>, entry: string) {
+  using dir = tempDir("mock-module-pending", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", entry],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  let hung = false;
+  const deadline = setTimeout(() => {
+    hung = true;
+    proc.kill(9);
+  }, HANG_DEADLINE_MS);
+  try {
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr: normalizeBunSnapshot(stderr, dir), exitCode, hung };
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+test.concurrent(
+  "a factory promise still pending on return patches an already-imported module",
+  async () => {
+    const { stderr, exitCode, hung } = await runMockFile(
+      {
+        "moduleA.ts": `export function a() { return "real-a"; }`,
+        "pending.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        mock.module("./moduleA", async () => {
+          await Promise.resolve();
+          return { a: () => "mocked-a" };
+        });
+        import { a } from "./moduleA";
+        test("patched", () => { expect(a()).toBe("mocked-a"); });
+      `,
+      },
+      "pending.test.ts",
+    );
+    expect(hung).toBe(false);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test.concurrent(
+  "a factory awaiting a dynamic import patches an already-imported module",
+  async () => {
+    const { stderr, exitCode, hung } = await runMockFile(
+      {
+        "moduleA.ts": `export function a() { return "real-a"; }`,
+        "partial.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        mock.module("./moduleA", () =>
+          (async () => {
+            const real = await import("./moduleA?actual");
+            return { a: mock(() => "mocked-" + real.a()) };
+          })(),
+        );
+        import { a } from "./moduleA";
+        test("partially mocked", () => { expect(a()).toBe("mocked-real-a"); });
+      `,
+      },
+      "partial.test.ts",
+    );
+    expect(hung).toBe(false);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test.concurrent(
+  "a factory promise that rejects asynchronously throws from mock.module",
+  async () => {
+    const { stderr, exitCode, hung } = await runMockFile(
+      {
+        "moduleB.ts": `export const b = 1;`,
+        "rejects.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        mock.module("./moduleB", async () => {
+          await Promise.resolve();
+          throw new Error("factory boom");
+        });
+        import { b } from "./moduleB";
+        test("unreachable", () => { expect(b).toBe(1); });
+      `,
+      },
+      "rejects.test.ts",
+    );
+    expect(hung).toBe(false);
+    expect(stderr).toContain("factory boom");
+    expect(exitCode).not.toBe(0);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test("a factory promise that resolves to a non-object is rejected like the synchronous case", () => {
+  expect(() => mock.module("./mock-module-fixture", async () => 42)).toThrow(
+    "mock(module, fn) requires a function that returns an object",
+  );
 });

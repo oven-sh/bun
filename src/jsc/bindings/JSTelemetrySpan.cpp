@@ -543,7 +543,8 @@ bool telemetrySpanSetAttributes(Zig::GlobalObject* globalObject, JSTelemetrySpan
     }
     MarkedArgumentBuffer args;
     args.append(attributes);
-    JSValue fn = span->getPrototypeDirect().getObject()->get(globalObject, WebCore::builtinNames(vm).setAttributesPublicName());
+    // (the class prototype, not the instance's — that one is user-mutable)
+    JSValue fn = globalObject->JSTelemetrySpanStructure()->storedPrototypeObject()->get(globalObject, WebCore::builtinNames(vm).setAttributesPublicName());
     RETURN_IF_EXCEPTION(scope, false);
     call(globalObject, fn, span, args, "setAttributes"_s);
     RETURN_IF_EXCEPTION(scope, false);

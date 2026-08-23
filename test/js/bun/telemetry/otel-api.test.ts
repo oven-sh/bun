@@ -3,7 +3,13 @@ import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 async function run(script: string) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: import.meta.dir,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   return { stdout, exitCode };
 }
@@ -101,6 +107,40 @@ describe("Bun.otel", () => {
     ]);
     expect([got.s2.kind, got.s2.status]).toEqual([2, { code: 1 }]);
     expect([got.s3.kind, got.s3.status]).toEqual([0, { code: 0 }]);
+  });
+
+  test("a span with its prototype removed still takes attributes through Bun.otel.set (no crash)", async () => {
+    {
+      using span = Bun.otel.span("noproto");
+      Object.setPrototypeOf(span, null);
+      expect(Bun.otel.set(new Proxy({ a: 1 }, {}) as any)).toBe(true);
+      expect(Bun.otel.set("b", 2)).toBe(true);
+    }
+    const [s] = (await collect()).filter(s => s.name === "noproto");
+    expect(s.attributes).toEqual({ a: 1, b: 2 });
+  });
+
+  test("a worker spawned before the main thread enables tracing gets the @opentelemetry/api global once it records", async () => {
+    const { stdout, exitCode } = await run(`
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(\`
+        const { parentPort } = require("node:worker_threads");
+        parentPort.on("message", async () => {
+          Bun.otel.tracer("w").startSpan("first").end(); // first touch: records natively
+          await new Promise(r => setImmediate(r));
+          const { trace } = require("@opentelemetry/api");
+          parentPort.postMessage(trace.getTracer("x").startSpan("y").isRecording());
+        });
+        parentPort.postMessage("ready");
+      \`, { eval: true });
+      await new Promise(r => w.once("message", r));
+      Bun.otel.start({ exporters: [] });
+      w.postMessage("go");
+      console.log(await new Promise(r => w.once("message", r)));
+      await w.terminate();
+    `);
+    expect(stdout.trim()).toBe("true");
+    expect(exitCode).toBe(0);
   });
 
   test("Bun.otel exposes only the public surface", () => {

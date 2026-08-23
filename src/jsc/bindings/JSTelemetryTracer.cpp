@@ -123,7 +123,7 @@ static void callSpanBuiltin(Zig::GlobalObject* globalObject, JSTelemetrySpan* sp
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue fn = span->getPrototypeDirect().getObject()->get(globalObject, name);
+    JSValue fn = globalObject->JSTelemetrySpanStructure()->storedPrototypeObject()->get(globalObject, name);
     RETURN_IF_EXCEPTION(scope, );
     MarkedArgumentBuffer args;
     args.append(arg);

@@ -122,6 +122,22 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
         s.rebind_global(global);
         return s;
     }
+    let s = vm_state_create(global);
+    // A VM that first touches telemetry after another thread configured it
+    // (a worker spawned before main's `start()`): give it the api global too —
+    // on the next tick, since this can be reached from inside an integration.
+    if configured() && !s.api_installed.get() {
+        exporter::post_to_vm(&global.bun_vm().handle(), |_| {
+            if let Some(s) = current_vm_state() {
+                install_api_global(s.global());
+            }
+            Ok(())
+        });
+    }
+    s
+}
+
+fn vm_state_create(global: &JSGlobalObject) -> &'static VmState {
     let s = Box::leak(Box::new(VmState {
         global: Cell::new(core::ptr::from_ref(global)),
         local: RefCell::new(bun_telemetry::Local::new()),

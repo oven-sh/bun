@@ -726,11 +726,15 @@ impl Exporter for JsExporter {
 
 /// Idle hook target: wake the VM that has `forceFlush()` waiters.
 pub(crate) fn post_flush_wake(handle: &VmHandle) {
-    fn run(_: *mut u8) -> JsResult<()> {
+    post_to_vm(handle, |_| {
         super::resolve_flush_waiters();
         Ok(())
-    }
-    let managed = ManagedTask::new(core::ptr::NonNull::<u8>::dangling().as_ptr(), run);
+    });
+}
+
+/// Run `f` on `handle`'s event loop (dropped if that loop is gone).
+pub(crate) fn post_to_vm(handle: &VmHandle, f: fn(*mut u8) -> JsResult<()>) {
+    let managed = ManagedTask::new(core::ptr::NonNull::<u8>::dangling().as_ptr(), f);
     let ct = ConcurrentTask::create(managed);
     if let bun_jsc::Posted::Refused(ct) = handle.post(bun_jsc::LoopKind::Regular, ct) {
         // SAFETY: `ct` was refused unqueued; we still own it.

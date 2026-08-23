@@ -4952,8 +4952,9 @@ pub(crate) mod __gated_printer {
                                                 ) {
                                                     if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                                                         // reshaped for borrowck — bump access first.
-                                                        let str8 =
-                                                            str.string(self.bump).expect("OOM");
+                                                        let str8 = bun_core::handle_oom(
+                                                            str.string(self.bump),
+                                                        );
                                                         if let Some(mi) = self.module_info() {
                                                             let name_id = mi.str(str8);
                                                             mi.add_export_info_local(

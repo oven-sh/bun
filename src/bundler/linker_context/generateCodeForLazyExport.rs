@@ -433,7 +433,7 @@ pub(crate) fn generate_code_for_lazy_export(
                     // across the `&mut self` call to `generate_named_export_in_file` below.
                     let alloc: &bun_alloc::Arena =
                         unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
-                    let name: &[u8] = key_str.flattened(alloc).string(alloc).expect("OOM");
+                    let name: &[u8] = bun_core::handle_oom(key_str.flattened(alloc).string(alloc));
 
                     // TODO: support non-identifier names
                     if !js_lexer::is_identifier(name) {

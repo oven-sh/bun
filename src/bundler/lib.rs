@@ -355,13 +355,14 @@ bun_dispatch::link_interface! {
     }
 }
 impl DevServerHandle {
-    /// The handle for a dev server reached through a dispatch-time `ThisPtr`
-    /// (whose invariant — the pointee stays live for every use through it and
-    /// its copies — is exactly `of`'s).
+    /// The handle for the dev server `owner` points at. The handle is another
+    /// back-reference: whoever stores it takes on `owner`'s holder obligation
+    /// (must be dropped before the pointee).
     #[inline]
-    pub fn from_this<T: DevServerHandleOwner>(this: bun_ptr::ThisPtr<T>) -> Self {
-        // SAFETY: see doc comment.
-        unsafe { Self::of(this.as_ptr()) }
+    pub fn from_owner<T: DevServerHandleOwner>(owner: bun_ptr::BackRef<T, bun_ptr::Root>) -> Self {
+        // SAFETY: `BackRef` invariant — the pointee is live while the handle's
+        // holder (bound by the same obligation) uses it.
+        unsafe { Self::of(owner.this_ptr().as_ptr()) }
     }
 }
 // SAFETY: the handle is `{ kind, owner: *mut () }`; the raw pointer is what

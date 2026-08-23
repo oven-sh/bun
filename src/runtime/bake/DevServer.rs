@@ -278,6 +278,24 @@ pub struct CurrentBundle {
     pub(crate) promise: DeferredPromise,
 }
 
+/// A request to `DevServer::start_async_bundle`.
+pub(crate) struct BundleRequest {
+    pub(crate) entry_points: EntryPointList,
+    pub(crate) had_reload_event: bool,
+    /// When the work that led to this bundle started.
+    pub(crate) timer: Instant,
+}
+
+/// A bundle set up by `start_async_bundle_setup`, before its entry points are
+/// enqueued.
+struct BundleSetup {
+    bv2: Box<BundleV2<'static>>,
+    /// Lives in `heap`; AST nodes built while the entry points are enqueued go
+    /// through it (see `start_async_bundle`).
+    ast_memory_store: &'static mut bun_ast::ASTMemoryAllocator,
+    heap: Box<bun_alloc::MimallocArena>,
+}
+
 pub struct NextBundle {
     /// A list of `RouteBundle`s which have active requests to bundle it.
     pub(crate) route_queue: ArrayHashMap<route_bundle::Index, ()>,
@@ -923,6 +941,9 @@ impl Drop for DevServer {
 
         for request in ::core::mem::take(&mut self.next_bundle.requests) {
             debug_assert!(!matches!(*request.handler.get(), Handler::ServerHandler(_)));
+            // Ends the response, which still had this request as its abort
+            // handler's user-data.
+            request.abort();
             DeferredRequest::release(request);
         }
         self.next_bundle.promise.deinit_idempotently();
@@ -1258,7 +1279,7 @@ fn dev_route<const ID: DevHandlerId>(
             // is where what bundling for it left pending is folded. The user's
             // JS runs after the dev server borrow ends.
             let server = cell.get().server;
-            let result = match cell.with_mut(|dev| on_request(dev, req, resp)) {
+            let result = match on_request(cell, req, resp) {
                 Ok(RequestAction::Done) => Ok(()),
                 Ok(RequestAction::UserHandler) => {
                     server.on_request(req, resp);
@@ -1581,11 +1602,65 @@ trait EnsureRouteCtx {
     fn to_dev_response(&mut self, dev: &mut DevServer) -> DevResponse<'_>;
 }
 
+/// What `ensure_route_is_bundled_step` needs done outside the dev server
+/// borrow before it can continue.
+enum EnsureRouteStep {
+    Done,
+    /// Ask the server for its plugins (which may evaluate them — user JS).
+    LoadPlugins,
+    /// Bundle this route now.
+    StartBundle(EntryPointList),
+}
+
 fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
-    dev: &mut DevServer,
+    cell: &DevServerCell,
     route_bundle_index: route_bundle::Index,
     ctx: &mut Ctx,
 ) -> JsResult<()> {
+    loop {
+        match cell.with_mut(|dev| ensure_route_is_bundled_step(dev, route_bundle_index, ctx))? {
+            EnsureRouteStep::Done => return Ok(()),
+            EnsureRouteStep::StartBundle(entry_points) => {
+                DevServer::start_async_bundle(
+                    cell,
+                    BundleRequest {
+                        entry_points,
+                        had_reload_event: false,
+                        timer: Instant::now(),
+                    },
+                )
+                .expect("oom");
+                return Ok(());
+            }
+            EnsureRouteStep::LoadPlugins => {
+                let server = cell.get().server;
+                let load_result =
+                    server.get_or_load_plugins(crate::server::ServePluginsCallback::DevServer);
+                cell.with_mut(|dev| match load_result {
+                    crate::server::GetOrStartLoadResult::Pending => {
+                        // A synchronously settled load already moved this on.
+                        if dev.plugin_state == PluginState::Unknown {
+                            dev.plugin_state = PluginState::Pending;
+                        }
+                    }
+                    crate::server::GetOrStartLoadResult::Err => {
+                        dev.plugin_state = PluginState::Err;
+                    }
+                    crate::server::GetOrStartLoadResult::Ready(ready) => {
+                        dev.plugin_state = PluginState::Loaded;
+                        dev.bundler_options.plugin = ready.map(::core::ptr::NonNull::from);
+                    }
+                });
+            }
+        }
+    }
+}
+
+fn ensure_route_is_bundled_step<Ctx: EnsureRouteCtx>(
+    dev: &mut DevServer,
+    route_bundle_index: route_bundle::Index,
+    ctx: &mut Ctx,
+) -> JsResult<EnsureRouteStep> {
     debug_assert!(dev.magic == Magic::Valid);
     let mut state = dev.route_bundle_ptr(route_bundle_index).server_state;
     'sw: loop {
@@ -1597,70 +1672,46 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                     ctx.on_defer(dev, BundleQueueType::NextBundle)?;
                     dev.route_bundle_ptr(route_bundle_index).server_state =
                         route_bundle::State::DeferredToNextBundle;
-                    return Ok(());
+                    return Ok(EnsureRouteStep::Done);
                 }
 
                 // No current bundle, we'll create a bundle with just this route, but first:
                 // If plugins are not yet loaded, prepare them.
-                let mut plugin = dev.plugin_state;
-                'plugin: loop {
-                    match plugin {
-                        PluginState::Unknown => {
-                            if dev.bundler_options.plugin.is_some() {
-                                // Framework-provided plugin is likely going to be phased out later
-                                dev.plugin_state = PluginState::Loaded;
+                match dev.plugin_state {
+                    PluginState::Unknown => {
+                        if dev.bundler_options.plugin.is_some() {
+                            // Framework-provided plugin is likely going to be phased out later
+                            dev.plugin_state = PluginState::Loaded;
+                        } else {
+                            // TODO: implement a proper solution here
+                            let has_tailwind = if let Some(serve_plugins) =
+                                &dev.vm().transpiler.options.serve_plugins
+                            {
+                                serve_plugins
+                                    .iter()
+                                    .find(|p| strings::includes(p, b"tailwind"))
+                                    .map(|_| Default::default())
                             } else {
-                                // TODO: implement a proper solution here
-                                let has_tailwind = if let Some(serve_plugins) =
-                                    &dev.vm().transpiler.options.serve_plugins
-                                {
-                                    serve_plugins
-                                        .iter()
-                                        .find(|p| strings::includes(p, b"tailwind"))
-                                        .map(|_| Default::default())
-                                } else {
-                                    None
-                                };
-                                dev.has_tailwind_plugin_hack = has_tailwind;
-
-                                let load_result: crate::server::GetOrStartLoadResult =
-                                    dev.server.get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer,
-                                    );
-                                match load_result {
-                                    crate::server::GetOrStartLoadResult::Pending => {
-                                        dev.plugin_state = PluginState::Pending;
-                                        plugin = PluginState::Pending;
-                                        continue 'plugin;
-                                    }
-                                    crate::server::GetOrStartLoadResult::Err => {
-                                        dev.plugin_state = PluginState::Err;
-                                        plugin = PluginState::Err;
-                                        continue 'plugin;
-                                    }
-                                    crate::server::GetOrStartLoadResult::Ready(ready) => {
-                                        dev.plugin_state = PluginState::Loaded;
-                                        dev.bundler_options.plugin =
-                                            ready.map(::core::ptr::NonNull::from);
-                                    }
-                                }
-                            }
-                            break 'plugin;
+                                None
+                            };
+                            dev.has_tailwind_plugin_hack = has_tailwind;
+                            // Comes back here with `plugin_state` moved on.
+                            return Ok(EnsureRouteStep::LoadPlugins);
                         }
-                        PluginState::Pending => {
-                            dev.next_bundle.route_queue.put(route_bundle_index, ())?;
-                            ctx.on_defer(dev, BundleQueueType::NextBundle)?;
-                            dev.route_bundle_ptr(route_bundle_index).server_state =
-                                route_bundle::State::DeferredToNextBundle;
-                            return Ok(());
-                        }
-                        PluginState::Err => {
-                            // TODO: render plugin error page
-                            ctx.on_plugin_error(dev)?;
-                            return Ok(());
-                        }
-                        PluginState::Loaded => break 'plugin,
                     }
+                    PluginState::Pending => {
+                        dev.next_bundle.route_queue.put(route_bundle_index, ())?;
+                        ctx.on_defer(dev, BundleQueueType::NextBundle)?;
+                        dev.route_bundle_ptr(route_bundle_index).server_state =
+                            route_bundle::State::DeferredToNextBundle;
+                        return Ok(EnsureRouteStep::Done);
+                    }
+                    PluginState::Err => {
+                        // TODO: render plugin error page
+                        ctx.on_plugin_error(dev)?;
+                        return Ok(EnsureRouteStep::Done);
+                    }
+                    PluginState::Loaded => {}
                 }
 
                 // Prepare a bundle with just this route.
@@ -1689,9 +1740,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                 dev.route_bundle_ptr(route_bundle_index).server_state =
                     route_bundle::State::Bundling;
 
-                dev.start_async_bundle(entry_points, false, Instant::now())
-                    .expect("oom");
-                return Ok(());
+                return Ok(EnsureRouteStep::StartBundle(entry_points));
             }
             route_bundle::State::DeferredToNextBundle => {
                 debug_assert!(
@@ -1701,12 +1750,12 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                         .is_some()
                 );
                 ctx.on_defer(dev, BundleQueueType::NextBundle)?;
-                return Ok(());
+                return Ok(EnsureRouteStep::Done);
             }
             route_bundle::State::Bundling => {
                 debug_assert!(dev.current_bundle.is_some());
                 ctx.on_defer(dev, BundleQueueType::CurrentBundle)?;
-                return Ok(());
+                return Ok(EnsureRouteStep::Done);
             }
             route_bundle::State::PossibleBundlingFailures => {
                 if !dev.bundling_failures.is_empty() {
@@ -1714,7 +1763,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                     // reachable by this route.
                     let resp = ctx.to_dev_response(dev);
                     match check_route_failures(dev, route_bundle_index, resp)? {
-                        CheckResult::Stop => return Ok(()),
+                        CheckResult::Stop => return Ok(EnsureRouteStep::Done),
                         CheckResult::Ok => {} // Errors were cleared or not in the way.
                         CheckResult::Rebuild => {
                             state = route_bundle::State::Unqueued;
@@ -1729,7 +1778,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
             }
             route_bundle::State::Loaded => {
                 ctx.on_loaded(dev)?;
-                return Ok(());
+                return Ok(EnsureRouteStep::Done);
             }
         }
     }
@@ -2581,12 +2630,92 @@ pub struct ResponseAndMethod {
 }
 
 impl DevServer {
+    /// Start bundling `request.entry_points`. The bundler's entry-point setup
+    /// can run plugin (`onResolve`) JavaScript, so it runs between — not
+    /// inside — the dev server borrows.
     pub(crate) fn start_async_bundle(
-        &mut self,
-        entry_points: EntryPointList,
-        had_reload_event: bool,
-        timer: Instant,
+        cell: &DevServerCell,
+        request: BundleRequest,
     ) -> crate::Result<()> {
+        let BundleRequest {
+            entry_points,
+            had_reload_event,
+            timer,
+        } = request;
+        let BundleSetup {
+            mut bv2,
+            ast_memory_store,
+            heap,
+        } = cell.with_mut(|dev| dev.start_async_bundle_setup(&entry_points))?;
+
+        // AST nodes built while the entry points are enqueued live exactly as
+        // long as the bundle: the `AstAllocState` is taken into `CurrentBundle`
+        // below and released by the guard on every path.
+        let mut ast_memory_store =
+            scopeguard::guard(ast_memory_store, |store| store.release_ast_state());
+        let ast_scope = ast_memory_store.enter();
+
+        // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
+        // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
+        // can name it without depending on `bun_runtime`). Convert by value —
+        // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
+        let started = bv2.start_from_bake_dev_server(&{
+            let mut bt = bundler::bake_types::EntryPointList::empty();
+            for (k, v) in entry_points.set.iter() {
+                bun_core::handle_oom(
+                    bt.set
+                        .put(k, bundler::bake_types::EntryPointFlags(v.bits())),
+                );
+            }
+            bt
+        });
+        drop(entry_points);
+
+        let start_data = cell.with_mut(|dev| -> crate::Result<_> {
+            let (start_data, resolve_failures) = started?;
+            for failure in resolve_failures {
+                dev.handle_parse_task_failure(
+                    &crate::Error::from(failure.err),
+                    failure.graph,
+                    &failure.abs_path,
+                    &failure.log,
+                    &mut bv2,
+                )?;
+            }
+            Ok(start_data)
+        })?;
+        // End the AST scope and move its state into the bundle so the small
+        // `AstVec`s built during setup stay alive until the bundle completes.
+        drop(ast_scope);
+        let ast_alloc_state = ast_memory_store.take_ast_state();
+        drop(ast_memory_store);
+
+        cell.with_mut(move |dev| {
+            dev.current_bundle = Some(CurrentBundle {
+                bv2,
+                heap,
+                ast_alloc_state,
+                timer,
+                start_data,
+                had_reload_event,
+                requests: ::core::mem::take(&mut dev.next_bundle.requests),
+                promise: ::core::mem::take(&mut dev.next_bundle.promise),
+                resolution_failure_entries: Default::default(),
+            });
+
+            dev.next_bundle.promise = DeferredPromise::default();
+            dev.next_bundle.requests = deferred_request::List::default();
+            dev.next_bundle.route_queue.clear_retaining_capacity();
+        });
+        Ok(())
+    }
+
+    /// Everything `start_async_bundle` does before handing the entry points
+    /// to the bundler.
+    fn start_async_bundle_setup(
+        &mut self,
+        entry_points: &EntryPointList,
+    ) -> crate::Result<BundleSetup> {
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
@@ -2615,14 +2744,7 @@ impl DevServer {
             None => ::core::ptr::NonNull::from(&mut *server_transpiler),
         };
 
-        // AST nodes built during bundle setup live exactly as long as the
-        // bundle: the `AstAllocState` is taken into `CurrentBundle` on success
-        // and released by the guard on every path.
-        let mut ast_memory_store = scopeguard::guard(
-            heap_ref.alloc(bun_ast::ASTMemoryAllocator::borrowing(heap_ref)),
-            |store| store.release_ast_state(),
-        );
-        let ast_scope = ast_memory_store.enter();
+        let ast_memory_store = heap_ref.alloc(bun_ast::ASTMemoryAllocator::borrowing(heap_ref));
 
         // The bundler stores `Option<NonNull<AnyEventLoop>>`; park the value
         // in `heap` so it lives exactly as long as `bv2`.
@@ -2660,50 +2782,24 @@ impl DevServer {
             self.graph_safety_lock.unlock();
         }
 
-        // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
-        // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
-        // can name it without depending on `bun_runtime`). Convert by value —
-        // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
-        let start_data = bv2.start_from_bake_dev_server(&{
-            let mut bt = bundler::bake_types::EntryPointList::empty();
-            for (k, v) in entry_points.set.iter() {
-                bun_core::handle_oom(
-                    bt.set
-                        .put(k, bundler::bake_types::EntryPointFlags(v.bits())),
-                );
-            }
-            bt
-        })?;
-        drop(entry_points);
-        // End the AST scope and move its state into the bundle so the small
-        // `AstVec`s built during setup stay alive until the bundle completes.
-        drop(ast_scope);
-        let ast_alloc_state = ast_memory_store.take_ast_state();
-        drop(ast_memory_store);
-        self.current_bundle = Some(CurrentBundle {
+        Ok(BundleSetup {
             bv2,
+            ast_memory_store,
             heap,
-            ast_alloc_state,
-            timer,
-            start_data,
-            had_reload_event,
-            requests: ::core::mem::take(&mut self.next_bundle.requests),
-            promise: ::core::mem::take(&mut self.next_bundle.promise),
-            resolution_failure_entries: Default::default(),
-        });
-
-        self.next_bundle.promise = DeferredPromise::default();
-        self.next_bundle.requests = deferred_request::List::default();
-        self.next_bundle.route_queue.clear_retaining_capacity();
-        Ok(())
+        })
     }
 
     /// The two borrows a `BundleV2<'static>` holds for the lifetime of a
     /// bundle: the server transpiler (`bv2.transpiler`) and the bundle's heap
     /// (`bv2.graph.heap`). `BundleV2<'a>` ties both to one `'a`, which for the
-    /// dev server's `Transpiler<'static>` must be `'static`; the transpiler is
-    /// boxed in `self` and the heap is boxed in the `CurrentBundle` next to
-    /// `bv2`, and `finalize_bundle_cleanup` drops `bv2` before either.
+    /// dev server's `Transpiler<'static>` must be `'static`. Liveness: the
+    /// transpiler is boxed in `self` and the heap is boxed in the
+    /// `CurrentBundle` next to `bv2`, and `finalize_bundle_cleanup` drops `bv2`
+    /// before either. Aliasing: this is NOT exclusive — the dev server keeps
+    /// using `self.server_transpiler` (its resolver) while the bundle runs, as
+    /// the bundler's own `client_transpiler`/`ssr_transpiler` `NonNull`s
+    /// already do. Goes away when `BundleV2` takes its primary transpiler the
+    /// same way (`NonNull`/`BackRef`) and owns the dev-server bundle heap.
     fn bundle_borrows(
         &mut self,
         heap: &bun_alloc::MimallocArena,
@@ -2711,8 +2807,8 @@ impl DevServer {
         &'static mut Transpiler<'static>,
         &'static bun_alloc::MimallocArena,
     ) {
-        // SAFETY: see doc comment — both pointees outlive the `BundleV2` that
-        // receives these borrows; `BundleV2` needs an owning-handle API to say so.
+        // SAFETY: see doc comment (liveness holds; exclusivity is the bundler's
+        // existing shared-transpiler contract, not established here).
         unsafe {
             (
                 bun_ptr::detach_lifetime_mut(&mut *self.server_transpiler),
@@ -3227,7 +3323,11 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
+fn finalize_bundle_cleanup(
+    dev: &mut DevServer,
+    bv2: &mut BundleV2,
+    had_sent_hmr_event: bool,
+) -> Option<BundleRequest> {
     bv2.deinit_without_freeing_arena();
     if let Some(cb) = &mut dev.current_bundle {
         cb.promise.deinit_idempotently();
@@ -3260,64 +3360,152 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
         );
     }
 
-    dev.start_next_bundle_if_present();
-
-    // Unref the ref added in `start_async_bundle`
-    dev.server.on_static_request_complete();
+    dev.start_next_bundle_if_present()
 }
 
-fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
-    if !current_bundle.requests.is_empty() {
+/// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
+/// This function does not recover DevServer state if it fails (allocation failure)
+/// Called at the end of BundleV2 to index bundle contents into the
+/// `IncrementalGraph`s. This function does not recover DevServer state if it
+/// fails (allocation failure).
+///
+/// Everything that runs JavaScript (loading the server patch, the framework's
+/// request handler, aborted requests' signal handlers, microtasks) runs
+/// between — never inside — the `cell.with_mut` sections.
+pub(crate) fn finalize_bundle(
+    cell: &DevServerCell,
+    bv2: &mut BundleV2,
+    result: &mut bundler::bundle_v2::DevServerOutput,
+) -> JsResult<()> {
+    debug_assert!(cell.get().magic == Magic::Valid);
+    let vm = cell.get().vm;
+    // Promise reactions queued below run when this scope exits, after the
+    // last dev server borrow.
+    let event_loop_scope = vm.enter_event_loop_scope();
+    let mut had_sent_hmr_event = false;
+    let finalized = finalize_bundle_phases(cell, bv2, result, &mut had_sent_hmr_event);
+    // The chunks live in the bundle's arena, which does not run their destructors.
+    for chunk in result.chunks.iter_mut() {
+        drop(::core::mem::take(chunk));
+    }
+    let unanswered = cell.with_mut(|dev| {
+        ::core::mem::take(
+            &mut dev
+                .current_bundle
+                .as_mut()
+                .expect("infallible: bundle active")
+                .requests,
+        )
+    });
+    abort_unanswered_requests(unanswered);
+    let next_bundle = cell.with_mut(|dev| finalize_bundle_cleanup(dev, bv2, had_sent_hmr_event));
+    let server = cell.get().server;
+    if let Some(next_bundle) = next_bundle {
+        DevServer::start_async_bundle(cell, next_bundle).expect("oom");
+    }
+    // Unref the ref added in `start_async_bundle`
+    server.on_static_request_complete();
+    drop(event_loop_scope);
+    finalized
+}
+
+/// The server-side HMR patch a bundle produced, loaded into the server
+/// runtime between the two graph phases of `finalize_bundle`.
+struct ServerPatch {
+    code: Vec<u8>,
+    source_map_json: Option<Vec<u8>>,
+    register_update: JSValue,
+    client_components_added: JSValue,
+    client_components_removed: JSValue,
+}
+
+impl ServerPatch {
+    fn load(self, global: &JSGlobalObject) {
+        let server_modules = if let Some(json) = self.source_map_json {
+            // This memory will be owned by the `DevServerSourceProvider` in C++
+            match c::bake_load_server_hmr_patch_with_source_map(
+                global,
+                BunString::clone_utf8(&self.code),
+                json.into_boxed_slice(),
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    VirtualMachine::get_mut()
+                        .print_error_like_object_to_console(global.take_exception(err));
+                    // Note: `panic!()` would unwind through the
+                    // `extern "C"` boundary above (`nounwind` UB), so abort.
+                    bun_core::Output::panic(format_args!(
+                        "Error thrown while evaluating server code. This is always a bug in the bundler."
+                    ));
+                }
+            }
+        } else {
+            match c::bake_load_server_hmr_patch(global, BunString::clone_latin1(&self.code)) {
+                Ok(v) => v,
+                Err(err) => {
+                    VirtualMachine::get_mut()
+                        .print_error_like_object_to_console(global.take_exception(err));
+                    // Note: `panic!()` would unwind through the
+                    // `extern "C"` boundary above (`nounwind` UB), so abort.
+                    bun_core::Output::panic(format_args!(
+                        "Error thrown while evaluating server code. This is always a bug in the bundler."
+                    ));
+                }
+            }
+        };
+        let errors = match self.register_update.call(
+            global,
+            global.to_js_value(),
+            &[
+                server_modules,
+                self.client_components_added,
+                self.client_components_removed,
+            ],
+        ) {
+            Ok(v) => v,
+            Err(err) => {
+                VirtualMachine::get_mut()
+                    .print_error_like_object_to_console(global.take_exception(err));
+                panic!(
+                    "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
+                );
+            }
+        };
+        let _ = errors; // TODO:
+    }
+}
+
+/// What `finalize_bundle` does with the requests waiting on the bundle.
+enum BundleOutcome {
+    /// The bundle has failures; everything waiting was answered with the
+    /// error page. These request contexts are to be released.
+    Failed(Vec<crate::server::AnyRequestContext>),
+    /// The bundle is good; serve the waiting requests.
+    Serve,
+}
+
+/// Releases the deferred requests a bundle never answered (only non-empty
+/// when finalizing bailed out early).
+fn abort_unanswered_requests(requests: deferred_request::List) {
+    if !requests.is_empty() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
             "current_bundle.requests.first != null. this leaves pending requests without an error page!",
         );
     }
-    while let Some(req) = current_bundle.requests.pop() {
+    for req in requests.into_iter().rev() {
         req.abort();
         DeferredRequest::release(req);
     }
 }
 
-/// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
-/// This function does not recover DevServer state if it fails (allocation failure)
-pub(super) fn finalize_bundle(
-    dev: &mut DevServer,
-    bv2: &mut BundleV2,
-    result: &mut bundler::bundle_v2::DevServerOutput,
-) -> JsResult<()> {
-    debug_assert!(dev.magic == Magic::Valid);
-    let mut had_sent_hmr_event = false;
-    let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
-    // The chunks live in the bundle's arena, which does not run their destructors.
-    for chunk in result.chunks.iter_mut() {
-        drop(::core::mem::take(chunk));
-    }
-    drain_current_bundle_requests(
-        dev.current_bundle
-            .as_mut()
-            .expect("infallible: bundle active"),
-    );
-    finalize_bundle_cleanup(dev, bv2, had_sent_hmr_event);
-    finalized
-}
-
-fn finalize_bundle_inner(
-    dev: &mut DevServer,
+fn finalize_bundle_phases(
+    cell: &DevServerCell,
     bv2: &mut BundleV2,
     result: &mut bundler::bundle_v2::DevServerOutput,
     had_sent_hmr_event: &mut bool,
 ) -> JsResult<()> {
-    macro_rules! current_bundle {
-        () => {
-            dev.current_bundle
-                .as_mut()
-                .expect("infallible: bundle active")
-        };
-    }
-
-    let _lock = dev.graph_safety_lock.guard();
-
+    let bv2: &BundleV2 = bv2;
     // The three regions of `result.chunks` are disjoint:
     // `[0] | [1..1+n_css] | [1+n_css..1+n_css+n_html]`.
     let n_css = result.css_file_list.count();
@@ -3363,62 +3551,47 @@ fn finalize_bundle_inner(
     };
 
     let quoted_source_contents = bv2.linker.graph.files.items_quoted_source_contents();
-    // Pass 1, update the graph's nodes, resolving every bundler source
-    // index into its `IncrementalGraph(...).FileIndex`
-    let js_chunk = &result.chunks[0];
-    debug_assert_eq!(
-        js_chunk.content.javascript().parts_in_chunk_in_order.len(),
-        js_chunk.compile_results_for_chunk.len()
-    );
-    for (part_range, compile_result) in js_chunk
-        .content
-        .javascript()
-        .parts_in_chunk_in_order
-        .iter()
-        .zip(js_chunk.compile_results_for_chunk.iter())
-    {
-        let index = part_range.source_index;
-        let source_map: bun_sourcemap::Chunk = match compile_result.source_map_chunk() {
-            Some(c) => c.clone(),
-            None => 'brk: {
-                // The source map is `null` if empty
-                debug_assert!(matches!(
-                    compile_result,
-                    bundler::CompileResult::Javascript {
-                        result: bun_js_printer::PrintResult::Result(_),
-                        ..
-                    }
-                ));
-                debug_assert!(
-                    dev.server_transpiler().options.source_map
-                        != bundler::options::SourceMapOption::None
-                );
-                debug_assert!(!part_range.source_index.is_runtime());
-                break 'brk bun_sourcemap::Chunk::init_empty();
-            }
-        };
-        let quoted_contents = &quoted_source_contents[part_range.source_index.get() as usize];
-        match targets[part_range.source_index.get() as usize].bake_graph() {
-            bake::Graph::Client => dev.client_graph_mut().receive_chunk(
-                &mut ctx,
-                index,
-                incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.code().to_vec().into_boxed_slice(),
-                    source_map: Some(incremental_graph::ReceiveChunkSourceMap {
-                        chunk: source_map,
-                        // `quoted_contents` lives in the per-bundle AST heap,
-                        // which is destroyed at bundle end; copy onto the
-                        // global heap so the dev-server can hold it across
-                        // rebuilds for stack-trace remapping.
-                        escaped_source: quoted_contents
-                            .as_ref()
-                            .map(|v| v.as_slice().to_vec().into_boxed_slice()),
-                    }),
-                },
-                false,
-            )?,
-            graph @ (bake::Graph::Server | bake::Graph::Ssr) => {
-                dev.server_graph_mut().receive_chunk(
+
+    // Phase 1: index the bundle into the graphs and prepare the server patch.
+    let server_patch = cell.with_mut(|dev| -> JsResult<Option<ServerPatch>> {
+        let _lock = dev.graph_safety_lock.guard();
+        // Pass 1, update the graph's nodes, resolving every bundler source
+        // index into its `IncrementalGraph(...).FileIndex`
+        let js_chunk = &result.chunks[0];
+        debug_assert_eq!(
+            js_chunk.content.javascript().parts_in_chunk_in_order.len(),
+            js_chunk.compile_results_for_chunk.len()
+        );
+        for (part_range, compile_result) in js_chunk
+            .content
+            .javascript()
+            .parts_in_chunk_in_order
+            .iter()
+            .zip(js_chunk.compile_results_for_chunk.iter())
+        {
+            let index = part_range.source_index;
+            let source_map: bun_sourcemap::Chunk = match compile_result.source_map_chunk() {
+                Some(c) => c.clone(),
+                None => 'brk: {
+                    // The source map is `null` if empty
+                    debug_assert!(matches!(
+                        compile_result,
+                        bundler::CompileResult::Javascript {
+                            result: bun_js_printer::PrintResult::Result(_),
+                            ..
+                        }
+                    ));
+                    debug_assert!(
+                        dev.server_transpiler().options.source_map
+                            != bundler::options::SourceMapOption::None
+                    );
+                    debug_assert!(!part_range.source_index.is_runtime());
+                    break 'brk bun_sourcemap::Chunk::init_empty();
+                }
+            };
+            let quoted_contents = &quoted_source_contents[part_range.source_index.get() as usize];
+            match targets[part_range.source_index.get() as usize].bake_graph() {
+                bake::Graph::Client => dev.client_graph_mut().receive_chunk(
                     &mut ctx,
                     index,
                     incremental_graph::ReceiveChunkContent::Js {
@@ -3434,795 +3607,844 @@ fn finalize_bundle_inner(
                                 .map(|v| v.as_slice().to_vec().into_boxed_slice()),
                         }),
                     },
-                    graph == bake::Graph::Ssr,
-                )?
-            }
-        }
-    }
-
-    for (i, metadata) in (1..1 + n_css).zip(result.css_file_list.values()) {
-        debug_assert!(matches!(
-            result.chunks[i].content,
-            bundler::chunk::Content::Css(_)
-        ));
-
-        let index = bun_ast::Index::init(result.chunks[i].entry_point.source_index());
-
-        // `IntermediateOutput::code` takes `&mut self` plus `&Chunk`/`&[Chunk]`
-        // views of the same storage; take the output out for the call.
-        let code = {
-            let mut io = ::core::mem::take(&mut result.chunks[i].intermediate_output);
-            let code = io.code(
-                None,
-                &bv2.graph,
-                &bv2.linker.graph,
-                b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
-                &result.chunks[i],
-                result.chunks,
-                None,
-                bundler::chunk::ReferencePathStyle::ImporterRelative,
-                bundler::chunk::SourceMapShiftTracking::Disabled,
-            );
-            result.chunks[i].intermediate_output = io;
-            code?
-        };
-
-        // Create an entry for this file.
-        let key = ctx.sources[index.get() as usize]
-            .path
-            .key_for_incremental_graph();
-        // TODO: use a hash mix with the first half being a path hash and the second half content hash
-        let h = hash(key);
-        // Track css files that look like tailwind files.
-        // Note: hoisted before `replace_path` because that consumes
-        // `code.buffer`.
-        let looks_like_tailwind = dev.has_tailwind_plugin_hack.is_some() && {
-            let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
-            strings::index_of(first_1024, b"tailwind").is_some()
-        };
-        dev.assets.replace_path(
-            &mut dev.client_graph,
-            dev.server,
-            key,
-            crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
-            &MimeType::CSS,
-            h,
-        )?;
-
-        if let Some(map) = &mut dev.has_tailwind_plugin_hack {
-            if looks_like_tailwind {
-                // Note: `get_or_put` consumes the key by value; on miss the key
-                // already lives in the map so the explicit `*key_ptr =` is redundant.
-                let _ = map.get_or_put(Box::from(key))?;
-            } else {
-                let _ = map.swap_remove(&Box::<[u8]>::from(key));
+                    false,
+                )?,
+                graph @ (bake::Graph::Server | bake::Graph::Ssr) => {
+                    dev.server_graph_mut().receive_chunk(
+                        &mut ctx,
+                        index,
+                        incremental_graph::ReceiveChunkContent::Js {
+                            code: compile_result.code().to_vec().into_boxed_slice(),
+                            source_map: Some(incremental_graph::ReceiveChunkSourceMap {
+                                chunk: source_map,
+                                // `quoted_contents` lives in the per-bundle AST heap,
+                                // which is destroyed at bundle end; copy onto the
+                                // global heap so the dev-server can hold it across
+                                // rebuilds for stack-trace remapping.
+                                escaped_source: quoted_contents
+                                    .as_ref()
+                                    .map(|v| v.as_slice().to_vec().into_boxed_slice()),
+                            }),
+                        },
+                        graph == bake::Graph::Ssr,
+                    )?
+                }
             }
         }
 
-        dev.client_graph_mut().receive_chunk(
-            &mut ctx,
-            index,
-            incremental_graph::ReceiveChunkContent::Css(h),
-            false,
-        )?;
+        for (i, metadata) in (1..1 + n_css).zip(result.css_file_list.values()) {
+            debug_assert!(matches!(
+                result.chunks[i].content,
+                bundler::chunk::Content::Css(_)
+            ));
 
-        // If imported on server, there needs to be a server-side file entry
-        // so that edges can be attached.
-        if metadata.imported_on_server {
-            dev.server_graph
-                .insert_css_file_on_server(&mut ctx, index, key)?;
+            let index = bun_ast::Index::init(result.chunks[i].entry_point.source_index());
+
+            // `IntermediateOutput::code` takes `&mut self` plus `&Chunk`/`&[Chunk]`
+            // views of the same storage; take the output out for the call.
+            let code = {
+                let mut io = ::core::mem::take(&mut result.chunks[i].intermediate_output);
+                let code = io.code(
+                    None,
+                    &bv2.graph,
+                    &bv2.linker.graph,
+                    b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
+                    &result.chunks[i],
+                    result.chunks,
+                    None,
+                    bundler::chunk::ReferencePathStyle::ImporterRelative,
+                    bundler::chunk::SourceMapShiftTracking::Disabled,
+                );
+                result.chunks[i].intermediate_output = io;
+                code?
+            };
+
+            // Create an entry for this file.
+            let key = ctx.sources[index.get() as usize]
+                .path
+                .key_for_incremental_graph();
+            // TODO: use a hash mix with the first half being a path hash and the second half content hash
+            let h = hash(key);
+            // Track css files that look like tailwind files.
+            // Note: hoisted before `replace_path` because that consumes
+            // `code.buffer`.
+            let looks_like_tailwind = dev.has_tailwind_plugin_hack.is_some() && {
+                let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
+                strings::index_of(first_1024, b"tailwind").is_some()
+            };
+            dev.assets.replace_path(
+                &mut dev.client_graph,
+                dev.server,
+                key,
+                crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
+                &MimeType::CSS,
+                h,
+            )?;
+
+            if let Some(map) = &mut dev.has_tailwind_plugin_hack {
+                if looks_like_tailwind {
+                    // Note: `get_or_put` consumes the key by value; on miss the key
+                    // already lives in the map so the explicit `*key_ptr =` is redundant.
+                    let _ = map.get_or_put(Box::from(key))?;
+                } else {
+                    let _ = map.swap_remove(&Box::<[u8]>::from(key));
+                }
+            }
+
+            dev.client_graph_mut().receive_chunk(
+                &mut ctx,
+                index,
+                incremental_graph::ReceiveChunkContent::Css(h),
+                false,
+            )?;
+
+            // If imported on server, there needs to be a server-side file entry
+            // so that edges can be attached.
+            if metadata.imported_on_server {
+                dev.server_graph
+                    .insert_css_file_on_server(&mut ctx, index, key)?;
+            }
         }
-    }
 
-    for chunk in result.chunks[1 + n_css..1 + n_css + n_html].iter_mut() {
-        let index = bun_ast::Index::init(chunk.entry_point.source_index());
-        let generated_js = dev.generate_javascript_code_for_html_file(
-            index,
-            import_records,
-            input_file_sources,
-            bv2.graph.input_files.items_loader(),
-        )?;
-        dev.client_graph_mut().receive_chunk(
-            &mut ctx,
-            index,
-            incremental_graph::ReceiveChunkContent::Js {
-                code: generated_js,
-                source_map: None,
-            },
-            false,
-        )?;
-        let client_index = ctx
-            .get_cached_index(bake::Side::Client, index)
-            .unwrap::<{ bake::Side::Client }>()
-            .expect("unresolved index");
-        // Not the file of a route: a plugin resolved a route's file to it, or loaded it as html.
-        let Some(route_bundle_index) = dev.client_graph.html_route_bundle_index(client_index)
-        else {
-            continue;
-        };
-        let route_bundle = &mut dev.route_bundles[route_bundle_index.get() as usize];
-        debug_assert!(route_bundle.data.html().bundled_file == client_index);
-        if route_bundle
-            .data
-            .html_mut()
-            .cached_response
-            .take()
-            .is_some()
+        for chunk in result.chunks[1 + n_css..1 + n_css + n_html].iter_mut() {
+            let index = bun_ast::Index::init(chunk.entry_point.source_index());
+            let generated_js = dev.generate_javascript_code_for_html_file(
+                index,
+                import_records,
+                input_file_sources,
+                bv2.graph.input_files.items_loader(),
+            )?;
+            dev.client_graph_mut().receive_chunk(
+                &mut ctx,
+                index,
+                incremental_graph::ReceiveChunkContent::Js {
+                    code: generated_js,
+                    source_map: None,
+                },
+                false,
+            )?;
+            let client_index = ctx
+                .get_cached_index(bake::Side::Client, index)
+                .unwrap::<{ bake::Side::Client }>()
+                .expect("unresolved index");
+            // Not the file of a route: a plugin resolved a route's file to it, or loaded it as html.
+            let Some(route_bundle_index) = dev.client_graph.html_route_bundle_index(client_index)
+            else {
+                continue;
+            };
+            let route_bundle = &mut dev.route_bundles[route_bundle_index.get() as usize];
+            debug_assert!(route_bundle.data.html().bundled_file == client_index);
+            if route_bundle
+                .data
+                .html_mut()
+                .cached_response
+                .take()
+                .is_some()
+            {
+                route_bundle.invalidate_client_bundle(&mut dev.source_maps);
+            }
+            let html = match &mut route_bundle.data {
+                route_bundle::Data::Html(h) => h,
+                _ => unreachable!(),
+            };
+            let bundler::CompileResult::Html {
+                code: compile_result_code,
+                script_injection_offset: compile_result_offset,
+                ..
+            } = chunk.compile_results_for_chunk.get_mut(0)
+            else {
+                unreachable!()
+            };
+            // Drops the previous text and transfers ownership of the chunk's
+            // compile-result code, leaving an empty
+            // boxed slice behind in the chunk — nothing reads it after this.
+            html.bundled_html_text = Some(std::mem::take(compile_result_code));
+            html.script_injection_offset =
+                Some(route_bundle::ByteOffset::init(*compile_result_offset));
+
+            chunk
+                .entry_point
+                .set_entry_point_id(route_bundle_index.get());
+        }
+
+        // Sized AFTER
+        // Pass 1 so server/client bitsets cover files just inserted by `receive_chunk`.
+        *ctx.gts = dev.init_graph_trace_state(if n_css > 0 {
+            input_file_sources.len()
+        } else {
+            0
+        })?;
+        ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
+
+        dev.incremental_result.had_adjusted_edges = false;
+
+        dev.prepare_and_log_resolution_failures()?;
+        dev.report_html_routes_without_html()?;
+
+        // Pass 2, update the graph's edges by performing import diffing on each
+        // changed file, removing dependencies. This pass also flags what routes
+        // have been modified.
+        for part_range in result.chunks[0]
+            .content
+            .javascript()
+            .parts_in_chunk_in_order
+            .iter()
         {
-            route_bundle.invalidate_client_bundle(&mut dev.source_maps);
-        }
-        let html = match &mut route_bundle.data {
-            route_bundle::Data::Html(h) => h,
-            _ => unreachable!(),
-        };
-        let bundler::CompileResult::Html {
-            code: compile_result_code,
-            script_injection_offset: compile_result_offset,
-            ..
-        } = chunk.compile_results_for_chunk.get_mut(0)
-        else {
-            unreachable!()
-        };
-        // Drops the previous text and transfers ownership of the chunk's
-        // compile-result code, leaving an empty
-        // boxed slice behind in the chunk — nothing reads it after this.
-        html.bundled_html_text = Some(std::mem::take(compile_result_code));
-        html.script_injection_offset = Some(route_bundle::ByteOffset::init(*compile_result_offset));
-
-        chunk
-            .entry_point
-            .set_entry_point_id(route_bundle_index.get());
-    }
-
-    // Sized AFTER
-    // Pass 1 so server/client bitsets cover files just inserted by `receive_chunk`.
-    *ctx.gts = dev.init_graph_trace_state(if n_css > 0 {
-        input_file_sources.len()
-    } else {
-        0
-    })?;
-    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
-
-    dev.incremental_result.had_adjusted_edges = false;
-
-    dev.prepare_and_log_resolution_failures()?;
-    dev.report_html_routes_without_html()?;
-
-    // Pass 2, update the graph's edges by performing import diffing on each
-    // changed file, removing dependencies. This pass also flags what routes
-    // have been modified.
-    for part_range in result.chunks[0]
-        .content
-        .javascript()
-        .parts_in_chunk_in_order
-        .iter()
-    {
-        match targets[part_range.source_index.get() as usize].bake_graph() {
-            bake::Graph::Server | bake::Graph::Ssr => {
-                dev.server_graph_mut().process_chunk_dependencies(
+            match targets[part_range.source_index.get() as usize].bake_graph() {
+                bake::Graph::Server | bake::Graph::Ssr => {
+                    dev.server_graph_mut().process_chunk_dependencies(
+                        &mut ctx,
+                        incremental_graph::ProcessMode::Normal,
+                        part_range.source_index,
+                    )?
+                }
+                bake::Graph::Client => dev.client_graph_mut().process_chunk_dependencies(
                     &mut ctx,
                     incremental_graph::ProcessMode::Normal,
                     part_range.source_index,
-                )?
+                )?,
             }
-            bake::Graph::Client => dev.client_graph_mut().process_chunk_dependencies(
+        }
+        for chunk in result.chunks[1 + n_css..1 + n_css + n_html].iter() {
+            let index = bun_ast::Index::init(chunk.entry_point.source_index());
+            dev.client_graph_mut().process_chunk_dependencies(
                 &mut ctx,
                 incremental_graph::ProcessMode::Normal,
-                part_range.source_index,
-            )?,
+                index,
+            )?;
         }
-    }
-    for chunk in result.chunks[1 + n_css..1 + n_css + n_html].iter() {
-        let index = bun_ast::Index::init(chunk.entry_point.source_index());
-        dev.client_graph_mut().process_chunk_dependencies(
-            &mut ctx,
-            incremental_graph::ProcessMode::Normal,
-            index,
-        )?;
-    }
-    for chunk in result.chunks[1..1 + n_css].iter() {
-        let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
-        dev.client_graph_mut().process_chunk_dependencies(
-            &mut ctx,
-            incremental_graph::ProcessMode::Css,
-            entry_index,
-        )?;
-    }
+        for chunk in result.chunks[1..1 + n_css].iter() {
+            let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
+            dev.client_graph_mut().process_chunk_dependencies(
+                &mut ctx,
+                incremental_graph::ProcessMode::Css,
+                entry_index,
+            )?;
+        }
 
-    // Index all failed files now that the incremental graph has been updated.
-    if !dev.incremental_result.failures_removed.is_empty()
-        || !dev.incremental_result.failures_added.is_empty()
-    {
-        *had_sent_hmr_event = true;
-    }
-    dev.index_failures()?;
+        // Index all failed files now that the incremental graph has been updated.
+        if !dev.incremental_result.failures_removed.is_empty()
+            || !dev.incremental_result.failures_added.is_empty()
+        {
+            *had_sent_hmr_event = true;
+        }
+        dev.index_failures()?;
 
-    dev.client_graph.ensure_stale_bit_capacity(false)?;
-    dev.server_graph.ensure_stale_bit_capacity(false)?;
+        dev.client_graph.ensure_stale_bit_capacity(false)?;
+        dev.server_graph.ensure_stale_bit_capacity(false)?;
 
-    dev.generation = dev.generation.wrapping_add(1);
-    if Environment::ENABLE_LOGS {
-        debug_log!(
-            "Bundle Round {}: {} server, {} client, {} ms",
-            dev.generation,
-            dev.server_graph.current_chunk_parts.len(),
-            dev.client_graph.current_chunk_parts.len(),
-            current_bundle!().timer.elapsed().as_millis(),
-        );
-    }
+        dev.generation = dev.generation.wrapping_add(1);
+        if Environment::ENABLE_LOGS {
+            debug_log!(
+                "Bundle Round {}: {} server, {} client, {} ms",
+                dev.generation,
+                dev.server_graph.current_chunk_parts.len(),
+                dev.client_graph.current_chunk_parts.len(),
+                dev.current_bundle
+                    .as_ref()
+                    .expect("infallible: bundle active")
+                    .timer
+                    .elapsed()
+                    .as_millis(),
+            );
+        }
 
-    // Load all new chunks into the server runtime.
-    if !dev.frontend_only && dev.server_graph.current_chunk_len > 0 {
+        // Load all new chunks into the server runtime.
+        if dev.frontend_only || dev.server_graph.current_chunk_len == 0 {
+            return Ok(None);
+        }
         // Generate a script_id for server bundles
 
         // Get the source map if available and render to JSON
         let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
-            'json: {
-                // Create a temporary source map entry to render
-                let mut source_map_entry = source_map_store::Entry {
-                    ref_count: 1,
-                    ..Default::default()
-                };
+            // Create a temporary source map entry to render
+            let mut source_map_entry = source_map_store::Entry {
+                ref_count: 1,
+                ..Default::default()
+            };
 
-                // Fill the source map entry
-                dev.server_graph.take_source_map(&mut source_map_entry)?;
-                let source_map_entry = scopeguard::guard(source_map_entry, |mut entry| {
-                    entry.ref_count = 0;
-                    entry.deinit();
-                });
+            // Fill the source map entry
+            dev.server_graph.take_source_map(&mut source_map_entry)?;
+            let source_map_entry = scopeguard::guard(source_map_entry, |mut entry| {
+                entry.ref_count = 0;
+                entry.deinit();
+            });
 
-                let json_data =
-                    source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?;
-                break 'json Some(json_data);
-            }
+            Some(source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?)
         } else {
             None
         };
 
-        let server_bundle = dev.server_graph.take_js_bundle_server(
+        let code = dev.server_graph.take_js_bundle_server(
             &incremental_graph::TakeJSBundleOptionsServer {
                 kind: ChunkKind::HmrChunk,
             },
         )?;
 
         let global = dev.global();
-        let server_modules = if let Some(json) = source_map_json {
-            // This memory will be owned by the `DevServerSourceProvider` in C++
-            match c::bake_load_server_hmr_patch_with_source_map(
+        Ok(Some(ServerPatch {
+            code,
+            source_map_json,
+            register_update: dev.server_register_update_callback.get().unwrap(),
+            client_components_added: dev.make_array_for_server_components_patch(
                 global,
-                BunString::clone_utf8(&server_bundle),
-                json.into_boxed_slice(),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    dev.vm_mut()
-                        .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
+                &dev.incremental_result.client_components_added,
+            )?,
+            client_components_removed: dev.make_array_for_server_components_patch(
+                global,
+                &dev.incremental_result.client_components_removed,
+            )?,
+        }))
+    })?;
+
+    if let Some(patch) = server_patch {
+        patch.load(cell.get().global());
+    }
+
+    // Phase 2: work out what changed and tell the HMR clients.
+    let outcome = cell.with_mut(|dev| -> JsResult<BundleOutcome> {
+        let _lock = dev.graph_safety_lock.guard();
+        macro_rules! current_bundle {
+            () => {
+                dev.current_bundle
+                    .as_mut()
+                    .expect("infallible: bundle active")
+            };
+        }
+
+        let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;
+        let mut route_bits_client = DynamicBitSet::init_empty(dev.route_bundles.len())?;
+
+        let mut has_route_bits_set = false;
+
+        let mut hot_update_payload: Vec<u8> = Vec::with_capacity(65536);
+        hot_update_payload.push(MessageId::HotUpdate.char());
+
+        // The writer used for the hot_update payload
+        macro_rules! w_int {
+            ($t:ty, $v:expr) => {
+                hot_update_payload.extend_from_slice(&<$t>::to_le_bytes($v))
+            };
+        }
+        macro_rules! w_all {
+            ($s:expr) => {
+                hot_update_payload.extend_from_slice($s)
+            };
+        }
+
+        // It was discovered that if a tree falls with nobody around it, it does not
+        // make any sound. Let's avoid writing into `w` if no sockets are open.
+        let hot_update_subscribers = dev.num_subscribers(HmrTopic::HotUpdate);
+        let will_hear_hot_update = hot_update_subscribers > 0;
+
+        // This list of routes affected excludes client code.
+        if will_hear_hot_update
+            && current_bundle!().had_reload_event
+            && (dev.incremental_result.framework_routes_affected.len()
+                + dev.incremental_result.html_routes_hard_affected.len())
+                > 0
+            && dev.bundling_failures.is_empty()
+        {
+            has_route_bits_set = true;
+
+            for request in &dev.incremental_result.framework_routes_affected {
+                let route = dev.router.route_ptr(request.route_index());
+                if let Some(id) = route.bundle {
+                    route_bits.set(id.get() as usize);
+                }
+                if request.should_recurse_when_visiting() {
+                    mark_all_route_children(
+                        &dev.router,
+                        &mut [&mut route_bits],
+                        request.route_index(),
+                    );
                 }
             }
-        } else {
-            match c::bake_load_server_hmr_patch(global, BunString::clone_latin1(&server_bundle)) {
-                Ok(v) => v,
-                Err(err) => {
-                    dev.vm_mut()
-                        .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
+            for route_bundle_index in &dev.incremental_result.html_routes_hard_affected {
+                route_bits.set(route_bundle_index.get() as usize);
+                route_bits_client.set(route_bundle_index.get() as usize);
+            }
+
+            // List 1
+            let mut it = route_bits.iterator::<true, true>();
+            while let Some(bundled_route_index) = it.next() {
+                let bundle = &dev.route_bundles[bundled_route_index];
+                if bundle.active_viewers == 0 {
+                    continue;
                 }
-            }
-        };
-        let errors = match dev.server_register_update_callback.get().unwrap().call(
-            global,
-            global.to_js_value(),
-            &[
-                server_modules,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.incremental_result.client_components_added,
-                )?,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.incremental_result.client_components_removed,
-                )?,
-            ],
-        ) {
-            Ok(v) => v,
-            Err(err) => {
-                dev.vm_mut()
-                    .print_error_like_object_to_console(global.take_exception(err));
-                panic!(
-                    "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
-                );
-            }
-        };
-        let _ = errors; // TODO:
-    }
-
-    let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;
-    let mut route_bits_client = DynamicBitSet::init_empty(dev.route_bundles.len())?;
-
-    let mut has_route_bits_set = false;
-
-    let mut hot_update_payload: Vec<u8> = Vec::with_capacity(65536);
-    hot_update_payload.push(MessageId::HotUpdate.char());
-
-    // The writer used for the hot_update payload
-    macro_rules! w_int {
-        ($t:ty, $v:expr) => {
-            hot_update_payload.extend_from_slice(&<$t>::to_le_bytes($v))
-        };
-    }
-    macro_rules! w_all {
-        ($s:expr) => {
-            hot_update_payload.extend_from_slice($s)
-        };
-    }
-
-    // It was discovered that if a tree falls with nobody around it, it does not
-    // make any sound. Let's avoid writing into `w` if no sockets are open.
-    let hot_update_subscribers = dev.num_subscribers(HmrTopic::HotUpdate);
-    let will_hear_hot_update = hot_update_subscribers > 0;
-
-    // This list of routes affected excludes client code.
-    if will_hear_hot_update
-        && current_bundle!().had_reload_event
-        && (dev.incremental_result.framework_routes_affected.len()
-            + dev.incremental_result.html_routes_hard_affected.len())
-            > 0
-        && dev.bundling_failures.is_empty()
-    {
-        has_route_bits_set = true;
-
-        for request in &dev.incremental_result.framework_routes_affected {
-            let route = dev.router.route_ptr(request.route_index());
-            if let Some(id) = route.bundle {
-                route_bits.set(id.get() as usize);
-            }
-            if request.should_recurse_when_visiting() {
-                mark_all_route_children(&dev.router, &mut [&mut route_bits], request.route_index());
+                w_int!(i32, i32::try_from(bundled_route_index).expect("int cast"));
             }
         }
-        for route_bundle_index in &dev.incremental_result.html_routes_hard_affected {
-            route_bits.set(route_bundle_index.get() as usize);
-            route_bits_client.set(route_bundle_index.get() as usize);
-        }
+        w_int!(i32, -1);
 
-        // List 1
-        let mut it = route_bits.iterator::<true, true>();
-        while let Some(bundled_route_index) = it.next() {
-            let bundle = &dev.route_bundles[bundled_route_index];
-            if bundle.active_viewers == 0 {
-                continue;
-            }
-            w_int!(i32, i32::try_from(bundled_route_index).expect("int cast"));
-        }
-    }
-    w_int!(i32, -1);
+        // When client component roots get updated, the `client_components_affected`
+        // list contains the server side versions of these roots.
+        if !dev.incremental_result.client_components_affected.is_empty() {
+            has_route_bits_set = true;
 
-    // When client component roots get updated, the `client_components_affected`
-    // list contains the server side versions of these roots.
-    if !dev.incremental_result.client_components_affected.is_empty() {
-        has_route_bits_set = true;
+            dev.incremental_result.framework_routes_affected.clear();
+            dev.incremental_result.html_routes_hard_affected.clear();
+            dev.incremental_result.html_routes_soft_affected.clear();
+            ctx.gts.clear();
 
-        dev.incremental_result.framework_routes_affected.clear();
-        dev.incremental_result.html_routes_hard_affected.clear();
-        dev.incremental_result.html_routes_soft_affected.clear();
-        ctx.gts.clear();
-
-        for index in dev.incremental_result.client_components_affected.clone() {
-            dev.server_graph_mut().trace_dependencies(
-                index,
-                ctx.gts,
-                incremental_graph::TraceDependencyGoal::NoStop,
-                index,
-            )?;
-        }
-
-        for request in &dev.incremental_result.framework_routes_affected {
-            let route = dev.router.route_ptr(request.route_index());
-            if let Some(id) = route.bundle {
-                route_bits.set(id.get() as usize);
-                route_bits_client.set(id.get() as usize);
-            }
-            if request.should_recurse_when_visiting() {
-                mark_all_route_children(
-                    &dev.router,
-                    &mut [&mut route_bits, &mut route_bits_client],
-                    request.route_index(),
-                );
-            }
-        }
-
-        // Free old bundles
-        let mut it = route_bits_client.iterator::<true, true>();
-        while let Some(bundled_route_index) = it.next() {
-            dev.route_bundles[bundled_route_index].invalidate_client_bundle(&mut dev.source_maps);
-        }
-    } else if !dev.incremental_result.html_routes_hard_affected.is_empty() {
-        // Free old bundles
-        let mut it = route_bits_client.iterator::<true, true>();
-        while let Some(bundled_route_index) = it.next() {
-            dev.route_bundles[bundled_route_index].invalidate_client_bundle(&mut dev.source_maps);
-        }
-    }
-
-    // Softly affected HTML routes only need the bundle invalidated.
-    if !dev.incremental_result.html_routes_soft_affected.is_empty() {
-        for index in &dev.incremental_result.html_routes_soft_affected {
-            dev.route_bundles[index.get() as usize].invalidate_client_bundle(&mut dev.source_maps);
-            route_bits.set(index.get() as usize);
-        }
-        has_route_bits_set = true;
-    }
-
-    // `route_bits` will have all of the routes that were modified.
-    if has_route_bits_set && (will_hear_hot_update || dev.incremental_result.had_adjusted_edges) {
-        // Note: copy out before the loop so the `&mut RouteBundle` borrow
-        // below doesn't overlap a `&dev.incremental_result` read.
-        let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
-        let mut it = route_bits.iterator::<true, true>();
-        // List 2
-        while let Some(i) = it.next() {
-            let route_bundle = &mut dev.route_bundles[i];
-            if had_adjusted_edges {
-                match &mut route_bundle.data {
-                    route_bundle::Data::Framework(fw_bundle) => {
-                        fw_bundle.cached_css_file_array.clear_without_deallocation()
-                    }
-                    route_bundle::Data::Html(html) => html.cached_response = None,
-                }
-            }
-            if route_bundle.active_viewers == 0 || !will_hear_hot_update {
-                continue;
-            }
-            let trace_key = route_bundle.trace_key();
-            w_int!(i32, i32::try_from(i).expect("int cast"));
-
-            // If no edges were changed, then it is impossible to
-            // change the list of CSS files.
-            if had_adjusted_edges {
-                ctx.gts.clear();
-                dev.client_graph.current_css_files.clear();
-                dev.trace_all_route_imports(trace_key, ctx.gts, TraceImportGoal::FindCss)?;
-                let css_ids = &dev.client_graph.current_css_files;
-
-                w_int!(i32, i32::try_from(css_ids.len()).expect("int cast"));
-                for css_id in css_ids {
-                    let mut hex = [0u8; 16];
-                    let n = bun_core::fmt::bytes_to_hex_lower(&css_id.to_ne_bytes(), &mut hex);
-                    w_all!(&hex[..n]);
-                }
-            } else {
-                w_int!(i32, -1);
-            }
-        }
-    }
-    w_int!(i32, -1);
-
-    let css_chunks = &result.chunks[1..1 + n_css];
-    if will_hear_hot_update {
-        if dev.client_graph.current_chunk_len > 0 || !css_chunks.is_empty() {
-            // Send CSS mutations
-            dev.assets.reindex_if_needed()?;
-            w_int!(u32, u32::try_from(css_chunks.len()).expect("int cast"));
-            use bun_bundler::Graph::InputFileColumns as _;
-            let sources = bv2.graph.input_files.items_source();
-            for chunk in css_chunks {
-                let key = sources[chunk.entry_point.source_index() as usize]
-                    .path
-                    .key_for_incremental_graph();
-                let content_hash = hash(key);
-                let mut hex = [0u8; 16];
-                let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
-                w_all!(&hex[..n]);
-                let css_data: &[u8] = match dev.assets.get(content_hash) {
-                    Some(route) => &route.blob.internal_blob().bytes,
-                    None => b"",
-                };
-                w_int!(u32, u32::try_from(css_data.len()).expect("int cast"));
-                w_all!(css_data);
-            }
-
-            // Send the JS chunk
-            if dev.client_graph.current_chunk_len > 0 {
-                let script_id = 'h: {
-                    // Matches the bundler's `ContentHasher` hash (XxHash64).
-                    let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
-                    let keys = dev.client_graph.bundled_files.keys();
-                    let values = dev.client_graph.bundled_files.values();
-                    for part in &dev.client_graph.current_chunk_parts {
-                        source_map_hash.update(&keys[part.get() as usize]);
-                        if let Some(map) = values[part.get() as usize].source_map.get() {
-                            source_map_hash.update(map.vlq());
-                        }
-                    }
-                    // Set the bottom bit.
-                    break 'h source_map_store::Key::init(source_map_hash.digest() | 1);
-                };
-                let mut sockets: u32 = 0;
-                for socket in dev.active_websocket_connections.values() {
-                    if socket.is_subscribed(HmrTopic::HotUpdate) {
-                        let is_new = socket.referenced_source_maps.with_mut(|maps| {
-                            !maps.get_or_put(script_id).expect("oom").found_existing
-                        });
-                        if is_new {
-                            sockets += 1;
-                        }
-                    }
-                }
-                map_log!("inc {:x}, for {} sockets", script_id.get(), sockets);
-                let entry = match dev
-                    .source_maps
-                    .put_or_increment_ref_count(script_id, sockets)?
-                {
-                    source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
-                        dev.client_graph.take_source_map(entry)?;
-                        break 'brk entry;
-                    }
-                    source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
-                };
-                w_int!(u32, entry.overlapping_memory_cost);
-
-                // Build and send the source chunk
-                let console_log = dev.should_receive_console_log_from_browser();
-                dev.client_graph_mut().take_js_bundle_to_list(
-                    &mut hot_update_payload,
-                    &incremental_graph::TakeJSBundleOptionsClient {
-                        kind: crate::bake::dev_server::ChunkKind::HmrChunk,
-                        script_id,
-                        console_log,
-                        ..Default::default()
-                    },
+            for index in dev.incremental_result.client_components_affected.clone() {
+                dev.server_graph_mut().trace_dependencies(
+                    index,
+                    ctx.gts,
+                    incremental_graph::TraceDependencyGoal::NoStop,
+                    index,
                 )?;
             }
-        } else {
-            w_int!(i32, 0);
-        }
 
-        dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
-        *had_sent_hmr_event = true;
-    }
-
-    if !dev.incremental_result.failures_added.is_empty() {
-        dev.bundles_since_last_error = 0;
-
-        // Only the first failure payload sent notifies the inspector.
-        let mut notify_inspector = dev.inspector().is_some();
-        if current_bundle!().promise.strong.has_value() {
-            dev.set_current_bundle_route_states(route_bundle::State::PossibleBundlingFailures);
-            let global = dev.global();
-            let promise = current_bundle!().promise.strong.take();
-            current_bundle!().promise.reset();
-            dev.send_serialized_failures(
-                DevResponse::Promise(PromiseResponse { promise, global }),
-                dev.bundling_failures.values(),
-                dev.inspector()
-                    .filter(|_| ::core::mem::take(&mut notify_inspector)),
-            )?;
-        }
-
-        while let Some(req) = current_bundle!().requests.pop() {
-            let req = scopeguard::guard(req, DeferredRequest::release);
-
-            dev.route_bundle_ptr(req.route_bundle_index).server_state =
-                route_bundle::State::PossibleBundlingFailures;
-
-            let resp: DevResponse = match req.handler.replace(Handler::Aborted) {
-                Handler::Aborted => continue,
-                Handler::ServerHandler(mut saved) => {
-                    let resp = saved.response;
-                    // Releases the ref taken in `defer_request`...
-                    saved.deinit();
-                    // ...and the request context's own: the error page is
-                    // written to the raw response below, so nothing hands the
-                    // context to a JS handler that would finish it.
-                    saved.ctx.deref();
-                    DevResponse::Http(resp)
+            for request in &dev.incremental_result.framework_routes_affected {
+                let route = dev.router.route_ptr(request.route_index());
+                if let Some(id) = route.bundle {
+                    route_bits.set(id.get() as usize);
+                    route_bits_client.set(id.get() as usize);
                 }
-                Handler::BundledHtmlPage(ram) => DevResponse::Http(ram.response),
-            };
-
-            dev.send_serialized_failures(
-                resp,
-                dev.bundling_failures.values(),
-                dev.inspector()
-                    .filter(|_| ::core::mem::take(&mut notify_inspector)),
-            )?;
-        }
-        if notify_inspector {
-            let mut buf: Vec<u8> = Vec::new();
-            dev.encode_serialized_failures(
-                dev.bundling_failures.values(),
-                &mut buf,
-                dev.inspector(),
-            )?;
-        }
-
-        return Ok(());
-    }
-
-    if dev.bundling_failures.is_empty() {
-        if current_bundle!().had_reload_event {
-            let clear_terminal = !bun_output::scope_is_visible!(DevServer)
-                && !dev
-                    .vm()
-                    .env_loader()
-                    .has_set_no_clear_terminal_on_reload(false);
-            if clear_terminal {
-                Output::disable_buffering();
-                Output::reset_terminal_all();
-                Output::enable_buffering();
+                if request.should_recurse_when_visiting() {
+                    mark_all_route_children(
+                        &dev.router,
+                        &mut [&mut route_bits, &mut route_bits_client],
+                        request.route_index(),
+                    );
+                }
             }
 
-            dev.print_memory_line();
-
-            dev.bundles_since_last_error += 1;
-            if dev.bundles_since_last_error > 1 {
-                bun_core::pretty_error!("<cyan>[x{}]<r> ", dev.bundles_since_last_error);
+            // Free old bundles
+            let mut it = route_bits_client.iterator::<true, true>();
+            while let Some(bundled_route_index) = it.next() {
+                dev.route_bundles[bundled_route_index]
+                    .invalidate_client_bundle(&mut dev.source_maps);
             }
-        } else {
-            dev.bundles_since_last_error = 0;
-            dev.print_memory_line();
+        } else if !dev.incremental_result.html_routes_hard_affected.is_empty() {
+            // Free old bundles
+            let mut it = route_bits_client.iterator::<true, true>();
+            while let Some(bundled_route_index) = it.next() {
+                dev.route_bundles[bundled_route_index]
+                    .invalidate_client_bundle(&mut dev.source_maps);
+            }
         }
 
-        let ms_elapsed = u64::try_from(current_bundle!().timer.elapsed().as_millis()).unwrap();
+        // Softly affected HTML routes only need the bundle invalidated.
+        if !dev.incremental_result.html_routes_soft_affected.is_empty() {
+            for index in &dev.incremental_result.html_routes_soft_affected {
+                dev.route_bundles[index.get() as usize]
+                    .invalidate_client_bundle(&mut dev.source_maps);
+                route_bits.set(index.get() as usize);
+            }
+            has_route_bits_set = true;
+        }
 
-        bun_core::pretty_error!(
-            "<green>{} in {}ms<r>",
-            if current_bundle!().had_reload_event {
-                "Reloaded"
-            } else {
-                "Bundled page"
-            },
-            ms_elapsed,
-        );
-
-        // Intentionally creating a new scope here so we can limit the lifetime
-        // of the `relative_path_buf`
+        // `route_bits` will have all of the routes that were modified.
+        if has_route_bits_set && (will_hear_hot_update || dev.incremental_result.had_adjusted_edges)
         {
-            let mut buf = paths::path_buffer_pool::get();
+            // Note: copy out before the loop so the `&mut RouteBundle` borrow
+            // below doesn't overlap a `&dev.incremental_result` read.
+            let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
+            let mut it = route_bits.iterator::<true, true>();
+            // List 2
+            while let Some(i) = it.next() {
+                let route_bundle = &mut dev.route_bundles[i];
+                if had_adjusted_edges {
+                    match &mut route_bundle.data {
+                        route_bundle::Data::Framework(fw_bundle) => {
+                            fw_bundle.cached_css_file_array.clear_without_deallocation()
+                        }
+                        route_bundle::Data::Html(html) => html.cached_response = None,
+                    }
+                }
+                if route_bundle.active_viewers == 0 || !will_hear_hot_update {
+                    continue;
+                }
+                let trace_key = route_bundle.trace_key();
+                w_int!(i32, i32::try_from(i).expect("int cast"));
 
-            // Compute a file name to display
-            let file_name: Option<&[u8]> = if current_bundle!().had_reload_event {
-                if !bv2.graph.entry_points.is_empty() {
-                    Some(dev.relative_path(&mut *buf, {
-                        use bun_bundler::Graph::InputFileColumns as _;
-                        bv2.graph.input_files.items_source()
-                            [bv2.graph.entry_points[0].get() as usize]
-                            .path
-                            .text
-                    }))
+                // If no edges were changed, then it is impossible to
+                // change the list of CSS files.
+                if had_adjusted_edges {
+                    ctx.gts.clear();
+                    dev.client_graph.current_css_files.clear();
+                    dev.trace_all_route_imports(trace_key, ctx.gts, TraceImportGoal::FindCss)?;
+                    let css_ids = &dev.client_graph.current_css_files;
+
+                    w_int!(i32, i32::try_from(css_ids.len()).expect("int cast"));
+                    for css_id in css_ids {
+                        let mut hex = [0u8; 16];
+                        let n = bun_core::fmt::bytes_to_hex_lower(&css_id.to_ne_bytes(), &mut hex);
+                        w_all!(&hex[..n]);
+                    }
                 } else {
-                    None // TODO: How does this happen
-                }
-            } else {
-                'brk: {
-                    let route_bundle_index = 'rbi: {
-                        if let Some(first) = current_bundle!().requests.last() {
-                            break 'rbi first.route_bundle_index;
-                        }
-                        let route_bundle_indices =
-                            current_bundle!().promise.route_bundle_indices.keys();
-                        if route_bundle_indices.is_empty() {
-                            break 'brk None;
-                        }
-                        break 'rbi route_bundle_indices[0];
-                    };
-
-                    // Note: index `route_bundles` immutably so `dev.relative_path`
-                    // / `dev.router` / `dev.server_graph` reads below stay disjoint.
-                    break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data {
-                        route_bundle::Data::Html(html) => {
-                            Some(dev.relative_path(&mut *buf, &html.html_bundle.bundle.path))
-                        }
-                        route_bundle::Data::Framework(fw) => 'file_name: {
-                            let route = dev.router.route_ptr(fw.route_index);
-                            let opaque_id = match route.file_page.or(route.file_layout) {
-                                Some(id) => id,
-                                None => break 'file_name None,
-                            };
-                            let server_index =
-                                from_opaque_file_id::<{ bake::Side::Server }>(opaque_id);
-                            let abs_path =
-                                &dev.server_graph.bundled_files.keys()[server_index.get() as usize];
-                            break 'file_name Some(dev.relative_path(&mut *buf, abs_path));
-                        }
-                    };
-                }
-            };
-
-            let total_count = bv2.graph.entry_points.len();
-            if let Some(name) = file_name {
-                bun_core::pretty_error!("<d>:<r> {}", bstr::BStr::new(name));
-                if total_count > 1 {
-                    bun_core::pretty_error!(" <d>+ {} more<r>", total_count - 1);
+                    w_int!(i32, -1);
                 }
             }
         }
-        bun_core::pretty_error!("\n");
-        Output::flush();
+        w_int!(i32, -1);
 
-        if let Some(agent) = dev.inspector() {
-            agent.notify_bundle_complete(dev.inspector_server_id, ms_elapsed as f64);
+        let css_chunks = &result.chunks[1..1 + n_css];
+        if will_hear_hot_update {
+            if dev.client_graph.current_chunk_len > 0 || !css_chunks.is_empty() {
+                // Send CSS mutations
+                dev.assets.reindex_if_needed()?;
+                w_int!(u32, u32::try_from(css_chunks.len()).expect("int cast"));
+                use bun_bundler::Graph::InputFileColumns as _;
+                let sources = bv2.graph.input_files.items_source();
+                for chunk in css_chunks {
+                    let key = sources[chunk.entry_point.source_index() as usize]
+                        .path
+                        .key_for_incremental_graph();
+                    let content_hash = hash(key);
+                    let mut hex = [0u8; 16];
+                    let n =
+                        bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
+                    w_all!(&hex[..n]);
+                    let css_data: &[u8] = match dev.assets.get(content_hash) {
+                        Some(route) => &route.blob.internal_blob().bytes,
+                        None => b"",
+                    };
+                    w_int!(u32, u32::try_from(css_data.len()).expect("int cast"));
+                    w_all!(css_data);
+                }
+
+                // Send the JS chunk
+                if dev.client_graph.current_chunk_len > 0 {
+                    let script_id = 'h: {
+                        // Matches the bundler's `ContentHasher` hash (XxHash64).
+                        let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
+                        let keys = dev.client_graph.bundled_files.keys();
+                        let values = dev.client_graph.bundled_files.values();
+                        for part in &dev.client_graph.current_chunk_parts {
+                            source_map_hash.update(&keys[part.get() as usize]);
+                            if let Some(map) = values[part.get() as usize].source_map.get() {
+                                source_map_hash.update(map.vlq());
+                            }
+                        }
+                        // Set the bottom bit.
+                        break 'h source_map_store::Key::init(source_map_hash.digest() | 1);
+                    };
+                    let mut sockets: u32 = 0;
+                    for socket in dev.active_websocket_connections.values() {
+                        if socket.is_subscribed(HmrTopic::HotUpdate) {
+                            let is_new = socket.referenced_source_maps.with_mut(|maps| {
+                                !maps.get_or_put(script_id).expect("oom").found_existing
+                            });
+                            if is_new {
+                                sockets += 1;
+                            }
+                        }
+                    }
+                    map_log!("inc {:x}, for {} sockets", script_id.get(), sockets);
+                    let entry = match dev
+                        .source_maps
+                        .put_or_increment_ref_count(script_id, sockets)?
+                    {
+                        source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
+                            dev.client_graph.take_source_map(entry)?;
+                            break 'brk entry;
+                        }
+                        source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
+                    };
+                    w_int!(u32, entry.overlapping_memory_cost);
+
+                    // Build and send the source chunk
+                    let console_log = dev.should_receive_console_log_from_browser();
+                    dev.client_graph_mut().take_js_bundle_to_list(
+                        &mut hot_update_payload,
+                        &incremental_graph::TakeJSBundleOptionsClient {
+                            kind: crate::bake::dev_server::ChunkKind::HmrChunk,
+                            script_id,
+                            console_log,
+                            ..Default::default()
+                        },
+                    )?;
+                }
+            } else {
+                w_int!(i32, 0);
+            }
+
+            dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
+            *had_sent_hmr_event = true;
         }
-    }
 
-    // Release the lock because the underlying handler may acquire one.
-    dev.graph_safety_lock.unlock();
-    let served = finalize_bundle_serve_requests(dev);
-    dev.graph_safety_lock.lock();
-    served
+        if !dev.incremental_result.failures_added.is_empty() {
+            dev.bundles_since_last_error = 0;
+
+            // Only the first failure payload sent notifies the inspector.
+            let mut notify_inspector = dev.inspector().is_some();
+            let mut release_after = Vec::new();
+            if current_bundle!().promise.strong.has_value() {
+                dev.set_current_bundle_route_states(route_bundle::State::PossibleBundlingFailures);
+                let global = dev.global();
+                let promise = current_bundle!().promise.strong.take();
+                current_bundle!().promise.reset();
+                dev.send_serialized_failures(
+                    DevResponse::Promise(PromiseResponse { promise, global }),
+                    dev.bundling_failures.values(),
+                    dev.inspector()
+                        .filter(|_| ::core::mem::take(&mut notify_inspector)),
+                )?;
+            }
+
+            while let Some(req) = current_bundle!().requests.pop() {
+                let req = scopeguard::guard(req, DeferredRequest::release);
+
+                dev.route_bundle_ptr(req.route_bundle_index).server_state =
+                    route_bundle::State::PossibleBundlingFailures;
+
+                let resp: DevResponse = match req.handler.replace(Handler::Aborted) {
+                    Handler::Aborted => continue,
+                    Handler::ServerHandler(mut saved) => {
+                        let resp = saved.response;
+                        // Releases the ref taken in `defer_request`; the request
+                        // context's own is released once the error page is out
+                        // (nothing hands the context to a JS handler that would
+                        // finish it).
+                        release_after.push(saved.ctx);
+                        saved.deinit();
+                        DevResponse::Http(resp)
+                    }
+                    Handler::BundledHtmlPage(ram) => DevResponse::Http(ram.response),
+                };
+
+                dev.send_serialized_failures(
+                    resp,
+                    dev.bundling_failures.values(),
+                    dev.inspector()
+                        .filter(|_| ::core::mem::take(&mut notify_inspector)),
+                )?;
+            }
+            if notify_inspector {
+                let mut buf: Vec<u8> = Vec::new();
+                dev.encode_serialized_failures(
+                    dev.bundling_failures.values(),
+                    &mut buf,
+                    dev.inspector(),
+                )?;
+            }
+
+            return Ok(BundleOutcome::Failed(release_after));
+        }
+
+        if dev.bundling_failures.is_empty() {
+            if current_bundle!().had_reload_event {
+                let clear_terminal = !bun_output::scope_is_visible!(DevServer)
+                    && !dev
+                        .vm()
+                        .env_loader()
+                        .has_set_no_clear_terminal_on_reload(false);
+                if clear_terminal {
+                    Output::disable_buffering();
+                    Output::reset_terminal_all();
+                    Output::enable_buffering();
+                }
+
+                dev.print_memory_line();
+
+                dev.bundles_since_last_error += 1;
+                if dev.bundles_since_last_error > 1 {
+                    bun_core::pretty_error!("<cyan>[x{}]<r> ", dev.bundles_since_last_error);
+                }
+            } else {
+                dev.bundles_since_last_error = 0;
+                dev.print_memory_line();
+            }
+
+            let ms_elapsed = u64::try_from(current_bundle!().timer.elapsed().as_millis()).unwrap();
+
+            bun_core::pretty_error!(
+                "<green>{} in {}ms<r>",
+                if current_bundle!().had_reload_event {
+                    "Reloaded"
+                } else {
+                    "Bundled page"
+                },
+                ms_elapsed,
+            );
+
+            // Intentionally creating a new scope here so we can limit the lifetime
+            // of the `relative_path_buf`
+            {
+                let mut buf = paths::path_buffer_pool::get();
+
+                // Compute a file name to display
+                let file_name: Option<&[u8]> = if current_bundle!().had_reload_event {
+                    if !bv2.graph.entry_points.is_empty() {
+                        Some(dev.relative_path(&mut *buf, {
+                            use bun_bundler::Graph::InputFileColumns as _;
+                            bv2.graph.input_files.items_source()
+                                [bv2.graph.entry_points[0].get() as usize]
+                                .path
+                                .text
+                        }))
+                    } else {
+                        None // TODO: How does this happen
+                    }
+                } else {
+                    'brk: {
+                        let route_bundle_index = 'rbi: {
+                            if let Some(first) = current_bundle!().requests.last() {
+                                break 'rbi first.route_bundle_index;
+                            }
+                            let route_bundle_indices =
+                                current_bundle!().promise.route_bundle_indices.keys();
+                            if route_bundle_indices.is_empty() {
+                                break 'brk None;
+                            }
+                            break 'rbi route_bundle_indices[0];
+                        };
+
+                        // Note: index `route_bundles` immutably so `dev.relative_path`
+                        // / `dev.router` / `dev.server_graph` reads below stay disjoint.
+                        break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data
+                        {
+                            route_bundle::Data::Html(html) => {
+                                Some(dev.relative_path(&mut *buf, &html.html_bundle.bundle.path))
+                            }
+                            route_bundle::Data::Framework(fw) => 'file_name: {
+                                let route = dev.router.route_ptr(fw.route_index);
+                                let opaque_id = match route.file_page.or(route.file_layout) {
+                                    Some(id) => id,
+                                    None => break 'file_name None,
+                                };
+                                let server_index =
+                                    from_opaque_file_id::<{ bake::Side::Server }>(opaque_id);
+                                let abs_path = &dev.server_graph.bundled_files.keys()
+                                    [server_index.get() as usize];
+                                break 'file_name Some(dev.relative_path(&mut *buf, abs_path));
+                            }
+                        };
+                    }
+                };
+
+                let total_count = bv2.graph.entry_points.len();
+                if let Some(name) = file_name {
+                    bun_core::pretty_error!("<d>:<r> {}", bstr::BStr::new(name));
+                    if total_count > 1 {
+                        bun_core::pretty_error!(" <d>+ {} more<r>", total_count - 1);
+                    }
+                }
+            }
+            bun_core::pretty_error!("\n");
+            Output::flush();
+
+            if let Some(agent) = dev.inspector() {
+                agent.notify_bundle_complete(dev.inspector_server_id, ms_elapsed as f64);
+            }
+        }
+
+        Ok(BundleOutcome::Serve)
+    })?;
+
+    match outcome {
+        BundleOutcome::Failed(contexts) => {
+            for ctx in contexts {
+                ctx.deref();
+            }
+            Ok(())
+        }
+        BundleOutcome::Serve => finalize_bundle_serve_requests(cell),
+    }
 }
 
 /// The tail of `finalize_bundle`: hand the finished bundle to every request
-/// that was waiting on it. Runs with `graph_safety_lock` released.
-fn finalize_bundle_serve_requests(dev: &mut DevServer) -> JsResult<()> {
-    macro_rules! current_bundle {
-        () => {
-            dev.current_bundle
+/// that was waiting on it. The framework's request handler runs outside the
+/// dev server borrow.
+fn finalize_bundle_serve_requests(cell: &DevServerCell) -> JsResult<()> {
+    cell.with_mut(|dev| -> JsResult<()> {
+        // Set all the deferred routes to the .loaded state up front
+        let Some(current_bundle) = dev.current_bundle.as_ref() else {
+            unreachable!("infallible: bundle active")
+        };
+        for i in 0..current_bundle.requests.len() {
+            let rbi = dev.current_bundle.as_ref().unwrap().requests[i].route_bundle_index;
+            dev.route_bundle_ptr(rbi).server_state = route_bundle::State::Loaded;
+        }
+
+        if dev
+            .current_bundle
+            .as_ref()
+            .unwrap()
+            .promise
+            .strong
+            .has_value()
+        {
+            dev.set_current_bundle_route_states(route_bundle::State::Loaded);
+            let global = dev.global();
+            let mut promise =
+                scopeguard::guard(&mut dev.current_bundle.as_mut().unwrap().promise, |p| {
+                    p.deinit_idempotently()
+                });
+            promise.strong.resolve(global, JSValue::TRUE)?;
+        }
+        Ok(())
+    })?;
+
+    loop {
+        // Pop the next request and get it ready under the borrow...
+        let next = cell.with_mut(|dev| -> JsResult<Option<_>> {
+            let Some(req) = dev
+                .current_bundle
                 .as_mut()
                 .expect("infallible: bundle active")
+                .requests
+                .pop()
+            else {
+                return Ok(None);
+            };
+            let req = scopeguard::guard(req, DeferredRequest::release);
+
+            dev.route_bundle_ptr(req.route_bundle_index).server_state = route_bundle::State::Loaded;
+
+            // Note: `SavedRequest` is move-only (`Strong` field). Take the
+            // handler by value so the `Saved` payload moves into the union; the
+            // request is being released regardless.
+            let call = match req.handler.replace(Handler::Aborted) {
+                Handler::Aborted => None,
+                Handler::ServerHandler(saved) => {
+                    let url = match saved.request() {
+                        Some(r) => bun_core::StringView::new(r.url.get()),
+                        None => bun_core::StringView::EMPTY,
+                    };
+                    let call = dev
+                        .prepare_framework_request(req.route_bundle_index, url.to_utf8().slice());
+                    Some((call, saved))
+                }
+                Handler::BundledHtmlPage(ram) => {
+                    dev.on_html_request_with_bundle(
+                        req.route_bundle_index,
+                        ram.response,
+                        ram.method,
+                    );
+                    None
+                }
+            };
+            Ok(Some((
+                scopeguard::ScopeGuard::into_inner(req),
+                call,
+                dev.server,
+            )))
+        })?;
+        let Some((req, call, server)) = next else {
+            return Ok(());
         };
-    }
-
-    // Set all the deferred routes to the .loaded state up front
-    for i in 0..current_bundle!().requests.len() {
-        let rbi = current_bundle!().requests[i].route_bundle_index;
-        dev.route_bundle_ptr(rbi).server_state = route_bundle::State::Loaded;
-    }
-
-    if current_bundle!().promise.strong.has_value() {
-        dev.set_current_bundle_route_states(route_bundle::State::Loaded);
-        let vm = dev.vm;
-        let _exit = vm.enter_event_loop_scope();
-        let mut promise =
-            scopeguard::guard(&mut current_bundle!().promise, |p| p.deinit_idempotently());
-        promise.strong.resolve(vm.global(), JSValue::TRUE)?;
-    }
-
-    while let Some(req) = current_bundle!().requests.pop() {
+        // ...then run the framework's handler and release it outside.
         let req = scopeguard::guard(req, DeferredRequest::release);
-
-        dev.route_bundle_ptr(req.route_bundle_index).server_state = route_bundle::State::Loaded;
-
-        // Note: `SavedRequest` is move-only (`Strong` field). Take the
-        // handler by value so the `Saved` payload moves into the union; the
-        // request is being released regardless.
-        match req.handler.replace(Handler::Aborted) {
-            Handler::Aborted => continue,
-            Handler::ServerHandler(saved) => {
-                let response = saved.response;
-                let ctx = saved.ctx;
-                // Note: `saved` is moved out (so `release` sees `Aborted`);
-                // `js_request: StrongOptional` releases on Drop, but
-                // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
-                // `ctx.ref_()` from `defer_request` here so the request
-                // context's `on_request_complete` (and thus the server's
-                // `pending_requests--`) eventually fires. Without this the
-                // bake-harness graceful-exit deinit check ("Failed to trigger
-                // deinit") never sees DevServer Drop.
-                scopeguard::defer! { ctx.deref() };
-                let url = match saved.request() {
-                    Some(r) => bun_core::StringView::new(r.url.get()),
-                    None => bun_core::StringView::EMPTY,
-                };
-                let call =
-                    dev.prepare_framework_request(req.route_bundle_index, url.to_utf8().slice())?;
-                call.run(dev.server, SavedRequestUnion::Saved(saved), response);
-            }
-            Handler::BundledHtmlPage(ram) => {
-                dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)
-            }
+        if let Some((call, saved)) = call {
+            let response = saved.response;
+            let ctx = saved.ctx;
+            // Note: `saved` is moved out (so `release` sees `Aborted`);
+            // `js_request: StrongOptional` releases on Drop, but
+            // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
+            // `ctx.ref_()` from `defer_request` here so the request
+            // context's `on_request_complete` (and thus the server's
+            // `pending_requests--`) eventually fires. Without this the
+            // bake-harness graceful-exit deinit check ("Failed to trigger
+            // deinit") never sees DevServer Drop.
+            scopeguard::defer! { ctx.deref() };
+            call?.run(server, SavedRequestUnion::Saved(saved), response);
         }
+        drop(req);
     }
-    Ok(())
 }
 
 impl DevServer {
@@ -4241,7 +4463,10 @@ impl DevServer {
         }
     }
 
-    fn start_next_bundle_if_present(&mut self) {
+    /// If requests, a reload event or a `bundleNewRoute` promise are waiting
+    /// on the next bundle, returns that bundle for `start_async_bundle`.
+    #[must_use]
+    fn start_next_bundle_if_present(&mut self) -> Option<BundleRequest> {
         debug_assert!(self.magic == Magic::Valid);
         // Clear the current bundle
         debug_assert!(self.current_bundle.is_none());
@@ -4273,13 +4498,17 @@ impl DevServer {
                     .expect("oom");
             }
 
-            if !entry_points.set.is_empty() {
-                self.start_async_bundle(entry_points, is_reload, timer)
-                    .expect("oom");
-            }
-
             self.next_bundle.route_queue.clear_retaining_capacity();
+
+            if !entry_points.set.is_empty() {
+                return Some(BundleRequest {
+                    entry_points,
+                    had_reload_event: is_reload,
+                    timer,
+                });
+            }
         }
+        None
     }
 
     /// Note: The log is not consumed here
@@ -4484,15 +4713,20 @@ impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
 }
 
 fn on_request(
-    dev: &mut DevServer,
+    cell: &DevServerCell,
     req: &mut Request,
     mut resp: AnyResponse,
 ) -> JsResult<RequestAction> {
-    let mut params: framework_router::MatchedParams = Default::default();
-    if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
-        let route_bundle_index = dev
-            .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
-            .expect("oom");
+    let route_bundle_index = cell.with_mut(|dev| {
+        let mut params: framework_router::MatchedParams = Default::default();
+        dev.router
+            .match_slow(req.url(), &mut params)
+            .map(|route_index| {
+                dev.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
+                    .expect("oom")
+            })
+    });
+    if let Some(route_bundle_index) = route_bundle_index {
         let mut ctx = RequestEnsureRouteBundledCtx {
             req: ReqOrSaved::Req(req),
             resp,
@@ -4500,8 +4734,7 @@ fn on_request(
             route_bundle_index,
             framework_call: None,
         };
-        let rbi = ctx.route_bundle_index;
-        return match ensure_route_is_bundled(dev, rbi, &mut ctx) {
+        return match ensure_route_is_bundled(cell, route_bundle_index, &mut ctx) {
             Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(err) => Err(err),
             Ok(()) => Ok(match ctx.framework_call {
@@ -4511,7 +4744,7 @@ fn on_request(
         };
     }
 
-    if !dev.server.config().on_request.is_empty() {
+    if !cell.get().server.config().on_request.is_empty() {
         return Ok(RequestAction::UserHandler);
     }
 
@@ -4520,18 +4753,20 @@ fn on_request(
 }
 
 impl DevServer {
+    /// `Bun.serve`'s HTML-import routes in development: serve the bundled
+    /// page for `html`.
     pub(crate) fn respond_for_html_bundle(
-        &mut self,
+        cell: &DevServerCell,
         html: bun_ptr::ThisPtr<HTMLBundleRoute>,
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
-        if !is_allowed_dev_host(self, req) {
+        if !is_allowed_dev_host(cell.get(), req) {
             host_forbidden(resp);
             return Ok(());
         }
-        let route_bundle_index = self
-            .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
+        let route_bundle_index = cell
+            .with_mut(|dev| dev.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html)))
             .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
             req: ReqOrSaved::Req(req),
@@ -4540,8 +4775,7 @@ impl DevServer {
             route_bundle_index,
             framework_call: None,
         };
-        let rbi = ctx.route_bundle_index;
-        match ensure_route_is_bundled(self, rbi, &mut ctx) {
+        match ensure_route_is_bundled(cell, route_bundle_index, &mut ctx) {
             Ok(()) => {}
             // This is the dev server's entry from Bun.serve's static-route
             // trampoline (`StaticRouteLike`, which otherwise never enters
@@ -5463,24 +5697,36 @@ impl DevServer {
     }
 
     pub(crate) fn on_plugins_resolved(
-        &mut self,
+        cell: &DevServerCell,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
-        self.plugin_state = PluginState::Loaded;
-        self.start_next_bundle_if_present();
-        Ok(())
+        let next_bundle = cell.with_mut(|dev| {
+            dev.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
+            dev.plugin_state = PluginState::Loaded;
+            dev.start_next_bundle_if_present()
+        });
+        match next_bundle {
+            Some(next_bundle) => Self::start_async_bundle(cell, next_bundle),
+            None => Ok(()),
+        }
     }
 
-    pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
+    /// Returns the requests that were waiting on the plugins; the caller
+    /// aborts them (`abort_deferred_requests`) once the dev server borrow ends,
+    /// since aborting a request runs its abort-signal handlers.
+    pub(crate) fn on_plugins_rejected(&mut self) -> deferred_request::List {
         self.plugin_state = PluginState::Err;
-        while let Some(d) = self.next_bundle.requests.pop() {
-            d.abort();
-            DeferredRequest::release(d);
-        }
+        let requests = ::core::mem::take(&mut self.next_bundle.requests);
         self.next_bundle.route_queue.clear_retaining_capacity();
         // TODO: allow recovery from this state
-        Ok(())
+        requests
+    }
+
+    pub(crate) fn abort_deferred_requests(requests: deferred_request::List) {
+        for req in requests.into_iter().rev() {
+            req.abort();
+            DeferredRequest::release(req);
+        }
     }
 }
 
@@ -5683,7 +5929,7 @@ pub fn bundle_new_route_js_function_impl(
 
     let vm = DevServerCell::get(&dev_cell).vm;
     let _exit = vm.enter_event_loop_scope();
-    let (route_bundle_index, ctx) = dev_cell.with_mut(|dev| {
+    let route_bundle_index = dev_cell.with_mut(|dev| {
         let mut params: framework_router::MatchedParams = Default::default();
         let Some(route_index) = dev.router.match_slow(pathname, &mut params) else {
             return Err(global.throw(format_args!(
@@ -5691,20 +5937,17 @@ pub fn bundle_new_route_js_function_impl(
                 bstr::BStr::new(pathname)
             )));
         };
-
-        let route_bundle_index = dev
+        Ok(dev
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
-            .expect("oom");
-        let mut ctx = PromiseEnsureRouteBundledCtx {
-            global,
-            promise: None,
-            route_bundle_index,
-            settled: false,
-        };
-
-        ensure_route_is_bundled(dev, route_bundle_index, &mut ctx)?;
-        Ok((route_bundle_index, ctx))
+            .expect("oom"))
     })?;
+    let mut ctx = PromiseEnsureRouteBundledCtx {
+        global,
+        promise: None,
+        route_bundle_index,
+        settled: false,
+    };
+    ensure_route_is_bundled(&dev_cell, route_bundle_index, &mut ctx)?;
     if ctx.settled {
         VirtualMachine::get_mut().drain_microtasks();
     }

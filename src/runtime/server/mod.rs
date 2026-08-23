@@ -3469,8 +3469,14 @@ impl AnyServer {
         })
     }
 
-    /// Run `f` on the DevServer (when configured). HTMLBundle's request path
-    /// mutates DevServer state (`respond_for_html_bundle`).
+    /// The attached DevServer's cell.
+    pub(crate) fn dev_server_cell(
+        &self,
+    ) -> Option<bun_ptr::BackRef<crate::bake::DevServer::DevServerCell>> {
+        any_server_dispatch!(self, |s| s.dev_server_cell())
+    }
+
+    /// Run `f` on the DevServer (when configured).
     pub(crate) fn with_dev_server_mut<R>(
         &self,
         f: impl FnOnce(&mut crate::bake::DevServer::DevServer) -> R,

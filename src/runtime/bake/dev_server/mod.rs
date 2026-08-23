@@ -40,6 +40,7 @@ pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 // blocks and submodules name a single type. Re-export so
 // `crate::bake::dev_server::DevServer` (the public path used by `server/`,
 // `dispatch.rs`, …) resolves to that one struct.
+pub(crate) use super::dev_server_body::BundleRequest;
 pub use super::dev_server_body::{
     CacheEntry, CurrentBundle, DeferredPromise, DeferredRequest, DevServer, DevServerCell,
     EntryPointList, HTMLRouter, Magic, NextBundle, Options, PluginState, RouteIndexAndRecurseFlag,
@@ -357,12 +358,18 @@ pub struct HotReloadEvent {
 impl HotReloadEvent {
     fn new() -> HotReloadEvent {
         HotReloadEvent {
-            data: bun_threading::Guarded::new(HotReloadFiles {
-                files: Default::default(),
-                dirs: Default::default(),
-                extra_files: Vec::new(),
-                timer: std::time::Instant::now(),
-            }),
+            data: bun_threading::Guarded::new(HotReloadFiles::default()),
+        }
+    }
+}
+
+impl Default for HotReloadFiles {
+    fn default() -> Self {
+        HotReloadFiles {
+            files: Default::default(),
+            dirs: Default::default(),
+            extra_files: Vec::new(),
+            timer: std::time::Instant::now(),
         }
     }
 }
@@ -554,8 +561,10 @@ impl HotReloadTask {
             return;
         };
         let first = self.first;
-        dev.get()
-            .with_mut(|dev| dev.on_hot_reload_task(&self.shared, first));
+        let cell = dev.get();
+        if let Some(bundle) = cell.with_mut(|dev| dev.on_hot_reload_task(&self.shared, first)) {
+            let _ = DevServer::start_async_bundle(cell, bundle);
+        }
     }
 
     /// The task was still queued when its VM shut down; nothing to release
@@ -564,7 +573,8 @@ impl HotReloadTask {
 }
 
 impl DevServer {
-    fn on_hot_reload_task(&mut self, shared: &HotReloadShared, first: u8) {
+    /// Returns the bundle to start for this event, if any.
+    fn on_hot_reload_task(&mut self, shared: &HotReloadShared, first: u8) -> Option<BundleRequest> {
         debug_assert!(self.magic == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");
         scopeguard::defer! {
@@ -573,14 +583,14 @@ impl DevServer {
 
         if self.current_bundle.is_some() {
             self.next_bundle.reload_event = Some(first);
-            return;
+            return None;
         }
 
         let mut entry_points = EntryPointList::default();
         let timer = self.drain_hot_reload_events(shared, first, &mut entry_points);
 
         if entry_points.set.count() == 0 {
-            return;
+            return None;
         }
 
         match &mut self.testing_batch_events {
@@ -592,14 +602,16 @@ impl DevServer {
                     &[MessageId::TestingWatchSynchronization.char(), 1],
                     bun_uws::Opcode::BINARY,
                 );
-                return;
+                return None;
             }
             TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
         }
 
-        if let Err(_err) = self.start_async_bundle(entry_points, true, timer) {
-            return;
-        }
+        Some(BundleRequest {
+            entry_points,
+            had_reload_event: true,
+            timer,
+        })
     }
 
     /// Process the event in slot `first` and every event the watcher queued
@@ -613,11 +625,13 @@ impl DevServer {
         let mut current = first;
         let mut timer = None;
         loop {
-            {
-                let mut files = shared.events[current as usize].data.lock();
-                files.process_file_list(self, entry_points);
-                timer.get_or_insert(files.timer);
-            }
+            // Taken out so the slot's lock is not held across graph work
+            // (which may take `Watcher.mutex`; the watcher thread takes the
+            // two in the other order).
+            let mut files = ::core::mem::take(&mut *shared.events[current as usize].data.lock());
+            files.process_file_list(self, entry_points);
+            timer.get_or_insert(files.timer);
+            *shared.events[current as usize].data.lock() = files;
             match shared.recycle_event_from_dev_server(current) {
                 Some(next) => current = next,
                 None => break,
@@ -1000,8 +1014,7 @@ bun_bundler::link_impl_DevServerHandle! {
             // `'static` is a stand-in for the DevServer-self lifetime — see
             // the comment on `CurrentBundle.bv2`.
             let (bv2, result) = (&mut *bv2.cast(), &mut *result);
-            (*this)
-                .with_mut(|dev| super::dev_server_body::finalize_bundle(dev, bv2, result))
+            super::dev_server_body::finalize_bundle(&*this, bv2, result)
                 .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
         handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
@@ -1076,7 +1089,9 @@ impl DevServer {
     /// `Transpiler.options.dev_server` / `LinkerContext.dev_server`.
     #[inline]
     pub(crate) fn bundler_handle(&self) -> bun_bundler::dispatch::DevServerHandle {
-        bun_bundler::dispatch::DevServerHandle::from_this(self.this())
+        // Held by `CurrentBundle.bv2`, which this dev server (the cell's
+        // contents) owns and drops first.
+        bun_bundler::dispatch::DevServerHandle::from_owner(self.this.expect("set by init()"))
     }
 }
 

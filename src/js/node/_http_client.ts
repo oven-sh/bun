@@ -444,7 +444,7 @@ function ClientRequest(input, options, cb) {
     }
   }
 
-  const optionsHeaders = options.headers;
+  let optionsHeaders = options.headers;
   const headersArray = ArrayIsArray(optionsHeaders);
   if (!headersArray) {
     if (optionsHeaders) {
@@ -467,48 +467,40 @@ function ClientRequest(input, options, cb) {
     }
 
     if (otelHttpClientEnabled()) otelClientRequestStart(this, protocol, host, port);
-
-    if (this.getHeader("expect")) {
-      if (this._header) {
-        throw $ERR_HTTP_HEADERS_SENT("render");
-      }
-
-      rewriteForProxiedHttp(this, optsWithoutSignal);
-      try {
-        this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", this[kOutHeaders]);
-      } catch (e) {
-        otelClientRequestEnd(this, undefined, e);
-        throw e;
-      }
-    } else {
-      rewriteForProxiedHttp(this, optsWithoutSignal);
-    }
-  } else {
-    let arrayHeaders = optionsHeaders;
-    if (otelHttpClientEnabled()) arrayHeaders = otelClientRequestStart(this, protocol, host, port, arrayHeaders);
-    rewriteForProxiedHttp(this, optsWithoutSignal);
-    try {
-      this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", arrayHeaders);
-    } catch (e) {
-      // (invalid header name/value) the span was already started; finish it
-      otelClientRequestEnd(this, undefined, e);
-      throw e;
-    }
+  } else if (otelHttpClientEnabled()) {
+    optionsHeaders = otelClientRequestStart(this, protocol, host, port, optionsHeaders);
   }
 
-  // The rest can still throw synchronously (bad options, createConnection);
-  // a span started above must end with the error rather than be orphaned.
-  if (this[kOtelSpan] === undefined) initiateClientRequest.$call(this, options, optsWithoutSignal, thisAgent);
+  // Everything after the client span starts can throw synchronously (proxy
+  // rewriting, invalid headers, bad options, createConnection): the span must
+  // then end with that error rather than be orphaned.
+  if (this[kOtelSpan] === undefined)
+    finishInit.$call(this, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent);
   else
     try {
-      initiateClientRequest.$call(this, options, optsWithoutSignal, thisAgent);
+      finishInit.$call(this, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent);
     } catch (e) {
       otelClientRequestEnd(this, undefined, e);
       throw e;
     }
 }
 
-function initiateClientRequest(this: any, options, optsWithoutSignal, thisAgent) {
+function finishInit(this: any, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent) {
+  if (!headersArray) {
+    if (this.getHeader("expect")) {
+      if (this._header) {
+        throw $ERR_HTTP_HEADERS_SENT("render");
+      }
+      rewriteForProxiedHttp(this, optsWithoutSignal);
+      this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", this[kOutHeaders]);
+    } else {
+      rewriteForProxiedHttp(this, optsWithoutSignal);
+    }
+  } else {
+    rewriteForProxiedHttp(this, optsWithoutSignal);
+    this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", optionsHeaders);
+  }
+
   this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
   // initiate connection

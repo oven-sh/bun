@@ -330,6 +330,10 @@ declare module "bun" {
             delayMs?: number | undefined;
             /** How long the exit-time flush may block. @default 30000 */
             timeoutMs?: number | undefined;
+            /** Alias of `delayMs` (the SDK's name). */
+            scheduledDelayMillis?: number | undefined;
+            /** Alias of `timeoutMs` (the SDK's name). */
+            exportTimeoutMillis?: number | undefined;
             /** Spans buffered before new ones are dropped. @default 2048 */
             maxQueueSize?: number | undefined;
             /** Buffered span count that triggers an immediate export. @default 512 */

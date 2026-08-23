@@ -9,9 +9,11 @@ use bun_boringssl::c as boring;
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
-use bun_options_types::Format;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_sys::{self as sys, Fd, O};
+
+use crate::ResolvedSource;
+use crate::VM;
 
 pub const STATUS_FAILED: i32 = 0;
 pub const STATUS_ENABLED: i32 = 1;
@@ -45,6 +47,8 @@ struct CacheState {
 unsafe impl Send for CacheState {}
 
 struct Entry {
+    /// A re-fetch with different content gets a new id, so [`deliver`] can drop bytecode for the old one.
+    id: u64,
     /// `path.text` of the module (absolute file path).
     filename: Box<[u8]>,
     is_cjs: bool,
@@ -56,7 +60,15 @@ struct Entry {
     /// Deserialized bytecode blob handed to JSC (the cache was accepted).
     /// Kept alive for the process — `ZigSourceProvider` wraps it, no copy.
     blob: Option<AlignedBlob>,
+    /// Bytecode the compiling VM delivered for a miss, not yet written.
+    generated: Option<Box<[u8]>>,
     persisted: bool,
+}
+
+static NEXT_ENTRY_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+
+fn next_entry_id() -> u64 {
+    NEXT_ENTRY_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 /// 128-byte-aligned blob. JSC's bytecode decoder reads the blob in place and
@@ -539,10 +551,48 @@ pub fn get_dir() -> Option<Vec<u8>> {
 // Fetch-time hook (read + validate)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What [`fetch`] found: accepted on-disk bytecode, or the entry the compiling VM should [`deliver`] to.
+pub struct Fetch {
+    blob: Option<(*mut u8, usize)>,
+    key: u64,
+    entry_id: u64,
+}
+
+impl Fetch {
+    fn hit(blob: &AlignedBlob) -> Self {
+        Self {
+            blob: Some((blob.ptr.as_ptr(), blob.len)),
+            key: 0,
+            entry_id: 0,
+        }
+    }
+
+    fn miss(entry: &Entry, key: u64) -> Self {
+        Self {
+            blob: None,
+            key,
+            entry_id: if entry.persisted || entry.generated.is_some() {
+                0
+            } else {
+                entry.id
+            },
+        }
+    }
+
+    pub fn apply(&self, resolved_source: &mut ResolvedSource) {
+        if let Some((ptr, size)) = self.blob {
+            resolved_source.bytecode_cache = ptr;
+            resolved_source.bytecode_cache_size = size;
+        }
+        resolved_source.node_compile_cache_key = self.key;
+        resolved_source.node_compile_cache_entry_id = self.entry_id;
+    }
+}
+
 /// Module-fetch hook: register/refresh the entry for `filename`; returns the
 /// validated bytecode blob when the on-disk cache matches `code` (post-
 /// transpile text). The pointer stays valid for the process (entry map owns it).
-pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usize)> {
+pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<Fetch> {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return None;
     }
@@ -558,29 +608,34 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
     if let Some(entry) = state.entries.get(&key) {
         if entry.code_hash == code_hash && entry.code_size == code_size {
             // Same module, unchanged code (e.g. re-required): reuse.
-            return entry.blob.as_ref().map(|b| (b.ptr.as_ptr(), b.len));
+            return Some(match &entry.blob {
+                Some(blob) => Fetch::hit(blob),
+                None => Fetch::miss(entry, key),
+            });
         }
     }
 
     let mut entry = Entry {
+        id: next_entry_id(),
         filename: filename.into(),
         is_cjs,
         code_hash,
         code_size,
         code: None,
         blob: None,
+        generated: None,
         persisted: false,
     };
 
     read_cache_file(state, key, &mut entry, Some(code));
 
-    let result = if entry.blob.is_some() {
+    let result = if let Some(blob) = &entry.blob {
         cclog!(
             "[compile cache] code cache for {} {} was accepted, keeping the in-memory entry\n",
             type_name(is_cjs),
             display_name(filename, is_cjs)
         );
-        entry.blob.as_ref().map(|b| (b.ptr.as_ptr(), b.len))
+        Fetch::hit(blob)
     } else {
         cclog!(
             "[compile cache] code cache for {} {} was not initialized, initializing the in-memory entry\n",
@@ -588,7 +643,7 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
             display_name(filename, is_cjs)
         );
         entry.code = Some(code.into());
-        None
+        Fetch::miss(&entry, key)
     };
     if let Some(old) = state.entries.insert(key, entry) {
         if let Some(blob) = old.blob {
@@ -596,7 +651,30 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
             RETIRED_BLOBS.lock().push(blob);
         }
     }
-    result
+    Some(result)
+}
+
+/// The compiling VM hands over a missed module's bytecode (`None`: encoding failed); stale entry ids are ignored.
+pub fn deliver(key: u64, entry_id: u64, bytecode: Option<&[u8]>) {
+    let mut guard = STATE.lock();
+    let Some(state) = guard.as_mut() else { return };
+    let Some(entry) = state.entries.get_mut(&key) else {
+        return;
+    };
+    if entry.id != entry_id || entry.persisted {
+        return;
+    }
+    match bytecode {
+        Some(bytes) => entry.generated = Some(bytes.into()),
+        None => {
+            cclog!(
+                "[compile cache] generating cache for {} {} failed, skipping\n",
+                type_name(entry.is_cjs),
+                display_name(&entry.filename, entry.is_cjs)
+            );
+            entry.persisted = true;
+        }
+    }
 }
 
 /// Parse-failure hook: mirrors Node registering an entry before compilation.
@@ -613,12 +691,14 @@ pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
         return;
     }
     let mut entry = Entry {
+        id: next_entry_id(),
         filename: filename.into(),
         is_cjs,
         code_hash: [0u8; HASH_SIZE],
         code_size: 0,
         code: None,
         blob: None,
+        generated: None,
         persisted: false,
     };
     // The read is attempted (and logged) like Node; without current code the
@@ -865,79 +945,136 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
 // Persist (exit + flush)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Bytecode generation runs on one long-lived worker thread with its own JSC
-/// VM (`getVMForBytecodeCache`), mirroring `bun build --bytecode`'s bundler
-/// threads, so only a single extra VM ever exists.
-struct GenJob {
-    format: Format,
-    code: Box<[u8]>,
-    url: Box<[u8]>,
-    resp: std::sync::mpsc::SyncSender<Option<Box<[u8]>>>,
+unsafe extern "C" {
+    fn Bun__NodeCompileCache__encodePending(vm: &VM);
 }
 
-fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]>> {
-    use std::sync::mpsc;
-    static WORKER: Mutex<Option<mpsc::Sender<GenJob>>> = Mutex::new(None);
-
-    let (resp_tx, resp_rx) = mpsc::sync_channel(1);
-    {
-        let mut guard = WORKER.lock();
-        if guard.is_none() {
-            let (tx, rx) = mpsc::channel::<GenJob>();
-            let spawned = std::thread::Builder::new()
-                .name("BunCompileCache".to_string())
-                // JSC parsing of large modules needs a deep stack.
-                .stack_size(16 * 1024 * 1024)
-                .spawn(move || {
-                    for job in rx {
-                        let mut url = BunString::clone_utf8(&job.url);
-                        let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
-                            job.format, &job.code, &mut url,
-                        );
-                        url.deref();
-                        let _ = job.resp.send(result);
-                    }
-                });
-            match spawned {
-                Ok(_) => *guard = Some(tx),
-                Err(_) => return None,
-            }
-        }
-        let tx = guard.as_ref().expect("set above");
-        if tx
-            .send(GenJob {
-                format,
-                code: code.into(),
-                url: url.into(),
-                resp: resp_tx,
-            })
-            .is_err()
-        {
-            return None;
-        }
+/// Encodes every missed module `vm` compiled and [`deliver`]s the bytes; runs on `vm`'s thread with its lock held.
+pub fn encode_pending(vm: &VM) {
+    if !is_enabled() {
+        return;
     }
-    resp_rx.recv().ok().flatten()
+    // SAFETY: `vm` is the live VM of the calling thread per fn contract.
+    unsafe { Bun__NodeCompileCache__encodePending(vm) };
 }
 
-/// One unit of persist work, snapshotted out of `STATE` so bytecode generation runs with the lock
-/// dropped. `code` is moved out (concurrent `fetch` sees `code: None` and skips). Keys hash
-/// `(is_cjs, filename)` — not content — so Phase 3 re-checks `code_hash` before touching the entry.
-struct PersistJob {
+/// Writes one entry's stored source + bytecode; `Err(())` leaves it unpersisted so a later pass may retry.
+fn write_entry(
+    dir: &[u8],
+    dir_handle: &sys::Dir,
     key: u64,
-    format: Format,
-    code: Box<[u8]>,
-    filename: Box<[u8]>,
-    is_cjs: bool,
-    code_size: u32,
-    code_hash: [u8; HASH_SIZE],
+    entry: &Entry,
+    blob: &[u8],
+) -> Result<(), ()> {
+    let logging = LOG_ENABLED.load(Ordering::Relaxed);
+    let tname = type_name(entry.is_cjs);
+    let name = if logging {
+        display_name(&entry.filename, entry.is_cjs)
+    } else {
+        String::new()
+    };
+    let Some(code) = entry.code.as_deref() else {
+        return Err(());
+    };
+
+    let cache_size = blob.len() as u32;
+    let cache_hash = sha256(blob);
+
+    let basename = cache_basename(key);
+    let mut tmpname_buf = PathBuffer::uninit();
+    let tmpname_zstr: &ZStr =
+        match bun_resolver::fs::FileSystem::tmpname(&basename, &mut tmpname_buf[..], key) {
+            Ok(z) => z,
+            Err(_) => return Err(()),
+        };
+
+    cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
+
+    // 0600 like Node: entries contain the module's post-transpile source.
+    let mut tmpfile = match sys::Tmpfile::create_with_mode(dir_handle.fd(), tmpname_zstr, 0o600) {
+        Ok(t) => t,
+        Err(e) => {
+            cclog!("failed. {}\n", errno_name(&e));
+            return Err(());
+        }
+    };
+    let _close = sys::CloseOnDrop::new(tmpfile.fd);
+
+    let tmp_display = if logging {
+        format!(
+            "{}{}{}",
+            dir.as_bstr(),
+            SEP as char,
+            tmpname_zstr.as_bytes().as_bstr()
+        )
+    } else {
+        String::new()
+    };
+    cclog!(" -> {tmp_display}\n");
+    cclog!(
+        "[compile cache] writing cache for {tname} {name} to temporary file {tmp_display} [{MAGIC} {} {cache_size} {} {}]...",
+        entry.code_size,
+        hex(&entry.code_hash),
+        hex(&cache_hash)
+    );
+
+    let mut header_bytes = [0u8; HEADER_SIZE];
+    header_bytes[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+    header_bytes[4..8].copy_from_slice(&entry.code_size.to_le_bytes());
+    header_bytes[8..12].copy_from_slice(&cache_size.to_le_bytes());
+    header_bytes[12..12 + HASH_SIZE].copy_from_slice(&entry.code_hash);
+    header_bytes[12 + HASH_SIZE..HEADER_SIZE].copy_from_slice(&cache_hash);
+    // ManuallyDrop: the fd is owned by `_close` above.
+    let file = core::mem::ManuallyDrop::new(sys::File::from_fd(tmpfile.fd));
+    let write_all = || -> sys::Maybe<()> {
+        file.pwrite_all(&header_bytes, 0)?;
+        file.pwrite_all(code, HEADER_SIZE as i64)?;
+        // The gap up to the 128-aligned blob offset is a hole (zeros).
+        file.pwrite_all(blob, blob_file_offset(entry.code_size) as i64)?;
+        Ok(())
+    };
+    if let Err(e) = write_all() {
+        cclog!("failed: {}\n", errno_name(&e));
+        let _ = sys::unlinkat(dir_handle.fd(), tmpname_zstr);
+        return Err(());
+    }
+    cclog!("success\n");
+
+    let mut dest_z = [0u8; 17];
+    dest_z[..16].copy_from_slice(&basename);
+    let dest_zstr = ZStr::from_buf(&dest_z, 16);
+    let final_display = if logging {
+        format!(
+            "{}{}{}",
+            dir.as_bstr(),
+            SEP as char,
+            core::str::from_utf8(&basename).expect("hex")
+        )
+    } else {
+        String::new()
+    };
+    cclog!("[compile cache] Renaming {tmp_display} to {final_display}...");
+    if let Err(e) = tmpfile.finish(dest_zstr) {
+        cclog!("failed: {}\n", errno_name(&e));
+        let _ = sys::unlinkat(dir_handle.fd(), tmpname_zstr);
+        return Err(());
+    }
+    cclog!("success\n");
+    Ok(())
 }
 
-/// Phase 1 (locked): decide what needs persisting and move the source code
-/// out of the entries.
-fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
-    let mut jobs = Vec::new();
+/// Writes every entry whose bytecode has been delivered; touches no VM, so any thread may run it.
+fn persist_pass() {
+    let mut guard = STATE.lock();
+    let Some(state) = guard.as_mut() else { return };
+    let CacheState {
+        dir,
+        dir_handle,
+        entries,
+        ..
+    } = state;
     let logging = LOG_ENABLED.load(Ordering::Relaxed);
-    for (&key, entry) in state.entries.iter_mut() {
+    for (&key, entry) in entries.iter_mut() {
         let tname = type_name(entry.is_cjs);
         let name = if logging {
             display_name(&entry.filename, entry.is_cjs)
@@ -955,225 +1092,57 @@ fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
             cclog!("[compile cache] skip persisting {tname} {name} because cache was the same\n");
             continue;
         }
-        let Some(code) = entry.code.take() else {
+        let Some(generated) = entry.generated.take() else {
             cclog!(
                 "[compile cache] skip persisting {tname} {name} because the cache was not initialized\n"
             );
             continue;
         };
-        jobs.push(PersistJob {
-            key,
-            format: if entry.is_cjs {
-                Format::Cjs
-            } else {
-                Format::Esm
-            },
-            code,
-            filename: entry.filename.clone(),
-            is_cjs: entry.is_cjs,
-            code_size: entry.code_size,
-            code_hash: entry.code_hash,
-        });
-    }
-    jobs
-}
-
-/// Phase 3 (locked): write one generated blob to disk. `Ok(())` on success;
-/// on any I/O failure returns `Err(())` and the caller restores the taken
-/// `entry.code` and leaves `persisted` false so a later pass may retry.
-fn write_persist_job_locked(
-    state: &mut CacheState,
-    job: &PersistJob,
-    blob: &[u8],
-) -> Result<(), ()> {
-    let logging = LOG_ENABLED.load(Ordering::Relaxed);
-    let tname = type_name(job.is_cjs);
-    let name = if logging {
-        display_name(&job.filename, job.is_cjs)
-    } else {
-        String::new()
-    };
-
-    let cache_size = blob.len() as u32;
-    let cache_hash = sha256(blob);
-
-    let basename = cache_basename(job.key);
-    let mut tmpname_buf = PathBuffer::uninit();
-    let tmpname_zstr: &ZStr =
-        match bun_resolver::fs::FileSystem::tmpname(&basename, &mut tmpname_buf[..], job.key) {
-            Ok(z) => z,
-            Err(_) => return Err(()),
-        };
-
-    cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
-
-    // 0600 like Node: entries contain the module's post-transpile source.
-    let mut tmpfile =
-        match sys::Tmpfile::create_with_mode(state.dir_handle.fd(), tmpname_zstr, 0o600) {
-            Ok(t) => t,
-            Err(e) => {
-                cclog!("failed. {}\n", errno_name(&e));
-                return Err(());
+        match write_entry(dir, dir_handle, key, entry, &generated) {
+            Ok(()) => {
+                entry.persisted = true;
+                entry.code = None;
             }
-        };
-    let _close = sys::CloseOnDrop::new(tmpfile.fd);
-
-    let tmp_display = if logging {
-        format!(
-            "{}{}{}",
-            state.dir.as_bstr(),
-            SEP as char,
-            tmpname_zstr.as_bytes().as_bstr()
-        )
-    } else {
-        String::new()
-    };
-    cclog!(" -> {tmp_display}\n");
-    cclog!(
-        "[compile cache] writing cache for {tname} {name} to temporary file {tmp_display} [{MAGIC} {} {cache_size} {} {}]...",
-        job.code_size,
-        hex(&job.code_hash),
-        hex(&cache_hash)
-    );
-
-    let mut header_bytes = [0u8; HEADER_SIZE];
-    header_bytes[0..4].copy_from_slice(&MAGIC.to_le_bytes());
-    header_bytes[4..8].copy_from_slice(&job.code_size.to_le_bytes());
-    header_bytes[8..12].copy_from_slice(&cache_size.to_le_bytes());
-    header_bytes[12..12 + HASH_SIZE].copy_from_slice(&job.code_hash);
-    header_bytes[12 + HASH_SIZE..HEADER_SIZE].copy_from_slice(&cache_hash);
-    // ManuallyDrop: the fd is owned by `_close` above.
-    let file = core::mem::ManuallyDrop::new(sys::File::from_fd(tmpfile.fd));
-    let write_all = || -> sys::Maybe<()> {
-        file.pwrite_all(&header_bytes, 0)?;
-        file.pwrite_all(&job.code, HEADER_SIZE as i64)?;
-        // The gap up to the 128-aligned blob offset is a hole (zeros).
-        file.pwrite_all(blob, blob_file_offset(job.code_size) as i64)?;
-        Ok(())
-    };
-    if let Err(e) = write_all() {
-        cclog!("failed: {}\n", errno_name(&e));
-        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
-        return Err(());
-    }
-    cclog!("success\n");
-
-    let mut dest_z = [0u8; 17];
-    dest_z[..16].copy_from_slice(&basename);
-    let dest_zstr = ZStr::from_buf(&dest_z, 16);
-    let final_display = if logging {
-        format!(
-            "{}{}{}",
-            state.dir.as_bstr(),
-            SEP as char,
-            core::str::from_utf8(&basename).expect("hex")
-        )
-    } else {
-        String::new()
-    };
-    cclog!("[compile cache] Renaming {tmp_display} to {final_display}...");
-    if let Err(e) = tmpfile.finish(dest_zstr) {
-        cclog!("failed: {}\n", errno_name(&e));
-        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
-        return Err(());
-    }
-    cclog!("success\n");
-    Ok(())
-}
-
-/// Full persist pass. `STATE` is held only for snapshot and file-write phases; bytecode
-/// generation runs with the lock dropped so concurrent module loads are not stalled.
-fn persist_pass() {
-    // Phase 1: snapshot under the lock.
-    let jobs = {
-        let mut guard = STATE.lock();
-        let Some(state) = guard.as_mut() else { return };
-        collect_persist_jobs(state)
-    };
-
-    // Phase 2: generate bytecode, unlocked.
-    let mut generated: Vec<(PersistJob, Option<Box<[u8]>>)> = Vec::with_capacity(jobs.len());
-    for job in jobs {
-        let blob = generate_bytecode(job.format, &job.code, &job.filename);
-        if blob.is_none() {
-            cclog!(
-                "[compile cache] generating cache for {} {} failed, skipping\n",
-                type_name(job.is_cjs),
-                display_name(&job.filename, job.is_cjs)
-            );
-        }
-        generated.push((job, blob));
-    }
-
-    // Phase 3: write files and update entries under the lock.
-    let mut guard = STATE.lock();
-    let Some(state) = guard.as_mut() else { return };
-    for (job, blob) in generated {
-        let Some(blob) = blob else {
-            // Do not retry on the next persist pass. Skip if the entry now
-            // holds different content (file changed and was re-fetched).
-            if let Some(entry) = state.entries.get_mut(&job.key) {
-                if entry.code_hash == job.code_hash && entry.code_size == job.code_size {
-                    entry.persisted = true;
-                }
-            }
-            continue;
-        };
-        let wrote = write_persist_job_locked(state, &job, &blob);
-        let Some(entry) = state.entries.get_mut(&job.key) else {
-            continue;
-        };
-        if entry.code_hash != job.code_hash || entry.code_size != job.code_size {
-            // The entry was repopulated with different content mid-pass; the
-            // write we just did is stale (the header check corrects it on
-            // the next load) and the taken code must not overwrite the new.
-            continue;
-        }
-        match wrote {
-            Ok(()) => entry.persisted = true,
-            // Keep the source so a later pass can retry, matching the old
-            // in-place behavior for failed writes.
-            Err(()) => {
-                if entry.code.is_none() {
-                    entry.code = Some(job.code);
-                }
-            }
+            Err(()) => entry.generated = Some(generated),
         }
     }
-
     cclog!("[compile cache] Clear deserialized cache.\n");
-    // Drop persisted code copies; blobs stay alive (JSC providers reference
-    // them) and entries stay so unchanged re-fetches keep hitting in memory.
-    for entry in state.entries.values_mut() {
-        if entry.persisted {
-            entry.code = None;
-        }
-    }
 }
 
-/// `module.flushCompileCache()`.
-pub fn flush() {
+/// `module.flushCompileCache()`; runs on the calling VM's thread.
+pub fn flush(vm: &VM) {
     if !is_enabled() {
         return;
     }
     cclog!("[compile cache] module.flushCompileCache() requested.\n");
+    encode_pending(vm);
     persist_pass();
     cclog!("[compile cache] module.flushCompileCache() finished.\n");
 }
 
 /// Exit-time persist; runs once, from the main VM's `on_exit`.
-pub fn persist_at_exit() {
+pub fn persist_at_exit(vm: &VM) {
     static DONE: AtomicBool = AtomicBool::new(false);
     if !is_enabled() || DONE.swap(true, Ordering::Relaxed) {
         return;
     }
-    persist_now();
+    encode_pending(vm);
+    persist_pass();
 }
 
 /// Non-latching sibling of [`persist_at_exit`] for paths where the process may survive (e.g. a
 /// self-directed signal that proves non-fatal). Leaves the exit latch unset so a later real exit
 /// still persists modules loaded after this point.
-pub fn persist_now() {
+pub fn persist_now(vm: &VM) {
+    if !is_enabled() {
+        return;
+    }
+    encode_pending(vm);
+    persist_pass();
+}
+
+/// For threads that own no VM (`--watch` reload): writes what was delivered so far, the rest is lost.
+pub fn persist_now_off_thread() {
     if !is_enabled() {
         return;
     }
@@ -1225,6 +1194,24 @@ pub extern "C" fn Bun__NodeCompileCache__getDir() -> BunString {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__NodeCompileCache__flush() {
-    flush();
+pub extern "C" fn Bun__NodeCompileCache__flush(vm: &VM) {
+    flush(vm);
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `bytecode` is null (encoding failed) or valid for `len` bytes.
+pub unsafe extern "C" fn Bun__NodeCompileCache__deliver(
+    key: u64,
+    entry_id: u64,
+    bytecode: *const u8,
+    len: usize,
+) {
+    let bytes = if bytecode.is_null() {
+        None
+    } else {
+        // SAFETY: per fn contract.
+        Some(unsafe { core::slice::from_raw_parts(bytecode, len) })
+    };
+    deliver(key, entry_id, bytes);
 }

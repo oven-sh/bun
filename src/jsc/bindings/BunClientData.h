@@ -71,6 +71,10 @@ class DOMWrapperWorld;
 #include "HTTPHeaderIdentifiers.h"
 #include "DOMURLBaseCache.h"
 #include <JavaScriptCore/HeapObserver.h>
+#include <JavaScriptCore/SourceCodeKey.h>
+namespace JSC {
+class UnlinkedCodeBlock;
+}
 namespace Zig {
 class GlobalObject;
 }
@@ -271,6 +275,15 @@ public:
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+
+    // Node compile cache misses this VM compiled and has not encoded yet (Zig::SourceProvider::didGenerateUnlinkedCodeBlock).
+    struct NodeCompileCachePending {
+        uint64_t cacheKey;
+        uint64_t entryId;
+        JSC::SourceCodeKey key;
+        JSC::Weak<JSC::UnlinkedCodeBlock> codeBlock;
+    };
+    Vector<NodeCompileCachePending> nodeCompileCachePending;
 
 private:
     bool isWebCoreJSClientData() const final { return true; }

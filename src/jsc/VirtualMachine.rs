@@ -530,7 +530,7 @@ impl VMHolder {
         // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
         // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
-        crate::node_compile_cache::persist_now();
+        crate::node_compile_cache::persist_now(vm.jsc_vm_mut());
     }
 }
 
@@ -1713,10 +1713,11 @@ impl VirtualMachine {
         }
         self.has_run_cleanup_hooks = true;
 
-        // Persist the Node compile cache (NODE_COMPILE_CACHE /
-        // module.enableCompileCache()) after user exit handlers ran.
+        // Persist the Node compile cache after user exit handlers ran; a worker only encodes, the main exit writes.
         if self.is_main_thread() {
-            crate::node_compile_cache::persist_at_exit();
+            crate::node_compile_cache::persist_at_exit(self.jsc_vm_mut());
+        } else {
+            crate::node_compile_cache::encode_pending(self.jsc_vm_mut());
         }
     }
 
@@ -3877,7 +3878,7 @@ impl VirtualMachine {
                 );
             // execve will not reach on_exit; flush the compile cache here like
             // node's child does via AtExit(FlushCompileCache) on every restart.
-            crate::node_compile_cache::persist_now();
+            crate::node_compile_cache::persist_now(self.jsc_vm_mut());
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }

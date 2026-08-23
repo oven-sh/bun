@@ -15,7 +15,13 @@
 #include <sys/stat.h>
 #include <JavaScriptCore/SourceCodeKey.h>
 #include <mimalloc.h>
+#include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
+#include <JavaScriptCore/UnlinkedCodeBlock.h>
+#include <JavaScriptCore/WeakInlines.h>
+#include "BunClientData.h"
+
+extern "C" void Bun__NodeCompileCache__deliver(uint64_t key, uint64_t entryId, const uint8_t* bytecode, size_t length);
 
 namespace Zig {
 
@@ -155,6 +161,31 @@ Ref<SourceProvider> SourceProvider::create(
 StringView SourceProvider::source() const
 {
     return StringView(m_source.get());
+}
+
+void SourceProvider::didGenerateUnlinkedCodeBlock(JSC::VM& vm, const JSC::SourceCodeKey& key, JSC::UnlinkedCodeBlock* codeBlock) const
+{
+    if (!m_resolvedSource.node_compile_cache_entry_id)
+        return;
+    if (codeBlock->codeType() != JSC::GlobalCode && codeBlock->codeType() != JSC::ModuleCode)
+        return;
+    WebCore::clientData(vm)->nodeCompileCachePending.append({ m_resolvedSource.node_compile_cache_key, m_resolvedSource.node_compile_cache_entry_id, key, JSC::Weak<JSC::UnlinkedCodeBlock>(codeBlock) });
+}
+
+// VM thread only: called before JSC__VM__runGC drops unlinked function code, and at persist time.
+extern "C" void Bun__NodeCompileCache__encodePending(JSC::VM* vm)
+{
+    auto pending = std::exchange(WebCore::clientData(*vm)->nodeCompileCachePending, {});
+    for (auto& entry : pending) {
+        JSC::UnlinkedCodeBlock* codeBlock = entry.codeBlock.get();
+        if (!codeBlock)
+            continue;
+        RefPtr<JSC::CachedBytecode> bytecode = JSC::encodeCodeBlock(*vm, entry.key, codeBlock);
+        if (bytecode)
+            Bun__NodeCompileCache__deliver(entry.cacheKey, entry.entryId, bytecode->span().data(), bytecode->span().size());
+        else
+            Bun__NodeCompileCache__deliver(entry.cacheKey, entry.entryId, nullptr, 0);
+    }
 }
 
 SourceProvider::~SourceProvider()

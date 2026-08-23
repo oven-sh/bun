@@ -5143,9 +5143,13 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 
 #pragma mark - JSC::VM
 
+extern "C" void Bun__NodeCompileCache__encodePending(JSC::VM* vm);
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
+    // Both branches below drop unlinked function code; the compile cache wants it first.
+    Bun__NodeCompileCache__encodePending(vm);
 
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
     if (!malloc_zone_check(nullptr)) {

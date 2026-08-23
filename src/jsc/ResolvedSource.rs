@@ -51,6 +51,9 @@ pub struct ResolvedSource {
     /// was used at build time. If empty, the origin is derived from source_url.
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
+    /// Node compile cache entry that missed on disk (`entry_id == 0`: none); see `Fetch::apply`.
+    pub node_compile_cache_key: u64,
+    pub node_compile_cache_entry_id: u64,
 }
 
 impl Default for ResolvedSource {
@@ -70,6 +73,8 @@ impl Default for ResolvedSource {
             bytecode_cache_size: 0,
             module_info: core::ptr::null_mut(),
             bytecode_origin_path: BunString::empty(),
+            node_compile_cache_key: 0,
+            node_compile_cache_entry_id: 0,
         }
     }
 }

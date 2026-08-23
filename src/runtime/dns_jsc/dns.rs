@@ -3203,10 +3203,15 @@ pub mod internal {
         unsafe { std::ptr::from_mut::<RequestResult>((*req).result.as_mut().unwrap()) }
     }
 
-    /// Change the process default result order. Completed cache entries were
-    /// packed with the old order, so drop them; otherwise the new order would
-    /// only take effect once they expire (up to the cache TTL). In-flight
-    /// entries pack with the new order when they complete, so they stay.
+    /// Change the process default result order and invalidate every cache
+    /// entry: completed entries were packed with the old order, and an
+    /// in-flight lookup may still pack with it (the work-pool thread reads the
+    /// order before this lock is taken, then publishes its result after it is
+    /// released). An invalid entry is never served to a new lookup, so the
+    /// next one re-resolves under the new order; waiters already registered on
+    /// an in-flight entry still get its result. A lookup whose `Request` is
+    /// created after this walk reads the new order: the creation locks this
+    /// same cache, which orders it after the store above.
     pub(crate) fn set_default_order(order: bun_dns::Order) {
         if bun_dns::Order::global_default() == order {
             return;
@@ -3220,15 +3225,13 @@ pub mod internal {
             // SAFETY: entries 0..len are valid heap Requests; refcount/valid
             // are only mutated under `global_cache().lock()`, held here.
             unsafe {
-                if (*entry).result.is_some() {
-                    (*entry).valid = false;
-                    if (*entry).refcount == 0 {
-                        let len = guard.len;
-                        let _ = guard.delete_entry_at(len, i);
-                        Request::deinit(entry);
-                        // delete_entry_at swapped the last entry into slot i.
-                        continue;
-                    }
+                (*entry).valid = false;
+                if (*entry).result.is_some() && (*entry).refcount == 0 {
+                    let len = guard.len;
+                    let _ = guard.delete_entry_at(len, i);
+                    Request::deinit(entry);
+                    // delete_entry_at swapped the last entry into slot i.
+                    continue;
                 }
             }
             i += 1;
@@ -6054,6 +6057,13 @@ impl Resolver {
     // default, the order must reach the connect-path DNS cache that fetch()
     // and Bun.connect() dial through (Node applies it there via undici's
     // `dns.lookup`). See #40178.
+    //
+    // Deliberate Node divergence: Node scopes setDefaultResultOrder per
+    // thread. Bun keeps the `dns.lookup` default per thread (the JS-side
+    // cache in node/dns.ts), but the connect path shares one process-global
+    // DNS cache, so the order there is process-wide: a worker's call changes
+    // the dial order for every thread. docs/runtime/nodejs-compat.mdx states
+    // this, and dns-interleave.test.ts pins it.
     pub(crate) fn set_runtime_default_result_order_option(
         global_this: &JSGlobalObject,
         frame: &CallFrame,

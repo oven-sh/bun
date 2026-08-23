@@ -305,6 +305,47 @@ describe.concurrent("dns result order reaches the connect path", () => {
     });
   });
 
+  // Deliberate Node divergence: Node scopes setDefaultResultOrder per thread.
+  // Bun's connect path shares one process-global DNS cache, so a worker's
+  // call changes the dial order for the whole process, while the dns.lookup
+  // default stays per-thread. See docs/runtime/nodejs-compat.mdx.
+  test("setDefaultResultOrder in a Worker changes the connect-path order process-wide", async () => {
+    const { out, stderr, exitCode, signal } = await run(/* js */ `
+      const dns = require("node:dns");
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker('require("node:dns").setDefaultResultOrder("ipv4first")', { eval: true });
+      await new Promise((resolve, reject) => {
+        worker.on("exit", resolve);
+        worker.on("error", reject);
+      });
+      const order = dnsCacheSeed("order-worker.test", ["::1", "127.0.0.1"]);
+      const lookupDefault = dns.getDefaultResultOrder();
+      console.log(JSON.stringify({ ok: true, order, lookupDefault }));
+      process.exit(0);
+    `);
+    expect({ out, stderr, exitCode, signal }).toEqual({
+      // The connect path follows the worker's order; the main thread's
+      // dns.lookup default is untouched.
+      out: { ok: true, order: [4, 6], lookupDefault: "verbatim" },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
+  test("--dns-result-order with an invalid value exits with an error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--dns-result-order=bogus", "-e", "console.log('reached')"],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Invalid DNS result order");
+    expect(exitCode).toBe(1);
+  });
+
   test("fetch() connects through an ipv4first-seeded entry", async () => {
     const { out, stderr, exitCode, signal } = await run(
       /* js */ `

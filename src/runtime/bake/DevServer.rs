@@ -2642,10 +2642,12 @@ impl DevServer {
             had_reload_event,
             timer,
         } = request;
+        // Bound in this order so that on an early return `bv2` (which borrows
+        // `*heap`) drops before `heap`.
         let BundleSetup {
-            mut bv2,
-            ast_memory_store,
             heap,
+            ast_memory_store,
+            mut bv2,
         } = cell.with_mut(|dev| dev.start_async_bundle_setup(&entry_points))?;
 
         // AST nodes built while the entry points are enqueued live exactly as
@@ -3363,8 +3365,6 @@ fn finalize_bundle_cleanup(
     dev.start_next_bundle_if_present()
 }
 
-/// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
-/// This function does not recover DevServer state if it fails (allocation failure)
 /// Called at the end of BundleV2 to index bundle contents into the
 /// `IncrementalGraph`s. This function does not recover DevServer state if it
 /// fails (allocation failure).

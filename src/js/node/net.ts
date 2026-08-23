@@ -2053,7 +2053,9 @@ Socket.prototype.connect = function connect(...args) {
             }
           } else {
             // wait to be connected
-            connection.once("connect", () => {
+            const onConnect = () => {
+              connection.removeListener("error", onError);
+              connection.removeListener("close", onClose);
               // The TLS socket may have been destroyed before the underlying
               // socket connected (e.g. tls.connect({ socket }).destroy()); don't
               // start a handshake on a dead socket.
@@ -2099,7 +2101,20 @@ Socket.prototype.connect = function connect(...args) {
                   throw new Error("Invalid socket");
                 }
               }
-            });
+            };
+            // Until then, route the connection's failure like node's wrap (internal/tls/wrap.js _init / _wrapHandle).
+            const onError = error => {
+              // Not once this socket was destroyed while waiting (onConnect tears the connection down).
+              if (!this.destroyed) this._emitTLSError(error);
+            };
+            const onClose = () => {
+              connection.removeListener("connect", onConnect);
+              connection.removeListener("error", onError);
+              this.destroy();
+            };
+            connection.once("connect", onConnect);
+            connection.on("error", onError);
+            connection.once("close", onClose);
           }
         }
       } catch (error) {

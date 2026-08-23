@@ -5747,6 +5747,10 @@ pub mod darwin {
 #[cfg(not(target_os = "macos"))]
 pub mod darwin {}
 
+/// `<dns_sd.h>` (mDNSResponder client).
+#[cfg(target_os = "macos")]
+pub mod dns_sd;
+
 // ── Mach-O header parsing (subset). ──────────────────────────────────────
 // Just the slice that the crash handler uses to
 // walk dyld load commands and resolve a stable (ASLR-unslid) address for
@@ -8278,6 +8282,22 @@ pub mod net {
             Self { any }
         }
 
+        /// Overwrite the port (host order in, stored network order); ignored
+        /// for families other than `AF_INET`/`AF_INET6`.
+        pub fn set_port(&mut self, port: u16) {
+            match self.family() {
+                // SAFETY: `family() == AF_INET` ⇒ the storage holds a `sockaddr_in`.
+                AF_INET => unsafe {
+                    (*(&raw mut self.any).cast::<sock::sockaddr_in>()).sin_port = port.to_be()
+                },
+                // SAFETY: `family() == AF_INET6` ⇒ the storage holds a `sockaddr_in6`.
+                AF_INET6 => unsafe {
+                    (*(&raw mut self.any).cast::<sock::sockaddr_in6>()).sin6_port = port.to_be()
+                },
+                _ => {}
+            }
+        }
+
         /// The IPv6 zone index (`fe80::1%en0`); ignored for IPv4.
         pub fn set_scope_id(&mut self, scope_id: u32) {
             if self.family() == AF_INET6 {
@@ -8373,6 +8393,132 @@ pub mod net {
             } else {
                 write!(f, "<addr family={}>", self.family())
             }
+        }
+    }
+
+    impl Address {
+        /// Copy a `sockaddr` given as its raw bytes (a C API's
+        /// `(addr, addrlen)` pair). `None` if `bytes` is shorter than the
+        /// address family it declares needs.
+        pub fn from_sockaddr_bytes(bytes: &[u8]) -> Option<Self> {
+            if bytes.len() < 2 {
+                return None;
+            }
+            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
+            let mut any: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let cap = core::mem::size_of::<sockaddr_storage>().min(bytes.len());
+            // SAFETY: `cap` bytes fit both `bytes` and `any`; distinct objects.
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), (&raw mut any).cast::<u8>(), cap)
+            };
+            let this = Self { any };
+            let need = match this.family() {
+                AF_INET => core::mem::size_of::<sockaddr_in>(),
+                AF_INET6 => core::mem::size_of::<sockaddr_in6>(),
+                _ => 2,
+            };
+            (bytes.len() >= need).then_some(this)
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // getaddrinfo(3)
+    // ──────────────────────────────────────────────────────────────────────
+
+    #[cfg(windows)]
+    pub use bun_windows_sys::ws2_32::addrinfo;
+    #[cfg(unix)]
+    pub use libc::addrinfo;
+
+    /// The owned result list of one `getaddrinfo(3)` call; `freeaddrinfo` on drop.
+    pub struct AddrInfoList(core::ptr::NonNull<addrinfo>);
+
+    impl AddrInfoList {
+        /// Blocking `getaddrinfo(3)`. `Err` carries its non-zero return (an
+        /// `EAI_*` code); a zero return that produced no entries is `Ok(None)`.
+        pub fn lookup(
+            node: Option<&core::ffi::CStr>,
+            service: Option<&core::ffi::CStr>,
+            hints: Option<&addrinfo>,
+        ) -> Result<Option<Self>, core::ffi::c_int> {
+            #[cfg(windows)]
+            use bun_windows_sys::ws2_32::getaddrinfo;
+            #[cfg(unix)]
+            use libc::getaddrinfo;
+            // SAFETY: idempotent Winsock init; ws2_32 getaddrinfo needs WSAStartup.
+            #[cfg(windows)]
+            unsafe {
+                bun_libuv_sys::uv__winsock_ensure()
+            };
+            let mut result: *mut addrinfo = core::ptr::null_mut();
+            // SAFETY: `node`/`service` are NUL-terminated or null, `hints` is a
+            // live `addrinfo` or null, `result` is a stack out-param.
+            let rc = unsafe {
+                getaddrinfo(
+                    node.map_or(core::ptr::null(), |s| s.as_ptr()),
+                    service.map_or(core::ptr::null(), |s| s.as_ptr()),
+                    hints.map_or(core::ptr::null(), core::ptr::from_ref),
+                    &raw mut result,
+                )
+            };
+            if rc != 0 {
+                // getaddrinfo only allocates the list on success; `result` is
+                // unspecified here and must not be freed.
+                return Err(rc);
+            }
+            Ok(core::ptr::NonNull::new(result).map(Self))
+        }
+
+        /// The first entry (the list is never empty).
+        #[inline]
+        pub fn first(&self) -> &addrinfo {
+            // SAFETY: the live head node `getaddrinfo` returned; freed only on drop.
+            unsafe { self.0.as_ref() }
+        }
+
+        /// Every entry, in the order `getaddrinfo` returned them.
+        #[inline]
+        pub fn iter(&self) -> impl Iterator<Item = AddrInfoEntry<'_>> + Clone {
+            // SAFETY: `ai_next` links null or the next node of this same list,
+            // all of which live until `self` is dropped.
+            core::iter::successors(Some(self.first()), |ai| unsafe { ai.ai_next.as_ref() })
+                .map(AddrInfoEntry)
+        }
+    }
+
+    impl Drop for AddrInfoList {
+        fn drop(&mut self) {
+            #[cfg(windows)]
+            use bun_windows_sys::ws2_32::freeaddrinfo;
+            #[cfg(unix)]
+            use libc::freeaddrinfo;
+            // SAFETY: the list `getaddrinfo` allocated, freed exactly once.
+            unsafe { freeaddrinfo(self.0.as_ptr()) }
+        }
+    }
+
+    /// One node of an [`AddrInfoList`].
+    #[derive(Clone, Copy)]
+    pub struct AddrInfoEntry<'a>(&'a addrinfo);
+
+    impl<'a> AddrInfoEntry<'a> {
+        /// The C node (its `ai_next`/`ai_addr`/`ai_canonname` point into the list).
+        #[inline]
+        pub fn raw(self) -> &'a addrinfo {
+            self.0
+        }
+
+        /// The socket address, if the node has one.
+        pub fn address(self) -> Option<Address> {
+            if self.0.ai_addr.is_null() {
+                return None;
+            }
+            // SAFETY: `getaddrinfo` sets `ai_addr` to an `ai_addrlen`-byte
+            // sockaddr owned by the list for `'a`.
+            let bytes = unsafe {
+                core::slice::from_raw_parts(self.0.ai_addr.cast::<u8>(), self.0.ai_addrlen as usize)
+            };
+            Address::from_sockaddr_bytes(bytes)
         }
     }
 }

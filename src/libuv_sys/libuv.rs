@@ -3006,6 +3006,182 @@ unsafe extern "C" {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Typed `uv_getaddrinfo` — the request is a `Box<T>` embedding the
+// `uv_getaddrinfo_t`; libuv owns it from submission until its one completion
+// callback hands it back.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// The owned `addrinfo` list of a completed `uv_getaddrinfo` (libuv re-packs
+/// the wide result into one `uv__malloc` block, so this is freed with
+/// `uv_freeaddrinfo`, never `ws2_32!freeaddrinfo`).
+pub struct UvAddrInfo(*mut addrinfo);
+
+impl UvAddrInfo {
+    /// The first entry, or `None` if the lookup produced nothing.
+    #[inline]
+    pub fn head(&self) -> Option<&addrinfo> {
+        // SAFETY: null or the list libuv allocated, owned until drop.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl Drop for UvAddrInfo {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: the block `uv_getaddrinfo` allocated, freed exactly once.
+            unsafe { uv_freeaddrinfo(self.0.cast()) }
+        }
+    }
+}
+
+/// A heap request type that embeds the `uv_getaddrinfo_t` it is submitted with.
+pub trait GetAddrInfoRequest: Sized {
+    fn uv_req(&mut self) -> &mut uv_getaddrinfo_t;
+    /// The completion (event-loop thread): `status` is 0, a `UV_EAI_*` code, or
+    /// `UV_ECANCELED`.
+    fn on_complete(this: Box<Self>, status: c_int, result: UvAddrInfo);
+}
+
+/// A submitted [`GetAddrInfoRequest`] that has not completed yet, for
+/// [`cancel`](Self::cancel): a back-reference into the request libuv holds.
+/// Holder obligation (taken on by keeping the value [`getaddrinfo`] returns):
+/// drop it no later than the request box handed back to
+/// [`on_complete`](GetAddrInfoRequest::on_complete) is freed.
+pub struct InflightGetAddrInfo(ptr::NonNull<uv_getaddrinfo_t>);
+
+impl InflightGetAddrInfo {
+    /// `uv_cancel`: if the work has not started, complete it soon with
+    /// `UV_ECANCELED`; otherwise no effect.
+    #[inline]
+    pub fn cancel(&self) {
+        // SAFETY: holder contract — the request is still owned by libuv.
+        let _ = unsafe { uv_cancel(self.0.as_ptr().cast::<uv_req_t>()) };
+    }
+}
+
+unsafe extern "C" fn getaddrinfo_complete<T: GetAddrInfoRequest>(
+    req: *mut uv_getaddrinfo_t,
+    status: c_int,
+    res: *mut addrinfo,
+) {
+    // SAFETY: `req.data` is the `Box<T>` `getaddrinfo` submitted, handed back
+    // for this one callback; `res` (== `req.addrinfo`) is ours to free.
+    let this = unsafe { Box::from_raw((*req).data.cast::<T>()) };
+    T::on_complete(this, status, UvAddrInfo(res));
+}
+
+/// `uv_getaddrinfo` on `loop_`. On `Ok` libuv owns `req` until
+/// [`GetAddrInfoRequest::on_complete`]; on a synchronous failure (e.g.
+/// `UV_EINVAL` for an over-long name) the request comes straight back.
+pub fn getaddrinfo<T: GetAddrInfoRequest>(
+    loop_: *mut Loop,
+    req: Box<T>,
+    node: &core::ffi::CStr,
+    service: &core::ffi::CStr,
+    hints: Option<&addrinfo>,
+) -> Result<InflightGetAddrInfo, (ReturnCode, Box<T>)> {
+    let raw = Box::into_raw(req);
+    // SAFETY: `raw` is the allocation just leaked, which lives until the
+    // callback re-boxes it, and `uv` points into it; node/service are
+    // NUL-terminated; hints is a live `addrinfo` or null (libuv copies it).
+    let (rc, uv) = unsafe {
+        let uv = ptr::NonNull::from((*raw).uv_req());
+        (*uv.as_ptr()).data = raw.cast::<c_void>();
+        let rc = uv_getaddrinfo(
+            loop_,
+            uv.as_ptr(),
+            Some(getaddrinfo_complete::<T>),
+            node.as_ptr(),
+            service.as_ptr(),
+            hints.map_or(ptr::null(), |h| ptr::from_ref(h).cast::<c_void>()),
+        );
+        (rc, uv)
+    };
+    if rc.int() < 0 {
+        // SAFETY: libuv did not take the request; we still own `raw`.
+        return Err((rc, unsafe { Box::from_raw(raw) }));
+    }
+    Ok(InflightGetAddrInfo(uv))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Typed `uv_poll_t` on a socket — a heap handle plus owner data; libuv holds
+// its address from init until the close callback frees it.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// The owner data's poll callback.
+pub trait SocketPollHandler: Sized {
+    /// `status < 0` is an error; otherwise `events` is the ready `UV_READABLE`
+    /// / `UV_WRITABLE` set. May close the poll (drop its [`SocketPoll`]).
+    fn on_poll(data: &Self, status: c_int, events: c_int);
+}
+
+#[repr(C)]
+struct SocketPollBox<T> {
+    handle: UnsafeCell<uv_poll_t>,
+    data: T,
+}
+
+/// The owner's handle to a started socket poll. Dropping it `uv_close`s the
+/// handle; the allocation (and `T`) is freed in the close callback.
+pub struct SocketPoll<T: SocketPollHandler>(ptr::NonNull<SocketPollBox<T>>);
+
+impl<T: SocketPollHandler> SocketPoll<T> {
+    /// `uv_poll_init_socket`; `Err` gives `data` back.
+    pub fn init(loop_: *mut Loop, socket: uv_os_sock_t, data: T) -> Result<Self, (c_int, T)> {
+        let boxed = Box::new(SocketPollBox {
+            handle: UnsafeCell::new(bun_core::ffi::zeroed()),
+            data,
+        });
+        // SAFETY: `handle` is a zeroed `uv_poll_t` at a stable heap address.
+        let rc = unsafe { uv_poll_init_socket(loop_, boxed.handle.get(), socket) };
+        if rc < 0 {
+            return Err((rc, boxed.data));
+        }
+        Ok(SocketPoll(ptr::NonNull::from(Box::leak(boxed))))
+    }
+
+    #[inline]
+    fn handle(&self) -> *mut uv_poll_t {
+        // SAFETY: the live allocation `init` leaked; freed only by `close_cb`.
+        unsafe { self.0.as_ref() }.handle.get()
+    }
+
+    /// `uv_poll_start` (or re-start with a new event set).
+    #[inline]
+    pub fn start(&self, events: c_int) -> c_int {
+        // SAFETY: initialised, not yet closed handle.
+        unsafe { uv_poll_start(self.handle(), events, Some(Self::poll_cb)) }
+    }
+
+    #[inline]
+    pub fn data(&self) -> &T {
+        // SAFETY: the live allocation `init` leaked; freed only by `close_cb`.
+        &unsafe { self.0.as_ref() }.data
+    }
+
+    unsafe extern "C" fn poll_cb(handle: *mut uv_poll_t, status: c_int, events: c_int) {
+        // SAFETY: `handle` is the first field of the `SocketPollBox<T>` that
+        // registered this callback, live until `close_cb`.
+        let data = unsafe { &(*handle.cast::<SocketPollBox<T>>()).data };
+        T::on_poll(data, status, events);
+    }
+
+    unsafe extern "C" fn close_cb(handle: *mut uv_handle_t) {
+        // SAFETY: `handle` is the first field of the `SocketPollBox<T>` `init`
+        // leaked; libuv is done with it.
+        drop(unsafe { Box::from_raw(handle.cast::<SocketPollBox<T>>()) });
+    }
+}
+
+impl<T: SocketPollHandler> Drop for SocketPoll<T> {
+    fn drop(&mut self) {
+        // SAFETY: initialised, not yet closed handle; `close_cb` frees it.
+        unsafe { uv_close(self.handle().cast::<uv_handle_t>(), Some(Self::close_cb)) }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Layout assertions (Windows x64).
 //
 // Authoritative `sizeof`s taken from a `cl.exe`-compiled probe against

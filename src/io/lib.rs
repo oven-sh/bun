@@ -270,7 +270,7 @@ pub use parent_death_watchdog as ParentDeathWatchdog;
 // ─── public surface (was bun_io's crate root) ──────────────────────────────
 
 #[cfg(not(windows))]
-pub use posix_event_loop::{FilePoll, Loop};
+pub use posix_event_loop::{FilePoll, Loop, OwnedFilePoll};
 #[cfg(windows)]
 pub use windows_event_loop::{FilePoll, Loop};
 

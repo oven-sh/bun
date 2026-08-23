@@ -570,11 +570,9 @@ impl Framework {
     /// - If any file system router types are provided, configure using
     ///   the above react configuration.
     ///
-    /// Packages are resolved from the top-level directory and from each
-    /// directory in `extra_resolve_dirs` (the directories of the HTML entry
-    /// points). The extra directories matter in a workspace: the isolated
-    /// install linker puts `react` in the workspace package's `node_modules`,
-    /// where a resolution from the top-level directory cannot see it.
+    /// Packages resolve from the top-level directory and from each directory
+    /// in `extra_resolve_dirs` (the HTML entry directories, where the
+    /// isolated install linker puts a workspace package's dependencies).
     /// The provided allocator is not stored.
     pub fn auto(
         arena: &Arena,

@@ -934,11 +934,9 @@ impl ServerConfig {
                             .map(|t| convert_file_system_router_type(&arena, t))
                             .collect();
 
-                    // Directories of the HTML entry points. `Framework::auto`
-                    // resolves `react` / `react-refresh` from these in addition
-                    // to the top-level directory, so detection works when the
-                    // packages live in a workspace package's `node_modules`
-                    // (the isolated linker layout).
+                    // HTML entry directories. `Framework::auto` resolves react
+                    // from these too: the isolated install linker puts a
+                    // workspace package's react outside the top-level dir.
                     let mut html_entry_dirs: Vec<&[u8]> = Vec::new();
                     for &bundle in init_ctx.dedupe_html_bundle_map.keys() {
                         // SAFETY: the map's value holds a Route that refs the

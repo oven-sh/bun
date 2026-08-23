@@ -1147,12 +1147,10 @@ impl JSGlobalObject {
         })
     }
 
-    /// Returns a freshly-created `napi_env` owned by this global, for use by
-    /// the FFI module. The concrete `NapiEnv` struct lives in `bun_runtime`
-    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
-    /// callers in `bun_runtime` cast to `*mut NapiEnv`.
-    pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
-        ZigGlobalObject__makeNapiEnvForFFI(self)
+    /// A freshly-created `napi_env` owned by this global (it lives as long as
+    /// the global does), for use by the FFI module.
+    pub fn make_napi_env_for_ffi(&self) -> &crate::NapiEnv {
+        crate::NapiEnv::opaque_ref(ZigGlobalObject__makeNapiEnvForFFI(self))
     }
 
     // returns false if it throws
@@ -1557,7 +1555,7 @@ unsafe extern "C" {
     safe fn ZigGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
 
-    safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
+    safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut crate::NapiEnv;
 
     safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
     safe fn JSC__JSGlobalObject__vm(this: &JSGlobalObject) -> *mut VM;

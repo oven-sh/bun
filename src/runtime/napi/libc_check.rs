@@ -7,43 +7,28 @@
 //! ELF `PT_DYNAMIC` segment before calling `dlopen` and surface a
 //! `ERR_DLOPEN_FAILED` that names the problem. See issue #15753.
 
-use core::ffi::c_char;
-
 /// Called from `Process_functionDlopen` (BunProcess.cpp) immediately before
-/// `dlopen`. Returns `1` when the file at `path_ptr[..path_len]` is an ELF
-/// shared object whose `DT_NEEDED` list references glibc and this process is
-/// musl-linked (or the test-only `BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK` env var
-/// is set). The matching soname is copied NUL-terminated into
-/// `soname_out[..soname_cap]` so the thrown error can quote the actual
-/// rejected entry. Returns `0` for every other outcome, including I/O and
-/// parse errors: a false negative falls through to `dlopen` which is today's
-/// behaviour, whereas a false positive would refuse a working addon.
-///
-/// # Safety
-/// `path_ptr` must be valid for reads of `path_len` bytes; `soname_out` must
-/// be valid for writes of `soname_cap` bytes.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__addonNeedsGlibcOnMusl(
-    path_ptr: *const c_char,
-    path_len: usize,
-    soname_out: *mut u8,
-    soname_cap: usize,
-) -> i32 {
-    let _ = (path_ptr, path_len, soname_out, soname_cap);
+/// `dlopen`. Returns `1` when the file at `path` is an ELF shared object whose
+/// `DT_NEEDED` list references glibc and this process is musl-linked (or the
+/// test-only `BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK` env var is set). The
+/// matching soname is copied NUL-terminated into `soname_out` so the thrown
+/// error can quote the actual rejected entry. Returns `0` for every other
+/// outcome, including I/O and parse errors: a false negative falls through to
+/// `dlopen` which is today's behaviour, whereas a false positive would refuse
+/// a working addon.
+// HOST_EXPORT(Bun__addonNeedsGlibcOnMusl, c)
+pub fn addon_needs_glibc_on_musl(path: &[u8], soname_out: &mut [u8]) -> i32 {
+    let _ = (path, &soname_out);
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if !check_enabled() {
             return 0;
         }
-        // SAFETY: caller contract.
-        let path = unsafe { bun_core::ffi::slice(path_ptr.cast::<u8>(), path_len) };
         if let Some(name) = elf_glibc_needed(path) {
-            if !soname_out.is_null() && soname_cap > 0 {
-                // SAFETY: caller contract.
-                let out = unsafe { core::slice::from_raw_parts_mut(soname_out, soname_cap) };
-                let n = name.len().min(soname_cap - 1);
-                out[..n].copy_from_slice(&name[..n]);
-                out[n] = 0;
+            if let Some(cap) = soname_out.len().checked_sub(1) {
+                let n = name.len().min(cap);
+                soname_out[..n].copy_from_slice(&name[..n]);
+                soname_out[n] = 0;
             }
             return 1;
         }

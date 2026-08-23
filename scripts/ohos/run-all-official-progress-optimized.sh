@@ -246,7 +246,7 @@ run_test() {
     */cli/install/bun-install.test.ts|*/cli/install/bun-run.test.ts|\
     */cli/install/bun-update.test.ts|*/cli/install/bun-update-transitive.test.ts|\
     */cli/install/bun-update-lockfile-sync.test.ts|*/cli/install/bun-dedupe.test.ts|\
-    */cli/install/bun-audit.test.ts|*/cli/install/bun-prune.test.ts|\
+    */cli/install/bun-prune.test.ts|\
     */cli/install/bun-pm-licenses.test.ts|*/cli/install/bun-add-catalog.test.ts|\
     */cli/install/bun-add.test.ts|*/cli/install/migration/migrate.test.ts|\
     */cli/install/nested-overrides.test.ts|\
@@ -254,6 +254,11 @@ run_test() {
     */cli/install/bun-security-scanner-matrix-without-node-modules.test.ts|\
     */cli/install/bun-pack.test.ts|*/cli/install/bun-install-registry.test.ts)
       WT=$((TMOUT * 2))       # 600s
+      BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
+      ;;
+    # ── bun-audit：150 用例已改顺序执行，单跑实测 676s，需 3×TMOUT ──
+    */cli/install/bun-audit.test.ts)
+      WT=$((TMOUT * 3))       # 900s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     # ── 泄漏/长时间测试 ──

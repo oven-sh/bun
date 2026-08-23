@@ -6,6 +6,11 @@
 // real server cannot be made to produce on demand. Behavior only observable
 // at process level (exit, uncaught exceptions, RSS) runs in a subprocess.
 // End-to-end behavior runs against the docker-compose postgres service.
+//
+// Every test owns its mock server and client (or, against the shared postgres
+// service, its channel names), so the suites run concurrently: each reconnect
+// test sits out at least one 250ms backoff, and each subprocess test pays a
+// debug-build startup.
 
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
@@ -143,7 +148,25 @@ function gate() {
   });
 }
 
-describe("listen", () => {
+const connectionClosed = {
+  name: "PostgresError",
+  code: "ERR_POSTGRES_CONNECTION_CLOSED",
+  message: "Connection closed",
+};
+/** What the mock's ErrorResponse (SQLSTATE 42601) becomes on the client. */
+const serverError = (message: string) => ({ name: "PostgresError", code: "ERR_POSTGRES_SYNTAX_ERROR", message });
+const invalidChannel = (channel: string, reason: string) => ({
+  name: "TypeError",
+  code: "ERR_INVALID_ARG_VALUE",
+  message: `The argument 'channel' ${reason}. Received '${channel}'`,
+});
+const invalidCallback = (name: string) => ({
+  name: "TypeError",
+  code: "ERR_INVALID_ARG_TYPE",
+  message: `The "${name}" argument must be of type function. Received type number (1)`,
+});
+
+describe.concurrent("listen", () => {
   test("routes notifications to the channel's listener, in order", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
@@ -214,9 +237,10 @@ describe("listen", () => {
     const ascii63 = Buffer.alloc(63, "c").toString();
     const cjk63 = Buffer.alloc(63, "字").toString(); // 21 characters
     const cjk66 = Buffer.alloc(66, "字").toString(); // 22 characters, 66 bytes
-    await expect(sql.listen(ascii63 + "c", () => {})).rejects.toThrow(/63 bytes/);
-    await expect(sql.listen(cjk66, () => {})).rejects.toThrow(/63 bytes/);
-    expect(() => sql.notify(cjk66)).toThrow(/63 bytes/);
+    const tooLong = (channel: string) => invalidChannel(channel, "must be at most 63 bytes");
+    await expect(sql.listen(ascii63 + "c", () => {})).rejects.toMatchObject(tooLong(ascii63 + "c"));
+    await expect(sql.listen(cjk66, () => {})).rejects.toMatchObject(tooLong(cjk66));
+    expect(() => sql.notify(cjk66)).toThrow(expect.objectContaining(tooLong(cjk66)));
 
     await sql.listen(ascii63, () => {});
     await sql.listen(cjk63, () => {});
@@ -244,14 +268,23 @@ describe("listen", () => {
   test("concurrent listen() calls on a new channel share its round trip", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
+    const got: string[] = [];
     const all = gate();
     const count = all.after(3);
-    const subscriptions = await Promise.all([1, 2, 3].map(() => sql.listen("ch", () => count())));
+    const subscriptions = await Promise.all(
+      [1, 2, 3].map(n =>
+        sql.listen("ch", payload => {
+          got.push(`${n}:${payload}`);
+          count();
+        }),
+      ),
+    );
     expect(server.queries).toEqual(['LISTEN "ch"']);
     expect(subscriptions.map(subscription => subscription.channel)).toEqual(["ch", "ch", "ch"]);
     expect(new Set(subscriptions).size).toBe(3);
     server.notify("ch", "x");
     await all;
+    expect(got).toEqual(["1:x", "2:x", "3:x"]);
   });
 
   test("a listener that unlistens itself mid-dispatch does not starve the others", async () => {
@@ -319,10 +352,10 @@ describe("listen", () => {
   test("registering the same callback twice is two subscriptions, each removed by its own handle", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
-    let calls = 0;
+    const got: string[] = [];
     let count = () => {};
-    const callback = () => {
-      calls++;
+    const callback = (payload: string) => {
+      got.push(payload);
       count();
     };
     const first = await sql.listen("ch", callback);
@@ -333,7 +366,7 @@ describe("listen", () => {
     count = both.after(2);
     server.notify("ch", "x");
     await both;
-    expect(calls).toBe(2);
+    expect(got).toEqual(["x", "x"]);
 
     await first.unlisten();
     const one = gate();
@@ -342,7 +375,7 @@ describe("listen", () => {
     await one;
     // This round trip is ordered after any second delivery of "y".
     await sql.listen("barrier", () => {});
-    expect(calls).toBe(3);
+    expect(got).toEqual(["x", "x", "y"]);
     expect(server.queries).toEqual(['LISTEN "ch"', 'LISTEN "barrier"']);
 
     await second.unlisten();
@@ -378,7 +411,7 @@ describe("listen", () => {
   });
 });
 
-describe("unlisten", () => {
+describe.concurrent("unlisten", () => {
   test("removing one of several listeners is local; removing the last sends UNLISTEN", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
@@ -456,7 +489,8 @@ describe("unlisten", () => {
     const unlistening = subscription.unlisten();
     await server.untilQuery(queries => queries.includes('UNLISTEN "ch"'));
     server.dropConnections();
-    await unlistening;
+    await expect(unlistening).resolves.toBeUndefined();
+    expect(server.queries).toEqual(['LISTEN "keep"', 'LISTEN "ch"', 'UNLISTEN "ch"']);
   });
 
   test("a handle from before close() is a no-op afterwards, also for a re-opened client", async () => {
@@ -476,7 +510,7 @@ describe("unlisten", () => {
   });
 });
 
-describe("listen/unlisten interleavings", () => {
+describe.concurrent("listen/unlisten interleavings", () => {
   test("a re-listen() while the UNLISTEN is in flight gets its own LISTEN, ordered after it", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
@@ -498,7 +532,7 @@ describe("listen/unlisten interleavings", () => {
     await using sql = client(server.url);
     await sql.listen("keep", () => {});
     server.failNextListen("bad");
-    await expect(sql.listen("bad", () => {})).rejects.toThrow("cannot LISTEN bad");
+    await expect(sql.listen("bad", () => {})).rejects.toMatchObject(serverError("cannot LISTEN bad"));
     await sql.listen("bad", () => {});
     expect(server.queries).toEqual(['LISTEN "keep"', 'LISTEN "bad"', 'LISTEN "bad"']);
   });
@@ -512,7 +546,11 @@ describe("listen/unlisten interleavings", () => {
     const b = sql.listen("ch", () => {});
     server.release();
     const results = await Promise.allSettled([a, b]);
-    expect(results.map(result => result.status)).toEqual(["rejected", "rejected"]);
+    expect(results).toEqual([
+      { status: "rejected", reason: expect.objectContaining(serverError("cannot LISTEN ch")) },
+      { status: "rejected", reason: expect.objectContaining(serverError("cannot LISTEN ch")) },
+    ]);
+    expect(server.queries).toEqual(['LISTEN "ch"']);
     await server.untilClosed(1);
   });
 
@@ -520,14 +558,18 @@ describe("listen/unlisten interleavings", () => {
     const { port, server } = await listeningServer(socket => socket.destroy());
     try {
       await using sql = client(`postgres://u@127.0.0.1:${port}/db`);
-      await expect(sql.listen("ch", () => {})).rejects.toThrow();
+      await expect(sql.listen("ch", () => {})).rejects.toMatchObject({
+        name: "PostgresError",
+        code: "ERR_POSTGRES_CONNECTION_FAILED",
+        message: "Connection closed before the connection was established",
+      });
     } finally {
       server.close();
     }
   });
 });
 
-describe("reconnect", () => {
+describe.concurrent("reconnect", () => {
   test("re-subscribes every channel, runs onlisten again, resumes delivery", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
@@ -592,9 +634,15 @@ describe("reconnect", () => {
   test("a channel whose re-LISTEN is rejected is retried with backoff and warns", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
+    // console.warn is process-wide and this suite is concurrent, so keep only
+    // the warnings that name this test's channel.
     const warnings: string[] = [];
     const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+    console.warn = (...args: unknown[]) => {
+      const line = args.join(" ");
+      if (line.includes('"flaky"')) warnings.push(line);
+      else originalWarn(...args);
+    };
     try {
       const resubscribed = gate();
       await sql.listen("flaky", () => {}, resubscribed.after(2));
@@ -602,7 +650,7 @@ describe("reconnect", () => {
       server.dropConnections();
       await resubscribed;
       expect(server.connections.at(-1)!.filter(query => query === 'LISTEN "flaky"')).toHaveLength(2);
-      expect(warnings).toEqual([expect.stringContaining('LISTEN "flaky" failed, retrying: cannot LISTEN flaky')]);
+      expect(warnings).toEqual(['bun:sql LISTEN "flaky" failed, retrying: cannot LISTEN flaky']);
     } finally {
       console.warn = originalWarn;
     }
@@ -649,7 +697,7 @@ describe("reconnect", () => {
     // and rejects once the client has processed the drop, which is the moment
     // the client considers "ch" unsubscribed and has armed its backoff.
     server.dropConnections();
-    expect(await outcome(sql.listen("probe", () => {}))).toMatch(/closed/i);
+    expect(await outcome(sql.listen("probe", () => {}))).toBe("Connection closed");
 
     // This listen() brings the connection back (cancelling the backoff) and is
     // the one sending LISTEN "ch"; its rejection must not strand the first listener.
@@ -663,7 +711,7 @@ describe("reconnect", () => {
   });
 });
 
-describe("close()", () => {
+describe.concurrent("close()", () => {
   test("tears down the listen connection and rejects an in-flight listen()", async () => {
     await using server = await mockServer();
     const sql = client(server.url);
@@ -673,10 +721,11 @@ describe("close()", () => {
     await server.untilQuery(queries => queries.includes('LISTEN "pending"'));
 
     await sql.close();
-    await expect(pending).rejects.toThrow();
+    await expect(pending).rejects.toMatchObject(connectionClosed);
     await server.untilClosed(1);
-    await expect(sql.listen("ch", () => {})).rejects.toThrow("Connection closed");
-    await subscription.unlisten();
+    await expect(sql.listen("ch", () => {})).rejects.toMatchObject(connectionClosed);
+    await expect(subscription.unlisten()).resolves.toBeUndefined();
+    expect(server.queries).toEqual(['LISTEN "ch"', 'LISTEN "pending"']);
   });
 
   test("in the same tick as a listen() on the live connection rejects it before any LISTEN is sent", async () => {
@@ -702,7 +751,7 @@ describe("close()", () => {
       const sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1, connectionTimeout: 60 });
       const listening = sql.listen("ch", () => {});
       await sql.close();
-      await expect(listening).rejects.toThrow();
+      await expect(listening).rejects.toMatchObject(connectionClosed);
     } finally {
       server.close();
     }
@@ -713,30 +762,44 @@ describe("close()", () => {
     await using sql = client(server.url);
     const got = Promise.withResolvers<string>();
     await sql.listen("ch", got.resolve);
-    await expect(sql.close({ timeout: -1 })).rejects.toThrow();
+    await expect(sql.close({ timeout: -1 })).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The property 'options.timeout' must be a non-negative integer less than 2^31. Received -1",
+    });
     server.notify("ch", "still subscribed");
     expect(await got.promise).toBe("still subscribed");
+    expect(server.liveConnections).toBe(1);
   });
 });
 
-describe("arguments", () => {
+describe.concurrent("arguments", () => {
   test.each(["postgres", "sqlite"] as const)("%s: invalid arguments fail before any I/O", async adapter => {
     await using sql = adapter === "postgres" ? client("postgres://u@127.0.0.1:1/db") : new SQL("sqlite://:memory:");
     const callback = () => {};
-    await expect(sql.listen("", callback)).rejects.toThrow(/non-empty/);
-    await expect(sql.listen("a\0b", callback)).rejects.toThrow(/null bytes/);
-    await expect(sql.listen("ch", 1 as any)).rejects.toThrow(/onnotify/);
-    await expect(sql.listen("ch", callback, 1 as any)).rejects.toThrow(/onlisten/);
-    expect(() => sql.notify("", "p")).toThrow(/non-empty/);
-    expect(() => sql.notify("ch", null as any)).toThrow(/payload/);
-    expect(() => sql.notify("ch", 1 as any)).toThrow(/payload/);
+    const emptyChannel = invalidChannel("", "must be a non-empty string");
+    const invalidPayload = (received: string) => ({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "payload" argument must be of type string. Received ${received}`,
+    });
+    await expect(sql.listen("", callback)).rejects.toMatchObject(emptyChannel);
+    await expect(sql.listen("a\0b", callback)).rejects.toMatchObject(
+      invalidChannel("a\\x00b", "must not contain null bytes"),
+    );
+    await expect(sql.listen("ch", 1 as any)).rejects.toMatchObject(invalidCallback("onnotify"));
+    await expect(sql.listen("ch", callback, 1 as any)).rejects.toMatchObject(invalidCallback("onlisten"));
+    expect(() => sql.notify("", "p")).toThrow(expect.objectContaining(emptyChannel));
+    expect(() => sql.notify("ch", null as any)).toThrow(expect.objectContaining(invalidPayload("null")));
+    expect(() => sql.notify("ch", 1 as any)).toThrow(expect.objectContaining(invalidPayload("type number (1)")));
   });
 
   test("non-Postgres adapters reject with a clear error", async () => {
     await using sql = new SQL("sqlite://:memory:");
-    await expect(sql.listen("ch", () => {})).rejects.toThrow("PostgreSQL only");
-    await expect(sql.notify("ch", "p")).rejects.toThrow("PostgreSQL only");
-    await expect(sql.notify("ch")).rejects.toThrow("PostgreSQL only");
+    const unsupported = { name: "Error", message: "LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)" };
+    await expect(sql.listen("ch", () => {})).rejects.toMatchObject(unsupported);
+    await expect(sql.notify("ch", "p")).rejects.toMatchObject(unsupported);
+    await expect(sql.notify("ch")).rejects.toMatchObject(unsupported);
   });
 
   test("reserved connections expose listen() on the client's shared listen connection; unlisten lives on the subscription only", async () => {
@@ -757,7 +820,7 @@ describe("arguments", () => {
   });
 });
 
-describe("notify()", () => {
+describe.concurrent("notify()", () => {
   test("is sent through the pool without being awaited, and opens no listen connection", async () => {
     await using server = await mockServer();
     await using sql = client(server.url);
@@ -766,12 +829,17 @@ describe("notify()", () => {
     // to end in the docker suite.
     const settled = Promise.allSettled([sql.notify("ch", "payload"), sql.notify("signal")]);
     await server.untilQuery(queries => queries.some(query => query.includes("pg_notify($1, $2)")));
-    expect((await settled).map(result => result.status)).toEqual(["rejected", "rejected"]);
+    const rejected = {
+      status: "rejected",
+      reason: expect.objectContaining(serverError("mock rejects extended-protocol queries")),
+    };
+    expect(await settled).toEqual([rejected, rejected]);
+    expect(server.queries).toEqual(["SELECT pg_notify($1, $2)"]);
     expect(server.liveConnections).toBe(1);
   });
 });
 
-describe("in a subprocess", () => {
+describe.concurrent("in a subprocess", () => {
   const wireFrames = path.join(import.meta.dir, "wire-frames.ts");
   // The mock runs inside the child and is unref'd, so only the subscription
   // under test can hold the child open. `notifyMany`, `dropConnections`,
@@ -936,6 +1004,12 @@ describe("in a subprocess", () => {
     // of payload strings as free memory), after which a correct
     // implementation shows roughly no growth and leaking one string per
     // notification shows the pass's full payload volume.
+    //
+    // Steady state still drifts by several MiB from pass to pass (the allocator
+    // hands freed pages back to the OS on its own schedule), so a reading at
+    // or above the bound is checked against one more pass: a leak grows again,
+    // drift does not.
+    const bound = 12; // MiB; a leak adds ~24 per pass
     const result = await run(
       `
       const channels = ["a", "b", "c", "d"];
@@ -953,7 +1027,12 @@ describe("in a subprocess", () => {
         await pass();
         const base = rss();
         await pass();
-        return Math.round((rss() - base) / 1024 / 1024);
+        let growth = (rss() - base) / 1024 / 1024;
+        if (growth >= ${bound}) {
+          await pass();
+          growth = Math.min(growth, (rss() - base) / 1024 / 1024);
+        }
+        return Math.round(growth);
       };
       // 256 KiB per segment, 96 segments = 24 MiB per pass.
       const small = await measure(segment(256, Buffer.alloc(1024, 0x61).toString()), 96);
@@ -966,15 +1045,16 @@ describe("in a subprocess", () => {
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
     const growth = JSON.parse(result.stdout);
-    // Steady state drifts by a few MiB between passes; a leak adds ~24 MiB.
     expect(growth).toEqual({ small: expect.any(Number), large: expect.any(Number) });
-    expect(growth.small, JSON.stringify(growth)).toBeLessThan(6);
-    expect(growth.large, JSON.stringify(growth)).toBeLessThan(6);
+    expect(growth.small, JSON.stringify(growth)).toBeLessThan(bound);
+    expect(growth.large, JSON.stringify(growth)).toBeLessThan(bound);
   }, 30_000);
 });
 
 if (isDockerEnabled()) {
-  describeWithContainer("postgres", { image: "postgres_plain" }, container => {
+  // One postgres service for every test, so each test has its own channel
+  // names: a NOTIFY reaches every session that listens on that channel.
+  describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
     const connect = () =>
       new SQL(`postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`, { max: 2 });
     // The listening backend is the session whose last statement is our LISTEN.
@@ -1031,28 +1111,33 @@ if (isDockerEnabled()) {
     // so a later delivery proves an earlier notification was or was not
     // delivered.
     describe("ported from postgres.js", () => {
-      test("listen and notify", async () => {
+      test.each(["pgjs_hello", "withUpperChar"])("listen and notify: %s", async channel => {
         await container.ready;
         await using sql = connect();
         const result = Promise.withResolvers<string>();
-        await sql.listen("pgjs_hello", result.resolve);
-        await sql.notify("pgjs_hello", "works");
+        const subscription = await sql.listen(channel, result.resolve);
+        expect(subscription.channel).toBe(channel);
+        await sql.notify(channel, "works");
         expect(await result.promise).toBe("works");
       });
 
       test("double listen", async () => {
         await container.ready;
         await using sql = connect();
-        let count = 0;
-        for (let i = 0; i < 2; i++) {
-          const received = Promise.withResolvers<string>();
-          await sql.listen("pgjs_hello", received.resolve);
-          await sql.notify("pgjs_hello", "world");
-          await received.promise;
-          count++;
+        const got: string[] = [];
+        let count = () => {};
+        for (const n of [1, 2]) {
+          const delivered = gate();
+          count = delivered.after(n); // every listener so far receives it
+          await sql.listen("pgjs_double", payload => {
+            got.push(`${n}:${payload}`);
+            count();
+          });
+          await sql.notify("pgjs_double", "world");
+          await delivered;
         }
         await sql.listen("pgjs_weee", () => {});
-        expect(count).toBe(2);
+        expect(got).toEqual(["1:world", "1:world", "2:world"]);
       });
 
       test("multiple listeners work after a reconnect", async () => {
@@ -1084,7 +1169,7 @@ if (isDockerEnabled()) {
         count = b.after(2);
         await sql.notify("pgjs_reconnect_multi", "b");
         await b;
-        expect(xs.join("")).toBe("1a2a1b2b");
+        expect(xs).toEqual(["1a", "2a", "1b", "2b"]);
       });
 
       test("listen and notify with weird name", async () => {
@@ -1102,35 +1187,31 @@ if (isDockerEnabled()) {
         await subscription.unlisten();
 
         const barrier = gate();
-        await sql.listen("pgjs_barrier", barrier.open);
+        await sql.listen("pgjs_weird_barrier", barrier.open);
         await sql.notify(channel, "after unlisten");
-        await sql.notify("pgjs_barrier", "");
+        await sql.notify("pgjs_weird_barrier", "");
         await barrier;
         expect(got).toEqual(["works"]);
-      });
-
-      test("listen and notify with upper case", async () => {
-        await container.ready;
-        await using sql = connect();
-        const result = Promise.withResolvers<string>();
-        await sql.listen("withUpperChar", result.resolve);
-        await sql.notify("withUpperChar", "works");
-        expect(await result.promise).toBe("works");
       });
 
       test("listen reconnects", async () => {
         await container.ready;
         await using sql = connect();
+        const events: string[] = [];
         const a = gate();
         const b = gate();
-        const resolvers: Record<string, () => void> = { a: a.open, b: b.open };
-        let connects = 0;
+        const arrivals: Record<string, () => void> = { a: a.open, b: b.open };
         const reconnected = gate();
+        const onlisten = reconnected.after(2);
         await sql.listen(
           "pgjs_reconnect",
-          x => resolvers[x]?.(),
+          payload => {
+            events.push("got " + payload);
+            arrivals[payload]?.();
+          },
           () => {
-            if (++connects === 2) reconnected.open();
+            events.push("onlisten");
+            onlisten();
           },
         );
         await sql.notify("pgjs_reconnect", "a");
@@ -1139,7 +1220,7 @@ if (isDockerEnabled()) {
         await reconnected;
         await sql.notify("pgjs_reconnect", "b");
         await b;
-        expect(connects).toBe(2);
+        expect(events).toEqual(["onlisten", "got a", "onlisten", "got b"]);
       });
 
       test("listen result reports correct connection state after reconnection", async () => {
@@ -1165,20 +1246,20 @@ if (isDockerEnabled()) {
         await using sql = connect();
         const xs: string[] = [];
         const a = gate();
-        const subscription = await sql.listen("pgjs_test", x => {
+        const subscription = await sql.listen("pgjs_unlisten", x => {
           xs.push(x);
           a.open();
         });
-        await sql.notify("pgjs_test", "a");
+        await sql.notify("pgjs_unlisten", "a");
         await a;
         await subscription.unlisten();
 
         const barrier = gate();
-        await sql.listen("pgjs_barrier", barrier.open);
-        await sql.notify("pgjs_test", "b");
-        await sql.notify("pgjs_barrier", "");
+        await sql.listen("pgjs_unlisten_barrier", barrier.open);
+        await sql.notify("pgjs_unlisten", "b");
+        await sql.notify("pgjs_unlisten_barrier", "");
         await barrier;
-        expect(xs.join("")).toBe("a");
+        expect(xs).toEqual(["a"]);
       });
 
       test("listen after unlisten", async () => {
@@ -1193,18 +1274,18 @@ if (isDockerEnabled()) {
 
         const a = gate();
         received = a.open;
-        const subscription = await sql.listen("pgjs_test", listener);
-        await sql.notify("pgjs_test", "a");
+        const subscription = await sql.listen("pgjs_relisten", listener);
+        await sql.notify("pgjs_relisten", "a");
         await a;
         await subscription.unlisten();
-        await sql.notify("pgjs_test", "b");
+        await sql.notify("pgjs_relisten", "b");
 
         const c = gate();
         received = c.open;
-        await sql.listen("pgjs_test", listener);
-        await sql.notify("pgjs_test", "c");
+        await sql.listen("pgjs_relisten", listener);
+        await sql.notify("pgjs_relisten", "c");
         await c;
-        expect(xs.join("")).toBe("ac");
+        expect(xs).toEqual(["a", "c"]);
       });
 
       test("multiple listeners and unlisten one", async () => {
@@ -1212,26 +1293,26 @@ if (isDockerEnabled()) {
         await using sql = connect();
         const xs: string[] = [];
         let count = () => {};
-        await sql.listen("pgjs_test", x => {
+        await sql.listen("pgjs_multi", x => {
           xs.push("1" + x);
           count();
         });
-        const s2 = await sql.listen("pgjs_test", x => {
+        const s2 = await sql.listen("pgjs_multi", x => {
           xs.push("2" + x);
           count();
         });
 
         const a = gate();
         count = a.after(2);
-        await sql.notify("pgjs_test", "a");
+        await sql.notify("pgjs_multi", "a");
         await a;
         await s2.unlisten();
 
         const b = gate();
         count = b.open;
-        await sql.notify("pgjs_test", "b");
+        await sql.notify("pgjs_multi", "b");
         await b;
-        expect(xs.join("")).toBe("1a2a1b");
+        expect(xs).toEqual(["1a", "2a", "1b"]);
       });
     });
   });

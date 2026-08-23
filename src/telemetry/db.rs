@@ -191,6 +191,7 @@ pub fn sql_operation(sql: &[u8]) -> Option<&'static str> {
             continue;
         }
         if sql[i..].starts_with(b"/*") {
+            i += 2;
             i += bun_core::strings::index_of(&sql[i..], b"*/")? + 2;
             continue;
         }
@@ -303,6 +304,8 @@ mod tests {
             ("((with x as (select 1) select * from x", Some("WITH")),
             ("-- comment\nUPDATE t SET a=1", Some("UPDATE")),
             ("# mysql comment\n  DELETE FROM t", Some("DELETE")),
+            ("/*/ hint */ SELECT 1", Some("SELECT")),
+            ("/**/UPDATE t SET a=1", Some("UPDATE")),
             ("-- comment without newline", None),
             ("/* hi */ delete from t", Some("DELETE")),
             ("/* unterminated select 1", None),

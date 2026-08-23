@@ -65,15 +65,16 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
 
     if (auto string = dynamicDowncast<JSC::JSString>(referrer)) {
         WTF::String refererString = string->getString(global);
+        RETURN_IF_EXCEPTION(scope, {});
 
         WTF::String keyString = key.toWTFString(global);
-        RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (refererString.startsWith("bake:/"_s) || (refererString == "."_s && keyString.startsWith("bake:/"_s))) {
             BunString refererBunString = Bun::toString(refererString);
             BunString keyBunString = Bun::toString(keyString);
             BunString result = BakeProdResolve(global, &refererBunString, &keyBunString);
-            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+            RETURN_IF_EXCEPTION(scope, {});
 
             return JSC::Identifier::fromString(vm, result.transferToWTFString());
         }
@@ -81,7 +82,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
 
     if (auto string = dynamicDowncast<JSC::JSString>(key)) {
         auto keyView = string->getString(global);
-        RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (keyView.startsWith("bake:/"_s)) {
             WTF::String bakePrefix = "bake:/"_s;
@@ -89,7 +90,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
             BunString bakePrefixBunString = Bun::toString(bakePrefix);
             BunString keyBunString = Bun::toString(keyWithoutScheme);
             BunString result = BakeProdResolve(global, &bakePrefixBunString, &keyBunString);
-            RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+            RETURN_IF_EXCEPTION(scope, {});
 
             return JSC::Identifier::fromString(vm, result.transferToWTFString());
         }

@@ -152,6 +152,53 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
 `);
 });
 
+// https://github.com/oven-sh/bun/issues/40224
+describe.concurrent("DOMException formats as an error", () => {
+  test("Bun.inspect does not dump the legacy constant table", () => {
+    const err = new DOMException("The operation was aborted.", "AbortError");
+    const inspected = Bun.inspect(err);
+    expect(inspected).toContain("AbortError");
+    expect(inspected).toContain("The operation was aborted.");
+    expect(inspected).not.toContain("INDEX_SIZE_ERR");
+    expect(inspected).not.toContain("DATA_CLONE_ERR");
+  });
+
+  test("console.error(abort reason) prints an error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        "const ac = new AbortController(); ac.abort(); console.error(ac.signal.reason);",
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("AbortError");
+    expect(stderr).toContain("aborted");
+    expect(stderr).not.toContain("INDEX_SIZE_ERR");
+    expect(exitCode).toBe(0);
+  });
+
+  test("uncaught DOMException does not dump the legacy constant table", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'throw new DOMException("boom", "AbortError");'],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("AbortError: boom");
+    expect(stderr).not.toContain("INDEX_SIZE_ERR");
+    expect(exitCode).toBe(1);
+  });
+
+  test("DOMException nested in an object formats as an error", () => {
+    const inspected = Bun.inspect({ reason: new DOMException("nested", "DataError") });
+    expect(inspected).toContain("DataError");
+    expect(inspected).not.toContain("INDEX_SIZE_ERR");
+  });
+});
+
 describe("observable properties", () => {
   for (let property of ["sourceURL", "line", "column"]) {
     test(`${property} is observable`, () => {

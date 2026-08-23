@@ -6114,7 +6114,8 @@ impl VirtualMachine {
 
         let is_error_instance = error_instance != JSValue::ZERO
             && error_instance.is_cell()
-            && error_instance.js_type() == JSType::ErrorInstance;
+            && (error_instance.js_type() == JSType::ErrorInstance
+                || error_instance.is_dom_exception());
         // NOTE: cannot use `self.global()` — `global_ref` outlives a
         // `&mut self` recursion (`print_error_instance_js`) and is passed to
         // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)

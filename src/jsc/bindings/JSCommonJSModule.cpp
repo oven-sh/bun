@@ -83,8 +83,6 @@
 #include "ErrorCode.h"
 #include "WebCoreJSBuiltins.h"
 
-extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
-
 namespace Bun {
 using namespace JSC;
 
@@ -140,7 +138,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         resolveFunction = JSC::JSBoundFunction::create(vm,
             globalObject,
             globalObject->requireResolveFunctionUnbound(),
-            moduleObject->filename(),
+            moduleObject,
             ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
         RETURN_IF_EXCEPTION(scope, );
 
@@ -339,8 +337,11 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     if (!requireResolveBound) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
-    JSValue boundThis = requireResolveBound->boundThis();
-    JSString* filename = dynamicDowncast<JSString>(boundThis);
+    auto* boundModule = dynamicDowncast<Bun::JSCommonJSModule>(requireResolveBound->boundThis());
+    if (!boundModule) [[unlikely]] {
+        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+    }
+    JSString* filename = dynamicDowncast<JSString>(boundModule->filename());
     if (!filename) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
@@ -523,8 +524,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterPath,
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
-
-    thisObject->m_dirname.set(globalObject->vm(), thisObject, JSValue::decode(value).toString(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSString* string = JSValue::decode(value).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    thisObject->m_dirname.set(globalObject->vm(), thisObject, string);
     return true;
 }
 
@@ -648,8 +651,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterFilename,
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
-
-    thisObject->m_filename.set(globalObject->vm(), thisObject, JSValue::decode(value).toString(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSString* string = JSValue::decode(value).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    thisObject->m_filename.set(globalObject->vm(), thisObject, string);
     return true;
 }
 
@@ -660,8 +665,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterId,
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
-
-    thisObject->m_id.set(globalObject->vm(), thisObject, JSValue::decode(value).toString(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSString* string = JSValue::decode(value).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    thisObject->m_id.set(globalObject->vm(), thisObject, string);
     return true;
 }
 JSC_DEFINE_CUSTOM_SETTER(setterParent,
@@ -886,14 +893,16 @@ JSCommonJSModule* JSCommonJSModule::create(
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     RELEASE_ASSERT(callframe->argumentCount() == 4);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
 
     auto id = callframe->uncheckedArgument(0).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     JSValue object = callframe->uncheckedArgument(1);
     JSValue hasEvaluated = callframe->uncheckedArgument(2);
     ASSERT(hasEvaluated.isBoolean());
     JSValue parent = callframe->uncheckedArgument(3);
 
-    return JSValue::encode(JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent)));
 }
 
 JSCommonJSModule* JSCommonJSModule::create(
@@ -904,12 +913,15 @@ JSCommonJSModule* JSCommonJSModule::create(
     JSValue parent)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto key = requireMapKey->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     auto index = key->reverseFind(PLATFORM_SEP, key->length());
 
     JSString* dirname;
     if (index != WTF::notFound) {
         dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     } else {
         dirname = jsEmptyString(vm);
     }
@@ -1694,7 +1706,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
-        moduleObject->filename(),
+        moduleObject,
         ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 

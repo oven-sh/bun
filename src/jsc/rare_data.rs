@@ -29,8 +29,8 @@ use super::uuid::UUID;
 //
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
-//     → erased `*mut c_void` slots; high tier lazy-inits.
+//   - `node_fs_stat_watcher_scheduler`
+//     → erased `*mut c_void` slot; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → moved to
 //     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
 //     concrete types.
@@ -208,8 +208,6 @@ pub struct RareData {
     pub(crate) entropy_cache: Option<Box<EntropyCache>>,
 
     pub(crate) hot_map: Option<HotMap>,
-    /// `Vec<*mut bun_runtime::api::cron::CronJob>` — only stored/iterated here.
-    pub cron_jobs: Vec<*mut c_void>,
 
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
@@ -302,7 +300,6 @@ impl Default for RareData {
             stdout_mode: 0,
             entropy_cache: None,
             hot_map: None,
-            cron_jobs: Vec::new(),
             cleanup_hooks: Vec::new(),
             file_polls: None,
             spawn_ipc_group: SocketGroup::default(),
@@ -1023,7 +1020,7 @@ fn get_tls_default_ciphers_from_js(
 impl Drop for RareData {
     fn drop(&mut self) {
         // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
+        // s3_default_client / default_csrf_secret / cleanup_hooks /
         // tls_default_ciphers:
         // all dropped automatically via field Drop.
 
@@ -1031,7 +1028,6 @@ impl Drop for RareData {
             // SAFETY: engine was created by ENGINE_new.
             unsafe { boring::ENGINE_free(engine) };
         }
-        debug_assert!(self.cron_jobs.is_empty());
 
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.

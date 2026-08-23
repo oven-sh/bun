@@ -182,6 +182,150 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+// A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which
+// loop was current when their work started: what the macro started goes to the macro loop (or the wait
+// hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),
+// and whatever a macro started but did not await is adopted by the regular loop once the macro returns
+// (or it is stranded and its keep-alive holds the process open). These run the macro in the main VM:
+// the entry file's macros, or a module require()d so it transpiles on the main thread.
+describe("event loop routing around macros", () => {
+  async function run(files: Record<string, string>, env: Record<string, string> = {}) {
+    using dir = tempDir("macro-loops", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "index.ts"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds also print "[macro] call <name>" to stdout.
+    const lines = stdout
+      .trim()
+      .split("\n")
+      .filter(line => !line.startsWith("[macro]"));
+    return { lines, stderr, exitCode };
+  }
+
+  const unawaited: [name: string, macroSource: string][] = [
+    [
+      "an fs.promises call inside the macro",
+      [
+        `import { promises as fs } from "node:fs";`,
+        `export function m() {`,
+        `  fs.stat(import.meta.dir).then(() => console.log("settled"));`,
+        `  return 1;`,
+        `}`,
+      ].join("\n"),
+    ],
+    [
+      "an fs.promises call at the macro module's top level",
+      [
+        `import { promises as fs } from "node:fs";`,
+        `fs.stat(import.meta.dir).then(() => console.log("settled"));`,
+        `export function m() {`,
+        `  return 1;`,
+        `}`,
+      ].join("\n"),
+    ],
+    [
+      "a fetch() inside the macro",
+      [
+        `export function m() {`,
+        `  fetch(process.env.MACRO_TEST_URL!).then(res => res.text()).then(body => console.log(body));`,
+        `  return 1;`,
+        `}`,
+      ].join("\n"),
+    ],
+    [
+      // 64 bytes or more are hashed on the WebCrypto work queue; its reply and keep-alive release come
+      // back through the pool task's ticket rather than a thread-pool job like the cases above.
+      "a crypto.subtle.digest() inside the macro",
+      [
+        `export function m() {`,
+        `  crypto.subtle.digest("SHA-256", new Uint8Array(4096)).then(() => console.log("settled"));`,
+        `  return 1;`,
+        `}`,
+      ].join("\n"),
+    ],
+    [
+      // JSC's DeferredWorkTimer: the keep-alive and the completion are registered against the loop
+      // current at WebAssembly.compile() and delivered from a JSC helper thread.
+      "a WebAssembly.compile() inside the macro",
+      [
+        `export function m() {`,
+        `  WebAssembly.compile(new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0])).then(() => console.log("settled"));`,
+        `  return 1;`,
+        `}`,
+      ].join("\n"),
+    ],
+  ];
+
+  test.concurrent.each(unawaited)(
+    "%s that it does not await still lets the process exit",
+    async (_name, macroSource) => {
+      await using server = Bun.serve({ port: 0, fetch: () => new Response("settled") });
+      const { lines, stderr, exitCode } = await run(
+        {
+          "m.ts": macroSource,
+          "index.ts": `import { m } from "./m.ts" with { type: "macro" };\nconsole.log("value", m());\n`,
+        },
+        { MACRO_TEST_URL: server.url.href },
+      );
+      // The continuation runs on the macro loop if the work finishes while the macro is still being waited
+      // on and on the regular loop otherwise, so its position relative to the entry module's output varies.
+      expect({ lines: lines.sort(), stderr }).toEqual({ lines: ["settled", "value 1"], stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The program's digest finishes (microseconds, on the work queue) while the macro is parked in its
+  // 200 ms wait. Its callback belongs to the program: it must run after require() returns, not inside
+  // the macro's wait underneath the transpiler, so the macro never sees "program" in the log.
+  test.concurrent("a program completion that arrives during a macro waits for the macro to return", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": [
+        `export async function probe() {`,
+        `  await Bun.sleep(200);`,
+        `  return JSON.stringify(globalThis.log);`,
+        `}`,
+      ].join("\n"),
+      "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const seen = probe();\n`,
+      "index.ts": [
+        `globalThis.log = [];`,
+        `const digest = crypto.subtle.digest("SHA-256", new Uint8Array(4096)).then(() => globalThis.log.push("program"));`,
+        `const { seen } = require("./with-macro.ts");`,
+        `globalThis.log.push("required");`,
+        `await digest;`,
+        `console.log(seen, JSON.stringify(globalThis.log));`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: [`[] ["required","program"]`], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // If a program callback did run mid-macro, work it started there would be routed to the macro loop and,
+  // finishing after the macro returned, would need the regular loop to adopt it. Either way the chain
+  // must complete and the process must exit.
+  test.concurrent("work chained off a program completion across a macro completes", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": `export async function probe() {\n  await Bun.sleep(200);\n  return 1;\n}\n`,
+      "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const value = probe();\n`,
+      "index.ts": [
+        `import { promises as fs } from "node:fs";`,
+        `const chained = crypto.subtle`,
+        `  .digest("SHA-256", new Uint8Array(4096))`,
+        `  .then(() => fs.stat(import.meta.dir))`,
+        `  .then(() => "chained");`,
+        `const { value } = require("./with-macro.ts");`,
+        `console.log(value, await chained);`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

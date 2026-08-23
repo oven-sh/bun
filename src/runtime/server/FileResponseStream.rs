@@ -22,6 +22,7 @@ use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::{EventLoopHandle, VirtualMachine};
+use crate::server::{DirectoryRoute, FileRoute};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
@@ -39,10 +40,8 @@ pub(crate) struct FileResponseStream {
     auto_close: Cell<bool>,
     idle_timeout: Cell<u8>,
 
-    ctx: Cell<*mut c_void>,
-    on_complete: Cell<fn(*mut c_void, AnyResponse)>,
-    on_abort: Cell<Option<fn(*mut c_void, AnyResponse)>>,
-    on_error: Cell<fn(*mut c_void, AnyResponse, sys::Error)>,
+    /// Taken by whichever of complete / abort / error fires first.
+    owner: Cell<Option<StreamOwner>>,
 
     mode: Cell<Mode>,
     reader: JsCell<BufferedReader>,
@@ -110,16 +109,59 @@ pub(crate) struct StartOptions {
     /// should be `stat.size - offset` (after Range/slice clamping).
     pub length: Option<u64>,
     pub idle_timeout: u8,
-    pub ctx: *mut c_void,
-    pub on_complete: fn(*mut c_void, AnyResponse),
-    /// Fires instead of `on_complete` when the client disconnects mid-stream.
-    /// If `None`, abort is reported via `on_complete`.
-    pub on_abort: Option<fn(*mut c_void, AnyResponse)>,
-    pub on_error: fn(*mut c_void, AnyResponse, sys::Error),
+    pub owner: StreamOwner,
+}
+
+/// Who hears about the end of the stream. Exactly one of complete / abort /
+/// error is delivered, exactly once.
+pub(crate) enum StreamOwner {
+    /// The ref `FileRoute::on` took for this response; released on delivery.
+    FileRoute(bun_ptr::RefPtr<FileRoute>),
+    /// Likewise for `DirectoryRoute::on`.
+    DirectoryRoute(bun_ptr::RefPtr<DirectoryRoute>),
+    Ctx {
+        ctx: *mut c_void,
+        on_complete: fn(*mut c_void, AnyResponse),
+        /// Fires instead of `on_complete` when the client disconnects
+        /// mid-stream. If `None`, abort is reported via `on_complete`.
+        on_abort: Option<fn(*mut c_void, AnyResponse)>,
+        on_error: fn(*mut c_void, AnyResponse, sys::Error),
+    },
+}
+
+enum StreamEnd {
+    Complete,
+    Abort,
+    Error(sys::Error),
+}
+
+impl StreamOwner {
+    fn deliver(self, resp: AnyResponse, end: StreamEnd) {
+        match self {
+            StreamOwner::FileRoute(route) => {
+                route.on_response_complete(resp);
+                route.deref();
+            }
+            StreamOwner::DirectoryRoute(route) => {
+                route.on_response_complete(resp);
+                route.deref();
+            }
+            StreamOwner::Ctx {
+                ctx,
+                on_complete,
+                on_abort,
+                on_error,
+            } => match end {
+                StreamEnd::Complete => on_complete(ctx, resp),
+                StreamEnd::Abort => on_abort.unwrap_or(on_complete)(ctx, resp),
+                StreamEnd::Error(err) => on_error(ctx, resp, err),
+            },
+        }
+    }
 }
 
 impl FileResponseStream {
-    pub(crate) fn start(opts: &StartOptions) {
+    pub(crate) fn start(opts: StartOptions) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
@@ -135,10 +177,7 @@ impl FileResponseStream {
                 fd: Cell::new(opts.fd),
                 auto_close: Cell::new(opts.auto_close),
                 idle_timeout: Cell::new(opts.idle_timeout),
-                ctx: Cell::new(opts.ctx),
-                on_complete: Cell::new(opts.on_complete),
-                on_abort: Cell::new(opts.on_abort),
-                on_error: Cell::new(opts.on_error),
+                owner: Cell::new(Some(opts.owner)),
                 mode: Cell::new(if use_sendfile {
                     Mode::Sendfile
                 } else {
@@ -255,6 +294,12 @@ impl FileResponseStream {
         self.state.set(self.state.get() | flags);
     }
 
+    fn deliver(&self, resp: AnyResponse, end: StreamEnd) {
+        if let Some(owner) = self.owner.take() {
+            owner.deliver(resp, end);
+        }
+    }
+
     // ───────────────────────── reader backend ─────────────────────────
 
     #[allow(
@@ -279,7 +324,7 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             resp.end(chunk, resp.should_close_connection());
-            (self.on_complete.get())(self.ctx.get(), resp);
+            self.deliver(resp, StreamEnd::Complete);
             return false;
         }
 
@@ -453,7 +498,7 @@ impl FileResponseStream {
         self.detach_resp();
         let resp = self.resp.get();
         resp.end_send_file(self.sendfile.get().offset, resp.should_close_connection());
-        (self.on_complete.get())(self.ctx.get(), resp);
+        self.deliver(resp, StreamEnd::Complete);
         // `end_send_file` bypasses every shouldCloseConnection() gate: it does
         // not go through internalEnd, and the onWritable gate is skipped
         // because this frame returns `false` to it. Run the gate here — after
@@ -482,12 +527,7 @@ impl FileResponseStream {
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
-            (self
-                .on_abort
-                .get()
-                .unwrap_or_else(|| self.on_complete.get()))(
-                self.ctx.get(), self.resp.get()
-            );
+            self.deliver(self.resp.get(), StreamEnd::Abort);
         }
         self.finish();
     }
@@ -498,7 +538,7 @@ impl FileResponseStream {
             self.detach_resp();
             let resp = self.resp.get();
             resp.force_close();
-            (self.on_error.get())(self.ctx.get(), resp, err);
+            self.deliver(resp, StreamEnd::Error(err));
         }
         self.finish();
     }
@@ -531,7 +571,7 @@ impl FileResponseStream {
             self.detach_resp();
             let resp = self.resp.get();
             resp.end_without_body(resp.should_close_connection());
-            (self.on_complete.get())(self.ctx.get(), resp);
+            self.deliver(resp, StreamEnd::Complete);
             // This end runs uncorked (reader callbacks), so no cork or parser
             // gate will run the close check; do it here, after `on_complete`
             // like `end_sendfile`, so the callbacks see a live socket.

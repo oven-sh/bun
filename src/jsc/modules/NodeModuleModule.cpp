@@ -174,6 +174,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
         if (index != WTF::notFound) {
             dirname = JSC::jsSubstring(globalObject, idString, 0, index);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -226,7 +227,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JS
             "(function (exports, require, module, __filename, __dirname) { "_s));
     JSString* suffix = jsString(vm, String("\n});"_s));
 
-    return JSValue::encode(jsString(globalObject, prefix, code, suffix));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(globalObject, prefix, code, suffix)));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     (JSC::JSGlobalObject * globalObject,
@@ -354,7 +355,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         // If paths are provided, use Bun__resolveSyncWithPaths
         if (!pathsValue.isUndefinedOrNull()) {
             // Node.js requires options.paths to be an array
-            if (!JSC::isArray(globalObject, pathsValue)) {
+            bool pathsIsArray = JSC::isArray(globalObject, pathsValue);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!pathsIsArray) {
                 Bun::throwError(globalObject, scope,
                     Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
                     "options.paths must be an array"_s);
@@ -788,7 +791,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto arg1 = callFrame->argument(0);
-    auto name = makeAtomString(arg1.toWTFString(globalObject));
+    auto name = arg1.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});

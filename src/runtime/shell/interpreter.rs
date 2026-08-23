@@ -2226,7 +2226,7 @@ fn shell_get_path<'a>(
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
 /// the error with the *original* `path_` (not the rewritten one). POSIX: plain
 /// `bun_sys::fstatat(dir, path_)`.
-// consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`)
+// consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`) and the `ls` builtin
 pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
     #[cfg(windows)]
     {
@@ -2237,6 +2237,20 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
     #[cfg(not(windows))]
     {
         bun_sys::fstatat(dir, path_)
+    }
+}
+
+/// `shell_statat` without following a final symlink.
+pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
+    #[cfg(windows)]
+    {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let p = shell_get_path(dir, path_, &mut buf)?;
+        return bun_sys::lstat(p).map_err(|e| e.with_path(path_.as_bytes()));
+    }
+    #[cfg(not(windows))]
+    {
+        bun_sys::lstatat(dir, path_)
     }
 }
 

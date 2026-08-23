@@ -254,11 +254,6 @@ impl Socket {
         us_udp_socket_bound_port(self)
     }
 
-    pub fn bound_ip(&mut self, buf: *mut u8, length: &mut i32) {
-        // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
-        unsafe { us_udp_socket_bound_ip(self, buf, length) }
-    }
-
     /// The bound address's raw bytes (4 for IPv4, 16 for IPv6), written to
     /// the front of `buf`; returns how many were written (0 when unbound or
     /// `buf` is too small).

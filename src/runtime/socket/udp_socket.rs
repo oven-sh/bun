@@ -1643,10 +1643,8 @@ impl UDPSocket {
             return Ok(JSValue::UNDEFINED);
         };
         let mut buf = [0u8; 64];
-        let mut length: i32 = 64;
-        socket.bound_ip(buf.as_mut_ptr(), &mut length);
-
-        let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
+        let length = socket.bound_ip_into(&mut buf);
+        let address_bytes = &buf[..length];
         let port = socket.bound_port();
         Self::create_sock_addr(
             global_this,

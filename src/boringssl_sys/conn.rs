@@ -462,9 +462,8 @@ impl SSL {
         (!p.is_null()).then(|| struct_stack_st_X509::opaque_ref(p))
     }
 
-    /// The `idx`th signature algorithm shared with the peer as
-    /// `(sign_nid, hash_nid)`; with `idx == 0` the return value's first
-    /// element is also the total count (`SSL_get_shared_sigalgs`).
+    /// Total number of signature algorithms shared with the peer
+    /// (`SSL_get_shared_sigalgs` count probe).
     pub fn shared_sigalgs_count(&self) -> usize {
         usize::try_from(SSL_get_shared_sigalgs(
             self, 0, None, None, None, None, None,

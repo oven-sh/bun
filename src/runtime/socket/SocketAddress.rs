@@ -691,7 +691,10 @@ impl SocketAddress {
 
 fn pton(global: &JSGlobalObject, addr: &ZStr, dst: PtonDst<'_>) -> JsResult<()> {
     use bun_jsc::js_global_object::SysErrOptions;
-    match bun_cares_sys::pton(addr.as_cstr(), dst) {
+    // `addr` comes from unvalidated JS; an interior NUL just ends the C string early.
+    let addr =
+        core::ffi::CStr::from_bytes_until_nul(addr.as_bytes_with_nul()).expect("NUL-terminated");
+    match bun_cares_sys::pton(addr, dst) {
         0 => Err(global.throw_sys_error(
             &SysErrOptions {
                 code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,

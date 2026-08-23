@@ -742,10 +742,6 @@ impl Subprocess<'_> {
         // is still performed.
         let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal_arg, global_this)?;
 
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-
         match this.try_kill(sig) {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {

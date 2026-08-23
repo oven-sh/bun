@@ -829,9 +829,7 @@ impl CompileC {
             if !self.deferred_errors.is_empty() {
                 return Err(crate::Error::DeferredErrors);
             } else {
-                if !global_this.has_exception() {
-                    global_this.throw(format_args!("TinyCC failed to compile"));
-                }
+                global_this.throw(format_args!("TinyCC failed to compile"));
                 return Err(crate::Error::JSError);
             }
         }
@@ -1009,9 +1007,7 @@ impl FFI {
         let symbols_object: JSValue = object
             .get_own(global_this, &bun_core::String::borrow_utf8(b"symbols"))?
             .unwrap_or(JSValue::UNDEFINED);
-        if !global_this.has_exception()
-            && (symbols_object.is_empty() || !symbols_object.is_object())
-        {
+        if symbols_object.is_empty() || !symbols_object.is_object() {
             return Err(global_this.throw_invalid_argument_type_value(
                 b"symbols",
                 b"object",
@@ -1019,18 +1015,11 @@ impl FFI {
             ));
         }
 
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         // SAFETY: already checked that symbols_object is an object
         if let Some(val) = generate_symbols(global_this, &mut compile_c.symbols.map, unsafe {
             &*symbols_object.get_object().unwrap()
         })? {
-            if !val.is_empty() && !global_this.has_exception() {
-                return Err(global_this.throw_value(val));
-            }
-            return Err(JsError::Thrown);
+            return Err(global_this.throw_value(val));
         }
 
         for func in compile_c.symbols.map.values() {
@@ -1047,10 +1036,6 @@ impl FFI {
             object.get_own(global_this, &bun_core::String::borrow_utf8(b"library"))?
         {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
-        }
-
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(flags_value) = object.get_truthy(global_this, "flags")? {
@@ -1093,10 +1078,6 @@ impl FFI {
             }
         }
 
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         if let Some(define_value) = object.get_truthy(global_this, "define")? {
             if let Some(define_obj) = define_value.get_object() {
                 let mut iter = JSPropertyIterator::init(
@@ -1118,25 +1099,14 @@ impl FFI {
                             }
                         }
                     }
-                    if global_this.has_exception() {
-                        return Err(JsError::Thrown);
-                    }
 
                     compile_c.define.push([key, owned_value]);
                 }
             }
         }
 
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         if let Some(include_value) = object.get_truthy(global_this, "include")? {
             compile_c.include_dirs = StringArray::from_js(global_this, include_value, "include")?;
-        }
-
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(source_value) =
@@ -1167,10 +1137,6 @@ impl FFI {
                 let source_path = source_value.get_zig_string(global_this)?.to_owned_slice_z();
                 compile_c.source = Source::File(source_path);
             }
-        }
-
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         // Now we compile the code with tinycc.
@@ -1220,15 +1186,12 @@ impl FFI {
             let function_name = function.base_name.clone();
 
             if let Err(err) = function.compile(napi_env) {
-                if !global_this.has_exception() {
-                    let ret = global_this.to_invalid_arguments(format_args!(
-                        "{} when translating symbol \"{}\"",
-                        err.name(),
-                        BStr::new(function_name.as_bytes())
-                    ));
-                    return Err(global_this.throw_value(ret));
-                }
-                return Err(JsError::Thrown);
+                let ret = global_this.to_invalid_arguments(format_args!(
+                    "{} when translating symbol \"{}\"",
+                    err.name(),
+                    BStr::new(function_name.as_bytes())
+                ));
+                return Err(global_this.throw_value(ret));
             }
             match &function.step {
                 Step::Failed { msg, .. } => {

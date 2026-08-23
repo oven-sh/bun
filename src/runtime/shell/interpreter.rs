@@ -2916,14 +2916,6 @@ pub(crate) fn create_shell_interpreter(
         }
     };
 
-    if global.has_exception() {
-        // `deinit_from_finalizer` derefs root_io and closes `root_shell.cwd_fd`.
-        // Neither `Interpreter` nor `ShellExecEnv` implements `Drop`, so a plain
-        // box drop would leak the raw `cwd_fd`; run the explicit teardown.
-        interpreter.deinit_from_exec();
-        return Err(crate::jsc::JsError::Thrown);
-    }
-
     let interpreter = bun_core::heap::into_raw(interpreter);
     // SAFETY: `interpreter` is a fresh heap allocation; the C++ wrapper takes
     // ownership of the raw pointer and `interpreter` outlives this call.

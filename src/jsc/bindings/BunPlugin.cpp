@@ -88,7 +88,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
     }
 
     auto func = callframe->uncheckedArgument(1);
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (!func.isCell() || !func.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "onLoad() expects second argument to be a function"_s));
@@ -185,7 +184,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     auto filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s));
     RETURN_IF_EXCEPTION(scope, {});
     if (filterValue) {
-        RETURN_IF_EXCEPTION(scope, {});
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
             filter = uncheckedDowncast<JSC::RegExpObject>(filterValue);
     }
@@ -207,18 +205,15 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
                 return {};
             }
         }
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto func = callframe->uncheckedArgument(1);
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (!func.isCell() || !func.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "onResolve() expects second argument to be a function"_s));
         return {};
     }
 
-    RETURN_IF_EXCEPTION(scope, {});
     plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
     callback(ctx, globalObject);
 
@@ -293,7 +288,6 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
         JSC::throwTypeError(globalObject, throwScope, "plugin needs an object as first argument"_s);
         return {};
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSC::JSValue setupFunctionValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "setup"_s));
     RETURN_IF_EXCEPTION(throwScope, {});

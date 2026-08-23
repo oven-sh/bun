@@ -359,6 +359,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     Vector<TransferredMessagePort> transferredPorts;
 
@@ -374,7 +375,6 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
     options.dataMessagePorts = WTF::move(transferredPorts);
 
-    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -627,7 +627,6 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessage2Body(JSC
         }
     }
 
-    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(options)); })));
 }
 

@@ -1212,14 +1212,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `Run` — the canonical (and only)
-// definition lives here so the CLI dispatch path can drive the event loop
-// without a crate-cycle; `crate::run_main` re-exports it.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Everything [`Run::start`] needs; built on the stack at the end of
-/// `RunCommand::boot` / `boot_standalone`.
 /// Wire `--cpu-prof*` / `--heap-prof*` into the VM and start the CPU sampler.
 /// Call on the JS thread under the API lock. The profiles are written on the
 /// VM's exit path (`on_exit` / `Bun__writeProfilesBeforeSelfKill`), which reads
@@ -1262,6 +1254,14 @@ pub(crate) fn start_profilers(vm: &mut VirtualMachine, ctx: &ContextData) {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// `Run` — the canonical (and only)
+// definition lives here so the CLI dispatch path can drive the event loop
+// without a crate-cycle; `crate::run_main` re-exports it.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Everything [`Run::start`] needs; built on the stack at the end of
+/// `RunCommand::boot` / `boot_standalone`.
 pub struct Run<'a> {
     ctx: &'a ContextData,
     vm: &'a mut VirtualMachine,

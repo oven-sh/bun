@@ -2,9 +2,9 @@
 //! programmatic/bunfig options that override them.
 //! https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/
 
-use crate::data::{DEFAULT_LIMITS, Limits};
-use crate::processor::BatchConfig;
-use crate::{Instrument, Sampler};
+use bun_telemetry::data::{DEFAULT_LIMITS, Limits};
+use bun_telemetry::processor::BatchConfig;
+use bun_telemetry::{Instrument, Sampler};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Compression {
@@ -164,6 +164,8 @@ fn percent_decode(v: &[u8]) -> String {
 }
 
 /// Read configuration from the environment via `get`.
+#[cold]
+#[inline(never)]
 pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     // OTel SDK env spec: an empty value is the same as unset.
     let get = |k: &str| get(k).filter(|v| !v.trim_ascii().is_empty());

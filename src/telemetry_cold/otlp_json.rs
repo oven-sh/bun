@@ -8,6 +8,8 @@ use crate::decode::{
 };
 
 /// `ExportTraceServiceRequest` protobuf → OTLP/JSON bytes.
+#[cold]
+#[inline(never)]
 pub fn to_json(request: &[u8]) -> Vec<u8> {
     let mut w = Json {
         out: Vec::with_capacity(request.len() * 3),

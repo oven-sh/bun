@@ -10,9 +10,9 @@ use std::sync::Arc;
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult};
-use bun_telemetry::config::{self, Compression, OtlpExporterConfig};
 use bun_telemetry::processor::{self, Processor};
 use bun_telemetry::{Instrument, Limits, Sampler, SpanContext, propagation};
+use bun_telemetry_cold::config::{self, Compression, OtlpExporterConfig};
 
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerTag};
 
@@ -242,6 +242,7 @@ impl VmState {
     }
 }
 
+#[optimize(size)]
 extern "C" fn on_vm_exit(ctx: *mut c_void) {
     // SAFETY: `ctx` is the leaked VmState registered in `vm_state_or_init`.
     let s = unsafe { &*ctx.cast::<VmState>() };
@@ -281,6 +282,7 @@ pub(crate) fn after_record(global: &JSGlobalObject) {
 
 // ─────────────────────────── configuration ───────────────────────────
 
+#[optimize(size)]
 fn read_env_config(vm: &VirtualMachine) -> config::EnvConfig {
     let loader = vm.env_loader();
     config::from_env(&|k: &str| loader.get(k.as_bytes()).map(|v| v.to_vec()))
@@ -288,6 +290,7 @@ fn read_env_config(vm: &VirtualMachine) -> config::EnvConfig {
 
 /// Called once per VM during startup (main and workers). Cheap when
 /// telemetry is not enabled: one env lookup.
+#[optimize(size)]
 pub fn init_for_vm(global: &JSGlobalObject) {
     let vm = global.bun_vm();
     if let Some(s) = vm_state(global) {
@@ -307,7 +310,7 @@ pub fn init_for_vm(global: &JSGlobalObject) {
     let loader = vm.env_loader();
     if loader.get(b"BUN_OTEL").is_none()
         && loader.get(b"OTEL_BUN").is_none()
-        && !bun_telemetry::config::bunfig().is_some_and(|b| b.enabled == Some(true))
+        && !bun_telemetry_cold::config::bunfig().is_some_and(|b| b.enabled == Some(true))
     {
         return;
     }
@@ -328,16 +331,18 @@ pub fn init_for_vm(global: &JSGlobalObject) {
 /// Apply `cfg`: state, resource, exporters, enable mask. Exporters are
 /// additive; `start()` clears them first when it is given an explicit list.
 /// The enable mask replaces the previous one.
-pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry::Config) -> Result<(), Vec<u8>> {
+#[optimize(size)]
+pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry_cold::Config) -> Result<(), Vec<u8>> {
     let otlp_exporters = exporter::OtlpHttpExporter::from_configs(&cfg.otlp_exporters)?;
     configure_with(global, cfg, otlp_exporters);
     Ok(())
 }
 
 /// Apply `cfg` with already-constructed OTLP exporters (infallible part).
+#[optimize(size)]
 fn configure_with(
     global: &JSGlobalObject,
-    cfg: &bun_telemetry::Config,
+    cfg: &bun_telemetry_cold::Config,
     otlp_exporters: Vec<Arc<exporter::OtlpHttpExporter>>,
 ) {
     let vm = global.bun_vm();
@@ -363,25 +368,26 @@ fn configure_with(
     *p.config.write() = cfg.batch;
     let host_name = bun_core::OwnedString::new(crate::node::node_os::hostname_string());
     let os_version = bun_core::OwnedString::new(crate::node::node_os::release());
-    let resource = bun_telemetry::resource::encode(&bun_telemetry::resource::ResourceInfo {
-        service_name: cfg.service_name.as_deref(),
-        extra: &cfg.resource_attributes,
-        runtime_version: bun_core::Environment::VERSION_STRING,
-        pid: std::process::id(),
-        command: vm.main(),
-        executable_path: bun_core::self_exe_path()
-            .map(|p| p.as_bytes())
-            .unwrap_or(b""),
-        host_name: host_name.to_utf8().slice(),
-        // semconv enum values
-        host_arch: match bun_core::Environment::ARCH {
-            bun_core::Environment::Architecture::X64 => "amd64",
-            bun_core::Environment::Architecture::Arm64 => "arm64",
-            bun_core::Environment::Architecture::Wasm => "wasm32",
-        },
-        os_type: bun_core::Environment::OS.npm_name(),
-        os_version: os_version.to_utf8().slice(),
-    });
+    let resource =
+        bun_telemetry_cold::resource::encode(&bun_telemetry_cold::resource::ResourceInfo {
+            service_name: cfg.service_name.as_deref(),
+            extra: &cfg.resource_attributes,
+            runtime_version: bun_core::Environment::VERSION_STRING,
+            pid: std::process::id(),
+            command: vm.main(),
+            executable_path: bun_core::self_exe_path()
+                .map(|p| p.as_bytes())
+                .unwrap_or(b""),
+            host_name: host_name.to_utf8().slice(),
+            // semconv enum values
+            host_arch: match bun_core::Environment::ARCH {
+                bun_core::Environment::Architecture::X64 => "amd64",
+                bun_core::Environment::Architecture::Arm64 => "arm64",
+                bun_core::Environment::Architecture::Wasm => "wasm32",
+            },
+            os_type: bun_core::Environment::OS.npm_name(),
+            os_version: os_version.to_utf8().slice(),
+        });
     p.set_resource(resource);
     for x in otlp_exporters {
         p.add_exporter(x);
@@ -476,6 +482,7 @@ fn arg_string(global: &JSGlobalObject, v: JSValue) -> JsResult<Option<String>> {
 ///    sampler: number | "always_on" | …, instrumentations: { fetch: false, fs: "always" }, batch: { delayMs, maxQueue, maxBatch, timeoutMs },
 ///    captureDbStatement, propagators: ["tracecontext","baggage"] }`
 #[bun_jsc::host_fn]
+#[optimize(size)]
 pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let opts = frame.argument(0);
     let vm = global.bun_vm();
@@ -572,7 +579,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 // Vendor preset: { type: "datadog" | "honeycomb" | …, apiKey?, site?, id?, endpoint? }
                 if let Some(name) = opt_str(global, item, "type")? {
                     let field = |k: &str| opt_str(global, item, k);
-                    let input = bun_telemetry::presets::PresetInput {
+                    let input = bun_telemetry_cold::presets::PresetInput {
                         name: &name,
                         api_key: field("apiKey")?,
                         site: field("site")?.or(field("region")?),
@@ -580,7 +587,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                         endpoint: field("endpoint")?.or(field("url")?),
                     };
                     let loader = vm.env_loader();
-                    let mut x = match bun_telemetry::presets::resolve(&input, &|k| {
+                    let mut x = match bun_telemetry_cold::presets::resolve(&input, &|k| {
                         loader
                             .get(k.as_bytes())
                             .map(|v| bstr::ByteSlice::to_str_lossy(v).into_owned())
@@ -738,6 +745,7 @@ fn normalize_traces_url(url: &str) -> String {
     }
 }
 
+#[optimize(size)]
 fn read_exporter_extras(
     global: &JSGlobalObject,
     obj: JSValue,
@@ -824,10 +832,11 @@ fn sampler_from_js(global: &JSGlobalObject, v: JSValue, arg: Option<JSValue>) ->
     Ok(Sampler::default())
 }
 
+#[optimize(size)]
 fn read_instrumentations(
     global: &JSGlobalObject,
     v: JSValue,
-    cfg: &mut bun_telemetry::Config,
+    cfg: &mut bun_telemetry_cold::Config,
 ) -> JsResult<()> {
     if v.is_array() {
         // Allow-list form: ["http", "fetch"].
@@ -1046,6 +1055,7 @@ pub fn stats(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
 
 /// `decode(bytes)` → array of span objects (see exporter::decode_to_js).
 #[bun_jsc::host_fn]
+#[optimize(size)]
 pub fn decode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let v = frame.argument(0);
     let Some(buf) = v.as_array_buffer(global) else {

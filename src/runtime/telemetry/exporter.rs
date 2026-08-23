@@ -16,9 +16,9 @@ use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HeaderBuilder, Method,
 };
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong, VmHandle, bun_string_jsc};
-use bun_telemetry::config::{Compression, OtlpExporterConfig};
-use bun_telemetry::decode::{self, AnyValue, KeyValue, Repeated, Scope, Span, TraceRequest};
 use bun_telemetry::processor::{ExportPayload, ExportResult, Exporter, Processor};
+use bun_telemetry_cold::config::{Compression, OtlpExporterConfig};
+use bun_telemetry_cold::decode::{self, AnyValue, KeyValue, Repeated, Scope, Span, TraceRequest};
 use bun_threading::thread_pool;
 use bun_url::URL;
 
@@ -74,6 +74,7 @@ unsafe impl Send for OtlpHttpExporter {}
 unsafe impl Sync for OtlpHttpExporter {}
 
 impl OtlpHttpExporter {
+    #[optimize(size)]
     pub fn from_configs(
         cfgs: &[OtlpExporterConfig],
     ) -> Result<Vec<Arc<OtlpHttpExporter>>, Vec<u8>> {
@@ -342,7 +343,7 @@ impl Exporter for ConsoleExporter {
     }
 
     fn export_blocking(&self, payload: &ExportPayload, _deadline_ns: u64) -> ExportResult {
-        let mut json = bun_telemetry::otlp_json::to_json(&payload.body);
+        let mut json = bun_telemetry_cold::otlp_json::to_json(&payload.body);
         json.push(b'\n');
         bun_core::Output::print_error(bstr::BStr::new(&json));
         bun_core::Output::flush();
@@ -511,6 +512,7 @@ fn span_to_js(
 /// `{ traceId, spanId, parentSpanId, name, kind, startTime, endTime (epoch ms),
 ///    attributes, events, links, status, traceFlags, scope, resource }`.
 /// `kind` uses @opentelemetry/api numbering; `status.code` matches it already.
+#[optimize(size)]
 pub fn decode_to_js(global: &JSGlobalObject, request: &[u8]) -> JsResult<JSValue> {
     let out = JSValue::create_empty_array(global, 0)?;
     for rs in TraceRequest::new(request).resource_spans() {
@@ -552,7 +554,10 @@ impl JsFormat {
             JsFormat::Protobuf => bun_jsc::host_fn::from_js_host_call(global, || {
                 bun_jsc::JSUint8Array::from_bytes_copy(global, &payload.body)
             }),
-            JsFormat::Json => str_js(global, &bun_telemetry::otlp_json::to_json(&payload.body)),
+            JsFormat::Json => str_js(
+                global,
+                &bun_telemetry_cold::otlp_json::to_json(&payload.body),
+            ),
         }
     }
 }

@@ -326,6 +326,7 @@ dependencies = [
  "bun_standalone_graph",
  "bun_sys",
  "bun_telemetry",
+ "bun_telemetry_cold",
  "enum-map",
  "scopeguard",
  "thiserror",
@@ -1323,6 +1324,7 @@ dependencies = [
  "bun_sys_jsc",
  "bun_tcc_sys",
  "bun_telemetry",
+ "bun_telemetry_cold",
  "bun_threading",
  "bun_url",
  "bun_uws",
@@ -1657,6 +1659,17 @@ dependencies = [
  "bun_core",
  "bun_http_types",
  "bun_threading",
+ "bun_url",
+]
+
+[[package]]
+name = "bun_telemetry_cold"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_base64",
+ "bun_core",
+ "bun_telemetry",
  "bun_url",
 ]
 

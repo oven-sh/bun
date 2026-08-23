@@ -385,7 +385,7 @@ impl<'a> Parser<'a> {
             if let Some(expr) = json.get(b"telemetry") {
                 if expr.data.e_object().is_some() {
                     // [telemetry] — native OpenTelemetry (Bun.otel). Env vars override.
-                    let mut cfg = bun_telemetry::config::Bunfig::default();
+                    let mut cfg = bun_telemetry_cold::config::Bunfig::default();
                     if let Some(e) = expr.get(b"enabled") {
                         self.expect(&e, ExprTag::EBoolean)?;
                         cfg.enabled = e.as_bool();
@@ -427,7 +427,7 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-                    bun_telemetry::config::set_bunfig(cfg);
+                    bun_telemetry_cold::config::set_bunfig(cfg);
                 } else if cmd != CommandTag::TestCommand {
                     // `telemetry = false` (crash-report/analytics opt-out): run/auto only, as before.
                     self.expect(&expr, ExprTag::EBoolean)?;

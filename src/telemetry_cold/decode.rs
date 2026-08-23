@@ -4,8 +4,8 @@
 
 use core::marker::PhantomData;
 
-use crate::otlp::field as f;
-use crate::proto::{Reader, Value};
+use bun_telemetry::otlp::field as f;
+use bun_telemetry::proto::{Reader, Value};
 
 /// A message that can be viewed over its encoded body.
 pub trait Message<'a>: Sized {
@@ -496,8 +496,10 @@ pub fn hex_id<'b>(id: &[u8], out: &'b mut [u8; 64]) -> &'b [u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::otlp::{self, ScopeChunk, SpanWriter, Value as V};
-    use crate::span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId};
+    use bun_telemetry::otlp::{self, ScopeChunk, SpanWriter, Value as V};
+    use bun_telemetry::span::{
+        Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId,
+    };
 
     #[test]
     fn nesting_is_capped() {
@@ -506,10 +508,10 @@ mod tests {
         for _ in 0..10_000 {
             // ArrayValue.values (field 1, LEN) wrapping the previous AnyValue
             let mut arr = vec![];
-            crate::proto::write_bytes(&mut arr, f::ARR_VALUES, &inner);
+            bun_telemetry::proto::write_bytes(&mut arr, f::ARR_VALUES, &inner);
             // AnyValue.array_value (field 5, LEN)
             let mut av = vec![];
-            crate::proto::write_bytes(&mut av, f::AV_ARRAY, &arr);
+            bun_telemetry::proto::write_bytes(&mut av, f::AV_ARRAY, &arr);
             inner = av;
         }
         fn depth(v: AnyValue<'_>) -> usize {
@@ -523,7 +525,7 @@ mod tests {
 
     #[test]
     fn small_int_kv_fast_paths_decode() {
-        use crate::otlp::{Value, write_key_value};
+        use bun_telemetry::otlp::{Value, write_key_value};
         for v in [
             0i64,
             1,

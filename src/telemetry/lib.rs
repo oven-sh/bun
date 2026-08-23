@@ -7,19 +7,14 @@
 
 pub mod batch;
 pub mod clock;
-pub mod config;
 pub mod data;
 pub mod db;
-pub mod decode;
 pub mod http_record;
 pub mod otlp;
-pub mod otlp_json;
 pub mod pool;
-pub mod presets;
 pub mod processor;
 pub mod propagation;
 pub mod proto;
-pub mod resource;
 pub mod rt;
 pub mod sampler;
 pub mod span;
@@ -29,7 +24,6 @@ mod native_test_shims;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-pub use config::Config;
 pub use data::{DEFAULT_LIMITS, Limits};
 pub use otlp::{SpanWriter, Value};
 pub use pool::{JsCellRef, NativeSpan};

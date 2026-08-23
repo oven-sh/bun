@@ -1,6 +1,6 @@
 //! The OTLP `Resource` describing this process.
 
-use crate::otlp::{self, Value};
+use bun_telemetry::otlp::{self, Value};
 
 pub struct ResourceInfo<'a> {
     pub service_name: Option<&'a str>,
@@ -19,6 +19,8 @@ pub struct ResourceInfo<'a> {
 
 /// Semconv resource: service.*, telemetry.sdk.*, process.*, host.*, os.*
 /// (what the JS SDK's default env/process/host/os detectors report).
+#[cold]
+#[inline(never)]
 pub fn encode(info: &ResourceInfo<'_>) -> Vec<u8> {
     let service_name: &str = match info.service_name {
         Some(s) if !s.is_empty() => s,

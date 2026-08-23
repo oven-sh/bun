@@ -4,6 +4,7 @@
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
+#![feature(optimize_attribute)]
 #![feature(adt_const_params)]
 
 pub mod error;

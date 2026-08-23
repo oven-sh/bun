@@ -53,6 +53,8 @@ fn need(what: &'static str, preset: &str) -> PresetError {
 
 /// Resolve a preset to a concrete OTLP/HTTP exporter. `env` reads the
 /// vendor's conventional variables (`DD_API_KEY`, `HONEYCOMB_API_KEY`, …).
+#[cold]
+#[inline(never)]
 pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfig, PresetError> {
     let key = |vars: &[&str]| -> Option<String> {
         p.api_key

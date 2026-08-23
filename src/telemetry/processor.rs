@@ -3,7 +3,7 @@
 //! out to every configured exporter.
 
 use bun_threading::{Condvar, Guarded, RwLock};
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -140,8 +140,6 @@ pub struct Stats {
     pub spans_dropped: AtomicU64,
     pub exports_ok: AtomicU64,
     pub exports_failed: AtomicU64,
-    pub last_export_ns: AtomicU64,
-    pub generation: AtomicU32,
 }
 
 static GLOBAL: OnceLock<Processor> = OnceLock::new();
@@ -433,9 +431,6 @@ impl Processor {
         let mut payload = payload;
         let mut exporters = exporters;
         loop {
-            self.stats
-                .last_export_ns
-                .store(clock::now_unix_nanos(), Ordering::Relaxed);
             self.inflight.fetch_add(exporters.len(), Ordering::AcqRel);
             payload.expect(exporters.len());
             for e in exporters.drain(..) {

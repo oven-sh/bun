@@ -31,9 +31,9 @@ assert.strictEqual(test_function.TestCall(func4, 1), 2);
 assert.strictEqual(test_function.TestName.name, 'Name');
 assert.strictEqual(test_function.TestNameShort.name, 'Name_');
 
-// We use IIFE for the tracked_function scope instead of a block to be
-// compatible with non-V8 JS engines whose conservative stack scan may keep
-// the object alive while the creating frame is still on the stack.
+// We use IIFE for the tracked_function scope instead of {} to be compatible
+// with non-V8 JS engines that do not support scoped variables (same
+// convention as test_finalizer/test.js).
 (() => {
   let tracked_function = test_function.MakeTrackedFunction(common.mustCall());
   assert(!!tracked_function);

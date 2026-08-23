@@ -17,9 +17,9 @@ if (module !== require.main) {
   assert.strictEqual(test_instance_data.increment(), 42);
 
   // Test that the instance data can be accessed from a finalizer.
-  // We use IIFE for the object's scope to be compatible with non-V8 JS
-  // engines whose conservative stack scan may keep the object alive while
-  // the creating frame is still on the stack.
+  // We use IIFE for the object's scope instead of {} to be compatible with
+  // non-V8 JS engines that do not support scoped variables (same convention
+  // as test_finalizer/test.js).
   (() => {
     test_instance_data.objectWithFinalizer(common.mustCall());
   })();

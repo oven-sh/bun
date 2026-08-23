@@ -237,19 +237,15 @@ fn with_text_format_source_encoded<R>(
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
     // A private mi_heap costs microseconds to create, more than parsing a
-    // small document: keep one per VM thread (`RuntimeState::text_format_arena`,
-    // destroyed with the VM) and recycle it between calls. The slot is empty
-    // while a call is in flight, so a re-entrant call (the argument's
-    // `toString()` parsing another document) gets its own arena; whichever
-    // parks last wins and the other is destroyed.
+    // small document: keep one per VM thread (`RuntimeState::text_format_arena`)
+    // and recycle it between calls. The slot is empty while a call is in
+    // flight, so a re-entrant call gets its own arena.
     struct Recycle(Option<bun_alloc::Arena>);
     impl Drop for Recycle {
         fn drop(&mut self) {
             let Some(mut arena) = self.0.take() else {
                 return;
             };
-            // Re-fetched rather than captured at entry: if the VM state is
-            // gone by now the arena is simply dropped (`mi_heap_destroy`).
             if let Some(slot) = crate::jsc_hooks::text_format_arena_slot() {
                 arena.reset_retain_with_limit(2 * 1024 * 1024);
                 slot.set(Some(arena));

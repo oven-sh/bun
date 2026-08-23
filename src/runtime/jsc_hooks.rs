@@ -106,11 +106,9 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
-    /// Parked `mi_heap` recycled between `Bun.{TOML,YAML,JSON5,JSONC,XML}.parse`
-    /// calls on this thread (see `api::with_text_format_source_encoded`).
-    /// Owned here rather than in a `#[thread_local]` so Worker teardown
-    /// destroys it: mimalloc does not free a `mi_heap_t` when the thread that
-    /// created it exits, so a heap parked in TLS leaks with every Worker.
+    /// Arena recycled between `Bun.{TOML,YAML,JSON5,JSONC,XML}.parse` calls.
+    /// Owned by the VM state, not a `#[thread_local]`: mimalloc does not destroy
+    /// a heap when its creating thread exits, so a TLS-parked one leaked per Worker.
     pub(crate) text_format_arena: Cell<Option<bun_alloc::Arena>>,
 }
 
@@ -259,11 +257,8 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     unsafe { &(*state).global_dns_data }
 }
 
-/// The slot holding this thread's parked text-format parse arena
-/// ([`RuntimeState::text_format_arena`]), or `None` when no VM state is
-/// installed on this thread (callers then use a throwaway arena). Do not hold
-/// the returned reference across code that can tear the VM down; re-fetch it
-/// instead.
+/// This thread's [`RuntimeState::text_format_arena`] slot, or `None` when no
+/// VM state is installed on this thread.
 #[inline]
 pub(crate) fn text_format_arena_slot() -> Option<&'static Cell<Option<bun_alloc::Arena>>> {
     let state = runtime_state();
@@ -272,8 +267,7 @@ pub(crate) fn text_format_arena_slot() -> Option<&'static Cell<Option<bun_alloc:
     }
     // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
     // address is stable until `deinit_runtime_state`, which nulls
-    // `RUNTIME_STATE` before freeing the box, so a non-null `state` here is
-    // never a freed one. Mutation goes through the `Cell`.
+    // `RUNTIME_STATE` before freeing the box. Mutation goes through the `Cell`.
     Some(unsafe { &(*state).text_format_arena })
 }
 

@@ -26,14 +26,9 @@ use crate::stmt;
 // it here; the next `ASTMemoryAllocator` on this thread reclaims it, reusing
 // its committed pages. The pool holds at most one arena (nested scopes — rare
 // — fall back to a fresh `Arena::new()`). `#[thread_local]` (not the
-// `thread_local!` macro) so there is no destructor racing mimalloc's own
-// thread teardown. mimalloc does NOT destroy a parked heap when its thread
-// exits (heaps are not thread-bound in our fork), so an exiting thread strands
-// one empty `mi_heap_t`. That is acceptable only because the threads that park
-// here (bundler/install pool threads, the bundle thread) live as long as the
-// process; per-thread state on threads that come and go (Worker VMs) must be
-// owned by something torn down with the thread instead, like
-// `RuntimeState::text_format_arena` in `bun_runtime`.
+// `thread_local!` macro) so no destructor races mimalloc's own thread
+// teardown. mimalloc does not destroy a parked heap at thread exit; that is
+// fine here because the threads that park live as long as the process.
 #[thread_local]
 static ARENA_POOL: Cell<Option<Arena>> = Cell::new(None);
 

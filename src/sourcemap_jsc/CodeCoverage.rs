@@ -561,6 +561,164 @@ pub mod lcov {
     }
 }
 
+/// Cobertura XML (`coverage-04.dtd`). GitLab coverage visualization reads this
+/// format. Branch metrics are emitted as zero because JSC does not report
+/// them, and `<methods/>` is left empty because JSC does not expose function
+/// names (matching the lcov reporter, which omits FN records).
+pub mod cobertura {
+    use super::*;
+
+    use bun_collections::index_sort;
+    use bun_core::strings;
+    use bun_paths::resolve_path::{self, platform};
+
+    /// Per-file data extracted once from a `Report`: the path relativized
+    /// against `base_path` in posix form, the length of its package (dirname)
+    /// prefix, every executable `(line, hits)` pair, and the covered count —
+    /// reused by the sort, the package grouping, and every rate below.
+    struct File {
+        posix: Vec<u8>,
+        pkg_len: usize,
+        lines: Vec<(u32, u32)>,
+        covered: u32,
+    }
+
+    impl File {
+        fn from_report(report: &Report, base_path: &[u8]) -> File {
+            let mut filename: &[u8] = &report.source_url;
+            if !base_path.is_empty() {
+                filename = resolve_path::relative(base_path, filename);
+            }
+            let mut posix = filename.to_vec();
+            resolve_path::slashes_to_posix_in_place(&mut posix);
+            let pkg_len = resolve_path::dirname::<platform::Posix>(&posix).len();
+
+            let line_hits = report.line_hits.slice();
+            let mut covered: u32 = 0;
+            let mut lines = Vec::with_capacity(report.executable_lines.count());
+            let mut iter = report.executable_lines.iterator::<true, true>();
+            while let Some(line) = iter.next() {
+                let hits = line_hits[line];
+                covered += u32::from(hits > 0);
+                lines.push((line as u32 + 1, hits));
+            }
+            File {
+                posix,
+                pkg_len,
+                lines,
+                covered,
+            }
+        }
+
+        /// `.` for files at the report root, else the posix dirname.
+        fn package(&self) -> &[u8] {
+            if self.pkg_len == 0 {
+                b"."
+            } else {
+                &self.posix[..self.pkg_len]
+            }
+        }
+    }
+
+    pub fn write_format(
+        reports: &[Report<'_>],
+        base_path: &[u8],
+        timestamp_millis: u64,
+        writer: &mut impl bun_io::Write,
+    ) -> bun_io::Result<()> {
+        let files: Vec<File> = reports
+            .iter()
+            .map(|report| File::from_report(report, base_path))
+            .collect();
+
+        let mut total_lines_valid: u64 = 0;
+        let mut total_lines_covered: u64 = 0;
+        for file in &files {
+            total_lines_valid += file.lines.len() as u64;
+            total_lines_covered += u64::from(file.covered);
+        }
+        let line_rate = if total_lines_valid > 0 {
+            total_lines_covered as f64 / total_lines_valid as f64
+        } else {
+            1.0
+        };
+
+        writer.write_all(b"<?xml version=\"1.0\" ?>\n")?;
+        writer.write_all(
+            b"<!DOCTYPE coverage SYSTEM \"http://cobertura.sourceforge.net/xml/coverage-04.dtd\">\n",
+        )?;
+        write!(
+            writer,
+            "<coverage lines-valid=\"{total_lines_valid}\" lines-covered=\"{total_lines_covered}\" line-rate=\"{line_rate:.4}\" branches-valid=\"0\" branches-covered=\"0\" branch-rate=\"0\" timestamp=\"{timestamp_millis}\" complexity=\"0\" version=\"0.1\">\n"
+        )?;
+        writer.write_all(b"    <sources>\n        <source>.</source>\n    </sources>\n    <packages>\n")?;
+
+        let mut order: Vec<usize> = (0..files.len()).collect();
+        index_sort::sort_slice_by(&mut order, |&a, &b| {
+            files[a]
+                .package()
+                .cmp(files[b].package())
+                .then_with(|| files[a].posix.cmp(&files[b].posix))
+        });
+
+        for group in order.chunk_by(|&a, &b| files[a].package() == files[b].package()) {
+            let mut pkg_valid: u64 = 0;
+            let mut pkg_covered: u64 = 0;
+            for &idx in group {
+                pkg_valid += files[idx].lines.len() as u64;
+                pkg_covered += u64::from(files[idx].covered);
+            }
+            let pkg_rate = if pkg_valid > 0 {
+                pkg_covered as f64 / pkg_valid as f64
+            } else {
+                1.0
+            };
+
+            writer.write_all(b"        <package name=\"")?;
+            strings::write_xml_escaped(files[group[0]].package(), writer)?;
+            write!(
+                writer,
+                "\" line-rate=\"{pkg_rate:.4}\" branch-rate=\"0\" complexity=\"0\">\n"
+            )?;
+            writer.write_all(b"            <classes>\n")?;
+            for &idx in group {
+                write_class(&files[idx], writer)?;
+            }
+            writer.write_all(b"            </classes>\n        </package>\n")?;
+        }
+
+        writer.write_all(b"    </packages>\n</coverage>\n")?;
+        Ok(())
+    }
+
+    fn write_class(file: &File, writer: &mut impl bun_io::Write) -> bun_io::Result<()> {
+        let basename = bun_paths::basename(&file.posix);
+        let lines_valid = file.lines.len() as u32;
+        let line_rate = if lines_valid > 0 {
+            file.covered as f64 / lines_valid as f64
+        } else {
+            1.0
+        };
+
+        writer.write_all(b"                <class name=\"")?;
+        strings::write_xml_escaped(basename, writer)?;
+        writer.write_all(b"\" filename=\"")?;
+        strings::write_xml_escaped(&file.posix, writer)?;
+        write!(
+            writer,
+            "\" line-rate=\"{line_rate:.4}\" branch-rate=\"0.0\" complexity=\"0.0\">\n                    <methods/>\n                    <lines>\n"
+        )?;
+        for &(number, hits) in &file.lines {
+            writeln!(
+                writer,
+                "                        <line number=\"{number}\" hits=\"{hits}\"/>"
+            )?;
+        }
+        writer.write_all(b"                    </lines>\n                </class>\n")?;
+        Ok(())
+    }
+}
+
 unsafe extern "C" {
     fn CodeCoverage__withBlocksAndFunctions(
         vm: *mut VM,

@@ -1111,13 +1111,11 @@ impl WebWorker {
     /// other threads may concurrently hold `&WebWorker` on another
     /// thread; producing `&mut` here would be aliased-&mut UB.
     ///
-    /// `vm` is the caller's: `self.vm` is already null while the 'exit' handlers
-    /// run from `shutdown()`, and a process.exit() made there stops the script too.
+    /// `vm` is the caller's: `self.vm` is already null while `shutdown()` runs the 'exit' handlers.
     pub fn exit(&self, vm: &VirtualMachine) {
         self.exit_called.store(true, Ordering::Relaxed);
         let _ = self.set_requested_terminate();
-        // Stop subsequent JS at the next safepoint (process.exit()'s own exception
-        // check, right after `reallyExit` returns). From an immediate this runs
+        // Stop subsequent JS at the next safepoint. From an immediate this runs
         // before the turn's poll; the wake is what ends it.
         vm.handle_ref().request_termination();
     }

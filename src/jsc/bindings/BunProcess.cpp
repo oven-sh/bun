@@ -3674,8 +3674,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns with the
-    // thread's termination requested (also from inside a process.on('exit') handler);
-    // the caller's next exception check throws it, like Node's stack guard check.
+    // thread's termination requested; the caller's next exception check throws it.
     throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
 }

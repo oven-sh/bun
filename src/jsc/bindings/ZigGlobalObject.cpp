@@ -3435,17 +3435,15 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         throwException(scope, res.result.err, globalObject);
         return {};
     }
-
-    if (!queryString.isEmpty()) {
-        auto result = JSC::Identifier::fromString(vm, makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
+    auto derefResult = WTF::makeScopeExit([&] {
         res.result.value.deref();
         queryString.deref();
-        return result;
-    }
+    });
 
-    auto result = Identifier::fromString(vm, res.result.value.toWTFString(BunString::ZeroCopy));
-    res.result.value.deref();
-    return result;
+    if (!queryString.isEmpty()) {
+        return JSC::Identifier::fromString(vm, makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
+    }
+    return Identifier::fromString(vm, res.result.value.toWTFString(BunString::ZeroCopy));
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
@@ -3538,15 +3536,16 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             throwException(scope, resolved.result.err, globalObject);
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
         }
+        auto derefResult = WTF::makeScopeExit([&] {
+            resolved.result.value.deref();
+            queryString.deref();
+        });
 
         if (queryString.isEmpty()) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString());
         } else {
             resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
-            queryString.deref();
         }
-
-        resolved.result.value.deref();
     }
 
     // The C++ module loader now extracts `with.type` into a

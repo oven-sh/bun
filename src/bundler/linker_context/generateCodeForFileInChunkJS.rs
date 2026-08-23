@@ -424,8 +424,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     {
                         continue;
                     }
-                    // The key node is shared with every other chunk printing
-                    // this file; read it, never flatten it in place.
                     let name: &[u8] = match &prop.key.as_ref().unwrap().data {
                         ExprData::EString(s) => s
                             .flattened(temp_arena)

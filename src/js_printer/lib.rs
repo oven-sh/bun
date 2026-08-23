@@ -3762,8 +3762,6 @@ pub(crate) mod __gated_printer {
                         return;
                     }
 
-                    // A local copy: other threads may be printing this node
-                    // right now (one print per chunk), see `EString::flattened`.
                     let e = e.flattened(self.bump);
                     self.add_source_mapping(expr.loc);
 
@@ -3945,7 +3943,6 @@ pub(crate) mod __gated_printer {
                             E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
                             E::TemplateContents::Cooked(cooked) => {
                                 if cooked.is_present() {
-                                    // `parts` aliases the shared AST node.
                                     let local = cooked.flattened(self.bump);
                                     self.print_string_characters_e_string(&local, b'`');
                                 }

@@ -216,6 +216,9 @@ pub struct ReadFile {
     pub task: WorkPoolTask,
     pub(crate) system_error: Option<SystemError>,
     pub(crate) errno: Option<Error>,
+    /// The file's mtime as read off-thread / in the completion; applied to the
+    /// store on the JS thread when the read finishes.
+    pub(crate) last_modified: Option<jsc::JSTimeType>,
     #[cfg(not(windows))]
     pub(crate) io_task: Option<ReadFileTask>,
     pub(crate) io_poll: io::Poll,
@@ -311,6 +314,7 @@ impl ReadFile {
             task: bun_threading::work_task_for::<Self>(),
             system_error: None,
             errno: None,
+            last_modified: None,
             io_task: None,
             io_poll: io::Poll::default(),
             io: io::ParkedRequest::new(io::io_request_callback::<Self>()),
@@ -471,7 +475,12 @@ impl ReadFile {
         let buf = core::mem::take(&mut this.buffer);
         let system_error = this.system_error.take();
         // Held across the completion (it may inspect the store); released after.
-        let _store = this.store.clone();
+        let store = this.store.clone();
+        if let Some(last_modified) = this.last_modified {
+            if let Data::File(file) = Store::data_mut(&store) {
+                file.last_modified = last_modified;
+            }
+        }
         drop(this);
 
         if let Some(err) = system_error {
@@ -542,10 +551,8 @@ impl ReadFile {
             }
         };
 
-        if let Data::File(file) = Store::data_mut(&self.store) {
-            let mtime = bun_sys::PosixStat::init(&stat).mtime();
-            file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
-        }
+        let mtime = bun_sys::PosixStat::init(&stat).mtime();
+        self.last_modified = Some(jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize));
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {
             self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
@@ -753,6 +760,9 @@ pub struct ReadFileUV {
     pub(crate) buffer: Vec<u8>,
     pub(crate) system_error: Option<SystemError>,
     pub(crate) errno: Option<Error>,
+    /// The file's mtime as read off-thread / in the completion; applied to the
+    /// store on the JS thread when the read finishes.
+    pub(crate) last_modified: Option<jsc::JSTimeType>,
     /// `Some` until the read completes; a `ReadFileUV` dropped before that cancels it.
     pub(crate) on_done: Option<ReadFileOnDone>,
     pub(crate) is_regular_file: bool,
@@ -787,6 +797,7 @@ impl ReadFileUV {
             buffer: Vec::new(),
             system_error: None,
             errno: None,
+            last_modified: None,
             on_done: Some(on_done),
             is_regular_file: false,
             req: bun_core::ffi::zeroed(),
@@ -808,6 +819,12 @@ impl ReadFileUV {
         let event_loop = this.event_loop;
 
         let on_done = this.on_done.take().expect("a ReadFileUV completes once");
+
+        if let Some(last_modified) = this.last_modified {
+            if let Data::File(file) = Store::data_mut(&this.store) {
+                file.last_modified = last_modified;
+            }
+        }
 
         let result = if let Some(err) = this.system_error.take() {
             ReadFileResultType::Err(err)
@@ -984,12 +1001,12 @@ impl bun_io::uv_fs::OnFsStat for ReadFileUV {
         let stat = this.req.statbuf;
 
         // keep in sync with resolveSizeAndLastModified
-        if let Data::File(file) = Store::data_mut(&this.store) {
-            // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
-            // platform-width `isize` `to_js_time` expects.
-            file.last_modified =
-                jsc::to_js_time(stat.mtime().sec as isize, stat.mtime().nsec as isize);
-        }
+        // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
+        // platform-width `isize` `to_js_time` expects.
+        this.last_modified = Some(jsc::to_js_time(
+            stat.mtime().sec as isize,
+            stat.mtime().nsec as isize,
+        ));
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
             this.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));

@@ -337,15 +337,14 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("{fn_name} requires at least 1 argument")));
         }
 
-        if self.is_closed() {
-            return Ok(JSValue::FALSE);
-        }
-
         if !args[0].is_string() {
             return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", args[0]));
         }
 
-        let topic = args[0].to_slice(global_this)?;
+        // ToString can run user JS (a String object's toString/toPrimitive), so
+        // it happens before the closed check; the JSString roots the bytes.
+        let topic_string = args[0].to_js_string(global_this)?;
+        let topic = topic_string.view(global_this).to_slice();
 
         if topic.slice().is_empty() {
             return Err(
@@ -353,7 +352,13 @@ impl ServerWebSocket {
             );
         }
 
-        Ok(JSValue::from(op(self.websocket(), topic.slice())))
+        if self.is_closed() {
+            return Ok(JSValue::FALSE);
+        }
+
+        let result = op(self.websocket(), topic.slice());
+        topic_string.ensure_still_alive();
+        Ok(JSValue::from(result))
     }
 
     // pub const js = jsc.Codegen.JSServerWebSocket; — provided by #[bun_jsc::JsClass]
@@ -1067,11 +1072,6 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("send requires at least 1 argument")));
         }
 
-        if self.is_closed() {
-            bun_output::scoped_log!(WebSocketServer, "send() closed");
-            return Ok(JSValue::js_number(0.0));
-        }
-
         let compress = Self::parse_compress_arg(
             global_this,
             "send",
@@ -1083,42 +1083,38 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("send requires a non-empty message")));
         }
 
-        if let Some(buffer) = message_value.as_array_buffer(global_this) {
-            let slice = buffer.slice();
-            return Ok(send_status_to_js(
-                self.websocket().send(slice, Opcode::Binary, compress, true),
-                slice.len(),
-                "send",
-                "bytes",
-            ));
+        let array_buffer = message_value.as_array_buffer(global_this);
+        let mut js_string = None;
+        let string_slice;
+        let (buffer, opcode, unit): (&[u8], Opcode, &'static str) =
+            if let Some(buffer) = &array_buffer {
+                (buffer.slice(), Opcode::Binary, "bytes")
+            } else if let Some(slice) = blob_payload(global_this, "send", message_value)? {
+                (slice, Opcode::Binary, "bytes")
+            } else {
+                // ToString can run user JS that closes the socket; do it before the closed check.
+                let string = message_value.to_js_string(global_this)?;
+                string_slice = string.view(global_this).to_slice();
+                js_string = Some(string);
+                (string_slice.slice(), Opcode::Text, "bytes string")
+            };
+
+        if self.is_closed() {
+            bun_output::scoped_log!(WebSocketServer, "send() closed");
+            return Ok(JSValue::js_number(0.0));
         }
 
-        if let Some(slice) = blob_payload(global_this, "send", message_value)? {
-            let ret = send_status_to_js(
-                self.websocket().send(slice, Opcode::Binary, compress, true),
-                slice.len(),
-                "send",
-                "bytes",
-            );
-            message_value.ensure_still_alive();
-            return Ok(ret);
-        }
-
-        {
-            let js_string = message_value.to_js_string(global_this)?;
-            let view = js_string.view(global_this);
-            let slice = view.to_slice();
-
-            let buffer = slice.slice();
-            let ret = send_status_to_js(
-                self.websocket().send(buffer, Opcode::Text, compress, true),
-                buffer.len(),
-                "send",
-                "bytes string",
-            );
+        let ret = send_status_to_js(
+            self.websocket().send(buffer, opcode, compress, true),
+            buffer.len(),
+            "send",
+            unit,
+        );
+        message_value.ensure_still_alive();
+        if let Some(js_string) = js_string {
             js_string.ensure_still_alive();
-            Ok(ret)
         }
+        Ok(ret)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1134,11 +1130,6 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("sendText requires at least 1 argument")));
         }
 
-        if self.is_closed() {
-            bun_output::scoped_log!(WebSocketServer, "sendText() closed");
-            return Ok(JSValue::js_number(0.0));
-        }
-
         let compress = Self::parse_compress_arg(
             global_this,
             "sendText",
@@ -1150,11 +1141,16 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("sendText expects a string")));
         }
 
+        // ToString can run user JS that closes the socket; do it before the closed check.
         let js_string = message_value.to_js_string(global_this)?;
-        let view = js_string.view(global_this);
-        let slice = view.to_slice();
-
+        let slice = js_string.view(global_this).to_slice();
         let buffer = slice.slice();
+
+        if self.is_closed() {
+            bun_output::scoped_log!(WebSocketServer, "sendText() closed");
+            return Ok(JSValue::js_number(0.0));
+        }
+
         let ret = send_status_to_js(
             self.websocket().send(buffer, Opcode::Text, compress, true),
             buffer.len(),
@@ -1240,64 +1236,52 @@ impl ServerWebSocket {
         name: &'static str,
         opcode: Opcode,
     ) -> JsResult<JSValue> {
+        let value = callframe.argument(0);
+        let array_buffer = if value.is_empty_or_undefined_or_null() {
+            None
+        } else {
+            value.as_array_buffer(global_this)
+        };
+        let string_slice;
+        let mut js_string = None;
+        let buffer: &[u8] = if value.is_empty_or_undefined_or_null() {
+            &[]
+        } else if let Some(data) = &array_buffer {
+            data.slice()
+        } else if let Some(buffer) = blob_payload(global_this, name, value)? {
+            buffer
+        } else if value.is_string() {
+            // ToString can run user JS that closes the socket; do it before the closed check.
+            let string = value.to_js_string(global_this)?;
+            string_slice = string.view(global_this).to_slice();
+            js_string = Some(string);
+            string_slice.slice()
+        } else {
+            return Err(global_this.throw(format_args!(
+                "{} requires a string, Blob, or BufferSource",
+                name
+            )));
+        };
+
+        if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
+            return Err(throw_control_frame_too_large(global_this, buffer.len()));
+        }
+
         if self.is_closed() {
             return Ok(JSValue::js_number(0.0));
         }
 
-        if callframe.arguments_count() > 0 {
-            let value = callframe.argument(0);
-            if !value.is_empty_or_undefined_or_null() {
-                if let Some(data) = value.as_array_buffer(global_this) {
-                    let buffer = data.slice();
-                    if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
-                        return Err(throw_control_frame_too_large(global_this, buffer.len()));
-                    }
-                    return Ok(send_status_to_js(
-                        self.websocket().send(buffer, opcode, false, true),
-                        buffer.len(),
-                        name,
-                        "bytes",
-                    ));
-                } else if let Some(buffer) = blob_payload(global_this, name, value)? {
-                    if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
-                        return Err(throw_control_frame_too_large(global_this, buffer.len()));
-                    }
-                    let ret = send_status_to_js(
-                        self.websocket().send(buffer, opcode, false, true),
-                        buffer.len(),
-                        name,
-                        "bytes",
-                    );
-                    value.ensure_still_alive();
-                    return Ok(ret);
-                } else if value.is_string() {
-                    // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
-                    let string_value = value.to_js_string(global_this)?.to_slice(global_this);
-                    let buffer = string_value.slice();
-                    if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
-                        return Err(throw_control_frame_too_large(global_this, buffer.len()));
-                    }
-                    return Ok(send_status_to_js(
-                        self.websocket().send(buffer, opcode, false, true),
-                        buffer.len(),
-                        name,
-                        "bytes",
-                    ));
-                } else {
-                    return Err(global_this.throw(format_args!(
-                        "{} requires a string, Blob, or BufferSource",
-                        name
-                    )));
-                }
-            }
-        }
-
-        Ok(send_status_to_js(
-            self.websocket().send(&[], opcode, false, true),
-            0,
+        let ret = send_status_to_js(
+            self.websocket().send(buffer, opcode, false, true),
+            buffer.len(),
             name,
             "bytes",
-        ))
+        );
+        value.ensure_still_alive();
+        if let Some(js_string) = js_string {
+            js_string.ensure_still_alive();
+        }
+        Ok(ret)
     }
 
     #[bun_jsc::host_fn(getter)]

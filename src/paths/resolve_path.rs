@@ -1699,14 +1699,6 @@ enum JoinScratch {
     Heap(Vec<u8>),
 }
 
-/// Bound on what `_join_abs_string_buf` writes, scratch or output: the
-/// concatenation, the separator Windows adds after a bare share root, and the
-/// byte normalizing can add (see [`normalize_string_spill`]).
-#[inline]
-fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
-    parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
-}
-
 impl JoinScratch {
     #[inline]
     fn init(base: usize, parts: &[&[u8]]) -> Self {
@@ -1767,7 +1759,8 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
 }
 
 /// [`join_abs_string_buf`] into `buf` when the result fits, otherwise into
-/// `spill` (grown as needed, untouched in the common case); cf. [`join_z_buf_spill`].
+/// `spill` (grown as needed, untouched in the common case): the caller-buffer
+/// form of [`join_abs_string_spill`], cf. [`join_z_buf_spill`].
 pub fn join_abs_string_buf_spill<'a, P: PlatformT>(
     cwd: &'a [u8],
     buf: &'a mut [u8],

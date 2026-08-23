@@ -1380,8 +1380,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     memset(&res.result, 0, sizeof res.result);
     BunString specifierStr = Bun::toString(specifier);
 
-    // Under `bun test`, let mock.module() override builtin modules for require()
-    // the same way fetchCommonJSModule/fetchESMSourceCode do for the non-fast-path.
     if (isBunTest && globalObject->onLoadPlugins.hasVirtualModules()) {
         bool wasModuleMock = false;
         JSC::JSValue mocked = Bun::runVirtualModule(globalObject, &specifierStr, wasModuleMock);

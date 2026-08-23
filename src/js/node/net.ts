@@ -150,6 +150,8 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
+// Pipe vs TCP is not visible on bun's native handle, so the connect and accept paths record it here.
+const kIsPipe = Symbol("kIsPipe");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -1171,6 +1173,8 @@ function onconnection(err, clientHandle) {
     highWaterMark: self.highWaterMark,
   }) as NetSocket | TLSSocket;
   _socket.isServer = true;
+  // The same two sources Server.prototype.address() reads.
+  _socket[kIsPipe] = !!(handle.unix || self[kClusterUnixPath]);
   // Use the server's normalized fields so the per-socket flag agrees with the
   // native listener: node's tlsConnectionListener passes `this.requestCert`
   // (`=== true`-normalized), not the raw option.
@@ -1612,6 +1616,7 @@ function Socket(options?) {
   this._pendingEncoding = undefined; // for compatibility
   this._hadError = false;
   this.isServer = false;
+  this[kIsPipe] = false;
   this._handle = options?.handle || null;
   this[ksocket] = undefined;
   this.server = undefined;
@@ -1912,6 +1917,8 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd != null) {
+      // An adopted descriptor's address family is not inspected.
+      this[kIsPipe] = false;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -2134,6 +2141,7 @@ Socket.prototype.connect = function connect(...args) {
   const { path } = options;
   const pipe = !!path;
   $debug("pipe", pipe, path);
+  this[kIsPipe] = pipe;
 
   if (!this._handle) {
     this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
@@ -2582,6 +2590,10 @@ function fdSyncWritev(data, callback) {
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {
   if (this._handle) {
+    // Only a TCP handle can be reset: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L801-L815
+    if (typeof this[bunTlsSymbol] === "function" || this[kIsPipe]) {
+      throw $ERR_INVALID_HANDLE_TYPE();
+    }
     if (this.connecting) {
       this.once("connect", () => this._reset());
     } else {
@@ -4208,6 +4220,8 @@ function onClusterConnection(err, clientHandle) {
     socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
   }
   socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
+  // After connect({ fd }), which cleared it.
+  socket[kIsPipe] = !!this.unix;
   const blockList = self.blockList;
   if (blockList) {
     const remote = socket.remoteAddress;

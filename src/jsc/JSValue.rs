@@ -368,8 +368,7 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__isJSXElement(self, global))
     }
     /// `JSValue.isDOMException()` — true iff this is a `DOMException`
-    /// wrapper. `DOMException` is not an `ErrorInstance` cell; its
-    /// `js_type()` is `Object`.
+    /// wrapper (an `Object` cell, not an `ErrorInstance`).
     #[inline]
     pub fn is_dom_exception(self) -> bool {
         unsafe extern "C" {

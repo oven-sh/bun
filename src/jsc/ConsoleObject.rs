@@ -2212,10 +2212,8 @@ pub mod formatter {
             use jsc::JSType as T;
             let tag = match js_type {
                 T::ErrorInstance => TagPayload::Error,
-                // DOMException is a wrapper object, not an ErrorInstance
-                // cell. The object formatter would dump the 25 enumerable
-                // legacy constants from its prototype, so format it as an
-                // error like Node does (#40224).
+                // DOMException is an Object cell; the object formatter would
+                // dump its 25 enumerable prototype constants (#40224).
                 T::Object if value.is_dom_exception() => TagPayload::Error,
                 T::NumberObject => TagPayload::Double,
                 T::DerivedArray

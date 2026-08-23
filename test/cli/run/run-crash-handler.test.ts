@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -95,7 +95,10 @@ test.if(isPosix)(
 // "Segmentation fault at 0x<guard page>", or bun.report buckets every deep
 // recursion in native code as an arbitrary wild-pointer crash. Windows gets
 // `EXCEPTION_STACK_OVERFLOW` from the kernel and never needed this detection.
-test.if(isPosix)("native stack overflow is reported as StackOverflow, not SegmentationFault", async () => {
+// Linux and macOS only: those are the targets `fault_context_from_ucontext`
+// has register offsets for; elsewhere SP is unavailable and the fault still
+// reports as a plain segfault.
+test.if(isLinux || isMacOS)("native stack overflow is reported as StackOverflow, not SegmentationFault", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

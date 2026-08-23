@@ -471,6 +471,8 @@ pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
 #[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;
+#[cfg(windows)]
+pub mod uv_fs;
 #[path = "write.rs"]
 pub mod write;
 

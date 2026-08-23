@@ -13,10 +13,10 @@ pub struct InputSourceMap {
     pub map: Arc<ParsedSourceMap>,
     pub sources_content: Box<[Box<[u8]>]>,
     /// Byte offset of the trailing `//# sourceMappingURL=` line in the
-    /// original source (`0` when parsed from raw JSON). The linker strips
-    /// the comment from the emitted slot-0 `sourcesContent` so the inner
-    /// map isn't shipped twice.
-    pub comment_start: usize,
+    /// original source (`None` when parsed from raw JSON). The linker
+    /// strips the comment from the emitted slot-0 `sourcesContent` so the
+    /// inner map isn't shipped twice.
+    pub comment_start: Option<usize>,
 }
 
 impl InputSourceMap {
@@ -32,7 +32,7 @@ impl InputSourceMap {
     pub fn parse_from_source(source: &[u8]) -> Option<Box<InputSourceMap>> {
         let (comment_start, url) = find_source_mapping_url(source)?;
         let mut map = parse_data_url(url)?;
-        map.comment_start = comment_start;
+        map.comment_start = Some(comment_start);
         Some(map)
     }
 }
@@ -147,7 +147,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     Ok(Box::new(InputSourceMap {
         map: Arc::new(psm),
         sources_content: sources_content_slice.into_boxed_slice(),
-        comment_start: 0,
+        comment_start: None,
     }))
 }
 

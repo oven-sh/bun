@@ -1117,17 +1117,18 @@ impl<'a> LinkerContext<'a> {
                     // slot 0: the inner map would otherwise ship twice
                     // (base64 here + decoded in slots 1..N).
                     let file_contents: &[u8] = &sources[index as usize].contents;
-                    match input_source_maps.and_then(|m| m[index as usize].as_deref()) {
-                        Some(ism)
-                            if ism.comment_start > 0
-                                && ism.comment_start <= file_contents.len() =>
-                        {
-                            let truncated = &file_contents[..ism.comment_start];
+                    let comment_start = input_source_maps
+                        .and_then(|m| m[index as usize].as_deref())
+                        .and_then(|ism| ism.comment_start)
+                        .filter(|&start| start <= file_contents.len());
+                    match comment_start {
+                        Some(start) => {
+                            let truncated = &file_contents[..start];
                             let mut quote_buf = MutableString::init(truncated.len() + 2)?;
                             js_printer::quote_for_json(truncated, &mut quote_buf, false)?;
                             j.push_owned(quote_buf.to_default_owned());
                         }
-                        _ => {
+                        None => {
                             let content = quoted_source_map_contents[index as usize]
                                 .as_deref()
                                 .unwrap_or(b"null");

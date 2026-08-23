@@ -432,6 +432,55 @@ describe.concurrent("Bun.build chains inline input sourcemaps", () => {
     expect(parsed.sourcesContent[authoredIdx]).toBe(authoredContent);
   });
 
+  // A module whose entire contents are the comment line has
+  // comment_start == 0; the slot-0 truncation must still apply (offset 0
+  // is a real position, not "unset").
+  test("comment-only onLoad module does not double-ship the inline map", async () => {
+    const dir = tempDirWithFiles("bun-build-comment-only-chained", {
+      "entry.ts": `import './only.comment';\nconsole.log(1);\n`,
+      // On-disk stub so resolution succeeds; onLoad replaces the contents.
+      "only.comment": "",
+    });
+
+    const innerMap = {
+      version: 3,
+      sources: ["comment-only-authored.ts"],
+      sourcesContent: ["// authored\n"],
+      names: [],
+      mappings: "AAAA;",
+    };
+    const commentOnly = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(innerMap)).toString("base64")}`;
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+      plugins: [
+        {
+          name: "comment-only",
+          setup(build) {
+            build.onLoad({ filter: /only\.comment$/ }, () => ({
+              contents: commentOnly,
+              loader: "js",
+            }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+    // No sourcesContent slot may still carry the inline comment.
+    for (const content of parsed.sourcesContent) {
+      expect(content ?? "").not.toContain("sourceMappingURL");
+    }
+  });
+
   // A virtual module (onResolve custom namespace) has no on-disk directory
   // to resolve inner names against; they must surface verbatim instead of
   // being joined with a bogus base.

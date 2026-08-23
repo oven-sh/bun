@@ -283,6 +283,21 @@ describe("mock.module with an async factory when the module is already loaded", 
     `,
   });
 
+  // https://github.com/oven-sh/bun/issues/40007
+  check("an un-awaited factory that only awaits microtasks is applied before the first test runs", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      mock.module("./dep", async () => {
+        await Promise.resolve();
+        return { getValue: () => "mocked" };
+      });
+      import { getValue } from "./dep";
+      test("t", () => {
+        expect(getValue()).toBe("mocked");
+      });
+    `,
+  });
+
   check("the returned promise is what signals that the override has been applied", {
     "fixture.test.ts": `
       import { expect, test, mock } from "bun:test";
@@ -350,6 +365,25 @@ describe("mock.module with an async factory when the module is already loaded", 
           throw new Error("factory-boom");
         });
         await expect(p).rejects.toThrow("factory-boom");
+        expect(getValue()).toBe("real");
+      });
+    `,
+  });
+
+  check("a factory promise that resolves to a non-object is rejected like the synchronous case", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      test("t", async () => {
+        // already fulfilled when it is returned, so it is unwrapped synchronously
+        expect(() => mock.module("./dep", async () => 42)).toThrow(
+          "mock(module, fn) requires a function that returns an object",
+        );
+        const p = mock.module("./dep", async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          return 42;
+        });
+        await expect(p).rejects.toThrow("mock(module, fn) requires a function that returns an object");
         expect(getValue()).toBe("real");
       });
     `,

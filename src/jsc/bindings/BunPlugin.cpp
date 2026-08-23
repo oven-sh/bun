@@ -507,32 +507,33 @@ static void applyModuleMockOverrides(Zig::GlobalObject* globalObject, JSC::JSMod
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (moduleNamespaceObject) {
-        if (auto* object = exportsValue.getObject()) {
-            JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, );
+    // executeOnce() only checks the factory's return value, and a promise is an object.
+    auto* object = exportsValue.getObject();
+    if (!object) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "mock(module, fn) requires a function that returns an object"_s));
+        return;
+    }
 
-            // Read every export before overriding any, so a throwing getter leaves the
-            // namespace untouched.
-            MarkedArgumentBuffer values;
-            values.ensureCapacity(names.size());
-            for (auto& name : names) {
-                JSValue value = object->get(globalObject, name);
-                RETURN_IF_EXCEPTION(scope, );
-                values.append(value);
-            }
-            if (values.hasOverflowed()) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return;
-            }
-            for (size_t i = 0; i < names.size(); ++i) {
-                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
-                RETURN_IF_EXCEPTION(scope, );
-            }
-        } else {
-            // if it's not an object, I guess we just set the default export?
-            moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
+    if (moduleNamespaceObject) {
+        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, );
+
+        // Read every export before overriding any, so a throwing getter leaves the
+        // namespace untouched.
+        MarkedArgumentBuffer values;
+        values.ensureCapacity(names.size());
+        for (auto& name : names) {
+            JSValue value = object->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, );
+            values.append(value);
+        }
+        if (values.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+        for (size_t i = 0; i < names.size(); ++i) {
+            moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
             RETURN_IF_EXCEPTION(scope, );
         }
     }

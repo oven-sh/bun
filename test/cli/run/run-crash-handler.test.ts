@@ -738,7 +738,9 @@ describe("crash inside a native module", () => {
       let address: number;
       [address, i] = readVlq(payload, i);
       if (address === 0) break;
-      let object = "bun";
+      // The encoder only writes `[A-Za-z0-9._+-]` names, so a frame it wrongly
+      // names after an executable called `bun` cannot look like this.
+      let object = "<bun>";
       if (address === 1) {
         let length: number;
         [length, i] = readVlq(payload, i);
@@ -757,7 +759,7 @@ describe("crash inside a native module", () => {
   // there the trace is the fault alone.
   function expectBunCallers(objects: string[]) {
     expect(objects).not.toContain(path.basename(bunExe()));
-    if (isPosix) expect(objects.slice(1)).toContain("bun");
+    if (isPosix) expect(objects.slice(1)).toContain("<bun>");
   }
 
   const loadFixture = () => `const lib = dlopen(${JSON.stringify(fixture)}, {

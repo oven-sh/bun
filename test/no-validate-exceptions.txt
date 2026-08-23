@@ -27,15 +27,6 @@ test/napi/node-napi-tests/test/js-native-api/test_dataview/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
 
-# vendor/elysia
-vendor/elysia/test/aot/response.test.ts
-vendor/elysia/test/cookie/response.test.ts
-vendor/elysia/test/cookie/signature.test.ts
-vendor/elysia/test/core/dynamic.test.ts
-vendor/elysia/test/lifecycle/error.test.ts
-vendor/elysia/test/validator/body.test.ts
-vendor/elysia/test/ws/message.test.ts
-
 # TODO: jsc
 test/js/bun/jsonl/jsonl-parse.test.ts
 

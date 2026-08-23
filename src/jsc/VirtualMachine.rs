@@ -804,6 +804,21 @@ impl VirtualMachine {
         if p.is_null() { None } else { Some(p) }
     }
 
+    /// The main thread VM's libuv loop, or null before the main VM's `init()`
+    /// has installed it. Callable from any thread: `MAIN_THREAD_VM` and
+    /// `event_loop_handle` are both written once during `init()`, before user
+    /// code (and so any N-API addon) can run.
+    #[cfg(windows)]
+    pub fn main_thread_uv_loop() -> *mut crate::PlatformEventLoop {
+        let Some(vm) = Self::get_main_thread_vm() else {
+            return core::ptr::null_mut();
+        };
+        // SAFETY: raw field projection so no `&VirtualMachine` is formed off
+        // the JS thread; the main VM allocation is never freed.
+        unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() }
+            .unwrap_or(core::ptr::null_mut())
+    }
+
     #[inline]
     pub fn is_loaded() -> bool {
         VM.get().is_some()

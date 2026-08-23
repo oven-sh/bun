@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
+import defaultLoopSource from "./uv-stub-stuff/default_loop.c";
 import source from "./uv-stub-stuff/uv_impl.c";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
@@ -182,5 +183,57 @@ describe.if(!isWindows)("uv stubs", () => {
       afterClose: -constants.errno.EBADF,
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// On Windows bun links real libuv and addons resolve uv_* from bun.exe. The
+// exported uv_default_loop must return the loop bun drives: NAN-era addons
+// (ibm_db) call uv_queue_work(uv_default_loop(), ...) directly, and the
+// after-work callback only fires when that loop runs (#40225). libuv's real
+// default loop exists in the binary but nothing ever runs it.
+describe.if(isWindows)("uv_default_loop", () => {
+  let addon: {
+    queueWork: (cb: (ranWork: number) => void) => void;
+    defaultLoopIsNapiLoop: () => boolean;
+  };
+  let addonPath: string = "";
+
+  beforeAll(async () => {
+    const files = {
+      "default_loop.c": await Bun.file(defaultLoopSource).text(),
+      "package.json": JSON.stringify({
+        "name": "default-loop-addon",
+        "version": "1.0.0",
+        "scripts": {
+          "build:napi": "node-gyp configure && node-gyp build",
+        },
+        "dependencies": {
+          "node-gyp": "10.2.0",
+        },
+      }),
+      "binding.gyp": `{
+        "targets": [
+          {
+            "target_name": "default_loop",
+            "sources": [ "default_loop.c" ],
+          },
+        ]
+      }`,
+    };
+    const tempdir = tempDirWithFiles("uv-default-loop", files);
+    // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs
+    // for a root binding.gyp package; build:napi is the single explicit build.
+    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} run build:napi`.env(bunEnv).cwd(tempdir);
+    addonPath = path.join(tempdir, "build/Release/default_loop.node");
+    addon = require(addonPath);
+  });
+
+  test("returns the loop bun drives", () => {
+    expect(addon.defaultLoopIsNapiLoop()).toBe(true);
+  });
+
+  test("uv_queue_work on it delivers the after-work callback", async () => {
+    const ranWork = await new Promise(resolve => addon.queueWork(resolve));
+    expect(ranWork).toBe(1);
   });
 });

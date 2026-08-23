@@ -460,10 +460,8 @@ impl ServerWebSocket {
             result: Ok(JSValue::ZERO),
         };
         ws.cork(&mut corker, Corker::run);
-        let result = corker
-            .result
-            .unwrap_or_else(|e| global_object.take_exception(e));
-        if let Some(err_value) = result.to_error() {
+        if let Err(e) = corker.result {
+            let err_value = global_object.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onOpen exception");
 
             let mut closed_here = false;
@@ -547,22 +545,22 @@ impl ServerWebSocket {
             true,
         );
         ws.cork(&mut corker, Corker::run);
-        let result = corker
-            .result
-            .unwrap_or_else(|e| global_object.take_exception(e));
+        let result = match corker.result {
+            Ok(result) => result,
+            Err(e) => {
+                let err_value = global_object.take_error(e);
+                if let Some((span, entered)) = otel {
+                    drop(entered);
+                    crate::telemetry::websocket::end_message_thrown(span, global_object, err_value)?;
+                }
+                return self
+                    .handler()
+                    .run_error_callback(on_error, global_object, err_value);
+            }
+        };
         if let Some((span, entered)) = otel {
             drop(entered);
             crate::telemetry::websocket::end_message(span, global_object, result)?;
-        }
-
-        if result.is_empty_or_undefined_or_null() {
-            return Ok(());
-        }
-
-        if let Some(err_value) = result.to_error() {
-            return self
-                .handler()
-                .run_error_callback(on_error, global_object, err_value);
         }
 
         if let Some(promise) = result.as_any_promise() {
@@ -614,11 +612,8 @@ impl ServerWebSocket {
             };
             let _loop_guard = vm.enter_event_loop_scope();
             self.websocket().cork(&mut corker, Corker::run);
-            let result = corker
-                .result
-                .unwrap_or_else(|e| global_object.take_exception(e));
-
-            if let Some(err_value) = result.to_error() {
+            if let Err(e) = corker.result {
+                let err_value = global_object.take_error(e);
                 handler.run_error_callback(on_error, global_object, err_value)?;
             }
         }
@@ -667,7 +662,7 @@ impl ServerWebSocket {
             data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
-            let err = global_this.take_exception(e);
+            let err = global_this.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onPing error");
             handler.run_error_callback(on_error, global_this, err)?;
         }
@@ -699,7 +694,7 @@ impl ServerWebSocket {
             data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
-            let err = global_this.take_exception(e);
+            let err = global_this.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onPong error");
             handler.run_error_callback(on_error, global_this, err)?;
         }
@@ -790,7 +785,7 @@ impl ServerWebSocket {
             let message_js = match jsc::bun_string_jsc::create_utf8_for_js(global_object, message) {
                 Ok(v) => v,
                 Err(e) => {
-                    let err = global_object.take_exception(e);
+                    let err = global_object.take_error(e);
                     bun_output::scoped_log!(
                         WebSocketServer,
                         "onClose error (message) {}",
@@ -802,7 +797,7 @@ impl ServerWebSocket {
 
             let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
             if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
-                let err = global_object.take_exception(e);
+                let err = global_object.take_error(e);
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
                 return handler.run_error_callback(on_error, global_object, err);
             }

@@ -72,19 +72,24 @@ pub fn end_message(
     global: &JSGlobalObject,
     result: JSValue,
 ) -> bun_jsc::JsResult<()> {
-    // `to_error` unwraps a JSC::Exception to the thrown value.
-    let r = if let Some(err) = result.to_error() {
-        super::span::record_exception(global, span, err)
-    } else {
-        if let Some(p) = result.as_any_promise() {
-            if p.status() == bun_jsc::js_promise::Status::Rejected {
-                if let Some(mut l) = local(global) {
-                    pool::with(&mut l.pool, span, |s| s.set_status(StatusCode::Error, b""));
-                }
+    if let Some(p) = result.as_any_promise() {
+        if p.status() == bun_jsc::js_promise::Status::Rejected {
+            if let Some(mut l) = local(global) {
+                pool::with(&mut l.pool, span, |s| s.set_status(StatusCode::Error, b""));
             }
         }
-        Ok(())
-    };
+    }
+    super::end_native(global, span, 0, |_| {});
+    Ok(())
+}
+
+/// End a message span after the handler threw `err` (the thrown value).
+pub fn end_message_thrown(
+    span: NativeSpan,
+    global: &JSGlobalObject,
+    err: JSValue,
+) -> bun_jsc::JsResult<()> {
+    let r = super::span::record_exception(global, span, err);
     super::end_native(global, span, 0, |_| {});
     r
 }

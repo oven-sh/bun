@@ -454,6 +454,37 @@ pub fn copy_latin1_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
     }
 }
 
+/// [`copy_cp1252_into_utf16`] into a fresh, exactly-sized `Vec<u16>` (no zero-fill).
+pub fn cp1252_to_utf16_alloc(cp1252: &[u8]) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::with_capacity(cp1252.len());
+    let spare = &mut out.spare_capacity_mut()[..cp1252.len()];
+    // SAFETY: `MaybeUninit<u16>` and `u16` have the same layout; the slice is
+    // handed write-only to `copy_cp1252_into_utf16`, which stores one unit per
+    // input byte and reads none of it, so all `cp1252.len()` units are then set.
+    unsafe {
+        let dst = &mut *(core::ptr::from_mut(spare) as *mut [u16]);
+        let r = copy_cp1252_into_utf16(dst, cp1252);
+        debug_assert_eq!(r.written as usize, cp1252.len());
+        out.set_len(r.written as usize);
+    }
+    out
+}
+
+/// Each Latin-1 byte widened to one native-endian UTF-16 code unit, appended
+/// to `out` as bytes (`2 * latin1.len()` of them, no zero-fill).
+pub fn append_latin1_as_utf16_bytes(out: &mut Vec<u8>, latin1: &[u8]) {
+    out.reserve(latin1.len() * 2);
+    let (pairs, _) = out.spare_capacity_mut().as_chunks_mut::<2>();
+    for (pair, &b) in pairs.iter_mut().zip(latin1) {
+        let [lo, hi] = u16::from(b).to_ne_bytes();
+        pair[0].write(lo);
+        pair[1].write(hi);
+    }
+    // SAFETY: the loop initialized one pair per input byte — the first
+    // `2 * latin1.len()` spare bytes, which `reserve` made room for.
+    unsafe { out.set_len(out.len() + latin1.len() * 2) };
+}
+
 pub fn element_length_cp1252_into_utf16(cp1252_: &[u8]) -> usize {
     // cp1252 is always at most 1 UTF-16 code unit long
     cp1252_.len()

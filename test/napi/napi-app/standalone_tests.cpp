@@ -589,6 +589,24 @@ static napi_value test_napi_run_script(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+// After a throwing napi_run_script, napi_get_and_clear_last_exception hands
+// the addon the value the script threw (not an engine wrapper around it).
+static napi_value
+test_napi_run_script_last_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value ret = nullptr;
+  napi_status status = napi_run_script(env, info[1], &ret);
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  napi_valuetype type;
+  NODE_API_CALL(env, napi_typeof(env, exc, &type));
+  bool is_error = false;
+  NODE_API_CALL(env, napi_is_error(env, exc, &is_error));
+  printf("status=%d typeof=%d is_error=%d\n", (int)status, (int)type,
+         is_error ? 1 : 0);
+  return exc;
+}
+
 static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   const napi_status status = napi_throw(env, nullptr);
@@ -4494,6 +4512,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_many_args);
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_last_exception);
   REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);

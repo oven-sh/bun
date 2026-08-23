@@ -3070,7 +3070,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
             return napi_set_last_error(env, napi_pending_exception);
         }
         // Latched on the env like napi_throw; Node returns napi_generic_failure (not napi_pending_exception) here.
-        env->scheduleException(thrown.get());
+        env->scheduleException(thrown->value());
         return napi_set_last_error(env, napi_generic_failure);
     }
 

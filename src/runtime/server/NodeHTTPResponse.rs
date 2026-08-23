@@ -1541,6 +1541,15 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
     });
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
 
+    // Describe the rejection on the request span first: reading the error's
+    // name/message/stack can run getters, so do it before response state is
+    // looked at. A pending termination just carries on to the cleanup below.
+    let span = this.otel_span.get();
+    if span.is_some() {
+        this.otel_handler_error.set(true);
+        let _ = crate::telemetry::span::record_exception(global_object, span, err);
+    }
+
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
         && !flags.contains(Flags::SOCKET_CLOSED)
@@ -1560,13 +1569,6 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
             raw_response.clear_timeout();
             if !raw_response.state().is_http_status_called() {
                 this.write_status(raw_response, 500);
-            }
-            this.otel_handler_error.set(true);
-            let span = this.otel_span.get();
-            if span.is_some()
-                && crate::telemetry::span::record_exception(global_object, span, err).is_err()
-            {
-                return JSValue::ZERO; // terminating
             }
             raw_response.end_stream(raw_response.state().is_http_connection_close());
         }

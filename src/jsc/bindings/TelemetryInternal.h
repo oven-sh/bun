@@ -61,11 +61,9 @@ inline uint64_t telemetryTimeInputToNs(JSValue v)
     if (auto* arr = dynamicDowncast<JSArray>(v.asCell())) {
         JSValue s = arr->tryGetIndexQuickly(0u), n = arr->tryGetIndexQuickly(1u);
         if (s.isNumber() && n.isNumber()) {
-            {
-                double ds = s.asNumber(), dn = n.asNumber();
-                if (ds >= 0 && ds < 1.8e10 && dn >= 0 && dn < 1e12)
-                    return static_cast<uint64_t>(ds) * 1000000000ull + static_cast<uint64_t>(dn);
-            }
+            double ds = s.asNumber(), dn = n.asNumber();
+            if (ds >= 0 && ds < 1.8e10 && dn >= 0 && dn < 1e12)
+                return static_cast<uint64_t>(ds) * 1000000000ull + static_cast<uint64_t>(dn);
         }
     }
     return 0;

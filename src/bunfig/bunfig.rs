@@ -428,7 +428,8 @@ impl<'a> Parser<'a> {
                         }
                     }
                     bun_telemetry::config::set_bunfig(cfg);
-                } else {
+                } else if cmd != CommandTag::TestCommand {
+                    // `telemetry = false` (crash-report/analytics opt-out): run/auto only, as before.
                     self.expect(&expr, ExprTag::EBoolean)?;
                     bun_analytics::set_enabled(
                         if expr.as_bool().expect("infallible: type checked") {

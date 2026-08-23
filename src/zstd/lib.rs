@@ -2,6 +2,7 @@
 use core::ffi::{c_ulonglong, c_void};
 
 use bun_core::ZStr;
+use bun_core::ffi::FfiSlice;
 
 // ─── FFI bindings ─────────────────────────────────────────────────────────
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
@@ -796,7 +797,7 @@ pub struct Step {
 /// One zstd call over `input` into `out[len..]`, offering at most `out_limit` bytes.
 #[inline]
 fn stream_step(
-    input: &[u8],
+    input: FfiSlice<'_>,
     out: &mut Vec<u8>,
     out_limit: usize,
     call: impl FnOnce(&mut c::ZSTD_outBuffer, &mut c::ZSTD_inBuffer) -> usize,
@@ -838,14 +839,21 @@ impl CompressStream {
 
     /// One `ZSTD_compressStream2` call; `end` selects `ZSTD_e_end` over
     /// `ZSTD_e_continue`.
-    pub fn step(&mut self, input: &[u8], out: &mut Vec<u8>, out_limit: usize, end: bool) -> Step {
+    pub fn step(
+        &mut self,
+        input: FfiSlice<'_>,
+        out: &mut Vec<u8>,
+        out_limit: usize,
+        end: bool,
+    ) -> Step {
         let directive = if end {
             c::ZSTD_e_end
         } else {
             c::ZSTD_e_continue
         };
         stream_step(input, out, out_limit, |out_buf, in_buf| {
-            // SAFETY: live CCtx; the buffers describe `input` and the spare window for this one call.
+            // SAFETY: live CCtx; the buffers describe `input` (readable, FfiSlice
+            // invariant; zstd only reads it) and the spare window for this one call.
             unsafe { c::ZSTD_compressStream2(self.0.as_ptr(), out_buf, in_buf, directive) }
         })
     }
@@ -870,9 +878,10 @@ impl DecompressStream {
     }
 
     /// One `ZSTD_decompressStream` call.
-    pub fn step(&mut self, input: &[u8], out: &mut Vec<u8>, out_limit: usize) -> Step {
+    pub fn step(&mut self, input: FfiSlice<'_>, out: &mut Vec<u8>, out_limit: usize) -> Step {
         stream_step(input, out, out_limit, |out_buf, in_buf| {
-            // SAFETY: live DCtx; the buffers describe `input` and the spare window for this one call.
+            // SAFETY: live DCtx; the buffers describe `input` (readable, FfiSlice
+            // invariant; zstd only reads it) and the spare window for this one call.
             unsafe { c::ZSTD_decompressStream(self.0.as_ptr(), out_buf, in_buf) }
         })
     }

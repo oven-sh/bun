@@ -220,12 +220,17 @@ impl Codec {
     /// collects at most `max(high_water_mark, chunk length)` bytes into `out` and
     /// returns `true` if the codec stopped at that cap, in which case the caller
     /// must step again (with no input) before feeding the next chunk.
-    fn step(&mut self, input: &[u8], finish: bool, out: &mut Vec<u8>) -> Result<bool, CodecError> {
+    fn step(
+        &mut self,
+        input: FfiSlice<'_>,
+        finish: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<bool, CodecError> {
         out.clear();
         if let Some(mut pending) = self.pending.take() {
             debug_assert!(input.is_empty());
             return match self.run(
-                &pending.input[pending.pos..],
+                FfiSlice::new(&pending.input[pending.pos..]),
                 pending.finish,
                 true,
                 pending.cap,
@@ -241,10 +246,10 @@ impl Codec {
         }
         // Zstd decode: re-attach the frame magic the previous chunk ended inside of.
         let joined;
-        let bytes: &[u8] = if self.zstd_head_len > 0 {
-            joined = [&self.zstd_head[..self.zstd_head_len as usize], input].concat();
+        let bytes = if self.zstd_head_len > 0 {
+            joined = input.to_vec_with_prefix(&self.zstd_head[..self.zstd_head_len as usize]);
             self.zstd_head_len = 0;
-            &joined
+            FfiSlice::new(&joined)
         } else {
             input
         };
@@ -253,7 +258,7 @@ impl Codec {
             Progress::Done => Ok(false),
             Progress::More { consumed } => {
                 self.pending = Some(Pending {
-                    input: bytes[consumed..].to_vec(),
+                    input: bytes.skip(consumed).to_vec(),
                     pos: 0,
                     finish,
                     cap,
@@ -268,7 +273,7 @@ impl Codec {
     /// input left, to drain the output it is holding.
     fn run(
         &mut self,
-        input: &[u8],
+        input: FfiSlice<'_>,
         finish: bool,
         continuing: bool,
         cap: usize,
@@ -293,7 +298,7 @@ impl Codec {
                     };
                     let limit = reserve(out, cap)?;
                     let (consumed, rc) = s.step_into_spare(remaining, out, limit, flush);
-                    remaining = &remaining[consumed..];
+                    remaining = remaining.skip(consumed);
                     match rc {
                         zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
                         zlib::ReturnCode::StreamEnd => return Ok(Progress::Done),
@@ -339,7 +344,7 @@ impl Codec {
                     };
                     let limit = reserve(out, cap)?;
                     let (consumed, rc) = s.step_into_spare(remaining, out, limit, flush);
-                    remaining = &remaining[consumed..];
+                    remaining = remaining.skip(consumed);
                     match rc {
                         zlib::ReturnCode::Ok => {}
                         zlib::ReturnCode::BufError => {
@@ -390,7 +395,7 @@ impl Codec {
                     }
                     let limit = reserve(out, cap)?;
                     let step = encoder.step(op, remaining, out, limit);
-                    remaining = &remaining[step.consumed..];
+                    remaining = remaining.skip(step.consumed);
                     if !step.result {
                         return Err(CodecError::Message("brotli encode failed"));
                     }
@@ -415,7 +420,7 @@ impl Codec {
                     }
                     let limit = reserve(out, cap)?;
                     let step = decoder.step(remaining, out, limit);
-                    remaining = &remaining[step.consumed..];
+                    remaining = remaining.skip(step.consumed);
                     match step.result {
                         brotli::BrotliDecoderResult::success => {
                             self.ended = true;
@@ -455,7 +460,7 @@ impl Codec {
                     }
                     let limit = reserve(out, cap)?;
                     let step = cctx.step(remaining, out, limit, finish);
-                    remaining = &remaining[step.consumed..];
+                    remaining = remaining.skip(step.consumed);
                     if bun_zstd::c::ZSTD_isError(step.code) != 0 {
                         return Err(zstd_error(step.code, "zstd encode failed"));
                     }
@@ -473,7 +478,9 @@ impl Codec {
                         if remaining.is_empty() {
                             return Ok(Progress::Done);
                         }
-                        let head = &remaining[..remaining.len().min(4)];
+                        let mut head_buf = [0u8; 4];
+                        let head_len = remaining.copy_to(&mut head_buf);
+                        let head = &head_buf[..head_len];
                         if !Self::is_zstd_frame_prefix(head) {
                             return Err(CodecError::TrailingJunk);
                         }
@@ -481,8 +488,8 @@ impl Codec {
                             if finish {
                                 return Err(CodecError::TrailingJunk);
                             }
-                            self.zstd_head[..head.len()].copy_from_slice(head);
-                            self.zstd_head_len = head.len() as u8;
+                            self.zstd_head = head_buf;
+                            self.zstd_head_len = head_len as u8;
                             return Ok(Progress::Done);
                         }
                         dctx.reset();
@@ -495,7 +502,7 @@ impl Codec {
                     }
                     let limit = reserve(out, cap)?;
                     let step = dctx.step(remaining, out, limit);
-                    remaining = &remaining[step.consumed..];
+                    remaining = remaining.skip(step.consumed);
                     if bun_zstd::c::ZSTD_isError(step.code) != 0 {
                         return Err(zstd_error(step.code, "zstd decode failed"));
                     }
@@ -521,14 +528,14 @@ impl CompressionStreamCoder {
     fn step(&mut self, input: &[u8], finish: bool, out: &mut Vec<u8>) -> Result<bool, CodecError> {
         debug_assert!(self.codec.is_some(), "codec stepped while off-thread");
         match &mut self.codec {
-            Some(codec) => codec.step(input, finish, out),
+            Some(codec) => codec.step(FfiSlice::new(input), finish, out),
             None => Err(CodecError::Busy),
         }
     }
 }
 
 /// A chunk's bytes for the pool thread: the pinned ArrayBuffer they live in
-/// (copied out there, off the JS thread), or a copy made up front.
+/// (fed to the codec in place), or a copy made up front.
 pub(crate) enum AsyncInput {
     Pinned(PinnedArrayBuffer),
     Owned(Vec<u8>),
@@ -543,19 +550,11 @@ impl AsyncInput {
         }
     }
 
-    /// Pool thread, under the job's ticket: the bytes to feed the codec
-    /// (`snapshot` receives the copy of a pinned chunk).
-    pub(crate) fn bytes<'a>(
-        &'a self,
-        ticket: &bun_jsc::Ticket,
-        snapshot: &'a mut Vec<u8>,
-    ) -> &'a [u8] {
+    /// Pool thread, under the job's ticket: the bytes to feed the codec.
+    pub(crate) fn ffi_slice<'a>(&'a self, ticket: &bun_jsc::Ticket) -> FfiSlice<'a> {
         match self {
-            Self::Pinned(pinned) => {
-                *snapshot = pinned.to_vec(ticket);
-                snapshot
-            }
-            Self::Owned(v) => v,
+            Self::Pinned(pinned) => pinned.ffi_slice(ticket),
+            Self::Owned(v) => FfiSlice::new(v),
         }
     }
 }
@@ -741,11 +740,12 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     type Js = CompressionAsyncJs;
 
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        // A pinned chunk is copied here, off the JS thread.
-        let mut snapshot = Vec::new();
-        let bytes = this.input.bytes(done.ticket(), &mut snapshot);
         let result = match &mut this.codec {
-            Some(codec) => codec.step(bytes, this.finish, &mut this.out),
+            Some(codec) => codec.step(
+                this.input.ffi_slice(done.ticket()),
+                this.finish,
+                &mut this.out,
+            ),
             None => Err(CodecError::Busy),
         };
         match result {
@@ -778,8 +778,8 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 }
 
 /// Schedules one off-thread step; a continuation step passes no chunk and no
-/// input (the codec kept the tail). `input` is `chunk`'s bytes: pinned in
-/// place when `chunk` allows it, else copied.
+/// input (the codec kept the tail). `input` is `chunk`'s bytes: pinned and
+/// read in place when `chunk` allows it, else copied.
 // HOST_EXPORT(CompressionStreamCoder__transformAsync, c)
 pub fn transform_async(
     this: &mut crate::webcore::compression_stream_coder::CompressionStreamCoder,

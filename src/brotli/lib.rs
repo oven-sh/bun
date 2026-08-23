@@ -1,5 +1,7 @@
 use core::ptr;
 
+use bun_core::ffi::FfiSlice;
+
 pub mod error;
 pub use error::{Error, Result};
 
@@ -282,7 +284,7 @@ pub struct Step<R> {
 /// One brotli call over `input` into `out[len..]`, offering at most `out_limit` bytes.
 #[inline]
 fn stream_step<R>(
-    input: &[u8],
+    input: FfiSlice<'_>,
     out: &mut Vec<u8>,
     out_limit: usize,
     call: impl FnOnce(&mut usize, &mut *const u8, &mut usize, &mut *mut u8) -> R,
@@ -331,7 +333,7 @@ impl EncoderStream {
     pub fn step(
         &mut self,
         op: c::BrotliEncoderOperation,
-        input: &[u8],
+        input: FfiSlice<'_>,
         out: &mut Vec<u8>,
         out_limit: usize,
     ) -> Step<bool> {
@@ -387,7 +389,7 @@ impl DecoderStream {
     /// One `BrotliDecoderDecompressStream` call.
     pub fn step(
         &mut self,
-        input: &[u8],
+        input: FfiSlice<'_>,
         out: &mut Vec<u8>,
         out_limit: usize,
     ) -> Step<c::BrotliDecoderResult> {

@@ -165,20 +165,21 @@ impl ArrayBuffer {
 }
 
 /// An `ArrayBuffer`'s (or view's) bytes handed to a pool [`Job`](crate::Job)
-/// without copying them on the JS thread: the buffer is pinned (it cannot be
-/// detached or transferred, and — being neither resizable nor shared — cannot
-/// move, shrink, or be written by another agent) and its cell GC-protected
-/// until this is dropped. JS on the owning thread can still store into it
-/// while the job runs, so the job never views it as a `&[u8]`; it takes a
-/// snapshot with [`to_vec`](Self::to_vec) under its [`Ticket`](crate::Ticket).
-/// Like [`ThreadSafe`](crate::node_path::ThreadSafe), it is made on the JS
-/// thread and released there when the job comes back.
+/// without copying: the buffer is pinned (it cannot be detached or
+/// transferred, and — being neither resizable nor shared — cannot move,
+/// shrink, or be written by another agent) and its cell GC-protected until
+/// this is dropped. JS on the owning thread can still store into it while the
+/// job runs, so the job never views it as a `&[u8]`: [`ffi_slice`](Self::ffi_slice)
+/// lends it as an [`FfiSlice`](bun_core::ffi::FfiSlice) for C code (a codec)
+/// to read, under the job's [`Ticket`](crate::Ticket). Like
+/// [`ThreadSafe`](crate::node_path::ThreadSafe), it is made on the JS thread
+/// and released there when the job comes back.
 pub struct PinnedArrayBuffer(ArrayBuffer);
 
-// SAFETY: the only off-thread operation is `to_vec`, which demands a `Ticket`
-// (VM alive) and raw-copies memory that is pinned in place and protected for
-// as long as `self` lives; `Drop` releases pin/protect only on a JS thread (see
-// there) and is a leak, not a race, anywhere else.
+// SAFETY: the only off-thread operation is `ffi_slice`, which demands a
+// `Ticket` (VM alive) and lends memory that is pinned in place and protected
+// for as long as `self` lives, never as a `&[u8]`; `Drop` releases pin/protect
+// only on a JS thread (see there) and is a leak, not a race, anywhere else.
 unsafe impl Send for PinnedArrayBuffer {}
 
 impl PinnedArrayBuffer {
@@ -198,23 +199,15 @@ impl PinnedArrayBuffer {
         self.0.byte_len
     }
 
-    /// A copy of the bytes as they are now, from any thread that holds a
-    /// job's ticket. The owning JS thread may be storing into the buffer
-    /// concurrently; what such a racing store contributes is unspecified.
-    pub fn to_vec(&self, _vm_alive: &crate::Ticket) -> Vec<u8> {
-        let len = self.0.byte_len;
-        let mut out = Vec::<u8>::with_capacity(len);
-        if len != 0 {
-            // SAFETY: `ptr[..len]` is the pinned, protected backing store (alive
-            // while the VM is, which the ticket proves); `out` has `len` bytes of
-            // capacity and the two cannot overlap. Read through a raw pointer,
-            // never a `&[u8]`, because JS may write it meanwhile.
-            unsafe {
-                core::ptr::copy_nonoverlapping(self.0.ptr.cast_const(), out.as_mut_ptr(), len);
-                out.set_len(len);
-            }
-        }
-        out
+    /// The bytes, for C code to read from any thread that holds a job's
+    /// ticket. The owning JS thread may store into them concurrently; a
+    /// reader sees each byte's old or new value.
+    pub fn ffi_slice<'a>(&'a self, _vm_alive: &crate::Ticket) -> bun_core::ffi::FfiSlice<'a, u8> {
+        // SAFETY: pinned (no detach/transfer, not resizable/shared) and
+        // protected while `self` lives, and the heap outlives the ticket: the
+        // `byte_len` bytes at `ptr` stay allocated for `'a`. May be concurrently
+        // written by JS; `FfiSlice` never forms a `&[u8]` over it.
+        unsafe { bun_core::ffi::FfiSlice::from_raw(self.0.ptr.cast_const(), self.0.byte_len) }
     }
 }
 

@@ -22,6 +22,7 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
+use bun_core::ffi::FfiSlice;
 pub use bun_zlib_sys::shared::{Bytef, uInt, uLong, uLongf};
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
@@ -946,7 +947,14 @@ impl DeflateEncoder {
         if out.try_reserve(reserve).is_err() {
             return (0, ReturnCode::MemError);
         }
-        step_into_spare(&mut self.strm, input, out, usize::MAX, flush, deflate)
+        step_into_spare(
+            &mut self.strm,
+            input.into(),
+            out,
+            usize::MAX,
+            flush,
+            deflate,
+        )
     }
 
     /// [`step`](Self::step) without reserving: writes into whatever spare
@@ -954,7 +962,7 @@ impl DeflateEncoder {
     /// no room to write, zlib returns `BufError` having done nothing.
     pub fn step_into_spare(
         &mut self,
-        input: &[u8],
+        input: FfiSlice<'_>,
         out: &mut Vec<u8>,
         out_limit: usize,
         flush: FlushValue,
@@ -1040,7 +1048,14 @@ impl InflateDecoder {
         if out.try_reserve(reserve).is_err() {
             return (0, ReturnCode::MemError);
         }
-        step_into_spare(&mut self.strm, input, out, usize::MAX, flush, inflate)
+        step_into_spare(
+            &mut self.strm,
+            input.into(),
+            out,
+            usize::MAX,
+            flush,
+            inflate,
+        )
     }
 
     /// [`step`](Self::step) without reserving: writes into whatever spare
@@ -1048,7 +1063,7 @@ impl InflateDecoder {
     /// no room to write, zlib returns `BufError` having done nothing.
     pub fn step_into_spare(
         &mut self,
-        input: &[u8],
+        input: FfiSlice<'_>,
         out: &mut Vec<u8>,
         out_limit: usize,
         flush: FlushValue,
@@ -1179,7 +1194,7 @@ fn new_zstream() -> zStream_struct {
 /// Shared body of [`DeflateEncoder::step_into_spare`] / [`InflateDecoder::step_into_spare`].
 fn step_into_spare(
     strm: &mut zStream_struct,
-    input: &[u8],
+    input: FfiSlice<'_>,
     out: &mut Vec<u8>,
     out_limit: usize,
     flush: FlushValue,
@@ -1194,8 +1209,8 @@ fn step_into_spare(
     strm.next_out = spare.as_mut_ptr().cast::<u8>();
     strm.avail_out = out_len as uInt;
 
-    // SAFETY: strm was initialized by deflateInit2_/inflateInit2_; input is
-    // valid for `in_len` bytes; spare is valid write-only storage for
+    // SAFETY: strm was initialized by deflateInit2_/inflateInit2_; `input`
+    // is readable for `in_len` bytes (FfiSlice invariant; zlib only reads it); spare is valid write-only storage for
     // `out_len` bytes. zlib writes at most `out_len - avail_out` bytes.
     let rc = unsafe { op(&raw mut *strm, flush) };
 

@@ -2421,6 +2421,11 @@ pub mod ffi {
     /// borrow's lifetime, so an import taking `FfiSlice<'_, T>` can be declared
     /// `safe fn`: the callee may read `len` elements at `ptr` for the duration
     /// of the call and nothing else.
+    ///
+    /// One made with [`from_raw`](Self::from_raw) may cover memory something
+    /// else writes meanwhile (a pinned JS `ArrayBuffer`), so an `FfiSlice` is
+    /// never turned back into a `&[T]`: C code reads it, or
+    /// [`copy_to`](Self::copy_to)/[`to_vec`](Self::to_vec) take a raw copy.
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct FfiSlice<'a, T = u8> {
@@ -2437,6 +2442,79 @@ pub mod ffi {
                 len: s.len(),
                 _borrow: core::marker::PhantomData,
             }
+        }
+
+        /// # Safety
+        /// `ptr[..len]` stays allocated and readable for all of `'a` (its
+        /// contents may change, but it may not be freed, moved or shrunk).
+        #[inline]
+        pub const unsafe fn from_raw(ptr: *const T, len: usize) -> Self {
+            Self {
+                ptr,
+                len,
+                _borrow: core::marker::PhantomData,
+            }
+        }
+
+        #[inline]
+        pub const fn as_ptr(self) -> *const T {
+            self.ptr
+        }
+        #[inline]
+        pub const fn len(self) -> usize {
+            self.len
+        }
+        #[inline]
+        pub const fn is_empty(self) -> bool {
+            self.len == 0
+        }
+
+        /// `self[start..]`; panics if `start > len`.
+        #[inline]
+        #[track_caller]
+        pub fn skip(self, start: usize) -> Self {
+            assert!(start <= self.len, "FfiSlice::skip out of bounds");
+            // SAFETY: `start <= len`, so the result stays inside the same readable range.
+            unsafe { Self::from_raw(self.ptr.add(start), self.len - start) }
+        }
+
+        /// `self[..len.min(n)]`.
+        #[inline]
+        pub fn take(self, n: usize) -> Self {
+            Self {
+                len: self.len.min(n),
+                ..self
+            }
+        }
+    }
+
+    impl<'a, T: Copy> FfiSlice<'a, T> {
+        /// Copy `min(self.len, dst.len)` leading elements into `dst`; returns how many.
+        #[inline]
+        pub fn copy_to(self, dst: &mut [T]) -> usize {
+            let n = self.len.min(dst.len());
+            // SAFETY: `ptr[..n]` is readable (type invariant); `dst` is a distinct
+            // Rust-owned buffer of at least `n` elements.
+            unsafe { core::ptr::copy_nonoverlapping(self.ptr, dst.as_mut_ptr(), n) };
+            n
+        }
+
+        /// A copy of the elements as they are now.
+        pub fn to_vec(self) -> Vec<T> {
+            self.to_vec_with_prefix(&[])
+        }
+
+        /// `prefix` followed by a copy of the elements as they are now.
+        pub fn to_vec_with_prefix(self, prefix: &[T]) -> Vec<T> {
+            let mut out = Vec::<T>::with_capacity(prefix.len() + self.len);
+            out.extend_from_slice(prefix);
+            // SAFETY: `ptr[..len]` is readable (type invariant); `out` has room
+            // for `len` more elements after `prefix`, which the copy initializes.
+            unsafe {
+                core::ptr::copy_nonoverlapping(self.ptr, out.as_mut_ptr().add(out.len()), self.len);
+                out.set_len(out.len() + self.len);
+            }
+            out
         }
     }
 

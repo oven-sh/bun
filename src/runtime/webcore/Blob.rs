@@ -831,7 +831,9 @@ impl BlobExt for Blob {
             }
             // Same error every other malformed record produces (SerializedScriptValue's ValidationError).
             Err(_) => {
-                return Err(global_this.throw_type_error(format_args!("Unable to deserialize data.")));
+                return Err(
+                    global_this.throw_type_error(format_args!("Unable to deserialize data."))
+                );
             }
         };
 

@@ -596,10 +596,16 @@ fn expr_from_blob(
     loc: Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::StoreStr as Str;
-    use bun_http_types::MimeType::{Category, MimeType};
 
-    let category = MimeType::init(mime_type, false, None).category;
-    if category == Category::Json {
+    // `type/subtype` without parameters (`; charset=utf-8`), for classifying.
+    let essence: &[u8] = match strings::index_of_char_usize(mime_type, b';') {
+        Some(i) => strings::trim(&mime_type[..i], b" \t"),
+        None => mime_type,
+    };
+    let is_json = essence == b"application/json"
+        || essence.ends_with(b"+json")
+        || essence.ends_with(b"/json");
+    if is_json {
         // The parsed strings borrow the source bytes; keep them in `bump`.
         let bytes: &[u8] = bump.alloc_slice_copy(bytes);
         let source = &Source::init_path_string(b"fetch.json", bytes);
@@ -616,7 +622,12 @@ fn expr_from_blob(
         return Ok(out_expr);
     }
 
-    if category.is_text_like() {
+    let is_text_like = essence.starts_with(b"text/")
+        || essence == b"application/javascript"
+        || essence == b"application/x-javascript"
+        || essence == b"application/ecmascript"
+        || essence == b"application/xml";
+    if is_text_like {
         let mut output = bun_core::MutableString::init_empty();
         bun_core::quote_for_json(bytes, &mut output, true)?;
         let owned = output.to_owned_slice();
@@ -1187,6 +1198,17 @@ impl HostState {
 
     /// An error value (thrown, rejected with, or returned) as log lines.
     fn failure_from_value(&self, global: &JSGlobalObject, value: JSValue) -> MacroFailure {
+        self.failure_from_value_(global, value, true)
+    }
+
+    /// `expand`: list an `AggregateError`'s `errors` (one level; they may
+    /// contain the aggregate itself).
+    fn failure_from_value_(
+        &self,
+        global: &JSGlobalObject,
+        value: JSValue,
+        expand: bool,
+    ) -> MacroFailure {
         // The macro VM's own build/resolve errors (a macro module that does not
         // parse, an import it cannot find): message and position, as the log
         // would print them.
@@ -1268,13 +1290,13 @@ impl HostState {
         }
         // A module that fails to parse rejects its import with an
         // AggregateError of the parse errors; those are the useful part.
-        if value.is_aggregate_error(global) {
+        if expand && value.is_aggregate_error(global) {
             let each = value.get(global, "errors").and_then(|errors| match errors {
                 Some(errors) if errors.is_array() => {
                     errors.array_iterator(global).and_then(|mut it| {
                         let mut out = Vec::new();
                         while let Some(e) = it.next()? {
-                            out.push(self.failure_from_value(global, e).message);
+                            out.push(self.failure_from_value_(global, e, false).message);
                         }
                         Ok(out)
                     })

@@ -899,19 +899,23 @@ impl PackageManager {
         dependency_id: DependencyID,
         err: Error,
     ) {
-        if let Some(ctx) = self.on_wake.context {
-            // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
-            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
+        let handled = if let Some(ctx) = self.on_wake.context {
+            // SAFETY: the callback (`runtime::jsc_hooks`) validates `ctx` by
+            // address against its own thread's context before any deref.
             unsafe {
                 (self.on_wake.get_on_dependency_error())(
                     ctx.as_ptr(),
                     dependency,
                     dependency_id,
                     err.name(),
-                );
+                )
             }
         } else {
-            // No JS-side handler (bun build CLI): log the failure detail.
+            false
+        };
+        if !handled {
+            // No JS-side queue took the error (bun build CLI, or a bundle
+            // thread): log the failure detail.
             self.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,

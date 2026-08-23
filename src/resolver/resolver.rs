@@ -862,23 +862,6 @@ impl<'a> Resolver<'a> {
         Ok(pm.as_ptr())
     }
 
-    /// Uninstall this resolver's `WakeHandler` from the singleton (called
-    /// from `Transpiler::deinit`, before the VM's `WakeContext` is freed).
-    pub fn clear_package_manager_handler(&mut self) {
-        let Some(ctx) = self.on_wake_package_manager.context else {
-            return;
-        };
-        let Some(pm) = self.package_manager else {
-            return;
-        };
-        // SAFETY: `pm` names the process-static singleton; sole `&mut` here.
-        unsafe {
-            if (*pm.as_ptr()).on_wake_context() == Some(ctx) {
-                (*pm.as_ptr()).set_on_wake(Install::WakeHandler::default());
-            }
-        }
-    }
-
     /// Safe accessor for the optional [`AutoInstaller`] back-reference.
     ///
     /// Single `unsafe` deref site for the `package_manager:

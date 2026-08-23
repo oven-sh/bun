@@ -32,10 +32,11 @@ console.log("BUILD_OK");
   expect(stdout).toContain("BUILD_OK");
   expect(exitCode).toBe(0);
 
-  // The bundle must actually contain is-odd and run standalone.
+  // The bundle must actually contain is-odd and run standalone:
+  // --no-install keeps runtime auto-install from masking a bad bundle.
   await using run = Bun.spawn({
-    cmd: [bunExe(), `${String(dir)}/out/entry.js`],
-    env: bunEnv,
+    cmd: [bunExe(), "--no-install", `${String(dir)}/out/entry.js`],
+    env,
     stderr: "pipe",
   });
   const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
@@ -63,10 +64,11 @@ test.concurrent("bun build CLI auto-installs dependencies without package.json",
   expect(stderr).not.toContain("Could not resolve");
   expect(exitCode).toBe(0);
 
-  // The bundle must actually contain is-odd and run standalone.
+  // The bundle must actually contain is-odd and run standalone:
+  // --no-install keeps runtime auto-install from masking a bad bundle.
   await using run = Bun.spawn({
-    cmd: [bunExe(), `${String(dir)}/out/entry.js`],
-    env: bunEnv,
+    cmd: [bunExe(), "--no-install", `${String(dir)}/out/entry.js`],
+    env,
     stderr: "pipe",
   });
   const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);

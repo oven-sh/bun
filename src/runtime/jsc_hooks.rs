@@ -493,30 +493,37 @@ unsafe fn init_runtime_state(
                                 dep: &bun_resolver::install_types::Dependency,
                                 id: bun_resolver::install_types::DependencyID,
                                 err: &'static str,
-                            ) {
-                                // `Queue` is JS-thread-affine: dispatch only on its owning VM's thread.
-                                let Some(vm) = VirtualMachine::get_or_null() else {
-                                    return;
-                                };
-                                // SAFETY: `ctx` is some VM's live `WakeContext` (whichever
-                                // resolver last set the singleton's handler); the check
-                                // below rejects one that is not this thread's VM's.
-                                let queue = unsafe {
-                                    bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
-                                };
-                                // SAFETY: `vm` is this thread's live VM.
-                                if queue != unsafe { &raw mut (*vm).modules } {
-                                    return;
+                            ) -> bool {
+                                // `ctx` may name another VM's (possibly freed)
+                                // `WakeContext`: compare addresses against this
+                                // thread's own before any deref.
+                                let state = runtime_state();
+                                if state.is_null() {
+                                    return false;
                                 }
-                                // SAFETY: queue identity checked above.
+                                // SAFETY: `state` is this thread's live `RuntimeState`.
+                                let Some(my_ctx) = (unsafe { (*state).wake_ctx.as_deref() })
+                                else {
+                                    return false;
+                                };
+                                if !core::ptr::eq(
+                                    ctx.cast_const()
+                                        .cast::<bun_jsc::async_module::WakeContext>(),
+                                    core::ptr::from_ref(my_ctx),
+                                ) {
+                                    return false;
+                                }
+                                // SAFETY: `ctx` is this thread's own live
+                                // `WakeContext`; its queue is this VM's module queue.
                                 unsafe {
                                     bun_jsc::async_module::Queue::on_dependency_error(
-                                        queue.cast(),
+                                        my_ctx.queue.cast(),
                                         dep,
                                         id,
                                         err,
-                                    )
+                                    );
                                 }
+                                true
                             }
                             adapter
                         }),

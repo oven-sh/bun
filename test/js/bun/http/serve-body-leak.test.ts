@@ -8,7 +8,10 @@ const batchSize = 40;
 // A leaked 512 KB body × totalCount would grow RSS by gigabytes; the assertions
 // below compare against O(100 MB), so the slower ASAN/debug lanes keep the same
 // margin with fewer iterations (each request is ~2-10× slower there).
-const totalCount = isASAN || isDebug ? 3_000 : 10_000;
+const baseCount = isASAN || isDebug ? 3_000 : 10_000;
+// The HTTP/2 pass repeats every scenario; 40% keeps the file inside its CI
+// budget while a leaked 512 KB body per request would still be gigabytes.
+let totalCount = baseCount;
 const zeroCopyPayload = new Blob([payload]);
 const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
 
@@ -139,6 +142,7 @@ describe.each([false, true])("request body leak (http2: %p)", http2 => {
 
   beforeAll(async () => {
     fetchOptions = http2 ? { protocol: "http2", tls: { rejectUnauthorized: false } } : {};
+    totalCount = http2 ? baseCount * 0.4 : baseCount;
     const defer = Promise.withResolvers<string>();
     fixture = Bun.spawn(
       [bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts"), ...(http2 ? ["--http2"] : [])],

@@ -629,10 +629,8 @@ pub fn set_thread_name(name: &ZStr) {
     }
 }
 
-/// The calling thread's name as set by [`set_thread_name`], written into
-/// `buf`. Empty when the platform has no name for it. Only syscalls and
-/// thread-local reads, so the crash handler can call this from a signal
-/// handler.
+/// The calling thread's name from [`set_thread_name`], or empty. Async-signal-safe
+/// (syscalls only): the crash handler calls it from the SIGSEGV handler.
 #[cfg(unix)]
 pub fn current_thread_name(buf: &mut [u8; 64]) -> &[u8] {
     buf.fill(0);
@@ -653,6 +651,14 @@ pub fn current_thread_name(buf: &mut [u8; 64]) -> &[u8] {
         } != 0
         {
             return &[];
+        }
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        // SAFETY: `buf` is writable for `buf.len()` bytes; the call writes a
+        // NUL-terminated name that fits.
+        unsafe {
+            libc::pthread_get_name_np(libc::pthread_self(), buf.as_mut_ptr().cast(), buf.len());
         }
     }
     crate::slice_to_nul(buf)

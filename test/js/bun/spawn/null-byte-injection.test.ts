@@ -172,5 +172,55 @@ describe("null byte injection protection", () => {
       const result = await $`echo ${name}`.text();
       expect(result.trim()).toBe("hello.txt");
     });
+
+    test("throws error when .cwd() option contains null byte", () => {
+      try {
+        $`echo hello`.cwd("/tmp\0/etc");
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
+        expect(e.message).toMatch(/cwd must be a string without null bytes/);
+      }
+    });
+
+    test("throws error when .env() value contains null byte", () => {
+      try {
+        $`echo hello`.env({ X: "safe\0tail" });
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
+        expect(e.message).toMatch(/must be a string without null bytes/);
+      }
+    });
+
+    test("throws error when .env() key contains null byte", () => {
+      try {
+        $`echo hello`.env({ "MY\0VAR": "value" });
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
+        expect(e.message).toMatch(/must be a string without null bytes/);
+      }
+    });
+
+    test("throws error when $.cwd() default contains null byte", () => {
+      const sh = new $.Shell();
+      sh.cwd("/tmp\0/etc");
+      try {
+        sh`echo hello`;
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
+        expect(e.message).toMatch(/cwd must be a string without null bytes/);
+      }
+    });
+
+    test(".cwd() and .env() accept valid values", async () => {
+      const result = await $`echo ok`
+        .cwd(process.cwd())
+        .env({ ...process.env })
+        .text();
+      expect(result.trim()).toBe("ok");
+    });
   });
 });

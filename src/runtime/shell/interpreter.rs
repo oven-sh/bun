@@ -744,8 +744,6 @@ impl Interpreter {
         }
 
         // ── tick until done ────────────────────────────────────────────────
-        // The closure captures a raw pointer so borrowck doesn't see an
-        // overlap with `tick`'s `&mut self` on `mini`.
         let interp_ptr: *const Interpreter = &raw const *interp;
         mini.tick(core::ptr::null_mut(), |_ctx| {
             // SAFETY: `interp` lives in this stack frame for the whole tick

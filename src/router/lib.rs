@@ -930,8 +930,7 @@ impl Route {
                     .append(_abs)
                     .expect("unreachable");
 
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
-                // `(*entry).base_.remainder_buf`) are not used after this.
+                // SAFETY: EntryStore-owned, valid for process lifetime.
                 unsafe { &*entry }.set_abs_path(Interned::from_static(abs_path_str));
             }
 
@@ -957,7 +956,7 @@ impl Route {
                 debug_assert!(!strings::index_of_char(name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
-                // SAFETY: read-only reborrow; the `&mut` write above is dead.
+                // SAFETY: as above.
                 debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
             }
 

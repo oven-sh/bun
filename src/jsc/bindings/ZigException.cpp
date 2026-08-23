@@ -128,7 +128,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
 }
 
 static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
-    OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
+    OrdinalNumber* source_line_numbers, int32_t* source_lines_caret_column, uint8_t source_lines_count,
     ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
     auto code = stackFrame.codeBlock();
@@ -185,8 +185,14 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
             (*referenced_source_provider)->deref();
         }
         *referenced_source_provider = provider;
-        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
+        // The scan above stops on the previous line's '\n' (the loop below counts on lineStart staying there); the excerpt starts after it.
+        unsigned int textStart = lineStart;
+        if (lineStart < lineEnd && sourceString[lineStart] == '\n')
+            textStart++;
+        source_lines[0] = Bun::toStringView(sourceString.substring(textStart, lineEnd - textStart));
         source_line_numbers[0] = location.line();
+        // Not location.column(): on the first line of a source with a start column (node:vm's columnOffset) that includes the offset.
+        *source_lines_caret_column = location.byte_position - static_cast<int>(textStart);
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;
@@ -230,11 +236,12 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::Sta
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
         populateStackFrameMetadata(vm, globalObject, stackFrame, frame, finalizerSafety);
         populateStackFramePosition(stackFrame, nullptr,
-            nullptr,
+            nullptr, nullptr,
             0, frame.position, referenced_source_provider, flags);
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
         populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,
             is_top ? trace.source_lines_numbers : nullptr,
+            is_top ? &trace.source_lines_caret_column_zero_based : nullptr,
             is_top ? trace.source_lines_to_collect : 0, frame.position, referenced_source_provider, flags);
     }
 }
@@ -673,6 +680,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                                     auto str = jsStr->value(global);
                                     except.stack.source_lines_ptr[0] = Bun::toStringRef(str);
                                     except.stack.source_lines_numbers[0] = except.stack.frames_ptr[0].position.line();
+                                    except.stack.source_lines_caret_column_zero_based = except.stack.frames_ptr[0].position.column_zero_based;
                                     except.stack.source_lines_len = 1;
                                     except.remapped = true;
                                 }

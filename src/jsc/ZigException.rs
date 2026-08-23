@@ -168,6 +168,7 @@ impl Holder {
                     source_lines_numbers: self.source_line_numbers.as_mut_ptr(),
                     source_lines_len: Self::SOURCE_LINES_COUNT as u8,
                     source_lines_to_collect: Self::SOURCE_LINES_COUNT as u8,
+                    source_lines_caret_column: bun_core::Ordinal::INVALID,
                     frames_ptr: self.frames.as_mut_ptr(),
                     frames_len: 0,
                     frames_cap: Self::FRAME_COUNT as u8,

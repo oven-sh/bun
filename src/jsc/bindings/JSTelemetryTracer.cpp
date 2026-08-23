@@ -436,7 +436,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelWrap, (JSGlobalObject * lexicalGlobalObj
     JSValue lengthValue = target->get(globalObject, vm.propertyNames->length);
     RETURN_IF_EXCEPTION(scope, {});
     double lengthNumber = lengthValue.isNumber() ? lengthValue.asNumber() : 0;
-    unsigned length = std::isfinite(lengthNumber) && lengthNumber > 0 ? static_cast<unsigned>(std::min<double>(lengthNumber, 65535)) : 0;
+    unsigned length = std::isfinite(lengthNumber) && lengthNumber > 0 && lengthNumber <= 65535 ? static_cast<unsigned>(lengthNumber) : 0;
     ensureTracedFunctionHooks(vm);
     RELEASE_AND_RETURN(scope, JSValue::encode(JSTracedFunction::create(vm, globalObject, JSTracedFunction::Shape::Wrap, target, spanName, fnName.isEmpty() ? spanName->tryGetValue() : fnName, length)));
 }

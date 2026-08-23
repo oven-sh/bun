@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { syntaxHighlight } from "../../src/runtime/bake/client/JavaScriptSyntaxHighlighter";
+import { syntaxHighlight } from "bake/JavaScriptSyntaxHighlighter";
 
 // The dev server error overlay runs each source line of a code preview through
 // syntaxHighlight() on its own. The result is a run of <span class="...">

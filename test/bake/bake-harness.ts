@@ -1903,13 +1903,16 @@ class OutputLineStream extends EventEmitter {
 }
 
 export function indexHtmlScript(htmlFiles: string[]) {
+  // `htmlFiles` are platform-relative paths; both the import specifier and the
+  // route key need forward slashes.
+  const posixFiles = htmlFiles.map(file => file.replaceAll(path.sep, "/"));
   return [
-    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, "/"))};`),
+    ...posixFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file)};`),
     "export default {",
     "  static: {",
-    ...(htmlFiles.length === 1
+    ...(posixFiles.length === 1
       ? [`    '/*': html0,`]
-      : htmlFiles.map(
+      : posixFiles.map(
           (file, i) =>
             `    ${JSON.stringify(
               "/" +

@@ -2337,12 +2337,7 @@ impl JSValue {
     }
     /// `JSValue.toObject` — ECMA `ToObject`; throws on null/undefined.
     pub fn to_object(self, global: &JSGlobalObject) -> JsResult<*mut JSObject> {
-        let p = JSC__JSValue__toObject(self, global);
-        if p.is_null() {
-            Err(JsError::Thrown)
-        } else {
-            Ok(p)
-        }
+        crate::cpp::JSC__JSValue__toObject(self, global).map(core::ptr::NonNull::as_ptr)
     }
     /// `JSValue.unwrapBoxedPrimitive` — unwraps Number,
     /// Boolean, String, and BigInt objects to their primitive forms.
@@ -2742,7 +2737,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
     ) -> bool;
     safe fn Bun__JSValue__toNumber(this: JSValue, global: &JSGlobalObject) -> f64;
-    safe fn JSC__JSValue__toObject(this: JSValue, global: &JSGlobalObject) -> *mut JSObject;
     safe fn JSC__JSValue__unwrapBoxedPrimitive(global: &JSGlobalObject, this: JSValue) -> JSValue;
     safe fn JSC__JSValue__getPrototype(this: JSValue, global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__getName(

@@ -1886,7 +1886,31 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  it("an addon registered with napi_module_register whose init throws makes require() throw that error", async () => {
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "throwing_init_addon.node");
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { require(${JSON.stringify(addonPath)}); console.log("no throw"); } catch (e) { console.log(e.code, e.message); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ERR_THROWING_INIT init threw on purpose");
+    expect(exitCode).toBe(0);
+  });
+
   describe("napi_create_dataview", () => {
+    // Node hands back a zero-length DataView here; JSC has no DataView over a detached buffer, so Bun reports
+    // the TypeError instead (it used to crash).
+    it("on a detached ArrayBuffer fails with a pending TypeError", async () => {
+      const output = await runOn(bunExe(), "test_napi_dataview_detached", []);
+      expect(output).toContain("status_ok=0 result_null=1 pending=1");
+    });
+
     it("should validate bounds and provide consistent error messages", async () => {
       const output = await checkSameOutput("test_napi_dataview_bounds_errors", []);
       expect(output).toContain("napi_create_dataview");

@@ -140,21 +140,36 @@ void Isolate::RequestInterrupt(InterruptCallback callback, void* data)
     });
 }
 
+// v8::Isolate::ThrowException returns to addon code with the exception left pending on the VM; the frame that
+// observes it is the FunctionTemplate trampoline (or whatever entered the addon), not a C++ caller of this
+// function. So, as in the napi entry points, this is the top of its own scope: throw through a transient
+// ThrowScope and acknowledge it here so the addon's next API call does not see an unchecked simulated throw.
+static void throwIntoVM(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    {
+        auto inner = DECLARE_THROW_SCOPE(vm);
+        JSC::throwException(globalObject, inner, value);
+        inner.release();
+    }
+    EXCEPTION_ASSERT(scope.exception());
+}
+
 Local<Value> Isolate::ThrowException(Local<Value> exception)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm());
-    JSC::throwException(m_globalObject, scope, exception->localToJSValue());
+    throwIntoVM(m_globalObject, exception->localToJSValue());
     return exception;
 }
 
 Local<Value> Isolate::ThrowError(Local<String> message)
 {
     JSC::VM& vm = this->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::String wtfMessage = message->localToJSString()->value(m_globalObject);
+    // tryGetValue(): an unresolvable rope yields a null message here rather than a second exception.
+    WTF::String wtfMessage = message->localToJSString()->tryGetValue();
     JSC::JSObject* error = JSC::createError(m_globalObject, wtfMessage);
     Local<Value> handle = currentHandleScope()->createLocal<Value>(vm, error);
-    JSC::throwException(m_globalObject, scope, error);
+    throwIntoVM(m_globalObject, error);
     return handle;
 }
 

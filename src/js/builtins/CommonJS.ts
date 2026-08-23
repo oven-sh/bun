@@ -15,8 +15,8 @@ export function require(this: JSCommonJSModule, _: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
+export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
+  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -144,15 +144,11 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 }
 
 $visibility = "Private";
-export function requireResolve(
-  this: string | { filename?: string; id?: string },
-  id: string,
-  options: { paths?: string[] } = {},
-) {
+export function requireResolve(this: JSCommonJSModule, id: string, options: { paths?: string[] } = {}) {
   // Only `options.paths` extraction happens here; builtin bypass and paths
   // validation are native (functionImportMeta__resolveSyncPrivate).
   const paths = typeof options === "object" && options !== null ? options.paths : undefined;
-  return $resolveSync(id, typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""), false, true, paths);
+  return $resolveSync(id, this.filename, false, true, paths, this, options ?? {});
 }
 
 $visibility = "Private";

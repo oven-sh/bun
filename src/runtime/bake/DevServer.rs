@@ -200,11 +200,6 @@ pub struct Options<'a> {
 // implemented. Callers construct `Options` via struct-literal at the call site
 // (see `bake_body.rs::UserOptions::into_dev_server_options`).
 
-// The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
-// all use `@fieldParentPointer` to access DevServer's state. This pattern has
-// made it easier to group related fields together, but one must remember those
-// structures still depend on the DevServer pointer.
-
 #[cfg(debug_assertions)]
 #[repr(u128)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -272,7 +267,6 @@ pub struct CurrentBundle {
     pub(crate) had_reload_event: bool,
     /// After a bundle finishes, these requests will be continued, either
     /// calling their handler on success or sending the error page on failure.
-    /// Owned by `deferred_request_pool` in DevServer.
     pub(crate) requests: deferred_request::List,
     /// Resolution failures are grouped by incremental graph file index.
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
@@ -4200,13 +4194,13 @@ fn finalize_bundle_serve_requests(dev: &mut DevServer) -> JsResult<()> {
 
         // Note: `SavedRequest` is move-only (`Strong` field). Take the
         // handler by value so the `Saved` payload moves into the union; the
-        // node is being torn down via `_deref` regardless.
+        // request is being released regardless.
         match req.handler.replace(Handler::Aborted) {
             Handler::Aborted => continue,
             Handler::ServerHandler(saved) => {
                 let response = saved.response;
                 let ctx = saved.ctx;
-                // Note: `saved` is moved out (so `__deinit` sees `Aborted`);
+                // Note: `saved` is moved out (so `release` sees `Aborted`);
                 // `js_request: StrongOptional` releases on Drop, but
                 // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
                 // `ctx.ref_()` from `defer_request` here so the request

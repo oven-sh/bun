@@ -1282,8 +1282,7 @@ impl Run<'_> {
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
-        // SAFETY: `ctx` lives in this never-returning process entry frame.
-        unsafe { cli::profiling::configure(vm, &ctx.runtime_options) };
+        cli::profiling::configure(vm, &ctx.runtime_options);
 
         Self::add_conditional_globals(vm, ctx);
 

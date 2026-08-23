@@ -2341,13 +2341,8 @@ impl TestCommand {
         }
 
         {
-            let vm_ptr: *mut VirtualMachine = vm;
-            vm.run_with_api_lock(|| {
-                // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine` while
-                // this API-lock closure holds unique access on the JS thread. `ctx`
-                // lives in this never-returning test command frame and outlives `vm`.
-                unsafe { crate::cli::profiling::configure(&mut *vm_ptr, &ctx.runtime_options) }
-            });
+            let _api_lock = vm.global().vm().get_api_lock();
+            crate::cli::profiling::configure(vm, &ctx.runtime_options);
         }
 
         if ctx.test_options.test_worker {

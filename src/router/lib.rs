@@ -726,12 +726,8 @@ impl Route {
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // NOTE: `entry` is a raw `*mut Entry`
-        // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
-        // string) and a `&mut Entry` parameter would alias them.
-        // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) is interior (`Cell` + publish flag) and happens
-        // under the per-entry mutex.
+        // NOTE: `entry` is a raw `*mut Entry` because `base_`/`extname` may
+        // borrow `(*entry).base_` and a `&mut Entry` parameter would alias them.
         // SAFETY: caller passes an EntryStore-owned pointer valid for the
         // process lifetime; no other live `&mut` to it during this call.
         let entry_abs_path = unsafe { &*entry }.abs_path().as_bytes();
@@ -847,18 +843,14 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            // The reads of `cache().fd` and the `set_abs_path` write below
-            // rewrite the cached `Entry`; serialize them on the per-entry
-            // mutex (the same lock every other `Entry` rewrite path takes).
+            // Every cached-`Entry` rewrite takes the per-entry mutex.
             let entry_guard = if abs_path_str.is_empty() {
                 // SAFETY: see fn-level NOTE — read-only reborrow.
                 Some(unsafe { &*entry }.mutex.lock_guard())
             } else {
                 None
             };
-            // A resolver on a bundler thread may have published the path between
-            // the unlocked read above and taking the lock; a published value is
-            // never rewritten, so re-check under the lock before filling.
+            // Re-check under the lock: a bundler thread may have published it.
             if abs_path_str.is_empty() {
                 // SAFETY: see fn-level NOTE — read-only reborrow.
                 abs_path_str = unsafe { &*entry }.abs_path().as_bytes();
@@ -942,8 +934,7 @@ impl Route {
                     .append(_abs)
                     .expect("unreachable");
 
-                // SAFETY: see fn-level NOTE — read-only reborrow; the write is
-                // interior and `entry_guard` is held.
+                // SAFETY: see fn-level NOTE — read-only reborrow, `entry_guard` held.
                 unsafe { &*entry }.set_abs_path(Interned::from_static(abs_path_str));
             }
             drop(entry_guard);

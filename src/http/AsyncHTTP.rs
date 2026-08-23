@@ -665,7 +665,7 @@ struct MultiHTTPState {
 
 struct MultiHTTPRequest<'a> {
     // Late-init: `AsyncHTTP::init` needs this allocation's address for its
-    // callback context, so it is written once the box exists.
+    // callback context, so it is written once the allocation exists.
     async_http: Option<AsyncHTTP<'a>>,
     index: usize,
     channel: *const MultiHTTPChannel,
@@ -679,7 +679,7 @@ fn get_many_sync_callback(
     // As in `send_sync_callback`: no progress signals are set, so this is the
     // terminal (only) callback for the request.
     debug_assert!(!result.has_more);
-    // SAFETY: `this` is one of the boxes `get_many_sync` keeps alive until every
+    // SAFETY: `this` is one of the `OwnedThis` `get_many_sync` keeps alive until every
     // request has reported; `channel` points at its stack frame, which is
     // blocked in the wait loop below until `remaining` reaches zero.
     let (index, channel) = unsafe { ((*this).index, &*(*this).channel) };
@@ -712,29 +712,38 @@ pub fn get_many_sync(urls: &[&[u8]], redirect: FetchRedirect) -> Vec<SyncRespons
         cv: bun_threading::Condvar::new(),
     };
 
-    let mut requests: Vec<Box<MultiHTTPRequest<'_>>> = Vec::with_capacity(urls.len());
+    // `OwnedThis` (not `Box`) so moving the owner into `requests` does not
+    // retag the allocation the HTTP thread's callback context points into.
+    let mut requests: Vec<bun_ptr::OwnedThis<MultiHTTPRequest<'_>>> =
+        Vec::with_capacity(urls.len());
     let mut batch = Batch::default();
     for (index, url) in urls.iter().enumerate() {
-        let mut request = Box::new(MultiHTTPRequest {
+        let request = bun_ptr::OwnedThis::new(MultiHTTPRequest {
             async_http: None,
             index,
             channel: &raw const channel,
         });
-        let ctx: *mut MultiHTTPRequest<'_> = &raw mut *request;
-        let async_http = request.async_http.insert(AsyncHTTP::init(
-            Method::GET,
-            URL::parse(url),
-            headers::EntryList::default(),
-            b"",
-            b"",
-            HTTPClientResultCallback::new::<MultiHTTPRequest<'static>>(
-                ctx.cast(),
-                get_many_sync_callback,
-            ),
-            redirect,
-            Options::default(),
-        ));
-        async_http.schedule(&mut batch);
+        let ctx: *mut MultiHTTPRequest<'_> = request.this_ptr().as_ptr();
+        // SAFETY: freshly allocated and not yet shared; `ctx` carries the
+        // allocation's root provenance, and no `&`/`&mut` to it is live.
+        unsafe {
+            (*ctx)
+                .async_http
+                .insert(AsyncHTTP::init(
+                    Method::GET,
+                    URL::parse(url),
+                    headers::EntryList::default(),
+                    b"",
+                    b"",
+                    HTTPClientResultCallback::new::<MultiHTTPRequest<'static>>(
+                        ctx.cast(),
+                        get_many_sync_callback,
+                    ),
+                    redirect,
+                    Options::default(),
+                ))
+                .schedule(&mut batch);
+        }
         requests.push(request);
     }
     crate::HTTPThread::schedule(batch);

@@ -2729,6 +2729,7 @@ impl VirtualMachine {
             // explicitly.
             addr_of_mut!((*vm).cpu_profiler_config).write(None);
             addr_of_mut!((*vm).heap_profiler_config).write(None);
+            addr_of_mut!((*vm).on_print_error_zig_exception).write(None);
             // `Option<bool>` uses the bool's invalid range (2) as the niche, so
             // all-zero bytes decode as `Some(false)` — for TLS that would
             // silently disable certificate verification. Write `None` explicitly.

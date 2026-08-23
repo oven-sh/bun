@@ -996,7 +996,11 @@ mod draft {
                                 let mut name_buf = [0u8; 64];
                                 let name = bun_core::current_thread_name(&mut name_buf);
                                 let written = if name.is_empty() {
-                                    write!(writer, "(thread {})", bun_threading::current_thread_id())
+                                    write!(
+                                        writer,
+                                        "(thread {})",
+                                        bun_threading::current_thread_id()
+                                    )
                                 } else {
                                     write!(writer, "({})", bstr::BStr::new(name))
                                 };
@@ -1518,7 +1522,8 @@ mod draft {
         fn is_stack_overflow(self, fault_addr: usize) -> bool {
             const BELOW: usize = 4096;
             const ABOVE: usize = 256 * 1024;
-            fault_addr >= self.sp.saturating_sub(BELOW) && fault_addr < self.sp.saturating_add(ABOVE)
+            fault_addr >= self.sp.saturating_sub(BELOW)
+                && fault_addr < self.sp.saturating_add(ABOVE)
         }
     }
 

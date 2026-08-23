@@ -2829,10 +2829,13 @@ impl<'a> Resolver<'a> {
                         if !tried_store_fallback
                             && is_global_store_entry_dir(dir_info.abs_path, p.abs_path)
                         {
-                            tried_store_fallback = true;
                             if let Some(fallback) =
                                 self.store_hoisted_fallback_dir_info(dir_info.abs_path)
                             {
+                                // Set only on success: a lookalike directory
+                                // with no project link must not use up the
+                                // one jump.
+                                tried_store_fallback = true;
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
                                         "Retrying from the project's store fallback \"{}\"",

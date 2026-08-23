@@ -76,7 +76,7 @@ const _: () = {
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields mutated by host-fns are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
-/// field layout is unchanged. `method`/`flags`/`request_context`/`body`/
+/// field layout is unchanged. `method`/`flags`/`body`/
 /// `weak_ptr_data` are only written during construction or via raw-ptr
 /// `finalize`, so stay plain.
 #[repr(C)]
@@ -98,7 +98,7 @@ pub struct Request {
     js_ref: JsCell<JsRef>,
     pub method: Method,
     pub(crate) flags: Flags,
-    pub(crate) request_context: AnyRequestContext,
+    pub(crate) request_context: Cell<AnyRequestContext>,
     pub(crate) weak_ptr_data: WeakPtrData,
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
@@ -249,7 +249,7 @@ impl Request {
             return Ok(self.headers_mut().as_mut().unwrap());
         }
 
-        if let Some(req) = self.request_context.get_request() {
+        if let Some(req) = self.request_context.get().get_request() {
             // we have a request context, so we can get the headers from it
             self.headers.set(Some(HeadersRef::create_from_uws(
                 req.cast::<core::ffi::c_void>(),
@@ -298,7 +298,7 @@ impl Request {
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
         if self.headers.get().is_none() {
-            if let Some(req) = self.request_context.get_request() {
+            if let Some(req) = self.request_context.get().get_request() {
                 // we have a request context, so we can get the headers from it
                 self.headers.set(Some(HeadersRef::create_from_uws(
                     req.cast::<core::ffi::c_void>(),
@@ -323,7 +323,7 @@ impl Request {
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
         if self.headers.get().is_none() {
-            if let Some(uws_req) = self.request_context.get_request() {
+            if let Some(uws_req) = self.request_context.get().get_request() {
                 self.headers.set(Some(HeadersRef::create_from_uws(
                     uws_req.cast::<core::ffi::c_void>(),
                 )));
@@ -342,7 +342,7 @@ impl Request {
     }
 
     pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
-        if let Some(req) = self.request_context.get_request() {
+        if let Some(req) = self.request_context.get().get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             if let Some(value) = req.header(b"content-type") {
@@ -370,7 +370,7 @@ impl Request {
 impl Request {
     pub(crate) fn memory_cost(&self) -> usize {
         core::mem::size_of::<Request>()
-            + self.request_context.memory_cost()
+            + self.request_context.get().memory_cost()
             + self.url.get().byte_slice().len()
             + self.body_value().memory_cost()
     }
@@ -378,6 +378,7 @@ impl Request {
     #[bun_uws::uws_callback(export = "Request__setCookiesOnRequestContext")]
     pub fn ffi_set_cookies_on_request_context(&self, cookie_map: Option<&CookieMap>) {
         self.request_context
+            .get()
             .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }
 
@@ -428,7 +429,7 @@ impl Request {
             js_ref: JsCell::new(JsRef::empty()),
             method,
             flags: Flags::default(),
-            request_context: AnyRequestContext::NULL,
+            request_context: Cell::new(AnyRequestContext::NULL),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }
@@ -771,7 +772,7 @@ impl Request {
             return url.byte_slice().len();
         }
 
-        if let Some(req) = self.request_context.get_request() {
+        if let Some(req) = self.request_context.get().get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
@@ -863,7 +864,7 @@ impl Request {
             return Ok(());
         }
 
-        if let Some(req) = self.request_context.get_request() {
+        if let Some(req) = self.request_context.get().get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
@@ -992,7 +993,7 @@ impl Request {
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
             method: Method::GET,
             flags: Flags::default(),
-            request_context: AnyRequestContext::NULL,
+            request_context: Cell::new(AnyRequestContext::NULL),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         };
@@ -1499,7 +1500,7 @@ impl Request {
                     js_ref: JsCell::new(JsRef::empty()),
                     method: self.method,
                     flags: self.flags,
-                    request_context: AnyRequestContext::NULL,
+                    request_context: Cell::new(AnyRequestContext::NULL),
                     weak_ptr_data: WeakPtrData::EMPTY,
                     reported_estimated_size: Cell::new(0),
                 },
@@ -1531,7 +1532,7 @@ impl Request {
             js_ref: JsCell::new(JsRef::empty()),
             method: Method::GET,
             flags: Flags::default(),
-            request_context: AnyRequestContext::NULL,
+            request_context: Cell::new(AnyRequestContext::NULL),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         });
@@ -1560,7 +1561,7 @@ impl Request {
                 https,
                 ..Flags::default()
             },
-            request_context,
+            request_context: Cell::new(request_context),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }

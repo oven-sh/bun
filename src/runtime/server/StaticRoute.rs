@@ -263,7 +263,7 @@ impl StaticRoute {
     pub(crate) fn on_head(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
         Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -318,7 +318,7 @@ impl StaticRoute {
     pub(crate) fn on(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
         Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -356,7 +356,7 @@ impl StaticRoute {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_static_request_complete();
         }
         let n = this.pending_responses.get() - 1;
@@ -549,7 +549,7 @@ impl StaticRoute {
     ) -> bool {
         req.set_yield(false);
         Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }

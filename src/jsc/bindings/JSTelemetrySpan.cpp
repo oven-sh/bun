@@ -461,9 +461,11 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncEnd, (JSGlobalObject * lexicalG
 }
 
 // span.setAttribute(key, value) from C++ (what the TelemetrySpan.ts builtin does).
+// Throws only on OOM.
 void telemetrySpanSetAttribute(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, JSString* key, JSValue value)
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!(span->state() & JSTelemetrySpan::Recording) || value.isUndefinedOrNull())
         return;
     if (span->m_native) {
@@ -474,22 +476,28 @@ void telemetrySpanSetAttribute(Zig::GlobalObject* globalObject, JSTelemetrySpan*
     JSArray* attrs = telemetryArray(span->get(Field::Attributes));
     if (!attrs) {
         attrs = constructEmptyArray(globalObject, nullptr, 0);
-        if (!attrs) [[unlikely]]
-            return;
+        RETURN_IF_EXCEPTION(scope, );
         span->field(Field::Attributes).set(vm, span, attrs);
     } else {
         // Keys stay unique: last write wins.
         unsigned n = attrs->length();
         for (unsigned i = 0; i + 1 < n; i += 2) {
             JSValue k = attrs->tryGetIndexQuickly(i);
-            if (k && k.isString() && (asString(k) == key || asString(k)->equal(globalObject, key))) {
+            if (!k || !k.isString())
+                continue;
+            bool same = asString(k) == key || asString(k)->equal(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, );
+            if (same) {
                 attrs->putDirectIndex(globalObject, i + 1, value);
+                RETURN_IF_EXCEPTION(scope, );
                 return;
             }
         }
     }
     attrs->push(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, );
     attrs->push(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 // span.setAttributes(object) from C++. Plain objects take a direct walk of
@@ -519,9 +527,10 @@ bool telemetrySpanSetAttributes(Zig::GlobalObject* globalObject, JSTelemetrySpan
             if (fresh) {
                 flat.append(key);
                 flat.append(value);
-            } else
-                telemetrySpanSetAttribute(globalObject, span, key, value);
-            return true;
+                return true;
+            }
+            telemetrySpanSetAttribute(globalObject, span, key, value);
+            return !scope.exception();
         });
         RETURN_IF_EXCEPTION(scope, false);
         if (fresh && flat.size()) {
@@ -568,9 +577,12 @@ void telemetryFailSpanNoJS(Zig::GlobalObject* globalObject, JSTelemetrySpan* spa
         JSValue code = instance->getDirect(vm, WebCore::builtinNames(vm).codePublicName());
         if (code && code.isString())
             type = asString(code)->tryGetValue();
-        if (type.isEmpty())
+        if (type.isEmpty()) {
             type = instance->sanitizedNameString(globalObject);
+            scope.clearException();
+        }
         message = instance->sanitizedMessageString(globalObject);
+        scope.clearException();
     } else if (error.isString())
         message = asString(error)->tryGetValue();
     if (type.isEmpty())
@@ -584,11 +596,14 @@ void telemetryFailSpanNoJS(Zig::GlobalObject* globalObject, JSTelemetrySpan* spa
         flat.append(jsString(vm, message));
     }
     JSArray* flatArray = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), flat);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException(); // (an OOM while recording is dropped)
+        return;
+    }
     BunString messageStr = Bun::toString(message);
     if (span->m_native) {
         TelemetryAttrGatherer gatherer;
         TelemetryEventRef event { telemetryBorrow(jsNontrivialString(vm, "exception"_s)), 0, gatherer.gather(flatArray) };
-        gatherer.gatherOne(jsNontrivialString(vm, "error.type"_s), jsString(vm, type));
         TelemetryAttrPool pool = gatherer.pool();
         Bun__Telemetry__nativeAddEvent(globalObject, span->m_native, &event, &pool);
         TelemetryAttrGatherer attr;
@@ -599,25 +614,27 @@ void telemetryFailSpanNoJS(Zig::GlobalObject* globalObject, JSTelemetrySpan* spa
         return;
     }
     using Field = JSTelemetrySpan::Field;
-    JSArray* events = telemetryArray(span->get(Field::Events));
-    if (!events) {
-        events = constructEmptyArray(globalObject, nullptr, 0);
-        span->field(Field::Events).set(vm, span, events);
-    }
-    events->push(globalObject, jsNontrivialString(vm, "exception"_s));
-    events->push(globalObject, jsNumber(static_cast<double>(Bun__Telemetry__nowNs()) / 1e6));
-    events->push(globalObject, flatArray);
-    JSArray* attrs = telemetryArray(span->get(Field::Attributes));
-    if (!attrs) {
-        attrs = constructEmptyArray(globalObject, nullptr, 0);
-        span->field(Field::Attributes).set(vm, span, attrs);
-    }
-    attrs->push(globalObject, jsNontrivialString(vm, "error.type"_s));
-    attrs->push(globalObject, jsString(vm, type));
-    if (span->get(Field::StatusCode).asInt32() != 1) {
-        span->field(Field::StatusCode).set(vm, span, jsNumber(2));
-        span->field(Field::StatusMessage).set(vm, span, message.isEmpty() ? jsEmptyString(vm) : jsString(vm, message));
-    }
+    auto record = [&] {
+        JSArray* events = telemetryArray(span->get(Field::Events));
+        if (!events) {
+            events = constructEmptyArray(globalObject, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, );
+            span->field(Field::Events).set(vm, span, events);
+        }
+        events->push(globalObject, jsNontrivialString(vm, "exception"_s));
+        RETURN_IF_EXCEPTION(scope, );
+        events->push(globalObject, jsNumber(static_cast<double>(Bun__Telemetry__nowNs()) / 1e6));
+        RETURN_IF_EXCEPTION(scope, );
+        events->push(globalObject, flatArray);
+        RETURN_IF_EXCEPTION(scope, );
+        telemetrySpanSetAttribute(globalObject, span, jsNontrivialString(vm, "error.type"_s), jsString(vm, type));
+        RETURN_IF_EXCEPTION(scope, );
+        if (span->get(Field::StatusCode).asInt32() != 1) {
+            span->field(Field::StatusCode).set(vm, span, jsNumber(2));
+            span->field(Field::StatusMessage).set(vm, span, message.isEmpty() ? jsEmptyString(vm) : jsString(vm, message));
+        }
+    };
+    record();
     scope.clearException(); // (an OOM while recording is dropped)
 }
 

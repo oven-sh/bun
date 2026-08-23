@@ -926,6 +926,73 @@ test(
   timeout,
 );
 
+// fs.readFile / readFileSync read until EOF, and a FIFO (or /dev/urandom) never reaches one. The
+// native read loop checked only the caller's AbortSignal between chunks, never whether the worker
+// had been asked to stop: the sync form never came back to JS for the termination to land, and the
+// async form kept its pool job alive, which the worker's teardown waits for. terminate() hung for as
+// long as the data flowed (node: ~5ms). The loop now gives up at the next chunk once the worker
+// is stopping. Two data points per flavor: less than 256 KiB read so far (the pre-stat read), and
+// more (the read-until-EOF tail, where the buffer grows).
+describe.skipIf(isWindows)("terminate() stops a readFile of a FIFO that never ends", () => {
+  test.concurrent.each([
+    ["readFileSync", 192 * 1024],
+    ["readFileSync", 512 * 1024],
+    ["promises.readFile", 192 * 1024],
+    ["promises.readFile", 512 * 1024],
+  ])(
+    "%s after %d bytes",
+    async (api, fed) => {
+      using dir = tempDir("worker-terminate-readfile-fifo", {});
+      const fifo = join(String(dir), "fifo");
+      const read =
+        api === "readFileSync"
+          ? `fs.readFileSync(fifo); parentPort.postMessage("returned");`
+          : `fs.promises.readFile(fifo).then(() => parentPort.postMessage("resolved"), e => parentPort.postMessage("rejected " + e.code));`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const fs = require("node:fs");
+        const { Worker } = require("node:worker_threads");
+        const fifo = ${JSON.stringify(fifo)};
+        require("node:child_process").execFileSync("mkfifo", [fifo]);
+        // Both ends are held here: the worker's open() does not block, and its read() never sees EOF.
+        const fd = fs.openSync(fifo, "r+");
+        const w = new Worker(
+          'const fs = require("node:fs"); const { parentPort, workerData: fifo } = require("node:worker_threads");' +
+          'parentPort.postMessage("reading"); ${read}',
+          { eval: true, workerData: fifo },
+        );
+        w.on("error", e => { console.error("worker error:", e); process.exit(1); });
+        w.on("message", async m => {
+          if (m !== "reading") { console.log("unexpected:", m); process.exit(1); }
+          // A blocking write of more than the pipe holds returns once the worker's read loop has
+          // drained the rest, so the worker is inside that loop, blocked in read(), from here on.
+          const chunk = Buffer.alloc(${fed}, 0x78);
+          for (let off = 0; off < chunk.length; ) off += fs.writeSync(fd, chunk, off);
+          // Keep the data flowing: the loop can only notice the stop when a read returns.
+          const feed = setInterval(() => fs.writeSync(fd, "x"), 1);
+          const code = await w.terminate();
+          clearInterval(feed);
+          fs.closeSync(fd);
+          console.log("terminated", code);
+        });
+      `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("terminated 1\n");
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+});
+
 // A worker exiting while a Bun.spawn() child still has a pending pipe-backed stdin (a Blob the child
 // never reads; the default stdin path on Windows, BUN_FEATURE_FLAG_DISABLE_MEMFD elsewhere): the
 // Subprocess finalizer closed that writer, whose close path re-evaluated pending activity and tried to

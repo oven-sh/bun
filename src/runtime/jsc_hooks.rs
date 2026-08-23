@@ -1330,8 +1330,8 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
         None
     };
     bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::PathBuffer::uninit(),
         vm: vm_field,
+        ..NodeFS::default()
     }))
     .cast::<c_void>()
 }

@@ -262,6 +262,12 @@ impl Ticket {
     pub fn cancelled(&self) -> bool {
         self.shared.state() >= State::Draining
     }
+
+    /// The uncounted handle of this ticket's VM (any thread): for code the
+    /// work calls that reads the gate but must not hold a ticket itself.
+    pub fn handle(&self) -> VmHandle {
+        VmHandle(Arc::clone(&self.shared))
+    }
 }
 
 impl Clone for Ticket {

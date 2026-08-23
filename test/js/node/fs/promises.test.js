@@ -1,4 +1,5 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -482,6 +483,37 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       await promise;
     } catch (err) {
       expectNodeAbortError(err, ac.signal.reason);
+    }
+  });
+
+  // A FIFO has no size and no EOF while a writer holds it, so readFile reads it
+  // chunk by chunk. The first 256 KiB went through a loop that never looked at
+  // the signal: an abort there was only seen once 256 KiB had arrived. Node
+  // checks the signal before every chunk.
+  test.skipIf(isWindows)("readFile of a FIFO aborted between chunks rejects at the next chunk", async () => {
+    using dir = tempDir("fs-abort-readfile-fifo", {});
+    const fifo = join(String(dir), "fifo");
+    mkfifo(fifo, 0o666);
+    // Both ends are held here: the pool thread's open() does not block, and its read() never sees EOF.
+    const fd = fs.openSync(fifo, "r+");
+    try {
+      const ac = new AbortController();
+      const reason = new Error("stop");
+      const promise = fsPromises.readFile(fifo, { signal: ac.signal });
+      // A blocking write of more than the pipe holds returns once the read loop has drained the rest,
+      // so the read is in flight, blocked on the next chunk, from here on.
+      const chunk = Buffer.alloc(192 * 1024, 0x78);
+      for (let off = 0; off < chunk.length; ) off += fs.writeSync(fd, chunk, off);
+      ac.abort(reason);
+      fs.writeSync(fd, "x");
+      expect.assertions(4);
+      try {
+        await promise;
+      } catch (err) {
+        expectNodeAbortError(err, reason);
+      }
+    } finally {
+      fs.closeSync(fd);
     }
   });
 

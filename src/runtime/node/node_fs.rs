@@ -1255,7 +1255,10 @@ mod _async_tasks {
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            let mut node_fs = NodeFS::default();
+            let mut node_fs = NodeFS {
+                vm_handle: Some(done.ticket().handle()),
+                ..NodeFS::default()
+            };
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
             // `sys::Error::path` is `Box<[u8]>` boxed at the `errno_sys_p`
             // construction site, so no clone is needed — `node_fs` may drop.
@@ -4493,6 +4496,10 @@ pub struct NodeFS {
     /// the heap allocated buffer on the NodeFS struct
     pub(crate) sync_error_buf: PathBuffer, // must be align_of::<u16>()-aligned — enforced via #[repr(C)] + field order, see above
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
+    /// The VM whose script asked for this operation (the `node:fs` binding's
+    /// own VM, or the VM a pool job serves). A read-until-EOF loop stops at
+    /// the next chunk once that VM stops. `None` for the internal callers.
+    pub(crate) vm_handle: Option<bun_jsc::VmHandle>,
 }
 
 impl Default for NodeFS {
@@ -4500,6 +4507,7 @@ impl Default for NodeFS {
         Self {
             sync_error_buf: PathBuffer::uninit(),
             vm: None,
+            vm_handle: None,
         }
     }
 }
@@ -6883,6 +6891,21 @@ impl NodeFS {
         }
     }
 
+    /// Between two reads of a read-until-EOF loop: does anyone still want the
+    /// bytes? Not once the caller's `signal` aborted, and not once the VM this
+    /// read serves has been asked to stop (`worker.terminate()`,
+    /// `process.exit()`). A pipe or a device has no EOF to reach, and the
+    /// worker's teardown waits for the pool job, so the loop has to give up
+    /// on its own. Node stops at the same point: it issues one request per
+    /// chunk, and a stopping environment runs no continuation.
+    fn read_abandoned(&self, args: &args::ReadFile) -> bool {
+        args.aborted()
+            || self
+                .vm_handle
+                .as_ref()
+                .is_some_and(|vm| !vm.script_allowed())
+    }
+
     pub(crate) fn read_file_with_options(
         &mut self,
         args: &args::ReadFile,
@@ -6959,7 +6982,7 @@ impl NodeFS {
             }
         });
 
-        if args.aborted() {
+        if self.read_abandoned(args) {
             return Err(abort_err());
         }
 
@@ -7012,6 +7035,9 @@ impl NodeFS {
                 }
                 total += amt;
                 available = &mut available[amt..];
+                if self.read_abandoned(args) {
+                    return Err(abort_err());
+                }
             }
             &pre_stat_buf[..total]
         };
@@ -7086,10 +7112,6 @@ impl NodeFS {
         }
         // ----------------------------
 
-        if args.aborted() {
-            return Err(abort_err());
-        }
-
         let stat_ = Syscall::fstat(fd)?;
 
         // For certain files, the size might be 0 but the file might still have contents.
@@ -7144,7 +7166,7 @@ impl NodeFS {
         // `phase == 0` is the size-bounded loop, `phase == 1` is the unbounded tail.
         let mut phase: u8 = if (total as u64) < size { 0 } else { 1 };
         loop {
-            if args.aborted() {
+            if self.read_abandoned(args) {
                 return Err(abort_err());
             }
             // When `total == min(buf.capacity, max_size)`

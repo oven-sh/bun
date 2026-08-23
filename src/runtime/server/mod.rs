@@ -3428,18 +3428,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 return;
             }
         };
-        // SAFETY: `from_js` returned a live route with one reference, which
-        // `deref_` gives back; `server` outlives this call.
-        unsafe {
-            (*route)
-                .server
-                .set(Some(AnyServer::from(core::ptr::from_ref::<Self>(server))));
-            crate::server::StaticRoute::on(
-                route,
-                uws_sys::AnyResponse::H3(core::ptr::from_mut(res)),
-            );
-            crate::server::StaticRoute::deref_(route);
-        }
+        // `from_js` returned a live route holding one reference, which the
+        // `deref()` below gives back; `server` outlives this call.
+        route
+            .server
+            .set(Some(AnyServer::from(core::ptr::from_ref::<Self>(server))));
+        crate::server::StaticRoute::on(
+            route.this_ptr(),
+            uws_sys::AnyResponse::H3(core::ptr::from_mut(res)),
+        );
+        route.deref();
     }
 
     /// The `wtOn*` counterpart of [`Self::write_ws_handler_slots`]. Every slot

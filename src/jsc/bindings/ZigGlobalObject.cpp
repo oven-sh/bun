@@ -3364,13 +3364,17 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
     WTF::String keyString;
     if (key.isString()) {
-        keyString = uncheckedDowncast<JSString>(key)->value(globalObject);
+        auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        if (keyString.startsWith("file://"_s)) {
-            auto url = WTF::URL(keyString);
+        if (moduleName->startsWith("file://"_s)) {
+            auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
                 keyString = url.fileSystemPath();
+            } else {
+                keyString = moduleName;
             }
+        } else {
+            keyString = moduleName;
         }
     } else {
         keyString = key.toWTFString(globalObject);

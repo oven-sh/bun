@@ -6315,13 +6315,16 @@ impl VirtualMachine {
                     continue;
                 }
 
+                // The fallback below is only for a cause the iterator did not
+                // visit, or the inline-formatted cause prints a second time.
+                if field.eq_ascii(b"cause") {
+                    saw_cause = true;
+                }
+
                 let kind = value.js_type();
                 // Only the errors_to_append path guards against circular
                 // references, so a DOMException takes the ErrorInstance route.
                 if (kind == JSType::ErrorInstance || value.is_dom_exception()) && !prev_had_errors {
-                    if field.eq_ascii(b"cause") {
-                        saw_cause = true;
-                    }
                     value.protect();
                     errors_to_append.push(value);
                 } else if kind.is_object()

@@ -228,6 +228,25 @@ describe.concurrent("DOMException formats as an error", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("DOMException cause of a nested error prints once", async () => {
+    const code =
+      'const deep = new DOMException("deep", "AbortError");' +
+      'const mid = new Error("mid"); mid.cause = deep;' +
+      'throw new Error("outer", { cause: mid });';
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: outer");
+    expect(stderr).toContain("error: mid");
+    expect(stderr.split("AbortError: deep").length - 1).toBe(1);
+    expect(stderr).not.toContain("INDEX_SIZE_ERR");
+    expect(exitCode).toBe(1);
+  });
+
   test("self-referencing DOMException prints [Circular] instead of recursing", () => {
     const err = new DOMException("x", "AbortError");
     err.self = err;

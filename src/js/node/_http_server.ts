@@ -224,11 +224,10 @@ function onNodeHTTPServerSocketTimeout() {
 }
 
 function emitListeningNextTick(self, hostname, port) {
-  if ((self.listening = !!self[serverSymbol])) {
-    // TODO: remove the arguments
-    // Note does not pass any arguments.
-    self.emit("listening", null, hostname, port);
-  }
+  // Nothing to announce if close() ran in the same tick as listen().
+  if (!self[serverSymbol]) return;
+  // Node passes no arguments. The extra ones are a Bun extension.
+  self.emit("listening", null, hostname, port);
 }
 
 function emitListenErrorNextTick(self, err) {
@@ -1059,6 +1058,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       },
     });
 
+    // Bun.serve() has bound and listened by now, so the flag is true at once, as node's getter is.
+    this.listening = true;
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     applyServerCustomOptions(this);
 

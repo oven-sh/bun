@@ -167,11 +167,13 @@ describe("node:http", () => {
       const order: string[] = [];
       server.on("listening", () => order.push("listening"));
       server.listen(0);
+      // The socket is bound when listen() returns, so the flag does not wait for the event.
+      const listeningAtOnce = server.listening;
       process.nextTick(() => order.push("nextTick"));
       await once(server, "listening");
       server.close();
       await once(server, "close");
-      expect(order).toEqual(["listening", "nextTick"]);
+      expect({ order, listeningAtOnce }).toEqual({ order: ["listening", "nextTick"], listeningAtOnce: true });
     });
 
     it("emits a listen() error on the next tick, before the event loop polls", async () => {
@@ -184,11 +186,16 @@ describe("node:http", () => {
       const order: string[] = [];
       server.on("error", (err: NodeJS.ErrnoException) => order.push("error:" + err.code));
       server.listen(port);
+      const listeningAtOnce = server.listening;
       process.nextTick(() => order.push("nextTick"));
       await once(server, "error");
       occupant.close();
       await once(occupant, "close");
-      expect(order).toEqual(["error:EADDRINUSE", "nextTick"]);
+      expect({ order, listeningAtOnce, listening: server.listening }).toEqual({
+        order: ["error:EADDRINUSE", "nextTick"],
+        listeningAtOnce: false,
+        listening: false,
+      });
     });
 
     // vite's port auto-increment (#27406): the callback of the failed listen() belongs to the

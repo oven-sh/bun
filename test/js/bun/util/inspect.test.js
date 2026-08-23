@@ -731,6 +731,77 @@ describe("console.logging class displays names and extends", async () => {
   }
 });
 
+describe("a name defined with Object.defineProperty is displayed", () => {
+  // tsc (__setFunctionName) and esbuild/Bun (__name) name the anonymous class their decorator
+  // lowering produces this way; the class binding they assign to is a temporary.
+  function setName(value, name) {
+    return Object.defineProperty(value, "name", { value: name, configurable: true });
+  }
+  class Base {}
+  const Item = setName(class {}, "Item");
+  const Derived = setName(class extends Base {}, "Derived");
+
+  it("class and instances", () => {
+    expect([Bun.inspect(Item), Bun.inspect(new Item()), Bun.inspect({ item: new Item() }, { compact: true })]).toEqual([
+      "[class Item]",
+      "Item {}",
+      "{ item: Item {} }",
+    ]);
+  });
+
+  it("extends clause and subclass instances", () => {
+    class Child extends Item {}
+    expect([Bun.inspect(Derived), Bun.inspect(new Derived()), Bun.inspect(Child), Bun.inspect(Item.prototype)]).toEqual(
+      ["[class Derived extends Base]", "Derived {}", "[class Child extends Item]", "Item {}"],
+    );
+  });
+
+  it("functions", () => {
+    expect(Bun.inspect(setName(function original() {}, "renamed"))).toBe("[Function: renamed]");
+  });
+
+  it("displayName still takes precedence", () => {
+    const fn = setName(function original() {}, "renamed");
+    fn.displayName = "Display";
+    expect(Bun.inspect(fn)).toBe("[Function: Display]");
+  });
+
+  it("a name accessor is not invoked", () => {
+    let called = false;
+    const Cls = Object.defineProperty(class Original {}, "name", {
+      get() {
+        called = true;
+        return "from getter";
+      },
+    });
+    expect(Bun.inspect(Cls)).toBe("[class Original]");
+    expect(Bun.inspect(new Cls())).toBe("Original {}");
+    expect(called).toBe(false);
+  });
+
+  it("a name redefined as empty prints like an anonymous function", () => {
+    const Unnamed = setName(class Original {}, "");
+    class Child extends Unnamed {}
+    expect([
+      Bun.inspect(Unnamed),
+      Bun.inspect(new Unnamed()),
+      Bun.inspect({ u: new Unnamed() }, { compact: true }),
+      Bun.inspect(Child),
+      Bun.inspect(setName(function original() {}, "")),
+    ]).toEqual(["[class (anonymous)]", "{}", "{ u: {} }", "[class Child]", "[Function]"]);
+  });
+
+  it("reading .name does not change the output of an untouched function", () => {
+    const { get } = Object.getOwnPropertyDescriptor({ get accessor() {} }, "accessor");
+    const Cls = class {};
+    const holder = { key: function () {} };
+    const values = [get, Cls, new Cls(), holder.key];
+    const before = values.map(value => Bun.inspect(value));
+    expect([get.name, Cls.name, holder.key.name]).toEqual(["get accessor", "Cls", "key"]);
+    expect(values.map(value => Bun.inspect(value))).toEqual(before);
+  });
+});
+
 it("console.log on a Blob shows name", () => {
   const blob = new Blob(["foo"], { type: "text/plain" });
   expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  type: "text/plain;charset=utf-8"\n}');

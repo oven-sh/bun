@@ -1157,17 +1157,6 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     NAPI_RETURN_SUCCESS(env);
 }
 
-extern "C" void napi_set_ref(NapiRef* ref, JSC::EncodedJSValue val_)
-{
-    NAPI_LOG_CURRENT_FUNCTION;
-    JSC::JSValue val = JSC::JSValue::decode(val_);
-    if (val) {
-        ref->strongRef.set(JSC::getVM(&*ref->globalObject), val);
-    } else {
-        ref->strongRef.clear();
-    }
-}
-
 extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     void* native_object,
     napi_finalize finalize_cb,
@@ -3414,11 +3403,6 @@ extern "C" bool NapiEnv__hasPendingException(napi_env env)
     }
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(env->vm());
     return scope.exception() != nullptr;
-}
-
-extern "C" uint32_t napi_internal_get_version(napi_env env)
-{
-    return env->napiModule().nm_version;
 }
 
 extern "C" JSGlobalObject* NapiEnv__globalObject(napi_env env)

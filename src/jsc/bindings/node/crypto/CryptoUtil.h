@@ -118,10 +118,6 @@ public:
         return allocated(buffer.data, buffer.len);
     }
 
-    static ByteSource foreign(const void* data, size_t size);
-
-    static ByteSource fromBIO(const ncrypto::BIOPointer& bio);
-
 private:
     const void* data_ = nullptr;
     void* allocated_data_ = nullptr;

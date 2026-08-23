@@ -1067,16 +1067,6 @@ impl<'a> PackageInstaller<'a> {
         let package_id = self.lockfile().buffers.resolutions.as_slice()[dependency_id as usize];
         let name = self.names[package_id as usize];
 
-        // const resolution = &this.resolutions[package_id];
-        // const task_id = switch (resolution.tag) {
-        //     .git => Task.Id.forGitCheckout(data.url, data.resolved),
-        //     .github => Task.Id.forTarball(data.url),
-        //     .local_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.local_tarball)),
-        //     .remote_tarball => Task.Id.forTarball(this.lockfile.str(&resolution.value.remote_tarball)),
-        //     .npm => Task.Id.forNPMPackage(name.slice(this.lockfile.buffers.string_bytes.items), resolution.value.npm.version),
-        //     else => unreachable,
-        // };
-
         // If a newly computed integrity hash is available (e.g. for a GitHub
         // tarball) and the lockfile doesn't already have one, persist it so
         // the lockfile gets re-saved with the hash.

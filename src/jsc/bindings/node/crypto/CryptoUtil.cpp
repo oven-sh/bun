@@ -497,12 +497,6 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
     return errorObject;
 }
 
-extern "C" EncodedJSValue Bun__NodeCrypto__createCryptoError(JSC::JSGlobalObject* globalObject, uint32_t err, const char* message)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    return JSValue::encode(createCryptoError(globalObject, scope, err, message));
-}
-
 void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, uint32_t err, const char* message)
 {
     JSValue errorObject = createCryptoError(globalObject, scope, err, message);
@@ -1102,23 +1096,9 @@ ByteSource& ByteSource::operator=(ByteSource&& other) noexcept
     return *this;
 }
 
-ByteSource ByteSource::fromBIO(const ncrypto::BIOPointer& bio)
-{
-    ASSERT(bio);
-    BUF_MEM* bptr = bio;
-    auto out = ncrypto::DataPointer::Alloc(bptr->length);
-    memcpy(out.get(), bptr->data, bptr->length);
-    return ByteSource::allocated(out.release());
-}
-
 ByteSource ByteSource::allocated(void* data, size_t size)
 {
     return ByteSource(data, data, size);
-}
-
-ByteSource ByteSource::foreign(const void* data, size_t size)
-{
-    return ByteSource(data, nullptr, size);
 }
 
 }

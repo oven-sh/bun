@@ -50,7 +50,7 @@ static void inheritPropagation(VM& vm, Zig::GlobalObject* globalObject, JSTeleme
     uint64_t handle = parentCell ? parentCell->m_native : parentHandle;
     if (!handle)
         return;
-    BunString traceState, baggage;
+    BunString traceState = { BunStringTag::Empty, {} }, baggage = { BunStringTag::Empty, {} };
     if (!Bun__Telemetry__nativePropagation(globalObject, handle, &traceState, &baggage))
         return;
     if (auto s = traceState.transferToWTFString(); !s.isEmpty())
@@ -605,7 +605,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
     }
     JSValue traceState, baggage;
     if (span->m_native) {
-        BunString ts, bg;
+        BunString ts = { BunStringTag::Empty, {} }, bg = { BunStringTag::Empty, {} };
         if (Bun__Telemetry__nativePropagation(globalObject, span->m_native, &ts, &bg)) {
             traceState = jsString(vm, ts.transferToWTFString());
             baggage = jsString(vm, bg.transferToWTFString());

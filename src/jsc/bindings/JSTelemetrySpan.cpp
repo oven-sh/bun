@@ -691,7 +691,7 @@ static JSString* traceStateHeader(Zig::GlobalObject* globalObject, JSTelemetrySp
         return s->length() ? s : nullptr;
     if (!span->m_native)
         return nullptr;
-    BunString traceState, baggage;
+    BunString traceState = { BunStringTag::Empty, {} }, baggage = { BunStringTag::Empty, {} };
     if (!Bun__Telemetry__nativePropagation(globalObject, span->m_native, &traceState, &baggage))
         return nullptr;
     baggage.deref();

@@ -1629,7 +1629,9 @@ impl SendQueue {
         let mut payload = StreamBuffer::default();
         let payload_length = match serialize(mode, &mut payload, global, value, is_internal) {
             Ok(n) => n,
-            Err(IPCSerializationError::NotSerializable) => return Ok(SerializeAndSendResult::Failure),
+            Err(IPCSerializationError::NotSerializable) => {
+                return Ok(SerializeAndSendResult::Failure);
+            }
             Err(IPCSerializationError::Js(e)) => return Err(e),
         };
         debug_assert!(payload.list.len() == payload_length);

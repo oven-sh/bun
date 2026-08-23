@@ -31,10 +31,9 @@ impl<'a> ObjectIterator<'a> {
         if self.current_row.is_empty() {
             self.current_row = JSObject::get_index(self.array, global_object, row_i)?;
             if !self.current_row.is_object() {
-                return Err(global_object.throw(format_args!(
-                    "Expected a row object at index {}",
-                    row_i
-                )));
+                return Err(
+                    global_object.throw(format_args!("Expected a row object at index {}", row_i))
+                );
             }
         }
 

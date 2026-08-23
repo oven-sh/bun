@@ -71,7 +71,6 @@ impl Signature {
             });
         }
 
-
         Ok(Signature {
             name: name.into_boxed_slice(),
             fields: fields.into_boxed_slice(),

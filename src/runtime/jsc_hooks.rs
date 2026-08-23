@@ -4018,12 +4018,12 @@ export default db;
                 let value = bun_jsc::bun_string_jsc::to_js(&string, global)
                     .expect("embedded text module string is never dead");
                 string.deref();
+                // No `specifier`/`source_url`: the ExportDefaultObject consumers
+                // never read or deref them.
                 // SAFETY: per fn contract — `out` is a valid out-param.
                 unsafe {
                     *out = ErrorableResolvedSource::ok(ResolvedSource {
                         jsvalue_for_export: value,
-                        specifier: specifier.dupe_ref(),
-                        source_url: specifier.dupe_ref(),
                         tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
                         ..ResolvedSource::default()
                     });

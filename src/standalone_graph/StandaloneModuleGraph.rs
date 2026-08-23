@@ -853,6 +853,7 @@ fn is_text_module_output(output_file: &OutputFile) -> bool {
 
 /// Writes `utf8` as a `WTF::StringImpl` body: Latin-1 when every code point
 /// fits, else UTF-16 at an even offset so the runtime can alias a `char16_t*`.
+/// `to_bytes` reserves `2 * utf8.len() + 4` bytes for it.
 fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
@@ -863,22 +864,20 @@ fn encode_text_module(
     // Invalid UTF-8 becomes U+FFFD, as with `TextDecoder`.
     let units = match strings::to_utf16_alloc(utf8, false, false) {
         Ok(Some(units)) => units,
-        // `None` only for all-ASCII input, handled above.
-        Ok(None) => unreachable!("to_utf16_alloc returned None for non-ASCII input"),
+        Ok(None) => unreachable!("non-ASCII input always converts"),
         Err(_) => bun_alloc::out_of_memory(),
     };
-    if units.iter().all(|&unit| unit <= 0xFF) {
-        let start = string_builder.len;
-        let dst = string_builder.writable();
-        for (dst, &unit) in dst.iter_mut().zip(units.iter()) {
-            *dst = unit as u8;
-        }
-        dst[units.len()] = 0;
-        string_builder.len += units.len() + 1;
+    let start = string_builder.len;
+    if let Some(latin1) =
+        strings::try_convert_utf16_to_latin1_in_buffer(string_builder.writable(), &units)
+    {
+        let len = latin1.len();
+        string_builder.writable()[len] = 0;
+        string_builder.len += len + 1;
         return (
             StringPointer {
                 offset: start as u32,
-                length: units.len() as u32,
+                length: len as u32,
             },
             Encoding::Latin1,
         );
@@ -889,11 +888,10 @@ fn encode_text_module(
     }
     let start = string_builder.len;
     let byte_len = units.len() * 2;
+    // SAFETY: a `u8` view over initialized `u16`s is in bounds and aligned.
+    let bytes = unsafe { core::slice::from_raw_parts(units.as_ptr().cast::<u8>(), byte_len) };
     let dst = string_builder.writable();
-    // Every `--compile` target is little-endian, whatever the build host is.
-    for (dst, unit) in dst.as_chunks_mut::<2>().0.iter_mut().zip(units.iter()) {
-        *dst = unit.to_le_bytes();
-    }
+    dst[..byte_len].copy_from_slice(bytes);
     dst[byte_len] = 0;
     dst[byte_len + 1] = 0;
     string_builder.len += byte_len + 2;

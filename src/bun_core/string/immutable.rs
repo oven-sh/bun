@@ -2493,6 +2493,24 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
     Some(&mut buf[..written])
 }
 
+/// UTF-16 → Latin-1 into `buf` (capacity ≥ `input.len()`), or `None` when a
+/// unit is above U+00FF. SIMD via simdutf; `buf` may hold a partial prefix
+/// after `None`.
+pub fn try_convert_utf16_to_latin1_in_buffer<'a>(
+    buf: &'a mut [u8],
+    input: &[u16],
+) -> Option<&'a mut [u8]> {
+    if input.len() > buf.len() {
+        return None;
+    }
+    let r = simdutf::convert::utf16::to::latin1::with_errors::le(input, buf);
+    if !r.is_successful() {
+        return None;
+    }
+    debug_assert_eq!(r.count, input.len());
+    Some(&mut buf[..input.len()])
+}
+
 /// Decode one WTF-8 sequence at the head of `s`; invalid lead/truncated → (U+FFFD, 1).
 /// Lone surrogates pass through (WTF-8). Helper for [`convert_utf8_to_utf16_in_buffer`].
 fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {

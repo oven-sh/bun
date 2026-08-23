@@ -567,7 +567,7 @@ pub(crate) fn basename(
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let (_path_js, path_str) = path_ptr.to_js_string_view(global_object)?;
+    let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
         return Ok(path_ptr);
     }
@@ -576,7 +576,7 @@ pub(crate) fn basename(
 
     let mut suffix_slice: Option<bun_core::ZigStringSlice> = None;
     if let Some(_suffix_ptr) = suffix_ptr {
-        let (_suffix_js, suffix_str) = _suffix_ptr.to_js_string_view(global_object)?;
+        let suffix_str = _suffix_ptr.to_js_string_view(global_object)?;
         if !suffix_str.is_empty() && suffix_str.length() <= path_str.length() {
             suffix_slice = Some(suffix_str.to_utf8());
         }
@@ -782,7 +782,7 @@ fn dirname(
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let (_path_js, path_str) = path_ptr.to_js_string_view(global_object)?;
+    let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
@@ -1025,7 +1025,7 @@ fn extname(
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let (_path_js, path_str) = path_ptr.to_js_string_view(global_object)?;
+    let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
         return Ok(path_ptr);
     }
@@ -1291,7 +1291,7 @@ fn is_absolute(
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let (_path_js, path_str) = path_ptr.to_js_string_view(global_object)?;
+    let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
         return Ok(JSValue::FALSE);
     }
@@ -1544,7 +1544,7 @@ pub(crate) fn join(
             }
             return Err(not_a_string(global_object, path_ptr, i));
         }
-        let (_path_js, path_str) = path_ptr.to_js_string_view(global_object)?;
+        let path_str = path_ptr.to_js_string_view(global_object)?;
         if path_str.is_empty() {
             continue;
         }
@@ -1982,7 +1982,7 @@ fn normalize(
         JSValue::UNDEFINED
     };
     validate_string(global_object, path_ptr, format_args!("path"))?;
-    let (_path_js, path_str) = path_ptr.to_js_string_view(global_object)?;
+    let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
@@ -2351,7 +2351,7 @@ pub(crate) fn parse(
     };
     crate::node::validators_impl::validate_string(global_object, path_ptr, format_args!("path"))?;
 
-    let (_path_js, path_str) = path_ptr.to_js_string_view(global_object)?;
+    let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
         return PathParsed::<u8>::default().to_js_object(global_object);
     }
@@ -2768,8 +2768,8 @@ fn relative(
     };
     crate::node::validators_impl::validate_string(global_object, to_ptr, format_args!("to"))?;
 
-    let (_from_js, from_str) = from_ptr.to_js_string_view(global_object)?;
-    let (_to_js, to_str) = to_ptr.to_js_string_view(global_object)?;
+    let from_str = from_ptr.to_js_string_view(global_object)?;
+    let to_str = to_ptr.to_js_string_view(global_object)?;
     if from_str.is_empty() && to_str.is_empty() {
         return Ok(from_ptr);
     }
@@ -3400,7 +3400,7 @@ fn resolve(
 
         let path = args[i as usize];
         validate_string(global_object, path, format_args!("paths[{}]", i))?;
-        let (_path_js, path_str) = path.to_js_string_view(global_object)?;
+        let path_str = path.to_js_string_view(global_object)?;
         if path_str.is_empty() {
             continue;
         }
@@ -3556,7 +3556,7 @@ fn to_namespaced_path(
     if !is_windows || !path_ptr.is_string() {
         return Ok(path_ptr);
     }
-    let (_path_js, path_str) = path_ptr.to_js_string_view(global_object)?;
+    let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
         return Ok(path_ptr);
     }

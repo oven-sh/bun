@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSType, JsClass, JsError, JsResult, ZigException,
+    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult, ZigException,
     bun_string_jsc, ffi, host_fn,
 };
 
@@ -847,17 +847,14 @@ impl JSValue {
             .map(|p| JSString::opaque_ref(p.as_ptr()))
     }
     /// [`to_js_string`] plus a borrowed view of its characters, in one FFI
-    /// call. Keep the `&JSString` alive for as long as the view is used.
+    /// call. The returned guard keeps the cell alive while in scope.
     #[track_caller]
-    pub fn to_js_string_view<'a>(
-        self,
-        global: &'a JSGlobalObject,
-    ) -> JsResult<(&'a JSString, bun_core::StringView<'a>)> {
+    pub fn to_js_string_view<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let mut view = bun_core::StringView::EMPTY;
         crate::call_null_is_throw(global, || {
             JSC__JSValue__toStringAndView(self, global, &mut view)
         })
-        .map(|p| (JSString::opaque_ref(p.as_ptr()), view))
+        .map(|p| JSStringView::new(JSString::opaque_ref(p.as_ptr()), view))
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         bun_string_jsc::from_js(self, global)
@@ -897,7 +894,10 @@ impl JSValue {
     /// Never throws; the backing cell is GC-rooted by the VM's SmallStrings
     /// table.
     pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
-        JSString::opaque_ref::<'a>(JSC__jsTypeStringForValue(global, self)).view(global)
+        crate::js_string::JSC__JSString__view(
+            JSString::opaque_ref::<'a>(JSC__jsTypeStringForValue(global, self)),
+            global,
+        )
     }
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         let mut out = ArrayBuffer::default();

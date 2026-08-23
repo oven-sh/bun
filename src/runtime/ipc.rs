@@ -1998,7 +1998,8 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
             return None;
         }
     };
-    let hex = info_value.as_string().to_slice(global);
+    let hex_view = info_value.as_string().view(global);
+    let hex = hex_view.to_utf8();
     let expected = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
     let mut info = vec![0u8; expected];
     let decoded = strings::decode_hex_to_bytes_truncate(&mut info, hex.slice());

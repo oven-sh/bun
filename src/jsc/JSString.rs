@@ -10,7 +10,10 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    safe fn JSC__JSString__view<'a>(this: &'a JSString, global: &JSGlobalObject) -> StringView<'a>;
+    pub(crate) safe fn JSC__JSString__view<'a>(
+        this: &'a JSString,
+        global: &JSGlobalObject,
+    ) -> StringView<'a>;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
     safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
@@ -26,16 +29,12 @@ impl JSString {
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
-    /// Borrows the string's characters; valid while `self` is reachable (keep the `&JSString` in a local).
     #[inline]
-    pub fn view(&self, global: &JSGlobalObject) -> StringView<'_> {
-        JSC__JSString__view(self, global)
-    }
-
-    /// UTF-8 of the characters; borrows when 8-bit ASCII, allocates
-    /// otherwise. Same lifetime caveat as [`view`](Self::view).
-    pub fn to_slice(&self, global: &JSGlobalObject) -> ZigStringSlice {
-        self.view(global).to_utf8()
+    pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JSStringView<'a> {
+        JSStringView {
+            cell: self,
+            view: JSC__JSString__view(self, global),
+        }
     }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
@@ -50,6 +49,55 @@ impl JSString {
 
     pub fn is_8bit(&self) -> bool {
         JSC__JSString__is8Bit(self)
+    }
+}
+
+/// A JSString's characters, borrowed. Keeps the cell observable to the GC's
+/// conservative stack scan until dropped (the Rust counterpart of
+/// `GCOwnedDataScope`), so a string `toString()` just created cannot be
+/// collected while its characters are in use.
+pub struct JSStringView<'a> {
+    cell: &'a JSString,
+    view: StringView<'a>,
+}
+
+impl<'a> JSStringView<'a> {
+    #[inline]
+    pub(crate) fn new(cell: &'a JSString, view: StringView<'a>) -> Self {
+        Self { cell, view }
+    }
+
+    #[inline]
+    pub fn cell(&self) -> &'a JSString {
+        self.cell
+    }
+
+    /// UTF-8 bytes; borrows when 8-bit ASCII, allocates otherwise. Never refs.
+    #[inline]
+    pub fn to_utf8(&self) -> ZigStringSlice {
+        self.view.to_utf8()
+    }
+}
+
+impl core::ops::Deref for JSStringView<'_> {
+    type Target = bun_core::String;
+
+    #[inline]
+    fn deref(&self) -> &bun_core::String {
+        &self.view
+    }
+}
+
+impl core::fmt::Display for JSStringView<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&*self.view, f)
+    }
+}
+
+impl Drop for JSStringView<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.cell.ensure_still_alive();
     }
 }
 

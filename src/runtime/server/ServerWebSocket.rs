@@ -345,7 +345,7 @@ impl ServerWebSocket {
             return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", args[0]));
         }
 
-        let (_topic_js, topic_js_view) = args[0].to_js_string_view(global_this)?;
+        let topic_js_view = args[0].to_js_string_view(global_this)?;
         let topic = topic_js_view.to_utf8();
 
         if topic.slice().is_empty() {
@@ -849,8 +849,8 @@ impl ServerWebSocket {
         // ToString on either argument can run user JS that stops the server or
         // triggers GC, so both are converted (and their JSStrings held) before
         // the handler state is read.
-        let (topic_string, topic_string_view) = topic_value.to_js_string_view(global_this)?;
-        let topic_slice = topic_string_view.to_utf8();
+        let topic_view = topic_value.to_js_string_view(global_this)?;
+        let topic_slice = topic_view.to_utf8();
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publish requires a non-empty topic")));
         }
@@ -867,16 +867,15 @@ impl ServerWebSocket {
         }
 
         let array_buffer = message_value.as_array_buffer(global_this);
-        let mut message_string = None;
+        let message_view;
         let message_slice;
         let (buffer, opcode): (&[u8], Opcode) = if let Some(array_buffer) = &array_buffer {
             (array_buffer.slice(), Opcode::Binary)
         } else if let Some(slice) = blob_payload(global_this, "publish", message_value)? {
             (slice, Opcode::Binary)
         } else {
-            let (string, view) = message_value.to_js_string_view(global_this)?;
-            message_slice = view.to_utf8();
-            message_string = Some(string);
+            message_view = message_value.to_js_string_view(global_this)?;
+            message_slice = message_view.to_utf8();
             (message_slice.slice(), Opcode::Text)
         };
 
@@ -886,11 +885,7 @@ impl ServerWebSocket {
         };
 
         let ret = self.do_publish(ctx, topic_slice.slice(), buffer, opcode, compress);
-        topic_string.ensure_still_alive();
         message_value.ensure_still_alive();
-        if let Some(message_string) = message_string {
-            message_string.ensure_still_alive();
-        }
         Ok(ret)
     }
 
@@ -912,8 +907,8 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publishText requires a topic string")));
         }
 
-        let (topic_string, topic_string_view) = topic_value.to_js_string_view(global_this)?;
-        let topic_slice = topic_string_view.to_utf8();
+        let topic_view = topic_value.to_js_string_view(global_this)?;
+        let topic_slice = topic_view.to_utf8();
 
         let compress = Self::parse_compress_arg(
             global_this,
@@ -926,8 +921,8 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publishText requires a non-empty message")));
         }
 
-        let (message_string, message_string_view) = message_value.to_js_string_view(global_this)?;
-        let message_slice = message_string_view.to_utf8();
+        let message_view = message_value.to_js_string_view(global_this)?;
+        let message_slice = message_view.to_utf8();
 
         let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
@@ -941,8 +936,6 @@ impl ServerWebSocket {
             Opcode::Text,
             compress,
         );
-        topic_string.ensure_still_alive();
-        message_string.ensure_still_alive();
         Ok(ret)
     }
 
@@ -966,8 +959,8 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publishBinary requires a topic string")));
         }
 
-        let (topic_string, topic_string_view) = topic_value.to_js_string_view(global_this)?;
-        let topic_slice = topic_string_view.to_utf8();
+        let topic_view = topic_value.to_js_string_view(global_this)?;
+        let topic_slice = topic_view.to_utf8();
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
         }
@@ -1002,7 +995,6 @@ impl ServerWebSocket {
         };
 
         let ret = self.do_publish(ctx, topic_slice.slice(), buffer, Opcode::Binary, compress);
-        topic_string.ensure_still_alive();
         message_value.ensure_still_alive();
         Ok(ret)
     }
@@ -1097,18 +1089,16 @@ impl ServerWebSocket {
         }
 
         {
-            let (js_string, js_string_view) = message_value.to_js_string_view(global_this)?;
-            let slice = js_string_view.to_utf8();
+            let view = message_value.to_js_string_view(global_this)?;
+            let slice = view.to_utf8();
 
             let buffer = slice.slice();
-            let ret = send_status_to_js(
+            Ok(send_status_to_js(
                 self.websocket().send(buffer, Opcode::Text, compress, true),
                 buffer.len(),
                 "send",
                 "bytes string",
-            );
-            js_string.ensure_still_alive();
-            Ok(ret)
+            ))
         }
     }
 
@@ -1141,18 +1131,16 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("sendText expects a string")));
         }
 
-        let (js_string, js_string_view) = message_value.to_js_string_view(global_this)?;
-        let slice = js_string_view.to_utf8();
+        let view = message_value.to_js_string_view(global_this)?;
+        let slice = view.to_utf8();
 
         let buffer = slice.slice();
-        let ret = send_status_to_js(
+        Ok(send_status_to_js(
             self.websocket().send(buffer, Opcode::Text, compress, true),
             buffer.len(),
             "sendText",
             "bytes string",
-        );
-        js_string.ensure_still_alive();
-        Ok(ret)
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1261,7 +1249,7 @@ impl ServerWebSocket {
                     value.ensure_still_alive();
                     return Ok(ret);
                 } else if value.is_string() {
-                    let (_js, view) = value.to_js_string_view(global_this)?;
+                    let view = value.to_js_string_view(global_this)?;
                     let string_value = view.to_utf8();
                     let buffer = string_value.slice();
                     if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {

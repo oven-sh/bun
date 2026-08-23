@@ -5753,7 +5753,7 @@ impl H2FrameParser {
                         return Err(global_object.throw_value(exception));
                     }
 
-                    let value_str = item.to_js_string(global_object)?;
+                    let value_view = item.to_js_string_view(global_object)?;
 
                     // All-digit names can't be passed to get_truthy (integer-index-like names
                     // trip a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
@@ -5766,7 +5766,7 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_view.to_utf8();
                     let value = value_slice.slice();
 
                     if let Some(ret) = handle_encode(this, value, never_index)? {
@@ -5787,7 +5787,7 @@ impl H2FrameParser {
                     }
                     single_value_headers[idx] = true;
                 }
-                let value_str = js_value.to_js_string(global_object)?;
+                let value_view = js_value.to_js_string_view(global_object)?;
 
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
                 // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
@@ -5800,7 +5800,7 @@ impl H2FrameParser {
                     }
                 };
 
-                let value_slice = value_str.to_slice(global_object);
+                let value_slice = value_view.to_utf8();
                 let value = value_slice.slice();
                 bun_output::scoped_log!(
                     H2FrameParser,
@@ -6167,8 +6167,8 @@ impl H2FrameParser {
                     }
                 };
                 let mut encode_value = |item: JSValue| -> JsResult<Option<JSValue>> {
-                    let value_str = item.to_js_string(global_object)?;
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_view = item.to_js_string_view(global_object)?;
+                    let value_slice = value_view.to_utf8();
                     let value = value_slice.slice();
                     if !is_valid_header_value(value) {
                         return Err(global_object
@@ -6572,8 +6572,8 @@ impl H2FrameParser {
                         continue;
                     }
 
-                    let name_str = name_js.to_js_string(global_object)?;
-                    let name_slice = name_str.to_slice(global_object);
+                    let name_view = name_js.to_js_string_view(global_object)?;
+                    let name_slice = name_view.to_utf8();
                     let name = name_slice.slice();
                     if name.is_empty() {
                         continue;
@@ -6630,7 +6630,7 @@ impl H2FrameParser {
                         single_value_headers[idx] = true;
                     }
 
-                    let value_str = value_js.to_js_string(global_object)?;
+                    let value_view = value_js.to_js_string_view(global_object)?;
 
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false
@@ -6641,7 +6641,7 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_view.to_utf8();
                     let value = value_slice.slice();
                     if !is_valid_header_value(value) {
                         return Err(global_object
@@ -6796,7 +6796,7 @@ impl H2FrameParser {
                             return Ok(JSValue::ZERO);
                         }
 
-                        let value_str = item.to_js_string(global_object)?;
+                        let value_view = item.to_js_string_view(global_object)?;
 
                         let never_index = if Self::is_index_like_name(validated_name) {
                             false
@@ -6807,7 +6807,7 @@ impl H2FrameParser {
                             }
                         };
 
-                        let value_slice = value_str.to_slice(global_object);
+                        let value_slice = value_view.to_utf8();
                         let value = value_slice.slice();
                         if !is_valid_header_value(value) {
                             return Err(global_object
@@ -6866,7 +6866,7 @@ impl H2FrameParser {
                         }
                         single_value_headers[idx] = true;
                     }
-                    let value_str = js_value.to_js_string(global_object)?;
+                    let value_view = js_value.to_js_string_view(global_object)?;
 
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false
@@ -6877,7 +6877,7 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_view.to_utf8();
                     let value = value_slice.slice();
                     if !is_valid_header_value(value) {
                         return Err(global_object

@@ -1422,7 +1422,7 @@ where
             )));
         }
 
-        let (_topic_js, topic_js_view) = topic_value.to_js_string_view(global)?;
+        let topic_js_view = topic_value.to_js_string_view(global)?;
         let topic = topic_js_view.to_utf8();
 
         if topic.slice().is_empty() {
@@ -1495,19 +1495,17 @@ where
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        // Converting `message_value` can run user JS / GC; the JSString keeps the
-        // topic bytes alive across it.
-        let (topic_string, topic_string_view) = topic_value.to_js_string_view(global)?;
-        let topic = topic_string_view.to_utf8();
+        // Converting `message_value` can run user JS / GC; `topic_view` keeps
+        // the topic bytes alive across it.
+        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic = topic_view.to_utf8();
         // jsc.JSValue
         let message_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
         // ?jsc.JSValue
         let compress_value = iter.next_eat();
-        let result = self.publish(global, topic.slice(), message_value, compress_value);
-        topic_string.ensure_still_alive();
-        result
+        self.publish(global, topic.slice(), message_value, compress_value)
     }
 
     /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
@@ -1636,7 +1634,7 @@ where
         // Resolve the payload before reading `self.app`: `to_js_string` can run
         // user JS that stops the server.
         let array_buffer = message_value.as_array_buffer(global);
-        let mut js_string: Option<&jsc::JSString> = None;
+        let message_view;
         let string_slice;
         let (buffer, opcode): (&[u8], uws_sys::Opcode) = if let Some(buffer) = &array_buffer {
             (buffer.slice(), uws_sys::Opcode::Binary)
@@ -1645,9 +1643,8 @@ where
         {
             (slice, uws_sys::Opcode::Binary)
         } else {
-            let (js_str, view) = message_value.to_js_string_view(global)?;
-            js_string = Some(js_str);
-            string_slice = view.to_utf8();
+            message_view = message_value.to_js_string_view(global)?;
+            string_slice = message_view.to_utf8();
             (string_slice.slice(), uws_sys::Opcode::Text)
         };
 
@@ -1664,12 +1661,7 @@ where
         );
         let result =
             super::server_web_socket::send_status_to_js(status, buffer.len(), "publish", "bytes");
-        // When the input was not already a JSString, `to_js_string` allocates a
-        // fresh GC cell not reachable from `message_value`; keep both alive.
         message_value.ensure_still_alive();
-        if let Some(js_string) = js_string {
-            js_string.ensure_still_alive();
-        }
         Ok(result)
     }
 

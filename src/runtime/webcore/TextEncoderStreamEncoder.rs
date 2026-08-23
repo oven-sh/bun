@@ -244,7 +244,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     global: &JSGlobalObject,
     chunk: JSValue,
 ) -> JSValue {
-    let Ok((_js_str, str)) = chunk.to_js_string_view(global) else {
+    let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
     };
     // SAFETY: `this` is the live encoder owned by the calling JS cell; driven
@@ -288,7 +288,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     sink_id: u8,
     sink_ptr: *mut core::ffi::c_void,
 ) -> JSValue {
-    let Ok((_js_str, str)) = chunk.to_js_string_view(global) else {
+    let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
     };
     // SAFETY: `this` is the live encoder owned by the calling JS cell; taken

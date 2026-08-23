@@ -1452,13 +1452,11 @@ pub mod js_bundler {
             let path = path_value
                 .to_js_string_view(global)
                 .expect("Unexpected: path is not a string")
-                .1
                 .to_owned_slice()
                 .into_boxed_slice();
             let namespace = namespace_value
                 .to_js_string_view(global)
                 .expect("Unexpected: namespace is not a string")
-                .1
                 .to_owned_slice()
                 .into_boxed_slice();
             resolve.value = ResolveValue::Success(ResolveSuccess {

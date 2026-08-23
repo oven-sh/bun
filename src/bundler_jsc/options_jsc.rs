@@ -30,7 +30,7 @@ pub fn loader_from_js(
         return Err(global.throw_invalid_arguments(format_args!("loader must be a string")));
     }
 
-    let (_loader_js, loader_str) = loader.to_js_string_view(global)?;
+    let loader_str = loader.to_js_string_view(global)?;
     if loader_str.is_empty() {
         return Ok(None);
     }

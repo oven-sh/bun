@@ -101,6 +101,7 @@ impl CountedKeepAlive {
 pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_as_array::<2>();
 
+    let data_view;
     let data: ZigStringSlice = 'blk: {
         let data: JSValue = arguments[0];
 
@@ -112,7 +113,8 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
             ));
         }
         if data.is_string_literal() {
-            break 'blk data.as_string().to_slice(global_this);
+            data_view = data.as_string().view(global_this);
+            break 'blk data_view.to_utf8();
         }
         let Some(buffer) = data.as_array_buffer(global_this) else {
             let ty_str = data.js_type_string(global_this);
@@ -128,7 +130,6 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         };
         break 'blk ZigStringSlice::from_utf8_never_free(buffer.byte_slice());
     };
-    // `data` drops at end of scope
 
     let value: u32 = 'blk: {
         let value: JSValue = arguments[1];

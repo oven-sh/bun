@@ -378,7 +378,6 @@ impl Glob {
 
         let pat_str: Box<[u8]> = pat_arg
             .to_js_string_view(global_this)?
-            .1
             .to_owned_slice()
             .into_boxed_slice();
 

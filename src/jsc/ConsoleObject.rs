@@ -3666,7 +3666,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let (_js, view) = value.to_js_string_view(self.global_this)?;
+            let view = value.to_js_string_view(self.global_this)?;
             let out_str = view.latin1();
             writer.add_for_new_line(out_str.len());
             writer.print(format_args!(
@@ -3700,7 +3700,7 @@ pub mod formatter {
             if value.is_cell() {
                 let number_name = value.get_class_name(self.global_this)?;
 
-                let (_number_js, number_value) = value.to_js_string_view(self.global_this)?;
+                let number_value = value.to_js_string_view(self.global_this)?;
 
                 if !number_name.eql_comptime(b"Number") {
                     writer.add_for_new_line(
@@ -4105,7 +4105,7 @@ pub mod formatter {
             }
             if value.is_cell() {
                 let bool_name = value.get_class_name(self.global_this)?;
-                let (_bool_js, bool_value) = value.to_js_string_view(self.global_this)?;
+                let bool_value = value.to_js_string_view(self.global_this)?;
 
                 if !bool_name.eql_comptime(b"Boolean") {
                     writer.add_for_new_line(
@@ -5163,7 +5163,7 @@ pub mod formatter {
                             'print_children: {
                                 match tag.tag.tag() {
                                     Tag::String => {
-                                        let (_children_js, children_string) =
+                                        let children_string =
                                             children.to_js_string_view(self.global_this)?;
                                         if children_string.is_empty() {
                                             break 'print_children;

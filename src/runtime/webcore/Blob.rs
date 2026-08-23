@@ -1997,8 +1997,7 @@ impl BlobExt for Blob {
         if let Some(content_type_) = args_iter.next_eat() {
             'inner: {
                 if content_type_.is_string() {
-                    let (_content_type_js, content_type_js_view) =
-                        content_type_.to_js_string_view(global_this)?;
+                    let content_type_js_view = content_type_.to_js_string_view(global_this)?;
                     let slicer = content_type_js_view.to_utf8();
                     let slice = slicer.slice();
                     if !is_valid_blob_type(slice) {
@@ -3269,7 +3268,7 @@ impl BlobExt for Blob {
                             // buffers instead — regardless of `MOVE`.
                             return Ok(artifact.blob.dupe());
                         } else {
-                            let (_js, sliced) = current.to_js_string_view(global)?;
+                            let sliced = current.to_js_string_view(global)?;
                             if !sliced.is_empty() {
                                 return Ok(Blob::init_with_all_ascii(
                                     sliced.to_owned_slice(),

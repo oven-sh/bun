@@ -4941,12 +4941,11 @@ impl Resolver {
                 {
                     break 'brk RecordType::DEFAULT;
                 }
-                // SAFETY: `to_js_string` returns a live *mut JSString rooted by `record_type_value`.
-                let record_type_str = record_type_value.to_js_string(global_this)?;
-                if record_type_str.length() == 0 {
+                let record_type_view = record_type_value.to_js_string_view(global_this)?;
+                if record_type_view.is_empty() {
                     break 'brk RecordType::DEFAULT;
                 }
-                match RECORD_TYPE_MAP.get(record_type_str.to_slice(global_this).slice()) {
+                match RECORD_TYPE_MAP.get(record_type_view.to_utf8().slice()) {
                     Some(r) => *r,
                     None => {
                         return Err(global_this.throw_invalid_argument_property_value(
@@ -4963,7 +4962,7 @@ impl Resolver {
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
         }
-        let (_name_value_js, name_view) = name_value.to_js_string_view(global_this)?;
+        let name_view = name_value.to_js_string_view(global_this)?;
         let name = name_view.to_utf8();
         if name.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
@@ -5026,7 +5025,7 @@ impl Resolver {
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
-        let (_ip_value_js, ip_slice_view) = ip_value.to_js_string_view(global_this)?;
+        let ip_slice_view = ip_value.to_js_string_view(global_this)?;
         let ip_slice = ip_slice_view.to_utf8();
         if ip_slice.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
@@ -5095,7 +5094,7 @@ impl Resolver {
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
         }
-        let (_name_value_js, name_view) = name_value.to_js_string_view(global_this)?;
+        let name_view = name_value.to_js_string_view(global_this)?;
         let name = name_view.to_utf8();
         if name.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
@@ -5233,7 +5232,7 @@ macro_rules! resolve_record_fn {
             if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
             }
-            let (_name_value_js, name_view) = name_value.to_js_string_view(global_this)?;
+            let name_view = name_value.to_js_string_view(global_this)?;
             let name = name_view.to_utf8();
             if !$allow_empty && name.slice().is_empty() {
                 return Err(global_this.throw_invalid_argument_type(
@@ -5904,15 +5903,15 @@ impl Resolver {
                 "string",
             ));
         }
-        let addr_str = addr_value.to_js_string(global_this)?;
-        if addr_str.length() == 0 {
+        let addr_view = addr_value.to_js_string_view(global_this)?;
+        if addr_view.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",
                 "address",
                 "non-empty string",
             ));
         }
-        let addr_slice = addr_str.to_slice(global_this);
+        let addr_slice = addr_view.to_utf8();
         let addr_s = addr_slice.slice();
 
         let port_value = arguments[1];

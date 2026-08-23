@@ -1425,7 +1425,7 @@ impl UDPSocket {
                 }
                 // Phase 1 stored the primitive JSString; `as_string()` is a
                 // plain cast (no `toPrimitive`, no user JS).
-                string_slices.push(val.as_string().to_slice(global_this));
+                string_slices.push(val.as_string().view(global_this).to_utf8());
                 break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();
@@ -1506,6 +1506,7 @@ impl UDPSocket {
 
         let payload_arg = arguments[0];
         let mut payload_str = ZigStringSlice::empty();
+        let payload_view;
         // Hoisted so the `slice()` borrow outlives the `'brk` block; the
         // backing store is kept alive by `payload_arg` on the JS stack.
         let array_buffer = payload_arg.as_array_buffer(global_this);
@@ -1521,8 +1522,8 @@ impl UDPSocket {
                 // `toPrimitive` cannot invalidate an earlier captured pointer,
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
-                // SAFETY: to_js_string returned non-null on success path.
-                payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this);
+                payload_view = payload_arg.to_js_string_view(global_this)?;
+                payload_str = payload_view.to_utf8();
                 break 'brk payload_str.slice();
             } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(

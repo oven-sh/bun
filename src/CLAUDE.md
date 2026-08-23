@@ -102,8 +102,8 @@ let owned: Vec<u8>       = s.to_owned_slice();
 
 JSValue → string: `value.to_bun_string(global)?` (owned `String`),
 `value.to_slice(global)?` (owned UTF-8 `ZigStringSlice`), or
-`value.to_js_string_view(global)?` (borrowed `(&JSString, StringView)`; don't
-hold across calls into JS).
+`value.to_js_string_view(global)?` (borrowed `JSStringView` guard; derefs to
+`&String` and keeps the `JSString` cell alive while it is in scope).
 
 To/from JS values, use the `bun_jsc::StringJsc` extension trait:
 

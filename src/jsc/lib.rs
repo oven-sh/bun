@@ -1203,7 +1203,7 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
 // JSString (real module in JSString.rs).
 #[path = "JSString.rs"]
 pub mod js_string;
-pub use self::js_string::JSString;
+pub use self::js_string::{JSString, JSStringView};
 
 #[path = "RefString.rs"]
 pub mod ref_string;

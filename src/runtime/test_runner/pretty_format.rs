@@ -1098,7 +1098,7 @@ impl<'a> Formatter<'a> {
                     );
                 }
                 Tag::String => {
-                    let (_js_str, str) = value.to_js_string_view(self.global_this)?;
+                    let str = value.to_js_string_view(self.global_this)?;
                     let str = str.to_zig_string();
                     self.add_for_new_line(str.len);
 
@@ -1240,7 +1240,7 @@ impl<'a> Formatter<'a> {
                     ));
                 }
                 Tag::BigInt => {
-                    let (_js_str, view) = value.to_js_string_view(self.global_this)?;
+                    let view = value.to_js_string_view(self.global_this)?;
                     let out_str = view.latin1();
                     self.add_for_new_line(out_str.len());
 
@@ -2141,7 +2141,7 @@ impl<'a> Formatter<'a> {
                                     'print_children: {
                                         match tag.tag {
                                             Tag::String => {
-                                                let (_children_js, children_string) =
+                                                let children_string =
                                                     children.to_js_string_view(self.global_this)?;
                                                 if children_string.is_empty() {
                                                     break 'print_children;

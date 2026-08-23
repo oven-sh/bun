@@ -117,6 +117,26 @@ pub type GenArrayBuffer = *mut JSCArrayBuffer;
 /// The codegen `m_ctx` `*mut webcore::Blob`, erased: `Blob` lives in `bun_runtime`.
 pub type GenBlob = *mut core::ffi::c_void;
 
+impl GenVal<GenArrayBuffer> {
+    /// The `JSC::ArrayBuffer` this arm holds a ref on.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn array_buffer(&self) -> &mut JSCArrayBuffer {
+        JSCArrayBuffer::opaque_mut(self.0)
+    }
+}
+
+impl GenVal<GenBlob> {
+    /// The `Blob` (the JS `Blob`'s `m_ctx`) this arm holds a ref on.
+    #[inline]
+    pub fn blob(&self) -> &crate::webcore_types::Blob {
+        assert!(!self.0.is_null());
+        // SAFETY: the `File` arm is only decoded from a JS `Blob`, whose live
+        // `m_ctx` C++ `leakRef()`ed into this field (released in `Drop`).
+        unsafe { &*self.0.cast::<crate::webcore_types::Blob>() }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Extern-ABI helper layouts.
 //

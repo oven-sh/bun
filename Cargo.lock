@@ -981,6 +981,7 @@ name = "bun_libuv_sys"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+ "bun_ptr",
  "bun_windows_sys",
  "bun_wyhash",
  "libc",

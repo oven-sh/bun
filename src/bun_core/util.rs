@@ -3698,6 +3698,33 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
 /// case used by http SSLConfig — re-exported from `bun_alloc` so the
 /// secure-zero core stays single-sourced. Pairs with [`dupe_z`].
 pub use bun_alloc::free_sensitive_cstr as free_sensitive;
+
+/// A [`dupe_z`] C string owned by this guard: zeroed and freed
+/// ([`free_sensitive`]) on drop, or handed off raw with
+/// [`into_raw`](Self::into_raw) to a container that does the same.
+pub struct SensitiveCStr(core::ptr::NonNull<core::ffi::c_char>);
+
+impl SensitiveCStr {
+    /// Copy `bytes` into a fresh NUL-terminated allocation.
+    pub fn new(bytes: &[u8]) -> Self {
+        SensitiveCStr(
+            core::ptr::NonNull::new(dupe_z(bytes).cast_mut()).expect("dupe_z aborts on OOM"),
+        )
+    }
+
+    /// Transfers the allocation out; the caller frees it with
+    /// [`free_sensitive`].
+    pub fn into_raw(self) -> *const core::ffi::c_char {
+        core::mem::ManuallyDrop::new(self).0.as_ptr().cast_const()
+    }
+}
+
+impl Drop for SensitiveCStr {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `dupe_z` (see `new`) and is owned here.
+        unsafe { free_sensitive(self.0.as_ptr()) }
+    }
+}
 /// Optimization-resistant memory zeroing — re-exported from `bun_alloc`.
 pub use bun_alloc::secure_zero;
 

@@ -406,6 +406,8 @@ pub mod socket_context;
 pub mod socket_group;
 #[path = "SocketKind.rs"]
 pub mod socket_kind;
+
+pub mod ssl;
 #[path = "thunk.rs"]
 pub mod thunk;
 // libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
@@ -490,7 +492,7 @@ pub use timer::Timer;
 
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
-pub use listen_socket::ListenSocket;
+pub use listen_socket::{ListenSocket, ServerNameHandler, SniDecision};
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
 pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};

@@ -213,11 +213,8 @@ impl us_socket_t {
     /// Install a socket-level SNI resolver on an already-adopted server-side
     /// TLS socket (there is no listen socket to hang it off). Must run before
     /// the handshake is driven.
-    pub fn on_server_name(
-        &mut self,
-        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
-    ) {
-        c::us_socket_on_server_name(self, cb);
+    pub fn on_server_name<H: crate::listen_socket::ServerNameHandler>(&mut self) {
+        c::us_socket_on_server_name(self, crate::listen_socket::socket_server_name_thunk::<H>);
     }
 
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for

@@ -54,3 +54,40 @@ pub unsafe fn ntop(
     }
     Some(bun_core::ffi::slice_to_nul(dst))
 }
+
+/// Where [`pton`] writes the parsed address: the `in_addr` / `in6_addr`
+/// field of a `sockaddr_in` / `sockaddr_in6`.
+pub enum PtonDst<'a> {
+    V4(&'a mut u32),
+    V6(&'a mut [u8; 16]),
+}
+
+/// `ares_inet_pton`: parse the NUL-terminated presentation address `addr`
+/// into `dst` (which picks the family). Returns the C result: 1 on success,
+/// 0 if `addr` is not parseable, -1 with `errno` set otherwise.
+pub fn pton(addr: &core::ffi::CStr, dst: PtonDst<'_>) -> core::ffi::c_int {
+    let (af, dst): (core::ffi::c_int, *mut core::ffi::c_void) = match dst {
+        PtonDst::V4(v4) => (c_ares::AF::INET, core::ptr::from_mut(v4).cast()),
+        PtonDst::V6(v6) => (c_ares::AF::INET6, core::ptr::from_mut(v6).cast()),
+    };
+    // SAFETY: `addr` is NUL-terminated; `dst` is writable for the 4 / 16
+    // bytes `ares_inet_pton` stores for `af`.
+    unsafe { c_ares::ares_inet_pton(af, addr.as_ptr(), dst) }
+}
+
+/// [`ntop`] for an address held as a Rust value (`ares_inet_ntop`
+/// formatting, which differs from `core::net`'s for IPv4-compatible IPv6).
+pub fn ip_to_text<'a>(ip: &core::net::IpAddr, dst: &'a mut [u8]) -> Option<&'a [u8]> {
+    match ip {
+        core::net::IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            // SAFETY: `in_addr` is these 4 network-order bytes.
+            unsafe { ntop(c_ares::AF::INET, octets.as_ptr().cast(), dst) }
+        }
+        core::net::IpAddr::V6(v6) => {
+            let octets = v6.octets();
+            // SAFETY: `in6_addr` is these 16 bytes.
+            unsafe { ntop(c_ares::AF::INET6, octets.as_ptr().cast(), dst) }
+        }
+    }
+}

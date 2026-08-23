@@ -447,7 +447,7 @@ impl SharedConnection {
         let rc = this.connection.process_result();
         if rc != sd::ERR_NO_ERROR {
             bun_output::scoped_log!(dns, "DNSServiceProcessResult: {}", rc);
-            // Defunct primary: detach, fail subordinates before freeing the parent (dns_sd.h), destroy.
+            // Defunct primary: detach, fail every subordinate, destroy.
             let ready = core::mem::take(&mut *this.inflight.borrow_mut());
             drop(Self::detach());
             for inf in ready {
@@ -545,8 +545,7 @@ impl SharedConnection {
         {
             timer_all_mut().remove(this.early_out_timer.as_ptr());
         }
-        // Return the `FilePoll` before the primary ref (and any remaining
-        // subordinates) is deallocated with `connection`.
+        // Return the `FilePoll` before its fd goes away with `connection`.
         drop(this.file_poll.borrow_mut().take());
         drop(this);
     }
@@ -612,7 +611,6 @@ impl SharedConnection {
         let Some(conn) = Self::detach() else {
             return;
         };
-        // Subordinates are dealt with (deallocating them) before the parent.
         loop {
             let Some(mut inf) = conn.inflight.borrow_mut().pop() else {
                 break;

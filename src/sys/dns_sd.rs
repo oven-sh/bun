@@ -116,10 +116,21 @@ pub trait GetAddrInfoReply {
     fn on_reply(&self, reply: &Reply<'_>);
 }
 
+/// The primary `DNSServiceCreateConnection` ref. Deallocating it invalidates
+/// every subordinate made on it (dns_sd.h), so each [`Query`] holds a share and
+/// it is deallocated only once the [`Connection`] and every `Query` are gone.
+struct PrimaryRef(NonNull<DNSServiceRefOpaque>);
+
+impl Drop for PrimaryRef {
+    fn drop(&mut self) {
+        // SAFETY: the live ref `DNSServiceCreateConnection` returned; no
+        // subordinate is left (each held an `Rc` to this).
+        unsafe { DNSServiceRefDeallocate(self.0.as_ptr()) }
+    }
+}
+
 /// The primary connection to mDNSResponder (`DNSServiceCreateConnection`).
-/// Dropping it deallocates the ref, which also invalidates every subordinate
-/// [`Query`] made on it — deallocate those first (dns_sd.h).
-pub struct Connection(NonNull<DNSServiceRefOpaque>);
+pub struct Connection(std::rc::Rc<PrimaryRef>);
 
 impl Connection {
     pub fn create() -> Result<Self, DNSServiceErrorType> {
@@ -129,14 +140,20 @@ impl Connection {
         if err != ERR_NO_ERROR {
             return Err(err);
         }
-        NonNull::new(sd_ref).map(Self).ok_or(ERR_NO_MEMORY)
+        let primary = NonNull::new(sd_ref).ok_or(ERR_NO_MEMORY)?;
+        Ok(Self(std::rc::Rc::new(PrimaryRef(primary))))
+    }
+
+    #[inline]
+    fn raw(&self) -> DNSServiceRef {
+        (self.0).0.as_ptr()
     }
 
     /// The connection's socket; readable when replies are buffered.
     #[inline]
     pub fn sock_fd(&self) -> c_int {
         // SAFETY: live connection ref.
-        unsafe { DNSServiceRefSockFD(self.0.as_ptr()) }
+        unsafe { DNSServiceRefSockFD(self.raw()) }
     }
 
     /// Read one batch of replies off the socket, running each query's
@@ -144,7 +161,7 @@ impl Connection {
     #[inline]
     pub fn process_result(&self) -> DNSServiceErrorType {
         // SAFETY: live connection ref.
-        unsafe { DNSServiceProcessResult(self.0.as_ptr()) }
+        unsafe { DNSServiceProcessResult(self.raw()) }
     }
 
     /// Start a `kDNSServiceFlagsShareConnection` address query (allowed to fail
@@ -160,7 +177,7 @@ impl Connection {
         context: bun_ptr::BackRef<C>,
     ) -> Result<Query, DNSServiceErrorType> {
         // ShareConnection requires `sub` to start as a copy of the primary ref.
-        let mut sub: DNSServiceRef = self.0.as_ptr();
+        let mut sub: DNSServiceRef = self.raw();
         let flags = flags | FLAGS_SHARE_CONNECTION;
         let context = context.as_const_ptr().cast_mut().cast::<c_void>();
         // SAFETY: `hostname` is NUL-terminated (dns_sd copies it); `context` is
@@ -191,26 +208,27 @@ impl Connection {
         if err != ERR_NO_ERROR {
             return Err(err);
         }
-        NonNull::new(sub).map(Query).ok_or(ERR_NO_MEMORY)
-    }
-}
-
-impl Drop for Connection {
-    fn drop(&mut self) {
-        // SAFETY: the live ref `DNSServiceCreateConnection` returned.
-        unsafe { DNSServiceRefDeallocate(self.0.as_ptr()) }
+        let sub = NonNull::new(sub).ok_or(ERR_NO_MEMORY)?;
+        Ok(Query {
+            sub,
+            _primary: std::rc::Rc::clone(&self.0),
+        })
     }
 }
 
 /// A subordinate query on a [`Connection`]; deallocated on drop (on the
 /// connection's thread, like every other use of the connection), after which
-/// no more replies are delivered for it.
-pub struct Query(NonNull<DNSServiceRefOpaque>);
+/// no more replies are delivered for it. Keeps the primary ref alive.
+pub struct Query {
+    sub: NonNull<DNSServiceRefOpaque>,
+    _primary: std::rc::Rc<PrimaryRef>,
+}
 
 impl Drop for Query {
     fn drop(&mut self) {
-        // SAFETY: the live subordinate ref `DNSServiceGetAddrInfo{,Ex}` returned.
-        unsafe { DNSServiceRefDeallocate(self.0.as_ptr()) }
+        // SAFETY: the live subordinate ref `DNSServiceGetAddrInfo` returned; its
+        // primary is still alive (`_primary`, dropped after this).
+        unsafe { DNSServiceRefDeallocate(self.sub.as_ptr()) }
     }
 }
 

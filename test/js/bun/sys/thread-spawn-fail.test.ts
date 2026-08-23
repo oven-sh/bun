@@ -161,6 +161,8 @@ async function runFixture(
 ) {
   const env: Record<string, string | undefined> = {
     ...bunEnv,
+    // The assertions match the strerror text of libc, which follows LC_MESSAGES.
+    LC_ALL: "C",
     LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath,
     REFUSE_THREADS_WHILE_EXISTS: join(dir, "refuse-threads"),
     // Without the fix the child crashes. Never upload that.

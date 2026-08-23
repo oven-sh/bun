@@ -156,8 +156,9 @@ __attribute__((constructor)) static void no_core(void) {
 int inotify_init1(int flags) {
   if (!real_inotify_init1) real_inotify_init1 = dlsym(RTLD_NEXT, "inotify_init1");
   /* Watcher::start() spawns through bun_threading::spawn_with_retry, which
-   * makes 20 attempts; fail all of them. */
-  armed = 20;
+   * makes 20 attempts. Arm many more, so that an unrelated thread created in
+   * the window cannot use them up. */
+  armed = 1000;
   return real_inotify_init1(flags);
 }
 

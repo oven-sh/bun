@@ -4042,6 +4042,7 @@ export default db;
                         core::ptr::null_mut()
                     },
                     is_commonjs_module: file.module_format == ModuleFormat::Cjs,
+                    source_code_hash: file.source_hash,
                     ..ResolvedSource::default()
                 });
             }

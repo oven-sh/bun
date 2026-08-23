@@ -51,6 +51,8 @@ pub struct ResolvedSource {
     /// was used at build time. If empty, the origin is derived from source_url.
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
+    /// `WTF::StringImpl::hash()` of `source_code`, when known ahead of time (0 = compute on demand).
+    pub source_code_hash: u32,
 }
 
 impl Default for ResolvedSource {
@@ -70,6 +72,7 @@ impl Default for ResolvedSource {
             bytecode_cache_size: 0,
             module_info: core::ptr::null_mut(),
             bytecode_origin_path: BunString::empty(),
+            source_code_hash: 0,
         }
     }
 }

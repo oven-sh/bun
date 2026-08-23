@@ -132,6 +132,7 @@ Ref<SourceProvider> SourceProvider::create(
                 sourceURLString.impl(), TextPosition(),
                 sourceType));
             provider->m_cachedBytecode = WTF::move(bytecode);
+            provider->m_hash = resolvedSource.source_code_hash;
             return provider;
         }
 
@@ -279,6 +280,12 @@ unsigned SourceProvider::hash() const
     }
 
     return m_source->hash();
+}
+
+// What StringImpl::hash() returns for an 8-bit string with these bytes; `bun build --compile` records it per module.
+extern "C" uint32_t Bun__WTFStringHashLatin1(const Latin1Character* characters, size_t length)
+{
+    return StringHasher::computeHashAndMaskTop8Bits(std::span { characters, length });
 }
 
 extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)

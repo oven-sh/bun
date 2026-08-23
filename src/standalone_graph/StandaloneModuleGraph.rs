@@ -478,6 +478,8 @@ pub struct File {
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
     pub bytecode_origin_path: &'static [u8],
+    /// `WTF::StringImpl::hash()` of `contents` as a Latin-1 string, computed at build time (0 = not recorded).
+    pub source_hash: u32,
     pub module_format: ModuleFormat,
     pub side: FileSide,
 }
@@ -626,11 +628,24 @@ bitflags::bitflags! {
         /// Every file's `contents` lies in one run that no bytecode, module
         /// info, name, or source map region overlaps (see `to_bytes`).
         const SOURCE_TEXT_CONTIGUOUS        = 1 << 4;
-        // _padding: u27
+        /// A `[u32; modules]` of each file's WTF string hash (0 = none) follows
+        /// the module table, so loading a module from bytecode never has to
+        /// hash — i.e. page in — its source text.
+        const HAS_SOURCE_HASHES             = 1 << 5;
+        // _padding: u26
     }
 }
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
+
+unsafe extern "C" {
+    fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
+}
+/// `WTF::StringImpl::hash()` for an 8-bit string with these bytes.
+fn wtf_latin1_string_hash(bytes: &[u8]) -> u32 {
+    // SAFETY: reads `len` bytes from `ptr`; pure function.
+    unsafe { Bun__WTFStringHashLatin1(bytes.as_ptr(), bytes.len()) }
+}
 
 impl StandaloneModuleGraph {
     fn from_bytes(
@@ -668,6 +683,21 @@ impl StandaloneModuleGraph {
         // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
         let modules_list_base = modules_list_bytes.as_ptr();
+        let source_hashes: Option<&[u8]> = if offsets.flags.contains(Flags::HAS_SOURCE_HASHES) {
+            // SAFETY: written by `to_bytes` directly after the module table; read-only subrange.
+            Some(unsafe {
+                slice_to(
+                    raw_const,
+                    raw_len,
+                    StringPointer {
+                        offset: offsets.modules_ptr.offset + offsets.modules_ptr.length,
+                        length: (modules_list_count * size_of::<u32>()) as u32,
+                    },
+                )
+            })
+        } else {
+            None
+        };
 
         if offsets.entry_point_id as usize > modules_list_count {
             return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
@@ -732,6 +762,9 @@ impl StandaloneModuleGraph {
                     } else {
                         b""
                     },
+                    source_hash: source_hashes.map_or(0, |h| {
+                        u32::from_le_bytes(h[i * 4..i * 4 + 4].try_into().expect("4 bytes"))
+                    }),
                     module_format: module.module_format,
                     side: module.side,
                     cached_blob: None,
@@ -891,7 +924,7 @@ pub(crate) fn to_bytes(
         return Ok(Vec::new());
     }
 
-    string_builder.cap += size_of::<CompiledModuleGraphFile>() * output_files.len();
+    string_builder.cap += (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
     string_builder.cap += TRAILER.len();
     string_builder.cap += 16;
     string_builder.cap += size_of::<Offsets>();
@@ -1110,12 +1143,26 @@ pub(crate) fn to_bytes(
             modules.len() * size_of::<CompiledModuleGraphFile>(),
         )
     };
+    // `Flags::HAS_SOURCE_HASHES`: the hash JSC's SourceCodeKey wants, so a launch that runs from bytecode never reads the
+    // source text just to hash it. Only for Latin-1 contents, which are handed to JSC as-is.
+    let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
+    for (module, output_file) in modules.iter().zip(&module_files) {
+        let hash = if module.encoding == Encoding::Latin1 && output_file.loader.is_javascript_like() {
+            wtf_latin1_string_hash(output_file.value.as_slice())
+        } else {
+            0
+        };
+        source_hashes.extend_from_slice(&hash.to_le_bytes());
+    }
+    let modules_ptr = string_builder.append_count(modules_as_bytes);
+    let hashes_ptr = string_builder.append_count(&source_hashes);
+    debug_assert_eq!(hashes_ptr.offset, modules_ptr.offset + modules_ptr.length);
     let offsets = Offsets {
         entry_point_id: entry_point_id.unwrap() as u32,
-        modules_ptr: string_builder.append_count(modules_as_bytes),
+        modules_ptr,
         compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
         byte_count: string_builder.len,
-        flags: flags | Flags::SOURCE_TEXT_CONTIGUOUS,
+        flags: flags | Flags::SOURCE_TEXT_CONTIGUOUS | Flags::HAS_SOURCE_HASHES,
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.

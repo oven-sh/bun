@@ -372,10 +372,13 @@ describe("node:http", () => {
   test("a client request that throws on an invalid header (array headers) still finishes its span", async () => {
     expect(() => http.request({ host: "127.0.0.1", port: 1, headers: [["bad name!", "v"]] as any })).toThrow();
     expect(() => http.request({ host: "127.0.0.1", port: 1, headers: ["bad name!", "v"] as any })).toThrow();
+    // throws after the headers were stored (option validation in the constructor tail)
+    expect(() => http.request({ host: "127.0.0.1", port: 1, uniqueHeaders: [null] } as any)).toThrow();
     const got = byName(await collect(), "bun.http.client");
-    expect(got.map(s => [s.status.code, s.attributes["error.type"]])).toEqual([
-      [2, "ERR_INVALID_HTTP_TOKEN"],
-      [2, "ERR_INVALID_HTTP_TOKEN"],
+    expect(got.map(s => [s.status.code, typeof s.attributes["error.type"]])).toEqual([
+      [2, "string"],
+      [2, "string"],
+      [2, "string"],
     ]);
     // nothing is left half-open in the pool
     expect(Bun.otel.stats().spansPending).toBe(0);

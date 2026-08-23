@@ -48,6 +48,9 @@ pub struct State {
 static STATE: core::sync::atomic::AtomicPtr<State> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 static RETIRED_STATES: bun_threading::Guarded<Vec<usize>> = bun_threading::Guarded::new(Vec::new());
+/// Serializes "is anything configured yet → configure" across threads (main
+/// and workers starting at once), so exporters are not added twice.
+static CONFIGURE_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
 static DEFAULT_STATE: State = State {
     sampler: Sampler::ParentBasedAlwaysOn,
     limits: bun_telemetry::data::DEFAULT_LIMITS,
@@ -89,6 +92,9 @@ pub struct VmState {
     js_exporters: RefCell<Vec<Arc<exporter::JsExporter>>>,
     /// Promises from `forceFlush()` waiting for in-flight exports to drain.
     flush_waiters: RefCell<Vec<bun_jsc::JSPromiseStrong>>,
+    /// Keeps this event loop alive while `flush_waiters` is non-empty (the
+    /// export completes on the HTTP thread; nothing else holds a worker open).
+    flush_keep_alive: RefCell<bun_io::KeepAlive>,
     flush_hook_installed: Cell<bool>,
     api_installed: Cell<bool>,
 }
@@ -125,6 +131,7 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
         timer_armed: Cell::new(false),
         js_exporters: RefCell::new(Vec::new()),
         flush_waiters: RefCell::new(Vec::new()),
+        flush_keep_alive: RefCell::new(bun_io::KeepAlive::init()),
         flush_hook_installed: Cell::new(false),
         api_installed: Cell::new(false),
     }));
@@ -270,7 +277,9 @@ pub fn init_for_vm(global: &JSGlobalObject) {
     if let Some(s) = vm_state(global) {
         s.rebind_global(global);
     }
+    let configuring = CONFIGURE_LOCK.lock();
     if configured() {
+        drop(configuring);
         // Already configured by another thread (worker inherits): just attach.
         if bun_telemetry::any_enabled() {
             let s = vm_state_or_init(global);
@@ -296,6 +305,8 @@ pub fn init_for_vm(global: &JSGlobalObject) {
     if let Err(e) = configure(global, &env.config) {
         bun_core::warn!("[otel] {}", bstr::BStr::new(&e));
     }
+    drop(configuring);
+    install_api_global(global);
 }
 
 /// Apply `cfg`: state, resource, exporters, enable mask. Exporters are
@@ -374,7 +385,6 @@ fn configure_with(
     bun_telemetry::set_enabled_mask(cfg.instruments, cfg.roots);
     let s = vm_state_or_init(global);
     s.arm_timer();
-    install_api_global(global);
 }
 
 /// Pre-populate `globalThis[Symbol.for("opentelemetry.js.api.1")]` so any
@@ -647,6 +657,8 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
     }
 
+    // (options are parsed; no user JS runs past this point)
+    let configuring = CONFIGURE_LOCK.lock();
     // `Bun.otel.start()` with no exporter anywhere (options, env, bunfig, an
     // earlier start) behaves like BUN_OTEL=1: the local collector default.
     if !replaces_exporters
@@ -697,6 +709,8 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             processor().add_exporter(e);
         }
     }
+    drop(configuring);
+    install_api_global(global);
     Ok(JSValue::UNDEFINED)
 }
 
@@ -931,6 +945,7 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     let strong = bun_jsc::JSPromiseStrong::init(global);
     let value = strong.value();
     s.flush_waiters.borrow_mut().push(strong);
+    s.flush_keep_alive.borrow_mut().ref_(bun_io::js_vm_ctx());
     if !s.flush_hook_installed.replace(true) {
         let handle = global.bun_vm().handle();
         processor().on_idle(
@@ -964,6 +979,7 @@ pub(crate) fn resolve_flush_waiters() {
         return;
     }
     let waiters = core::mem::take(&mut *s.flush_waiters.borrow_mut());
+    s.flush_keep_alive.borrow_mut().unref(bun_io::js_vm_ctx());
     let global = s.global();
     for mut w in waiters {
         let _ = w.resolve(global, JSValue::UNDEFINED);

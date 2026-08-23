@@ -496,6 +496,19 @@ function ClientRequest(input, options, cb) {
     }
   }
 
+  // The rest can still throw synchronously (bad options, createConnection);
+  // a span started above must end with the error rather than be orphaned.
+  if (this[kOtelSpan] === undefined) initiateClientRequest.$call(this, options, optsWithoutSignal, thisAgent);
+  else
+    try {
+      initiateClientRequest.$call(this, options, optsWithoutSignal, thisAgent);
+    } catch (e) {
+      otelClientRequestEnd(this, undefined, e);
+      throw e;
+    }
+}
+
+function initiateClientRequest(this: any, options, optsWithoutSignal, thisAgent) {
   this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
   // initiate connection

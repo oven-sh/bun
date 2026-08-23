@@ -627,6 +627,41 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     ).toEqual(["in-main", "in-worker"]);
   });
 
+  test("Bun.otel.start() from several workers at once registers the endpoint once", async () => {
+    using c = collector();
+    using dir = tempDir("otel-workers-start", {
+      "worker.js": `
+        Bun.otel.start({ endpoint: process.env.C });
+        Bun.otel.tracer("w").startSpan("w").end();
+        await Bun.otel.forceFlush();
+        postMessage("done");
+      `,
+      "index.js": `
+        const workers = Array.from({ length: 4 }, () => new Worker("./worker.js"));
+        Bun.otel.start({ endpoint: process.env.C });
+        await Promise.all(workers.map(w => new Promise(r => (w.onmessage = r))));
+        await Promise.all(workers.map(w => w.terminate()));
+        Bun.otel.tracer("m").startSpan("m").end();
+        await Bun.otel.forceFlush();
+        console.log(JSON.stringify(Bun.otel.stats()));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, C: c.url },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const stats = JSON.parse(stdout.trim());
+    // 5 spans, each exported once: one exporter, however the starts interleaved.
+    expect(stats.spansExported).toBe(5);
+    expect(stats.exportsSucceeded).toBe(c.received.length);
+    expect(c.spans().length).toBe(5);
+    expect(exitCode).toBe(0);
+  });
+
   test("bunfig [telemetry] table enables and configures", async () => {
     using c = collector();
     using dir = tempDir("otel-bunfig", {

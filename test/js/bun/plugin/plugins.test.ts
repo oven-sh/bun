@@ -924,7 +924,7 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
     using dir = tempDir("onresolve-throws-static", {
       "entry.mjs": `import "./dep.custom"; export default 1;`,
       "main.mjs": `
-        Bun.plugin({ name: "throws", setup(b) { b.onResolve({ filter: /\.custom$/ }, () => { throw new Error("resolve boom"); }); } });
+        Bun.plugin({ name: "throws", setup(b) { b.onResolve({ filter: /\\.custom$/ }, () => { throw new Error("resolve boom"); }); } });
         try {
           await import("./entry.mjs");
           console.log("resolved");

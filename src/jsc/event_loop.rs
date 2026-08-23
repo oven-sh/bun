@@ -5,7 +5,7 @@
 //! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
 //! `bun_runtime` types and are hoisted to that tier via link-time
 //! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
-//! `auto_tick`/`auto_tick_active` likewise
+//! `poll` likewise
 //! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
 //! poll deadline). See PORTING.md §Dispatch.
 
@@ -69,7 +69,7 @@ pub struct EventLoop {
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
-    /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
+    /// the loop poll). Promoted into `tasks` by `poll`, like immediates.
     pub yield_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
@@ -431,9 +431,13 @@ impl EventLoop {
 
         // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
-        vm.is_inside_deferred_task_queue.set(true);
-        self.deferred_tasks.run();
-        vm.is_inside_deferred_task_queue.set(false);
+        // Auto-flushes act for their sinks' owners; a native-only domain run
+        // runs nothing on an outer owner's behalf (`bun_io::run_epoch`).
+        if !bun_event_loop::active_run_is_native_only() {
+            vm.is_inside_deferred_task_queue.set(true);
+            self.deferred_tasks.run();
+            vm.is_inside_deferred_task_queue.set(false);
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
@@ -843,7 +847,7 @@ impl EventLoop {
         self.closed_for_tasks
     }
 
-    pub fn enqueue_task(&mut self, task: Task) {
+    pub fn enqueue_task(&mut self, mut task: Task) {
         if self.closed_for_tasks {
             // Teardown already released the queue and this loop never ticks
             // again: release the task now, as `release_queued_tasks` would have
@@ -851,6 +855,10 @@ impl EventLoop {
             // SAFETY: JS thread, JSC heap alive (teardown phase B/C).
             unsafe { self.release_task_unrun(task) };
             return;
+        }
+        if task.birth == 0 {
+            // `Task::new` on the JS thread: born now.
+            task.birth = bun_event_loop::birth_epoch();
         }
         let _ = self.tasks.write_item(task);
     }
@@ -960,14 +968,17 @@ impl EventLoop {
     }
 
     /// See [`EventLoop::yield_tasks`].
-    pub fn enqueue_task_after_yield(&mut self, task: Task) {
+    pub fn enqueue_task_after_yield(&mut self, mut task: Task) {
         if self.closed_for_tasks {
             return self.enqueue_task(task);
+        }
+        if task.birth == 0 {
+            task.birth = bun_event_loop::birth_epoch();
         }
         self.yield_tasks.push(task);
     }
 
-    /// `auto_tick`, before it polls: last iteration's yielded tasks become
+    /// `poll`, before it polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
     pub fn promote_yield_tasks(&mut self) -> bool {
         if self.yield_tasks.is_empty() {
@@ -986,7 +997,7 @@ impl EventLoop {
     /// Note: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
     /// the per-task body dispatches through `__bun_run_immediate_task` (link-
     /// time, definer in `bun_runtime`). The swap always happens — this is
-    /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
+    /// load-bearing for `poll`'s `has_pending_immediate` read, which must
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard).
     ///
@@ -1095,24 +1106,6 @@ impl EventLoop {
         self.vm_ref().as_mut().gc_controller.perform_gc();
     }
 
-    /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,
-    /// which dispatches to the `bun_runtime` hook (needs `Timer::All` for the
-    /// poll timeout). The body lives in `bun_runtime::jsc_hooks::auto_tick`.
-    #[inline]
-    pub fn auto_tick(&mut self) {
-        self.vm_ref().as_mut().auto_tick();
-    }
-
-    /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
-    /// only sleeps in the uSockets loop while it has active handles.
-    /// Dispatches through
-    /// `VirtualMachine::auto_tick_active` → `RuntimeHooks::auto_tick_active`
-    /// (body lives in `bun_runtime::jsc_hooks` — needs `Timer::All`).
-    #[inline]
-    pub fn auto_tick_active(&mut self) {
-        self.vm_ref().as_mut().auto_tick_active();
-    }
-
     /// Ticks until `promise` settles. `Err` when it returns with the promise
     /// still pending because the VM can no longer run the script that would
     /// settle it (execution forbidden, or a stop was requested: a worker being
@@ -1123,9 +1116,6 @@ impl EventLoop {
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
-        if promise.status() != PromiseStatus::Pending {
-            return Ok(());
-        }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
@@ -1133,12 +1123,26 @@ impl EventLoop {
             {
                 return Err(jsc::Stopped);
             }
-            self.tick();
-            if promise.status() == PromiseStatus::Pending {
-                self.auto_tick();
-            }
+            self.turn(None, || promise.status() != PromiseStatus::Pending);
         }
         Ok(())
+    }
+
+    /// One turn of the innermost domain run — the event loop's iteration (see
+    /// [`crate::domain_run::turn`]). Returns whether `deadline` has passed.
+    #[inline]
+    pub fn turn(
+        &mut self,
+        deadline: Option<&bun_core::Timespec>,
+        done: impl FnMut() -> bool,
+    ) -> bool {
+        self.vm_ref().as_mut().turn(deadline, done)
+    }
+
+    /// See [`VirtualMachine::turn_active`].
+    #[inline]
+    pub fn turn_active(&mut self, done: impl FnMut() -> bool) {
+        self.vm_ref().as_mut().turn_active(done)
     }
 
     pub fn wakeup(&self) {
@@ -1334,7 +1338,7 @@ impl EventLoop {
     /// Drive the loop while a worker's entry module graph is fetched and
     /// linked, until its evaluation has begun (`entry_evaluation_started`, set
     /// by the moduleLoaderEvaluate hook once the linked graph starts executing),
-    /// the promise settled, or termination was requested. Parks in `auto_tick`
+    /// the promise settled, or termination was requested. Parks in `poll`
     /// while imports are still being read/transpiled off-thread; does not wait
     /// for a top-level await.
     pub fn wait_for_worker_entry_evaluation(&mut self, promise: jsc::AnyPromise) {
@@ -1347,20 +1351,17 @@ impl EventLoop {
             {
                 break;
             }
-            self.tick();
             let vm = self.vm_ref();
-            let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
-            if terminated
-                || vm.entry_evaluation_started
-                || promise.status() != PromiseStatus::Pending
-            {
+            self.turn(None, || {
+                vm.worker_ref().is_some_and(|w| w.has_requested_terminate())
+                    || vm.entry_evaluation_started
+                    || promise.status() != PromiseStatus::Pending
+                    // Nothing in flight can settle the load; let spin() decide.
+                    || !vm.is_event_loop_alive()
+            });
+            if !self.vm_ref().is_event_loop_alive() {
                 break;
             }
-            if !vm.is_event_loop_alive() {
-                // Nothing in flight can settle the load; let spin() decide.
-                break;
-            }
-            self.auto_tick();
         }
     }
 }
@@ -1517,8 +1518,8 @@ bun_event_loop::link_impl_JsEventLoop! {
         },
         uws_loop() => (*this).usockets_loop(),
         tick() => (*this).tick(),
-        auto_tick() => (*this).auto_tick(),
-        auto_tick_active() => (*this).auto_tick_active(),
+        turn(context, is_done) => { (*this).turn(None, || is_done(context)); },
+        turn_active() => (*this).turn_active(|| false),
         global_object() => (*this).global.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         bun_vm() => (*this).virtual_machine.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         stdout() => (*this).vm_ref().as_mut().rare_data().stdout().cast(),

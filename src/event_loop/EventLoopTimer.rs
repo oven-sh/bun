@@ -57,6 +57,10 @@ pub struct EventLoopTimer {
     /// Internal heap fields.
     pub heap: IntrusiveField<EventLoopTimer>,
     pub in_heap: InHeap,
+    /// Birth epoch (`bun_io::run_epoch`) at insert. While a domain run turns the
+    /// loop, a due timer born before the run started is parked until the run
+    /// exits (`Tag::is_run_gated`).
+    pub birth: u32,
 }
 
 // Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
@@ -75,6 +79,10 @@ pub enum InHeap {
     None,
     Regular,
     Fake,
+    /// Due during a domain run it is foreign to: in `All::parked` (still
+    /// `ACTIVE`) until the run exits and it is reinserted with its original
+    /// deadline. `All::remove` knows to look there.
+    Parked,
 }
 
 impl EventLoopTimer {
@@ -85,6 +93,7 @@ impl EventLoopTimer {
             tag,
             heap: IntrusiveField::default(),
             in_heap: InHeap::None,
+            birth: 0,
         }
     }
 
@@ -212,6 +221,18 @@ pub enum Tag {
 }
 
 impl Tag {
+    /// Whether a domain run parks this timer while it is due but foreign to the
+    /// run (see `EventLoopTimer::birth`): everything whose firing is observable
+    /// to script or acts on behalf of a particular owner. The exceptions are the
+    /// loop's own housekeeping, which serve whoever is turning it.
+    pub fn is_run_gated(self) -> bool {
+        // (WTFTimer lives in its own heap, which is skipped wholesale during a run.)
+        !matches!(
+            self,
+            Tag::WTFTimer | Tag::GcRepeating | Tag::DateHeaderTimer
+        )
+    }
+
     /// Whether `jest.useFakeTimers()` captures this timer. Only timers a
     /// program schedules itself are faked; runtime-internal timeouts stay on
     /// the real clock, as in Jest. A fakeable owner arms with

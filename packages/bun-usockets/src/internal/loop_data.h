@@ -93,6 +93,19 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* Start epoch of the innermost domain run on this loop's thread
+     * (0 = none); mirrored here by Bun on run enter/exit so the ready-poll
+     * dispatch reads it without a call. See us_poll_t.bun_epoch. */
+    unsigned int run_start_epoch;
+    /* Whether that run executes scripts of its own (and so keeps accepting on
+     * older listen sockets, adopts older sockets it writes to, runs the
+     * embedder's hooks) or only waits on native work (spawnSync), admitting
+     * nothing that predates it. */
+    int run_executes_scripts;
+    /* Polls the active run(s) hold (see us_poll_t.held), in the order they surfaced. */
+    struct us_poll_t **held_polls;
+    unsigned int held_polls_len;
+    unsigned int held_polls_cap;
 };
 
 #endif // LOOP_DATA_H

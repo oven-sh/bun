@@ -309,6 +309,7 @@ impl Timeout {
                 state: TimerState::CANCELLED,
                 heap: IntrusiveField::default(),
                 in_heap: InHeap::default(),
+                birth: 0,
             },
             signal: signal_,
             flags: TimerFlags::default(),

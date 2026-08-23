@@ -298,6 +298,9 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
         #ifdef LIBUS_USE_KQUEUE
             // kqueue automatically removes the fd from the set on close
             // we can skip the system call for that case
+            if (s->p.held) {
+                us_internal_held_poll_forget(loop, &s->p);
+            }
             us_internal_loop_update_pending_ready_polls(loop, (struct us_poll_t *)s, 0, us_poll_events((struct us_poll_t*)s), 0);
         #else
             /* Disable any instance of us in the pending ready poll list */
@@ -426,6 +429,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
     }
+    us_internal_socket_touch_epoch(s, s->group->loop);
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
@@ -491,11 +495,15 @@ void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) {
 
 int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     if (s->ssl) {
+        if (!us_socket_is_closed(s)) {
+            us_internal_socket_touch_epoch(s, s->group->loop);
+        }
         return us_internal_ssl_write(s, data, length);
     }
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
     }
+    us_internal_socket_touch_epoch(s, s->group->loop);
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
@@ -546,6 +554,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         return us_socket_write(s, data, length);
     }
 
+    us_internal_socket_touch_epoch(s, s->group->loop);
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written < 0) {
         /* bsd_send already retries EINTR; bsd_would_block() reads errno on
@@ -653,6 +662,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
     }
+    us_internal_socket_touch_epoch(s, s->group->loop);
 
     struct msghdr msg = {0};
     struct iovec iov = {0};

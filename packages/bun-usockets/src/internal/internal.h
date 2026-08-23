@@ -341,6 +341,57 @@ struct us_socket_t {
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
 
+/* Domain runs — see us_poll_t.bun_epoch. The epoch counter lives in Rust
+ * (bun_io::run_epoch); it is a plain relaxed atomic load from here. */
+extern unsigned int Bun__runEpochCounter;
+#define Bun__runEpoch() (__atomic_load_n(&Bun__runEpochCounter, __ATOMIC_RELAXED) & 0x7fffffffu)
+
+/* Is `epoch` older than the domain run active on this loop's thread (if any)? */
+/* (Serial-number comparison in 31 bits: the counter may wrap; epochs 0 and 1 are
+ * reserved as "older than everything".) */
+static inline int us_internal_epoch_before(unsigned int a, unsigned int b) {
+    return (int) ((a - b) << 1) < 0;
+}
+static inline int us_internal_epoch_is_foreign_to(unsigned int epoch, unsigned int run_start) {
+    return run_start != 0 && (epoch <= 1 || us_internal_epoch_before(epoch, run_start));
+}
+static inline int us_internal_epoch_is_foreign(struct us_loop_t *loop, unsigned int epoch) {
+    unsigned int run_start = loop->data.run_start_epoch;
+    return __builtin_expect(run_start != 0, 0) && us_internal_epoch_is_foreign_to(epoch, run_start);
+}
+
+#ifndef LIBUS_USE_LIBUV
+/* Called by the ready-poll dispatch only while a run is active: hold `p` if its
+ * readiness is not the run's to dispatch. Nonzero = held (skip it). */
+int us_internal_hold_foreign_ready_poll(struct us_loop_t *loop, struct us_poll_t *p);
+/* Owner-side poll operations on a held poll (kernel state is "removed"). */
+void us_internal_held_poll_forget(struct us_loop_t *loop, struct us_poll_t *p);
+void us_internal_held_poll_moved(struct us_loop_t *loop, struct us_poll_t *from, struct us_poll_t *to);
+void us_internal_poll_put_back(struct us_poll_t *p, struct us_loop_t *loop);
+#endif
+/* A run on this loop's thread exited; `outer_start_epoch` is the enclosing
+ * run's start (0 if none). Put every held poll that is not still foreign to the
+ * enclosing run back into the kernel set; pending readiness reports again. */
+void us_internal_release_held_polls(struct us_loop_t *loop, unsigned int outer_start_epoch);
+
+/* A script-running run's own code is writing to `s`: if `s` predates the run,
+ * the socket (and the reply on it) becomes the run's. Native-only runs execute
+ * no code of their own that could write to an older socket; writes that happen
+ * while one is active are outer housekeeping (cork/auto-flush) and change nothing. */
+static inline void us_internal_socket_touch_epoch(struct us_socket_t *s, struct us_loop_t *loop) {
+#ifndef LIBUS_USE_LIBUV
+    if (us_internal_epoch_is_foreign(loop, s->p.bun_epoch) && loop->data.run_executes_scripts && !us_socket_is_closed(s)) {
+        s->p.bun_epoch = Bun__runEpoch();
+        if (s->p.held) {
+            us_internal_held_poll_forget(loop, &s->p);
+            us_internal_poll_put_back(&s->p, loop);
+        }
+    }
+#else
+    (void) s; (void) loop;
+#endif
+}
+
 /* us_socket_adopt relocates a socket whose ext grows and retires the old block
  * (is_closed + adopted, prev -> replacement; freed by the outermost tick's
  * us_internal_free_closed_sockets, so it is still readable mid-dispatch). A
@@ -365,6 +416,10 @@ struct us_connecting_socket_t {
     struct us_loop_t *loop;
     /* SSL_CTX to apply on open (borrowed; up_ref'd while in flight). */
     struct ssl_ctx_st *ssl_ctx;
+    /* us_poll_t.bun_epoch for the sockets this connect will create: they are
+     * consequences of the code that started the connect, not of whatever run
+     * happens to be turning the loop when the DNS answer arrives. */
+    unsigned int bun_epoch;
     // this is used to track all dns resolutions in this connection
     struct us_connecting_socket_t *next;
     struct us_socket_t *connecting_head;

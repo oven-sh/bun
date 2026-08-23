@@ -2477,8 +2477,7 @@ pub(crate) struct ThreadSafeFunction {
     /// dispatch on the VM. Weak: addon threads hold this function for as long
     /// as they like (Node: calls after env cleanup get `napi_closing`), so it
     /// cannot be something the VM waits for.
-    pub(crate) handle: bun_jsc::VmHandle,
-    pub(crate) loop_kind: bun_jsc::LoopKind,
+    pub(crate) poster: bun_event_loop::JsPoster,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -2929,9 +2928,7 @@ impl ThreadSafeFunction {
                     return;
                 }
                 let ct = ConcurrentTask::create_from(self_ptr);
-                if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                    self.handle.post(self.loop_kind, ct)
-                {
+                if let bun_jsc::vm_handle::Posted::Refused(ct) = self.poster.post(ct) {
                     // VM closed before the env cleanup hook ran here: no
                     // dispatch will happen; the queued calls are released by the
                     // teardown path. Free the task and fall back to Idle.
@@ -3234,8 +3231,7 @@ extern "C" fn napi_create_threadsafe_function(
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
         event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
-        handle: vm.handle(),
-        loop_kind: vm.current_loop_kind(),
+        poster: vm.js_poster(),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,
@@ -5330,7 +5326,11 @@ impl NapiFinalizerTask {
             );
         } else {
             let this = bun_core::heap::into_raw(self);
-            vm.event_loop_ref().enqueue_task(Task::init(this));
+            // A finalizer belongs to the program, never to whichever domain run
+            // happens to collect its object (a napi_finalize may call into JS).
+            let mut task = Task::init(this);
+            task.birth = bun_event_loop::PRIMORDIAL_EPOCH;
+            vm.event_loop_ref().enqueue_task(task);
         }
     }
 

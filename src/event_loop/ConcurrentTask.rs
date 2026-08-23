@@ -91,6 +91,7 @@ pub mod task_tag {
         Open,
         PollPendingModulesTask,
         PosixSignalTask,
+        RunEpochReplay,           // bun_runtime::domain_run — foreign process exits held on kqueue
         MemoryPressureTask,
         ProcessWaiterThreadTask,
         Read,
@@ -129,6 +130,13 @@ pub mod task_tag {
 #[derive(Copy, Clone)]
 pub struct Task {
     pub tag: TaskTag,
+    /// Birth epoch (`bun_io::run_epoch`), assigned by the door the task enters
+    /// its loop through: `EventLoop::enqueue_task` on the JS thread stamps "now",
+    /// a `Ticket` stamps the birth of the operation it completes, an owner that
+    /// posts on behalf of a JS object stamps that object's birth. Anything else
+    /// (a post from another thread with no such knowledge) stays 0, which every
+    /// domain run holds until it exits.
+    pub birth: u32,
     pub ptr: *mut (),
 }
 
@@ -174,7 +182,7 @@ impl TaskTag {
 impl Task {
     #[inline]
     pub const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
-        Task { tag, ptr }
+        Task { tag, birth: 0, ptr }
     }
 
     /// The type→tag table is the [`Taskable`] trait; the per-type impl
@@ -182,7 +190,11 @@ impl Task {
     // Takes `*mut T` directly; `&mut T` coerces at call sites.
     #[inline]
     pub fn init<T: Taskable>(ptr: *mut T) -> Task {
-        Task::new(T::TAG, ptr.cast::<()>())
+        Task {
+            tag: T::TAG,
+            birth: 0,
+            ptr: ptr.cast::<()>(),
+        }
     }
 
     /// Build a [`Task`] from an owned `Box<T>`. The dispatch arm for `T::TAG`
@@ -191,7 +203,7 @@ impl Task {
     /// callers use instead of open-coding `heap::alloc`.
     #[inline]
     pub fn from_boxed<T: Taskable>(task: Box<T>) -> Task {
-        Task::new(T::TAG, bun_core::heap::into_raw(task).cast::<()>())
+        Task::init(bun_core::heap::into_raw(task))
     }
 }
 

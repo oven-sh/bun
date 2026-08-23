@@ -145,10 +145,7 @@ impl AnyEventLoop {
             // returns; the borrow ends at the bottom of this loop body before
             // the next `is_done` call.
             match unsafe { &mut *this } {
-                AnyEventLoop::Js { owner } => {
-                    owner.tick();
-                    owner.auto_tick();
-                }
+                AnyEventLoop::Js { owner } => owner.turn(context, is_done),
                 AnyEventLoop::Mini(mini) => {
                     // One iteration only — we cannot call the *looping*
                     // `MiniEventLoop::tick` here because that would hold
@@ -165,8 +162,7 @@ impl AnyEventLoop {
         match self {
             AnyEventLoop::Js { owner } => {
                 let _ = context;
-                owner.tick();
-                owner.auto_tick_active();
+                owner.turn_active();
             }
             AnyEventLoop::Mini(mini) => mini.tick_without_idle(context),
         }
@@ -551,6 +547,9 @@ pub struct JsPosterVTable {
 pub struct JsPoster {
     data: *const (),
     vtable: &'static JsPosterVTable,
+    /// Birth epoch (`bun_io::run_epoch`) of whatever created the poster, on the
+    /// JS thread: what it posts later, from any thread, is born then.
+    birth: u32,
 }
 
 // SAFETY: `data` is an erased `Arc<VmHandle inner>`; the vtable fns are the
@@ -565,15 +564,22 @@ impl JsPoster {
     /// implementations (`VmHandle` / the isolated poster).
     #[inline]
     pub unsafe fn from_raw(data: *const (), vtable: &'static JsPosterVTable) -> Self {
-        Self { data, vtable }
+        Self {
+            data,
+            vtable,
+            birth: bun_io::run_epoch::birth(),
+        }
     }
 
     /// Queue `task` on the VM this poster was created for and wake it, or hand
     /// it back if the VM has closed.
     #[inline]
     pub fn post(&self, task: NonNull<ConcurrentTask>) -> Posted {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.post)(self.data, task) }
+        // SAFETY: `task` is a live carrier not yet posted; vtable contract.
+        unsafe {
+            (*task.as_ptr()).task.birth = self.birth;
+            (self.vtable.post)(self.data, task)
+        }
     }
 }
 
@@ -583,6 +589,7 @@ impl Clone for JsPoster {
             // SAFETY: vtable contract.
             data: unsafe { (self.vtable.clone)(self.data) },
             vtable: self.vtable,
+            birth: self.birth,
         }
     }
 }

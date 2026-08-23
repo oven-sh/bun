@@ -48,6 +48,7 @@
 #include "ZigSourceProvider.h"
 #include "StrongRootBlock.h"
 #include "BunClientData.h"
+#include "EventLoopDomain.h"
 #include "mimalloc.h"
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
@@ -556,6 +557,33 @@ JSC_DEFINE_HOST_FUNCTION(functionCallerSourceOrigin,
     return JSValue::encode(jsString(vm, sourceOrigin.string()));
 }
 
+// Domain runs (src/runtime/domain_run.rs), testing hooks.
+//
+// runUntilInDomainForTesting(thunk[, timeoutMs = 30000]) -> promise
+//   Enter a script-running domain run, call thunk (it returns a promise the
+//   run created) and turn the whole loop for the run until the promise settles.
+extern "C" JSC::EncodedJSValue Bun__Domain__runUntilInDomainForTesting(JSGlobalObject*, JSC::EncodedJSValue thunk, uint32_t timeoutMs);
+JSC_DECLARE_HOST_FUNCTION(functionRunUntilInDomainForTesting);
+JSC_DEFINE_HOST_FUNCTION(functionRunUntilInDomainForTesting, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thunk = callFrame->argument(0);
+    if (!thunk.isCallable())
+        return throwVMTypeError(globalObject, scope, "runUntilInDomainForTesting expects a function"_s);
+    uint32_t timeoutMs = 30000;
+    if (callFrame->argument(1).isUInt32())
+        timeoutMs = callFrame->argument(1).asUInt32();
+    RELEASE_AND_RETURN(scope, Bun__Domain__runUntilInDomainForTesting(globalObject, JSValue::encode(thunk), timeoutMs));
+}
+
+// activeRunForTesting() -> start epoch of the innermost domain run (0 = none)
+JSC_DECLARE_HOST_FUNCTION(functionActiveRunForTesting);
+JSC_DEFINE_HOST_FUNCTION(functionActiveRunForTesting, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(jsNumber(Bun::activeRun(globalObject->vm())));
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionNoFTL);
 JSC_DEFINE_HOST_FUNCTION(functionNoFTL,
     (JSGlobalObject*, CallFrame* callFrame))
@@ -973,7 +1001,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 36);
+    INIT_NATIVE_MODULE(BunJSC, 38);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -1008,6 +1036,8 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);
     putNativeFn(Identifier::fromString(vm, "estimateShallowMemoryUsageOf"_s), functionEstimateDirectMemoryUsageOf);
     putNativeFn(Identifier::fromString(vm, "percentAvailableMemoryInUse"_s), functionPercentAvailableMemoryInUse);
+    putNativeFn(Identifier::fromString(vm, "runUntilInDomainForTesting"_s), functionRunUntilInDomainForTesting);
+    putNativeFn(Identifier::fromString(vm, "activeRunForTesting"_s), functionActiveRunForTesting);
 
     // Deprecated
     putNativeFn(Identifier::fromString(vm, "describe"_s), functionDescribe);

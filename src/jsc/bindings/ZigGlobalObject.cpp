@@ -61,6 +61,7 @@
 #include "JavaScriptCore/VM.h"
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
+#include "EventLoopDomain.h"
 #include "BunClientData.h"
 #include "BunIDLConvert.h"
 #include "BunObject.h"
@@ -1981,6 +1982,10 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    // Field 1 of the async context tuple is the active domain run's start epoch
+    // (EventLoopDomain.h); process.nextTick reads it on every call, so keep it an int32.
+    m_asyncContextData.get()->putInternalField(vm, 1, jsNumber(0));
+
     m_commonStrings.initialize();
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();
@@ -3022,26 +3027,40 @@ uint8_t GlobalObject::drainMicrotasks()
     }
     scope.assertNoExceptionExceptTermination();
 
-    if (auto nextTickQueue = this->m_nextTickQueue.get()) {
-        nextTickQueue->drain(vm, this);
-        if (auto* exception = scope.exception()) {
-            if (vm.isTerminationException(exception)) {
-                Bun__VM__takeTerminationOutsideScript(this);
-                return 1;
-            }
-            (void)scope.tryClearException();
-            this->reportUncaughtExceptionAtEventLoop(this, exception);
-            return 0;
-        }
-    }
-    vm.drainMicrotasks();
-    if (auto* exception = scope.exception()) {
+    // An exception a drained callback left behind: the VM's termination ends the checkpoint
+    // (taken here, at loop level); anything else is reported and the checkpoint goes on.
+    auto landException = [&]() -> bool {
+        auto* exception = scope.exception();
+        if (!exception)
+            return false;
         if (vm.isTerminationException(exception)) {
             Bun__VM__takeTerminationOutsideScript(this);
-            return 1;
+            return true;
         }
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
+        return false;
+    };
+
+    auto& domains = Bun::eventLoopDomains(vm);
+    const uint32_t runExits = domains.exits();
+    auto* nextTickQueue = this->m_nextTickQueue.get();
+    if (nextTickQueue) {
+        nextTickQueue->drain(vm, this);
+        if (scope.exception()) {
+            return landException() ? 1 : 0;
+        }
+    }
+    vm.drainMicrotasks();
+    if (landException())
+        return 1;
+
+    // A domain run entered from one of those callbacks set aside older ticks and put
+    // them back when it exited, possibly after this checkpoint had passed them.
+    if (nextTickQueue && domains.exits() != runExits) [[unlikely]] {
+        nextTickQueue->drain(vm, this);
+        if (landException())
+            return 1;
     }
 
     return 0;

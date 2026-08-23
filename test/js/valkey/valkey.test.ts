@@ -44,10 +44,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       if (!ctx.redis.connected) {
         await ctx.redis.connect();
       }
-      // FLUSHALL also rewrites the RDB snapshot when save points are configured
-      // (the server default), which costs several ms of fsync per test. FLUSHDB
-      // clears the one database this client uses without the snapshot.
-      await ctx.redis.flushdb();
+      await ctx.redis.send("FLUSHALL", ["SYNC"]);
     });
 
     describe("Basic Operations", () => {
@@ -6380,10 +6377,13 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
     describe("Generic Key Commands", () => {
       test("OBJECT ENCODING returns internal encoding", async () => {
         const redis = ctx.redis;
-        const key = "obj:" + randomUUIDv7();
+        // Redis 8.2+ stores key and value in one 64-byte allocation and reports
+        // a short string as raw when the pair does not fit, so keep the key short.
+        const key = "obj";
         await redis.set(key, "hello");
-        const encoding = await redis.object("ENCODING", key);
-        expect(["embstr", "raw", "int"]).toContain(encoding);
+        expect(await redis.object("ENCODING", key)).toBe("embstr");
+        await redis.set(key, "12345");
+        expect(await redis.object("ENCODING", key)).toBe("int");
       });
 
       test("SORT sorts list elements", async () => {

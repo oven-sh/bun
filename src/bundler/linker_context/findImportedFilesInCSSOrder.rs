@@ -96,11 +96,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         has_external_import: bool,
         visited: Vec<Index>,
         order: Vec<CssImportOrder>,
-
-        /// `visit` recurses once per `@import` level; a chain of thousands of
-        /// files must fail the build, not overflow the thread's stack.
-        stack_check: bun_core::StackCheck,
-        stack_overflow: bool,
     }
 
     impl<'a> Visitor<'a> {
@@ -121,10 +116,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 source_index.get(),
                 self.input_file_pretty(source_index),
             );
-            if self.stack_overflow || !self.stack_check.is_safe_to_recurse() {
-                self.stack_overflow = true;
-                return;
-            }
             // The CSS specification strangely does not describe what to do when there
             // is a cycle. So we are left with reverse-engineering the behavior from a
             // real browser. Here's what the WebKit code base has to say about this:
@@ -322,8 +313,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         all_import_records: all_import_records_slice,
         has_external_import: false,
         order: Vec::new(),
-        stack_check: bun_core::StackCheck::init(),
-        stack_overflow: false,
     };
     let mut wrapping_conditions: Vec<ImportConditions> = Vec::new();
     let mut wrapping_import_records: Vec<ImportRecord> = Vec::new();
@@ -333,15 +322,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             *entry_point,
             &mut wrapping_conditions,
             &mut wrapping_import_records,
-        );
-    }
-
-    if visitor.stack_overflow {
-        // Split-borrow — see `LinkerContext::log_disjoint`.
-        this.log_disjoint().add_error(
-            None,
-            bun_ast::Loc::EMPTY,
-            "Maximum call stack size exceeded: the CSS @import chain is too deep to bundle",
         );
     }
 

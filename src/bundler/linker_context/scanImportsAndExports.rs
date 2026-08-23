@@ -351,23 +351,15 @@ pub(crate) fn scan_imports_and_exports(
                             export_star_records: export_star_import_records,
                             imports_to_bind: imports_to_bind_list,
                             source_index_stack: Vec::with_capacity(32),
-                            on_stack: vec![false; col_ref!(named_exports).len()],
                             exports_kind,
                             named_exports,
-                            stack_check: bun_core::StackCheck::init(),
-                            stack_overflow: false,
                         });
                     }
-                    let ctx = export_star_ctx.as_mut().unwrap();
-                    ctx.add_exports(resolved_exports, id, source_index);
-                    if ctx.stack_overflow {
-                        this.log_disjoint().add_error(
-                            Some(&col_ref!(input_files)[id]),
-                            bun_ast::Loc::EMPTY,
-                            "Maximum call stack size exceeded: the export * chain is too deep to bundle",
-                        );
-                        return Err(ScanImportsAndExportsError::ImportResolutionFailed);
-                    }
+                    export_star_ctx.as_mut().unwrap().add_exports(
+                        resolved_exports,
+                        id,
+                        source_index,
+                    );
                 }
 
                 // Also add a special export so import stars can bind to it. This must be
@@ -1244,17 +1236,10 @@ impl DependencyWrapper<'_> {
 struct ExportStarContext<'a> {
     import_records_list: *mut [ImportRecordList<'a>],
     source_index_stack: Vec<IndexInt>,
-    /// `on_stack[i]` == "`i` is in `source_index_stack`": an O(1) cycle check.
-    /// Scanning the stack made a chain of N re-exporting files cost O(N^3).
-    on_stack: Vec<bool>,
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
-    /// `add_exports` recurses once per `export *` level; a chain of thousands
-    /// of files must fail the build, not overflow the thread's stack.
-    stack_check: bun_core::StackCheck,
-    stack_overflow: bool,
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1266,15 +1251,12 @@ impl<'a> ExportStarContext<'a> {
         target_id: usize,
         source_index: IndexInt,
     ) {
-        if self.stack_overflow || !self.stack_check.is_safe_to_recurse() {
-            self.stack_overflow = true;
-            return;
-        }
         // Avoid infinite loops due to cycles in the export star graph
-        if self.on_stack[source_index as usize] {
-            return;
+        for i in self.source_index_stack.iter() {
+            if *i == source_index {
+                return;
+            }
         }
-        self.on_stack[source_index as usize] = true;
         self.source_index_stack.push(source_index);
         let stack_end_pos = self.source_index_stack.len();
 
@@ -1376,7 +1358,6 @@ impl<'a> ExportStarContext<'a> {
 
         // Scope-end truncation (no early returns after the push).
         self.source_index_stack.truncate(stack_end_pos - 1);
-        self.on_stack[source_index as usize] = false;
     }
 }
 

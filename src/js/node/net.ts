@@ -1955,14 +1955,12 @@ Socket.prototype.connect = function connect(...args) {
       this.pause();
     } else {
       process.nextTick(() => {
-        // Honor pause()/resume() calls made while connecting — only start
-        // reading if the user hasn't explicitly paused the stream. Matches
-        // Node's afterConnect, which calls socket.read(0) only when not paused:
+        // An already-open handle (fd, wrapped duplex) starts reading here unless
+        // the user paused; read(0) does that without switching to flowing mode.
+        // A pending connect gets this from afterConnect instead, so a pause()
+        // that lands before then is still honored:
         // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1649
-        // read(0) starts the handle reading without switching the stream into
-        // flowing mode, so data that arrives before a 'data' listener is
-        // attached stays buffered instead of being emitted to nobody.
-        if (!this.isPaused()) this.read(0);
+        if (!this.connecting && !this.isPaused()) this.read(0);
       });
       if (fd == null) this.connecting = true;
     }
@@ -3602,6 +3600,8 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     if (typeof this._handle.stop === "function") {
       this._handle.stop(false);
+      // Listener::do_stop unrefs the loop at once; hold it one turn like node's uv_close() (test-process-beforeexit).
+      setImmediate(noop);
       // Released here, not on 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2434-L2437
       const clusterHandle = this[kClusterHandle];
       if (clusterHandle) {
@@ -3902,7 +3902,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     if (netServerListen.hasSubscribers) {
       netServerListen.error.publish({ server: this, error });
     }
-    setTimeout(emitErrorNextTick, 1, this, error);
+    process.nextTick(emitErrorNextTick, this, error);
   }
   return this;
 };
@@ -4010,14 +4010,8 @@ Server.prototype[kRealListen] = function (
   // Unref the handle if the server was unref'ed prior to listening
   if (this._unref) this.unref();
 
-  // We must schedule the emitListeningNextTick() only after the next run of
-  // the event loop's IO queue. Otherwise, the server may not actually be listening
-  // when the 'listening' event is emitted.
-  //
-  // That leads to all sorts of confusion.
-  //
-  // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this);
+  // A tick, not a timer, so a close() from 'listening' runs before the loop accepts anything (as in Node).
+  process.nextTick(emitListeningNextTick, this);
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
@@ -4206,7 +4200,7 @@ function listenInCluster(
         if (netServerListen.hasSubscribers) {
           netServerListen.error.publish({ server, error: err });
         }
-        setTimeout(emitErrorNextTick, 1, server, err);
+        process.nextTick(emitErrorNextTick, server, err);
       }
       return;
     }
@@ -4235,7 +4229,7 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
     netServerListen.asyncEnd.publish({ server: this });
   }
   if (this._unref) this.unref();
-  setTimeout(emitListeningNextTick, 1, this);
+  process.nextTick(emitListeningNextTick, this);
 };
 
 function onClusterConnection(err, clientHandle) {
@@ -4335,8 +4329,8 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
-    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref().
-    if (self[kUserUnrefed]) handle.unref?.();
+    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref()/pause().
+    if (self[kUserUnrefed] || self[kPausedUnref]) handle.unref?.();
   }
 }
 

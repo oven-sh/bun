@@ -394,7 +394,6 @@ impl PendingValue {
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
                         Action::GetFormData(form_data) => 'brk: {
                             let fd = form_data.take().unwrap();
-                            // defer: form_data already taken; action.getFormData = None handled by take()
                             let encoding_js = match &fd.encoding {
                                 bun_core::form_data::Encoding::Multipart(multipart) => {
                                     BunString::init(&multipart[..]).to_js(global_this)?

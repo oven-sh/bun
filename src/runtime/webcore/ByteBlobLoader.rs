@@ -149,7 +149,7 @@ impl ByteBlobLoader {
             // SAFETY: `StoreRef` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
             // We hold the only outstanding ref (just detached) so exclusive access is sound.
             if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
-                drop(store); // defer store.deref()
+                drop(store);
                 return Some(blob);
             }
         }

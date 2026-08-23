@@ -1248,7 +1248,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             AnyServer::from(self),
             global,
             req,
-            SSL,
             any_response_from::<SSL>(resp),
             upgrade_ctx,
         );

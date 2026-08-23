@@ -857,7 +857,7 @@ inline void Http2Connection::recomputeIdleTimeout() {
     /* Most permissive among open streams (0 = never); a stream that never
      * asked counts as the context default, as does a connection with none. */
     unsigned t = streams.empty() ? ctx->idleTimeoutS : 0;
-    bool never = !streams.empty() && ctx->idleTimeoutS == 0;
+    bool never = streams.empty() && ctx->idleTimeoutS == 0;
     for (Http2Response *stream : streams) {
         unsigned s = stream->timeoutS == 255 ? ctx->idleTimeoutS : stream->timeoutS;
         if (s == 0) { never = true; break; }

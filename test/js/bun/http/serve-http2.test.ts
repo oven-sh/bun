@@ -1313,7 +1313,7 @@ describe("Bun.serve http2 over a unix socket", () => {
 
 describe("Bun.serve http2 in-process", () => {
   test("routes + fetch, reload, stop", async () => {
-    const server = Bun.serve({
+    await using server = Bun.serve({
       port: 0,
       http2: true,
       routes: { "/r": new Response("route-v1") },

@@ -1,11 +1,11 @@
 use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, Kind};
 use crate::shell::interpreter::{
-    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, OutputWrite,
+    FlagParser, Interpreter, NodeId, OutputQueue, OutputSrc, OutputTask, OutputTaskVTable,
     ParseFlagResult, ShellTask, unsupported_flag,
 };
-use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use bun_ptr::JsCellRefMut;
 
 #[derive(Default)]
 pub struct Touch {
@@ -25,14 +25,10 @@ pub struct ExecState {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
-    pub(crate) output_done: usize,
-    pub(crate) output_waiting: usize,
     /// Index into argv where filepath args start.
     pub(crate) args_start: usize,
     pub(crate) err: Option<bun_sys::Error>,
-    /// FIFO of in-flight OutputTasks awaiting an IOWriter chunk completion —
-    /// see mkdir.rs `Exec::output_queue` for rationale.
-    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Touch>>>,
+    pub(crate) output: OutputQueue<Touch>,
 }
 
 impl Touch {
@@ -61,11 +57,9 @@ impl Touch {
             started: false,
             tasks_count: 0,
             tasks_done: 0,
-            output_done: 0,
-            output_waiting: 0,
             args_start,
             err: None,
-            output_queue: std::collections::VecDeque::new(),
+            output: OutputQueue::default(),
         });
         Self::next(interp, cmd)
     }
@@ -82,9 +76,7 @@ impl Touch {
             State::Idle => panic!("Invalid state"),
             State::Exec(exec) => {
                 if exec.started {
-                    if exec.tasks_done >= exec.tasks_count
-                        && exec.output_done >= exec.output_waiting
-                    {
+                    if exec.tasks_done >= exec.tasks_count && exec.output.drained() {
                         let code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
                         exec.err = None;
                         Action::Done(code)
@@ -129,18 +121,14 @@ impl Touch {
         written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
-            return Builtin::done(interp, cmd, 1);
-        }
-        let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_queue.pop_front()
-        } else {
-            None
-        };
-        if let Some(task) = pending {
-            return OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, e);
-        }
-        Self::next(interp, cmd)
+        // Only the usage error is written directly; task output goes through
+        // `OutputTask::on_chunk`.
+        let _ = (written, e);
+        debug_assert!(matches!(
+            Self::state_mut(interp, cmd).state,
+            State::WaitingWriteErr
+        ));
+        Builtin::done(interp, cmd, 1)
     }
 
     fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, mut task: ShellTouchTask) {
@@ -161,73 +149,13 @@ impl Touch {
 }
 
 impl OutputTaskVTable for Touch {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-        errbuf: &[u8],
-    ) -> OutputWrite<Self> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
-        if let Some(safeguard) = stderr_needs_io {
-            // Park it so on_io_writer_chunk can route the completion back to
-            // the OutputTask state machine (there is no WriterTag for it).
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return OutputWrite::Enqueued(Builtin::write_out(
-                interp,
-                cmd,
-                IoKind::Stderr,
-                childptr,
-                errbuf,
-                safeguard,
-            ));
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        OutputWrite::Done(child)
+    fn output_queue(interp: &Interpreter, cmd: NodeId) -> JsCellRefMut<'_, OutputQueue<Self>> {
+        JsCellRefMut::map(Self::state_mut(interp, cmd), |me| match &mut me.state {
+            State::Exec(exec) => &mut exec.output,
+            _ => unreachable!("touch output outside Exec"),
+        })
     }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-    ) -> OutputWrite<Self> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
-        if let Some(safeguard) = stdout_needs_io {
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return OutputWrite::Enqueued(Builtin::write_out_with(
-                interp,
-                cmd,
-                IoKind::Stdout,
-                childptr,
-                safeguard,
-                |buf| {
-                    buf.extend_from_slice(child.output.slice());
-                    if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                        exec.output_queue.push_back(child);
-                    }
-                },
-            ));
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, child.output.slice());
-        OutputWrite::Done(child)
-    }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
+
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }

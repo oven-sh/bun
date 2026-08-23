@@ -14,8 +14,9 @@
 
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
+use bun_ptr::JsRefCell;
 use bun_ptr::{RefPtr, ThisPtr};
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
 #[cfg(not(windows))]
 use core::ffi::c_void;
 
@@ -47,6 +48,10 @@ pub struct ChildPtr {
     /// `Readable::Pipe` ref on its `ShellSubprocess` until every chunk it
     /// queued has completed or been `cancel_chunks`ed.
     pub(crate) subproc: Option<bun_ptr::BackRef<PipeReader, bun_ptr::Root>>,
+    /// `tag == Builtin`: which of the builtin's queued chunks this is (0 = the
+    /// builtin itself). Chunks with different `seq` are distinct children, so
+    /// each gets its own completion.
+    pub(crate) seq: u32,
 }
 
 impl ChildPtr {
@@ -54,6 +59,7 @@ impl ChildPtr {
         node: NodeId::NONE,
         tag: WriterTag::Cmd,
         subproc: None,
+        seq: 0,
     };
 
     #[inline]
@@ -62,6 +68,19 @@ impl ChildPtr {
             node,
             tag,
             subproc: None,
+            seq: 0,
+        }
+    }
+
+    /// The `seq`th chunk queued by the builtin at `node` (see
+    /// [`OutputQueue`](crate::shell::interpreter::OutputQueue)).
+    #[inline]
+    pub(crate) const fn builtin_task(node: NodeId, seq: u32) -> ChildPtr {
+        ChildPtr {
+            node,
+            tag: WriterTag::Builtin,
+            subproc: None,
+            seq,
         }
     }
 
@@ -73,6 +92,7 @@ impl ChildPtr {
             node: NodeId::NONE,
             tag: WriterTag::Subproc,
             subproc: Some(pipe.into()),
+            seq: 0,
         }
     }
 
@@ -190,7 +210,7 @@ pub struct IOWriter {
     /// short `with_mut` scopes.
     writer: JsCell<WriterImpl>,
     fd: Cell<Fd>,
-    writers: RefCell<Writers>,
+    writers: JsRefCell<Writers>,
     /// The bytes being written. In its own cell because the io layer borrows
     /// it (`get_buffer`) for the duration of a write syscall.
     buf: JsCell<Vec<u8>>,
@@ -205,7 +225,7 @@ pub struct IOWriter {
     /// `handle_dead_writer`). The syscall error is kept (not the derived
     /// `SystemError`) so each rejected chunk gets its own freshly-derived
     /// `SystemError`.
-    err: RefCell<Option<sys::Error>>,
+    err: JsRefCell<Option<sys::Error>>,
     evtloop: EventLoopHandle,
     is_writing: Cell<bool>,
     started: Cell<bool>,
@@ -252,13 +272,13 @@ impl IOWriter {
             self_root,
             writer: JsCell::new(writer),
             fd: Cell::new(fd),
-            writers: RefCell::new(Writers::new()),
+            writers: JsRefCell::new(Writers::new()),
             buf: JsCell::new(Vec::new()),
             #[cfg(windows)]
             winbuf: JsCell::new(Vec::new()),
             writer_idx: Cell::new(0),
             total_bytes_written: Cell::new(0),
-            err: RefCell::new(None),
+            err: JsRefCell::new(None),
             evtloop,
             is_writing: Cell::new(false),
             started: Cell::new(false),
@@ -1225,7 +1245,9 @@ pub(crate) fn on_io_writer_chunk(
     use crate::shell::builtin::Builtin;
     use crate::shell::states::{cmd, cond_expr, pipeline};
     match child.tag {
-        WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, written, err),
+        WriterTag::Builtin => {
+            Builtin::on_io_writer_chunk(interp, child.node, child.seq, written, err)
+        }
         WriterTag::Cmd => cmd::Cmd::on_io_writer_chunk(interp, child.node, written, err),
         WriterTag::CondExpr => {
             cond_expr::CondExpr::on_io_writer_chunk(interp, child.node, written, err)

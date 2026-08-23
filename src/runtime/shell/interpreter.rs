@@ -22,16 +22,17 @@
 //! `match` on the parent's tag (`Interpreter::child_done`), which keeps the
 //! per-tick hot path inlined (see PORTING.md §Dispatch hot-path).
 //!
-//! Each slot is a `RefCell<Node>` in its own heap box, so a borrowed node
-//! stays put while the arena grows and overlapping borrows of one node are a
-//! checked panic rather than aliasing. State methods take
+//! Slots are `JsRefCell<Node>`s in boxed chunks, so a borrowed node stays put
+//! while the arena grows and (in debug builds) overlapping borrows of one
+//! node are a checked panic rather than aliasing. State methods take
 //! `(&Interpreter, this: NodeId)` and look their own data up via
 //! `interp.as_<kind>(this)` / `interp.as_<kind>_mut(this)`; keep those borrows
 //! short and never hold one across a call that re-enters the same node.
 
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
-use core::cell::{Cell, Ref, RefCell, RefMut};
+use bun_ptr::{JsCellRef, JsCellRefMut, JsRefCell};
+use core::cell::Cell;
 use core::fmt;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -103,7 +104,16 @@ impl fmt::Display for NodeId {
 }
 
 const NODE_CHUNK: usize = 8;
-type NodeChunk = [RefCell<Node>; NODE_CHUNK];
+type NodeChunk = [JsRefCell<Node>; NODE_CHUNK];
+
+/// A chunk of free slots, built in place on the heap (an array literal would
+/// be assembled on the stack and copied over).
+fn new_node_chunk() -> Box<NodeChunk> {
+    let chunk: Box<[JsRefCell<Node>]> = core::iter::repeat_with(|| JsRefCell::new(Node::Free))
+        .take(NODE_CHUNK)
+        .collect();
+    chunk.try_into().ok().expect("exactly NODE_CHUNK slots")
+}
 
 /// One slot in the interpreter's state arena. All state structs
 /// live as enum variants so the arena is a single homogeneous vector.
@@ -177,33 +187,34 @@ impl Node {
     }
 }
 
+#[cold]
+#[inline(never)]
+#[track_caller]
+fn node_kind_mismatch(expected: &'static str, id: NodeId, got: StateKind) -> ! {
+    panic!("expected Node::{expected} at {id}, got {got:?}")
+}
+
 /// Generate `Interpreter::as_<kind>{,_mut}` typed accessors. These panic on
-/// tag mismatch, and (being `RefCell` borrows) on an overlapping borrow of
+/// tag mismatch, and (in debug builds) on an overlapping borrow of
 /// the same node.
 macro_rules! node_accessors {
     ($($variant:ident => $ty:ty, $get:ident, $get_mut:ident);* $(;)?) => {
         impl Interpreter {
             $(
-                #[inline]
+                #[inline(always)]
                 #[track_caller]
-                pub fn $get(&self, id: NodeId) -> Ref<'_, $ty> {
-                    Ref::map(self.node(id), |n| match n {
+                pub fn $get(&self, id: NodeId) -> JsCellRef<'_, $ty> {
+                    JsCellRef::map(self.node(id), |n| match n {
                         Node::$variant(v) => v,
-                        other => panic!(
-                            concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
-                            id, other.kind()
-                        ),
+                        other => node_kind_mismatch(stringify!($variant), id, other.kind()),
                     })
                 }
-                #[inline]
+                #[inline(always)]
                 #[track_caller]
-                pub fn $get_mut(&self, id: NodeId) -> RefMut<'_, $ty> {
-                    RefMut::map(self.node_mut(id), |n| match n {
+                pub fn $get_mut(&self, id: NodeId) -> JsCellRefMut<'_, $ty> {
+                    JsCellRefMut::map(self.node_mut(id), |n| match n {
                         Node::$variant(v) => v,
-                        other => panic!(
-                            concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
-                            id, other.kind()
-                        ),
+                        other => node_kind_mismatch(stringify!($variant), id, other.kind()),
                     })
                 }
             )*
@@ -273,10 +284,12 @@ pub enum OutputNeedsIOSafeGuard {
 pub struct Interpreter {
     /// State-machine node arena. Indices are `NodeId`s; freed slots are
     /// recycled via `free_list`. Slots live in fixed-size boxed chunks that
-    /// are only ever appended, so a `Ref`/`RefMut` into one stays valid while
-    /// the arena grows, and filling a slot goes through its own `RefCell`.
+    /// are only ever appended, so a `JsCellRef`/`JsCellRefMut` into one stays valid
+    /// while the arena grows; refilling a slot goes through its own cell.
+    nodes_head: Box<NodeChunk>,
+    /// Chunks after the first (most scripts never need one).
     #[allow(clippy::vec_box, reason = "chunk address stability across growth")]
-    nodes: JsCell<Vec<Box<NodeChunk>>>,
+    nodes_tail: JsCell<Vec<Box<NodeChunk>>>,
     /// Slots handed out so far (high-water mark).
     node_len: Cell<u32>,
     free_list: JsCell<Vec<u32>>,
@@ -420,7 +433,7 @@ impl Interpreter {
         debug_assert_eq!(*cwd_arr.last().unwrap(), 0);
 
         let (buffered_stdout, buffered_stderr) = CapturedBuf::new_pair();
-        let root_shell = Rc::new(RefCell::new(ShellExecEnv {
+        let root_shell = Rc::new(JsRefCell::new(ShellExecEnv {
             buffered_stdout,
             buffered_stderr,
             shell_env: EnvMap::init(),
@@ -459,7 +472,8 @@ impl Interpreter {
 
         // ── assemble ───────────────────────────────────────────────────────
         let interpreter = Box::new(Interpreter {
-            nodes: JsCell::new(Vec::new()),
+            nodes_head: new_node_chunk(),
+            nodes_tail: JsCell::new(Vec::new()),
             node_len: Cell::new(0),
             free_list: JsCell::new(Vec::new()),
             event_loop,
@@ -695,21 +709,25 @@ impl Interpreter {
 
     /// Allocate a fresh slot in the node arena and return its id. Reuses
     /// freed slots when available.
+    #[inline]
     pub(crate) fn alloc_node(&self, node: Node) -> NodeId {
-        let id = match self.free_list.with_mut(|f| f.pop()) {
-            Some(slot) => NodeId(slot),
-            None => {
-                let n = self.node_len.get();
-                if n as usize == self.nodes.get().len() * NODE_CHUNK {
-                    self.nodes.with_mut(|c| {
-                        c.push(Box::new([const { RefCell::new(Node::Free) }; NODE_CHUNK]))
-                    });
-                }
-                self.node_len.set(n + 1);
-                NodeId(n)
-            }
-        };
-        *self.node_mut(id) = node;
+        if let Some(slot) = self.free_list.with_mut(|f| f.pop()) {
+            let id = NodeId(slot);
+            self.slot(id).set(node);
+            return id;
+        }
+        self.alloc_node_slow(node)
+    }
+
+    #[inline(never)]
+    fn alloc_node_slow(&self, node: Node) -> NodeId {
+        let n = self.node_len.get();
+        if n as usize == (self.nodes_tail.get().len() + 1) * NODE_CHUNK {
+            self.nodes_tail.with_mut(|c| c.push(new_node_chunk()));
+        }
+        self.node_len.set(n + 1);
+        let id = NodeId(n);
+        self.slot(id).set(node);
         id
     }
 
@@ -724,11 +742,14 @@ impl Interpreter {
         if id == NodeId::NONE || id == NodeId::INTERPRETER {
             return;
         }
-        let old = core::mem::replace(&mut *self.node_mut(id), Node::Free);
-        debug_assert!(!matches!(old, Node::Free), "double-free of {}", id);
-        // Dropped outside the slot borrow: a node's fields (`IO`, env `Rc`s)
-        // never re-enter the arena on drop today, but keep it structural.
-        drop(old);
+        debug_assert!(
+            !matches!(self.kind(id), StateKind::Free),
+            "double-free of {}",
+            id
+        );
+        // Dropped in place: a node's fields (`IO`, env handles) never re-enter
+        // the arena on drop.
+        self.slot(id).set(Node::Free);
         self.free_list.with_mut(|f| f.push(id.0));
     }
 
@@ -808,9 +829,15 @@ impl Interpreter {
         false
     }
 
-    #[inline]
-    fn slot(&self, id: NodeId) -> &RefCell<Node> {
-        &self.nodes.get()[id.idx() / NODE_CHUNK][id.idx() % NODE_CHUNK]
+    #[inline(always)]
+    fn slot(&self, id: NodeId) -> &JsRefCell<Node> {
+        let i = id.idx();
+        if i < NODE_CHUNK {
+            &self.nodes_head[i]
+        } else {
+            let i = i - NODE_CHUNK;
+            &self.nodes_tail.get()[i / NODE_CHUNK][i % NODE_CHUNK]
+        }
     }
 
     #[cfg(not(windows))]
@@ -819,23 +846,33 @@ impl Interpreter {
         self.node_len.get() as usize
     }
 
-    #[inline]
+    #[inline(always)]
     #[track_caller]
-    pub fn node(&self, id: NodeId) -> Ref<'_, Node> {
+    pub fn node(&self, id: NodeId) -> JsCellRef<'_, Node> {
         self.slot(id).borrow()
     }
 
-    #[inline]
+    #[inline(always)]
     #[track_caller]
-    pub(crate) fn node_mut(&self, id: NodeId) -> RefMut<'_, Node> {
+    pub(crate) fn node_mut(&self, id: NodeId) -> JsCellRefMut<'_, Node> {
         self.slot(id).borrow_mut()
     }
 
     /// The state tag of node `id`.
-    #[inline]
+    #[inline(always)]
     #[track_caller]
     pub fn kind(&self, id: NodeId) -> StateKind {
         self.node(id).kind()
+    }
+
+    /// The IO a `Stmt` under `parent` (a `Script` or `If`) hands its children.
+    #[inline]
+    pub(crate) fn io_of(&self, parent: NodeId) -> IO {
+        match &*self.node(parent) {
+            Node::Script(s) => s.io.clone(),
+            Node::If(i) => i.io.clone(),
+            other => node_kind_mismatch("Script|If", parent, other.kind()),
+        }
     }
 
     // ── hoisted dispatch (PORTING.md §Dispatch hot-path) ───────────────────
@@ -1278,10 +1315,9 @@ impl Interpreter {
         // finished); the only remaining reader is `memory_cost()`, which
         // queries the arena's size and never touches the AST.
         debug_assert!(
-            self.nodes
-                .get()
+            self.nodes_head
                 .iter()
-                .flat_map(|c| c.iter())
+                .chain(self.nodes_tail.get().iter().flat_map(|c| c.iter()))
                 .all(|slot| matches!(&*slot.borrow(), Node::Free)),
             "AST arena reset with live state nodes"
         );
@@ -1508,14 +1544,14 @@ pub(crate) fn throw_shell_err(
 /// stdout/stderr pairs that share one allocation.
 #[derive(Clone)]
 pub struct CapturedBuf {
-    pair: Rc<[RefCell<Vec<u8>>; 2]>,
+    pair: Rc<[JsRefCell<Vec<u8>>; 2]>,
     idx: u8,
 }
 
 impl CapturedBuf {
     /// A fresh `(stdout, stderr)` pair.
     pub fn new_pair() -> (CapturedBuf, CapturedBuf) {
-        let pair: Rc<[RefCell<Vec<u8>>; 2]> = Rc::default();
+        let pair: Rc<[JsRefCell<Vec<u8>>; 2]> = Rc::default();
         (
             CapturedBuf {
                 pair: Rc::clone(&pair),
@@ -1527,13 +1563,13 @@ impl CapturedBuf {
 
     #[inline]
     #[track_caller]
-    pub fn borrow(&self) -> Ref<'_, Vec<u8>> {
+    pub fn borrow(&self) -> JsCellRef<'_, Vec<u8>> {
         self.pair[self.idx as usize].borrow()
     }
 
     #[inline]
     #[track_caller]
-    pub fn borrow_mut(&self) -> RefMut<'_, Vec<u8>> {
+    pub fn borrow_mut(&self) -> JsCellRefMut<'_, Vec<u8>> {
         self.pair[self.idx as usize].borrow_mut()
     }
 }
@@ -1542,7 +1578,7 @@ impl CapturedBuf {
 /// nodes that dupe (Script for command substitution, Subshell, pipeline
 /// children) hold the only handle to the fresh env, everything else shares
 /// its parent's. The env is freed when its last holder is.
-pub type EnvRc = Rc<RefCell<ShellExecEnv>>;
+pub type EnvRc = Rc<JsRefCell<ShellExecEnv>>;
 
 /// Shell execution environment (env vars, cwd, captured stdout/stderr).
 pub struct ShellExecEnv {
@@ -1675,7 +1711,7 @@ impl ShellExecEnv {
             "[ShellExecEnv] dupe 0x{:x}",
             std::ptr::from_ref(&duped) as usize
         );
-        Ok(Rc::new(RefCell::new(duped)))
+        Ok(Rc::new(JsRefCell::new(duped)))
     }
 
     /// Early teardown for the root env (held by the `Interpreter` until it is
@@ -2279,130 +2315,172 @@ impl OutputSrc {
 pub enum OutputTaskState {
     WaitingWriteErr,
     WaitingWriteOut,
-    Done,
 }
 
-/// What a builtin did with an [`OutputTask`]'s write request.
-#[allow(clippy::large_enum_variant)]
-pub enum OutputWrite<P: OutputTaskVTable> {
-    /// Queued on an `IOWriter`; the builtin holds the task until the chunk
-    /// callback hands it back through [`OutputTask::on_io_writer_chunk`].
-    Enqueued(Yield),
-    /// Written synchronously; carry on with the task.
-    Done(Box<OutputTask<P>>),
+/// The in-flight [`OutputTask`]s of one builtin. A task whose chunk is
+/// queued on an IOWriter is parked here under the sequence number carried
+/// in that chunk's [`ChildPtr`](crate::shell::io_writer::ChildPtr), so every
+/// chunk completion (or failure) finds exactly its task.
+pub struct OutputQueue<P: OutputTaskVTable> {
+    next_seq: u32,
+    /// Chunks queued on a writer that have not called back yet.
+    waiting: u32,
+    parked: Vec<OutputTask<P>>,
 }
 
-/// Vtable trait the parent builtin implements. All hooks
-/// take `(&Interpreter, NodeId)` (NodeId style — the parent builtin lives
-/// inside the interpreter's node arena).
-///
-/// `write_*` receive the task itself so an async write can park it on the
-/// builtin until the chunk completes.
-pub trait OutputTaskVTable: Sized {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: Box<OutputTask<Self>>,
-        errbuf: &[u8],
-    ) -> OutputWrite<Self>;
-    fn on_write_err(interp: &Interpreter, cmd: NodeId);
-    /// Write `task.output`.
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: Box<OutputTask<Self>>,
-    ) -> OutputWrite<Self>;
-    fn on_write_out(interp: &Interpreter, cmd: NodeId);
+impl<P: OutputTaskVTable> Default for OutputQueue<P> {
+    fn default() -> Self {
+        Self {
+            next_seq: 0,
+            waiting: 0,
+            parked: Vec::new(),
+        }
+    }
+}
+
+impl<P: OutputTaskVTable> OutputQueue<P> {
+    /// No chunk is still out on a writer.
+    #[inline]
+    pub(crate) fn drained(&self) -> bool {
+        self.waiting == 0
+    }
+}
+
+/// Implemented by the builtins that print through [`OutputTask`]s
+/// (ls/mkdir/touch/cp).
+pub trait OutputTaskVTable: Sized + 'static {
+    fn output_queue(interp: &Interpreter, cmd: NodeId) -> JsCellRefMut<'_, OutputQueue<Self>>;
+    /// A task finished both writes; usually re-runs the builtin's `next`.
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield;
 }
 
-/// A task that can write to stdout and/or stderr.
+/// Writes one sub-task's error message (stderr) and then its output (stdout)
+/// for the builtin at `parent`, then reports `on_done`.
 pub struct OutputTask<P: OutputTaskVTable> {
     /// Owning Cmd node (the builtin's `cmd` id).
     pub(crate) parent: NodeId,
     pub(crate) output: OutputSrc,
     pub(crate) state: OutputTaskState,
+    /// Key in the builtin's [`OutputQueue`] while a chunk is out.
+    seq: u32,
     _marker: core::marker::PhantomData<P>,
 }
 
 impl<P: OutputTaskVTable> OutputTask<P> {
-    pub(crate) fn new(parent: NodeId, output: OutputSrc) -> Box<Self> {
-        Box::new(OutputTask {
+    pub(crate) fn new(parent: NodeId, output: OutputSrc) -> Self {
+        OutputTask {
             parent,
             output,
             state: OutputTaskState::WaitingWriteErr,
+            seq: 0,
             _marker: core::marker::PhantomData,
+        }
+    }
+
+    /// Write `errbuf` (if any) to stderr, then the output to stdout, then
+    /// `on_done`. Returns as soon as a write has to wait for a writer.
+    pub(crate) fn start(mut me: Self, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
+        log!(
+            "OutputTask(0x{:x}) start errbuf={:?}",
+            &raw const me as usize,
+            errbuf.map(|b| b.len())
+        );
+        if let Some(err) = errbuf {
+            me.state = OutputTaskState::WaitingWriteErr;
+            match Self::write(me, interp, crate::shell::builtin::IoKind::Stderr, Some(err)) {
+                Ok(y) => return y,
+                Err(done) => me = done,
+            }
+        }
+        Self::write_output(me, interp)
+    }
+
+    fn write_output(mut me: Self, interp: &Interpreter) -> Yield {
+        me.state = OutputTaskState::WaitingWriteOut;
+        match Self::write(me, interp, crate::shell::builtin::IoKind::Stdout, None) {
+            Ok(y) => y,
+            Err(done) => Self::finish(done, interp),
+        }
+    }
+
+    /// Write `bytes` (or, for `None`, `me.output`) to `to`. `Ok`: the chunk
+    /// is queued and `me` parked until [`on_chunk`](Self::on_chunk); `Err`:
+    /// written without IO, carry on with `me`.
+    fn write(
+        mut me: Self,
+        interp: &Interpreter,
+        to: crate::shell::builtin::IoKind,
+        bytes: Option<&[u8]>,
+    ) -> Result<Yield, Self> {
+        use crate::shell::builtin::{Builtin, IoKind};
+        use crate::shell::io_writer::ChildPtr;
+        let parent = me.parent;
+        let needs_io = {
+            let b = Builtin::of(interp, parent);
+            match to {
+                IoKind::Stdout => b.stdout.needs_io(),
+                IoKind::Stderr => b.stderr.needs_io(),
+            }
+        };
+        let Some(safeguard) = needs_io else {
+            let _ = match bytes {
+                Some(b) => Builtin::write_no_io(interp, parent, to, b),
+                None => Builtin::write_no_io(interp, parent, to, me.output.slice()),
+            };
+            return Err(me);
+        };
+        // Park first: the writer may complete (or fail) the chunk from inside
+        // `enqueue`.
+        let seq = {
+            let mut q = P::output_queue(interp, parent);
+            q.next_seq += 1;
+            q.waiting += 1;
+            me.seq = q.next_seq;
+            let seq = me.seq;
+            q.parked.push(me);
+            seq
+        };
+        let child = ChildPtr::builtin_task(parent, seq);
+        Ok(match bytes {
+            Some(b) => Builtin::write_out(interp, parent, to, child, b, safeguard),
+            None => Builtin::write_out_with(interp, parent, to, child, safeguard, |buf| {
+                let q = P::output_queue(interp, parent);
+                if let Some(t) = q.parked.iter().rev().find(|t| t.seq == seq) {
+                    buf.extend_from_slice(t.output.slice());
+                }
+            }),
         })
     }
 
-    /// Drives the first state transition: write `errbuf` (if any), then the
-    /// output, then `on_done`.
-    pub(crate) fn start(mut me: Box<Self>, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
-        log!(
-            "OutputTask(0x{:x}) start errbuf={:?}",
-            &raw const *me as usize,
-            errbuf.map(|b| b.len())
-        );
-        me.state = OutputTaskState::WaitingWriteErr;
-        let parent = me.parent;
-        if let Some(err) = errbuf {
-            return match P::write_err(interp, parent, me, err) {
-                OutputWrite::Enqueued(y) => y,
-                OutputWrite::Done(me) => Self::next(me, interp),
-            };
-        }
-        me.state = OutputTaskState::WaitingWriteOut;
-        match P::write_out(interp, parent, me) {
-            OutputWrite::Enqueued(y) => y,
-            OutputWrite::Done(mut me) => {
-                P::on_write_out(interp, parent);
-                me.state = OutputTaskState::Done;
-                Self::deinit(me, interp)
-            }
-        }
-    }
-
-    pub(crate) fn next(mut me: Box<Self>, interp: &Interpreter) -> Yield {
-        let parent = me.parent;
-        match me.state {
-            OutputTaskState::WaitingWriteErr => {
-                P::on_write_err(interp, parent);
-                me.state = OutputTaskState::WaitingWriteOut;
-                match P::write_out(interp, parent, me) {
-                    OutputWrite::Enqueued(y) => y,
-                    OutputWrite::Done(mut me) => {
-                        P::on_write_out(interp, parent);
-                        me.state = OutputTaskState::Done;
-                        Self::deinit(me, interp)
-                    }
-                }
-            }
-            OutputTaskState::WaitingWriteOut => {
-                P::on_write_out(interp, parent);
-                me.state = OutputTaskState::Done;
-                Self::deinit(me, interp)
-            }
-            OutputTaskState::Done => panic!("Invalid state"),
-        }
-    }
-
-    pub(crate) fn on_io_writer_chunk(
-        me: Box<Self>,
+    /// The chunk parked under `seq` completed (or its writer failed).
+    pub(crate) fn on_chunk(
         interp: &Interpreter,
+        cmd: NodeId,
+        seq: u32,
         _written: usize,
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        log!(
-            "OutputTask(0x{:x}) onIOWriterChunk",
-            &raw const *me as usize
-        );
-        Self::next(me, interp)
+        let me = {
+            let mut q = P::output_queue(interp, cmd);
+            let pos = q.parked.iter().position(|t| t.seq == seq);
+            pos.map(|i| {
+                q.waiting -= 1;
+                q.parked.swap_remove(i)
+            })
+        };
+        let Some(me) = me else {
+            debug_assert!(false, "OutputTask chunk {seq} of {cmd} has no parked task");
+            return P::on_done(interp, cmd);
+        };
+        log!("OutputTask(0x{:x}) onIOWriterChunk", &raw const me as usize);
+        match me.state {
+            OutputTaskState::WaitingWriteErr => Self::write_output(me, interp),
+            OutputTaskState::WaitingWriteOut => Self::finish(me, interp),
+        }
     }
 
-    /// Fires `on_done` then frees.
-    fn deinit(me: Box<Self>, interp: &Interpreter) -> Yield {
-        debug_assert!(me.state == OutputTaskState::Done);
-        log!("OutputTask(0x{:x}) deinit", &raw const *me as usize);
+    fn finish(me: Self, interp: &Interpreter) -> Yield {
+        log!("OutputTask(0x{:x}) deinit", &raw const me as usize);
         let parent = me.parent;
         drop(me);
         P::on_done(interp, parent)

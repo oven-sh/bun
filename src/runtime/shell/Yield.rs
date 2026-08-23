@@ -3,7 +3,7 @@
 //! See the doc comment on `Yield` for the design. The Rust port carries
 //! `NodeId`s (indices into `Interpreter::nodes`) instead of `&mut State`
 //! borrows; state is reached through the `&Interpreter` threaded through
-//! `run` (per-node `RefCell`s).
+//! `run` (per-node cells).
 
 use core::cell::Cell;
 

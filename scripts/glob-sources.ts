@@ -31,7 +31,7 @@ interface SourcePattern {
  * To add a new source list: add an entry here. The `Sources` type and
  * `globAllSources()` pick it up automatically.
  */
-const patterns = {
+export const patterns = {
   /** `packages/bun-error/*` — error overlay page */
   bunError: {
     paths: ["packages/bun-error/*.{json,ts,tsx,css}", "packages/bun-error/img/*"],

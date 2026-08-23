@@ -275,6 +275,8 @@ impl Default for CompileC {
 
 enum Source {
     File(ZBox),
+    /// Never empty: `bun_ffi_cc` rejects an empty `source` array, and `first()`
+    /// relies on that.
     Files(Vec<ZBox>),
 }
 
@@ -1143,7 +1145,7 @@ impl FFI {
             object.get_own(global_this, &bun_core::String::borrow_utf8(b"source"))?
         {
             if source_value.is_array() {
-                compile_c.source = Source::Files(Vec::new());
+                let mut files: Vec<ZBox> = Vec::new();
                 let mut iter = source_value.array_iterator(global_this)?;
                 while let Some(value) = iter.next()? {
                     if !value.is_string() {
@@ -1153,10 +1155,19 @@ impl FFI {
                             value,
                         ));
                     }
-                    if let Source::Files(files) = &mut compile_c.source {
-                        files.push(value.get_zig_string(global_this)?.to_owned_slice_z());
-                    }
+                    files.push(value.get_zig_string(global_this)?.to_owned_slice_z());
                 }
+                if files.is_empty() {
+                    return Err(global_this
+                        .err(
+                            jsc::ErrorCode::INVALID_ARG_VALUE,
+                            format_args!(
+                                "The argument 'source' must be a non-empty array of file paths. Received []"
+                            ),
+                        )
+                        .throw());
+                }
+                compile_c.source = Source::Files(files);
             } else if !source_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"source",

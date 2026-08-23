@@ -601,9 +601,14 @@ impl ExitHandler {
     /// reference instead; the body re-enters JS so no `&mut` is held.
     pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
         let exit_code = vm.exit_handler.exit_code;
-        // `process.on('exit')` handlers are user script (see `on_exit`).
+        // `process.on('exit')` handlers are user script (see `on_exit`). In a worker,
+        // a process.exit() inside one throws the VM's termination to unwind the
+        // handler; outside script, this frame is where it lands.
         if vm.script_allowed() && !vm.exit_handler.skip_exit_listeners {
-            Process__dispatchOnExit(vm.global(), exit_code);
+            let global = vm.global();
+            let _ = jsc::from_js_host_call_generic(global, || {
+                Process__dispatchOnExit(global, exit_code)
+            });
         }
         if vm.worker.is_none() {
             Bun__WebView__closeAllForTermination();

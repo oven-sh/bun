@@ -1118,10 +1118,11 @@ impl WebWorker {
     pub fn exit(&self, vm: &VirtualMachine) {
         self.exit_called.store(true, Ordering::Relaxed);
         let _ = self.set_requested_terminate();
-        // Stop subsequent JS at the next safepoint: process.exit()'s own exception
-        // check right after `reallyExit` returns, so the calling script unwinds
-        // there. From an immediate this runs before the turn's poll; the wake is
-        // what ends it.
+        // Stop subsequent JS at the next safepoint. For process.exit() that is its
+        // own exception check right after `reallyExit` returns: the calling script
+        // unwinds up to the native frame that entered it (from an 'exit' handler,
+        // the dispatch in `on_exit()`). From an immediate this runs before the
+        // turn's poll; the wake is what ends it.
         vm.handle_ref().request_termination();
     }
 

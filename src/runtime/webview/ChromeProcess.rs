@@ -18,11 +18,10 @@
 //! and the write path can share it.
 //! Windows (no inheritable sockets): two uv_pipe()s driven here instead, see [`PipeEvent`] and `Bun__Chrome__writePipe`.
 
-use core::ffi::{CStr, c_char};
-use core::ptr;
+use core::cell::Cell;
+use core::ffi::CStr;
 #[cfg(windows)]
-use core::sync::atomic::AtomicU32;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::io::Write as _;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -30,16 +29,12 @@ use bun_core::ZStr;
 use bun_core::{self, ZBox, env_var, getenv_z, strings, zstr};
 use bun_jsc::JSGlobalObject;
 use bun_jsc::virtual_machine::VirtualMachine;
-#[cfg(windows)]
-use bun_libuv_sys::{UvHandle as _, UvStream as _};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
+use bun_ptr::{OwnedThis, ThisPtr};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{
-    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions,
-    Status, Stdio,
-};
+use bun_spawn::{self, EventLoopHandle, ProcessHandle, SpawnEnv, SpawnOptions, Status, Stdio};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -49,33 +44,30 @@ use bun_which::which;
 
 declare_scope!(Chrome, hidden);
 
+/// The Chrome child. Owned by this thread's [`Hosts`](crate::webview::Hosts)
+/// until its exit is reaped.
 pub(crate) struct ChromeProcess {
+    /// Our ref on the process; dropping this detaches and releases it.
     process: ProcessHandle,
-    /// Set by [`Bun__Chrome__retire`]: the exit is reaped but not reported to C++.
-    retired: bool,
+    /// Set by [`chrome_retire`]: the exit is reaped but not reported to C++.
+    retired: Cell<bool>,
     #[cfg(windows)]
     pipes: WindowsPipes,
     #[cfg(windows)]
     generation: u32,
 }
 
-/// Our ends of the two pipes (boxed, null once closed) and the read scratch.
+/// Our ends of the two pipes (`None` once closed).
 #[cfg(windows)]
 struct WindowsPipes {
     /// Child reads the other end as fd 3.
-    cmd: *mut uv::Pipe,
+    cmd: bun_jsc::JsCell<Option<uv::OwnedPipe>>,
     /// Child writes the other end as fd 4.
-    reply: *mut uv::Pipe,
-    read_buf: Box<[u8]>,
+    reply: bun_jsc::JsCell<Option<uv::OwnedPipe>>,
 }
 
-// PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
-// Only accessed from the JS thread (exported fns are called from C++ on the
-// mutator thread; on_process_exit runs on the event loop thread which is the
-// same thread), so Relaxed ordering suffices.
-static INSTANCE: AtomicPtr<ChromeProcess> = AtomicPtr::new(ptr::null_mut());
-
-/// Generation of the Chrome in INSTANCE; stamped on every [`PipeEvent`] (same threading as INSTANCE).
+/// Generation of the published Chrome; stamped on every [`PipeEvent`]. Main
+/// (JS) thread only, like the registry.
 #[cfg(windows)]
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
@@ -85,125 +77,105 @@ static GENERATION: AtomicU32 = AtomicU32::new(0);
 /// dies. SIGKILL here takes the browser process, the zygote tree follows.
 /// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
 /// rejectAllAndMarkDead handles promise rejection on the next loop tick.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__Chrome__kill() {
-    // SAFETY: JS-thread-only global; see INSTANCE decl.
-    unsafe {
-        if let Some(i) = INSTANCE.load(Ordering::Relaxed).as_mut() {
-            let _ = i.process.kill(9);
+// HOST_EXPORT(Bun__Chrome__kill, c)
+pub fn chrome_kill() {
+    crate::jsc_hooks::with_webview_hosts(|hosts| {
+        if let Some(chrome) = hosts.chrome.current() {
+            let _ = chrome.process.kill(9);
         }
-    }
+    });
 }
 
 /// Transport::retireGlobal (`bun test --isolate`): unpublish and kill this Chrome so the next file can spawn its own at once.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__Chrome__retire() {
-    let this = INSTANCE.swap(ptr::null_mut(), Ordering::Relaxed);
-    // SAFETY: INSTANCE held a live heap-allocated pointer; `on_exit` only
-    // frees it after it runs, and we have just taken it out of INSTANCE.
-    let Some(chrome) = (unsafe { this.as_mut() }) else {
-        return;
-    };
-    chrome.retired = true;
-    #[cfg(windows)]
-    {
-        // Queued events from this Chrome carry its generation; `QueuedEvent::deliver` drops them.
-        GENERATION.fetch_add(1, Ordering::Relaxed);
-        chrome.pipes.close();
-    }
-    let _ = chrome.process.kill(9);
+// HOST_EXPORT(Bun__Chrome__retire, c)
+pub fn chrome_retire() {
+    crate::jsc_hooks::with_webview_hosts(|hosts| {
+        let Some(chrome) = hosts.chrome.retire() else {
+            return;
+        };
+        chrome.retired.set(true);
+        #[cfg(windows)]
+        {
+            // Queued events from this Chrome carry its generation; `QueuedEvent::deliver` drops them.
+            GENERATION.fetch_add(1, Ordering::Relaxed);
+            chrome.pipes.close();
+        }
+        let _ = chrome.process.kill(9);
+    });
 }
 
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
-///
-/// # Safety
-/// `user_data_dir` and `path` must each be null or point to a valid
-/// NUL-terminated string. `extra_argv` must be null or point to
-/// `extra_argv_len` valid NUL-terminated string pointers.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Chrome__ensure(
+/// `extra_argv` is the extra switches back to back, each NUL-terminated.
+// HOST_EXPORT(Bun__Chrome__ensure, c)
+pub fn chrome_ensure(
     global: &JSGlobalObject,
-    user_data_dir: *const c_char,     // ?[*:0]const u8
-    path: *const c_char,              // ?[*:0]const u8
-    extra_argv: *const *const c_char, // ?[*]const [*:0]const u8
-    extra_argv_len: u32,
+    user_data_dir: Option<&CStr>,
+    path: Option<&CStr>,
+    extra_argv: &[u8],
     stdout_inherit: bool,
     stderr_inherit: bool,
 ) -> i32 {
-    {
-        if !INSTANCE.load(Ordering::Relaxed).is_null() {
-            return -1; // C++ already holds the transport
-        }
+    let published = crate::jsc_hooks::with_webview_hosts(|hosts| hosts.chrome.is_published());
+    if published != Some(false) {
+        return -1; // C++ already holds the transport (or no runtime state)
+    }
 
-        let extra: &[*const c_char] = if extra_argv.is_null() {
-            &[]
-        } else {
-            // SAFETY: caller guarantees extra_argv points to extra_argv_len entries.
-            unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
-        };
-        let vm = global.bun_vm_ptr();
-        let user_data_dir = if user_data_dir.is_null() {
-            None
-        } else {
-            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
-            Some(unsafe { bun_core::ffi::cstr(user_data_dir) })
-        };
-        let path = if path.is_null() {
-            None
-        } else {
-            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
-            Some(unsafe { bun_core::ffi::cstr(path) })
-        };
-        match spawn(
-            vm,
-            user_data_dir,
-            path,
-            extra,
-            stdout_inherit,
-            stderr_inherit,
-        ) {
-            Ok(rc) => rc,
-            Err(err) => {
-                scoped_log!(Chrome, "spawn failed: {}", err.name());
-                -1
-            }
+    let extra: Vec<&CStr> = extra_argv
+        .split_inclusive(|&b| b == 0)
+        .filter_map(|arg| CStr::from_bytes_with_nul(arg).ok())
+        .collect();
+    match spawn(
+        global.bun_vm(),
+        user_data_dir,
+        path,
+        &extra,
+        stdout_inherit,
+        stderr_inherit,
+    ) {
+        Ok(rc) => rc,
+        Err(err) => {
+            scoped_log!(Chrome, "spawn failed: {}", err.name());
+            -1
         }
     }
 }
 
 bun_spawn::link_impl_ProcessExit! {
     ChromeProcess for ChromeProcess => |this| {
-        on_process_exit(process, status, _rusage) => ChromeProcess::on_exit(this, process, &status),
+        on_process_exit(_process, status, _rusage) => ChromeProcess::on_exit(ThisPtr::new(this), &status),
     }
 }
 
 impl ChromeProcess {
-    /// Safety: `this` is the pointer published in INSTANCE (freed here); `process` is the exit callback's own argument, which carries the `&mut Process` already live in its frame (as in `SyncWindowsProcess::on_process_exit`).
-    unsafe fn on_exit(this: *mut ChromeProcess, process: *mut Process, status: &Status) {
+    /// The exit handler: `this` is the Chrome the registry owns (installed
+    /// with `set_exit_handler`), taken back and dropped here.
+    fn on_exit(this: ThisPtr<ChromeProcess>, status: &Status) {
         scoped_log!(Chrome, "chrome exited: {}", status);
-        // A retired Chrome was already unpublished by `Bun__Chrome__retire`.
-        let _ =
-            INSTANCE.compare_exchange(this, ptr::null_mut(), Ordering::Relaxed, Ordering::Relaxed);
-        // SAFETY: caller contract; nothing else references the allocation once INSTANCE is cleared.
-        let mut chrome = unsafe { bun_core::heap::take(this) };
-        debug_assert_eq!(process, chrome.process.as_ptr());
+        // A retired Chrome was already unpublished by `chrome_retire`.
+        let chrome =
+            crate::jsc_hooks::with_webview_hosts(|hosts| hosts.chrome.take(this)).flatten();
+        debug_assert!(chrome.is_some(), "chrome exit for an unknown chrome");
+        let Some(chrome) = chrome else {
+            return;
+        };
         chrome.close_transport();
-        if chrome.retired {
+        let retired = chrome.retired.get();
+        #[cfg(windows)]
+        let generation = chrome.generation;
+        // Releases our ref on the process.
+        drop(chrome);
+        if retired {
             return;
         }
         let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
         #[cfg(windows)]
-        PipeEvent::Exited { signo }.post(chrome.generation);
+        PipeEvent::Exited { signo }.post(generation);
         #[cfg(not(windows))]
-        {
-            drop(chrome);
-            // SAFETY: plain FFI call; takes no pointers.
-            unsafe { Bun__Chrome__died(signo) };
-        }
+        Bun__Chrome__died(signo);
     }
 
     /// On POSIX C++ owns the socket.
-    fn close_transport(&mut self) {
+    fn close_transport(&self) {
         #[cfg(windows)]
         self.pipes.close();
     }
@@ -478,143 +450,136 @@ fn find_playwright_shell() -> Option<ZBox> {
 
 /// Returns `Bun__Chrome__ensure`'s success value.
 fn spawn(
-    vm: *mut VirtualMachine,
+    vm: &VirtualMachine,
     user_data_dir: Option<&CStr>,
     explicit_path: Option<&CStr>,
-    extra_argv: &[*const c_char],
+    extra_argv: &[&CStr],
     stdout_inherit: bool,
     stderr_inherit: bool,
 ) -> crate::Result<i32> {
-    {
-        let chrome = find_chrome(explicit_path).ok_or(crate::Error::ChromeNotFound)?;
-        scoped_log!(
-            Chrome,
-            "using chrome: {}",
-            bstr::BStr::new(chrome.as_bytes())
-        );
+    let chrome = find_chrome(explicit_path).ok_or(crate::Error::ChromeNotFound)?;
+    scoped_log!(
+        Chrome,
+        "using chrome: {}",
+        bstr::BStr::new(chrome.as_bytes())
+    );
 
-        // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
-        // per-thread `jsc::EventLoop`.
-        let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
-        let mut endpoints = Endpoints::create(event_loop)?;
+    let event_loop = EventLoopHandle::init(vm.as_mut().event_loop().cast::<()>());
+    let mut endpoints = Endpoints::create(event_loop)?;
 
-        // Minimal flags. --remote-debugging-pipe is the one that matters;
-        // --headless works on both full Chrome (switches to headless mode) and
-        // chrome-headless-shell (no-op, it's already headless). --headless=new
-        // breaks chrome-headless-shell (it IS the new headless mode; =new is a
-        // full-Chrome-only switch). Playwright passes plain --headless
-        // (chromium.js:293).
-        //
-        // --user-data-dir MUST precede --remote-debugging-pipe in argv. Chrome's
-        // CommandLine::Init stops at the first -- after argv[0] on some builds;
-        // order-insensitive on most, but --user-data-dir-first is the defensive
-        // layout every headless harness uses. Without it, ProcessSingleton locks
-        // the default profile (~/Library/Application Support/Google/Chrome) and
-        // aborts if a real Chrome is already running.
-        let data_dir: ZBox = if let Some(d) = user_data_dir {
-            let d = d.to_bytes();
-            let mut v = Vec::with_capacity(16 + d.len());
-            v.extend_from_slice(b"--user-data-dir=");
-            v.extend_from_slice(d);
-            ZBox::from_vec(v)
+    // Minimal flags. --remote-debugging-pipe is the one that matters;
+    // --headless works on both full Chrome (switches to headless mode) and
+    // chrome-headless-shell (no-op, it's already headless). --headless=new
+    // breaks chrome-headless-shell (it IS the new headless mode; =new is a
+    // full-Chrome-only switch). Playwright passes plain --headless
+    // (chromium.js:293).
+    //
+    // --user-data-dir MUST precede --remote-debugging-pipe in argv. Chrome's
+    // CommandLine::Init stops at the first -- after argv[0] on some builds;
+    // order-insensitive on most, but --user-data-dir-first is the defensive
+    // layout every headless harness uses. Without it, ProcessSingleton locks
+    // the default profile (~/Library/Application Support/Google/Chrome) and
+    // aborts if a real Chrome is already running.
+    let data_dir: ZBox = if let Some(d) = user_data_dir {
+        let d = d.to_bytes();
+        let mut v = Vec::with_capacity(16 + d.len());
+        v.extend_from_slice(b"--user-data-dir=");
+        v.extend_from_slice(d);
+        ZBox::from_vec(v)
+    } else {
+        let mut name_buf = [0u8; 64];
+        let name = bun_paths::fs::FileSystem::tmpname(
+            b"bun-chrome",
+            &mut name_buf,
+            bun_core::fast_random(),
+        )?;
+        let mut dir_buf = path_buffer_pool::get();
+        let dir_parts: [&[u8]; 2] = [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
+        let dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &dir_parts);
+        bun_sys::mkdir(dir, 0o700)?;
+        let mut v = Vec::with_capacity(16 + dir.len());
+        v.extend_from_slice(b"--user-data-dir=");
+        v.extend_from_slice(&dir[..]);
+        ZBox::from_vec(v)
+    };
+
+    let mut argv: Vec<&CStr> = vec![
+        chrome.as_zstr().as_cstr(),
+        data_dir.as_zstr().as_cstr(),
+        c"--remote-debugging-pipe",
+        c"--headless",
+        c"--no-first-run",
+        c"--no-default-browser-check",
+        c"--disable-gpu", // headless CI has no GPU context
+        // Enterprise policy can force-install extensions (webRequest spam on
+        // stderr). --disable-extensions is best-effort; mandatory extensions
+        // may still load. --disable-background-networking shuts up GCM/update.
+        c"--disable-extensions",
+        c"--disable-background-networking",
+        // Throttling suite (playwright's chromiumSwitches.ts subset). These
+        // gate rAF/setTimeout firing when the tab thinks it's backgrounded.
+        // A headless target is "occluded" by definition; without these Chrome
+        // throttles timers to 1 Hz and pauses rAF entirely.
+        c"--disable-background-timer-throttling",
+        c"--disable-backgrounding-occluded-windows",
+        c"--disable-renderer-backgrounding",
+        // CDP message rate limiter — a burst of evaluates/clicks in a test
+        // loop hits it otherwise. Playwright and puppeteer both ship this.
+        c"--disable-ipc-flooding-protection",
+        // No startup window — targets are Target.createTarget'd, not the
+        // default about:blank. Saves one tab and the visual-complete wait.
+        c"--no-startup-window",
+    ];
+    // User extras last so they can override built-in flags (Chrome's
+    // CommandLine last-wins for duplicate switches). Memory is the caller's
+    // buffer — lives until Bun__Chrome__ensure returns, after which
+    // posix_spawn has copied argv into the child.
+    argv.extend_from_slice(extra_argv);
+
+    let env = vm
+        .as_mut()
+        .transpiler
+        .env_mut()
+        .map
+        .create_null_delimited_env_map()?;
+    let env: Vec<&CStr> = env.iter().collect();
+
+    let opts = SpawnOptions {
+        stdin: Stdio::Ignore,
+        stdout: if stdout_inherit {
+            Stdio::Inherit
         } else {
-            let mut name_buf = [0u8; 64];
-            let name = bun_paths::fs::FileSystem::tmpname(
-                b"bun-chrome",
-                &mut name_buf,
-                bun_core::fast_random(),
-            )?;
-            let mut dir_buf = path_buffer_pool::get();
-            let dir_parts: [&[u8]; 2] = [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
-            let dir =
-                resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &dir_parts);
-            bun_sys::mkdir(dir, 0o700)?;
-            let mut v = Vec::with_capacity(16 + dir.len());
-            v.extend_from_slice(b"--user-data-dir=");
-            v.extend_from_slice(&dir[..]);
-            ZBox::from_vec(v)
-        };
-
-        let mut argv: Vec<*const c_char> = vec![
-            chrome.as_ptr(),
-            data_dir.as_ptr(),
-            c"--remote-debugging-pipe".as_ptr(),
-            c"--headless".as_ptr(),
-            c"--no-first-run".as_ptr(),
-            c"--no-default-browser-check".as_ptr(),
-            c"--disable-gpu".as_ptr(), // headless CI has no GPU context
-            // Enterprise policy can force-install extensions (webRequest spam on
-            // stderr). --disable-extensions is best-effort; mandatory extensions
-            // may still load. --disable-background-networking shuts up GCM/update.
-            c"--disable-extensions".as_ptr(),
-            c"--disable-background-networking".as_ptr(),
-            // Throttling suite (playwright's chromiumSwitches.ts subset). These
-            // gate rAF/setTimeout firing when the tab thinks it's backgrounded.
-            // A headless target is "occluded" by definition; without these Chrome
-            // throttles timers to 1 Hz and pauses rAF entirely.
-            c"--disable-background-timer-throttling".as_ptr(),
-            c"--disable-backgrounding-occluded-windows".as_ptr(),
-            c"--disable-renderer-backgrounding".as_ptr(),
-            // CDP message rate limiter — a burst of evaluates/clicks in a test
-            // loop hits it otherwise. Playwright and puppeteer both ship this.
-            c"--disable-ipc-flooding-protection".as_ptr(),
-            // No startup window — targets are Target.createTarget'd, not the
-            // default about:blank. Saves one tab and the visual-complete wait.
-            c"--no-startup-window".as_ptr(),
-        ];
-        // User extras last so they can override built-in flags (Chrome's
-        // CommandLine last-wins for duplicate switches). Memory is the caller's
-        // CString Vector — lives until Bun__Chrome__ensure returns, after which
-        // posix_spawn has copied argv into the child.
-        for a in extra_argv {
-            argv.push(*a);
-        }
-        argv.push(core::ptr::null());
-
-        // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
-        // `transpiler.env` is set during VM init and lives for VM lifetime;
-        // `.map` is its `&mut Map` slot.
-        let env = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
-
-        let opts = SpawnOptions {
-            stdin: Stdio::Ignore,
-            stdout: if stdout_inherit {
-                Stdio::Inherit
-            } else {
-                Stdio::Ignore
-            },
-            stderr: if stderr_inherit {
-                Stdio::Inherit
-            } else {
-                Stdio::Ignore
-            },
-            extra_fds: endpoints.child_fds(), // dup2'd to child fd 3 and 4, in order
-            argv0: Some(chrome.as_ptr()),
-            #[cfg(windows)]
-            windows: bun_spawn::WindowsOptions {
-                loop_: event_loop,
-                ..Default::default()
-            },
-            ..SpawnOptions::default()
-        };
-
-        // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
-        // argv[0] non-null; valid for this call.
-        let spawned =
-            unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
+            Stdio::Ignore
+        },
+        stderr: if stderr_inherit {
+            Stdio::Inherit
+        } else {
+            Stdio::Ignore
+        },
+        extra_fds: endpoints.child_fds(), // dup2'd to child fd 3 and 4, in order
+        argv0: Some(chrome.as_ptr()),
         #[cfg(windows)]
-        let mut spawned = spawned;
+        windows: bun_spawn::WindowsOptions {
+            loop_: event_loop,
+            ..Default::default()
+        },
+        ..SpawnOptions::default()
+    };
 
-        // Keeping our copies of the child's ends would mask Chrome's death (no EOF).
-        endpoints.close_child_ends();
+    let spawned = bun_spawn::spawn_process_cstr(&opts, &argv, SpawnEnv::Strings(&env))??;
+    #[cfg(windows)]
+    let mut spawned = spawned;
 
-        endpoints.attach(spawned.to_process_handle(event_loop))
-    }
+    // Keeping our copies of the child's ends would mask Chrome's death (no EOF).
+    endpoints.close_child_ends();
+
+    let process = spawned.to_process_handle(event_loop);
+    endpoints.attach(process)
 }
 
 // Implemented in ChromeBackend.cpp. Rejects all pending CDP promises.
 unsafe extern "C" {
-    fn Bun__Chrome__died(signo: i32);
+    safe fn Bun__Chrome__died(signo: i32);
 }
 
 // --- POSIX transport: one socketpair --------------------------------------
@@ -671,33 +636,24 @@ impl Endpoints {
         }
     }
 
-    /// Publishes the singleton and returns our fd for C++ to adopt.
+    /// Publishes the Chrome and returns our fd for C++ to adopt.
     fn attach(mut self, process: ProcessHandle) -> crate::Result<i32> {
-        let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
+        let chrome = OwnedThis::new(ChromeProcess {
             process,
-            retired: false,
-        }));
-        // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
-        // and outlives it.
-        let process = unsafe {
-            let process = &(*self_ptr).process;
-            process
-                .process_mut()
-                .set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
-            process
-        };
-        if let Err(e) = process.process_mut().watch() {
+            retired: Cell::new(false),
+        });
+        chrome.process.set_exit_handler(chrome.this_ptr());
+        if let Err(e) = chrome.process.watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
-            // SAFETY: reclaim the Box (drops our process ref).
-            drop(unsafe { bun_core::heap::take(self_ptr) });
+            // Dropping `chrome` detaches and releases the process.
             self.close_all();
             return Err(crate::Error::WatchFailed);
         }
         // Same weak-handle reasoning as HostProcess: parent exit → Chrome's
         // fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit. dispatchOnExit
         // also SIGKILLs via Bun__Chrome__kill.
-        process.process_mut().disable_keeping_event_loop_alive();
-        INSTANCE.store(self_ptr, Ordering::Relaxed);
+        chrome.process.disable_keeping_event_loop_alive();
+        crate::jsc_hooks::with_webview_hosts(|hosts| hosts.chrome.publish(chrome));
 
         let fds = self.fds.take().expect("endpoints live");
         debug_assert!(self.child_closed);
@@ -723,70 +679,56 @@ struct Endpoints {
     /// The child's ends; `None` once closed.
     cmd_child: Option<Fd>,
     reply_child: Option<Fd>,
-    /// Our ends; null once handed over.
-    cmd: *mut uv::Pipe,
-    reply: *mut uv::Pipe,
+    /// Our ends; `None` once handed over.
+    cmd: Option<uv::OwnedPipe>,
+    reply: Option<uv::OwnedPipe>,
 }
 
 #[cfg(windows)]
 impl Endpoints {
-    fn create(event_loop: EventLoopHandle) -> crate::Result<Endpoints> {
+    fn create(_event_loop: EventLoopHandle) -> crate::Result<Endpoints> {
         // uv_pipe() returns [read end, write end]; UV_NONBLOCK_PIPE (overlapped) goes on our ends only.
-        let mut cmd_fds: [uv::uv_file; 2] = [0; 2];
-        // SAFETY: FFI; `cmd_fds` is the out-array uv_pipe fills.
-        unsafe { uv::uv_pipe(&raw mut cmd_fds, 0, uv::UV_NONBLOCK_PIPE as i32) }
-            .to_result(bun_sys::Tag::uv_pipe)?;
+        let cmd_fds = uv::pipe_pair(0, uv::UV_NONBLOCK_PIPE as i32)
+            .map_err(|rc| pipe_error(rc, bun_sys::Tag::uv_pipe))?;
         let mut endpoints = Endpoints {
             cmd_child: Some(Fd::from_uv(cmd_fds[0])),
             reply_child: None,
-            cmd: ptr::null_mut(),
-            reply: ptr::null_mut(),
+            cmd: None,
+            reply: None,
         };
         let cmd_parent = Fd::from_uv(cmd_fds[1]);
-        if let Err(err) = endpoints.wrap(event_loop, cmd_parent, |e, pipe| e.cmd = pipe) {
-            cmd_parent.close();
-            return Err(err);
+        match Self::wrap(cmd_parent) {
+            Ok(pipe) => endpoints.cmd = Some(pipe),
+            Err(err) => {
+                cmd_parent.close();
+                return Err(err);
+            }
         }
 
-        let mut reply_fds: [uv::uv_file; 2] = [0; 2];
-        // SAFETY: FFI; `reply_fds` is the out-array uv_pipe fills.
-        unsafe { uv::uv_pipe(&raw mut reply_fds, uv::UV_NONBLOCK_PIPE as i32, 0) }
-            .to_result(bun_sys::Tag::uv_pipe)?;
+        let reply_fds = uv::pipe_pair(uv::UV_NONBLOCK_PIPE as i32, 0)
+            .map_err(|rc| pipe_error(rc, bun_sys::Tag::uv_pipe))?;
         endpoints.reply_child = Some(Fd::from_uv(reply_fds[1]));
         let reply_parent = Fd::from_uv(reply_fds[0]);
-        if let Err(err) = endpoints.wrap(event_loop, reply_parent, |e, pipe| e.reply = pipe) {
-            reply_parent.close();
-            return Err(err);
+        match Self::wrap(reply_parent) {
+            Ok(pipe) => endpoints.reply = Some(pipe),
+            Err(err) => {
+                reply_parent.close();
+                return Err(err);
+            }
         }
         Ok(endpoints)
     }
 
     /// On success libuv owns `fd`; on failure the caller still does.
-    fn wrap(
-        &mut self,
-        event_loop: EventLoopHandle,
-        fd: Fd,
-        store: impl FnOnce(&mut Endpoints, *mut uv::Pipe),
-    ) -> crate::Result<()> {
-        let pipe: *mut uv::Pipe = bun_core::heap::into_raw(bun_core::boxed_zeroed::<uv::Pipe>());
-        // SAFETY: `pipe` is a live Box; `close_and_destroy` frees it in any state.
-        let result = unsafe {
-            (*pipe)
-                .init(event_loop.uv_loop(), false)
-                .to_result(bun_sys::Tag::uv_pipe)
-                .and_then(|()| (*pipe).open(fd.uv()).to_result(bun_sys::Tag::open))
-        };
-        if let Err(err) = result {
-            // SAFETY: see above.
-            unsafe { uv::Pipe::close_and_destroy(pipe) };
-            return Err(err.into());
-        }
+    fn wrap(fd: Fd) -> crate::Result<uv::OwnedPipe> {
+        let pipe =
+            uv::OwnedPipe::init(false).map_err(|rc| pipe_error(rc, bun_sys::Tag::uv_pipe))?;
+        pipe.open(fd.uv())
+            .map_err(|rc| pipe_error(rc, bun_sys::Tag::open))?;
         // Pending commands keep the loop alive (Transport::updateKeepAlive), not
         // the pipes.
-        // SAFETY: `pipe` is initialized.
-        unsafe { (*pipe).unref() };
-        store(self, pipe);
-        Ok(())
+        pipe.unref();
+        Ok(pipe)
     }
 
     fn child_fds(&self) -> Box<[Stdio]> {
@@ -808,51 +750,55 @@ impl Endpoints {
 
     /// Moves our ends into a [`ChromeProcess`], starts reading replies, and publishes it.
     fn attach(mut self, process: ProcessHandle) -> crate::Result<i32> {
-        let pipes = WindowsPipes {
-            cmd: core::mem::replace(&mut self.cmd, ptr::null_mut()),
-            reply: core::mem::replace(&mut self.reply, ptr::null_mut()),
-            read_buf: vec![0u8; READ_BUF_SIZE].into_boxed_slice(),
-        };
-        let reply = pipes.reply;
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
-        let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
+        let chrome = OwnedThis::new(ChromeProcess {
             process,
-            retired: false,
-            pipes,
+            retired: Cell::new(false),
+            pipes: WindowsPipes {
+                cmd: bun_jsc::JsCell::new(self.cmd.take()),
+                reply: bun_jsc::JsCell::new(self.reply.take()),
+            },
             generation,
-        }));
-        // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`.
-        let process: *mut Process = unsafe { (*self_ptr).process.as_ptr() };
+        });
 
         // Unlike POSIX the exit can't be delivered before we return (it comes
         // through this thread's loop), so the exit handler is installed after.
-        // SAFETY: `reply` and `process` are owned by `*self_ptr`, which
-        // outlives the reads (`WindowsPipes::close` stops them first).
-        let started = unsafe {
-            (*reply)
-                .read_start_ctx::<ChromeProcess>(self_ptr)
-                .to_result(bun_sys::Tag::listen)
-                .and_then(|()| (*process).watch())
-        };
+        let started = chrome
+            .pipes
+            .reply
+            .get()
+            .as_ref()
+            .expect("just moved in")
+            .read_start(
+                READ_BUF_SIZE,
+                Box::new(move |read| match read {
+                    uv::PipeRead::Data(data) => {
+                        scoped_log!(Chrome, "read {} bytes", data.len());
+                        PipeEvent::Data(Box::from(data)).post(generation);
+                    }
+                    uv::PipeRead::Error(err) => {
+                        scoped_log!(
+                            Chrome,
+                            "reply pipe closed: {:?}",
+                            bun_sys::windows::translate_uv_error_to_e(err)
+                        );
+                        PipeEvent::Closed.post(generation);
+                    }
+                }),
+            )
+            .map_err(|rc| pipe_error(rc, bun_sys::Tag::listen))
+            .and_then(|()| chrome.process.watch().map_err(Into::into));
         if let Err(err) = started {
             scoped_log!(Chrome, "read_start/watch failed: {}", err);
-            // SAFETY: `self_ptr` is unpublished; dropping it closes the pipes,
-            // then detaches and releases the process.
-            unsafe {
-                let mut chrome = bun_core::heap::take(self_ptr);
-                chrome.pipes.close();
-                let _ = chrome.process.kill(9);
-            }
-            return Err(err.into());
+            chrome.pipes.close();
+            let _ = chrome.process.kill(9);
+            // Dropping `chrome` detaches (closing the handle) and releases the process.
+            return Err(err);
         }
 
-        // SAFETY: `self_ptr` is live until `on_exit`.
-        unsafe {
-            let p = process;
-            (*p).set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
-            (*p).disable_keeping_event_loop_alive();
-        }
-        INSTANCE.store(self_ptr, Ordering::Relaxed);
+        chrome.process.set_exit_handler(chrome.this_ptr());
+        chrome.process.disable_keeping_event_loop_alive();
+        crate::jsc_hooks::with_webview_hosts(|hosts| hosts.chrome.publish(chrome));
         GENERATION.store(generation, Ordering::Relaxed);
         Ok(0)
     }
@@ -862,55 +808,26 @@ impl Endpoints {
 impl Drop for Endpoints {
     fn drop(&mut self) {
         self.close_child_ends();
-        for pipe in [self.cmd, self.reply] {
-            if !pipe.is_null() {
-                // SAFETY: still ours; `attach` nulls the fields it takes over.
-                unsafe { uv::Pipe::close_and_destroy(pipe) };
-            }
-        }
+        // `cmd` / `reply` still ours (not taken by `attach`) close as they drop.
     }
+}
+
+#[cfg(windows)]
+fn pipe_error(rc: uv::ReturnCode, tag: bun_sys::Tag) -> crate::Error {
+    bun_sys::Error::from_uv_rc(rc, tag)
+        .expect("an error return code")
+        .into()
 }
 
 #[cfg(windows)]
 impl WindowsPipes {
     /// Idempotent; in-flight writes complete with UV_ECANCELED and free themselves.
-    fn close(&mut self) {
-        let reply = core::mem::replace(&mut self.reply, ptr::null_mut());
-        if !reply.is_null() {
-            // SAFETY: the live Box from `attach`; ownership ends here.
-            unsafe {
-                (*reply).read_stop();
-                uv::Pipe::close_and_destroy(reply);
-            }
+    fn close(&self) {
+        if let Some(reply) = self.reply.replace(None) {
+            reply.read_stop();
+            drop(reply);
         }
-        let cmd = core::mem::replace(&mut self.cmd, ptr::null_mut());
-        if !cmd.is_null() {
-            // SAFETY: as above.
-            unsafe { uv::Pipe::close_and_destroy(cmd) };
-        }
-    }
-}
-
-#[cfg(windows)]
-impl uv::StreamReader for ChromeProcess {
-    fn on_read_alloc(this: &mut Self, _suggested_size: usize) -> &mut [u8] {
-        &mut this.pipes.read_buf
-    }
-
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        scoped_log!(
-            Chrome,
-            "reply pipe closed: {:?}",
-            bun_sys::windows::translate_uv_error_to_e(err)
-        );
-        PipeEvent::Closed.post(this.generation);
-    }
-
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        scoped_log!(Chrome, "read {} bytes", data.len());
-        // SAFETY: `this` is live for the duration of the callback.
-        let generation = unsafe { (*this).generation };
-        PipeEvent::Data(Box::from(data)).post(generation);
+        drop(self.cmd.replace(None));
     }
 }
 
@@ -956,99 +873,65 @@ impl QueuedEvent {
             );
             return Ok(());
         }
-        // SAFETY: plain FFI; onData copies `bytes` before returning.
-        unsafe {
-            match queued.event {
-                PipeEvent::Data(bytes) => Bun__Chrome__onPipeData(bytes.as_ptr(), bytes.len()),
-                PipeEvent::Closed => Bun__Chrome__onPipeClosed(),
-                PipeEvent::Exited { signo } => Bun__Chrome__died(signo),
-            }
+        match queued.event {
+            PipeEvent::Data(bytes) => Bun__Chrome__onPipeData(bun_core::ffi::FfiSlice::new(&bytes)),
+            PipeEvent::Closed => Bun__Chrome__onPipeClosed(),
+            PipeEvent::Exited { signo } => Bun__Chrome__died(signo),
         }
         Ok(())
     }
 }
 
-/// One in-flight `uv_write` and the copy of the chunk `buf` points into.
-#[cfg(windows)]
-struct WriteReq {
-    req: uv::uv_write_t,
-    buf: uv::uv_buf_t,
-    bytes: Box<[u8]>,
-    generation: u32,
-}
-
-#[cfg(windows)]
-impl WriteReq {
-    /// Safety: `pipe` is the live command pipe of the Chrome with `generation`.
-    unsafe fn submit(pipe: *mut uv::Pipe, chunk: &[u8], generation: u32) -> bool {
-        let mut req = Box::new(WriteReq {
-            req: bun_core::ffi::zeroed::<uv::uv_write_t>(),
-            buf: uv::uv_buf_t::init(b""), // re-init below, once `bytes` has stopped moving
-            bytes: Box::from(chunk),
-            generation,
-        });
-        req.buf = uv::uv_buf_t::init(&req.bytes);
-        let req = bun_core::heap::into_raw(req);
-        // SAFETY: caller contract; `req` stays put until `on_write` reclaims it.
-        let rc = unsafe {
-            (*req)
-                .req
-                .write((*pipe).as_stream(), &(*req).buf, req, WriteReq::on_write)
+/// Transport::writeRaw on Windows (POSIX writes through the usockets socket
+/// C++ owns). A write that fails surfaces as a Closed event, like any other
+/// loss of the transport.
+// HOST_EXPORT(Bun__Chrome__writePipe, c)
+pub fn chrome_write_pipe(data: &[u8]) {
+    #[cfg(not(windows))]
+    let _ = data;
+    #[cfg(windows)]
+    crate::jsc_hooks::with_webview_hosts(|hosts| {
+        let Some(chrome) = hosts.chrome.current() else {
+            return; // Chrome already exited; the Exited event is on its way to C++
         };
-        if let Some(err) = rc.to_error(bun_sys::Tag::write) {
-            scoped_log!(Chrome, "uv_write failed: {}", err);
-            // SAFETY: libuv did not take `req`, so the callback will not run.
-            unsafe { bun_core::heap::destroy(req) };
-            return false;
-        }
-        true
-    }
-
-    fn on_write(this: *mut WriteReq, status: uv::ReturnCode) {
-        // SAFETY: the Box leaked by `submit`; libuv hands it back exactly once.
-        let req = unsafe { bun_core::heap::take(this) };
-        if let Some(err) = status.to_error(bun_sys::Tag::write) {
-            scoped_log!(Chrome, "command pipe write failed: {}", err);
-            // ECANCELED is `WindowsPipes::close` draining the queue; the death is already being reported.
-            if status.int() != uv::UV_ECANCELED {
-                PipeEvent::Closed.post(req.generation);
+        let generation = chrome.generation;
+        scoped_log!(Chrome, "write {} bytes", data.len());
+        let cmd = chrome.pipes.cmd.get();
+        let cmd = cmd
+            .as_ref()
+            .expect("pipes are only closed after the chrome is unpublished");
+        for chunk in data.chunks(u32::MAX as usize) {
+            let queued = cmd.write(
+                Box::from(chunk),
+                Box::new(move |status: uv::ReturnCode| {
+                    if let Some(err) = status.to_error(bun_sys::Tag::write) {
+                        scoped_log!(Chrome, "command pipe write failed: {}", err);
+                        // ECANCELED is `WindowsPipes::close` draining the queue; the death is already being reported.
+                        if status.int() != uv::UV_ECANCELED {
+                            PipeEvent::Closed.post(generation);
+                        }
+                    }
+                }),
+            );
+            if let Err(rc) = queued {
+                scoped_log!(
+                    Chrome,
+                    "uv_write failed: {:?}",
+                    rc.to_error(bun_sys::Tag::write)
+                );
+                PipeEvent::Closed.post(generation);
+                return;
             }
         }
-    }
-}
-
-/// Transport::writeRaw on Windows. A write that fails surfaces as a Closed event, like any other loss of the transport. Safety: `data` points to `len` readable bytes.
-#[cfg(windows)]
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
-    let instance = INSTANCE.load(Ordering::Relaxed);
-    if instance.is_null() {
-        return; // Chrome already exited; the Exited event is on its way to C++
-    }
-    // SAFETY: INSTANCE is live until `on_exit` clears it; raw field reads, so
-    // nothing aliases the `&mut` the read callbacks form.
-    let (pipe, generation) = unsafe { ((*instance).pipes.cmd, (*instance).generation) };
-    debug_assert!(
-        !pipe.is_null(),
-        "pipes are only closed after INSTANCE is cleared"
-    );
-    scoped_log!(Chrome, "write {} bytes", len);
-    // SAFETY: caller contract.
-    let bytes = unsafe { bun_core::ffi::slice(data, len) };
-    for chunk in bytes.chunks(u32::MAX as usize) {
-        // SAFETY: `pipe` belongs to the published instance read above.
-        if !unsafe { WriteReq::submit(pipe, chunk, generation) } {
-            PipeEvent::Closed.post(generation);
-            return;
-        }
-    }
+    });
 }
 
 // Implemented in ChromeBackend.cpp.
 #[cfg(windows)]
 unsafe extern "C" {
-    fn Bun__Chrome__onPipeData(data: *const u8, len: usize);
-    fn Bun__Chrome__onPipeClosed();
+    // `onPipeData` copies the bytes before returning.
+    safe fn Bun__Chrome__onPipeData(data: bun_core::ffi::FfiSlice<'_>);
+    safe fn Bun__Chrome__onPipeClosed();
 }
 
 // --- DevToolsActivePort discovery -------------------------------------------
@@ -1163,20 +1046,14 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
 /// fails with a close code; C++ falls back to spawn in that case
 /// (m_wasAutoDetected gate in wsOnClose). We don't pre-validate here
 /// because that'd need a network round-trip which defeats the file.
-///
-/// # Safety
-/// `out_buf` must point to at least `out_cap` writable bytes.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> usize {
+// HOST_EXPORT(Bun__Chrome__autoDetect, c)
+pub fn chrome_auto_detect(out_buf: &mut [u8]) -> usize {
     let mut buf: Vec<u8> = Vec::new();
     if read_dev_tools_active_port(&mut buf).is_some() {
-        if buf.len() > out_cap {
+        if buf.len() > out_buf.len() {
             return 0;
         }
-        // SAFETY: caller guarantees out_buf points to at least out_cap writable bytes.
-        unsafe {
-            core::ptr::copy_nonoverlapping(buf.as_ptr(), out_buf, buf.len());
-        }
+        out_buf[..buf.len()].copy_from_slice(&buf);
         return buf.len();
     }
     0

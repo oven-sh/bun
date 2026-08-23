@@ -8,12 +8,11 @@ use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
 
 pub use s3_error::S3Error;
 
-// `get_sign_error_message` returns `&'static [u8]` of ASCII literals; reinterpret as
+// `get_sign_error_message` returns `&'static [u8]` of ASCII literals; view as
 // `&str` for the `format_args!`-taking `JSGlobalObject::err()` builder.
 #[inline]
 fn msg(bytes: &'static [u8]) -> &'static str {
-    // SAFETY: every value returned by `get_sign_error_message` is an ASCII string literal.
-    unsafe { core::str::from_utf8_unchecked(bytes) }
+    core::str::from_utf8(bytes).expect("S3 sign error messages are ASCII literals")
 }
 
 pub(crate) fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) -> JSValue {

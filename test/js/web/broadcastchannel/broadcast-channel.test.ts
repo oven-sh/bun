@@ -1,4 +1,32 @@
+import { bunEnv, bunExe } from "harness";
 import util from "util";
+
+// A payload that serializes fine but fails to deserialize: the DataView's offset is only
+// in bounds after a getter resized the buffer, and the buffer was serialized before that.
+const undeserializable = `(() => { const ab = new ArrayBuffer(8, { maxByteLength: 65536 });
+  return { ab, get grow() { ab.resize(65536); return 1; }, get view() { return new DataView(ab, 4096, 16); } }; })()`;
+
+test("a message that fails to deserialize fires messageerror and later messages still arrive", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const a = new BroadcastChannel("undeserializable"), b = new BroadcastChannel("undeserializable");
+       const seen = [];
+       const record = s => { seen.push(s); if (seen.length === 2) { console.log(seen.join(",")); a.close(); b.close(); } };
+       b.onmessageerror = e => record("messageerror:" + e.data);
+       b.onmessage = e => record("message:" + e.data);
+       a.postMessage(${undeserializable});
+       a.postMessage("after");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("messageerror:null,message:after\n");
+  expect(exitCode).toBe(0);
+});
 
 test("postMessage results in correct event", done => {
   let c1 = new BroadcastChannel("eventType");

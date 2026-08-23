@@ -335,7 +335,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let atype = address_type.to_int32();
 
         let host_owned: Vec<u8> = if address.is_string() {
-            let s = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let s = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global)?;
             let mut v = s.slice().to_vec();
             v.push(0);
             v

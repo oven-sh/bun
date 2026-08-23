@@ -35,10 +35,11 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust CompressionStreamCoder, refcounted (ownership rules on its
-    // `ref_count` field). This cell's reference is released eagerly at
-    // ClearAlgorithms (post-flush / error / cancel); a vm.heap.addFinalizer
-    // registered in the constructor is the idempotent fallback.
+    // The Rust CompressionStreamCoder this cell owns outright. Freed eagerly
+    // (CompressionStreamCoder__destroy) at ClearAlgorithms (post-flush / error /
+    // cancel); a vm.heap.addFinalizer registered in the constructor is the
+    // idempotent fallback. An in-flight off-thread step owns the codec state
+    // and hands it back through CompressionStreamCoder__restore.
     void* m_coder { nullptr };
 
 private:

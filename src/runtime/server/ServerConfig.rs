@@ -943,14 +943,14 @@ impl ServerConfig {
                         // bundle, so it stays alive for this scope.
                         let path = unsafe { &(*bundle).path };
                         if let Some(dir) = bun_paths::dirname(path) {
-                            if !html_entry_dirs
-                                .iter()
-                                .any(|d| bun_core::strings::eql(d, dir))
-                            {
+                            if !html_entry_dirs.iter().any(|d| strings::eql(d, dir)) {
                                 html_entry_dirs.push(dir);
                             }
                         }
                     }
+                    // Sort for determinism: map iteration order follows
+                    // pointer addresses, which vary across runs.
+                    html_entry_dirs.sort_unstable_by(|a, b| strings::order(a, b));
 
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.

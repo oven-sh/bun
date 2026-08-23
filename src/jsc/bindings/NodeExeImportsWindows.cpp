@@ -289,6 +289,9 @@ static bool registerDllNotification()
     static bool registered = [] {
         if (Bun__disableAddonDllNotification())
             return false;
+        // Initialize these here rather than on first use inside the loader callback.
+        host();
+        pageSize();
         auto ntdll = GetModuleHandleW(L"ntdll.dll");
         auto registerNotification = ntdll ? reinterpret_cast<LdrRegisterDllNotificationFunction>(GetProcAddress(ntdll, "LdrRegisterDllNotification")) : nullptr;
         PVOID cookie = nullptr;

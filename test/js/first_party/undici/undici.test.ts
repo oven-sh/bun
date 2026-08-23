@@ -229,6 +229,18 @@ describe("undici", () => {
         body.destroy();
       });
 
+      it("marks an already-closed body as used", async () => {
+        const { body } = await request(`${hostUrl}/get`);
+        const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+        body.on("close", onClose);
+        for await (const _ of body) {
+        }
+        await closed;
+        expect(await body.dump()).toBeNull();
+        expect(body.bodyUsed).toBe(true);
+        await expect(body.text()).rejects.toThrow("unusable");
+      });
+
       it("rejects a value that is not an AbortSignal", async () => {
         const { body } = await request(`${hostUrl}/get`);
         await expect(body.dump({ signal: 42 })).rejects.toThrow("signal must be an AbortSignal");

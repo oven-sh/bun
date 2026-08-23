@@ -125,6 +125,8 @@ class BodyReadable extends ReadableFromWeb {
     signal?.throwIfAborted();
 
     if (this._readableState.closeEmitted) {
+      // A closed stream is disturbed, so real undici reports bodyUsed as true.
+      this.#bodyUsed = true;
       return null;
     }
 

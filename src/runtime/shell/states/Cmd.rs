@@ -852,7 +852,9 @@ impl Cmd {
 
     /// [`Self::deinit`] for the VM-shutdown finalizer: defuses the
     /// `> ${arraybuffer}` unpins first — the heap sweep already deleted the
-    /// `JSC::ArrayBuffer` impls they would write to.
+    /// `JSC::ArrayBuffer` impls they would write to — and tells the subprocess
+    /// that the event loop is going away, so a child that is still running is
+    /// not left to an exit watch nothing will ever run again.
     #[cfg(not(windows))]
     pub(crate) fn deinit_from_finalizer(interp: &Interpreter, this: NodeId) {
         {
@@ -861,8 +863,11 @@ impl Cmd {
                 Exec::Builtin(b) => b.defuse_array_buf_pins(),
                 Exec::Subproc(sub) if !sub.child.is_null() => {
                     // SAFETY: `child` is the live heap::alloc'd subprocess;
-                    // the call only writes its own fields.
-                    unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
+                    // these only write its own fields.
+                    unsafe {
+                        ShellSubprocess::defuse_array_buffer_unpins(sub.child);
+                        (*sub.child).event_loop_is_shutting_down = true;
+                    }
                 }
                 _ => {}
             }

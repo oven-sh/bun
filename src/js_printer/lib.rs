@@ -3449,7 +3449,10 @@ pub(crate) mod __gated_printer {
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
-                        if let Some(mut str) = e.index.data.as_e_string() {
+                        if let Some(str) = e.index.data.as_e_string() {
+                            // Resolve into a local copy: the AST node is shared
+                            // with every other thread printing this module.
+                            let mut str = str.shallow_clone();
                             str.resolve_rope_if_needed(self.bump);
                             if str.is_utf8() {
                                 if let Some(value) =
@@ -3762,7 +3765,13 @@ pub(crate) mod __gated_printer {
                         return;
                     }
 
-                    let mut e = *e;
+                    // Resolve the rope into a local copy, never through the
+                    // `StoreRef`: the bundler prints a shared module into every
+                    // chunk that includes it, concurrently, from the same AST.
+                    // Writing `data` / `next = None` into the node races the
+                    // other printers' reads (torn `next` pointer, or the tail
+                    // printed twice).
+                    let mut e = e.shallow_clone();
                     e.resolve_rope_if_needed(self.bump);
                     self.add_source_mapping(expr.loc);
 
@@ -4652,7 +4661,8 @@ pub(crate) mod __gated_printer {
                     self.print_symbol(priv_.ref_);
                 }
                 ExprData::EString(key_str) => {
-                    let mut key_str = *key_str;
+                    // Local copy; see the `ExprData::EString` arm of `print_expr`.
+                    let mut key_str = key_str.shallow_clone();
                     self.add_source_mapping(key.loc);
                     if key_str.is_utf8() {
                         key_str.resolve_rope_if_needed(self.bump);
@@ -4908,7 +4918,9 @@ pub(crate) mod __gated_printer {
 
                                 match &property.key.data {
                                     ExprData::EString(str) => {
-                                        let mut str = *str;
+                                        // Local copy; see the `ExprData::EString`
+                                        // arm of `print_expr`.
+                                        let mut str = str.shallow_clone();
                                         str.resolve_rope_if_needed(self.bump);
                                         self.add_source_mapping(property.key.loc);
 

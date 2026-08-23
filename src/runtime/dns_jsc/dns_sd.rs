@@ -103,23 +103,26 @@ pub(crate) struct QueryState {
     stragglers: Stragglers,
     attempt: Attempt,
     /// Kept so `finish()` can reissue the query for the retry.
-    hostname: bun::ZBox,
+    hostname: Option<bun::ZBox>,
 }
 
-impl QueryState {
-    pub(crate) fn new(protocol: DNSServiceProtocol) -> Self {
+impl Default for QueryState {
+    /// Idle: nothing pending until `SharedConnection::start` issues the query.
+    fn default() -> Self {
         Self {
             results: Default::default(),
             sd_error: 0,
             saw_timeout: false,
             awaiting_more: false,
-            pending_proto: protocol,
+            pending_proto: 0,
             stragglers: Stragglers::None,
             attempt: Attempt::Plain,
-            hostname: bun::ZBox::from_bytes(b""),
+            hostname: None,
         }
     }
+}
 
+impl QueryState {
     /// Back to a fresh in-flight state for the unsuppressed reissue.
     pub(crate) fn reset_for_retry(&mut self, protocol: DNSServiceProtocol) {
         self.attempt = Attempt::Reissued;
@@ -249,8 +252,8 @@ impl InflightRequest {
 
     fn query(&self) -> &JsCell<QueryState> {
         match self {
-            InflightRequest::Jsc(r) => &r.backend.dns_sd().query,
-            InflightRequest::Internal(r) => &r.dns_sd.query,
+            InflightRequest::Jsc(r) => &r.dns_sd,
+            InflightRequest::Internal(r) => &r.dns_sd,
         }
     }
 
@@ -292,10 +295,7 @@ impl sd::GetAddrInfoReply for GetAddrInfoRequest {
     /// happens in `on_readable`.
     fn on_reply(&self, reply: &sd::Reply<'_>) {
         SharedConnection::note_reply(core::ptr::from_ref(self).cast());
-        self.backend
-            .dns_sd()
-            .query
-            .with_mut(|q| q.record_reply(reply));
+        self.dns_sd.with_mut(|q| q.record_reply(reply));
     }
 }
 
@@ -398,19 +398,21 @@ impl SharedConnection {
         hostname: &core::ffi::CStr,
     ) -> Option<()> {
         let suppress = addrconfig_flags(protocol);
+        request.query().set(QueryState {
+            pending_proto: protocol,
+            attempt: if suppress != 0 {
+                Attempt::Suppressed
+            } else {
+                Attempt::Plain
+            },
+            hostname: Some(bun::ZBox::from_bytes(hostname.to_bytes())),
+            ..Default::default()
+        });
         let sub = request.issue(&self.connection, protocol, suppress, hostname)?;
         if self.inflight.borrow().is_empty() {
             let ctx = self.ctx;
             self.with_file_poll(|p| p.enable_keeping_process_alive(ctx));
         }
-        request.query().with_mut(|q| {
-            q.attempt = if suppress != 0 {
-                Attempt::Suppressed
-            } else {
-                Attempt::Plain
-            };
-            q.hostname = bun::ZBox::from_bytes(hostname.to_bytes());
-        });
         self.inflight.borrow_mut().push(Inflight {
             request,
             sd_ref: Some(sub),
@@ -581,9 +583,11 @@ impl SharedConnection {
         let Some(this) = Self::current() else {
             return Err(inf);
         };
-        let (protocol, hostname) = {
+        let (protocol, Some(hostname)) = ({
             let q = inf.query().get();
             (protocol_for_pending(q), q.hostname.clone())
+        }) else {
+            return Err(inf);
         };
         inf.query().with_mut(|q| q.reset_for_retry(protocol));
         let Some(sub) = inf
@@ -668,12 +672,8 @@ pub(crate) fn lookup(
     };
 
     let protocol = protocol_for_family(query.options.family);
-    let request = bun_ptr::OwnedThis::new(*GetAddrInfoRequest::init(
-        cache,
-        get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
-        Some(this),
-        global_this,
-    ));
+    let request =
+        bun_ptr::OwnedThis::new(*GetAddrInfoRequest::init(cache, Some(this), global_this));
     let promise_value = request.head.promise.value();
 
     let name_z = bun::ZBox::from_bytes(query.name.as_ref());

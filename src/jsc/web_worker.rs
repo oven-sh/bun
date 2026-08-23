@@ -1111,18 +1111,14 @@ impl WebWorker {
     /// other threads may concurrently hold `&WebWorker` on another
     /// thread; producing `&mut` here would be aliased-&mut UB.
     ///
-    /// `vm` is the caller's, not `self.vm`: that is already null while the
-    /// 'exit' handlers run from `shutdown()`, and a process.exit() made there
-    /// must stop the script like any other (Node's `reallyExit` never returns
-    /// to the handler, and the later 'exit' handlers do not run).
+    /// `vm` is the caller's: `self.vm` is already null while the 'exit' handlers
+    /// run from `shutdown()`, and a process.exit() made there stops the script too.
     pub fn exit(&self, vm: &VirtualMachine) {
         self.exit_called.store(true, Ordering::Relaxed);
         let _ = self.set_requested_terminate();
-        // Stop subsequent JS at the next safepoint. For process.exit() that is its
-        // own exception check right after `reallyExit` returns: the calling script
-        // unwinds up to the native frame that entered it (from an 'exit' handler,
-        // the dispatch in `on_exit()`). From an immediate this runs before the
-        // turn's poll; the wake is what ends it.
+        // Stop subsequent JS at the next safepoint (process.exit()'s own exception
+        // check, right after `reallyExit` returns). From an immediate this runs
+        // before the turn's poll; the wake is what ends it.
         vm.handle_ref().request_termination();
     }
 

@@ -76,7 +76,7 @@ impl PmVersionCommand {
         let package_json_dir = Self::find_package_dir(original_cwd)?;
 
         if positionals.len() <= 1 {
-            Self::show_help(ctx, pm, &package_json_dir)?;
+            Self::show_help(pm, &package_json_dir)?;
             return Ok(());
         }
 
@@ -369,11 +369,7 @@ impl PmVersionCommand {
         None
     }
 
-    fn show_help(
-        _ctx: &command::ContextData,
-        pm: &PackageManager,
-        cwd: &[u8],
-    ) -> Result<(), AllocError> {
+    fn show_help(pm: &PackageManager, cwd: &[u8]) -> Result<(), AllocError> {
         let _current_version = Self::get_current_version(pm, cwd);
         let current_version: &[u8] = _current_version.as_deref().unwrap_or(b"1.0.0");
 

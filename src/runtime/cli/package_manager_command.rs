@@ -727,7 +727,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pkg") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmPkgCommand::exec(&&mut *ctx, pm, positionals, &cwd)?;
+            PmPkgCommand::exec(pm, positionals, &cwd)?;
             Global::exit(0);
         }
 

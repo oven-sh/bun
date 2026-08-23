@@ -1,7 +1,6 @@
 use std::io::Write as _;
 
 use crate::Error;
-use crate::cli::command::Context;
 use bun_ast::{E, Expr, ExprData};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
@@ -50,7 +49,6 @@ struct PackageJson {
 
 impl PmPkgCommand {
     pub(crate) fn exec(
-        ctx: &Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
         cwd: &[u8],
@@ -70,10 +68,10 @@ impl PmPkgCommand {
         };
 
         match subcommand {
-            SubCommand::Get => Self::exec_get(ctx, pm, &positionals[2..], cwd)?,
-            SubCommand::Set => Self::exec_set(ctx, pm, &positionals[2..], cwd)?,
-            SubCommand::Delete => Self::exec_delete(ctx, pm, &positionals[2..], cwd)?,
-            SubCommand::Fix => Self::exec_fix(ctx, pm, cwd)?,
+            SubCommand::Get => Self::exec_get(pm, &positionals[2..], cwd)?,
+            SubCommand::Set => Self::exec_set(pm, &positionals[2..], cwd)?,
+            SubCommand::Delete => Self::exec_delete(pm, &positionals[2..], cwd)?,
+            SubCommand::Fix => Self::exec_fix(pm, cwd)?,
             SubCommand::Help => Self::print_help(),
         }
         Ok(())
@@ -185,12 +183,7 @@ impl PmPkgCommand {
         })
     }
 
-    fn exec_get(
-        _ctx: &Context,
-        pm: &mut PackageManager,
-        args: &[&[u8]],
-        cwd: &[u8],
-    ) -> Result<(), Error> {
+    fn exec_get(pm: &mut PackageManager, args: &[&[u8]], cwd: &[u8]) -> Result<(), Error> {
         let path = Self::find_package_json(cwd)?;
 
         let pkg = Self::load_package_json(pm.log_mut(), &path)?;
@@ -270,12 +263,7 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    fn exec_set(
-        _ctx: &Context,
-        pm: &mut PackageManager,
-        args: &[&[u8]],
-        cwd: &[u8],
-    ) -> Result<(), Error> {
+    fn exec_set(pm: &mut PackageManager, args: &[&[u8]], cwd: &[u8]) -> Result<(), Error> {
         if args.is_empty() {
             Output::err_generic(
                 "<blue>bun pm pkg set<r> expects a key=value pair of args",
@@ -329,12 +317,7 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    fn exec_delete(
-        _ctx: &Context,
-        pm: &mut PackageManager,
-        args: &[&[u8]],
-        cwd: &[u8],
-    ) -> Result<(), Error> {
+    fn exec_delete(pm: &mut PackageManager, args: &[&[u8]], cwd: &[u8]) -> Result<(), Error> {
         if args.is_empty() {
             Output::err_generic("<blue>bun pm pkg <b>delete<r> expects key args", ());
             Global::exit(1);
@@ -372,7 +355,7 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    fn exec_fix(_ctx: &Context, pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
+    fn exec_fix(pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
         let path = Self::find_package_json(cwd)?;
 
         let pkg = Self::load_package_json(pm.log_mut(), &path)?;

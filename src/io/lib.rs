@@ -546,71 +546,40 @@ bun_dispatch::link_interface! {
 /// With a leading `borrow = this;` the bodies instead get `this` bound as a
 /// [`bun_ptr::ThisPtr<Self>`] and are pasted as-is (no `unsafe` block) — for
 /// intrusively refcounted parents whose handlers are safe fns taking
-/// `ThisPtr<Self>` and may drop their last ref mid-callback. An optional
-/// `reader = <field>;` names the by-value field (a `BufferedReader` or a
-/// `JsCell<BufferedReader>`) holding the reader; it implements
-/// [`pipe_reader::BufferedReaderOwner`] so the parent can drive the reader
-/// through [`BufferedReader::read_from`] / [`BufferedReader::on_error_from`].
+/// `ThisPtr<Self>` and may drop their last ref mid-callback.
 #[macro_export]
 macro_rules! impl_buffered_reader_parent {
     // Single-lifetime generic: trait impl over `<'lt>`, link registered at `'static`.
     (
         $variant:ident for $T:ident<$lt:lifetime>;
         borrow = this;
-        $( reader = $reader:ident; )?
         has_on_read_chunk = $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T<'static>);
-        $( $crate::__impl_buffered_reader_owner! { [$lt] [$T<$lt>] $reader } )?
         $crate::__impl_buffered_reader_parent_body_this! { [$lt] [$T<$lt>] $variant; has_on_read_chunk = $($rest)* }
     };
     (
         $variant:ident for $T:ident<$lt:lifetime>;
-        $( reader = $reader:ident; )?
         has_on_read_chunk = $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T<'static>);
-        $( $crate::__impl_buffered_reader_owner! { [$lt] [$T<$lt>] $reader } )?
         $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; has_on_read_chunk = $($rest)* }
     };
     // Non-generic.
     (
         $variant:ident for $T:ty;
         borrow = this;
-        $( reader = $reader:ident; )?
         has_on_read_chunk = $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T);
-        $( $crate::__impl_buffered_reader_owner! { [] [$T] $reader } )?
         $crate::__impl_buffered_reader_parent_body_this! { [] [$T] $variant; has_on_read_chunk = $($rest)* }
     };
     (
         $variant:ident for $T:ty;
-        $( reader = $reader:ident; )?
         has_on_read_chunk = $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T);
-        $( $crate::__impl_buffered_reader_owner! { [] [$T] $reader } )?
         $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; has_on_read_chunk = $($rest)* }
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __impl_buffered_reader_owner {
-    ([$($lt:lifetime)?] [$T:ty] $reader:ident) => {
-        // SAFETY: `$reader` is a by-value field of `$T`, so the projection
-        // stays inside `*this`'s allocation.
-        unsafe impl $(<$lt>)? $crate::pipe_reader::BufferedReaderOwner for $T {
-            #[inline]
-            fn reader(this: *mut Self) -> *mut $crate::BufferedReader {
-                $crate::pipe_reader::reader_slot_ptr(
-                    this,
-                    ::core::mem::offset_of!(Self, $reader),
-                    |p: &Self| &p.$reader,
-                )
-            }
-        }
     };
 }
 
@@ -787,7 +756,7 @@ pub use source::Source;
 // Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
 
-pub use pipe_reader::{BufferedReader, BufferedReaderOwner, BufferedReaderParent, PosixFlags};
+pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 

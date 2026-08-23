@@ -144,7 +144,7 @@ impl ReplCommand {
         // moving `arena` into `runner` — assigning from the pre-move local would dangle.
         vm.arena = NonNull::new(&raw mut runner.arena);
 
-        vm.run_with_api_lock(|| ReplRunner::start(&mut runner));
+        vm.run_with_api_lock_mut(|vm| ReplRunner::start(&mut runner, vm));
         Ok(())
     }
 
@@ -173,11 +173,9 @@ struct ReplRunner<'a, 'r> {
 }
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
-    fn start(this: &mut ReplRunner<'a, 'r>) {
-        let vm = VirtualMachine::get().as_mut();
-
+    fn start(this: &mut ReplRunner<'a, 'r>, vm: &mut VirtualMachine) {
         // Set up the REPL environment (now inside API lock)
-        if this.setup_repl_environment().is_err() {
+        if this.setup_repl_environment(vm).is_err() {
             // setupGlobalRequire threw a JS exception — surface it and exit
             if let Some(exception) = vm.global().try_take_exception() {
                 vm.print_error_like_object_to_console(exception);
@@ -213,9 +211,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         vm.global_exit();
     }
 
-    fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
-        let vm = VirtualMachine::get().as_mut();
-
+    fn setup_repl_environment(&mut self, vm: &mut VirtualMachine) -> bun_jsc::JsResult<()> {
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
         // This must be done inside the API lock as it allocates JS objects
         vm.global().expose_node_module_globals();

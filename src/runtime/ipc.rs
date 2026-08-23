@@ -1683,12 +1683,8 @@ impl SendQueue {
     pub fn channel_fd(&self) -> Option<Fd> {
         #[cfg(not(windows))]
         {
-            let socket = self.get_socket()?;
-            let raw = socket.socket.get()?;
-            // SAFETY: `get()` is Some only for a live connected socket owned
-            // by this queue; the pointer is valid for the duration of the
-            // synchronous read below.
-            Some(unsafe { (*raw).get_fd() })
+            let fd = self.get_socket()?.fd();
+            fd.is_valid().then_some(fd)
         }
         #[cfg(windows)]
         {

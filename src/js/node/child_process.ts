@@ -1340,12 +1340,15 @@ class ChildProcess extends EventEmitter {
         this.#closesNeeded++;
         readable.once("close", this.#maybeClose.bind(this));
         readable.pipe(stream, { end: false });
-        stream.on("unpipe", function destroyPumpOnUnpipe(src) {
+        const destroyPumpOnUnpipe = function destroyPumpOnUnpipe(src) {
           if (src === readable) {
             stream.removeListener("unpipe", destroyPumpOnUnpipe);
             readable.destroy();
           }
-        });
+        };
+        stream.on("unpipe", destroyPumpOnUnpipe);
+        // pipe() unpipes on 'end'; a readable destroyed before its end never unpipes.
+        readable.once("close", () => stream.removeListener("unpipe", destroyPumpOnUnpipe));
         // Anchor the pump: nothing else strongly references this readable.
         (this.#stdoutPumps ??= []).push(readable);
       }

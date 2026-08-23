@@ -1299,8 +1299,9 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("primary alive");
+  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
 });
 
 test("an out-of-range worker port throws in the worker and leaves the primary alive", async () => {
@@ -1328,10 +1329,11 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("sync code: ERR_SOCKET_BAD_PORT");
   expect(stdout).toContain("probe errno truthy: true");
   expect(stdout).toContain("primary alive");
+  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
 });
 
 test("closing a worker http server releases the primary's port claim", async () => {
@@ -1380,8 +1382,9 @@ if (cluster.isPrimary) {
 }
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("relisten code: EADDRINUSE syscall: bind");
+  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
 });
 
 test("a worker http server closed before the primary replies ignores the reply", async () => {

@@ -13,19 +13,16 @@ use bun_wyhash::Wyhash11 as Wyhash;
 // the body of this crate stays cfg-free.
 #[cfg(not(windows))]
 mod sock {
-    // `addrinfo`/`freeaddrinfo` are re-exported from the crate root below;
-    // the rest are crate-internal.
     pub(crate) use libc::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, sockaddr_un,
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
+        sockaddr_un,
     };
-    pub use libc::{addrinfo, freeaddrinfo};
 }
 #[cfg(windows)]
 mod sock {
     pub(crate) use bun_windows_sys::ws2_32::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
     };
-    pub use bun_windows_sys::ws2_32::{addrinfo, freeaddrinfo};
     // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
     // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
     // (`{ family: u16, path: [108]u8 }`) here so address_to_string stays
@@ -36,10 +33,6 @@ mod sock {
         pub sun_path: [u8; 108],
     }
 }
-
-// Re-export the cfg-dispatched addrinfo type + matching free so callers don't
-// duplicate the POSIX/Windows split (see dns_jsc::dns).
-pub use sock::{addrinfo, freeaddrinfo};
 
 #[cfg(windows)]
 pub const AI_V4MAPPED: c_int = 2048;
@@ -298,59 +291,14 @@ pub struct GetAddrInfoResult {
 
 pub type ResultList = Vec<GetAddrInfoResult>;
 
-pub enum ResultAny {
-    Addrinfo(*mut sock::addrinfo),
-    List(ResultList),
-}
-
-impl Drop for ResultAny {
-    fn drop(&mut self) {
-        match self {
-            ResultAny::Addrinfo(addrinfo) => {
-                if !addrinfo.is_null() {
-                    // SAFETY: addrinfo was allocated by C getaddrinfo (see LIFETIMES.tsv)
-                    unsafe { sock::freeaddrinfo(*addrinfo) };
-                }
-            }
-            ResultAny::List(_list) => {
-                // Vec drops itself
-            }
-        }
-    }
-}
-
 impl GetAddrInfoResult {
-    pub fn to_list(addrinfo: &sock::addrinfo) -> ResultList {
-        let mut list = ResultList::with_capacity(addr_info_count(addrinfo) as usize);
-
-        let mut addr: *const sock::addrinfo = addrinfo;
-        while !addr.is_null() {
-            // SAFETY: addr is non-null, points into the getaddrinfo result chain
-            let a = unsafe { &*addr };
-            if let Some(r) = Self::from_addr_info(a) {
-                list.push(r);
-            }
-            addr = a.ai_next;
-        }
-
-        list
-    }
-
-    pub fn from_addr_info(addrinfo: &sock::addrinfo) -> Option<GetAddrInfoResult> {
-        let sockaddr = addrinfo.ai_addr;
-        if sockaddr.is_null() {
-            return None;
-        }
-        Some(GetAddrInfoResult {
-            // SAFETY: `ai_addr` is non-null and points to a valid sockaddr per
-            // getaddrinfo's contract. `.cast()` erases the nominal-type
-            // mismatch on Windows (ws2_32::sockaddr ↔ the libuv-sys mirror
-            // `bun_sys::posix::sockaddr` routes to) — both are the 16-byte
-            // ws2def.h `SOCKADDR`.
-            address: unsafe { Address::init_posix(sockaddr.cast()) },
-            // no TTL in POSIX getaddrinfo()
-            ttl: 0,
-        })
+    /// Every entry of a `getaddrinfo(3)` result that carries an address (no
+    /// TTL in POSIX getaddrinfo()).
+    pub fn to_list(list: &bun_sys::net::AddrInfoList) -> ResultList {
+        list.iter()
+            .filter_map(|entry| entry.address())
+            .map(|address| GetAddrInfoResult { address, ttl: 0 })
+            .collect()
     }
 }
 
@@ -404,18 +352,6 @@ pub fn address_to_string(address: &Address) -> BunString {
         }
         _ => BunString::EMPTY,
     }
-}
-
-pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
-    let mut count: u32 = 1;
-    let mut current: *mut sock::addrinfo = addrinfo.ai_next;
-    while !current.is_null() {
-        // SAFETY: current is non-null, points into the getaddrinfo result chain
-        let cur = unsafe { &*current };
-        count += (!cur.ai_addr.is_null()) as u32;
-        current = cur.ai_next;
-    }
-    count
 }
 
 // ──────────────────────────────────────────────────────────────────────────

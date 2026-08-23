@@ -8430,8 +8430,13 @@ pub mod net {
     #[cfg(unix)]
     pub use libc::addrinfo;
 
-    /// The owned result list of one `getaddrinfo(3)` call; `freeaddrinfo` on drop.
-    pub struct AddrInfoList(core::ptr::NonNull<addrinfo>);
+    /// The owned result list of one `getaddrinfo(3)` call (or, on Windows, one
+    /// `uv_getaddrinfo`); freed with the matching deallocator on drop.
+    pub struct AddrInfoList {
+        head: core::ptr::NonNull<addrinfo>,
+        #[cfg(windows)]
+        from_uv: bool,
+    }
 
     impl AddrInfoList {
         /// Blocking `getaddrinfo(3)`. `Err` carries its non-zero return (an
@@ -8466,14 +8471,28 @@ pub mod net {
                 // unspecified here and must not be freed.
                 return Err(rc);
             }
-            Ok(core::ptr::NonNull::new(result).map(Self))
+            Ok(core::ptr::NonNull::new(result).map(|head| Self {
+                head,
+                #[cfg(windows)]
+                from_uv: false,
+            }))
+        }
+
+        /// Adopt the result of a completed `uv_getaddrinfo` (freed with
+        /// `uv_freeaddrinfo`); `None` if it produced nothing.
+        #[cfg(windows)]
+        pub fn from_uv(result: bun_libuv_sys::UvAddrInfo) -> Option<Self> {
+            core::ptr::NonNull::new(result.into_raw()).map(|head| Self {
+                head,
+                from_uv: true,
+            })
         }
 
         /// The first entry (the list is never empty).
         #[inline]
         pub fn first(&self) -> &addrinfo {
             // SAFETY: the live head node `getaddrinfo` returned; freed only on drop.
-            unsafe { self.0.as_ref() }
+            unsafe { self.head.as_ref() }
         }
 
         /// Every entry, in the order `getaddrinfo` returned them.
@@ -8492,8 +8511,14 @@ pub mod net {
             use bun_windows_sys::ws2_32::freeaddrinfo;
             #[cfg(unix)]
             use libc::freeaddrinfo;
+            #[cfg(windows)]
+            if self.from_uv {
+                // SAFETY: the block `uv_getaddrinfo` allocated, freed exactly once.
+                unsafe { bun_libuv_sys::uv_freeaddrinfo(self.head.as_ptr().cast()) };
+                return;
+            }
             // SAFETY: the list `getaddrinfo` allocated, freed exactly once.
-            unsafe { freeaddrinfo(self.0.as_ptr()) }
+            unsafe { freeaddrinfo(self.head.as_ptr()) }
         }
     }
 

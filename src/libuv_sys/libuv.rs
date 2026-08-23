@@ -3017,11 +3017,10 @@ unsafe extern "C" {
 pub struct UvAddrInfo(*mut addrinfo);
 
 impl UvAddrInfo {
-    /// The first entry, or `None` if the lookup produced nothing.
+    /// Give up ownership: null, or the list to free with `uv_freeaddrinfo`.
     #[inline]
-    pub fn head(&self) -> Option<&addrinfo> {
-        // SAFETY: null or the list libuv allocated, owned until drop.
-        unsafe { self.0.as_ref() }
+    pub fn into_raw(self) -> *mut addrinfo {
+        core::mem::ManuallyDrop::new(self).0
     }
 }
 

@@ -29,10 +29,10 @@ impl ManagedTask {
 
     /// # Safety
     /// `this` must be the live `*mut ManagedTask` embedded in a `Task` returned
-    /// by `new()`/`new_owned()`; ownership transfers — `this` is freed (via
+    /// by `new()`/`new_boxed()`; ownership transfers — `this` is freed (via
     /// `heap::take`) before return on both Ok and Err paths.
     pub unsafe fn run(this: *mut ManagedTask) -> JsResult<()> {
-        // SAFETY: `this` was produced by `heap::into_raw` in `new`/`new_owned`
+        // SAFETY: `this` was produced by `heap::into_raw` in `new`/`new_boxed`
         // (caller contract). Reconstituting the Box here frees it at scope
         // exit on both the Ok and Err paths.
         let this = unsafe { bun_core::heap::take(this) };
@@ -41,7 +41,7 @@ impl ManagedTask {
         callback(ctx.unwrap().as_ptr())
     }
 
-    /// Free without running: the owned context (if `new_owned`) is dropped.
+    /// Free without running: the owned context (if `new_boxed`) is dropped.
     ///
     /// # Safety
     /// As [`run`](Self::run); the task is not queued anywhere.
@@ -86,24 +86,6 @@ impl ManagedTask {
         let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
             callback: run::<T>,
             ctx: NonNull::new(Box::into_raw(ctx).cast::<c_void>()),
-            cleanup: Some(drop_ctx::<T>),
-        }));
-        ManagedTask::task(managed)
-    }
-
-    pub fn new_owned<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
-        fn drop_ctx<T>(p: *mut c_void) {
-            // SAFETY: `p` is the `heap::into_raw(Box<T>)` stored in `ctx` by `new_owned`.
-            unsafe { bun_core::heap::destroy(p.cast::<T>()) };
-        }
-        let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
-            // SAFETY: same fn-pointer ABI cast as `new`.
-            callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
-                    callback,
-                )
-            },
-            ctx: NonNull::new(ctx.cast::<c_void>()),
             cleanup: Some(drop_ctx::<T>),
         }));
         ManagedTask::task(managed)

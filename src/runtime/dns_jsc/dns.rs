@@ -9,11 +9,10 @@ use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_core::strings;
 use bun_core::{self as bun, env_var, fmt as bun_fmt};
-#[cfg(not(windows))]
 use bun_dns::ResultList as GetAddrInfoResultList;
 use bun_dns::{
     self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
-    Options as GetAddrInfoOptions, ResultAny as GetAddrInfoResultAny,
+    Options as GetAddrInfoOptions,
 };
 #[cfg(not(windows))]
 use bun_io::OwnedFilePoll;
@@ -210,12 +209,7 @@ pub(crate) mod lib_uv_backend {
             return Ok(promise);
         }
 
-        let request = GetAddrInfoRequest::init(
-            cache,
-            get_addr_info_request::Backend::CAres,
-            Some(this),
-            global_this,
-        );
+        let request = GetAddrInfoRequest::init(cache, Some(this), global_this);
 
         let hints = query.options.to_libc();
         let mut port_buf = [0u8; 128];
@@ -244,18 +238,9 @@ pub(crate) mod lib_uv_backend {
                 // completion would have taken so the pending-cache slot is released
                 // and the promise is rejected with a DNSException.
                 let request = *request;
-                if let (Some(resolver), Some(pos)) = (request.head.resolver(), request.pending_slot)
-                {
-                    Resolver::drain_pending_host_native(
-                        resolver,
-                        pos,
-                        rc.int(),
-                        &GetAddrInfoResultAny::Addrinfo(core::ptr::null_mut()),
-                        request.head,
-                    );
-                    return Ok(promise);
-                }
-                request.head.process_get_addr_info_native(rc.int());
+                request
+                    .head
+                    .finish_native(request.pending_slot, rc.int(), None);
                 Ok(promise)
             }
         }
@@ -717,10 +702,9 @@ impl c_ares::NameInfoHandler for GetNameInfoRequest {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetAddrInfoRequest {
-    /// Backend state that must live at the request's address (the dns_sd
-    /// query); nothing for c-ares / libuv / the work pool.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) backend: get_addr_info_request::Backend,
+    /// The dns_sd query state (written by the reply callback at this address).
+    #[cfg(target_os = "macos")]
+    pub(crate) dns_sd: JsCell<dns_sd::QueryState>,
     /// See [`PendingEntry`].
     pub(crate) pending_slot: Option<u8>,
     pub(crate) head: DNSLookup,
@@ -789,20 +773,6 @@ pub mod get_addr_info_request {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    pub struct BackendDnsSd {
-        pub(crate) query: JsCell<dns_sd::QueryState>,
-    }
-
-    #[cfg(target_os = "macos")]
-    impl BackendDnsSd {
-        pub(crate) fn new(protocol: dns_sd::DNSServiceProtocol) -> Self {
-            Self {
-                query: JsCell::new(dns_sd::QueryState::new(protocol)),
-            }
-        }
-    }
-
     /// Non-Windows libc backend (worker-thread blocking getaddrinfo).
     #[cfg(not(windows))]
     pub enum LibcBackend {
@@ -844,26 +814,10 @@ pub mod get_addr_info_request {
                 debug_timer,
             );
             *self = match result {
-                Ok(Some(list)) => LibcBackend::Success(GetAddrInfoResult::to_list(list.first())),
+                Ok(Some(list)) => LibcBackend::Success(GetAddrInfoResult::to_list(&list)),
                 Ok(None) => LibcBackend::Err(0),
                 Err(err) => LibcBackend::Err(err),
             };
-        }
-    }
-
-    pub enum Backend {
-        CAres,
-        #[cfg(target_os = "macos")]
-        DnsSd(BackendDnsSd),
-    }
-
-    impl Backend {
-        #[cfg(target_os = "macos")]
-        pub(crate) fn dns_sd(&self) -> &BackendDnsSd {
-            match self {
-                Backend::DnsSd(l) => l,
-                _ => unreachable!(),
-            }
         }
     }
 }
@@ -871,13 +825,13 @@ pub mod get_addr_info_request {
 impl GetAddrInfoRequest {
     pub(crate) fn init(
         cache: CacheHit,
-        backend: get_addr_info_request::Backend,
         resolver: Option<ThisPtr<Resolver>>,
         global_this: &JSGlobalObject,
     ) -> Box<Self> {
         bun_output::scoped_log!(GetAddrInfoRequest, "init");
         Box::new(Self {
-            backend,
+            #[cfg(target_os = "macos")]
+            dns_sd: JsCell::new(Default::default()),
             pending_slot: cache.new_slot(),
             head: DNSLookup::init_head(resolver, global_this),
         })
@@ -886,7 +840,7 @@ impl GetAddrInfoRequest {
     /// Complete a dns_sd-backed request.
     #[cfg(target_os = "macos")]
     pub(crate) fn complete_dns_sd(self) {
-        let (results, status) = self.backend.dns_sd().query.with_mut(|query| {
+        let (results, status) = self.dns_sd.with_mut(|query| {
             let results = query.take_results();
             let status = if !results.is_empty() {
                 0
@@ -901,23 +855,8 @@ impl GetAddrInfoRequest {
             status,
             results.len()
         );
-        // Error path must be `Addrinfo(null)`: `drain_pending_host_native` keys on `result_any_to_js` == None.
-        let any = if status == 0 {
-            GetAddrInfoResultAny::List(results)
-        } else {
-            GetAddrInfoResultAny::Addrinfo(core::ptr::null_mut())
-        };
-
-        if let (Some(resolver), Some(pos)) = (self.head.resolver(), self.pending_slot) {
-            Resolver::drain_pending_host_native(resolver, pos, status, &any, self.head);
-            return;
-        }
-
-        if status != 0 {
-            self.head.process_get_addr_info_native(status);
-        } else {
-            self.head.on_complete_native(&any);
-        }
+        self.head
+            .finish_native(self.pending_slot, status, (status == 0).then_some(&results));
     }
 
     /// The JS-thread completion of a libc (work-pool) lookup.
@@ -930,27 +869,10 @@ impl GetAddrInfoRequest {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
         match backend {
             get_addr_info_request::LibcBackend::Success(result) => {
-                // `ResultAny` impls `Drop` (frees the list) — the by-value drop
-                // at the end of whichever callee receives `any`.
-                let any = GetAddrInfoResultAny::List(result);
-                if let (Some(resolver), Some(pos)) = (head.resolver(), pending_slot) {
-                    Resolver::drain_pending_host_native(resolver, pos, 0, &any, head);
-                    return;
-                }
-                head.on_complete_native(&any);
+                head.finish_native(pending_slot, 0, Some(&result))
             }
             get_addr_info_request::LibcBackend::Err(err) => {
-                if let (Some(resolver), Some(pos)) = (head.resolver(), pending_slot) {
-                    Resolver::drain_pending_host_native(
-                        resolver,
-                        pos,
-                        err,
-                        &GetAddrInfoResultAny::Addrinfo(core::ptr::null_mut()),
-                        head,
-                    );
-                    return;
-                }
-                head.process_get_addr_info_native(err);
+                head.finish_native(pending_slot, err, None)
             }
             get_addr_info_request::LibcBackend::Query(_) => unreachable!(),
         }
@@ -976,26 +898,10 @@ impl GetAddrInfoRequest {
     pub(crate) fn on_libuv_complete(self, retcode: c_int, result: libuv::UvAddrInfo) {
         bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
 
-        // libuv re-packs the wide result into a `uv__malloc` block that
-        // `UvAddrInfo` frees with `uv_freeaddrinfo`; copy it into an owned
-        // `List` now so `ResultAny::Drop` (which calls `ws2_32!freeaddrinfo`)
-        // never sees libuv-owned memory.
-        let result_any = match result.head() {
-            None => GetAddrInfoResultAny::Addrinfo(core::ptr::null_mut()),
-            Some(head) => GetAddrInfoResultAny::List(GetAddrInfoResult::to_list(head)),
-        };
-        drop(result);
-
-        if let (Some(resolver), Some(pos)) = (self.head.resolver(), self.pending_slot) {
-            Resolver::drain_pending_host_native(resolver, pos, retcode, &result_any, self.head);
-            return;
-        }
-
-        if c_ares::Error::init_eai(retcode).is_some() {
-            self.head.process_get_addr_info_native(retcode);
-        } else {
-            self.head.on_complete_native(&result_any);
-        }
+        let result = bun_sys::net::AddrInfoList::from_uv(result)
+            .map(|list| GetAddrInfoResult::to_list(&list));
+        self.head
+            .finish_native(self.pending_slot, retcode, result.as_ref());
     }
 }
 
@@ -1235,12 +1141,32 @@ impl DNSLookup {
         }
     }
 
-    fn on_complete_native(self, result: &GetAddrInfoResultAny) {
+    /// Completion of a system-resolver lookup (libc, libuv, dns_sd): fan out
+    /// to the deduplicated waiters if this lookup owns a pending slot.
+    fn finish_native(
+        self,
+        pending_slot: Option<u8>,
+        status: c_int,
+        result: Option<&GetAddrInfoResultList>,
+    ) {
+        if let (Some(resolver), Some(pos)) = (self.resolver(), pending_slot) {
+            Resolver::drain_pending_host_native(resolver, pos, status, result, self);
+            return;
+        }
+        match result {
+            Some(_) => self.on_complete_native(result),
+            None => self.process_get_addr_info_native(status),
+        }
+    }
+
+    /// `None` (no result, no error) is an empty answer.
+    fn on_complete_native(self, result: Option<&GetAddrInfoResultList>) {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         let global = self.global_this();
-        // A null addrinfo with no error is an empty answer.
-        let array = super::options_jsc::result_any_to_js(result, global)
-            .and_then(|a| a.map_or_else(|| JSValue::create_empty_array(global, 0), Ok));
+        let array = match result {
+            Some(list) => super::options_jsc::result_list_to_js(list, global),
+            None => JSValue::create_empty_array(global, 0),
+        };
         let outcome = Outcome::of(global, array);
         self.on_complete_with_array(outcome);
     }
@@ -1252,7 +1178,7 @@ impl DNSLookup {
                 .reject_later(self.global_this());
             return;
         }
-        self.on_complete_native(&GetAddrInfoResultAny::Addrinfo(core::ptr::null_mut()))
+        self.on_complete_native(None)
     }
 
     fn process_get_addr_info(
@@ -1536,23 +1462,6 @@ pub mod internal {
         }
     }
 
-    /// The dns_sd query state of a connect-path lookup. Only the thread whose
-    /// `SharedConnection` issued the query touches it (from the reply callback
-    /// and completion), until `dns_sd_complete` publishes the result.
-    #[cfg(target_os = "macos")]
-    pub struct MacAsyncDNS {
-        pub(crate) query: JsCell<dns_sd::QueryState>,
-    }
-
-    #[cfg(target_os = "macos")]
-    impl Default for MacAsyncDNS {
-        fn default() -> Self {
-            Self {
-                query: JsCell::new(dns_sd::QueryState::new(0)),
-            }
-        }
-    }
-
     /// One cached lookup. usockets, the QUIC client and the work pool all hold
     /// it by address (`ThisPtr` / `BackRef`); the cache owns it and frees it
     /// only once `refcount` is back to zero.
@@ -1561,9 +1470,6 @@ pub mod internal {
         /// Set once, under the cache lock, when the lookup finishes; read
         /// lock-free by usockets after it has been notified.
         result: std::sync::OnceLock<AddrInfoResult>,
-        /// Who to notify when `result` lands; guarded by the cache lock (this
-        /// lock is only ever taken under it).
-        notify: bun_threading::Guarded<Vec<DNSRequestOwner>>,
         /// number of sockets that have a reference to result or are waiting for the result
         /// while this is non-zero, this entry cannot be freed
         refcount: AtomicU32,
@@ -1571,8 +1477,11 @@ pub mod internal {
         /// Not a precise timestamp.
         pub(crate) created_at: u32,
         valid: AtomicBool,
+        /// Only the thread whose `SharedConnection` issued the query touches it
+        /// (reply callback and completion), until `dns_sd_complete` publishes
+        /// the result.
         #[cfg(target_os = "macos")]
-        pub(crate) dns_sd: MacAsyncDNS,
+        pub(crate) dns_sd: JsCell<dns_sd::QueryState>,
     }
 
     impl Request {
@@ -1584,12 +1493,11 @@ pub mod internal {
             bun_ptr::OwnedThis::new(Self {
                 key,
                 result: std::sync::OnceLock::new(),
-                notify: bun_threading::Guarded::new(Vec::new()),
                 refcount: AtomicU32::new(refcount),
                 created_at,
                 valid: AtomicBool::new(true),
                 #[cfg(target_os = "macos")]
-                dns_sd: MacAsyncDNS::default(),
+                dns_sd: JsCell::new(Default::default()),
             })
         }
 
@@ -1629,12 +1537,6 @@ pub mod internal {
         }
     }
 
-    impl Drop for Request {
-        fn drop(&mut self) {
-            debug_assert!(self.notify.lock().is_empty());
-        }
-    }
-
     // ───────────── GlobalCache ─────────────
 
     const MAX_ENTRIES: usize = 256;
@@ -1646,6 +1548,13 @@ pub mod internal {
         /// Requests handed out while the cache had no room for them; freed
         /// like cached ones once their last holder lets go.
         orphans: Vec<bun_ptr::OwnedThis<Request>>,
+        /// Who to notify when an unfinished request's result lands.
+        waiting: Vec<Waiting>,
+    }
+
+    struct Waiting {
+        request: BackRef<Request, bun_ptr::Mut>,
+        owners: Vec<DNSRequestOwner>,
     }
 
     impl GlobalCache {
@@ -1653,12 +1562,52 @@ pub mod internal {
             Self {
                 cache: Vec::new(),
                 orphans: Vec::new(),
+                waiting: Vec::new(),
             }
         }
 
         #[inline]
         fn len(&self) -> usize {
             self.cache.len()
+        }
+
+        fn waiting_index(&self, request: ThisPtr<Request>) -> Option<usize> {
+            self.waiting
+                .iter()
+                .position(|w| core::ptr::eq(w.request.as_ptr(), request.as_ptr()))
+        }
+
+        fn add_waiter(&mut self, request: ThisPtr<Request>, owner: DNSRequestOwner) {
+            match self.waiting_index(request) {
+                Some(i) => self.waiting[i].owners.push(owner),
+                None => self.waiting.push(Waiting {
+                    request: BackRef::from(request),
+                    owners: vec![owner],
+                }),
+            }
+        }
+
+        fn take_waiters(&mut self, request: ThisPtr<Request>) -> Vec<DNSRequestOwner> {
+            match self.waiting_index(request) {
+                Some(i) => self.waiting.swap_remove(i).owners,
+                None => Vec::new(),
+            }
+        }
+
+        /// Withdraw `socket` from `request`'s waiters; whether it was waiting.
+        fn cancel_waiter(&mut self, request: ThisPtr<Request>, socket: &ConnectingSocket) -> bool {
+            let Some(i) = self.waiting_index(request) else {
+                return false;
+            };
+            let owners = &mut self.waiting[i].owners;
+            let Some(j) = owners
+                .iter()
+                .position(|o| matches!(o, DNSRequestOwner::Socket(s) if s.is(socket)))
+            else {
+                return false;
+            };
+            owners.swap_remove(j);
+            true
         }
 
         fn get(
@@ -1824,19 +1773,16 @@ pub mod internal {
     /// path frees the addrinfo request inline (via Bun__addrinfo_freeRequest),
     /// which re-acquires global_cache.lock — so drop it before notifying.
     pub(crate) fn register_quic(request: ThisPtr<Request>, pc: Box<bun_http::H3::PendingConnect>) {
-        let guard = global_cache().lock();
+        let mut guard = global_cache().lock();
         if request.has_result() {
             drop(guard);
             pc.on_dns_resolved_now();
             return;
         }
-        request
-            .notify
-            .lock()
-            .push(DNSRequestOwner::Quic(bun_http::H3::DnsPendingConnect::new(
-                pc,
-            )));
-        drop(guard);
+        guard.add_waiter(
+            request,
+            DNSRequestOwner::Quic(bun_http::H3::DnsPendingConnect::new(pc)),
+        );
     }
 
     /// The `ai_family`/`ai_socktype`/`ai_addrlen` header for a synthesized
@@ -1912,16 +1858,20 @@ pub mod internal {
     }
 
     fn after_result_entries(req: ThisPtr<Request>, result: AddrInfoResult) {
-        let guard = global_cache().lock();
+        let mut guard = global_cache().lock();
 
-        let notify = {
-            let _ = req.result.set(result);
-            let notify = core::mem::take(&mut *req.notify.lock());
-            req.refcount.fetch_sub(1, Ordering::Relaxed);
-            notify
-        };
-
-        // is this correct, or should it go after the loop?
+        // Each request is completed once (a dns_sd lookup handed to the work
+        // pool at thread teardown was never completed by dns_sd).
+        let already_set = req.result.set(result).is_err();
+        debug_assert!(!already_set);
+        let notify = guard.take_waiters(req);
+        if req.refcount.fetch_sub(1, Ordering::Relaxed) == 1 {
+            // Nobody waited (a prefetch, or every socket withdrew): an orphan
+            // has no other path to being freed.
+            debug_assert!(notify.is_empty());
+            guard.remove_orphan(req);
+            return;
+        }
         drop(guard);
 
         for query in notify {
@@ -1974,7 +1924,6 @@ pub mod internal {
         };
 
         let protocol = dns_sd::protocol_for_hints(&get_hints());
-        req.dns_sd.query.set(dns_sd::QueryState::new(protocol));
         shared
             .start(
                 dns_sd::InflightRequest::Internal(BackRef::from(req)),
@@ -1988,7 +1937,7 @@ pub mod internal {
     impl bun_sys::dns_sd::GetAddrInfoReply for Request {
         fn on_reply(&self, reply: &bun_sys::dns_sd::Reply<'_>) {
             dns_sd::SharedConnection::note_reply(core::ptr::from_ref(self).cast());
-            self.dns_sd.query.with_mut(|q| q.record_reply(reply));
+            self.dns_sd.with_mut(|q| q.record_reply(reply));
         }
     }
 
@@ -1997,7 +1946,6 @@ pub mod internal {
     pub(super) fn dns_sd_complete(req: BackRef<Request, bun_ptr::Mut>) {
         let (results, empty_status) = req
             .dns_sd
-            .query
             .with_mut(|query| (query.take_results(), query.empty_status()));
         let port = req.key.port;
         let req = req.this_ptr();
@@ -2308,43 +2256,31 @@ pub mod internal {
     }
 
     pub(crate) fn us_getaddrinfo_set(request: ThisPtr<Request>, socket: &ConnectingSocket) {
-        let _guard = global_cache().lock();
+        let mut guard = global_cache().lock();
         if request.has_result() {
             bun_uws_sys::addrinfo::dns_ready(socket);
             return;
         }
         // usockets keeps `socket` alive until it is notified or withdraws
         // itself with `Bun__addrinfo_cancel`.
-        request
-            .notify
-            .lock()
-            .push(DNSRequestOwner::Socket(DnsWaitingSocket::new(
-                BackRef::new(socket),
-            )));
+        guard.add_waiter(
+            request,
+            DNSRequestOwner::Socket(DnsWaitingSocket::new(BackRef::new(socket))),
+        );
     }
 
     pub(crate) fn us_getaddrinfo_cancel(
         request: ThisPtr<Request>,
         socket: &ConnectingSocket,
     ) -> c_int {
-        let _guard = global_cache().lock();
-        // afterResult sets result and moves the notify list out under this same
+        let mut guard = global_cache().lock();
+        // afterResult sets result and takes the waiters under this same
         // lock, so once result is non-null the socket is no longer cancellable
         // (the callback has fired or is about to fire on the worker thread).
         if request.has_result() {
             return 0;
         }
-        let mut notify = request.notify.lock();
-        for (i, item) in notify.iter().enumerate() {
-            match item {
-                DNSRequestOwner::Socket(s) if s.is(socket) => {
-                    notify.swap_remove(i);
-                    return 1;
-                }
-                _ => {}
-            }
-        }
-        0
+        guard.cancel_waiter(request, socket) as c_int
     }
 
     pub(crate) fn freeaddrinfo(req: ThisPtr<Request>, err: c_int) {
@@ -2976,7 +2912,7 @@ impl Resolver {
         this: ThisPtr<Self>,
         index: u8,
         err: i32,
-        result: &GetAddrInfoResultAny,
+        result: Option<&GetAddrInfoResultList>,
         head: DNSLookup,
     ) {
         bun_output::scoped_log!(DNSResolver, "drainPendingHostNative");
@@ -2987,17 +2923,17 @@ impl Resolver {
 
         let _g = this.ref_guard();
 
-        let mut array: Outcome =
-            match super::options_jsc::result_any_to_js(result, &global_object).transpose() {
-                Some(a) => Outcome::of(&global_object, a),
-                None => {
-                    head.process_get_addr_info_native(err);
-                    for waiter in waiters {
-                        waiter.process_get_addr_info_native(err);
-                    }
-                    return;
-                }
-            };
+        let Some(result) = result else {
+            head.process_get_addr_info_native(err);
+            for waiter in waiters {
+                waiter.process_get_addr_info_native(err);
+            }
+            return;
+        };
+        let mut array = Outcome::of(
+            &global_object,
+            super::options_jsc::result_list_to_js(result, &global_object),
+        );
         let mut prev_global = head.global_this;
 
         {
@@ -3009,11 +2945,9 @@ impl Resolver {
         for waiter in waiters {
             let new_global = waiter.global_this;
             if prev_global != new_global {
-                // Non-null addrinfo (checked above): never `None`.
                 array = Outcome::of(
                     &new_global,
-                    super::options_jsc::result_any_to_js(result, &new_global)
-                        .map(|a| a.expect("addrinfo present")),
+                    super::options_jsc::result_list_to_js(result, &new_global),
                 );
                 prev_global = new_global;
             }
@@ -3834,12 +3768,7 @@ impl Resolver {
         }
 
         let hints_buf = [query.to_cares()];
-        let request = GetAddrInfoRequest::init(
-            cache,
-            get_addr_info_request::Backend::CAres,
-            Some(this),
-            global_this,
-        );
+        let request = GetAddrInfoRequest::init(cache, Some(this), global_this);
         let promise = request.head.promise.value();
 
         channel.get_addr_info(&query.name, query.port, &hints_buf, request);

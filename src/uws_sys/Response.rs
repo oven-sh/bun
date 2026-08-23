@@ -984,6 +984,21 @@ impl AnyResponse {
         )
     }
 
+    /// [`on_data`](Self::on_data) counterpart of
+    /// [`on_writable_this`](Self::on_writable_this).
+    pub fn on_data_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, &[u8], bool) + Copy + 'static,
+    {
+        self.on_data(
+            |u: *mut U, chunk: &[u8], last: bool| {
+                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
+                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, chunk, last)
+            },
+            this.as_ptr(),
+        )
+    }
+
     pub fn clear_aborted(self) {
         any_dispatch!(self, |r| r.clear_aborted())
     }

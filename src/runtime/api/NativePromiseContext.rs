@@ -9,14 +9,12 @@
 //! Usage pattern:
 //!
 //! ```ignore
-//! ctx.ref_();
-//! let cell = native_promise_context::create(global, ctx);
+//! let cell = bun_jsc::native_promise_context::create(global, RefPtr::from_this(ctx), JSValue::ZERO);
 //! promise.then_with_value(global, cell, on_resolve, on_reject)?;
 //!
 //! // In on_resolve/on_reject:
-//! let Some(ctx) = native_promise_context::take::<RequestContext>(arguments[1]) else { return; };
-//! // ... process ...
-//! ctx.deref_();
+//! let Some(ctx) = bun_jsc::native_promise_context::take::<RequestContext>(arguments[1]) else { return; };
+//! // ... process; the ref is released when `ctx` drops.
 //! ```
 
 use core::ffi::c_void;
@@ -89,17 +87,14 @@ impl Tag {
     }
 }
 
-/// Maps a concrete native type to its `Tag`, expressed as a compile-time
-/// mapping via a trait impl per type.
-pub(crate) trait NativePromiseContextType {
-    const TAG: Tag;
-}
-
-// Layering note: blanket-impl over `ThisServer` so that ANY server
-// type (mod.rs::NewServer or server_body::NewServer) yields the same Tag —
-// the tag depends only on (SSL, DBG, MUX), never on the server type.
-const fn npc_tag_for(ssl: bool, dbg: bool, mux: bool) -> Tag {
-    match (ssl, dbg, mux) {
+// The tag depends only on (SSL, DBG, MUX): `ServerLike` is sealed to
+// `NewServer<SSL, DBG>` and a context whose server's `(SSL, DEBUG)` differ from
+// its own gets no tag, so each tag names exactly one type.
+const fn npc_tag_for(server_ssl: bool, server_dbg: bool, ssl: bool, dbg: bool, mux: bool) -> u8 {
+    if server_ssl != ssl || server_dbg != dbg {
+        return bun_jsc::native_promise_context::INVALID_TAG;
+    }
+    (match (ssl, dbg, mux) {
         (false, false, false) => Tag::HTTPServerRequestContext,
         (true, false, false) => Tag::HTTPSServerRequestContext,
         (false, true, false) => Tag::DebugHTTPServerRequestContext,
@@ -108,21 +103,18 @@ const fn npc_tag_for(ssl: bool, dbg: bool, mux: bool) -> Tag {
         (true, false, true) => Tag::HTTPSServerMuxRequestContext,
         (false, true, true) => Tag::DebugHTTPServerMuxRequestContext,
         (true, true, true) => Tag::DebugHTTPSServerMuxRequestContext,
-    }
+    }) as u8
 }
-impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromiseContextType
-    for server::NewRequestContext<ThisServer, SSL, DBG, MUX>
-{
-    const TAG: Tag = npc_tag_for(SSL, DBG, MUX);
-}
-impl NativePromiseContextType for html_rewriter::RewriterPipe {
-    const TAG: Tag = Tag::HTMLRewriterSuspension;
-}
+bun_jsc::native_promise_context_type!(
+    impl [ThisServer: server::ServerLike + 'static, const SSL: bool, const DBG: bool, const MUX: bool]
+    for server::NewRequestContext<ThisServer, SSL, DBG, MUX> =>
+        npc_tag_for(ThisServer::SSL, ThisServer::DEBUG, SSL, DBG, MUX)
+);
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
 // opaquely (never dereferenced by the C++ side), so the FFI itself has no
 // pointer-validity precondition — the ref-count contract is documented on
-// `create()` below, not on the FFI call.
+// `create_html_rewriter_suspension()` below, not on the FFI call.
 unsafe extern "C" {
     safe fn Bun__NativePromiseContext__create(
         global: &JSGlobalObject,
@@ -130,27 +122,41 @@ unsafe extern "C" {
         tag: u8,
         held: JSValue,
     ) -> JSValue;
-    safe fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
+    safe fn Bun__NativePromiseContext__take(value: JSValue, tag: u8) -> *mut c_void;
 }
 
-/// The cell owns the caller's claim on `ctx` until `take()` transfers it back
-/// or GC runs the destructor (which defers to [`DeferredDerefTask`]). `held`
-/// is visited by the cell, so whatever GC object keeps `ctx` alive can ride
-/// along for as long as the promise can settle; pass `JSValue::ZERO` when
-/// nothing needs rooting.
-pub(crate) fn create<T: NativePromiseContextType>(
+/// A `Tag::HTMLRewriterSuspension` cell. The cell owns the caller's claim on
+/// `pipe` until `take_html_rewriter_suspension()` transfers it back or GC runs
+/// the destructor (which defers to [`DeferredDerefTask`]). `held` is visited
+/// by the cell, so whatever GC object keeps `pipe` alive can ride along for as
+/// long as the promise can settle. (Request contexts use the typed
+/// [`bun_jsc::native_promise_context::create`], whose cell owns a `RefPtr`.)
+pub(crate) fn create_html_rewriter_suspension(
     global: &JSGlobalObject,
-    ctx: *mut T,
+    pipe: NonNull<html_rewriter::RewriterPipe>,
     held: JSValue,
 ) -> JSValue {
-    Bun__NativePromiseContext__create(global, ctx.cast::<c_void>(), T::TAG as u8, held)
+    Bun__NativePromiseContext__create(
+        global,
+        pipe.as_ptr().cast::<c_void>(),
+        Tag::HTMLRewriterSuspension as u8,
+        held,
+    )
 }
 
-/// Transfers the ref back to the caller and nulls the cell so the destructor
-/// is a no-op. Returns null if already taken (e.g., the connection aborted
-/// and the ref was released via the destructor on a prior GC cycle).
-pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
-    NonNull::new(Bun__NativePromiseContext__take(cell).cast::<T>())
+/// Transfers the claim back to the caller and nulls the cell so the destructor
+/// is a no-op. Returns null if already taken (the suspension was abandoned) or
+/// if `cell` is not an HTMLRewriter suspension cell.
+pub(crate) fn take_html_rewriter_suspension(
+    cell: JSValue,
+) -> Option<NonNull<html_rewriter::RewriterPipe>> {
+    if cell.is_empty() {
+        return None;
+    }
+    NonNull::new(
+        Bun__NativePromiseContext__take(cell, Tag::HTMLRewriterSuspension as u8)
+            .cast::<html_rewriter::RewriterPipe>(),
+    )
 }
 
 /// Called from the C++ destructor when a cell is collected with a non-null
@@ -285,34 +291,38 @@ impl DeferredDerefTask {
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {
         let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
+        use bun_jsc::native_promise_context::destroyed_ref;
         // SAFETY: ctx was packed in `schedule` from a live, non-null pointer
         // of the type indicated by `tag`, and this task owns one ref on it,
-        // released below (for the HTMLRewriter tags: the ref taken in
+        // released below (for the request contexts: the `RefPtr` the cell was
+        // created with; for the HTMLRewriter tags: the ref taken in
         // `begin_suspension`, or the last ref handed over by
         // `deref_outside_caller`). We are on the JS thread.
         unsafe {
             match tag {
-                Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),
+                Tag::HTTPServerRequestContext => {
+                    drop(destroyed_ref::<HTTPServerRequestContext>(ctx))
+                }
                 Tag::HTTPSServerRequestContext => {
-                    (*ctx.cast::<HTTPSServerRequestContext>()).deref()
+                    drop(destroyed_ref::<HTTPSServerRequestContext>(ctx))
                 }
                 Tag::DebugHTTPServerRequestContext => {
-                    (*ctx.cast::<DebugHTTPServerRequestContext>()).deref()
+                    drop(destroyed_ref::<DebugHTTPServerRequestContext>(ctx))
                 }
                 Tag::DebugHTTPSServerRequestContext => {
-                    (*ctx.cast::<DebugHTTPSServerRequestContext>()).deref()
+                    drop(destroyed_ref::<DebugHTTPSServerRequestContext>(ctx))
                 }
                 Tag::HTTPServerMuxRequestContext => {
-                    (*ctx.cast::<HTTPServerMuxRequestContext>()).deref()
+                    drop(destroyed_ref::<HTTPServerMuxRequestContext>(ctx))
                 }
                 Tag::HTTPSServerMuxRequestContext => {
-                    (*ctx.cast::<HTTPSServerMuxRequestContext>()).deref()
+                    drop(destroyed_ref::<HTTPSServerMuxRequestContext>(ctx))
                 }
                 Tag::DebugHTTPServerMuxRequestContext => {
-                    (*ctx.cast::<DebugHTTPServerMuxRequestContext>()).deref()
+                    drop(destroyed_ref::<DebugHTTPServerMuxRequestContext>(ctx))
                 }
                 Tag::DebugHTTPSServerMuxRequestContext => {
-                    (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).deref()
+                    drop(destroyed_ref::<DebugHTTPSServerMuxRequestContext>(ctx))
                 }
                 Tag::HTMLRewriterSuspension => {
                     let back = bun_ptr::BackRef::from(NonNull::new_unchecked(

@@ -494,6 +494,29 @@ pub unsafe trait CellRefCounted: Sized {
     }
 }
 
+/// Destroy hook body for a `T` whose storage is not a `Box` (a pool slot, a
+/// C-side owner): run `finalize(&*this)`, then — once that borrow has ended —
+/// hand the root pointer and whatever `finalize` returned to `release`, which
+/// gives the storage back.
+///
+/// Only a `#[ref_count(destroy = …)]` target may call this, forwarding the
+/// pointer the generated [`CellRefCounted::destroy`] received (sole owner,
+/// refcount zero).
+#[inline]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn destroy_with<T, R>(
+    this: *mut T,
+    finalize: impl FnOnce(&T) -> R,
+    release: impl FnOnce(NonNull<T>, R),
+) {
+    let ptr = NonNull::new(this).expect("destroy_with: null");
+    // SAFETY: `CellRefCounted::destroy` contract — `this` is the sole live
+    // owner of an initialized `T`; `finalize` only observes it shared, and that
+    // borrow ends before `release` may free the storage.
+    let r = finalize(unsafe { ptr.as_ref() });
+    release(ptr, r);
+}
+
 // A blanket `impl<T: ThreadSafeRefCounted> AnyRefCounted for T` would overlap
 // with the `RefCounted` blanket above (Rust forbids overlapping blanket impls).
 // Instead, thread-safe hosts opt in via `#[derive(ThreadSafeRefCounted)]`,

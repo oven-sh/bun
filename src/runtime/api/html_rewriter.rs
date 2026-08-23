@@ -1684,8 +1684,11 @@ impl RewriterPipe {
         let cell = self.cell.get();
         let promise = js_HTMLRewriterTransform::suspension_promise_get_cached(cell)
             .expect("suspension promise slot empty");
-        let pipe = core::ptr::from_ref(self).cast_mut();
-        let context = native_promise_context::create(&self.global, pipe, cell);
+        let context = native_promise_context::create_html_rewriter_suspension(
+            &self.global,
+            NonNull::from(self),
+            cell,
+        );
         // The context destructor (promise GC'd unsettled) queues
         // `abandon_suspension` (`DeferredDerefTask::schedule` runs it inline
         // once the VM's task queue has closed); this ref keeps the pipe alive
@@ -1896,7 +1899,8 @@ fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let args = frame.arguments();
     // `take` nulls the context so its destructor is a no-op; `None` means the
     // suspension was already abandoned.
-    let Some(pipe) = native_promise_context::take::<RewriterPipe>(args[args.len() - 1]) else {
+    let Some(pipe) = native_promise_context::take_html_rewriter_suspension(args[args.len() - 1])
+    else {
         return Ok(JSValue::UNDEFINED);
     };
     let pipe = BackRef::from(pipe);
@@ -1916,7 +1920,8 @@ fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let reason = args[0];
-    let Some(pipe) = native_promise_context::take::<RewriterPipe>(args[args.len() - 1]) else {
+    let Some(pipe) = native_promise_context::take_html_rewriter_suspension(args[args.len() - 1])
+    else {
         return Ok(JSValue::UNDEFINED);
     };
     let pipe = BackRef::from(pipe);

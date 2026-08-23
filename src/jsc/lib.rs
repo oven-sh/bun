@@ -159,6 +159,8 @@ pub mod js_ref;
 pub mod js_type;
 #[path = "JSValue.rs"]
 pub mod js_value;
+#[path = "NativePromiseContext.rs"]
+pub mod native_promise_context;
 #[path = "rare_data.rs"]
 pub mod rare_data;
 #[path = "StringBuilder.rs"]

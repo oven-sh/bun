@@ -104,6 +104,44 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         }
     }
 
+    /// Take a weak reference to the pointee of a dispatch-time
+    /// [`ThisPtr`](crate::ThisPtr). Safe: the `ThisPtr` invariant (a live `T`
+    /// behind the allocation's root pointer) is [`init_ref`](Self::init_ref)'s
+    /// contract.
+    #[inline]
+    pub fn from_this(this: crate::ThisPtr<T>) -> Self {
+        // SAFETY: see above.
+        unsafe { Self::init_ref(this.as_ptr()) }
+    }
+
+    /// Borrow the pointee, or `None` once the owner has finalized it (or this
+    /// handle is empty). Unlike [`get`](Self::get) this does not release the
+    /// weak ref on observing finalization; dropping the handle still does.
+    ///
+    /// The allocation is not freed while this handle holds its weak count.
+    /// The owner may still *finalize* the value (through its own pointer) if
+    /// the caller lets that happen while the borrow is live, exactly as with
+    /// [`get`](Self::get): do not hold the result across anything that can
+    /// finalize the owner (for GC-owned payloads: a JS allocation or
+    /// collection).
+    #[inline]
+    pub fn get_ref(&self) -> Option<&T> {
+        let value = self.raw_ptr?;
+        // SAFETY: allocation is live while any WeakPtr holds it (see above).
+        unsafe {
+            if (*T::weak_ptr_data(value.as_ptr())).finalized() {
+                return None;
+            }
+            Some(&*value.as_ptr())
+        }
+    }
+
+    /// Whether this handle refers to `this`'s allocation.
+    #[inline]
+    pub fn is(&self, this: crate::ThisPtr<T>) -> bool {
+        self.raw_ptr.is_some_and(|p| p.as_ptr() == this.as_ptr())
+    }
+
     /// Borrow the pointee, or `None` once the owner has finalized it (which
     /// also releases this handle's weak ref).
     ///

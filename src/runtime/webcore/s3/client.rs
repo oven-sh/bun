@@ -81,6 +81,29 @@ pub(crate) fn stat(
     )
 }
 
+/// [`stat`] answering to a `Bun.serve` request context.
+pub(crate) fn stat_for_request_context(
+    this: &S3Credentials,
+    path: &[u8],
+    ctx: crate::server::AnyRequestContext,
+    proxy_url: Option<&[u8]>,
+    request_payer: bool,
+) -> JsResult<()> {
+    s3_simple_request::execute_simple_s3_request(
+        this,
+        s3_simple_request::Options {
+            path,
+            method: bun_http::Method::HEAD,
+            proxy_url,
+            body: b"",
+            request_payer,
+            ..Default::default()
+        },
+        s3_simple_request::Callback::StatRequestContext(ctx),
+        core::ptr::null_mut(),
+    )
+}
+
 pub(crate) fn download(
     this: &S3Credentials,
     path: &[u8],

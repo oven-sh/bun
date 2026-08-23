@@ -230,7 +230,7 @@ pub(crate) enum InflightRequest {
     Jsc(bun_ptr::OwnedThis<GetAddrInfoRequest>),
     /// A connect-path lookup, owned by the global cache (its in-flight
     /// refcount keeps it alive until it completes).
-    Internal(BackRef<internal::Request, bun_ptr::Mut>),
+    Internal(BackRef<internal::Request, bun_ptr::Root>),
 }
 
 /// An in-flight query: its request plus the subordinate ref, which lives and

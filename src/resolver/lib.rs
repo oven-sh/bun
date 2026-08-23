@@ -1361,7 +1361,7 @@ pub mod fs {
         /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
         /// realpath.
         pub(crate) fn kind(
-            &mut self,
+            &self,
             dir_: &[u8],
             base: &[u8],
             existing_fd: Fd,
@@ -1549,7 +1549,7 @@ pub mod fs {
     impl crate::fs_full::EntryKindResolver for RealFS {
         #[inline(always)]
         fn resolve_kind(
-            &mut self,
+            &self,
             dir: &[u8],
             base: &[u8],
             existing_fd: bun_sys::Fd,

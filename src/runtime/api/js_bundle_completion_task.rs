@@ -1239,7 +1239,15 @@ impl CompletionStruct for JSBundleCompletionTask {
         let worker_pool = NonNull::new(thread_pool);
 
         // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
-        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
+        let mut bv2 = BundleV2::init(
+            bun_ptr::ParentRef::from_ref_mut(transpiler),
+            None,
+            bump,
+            event_loop,
+            false,
+            worker_pool,
+            bump,
+        )?;
 
         bv2.plugins = self.plugins();
         bv2.completion = Some(self.as_js_bundle_completion_task());

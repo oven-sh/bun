@@ -565,46 +565,6 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
     Ok(None)
 }
 
-/// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, populated by
-/// `server_body::AnyRoute::from_js`) into `bake_body::FileSystemRouterType`
-/// (`&'static [u8]`-backed, consumed by `Framework::auto`). The duplication is a
-/// layering wart and this conversion stands in for an arena-dupe until the two
-/// structs unify. All bytes are duped into `arena` so the resulting `&'static`
-/// slices live as long as `UserOptions.arena`.
-fn convert_file_system_router_type(
-    arena: &bun_alloc::Arena,
-    src: crate::bake::FileSystemRouterType,
-) -> crate::bake::bake_body::FileSystemRouterType {
-    use crate::bake::bake_body as bb;
-    // NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
-    // erasure for the `UserOptions.arena` self-referential pattern; bake_body's
-    // own `Framework::from_js` / `resolve` use it identically.
-    // TODO(refactor): thread a real `'bump` through `bb::Framework`/
-    // `bb::FileSystemRouterType` and remove this together with `arena_erase`.
-    fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
-        bb::arena_erase(arena.alloc_slice_copy(bytes))
-    }
-    fn dupe_slice_of(
-        arena: &bun_alloc::Arena,
-        v: &[std::borrow::Cow<'static, [u8]>],
-    ) -> &'static [&'static [u8]] {
-        let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(arena, c.as_ref())).collect();
-        bb::arena_erase(arena.alloc_slice_copy(&inner))
-    }
-
-    bb::FileSystemRouterType {
-        root: dupe(arena, src.root.as_ref()),
-        prefix: dupe(arena, src.prefix.as_ref()),
-        entry_server: dupe(arena, src.entry_server.as_ref()),
-        entry_client: src.entry_client.as_deref().map(|b| dupe(arena, b)),
-        ignore_underscores: src.ignore_underscores,
-        ignore_dirs: dupe_slice_of(arena, &src.ignore_dirs),
-        extensions: dupe_slice_of(arena, &src.extensions),
-        style: src.style,
-        allow_layouts: src.allow_layouts,
-    }
-}
-
 impl ServerConfig {
     pub fn from_js(
         global: &JSGlobalObject,
@@ -756,7 +716,6 @@ impl ServerConfig {
                 // `UserOptions`).
                 dedupe_html_bundle_map: Default::default(),
                 framework_router_list: Vec::new(),
-                js_string_allocations: crate::bake::StringRefList::EMPTY,
                 user_routes: &mut args.static_routes,
                 global,
             };
@@ -937,57 +896,31 @@ impl ServerConfig {
                 || !init_ctx.framework_router_list.is_empty()
             {
                 if args.development.is_hmr_enabled() {
-                    use crate::bake::bake_body as bb;
                     use bun_options_types::schema::api::DotEnvBehavior;
 
-                    // NOTE: the arena is created here and moved into
-                    // `UserOptions` (lives until `args.bake` is dropped).
-                    let arena = bun_alloc::Arena::new();
-
-                    let root = bb::arena_dupe_z(
-                        &arena,
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                    );
-
-                    // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
-                    // into `bake_body::FileSystemRouterType` (`&'static` slices)
-                    // by duping every string into the arena. Type
-                    // duplication; remove once the two structs unify.
-                    let router_types: Vec<bb::FileSystemRouterType> =
-                        core::mem::take(&mut init_ctx.framework_router_list)
-                            .into_iter()
-                            .map(|t| convert_file_system_router_type(&arena, t))
-                            .collect();
-
-                    // SAFETY: `bun_vm()` returns the live VM for this global;
-                    // we need `&mut Resolver` for `Framework::auto`.
+                    let root: Box<[u8]> =
+                        Box::from(bun_paths::fs::FileSystem::instance().top_level_dir());
+                    let router_types = core::mem::take(&mut init_ctx.framework_router_list);
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = bb::Framework::auto(&arena, resolver, router_types)
+                    let framework = crate::bake::Framework::auto(resolver, router_types)
                         .map_err(|e| global.throw_error(e, "Framework::auto"))?;
 
                     let mut user_options = crate::bake::UserOptions {
-                        arena,
-                        allocations: core::mem::replace(
-                            &mut init_ctx.js_string_allocations,
-                            crate::bake::StringRefList::EMPTY,
-                        ),
+                        arena: bun_alloc::Arena::new(),
                         root,
                         framework,
-                        bundler_options: bb::SplitBundlerOptions::default(),
+                        bundler_options: crate::bake::SplitBundlerOptions::default(),
                     };
 
                     let o = &vm.transpiler.options.transform_options;
 
                     match o.serve_env_behavior {
                         DotEnvBehavior::prefix => {
-                            // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
-                            // owned by the long-lived `transform_options`; dupe
-                            // into the arena so the `&'static [u8]` field is
-                            // backed by `UserOptions.arena`.
-                            user_options.bundler_options.client.env_prefix = o
-                                .serve_env_prefix
-                                .as_deref()
-                                .map(|p| bb::arena_dupe_z(&user_options.arena, p).as_bytes());
+                            user_options
+                                .bundler_options
+                                .client
+                                .env_prefix
+                                .clone_from(&o.serve_env_prefix);
                             user_options.bundler_options.client.env = DotEnvBehavior::prefix;
                         }
                         DotEnvBehavior::load_all => {

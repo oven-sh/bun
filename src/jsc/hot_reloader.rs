@@ -1344,7 +1344,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn get_loaders(&self) -> &bun_ast::LoaderHashTable {
-        &self.transpiler.options.loaders
+        &self.transpiler().options.loaders
     }
 
     fn log_level_at_least_info(&self) -> bool {
@@ -1371,13 +1371,14 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
         self.bun_watcher = Some(watcher_nn);
         // SAFETY: `watcher_ptr` was just installed; live for the process.
-        self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        self.transpiler_mut().resolver.watcher =
+            Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
         watcher_ptr
     }
 
     fn compute_clear_screen(&self) -> bool {
         !self
-            .transpiler
+            .transpiler()
             .env()
             .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
     }

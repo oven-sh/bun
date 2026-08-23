@@ -58,10 +58,12 @@ pub struct PendingImport {
 }
 
 pub struct BundleV2<'a> {
-    // `ssr_transpiler` may alias this same transpiler when the SSR graph
-    // isn't separate, so it stays `*mut`; `transpiler` is `&'a mut` for
-    // ergonomic field access throughout the bundler bodies.
-    pub transpiler: &'a mut Transpiler<'a>,
+    /// The primary (server-side under bake) transpiler. Non-exclusive
+    /// back-reference: the owner keeps using it between bundler turns (the dev
+    /// server resolves through it while a bundle is in flight) and
+    /// `ssr_transpiler` aliases it when the SSR graph isn't separate. Read via
+    /// `Deref`/[`BundleV2::transpiler`], write via [`BundleV2::transpiler_mut`].
+    pub(crate) transpiler: bun_ptr::ParentRef<Transpiler<'a>, bun_ptr::Mut>,
     /// When Server Components is enabled, this is used for the client bundles
     /// and `transpiler` is used for the server bundles.
     ///
@@ -140,6 +142,23 @@ pub struct BundleV2<'a> {
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
+
+    /// The bundle heap when this bundle owns it ([`BundleV2::init_with_owned_heap`]);
+    /// `graph.heap` and every `'a` arena borrow point into it. Declared last so
+    /// it is dropped after every field that references it.
+    owned_heap: Option<OwnedHeap>,
+}
+
+/// A heap allocation of the bundle arena, held as a raw pointer so the `'a`
+/// borrows minted from it in [`BundleV2::init_with_owned_heap`] stay valid
+/// while it moves into the bundle. Freed on drop.
+struct OwnedHeap(NonNull<bun_alloc::Arena>);
+
+impl Drop for OwnedHeap {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `heap::into_raw_nn` and is dropped once, here.
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
+    }
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -152,18 +171,32 @@ pub(crate) type ResolveQueue = StringHashMap<*mut ParseTask>;
 pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
     pub client_transpiler: NonNull<Transpiler<'a>>,
-    pub ssr_transpiler: NonNull<Transpiler<'a>>,
+    /// `None` when the SSR graph is not separate: SSR then goes through the
+    /// primary (server) transpiler.
+    pub ssr_transpiler: Option<NonNull<Transpiler<'a>>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
 }
 
 impl<'a> BundleV2<'a> {
-    // ── raw-ptr accessors ─────────────────────────────────────────────────
-    // `ssr_transpiler` is `*mut` because it may alias `transpiler`
-    // (same pointer in both slots when no SSR graph).
-    // Callers go through these accessors so the unsafe deref is centralized.
+    // ── transpiler accessors ──────────────────────────────────────────────
+    // `transpiler` / `client_transpiler` / `ssr_transpiler` are back-references
+    // handed over at construction (`ssr_transpiler` aliases `transpiler` when
+    // there is no separate SSR graph). Callers go through these accessors so
+    // the deref is centralized.
     #[inline]
-    pub(crate) fn transpiler(&self) -> &Transpiler<'a> {
-        &*self.transpiler
+    pub fn transpiler(&self) -> &Transpiler<'a> {
+        &self.transpiler
+    }
+
+    /// Exclusive access to the primary transpiler (log, resolver caches,
+    /// option fix-ups).
+    #[inline]
+    pub fn transpiler_mut(&mut self) -> &mut Transpiler<'a> {
+        // SAFETY: the `ParentRef` handed to `init` carries its owner's
+        // guarantee that the transpiler outlives this bundle and is not
+        // borrowed elsewhere while the bundler runs; `&mut self` rules out
+        // another borrow through this bundle.
+        unsafe { self.transpiler.assume_mut() }
     }
 
     #[inline]
@@ -255,7 +288,7 @@ impl<'a> BundleV2<'a> {
                     panic!("Failed to initialize client transpiler: {}", e.name())
                 });
             }
-            return &mut *self.transpiler;
+            return self.transpiler_mut();
         }
         // SAFETY: all three pointers are live for `'a` (set in `init`); the
         // `client_transpiler` arm is only reached when bake populated it.
@@ -263,7 +296,7 @@ impl<'a> BundleV2<'a> {
             match target {
                 Target::Browser => self.client_transpiler.unwrap().assume_mut(),
                 Target::ServerComponentsSsr => &mut *self.ssr_transpiler,
-                _ => &mut *self.transpiler,
+                _ => self.transpiler.assume_mut(),
             }
         }
     }
@@ -2901,9 +2934,12 @@ pub mod bv2_impl {
             Ok(Some(source_index.get()))
         }
 
-        /// `heap` is not freed when `deinit`ing the BundleV2
+        /// `transpiler` (and the bake transpilers) are back-references: the
+        /// owner keeps them alive, in place and otherwise unborrowed while the
+        /// bundle uses them. `heap` is not freed when `deinit`ing the BundleV2
+        /// (see [`BundleV2::init_with_owned_heap`] for a bundle that owns it).
         pub fn init(
-            transpiler: &'a mut Transpiler<'a>,
+            transpiler: bun_ptr::ParentRef<Transpiler<'a>, bun_ptr::Mut>,
             bake_options: Option<BakeOptions<'a>>,
             _alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
@@ -2915,16 +2951,18 @@ pub mod bv2_impl {
             thread_pool: Option<NonNull<ThreadPoolLib>>,
             heap: &'a ThreadLocalArena,
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            // The Box is heap-owned and dropped by the caller.
-            transpiler.options.mark_builtins_as_external =
-                transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
-            transpiler.resolver.opts.mark_builtins_as_external =
-                transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
+            {
+                // SAFETY: construction contract above — live and unborrowed.
+                let transpiler = unsafe { transpiler.assume_mut() };
+                transpiler.options.mark_builtins_as_external =
+                    transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
+                transpiler.resolver.opts.mark_builtins_as_external =
+                    transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
+            }
 
-            // SAFETY: `ssr_transpiler` intentionally aliases `transpiler` via a
-            // raw `*mut` until bake installs a separate SSR transpiler; all
-            // derefs go through the centralized accessors.
-            let ssr_alias: *mut Transpiler<'a> = std::ptr::from_mut(transpiler);
+            // `ssr_transpiler` intentionally aliases `transpiler` until bake
+            // installs a separate SSR transpiler.
+            let ssr_alias: *mut Transpiler<'a> = transpiler.as_mut_ptr();
             let mut this = Box::new(BundleV2 {
                 transpiler,
                 client_transpiler: None,
@@ -2962,6 +3000,7 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
+                owned_heap: None,
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
@@ -2969,7 +3008,9 @@ pub mod bv2_impl {
                 this.client_transpiler = Some(unsafe {
                     bun_ptr::ParentRef::from_raw_mut(bo.client_transpiler.as_ptr())
                 });
-                this.ssr_transpiler = bo.ssr_transpiler.as_ptr();
+                if let Some(ssr) = bo.ssr_transpiler {
+                    this.ssr_transpiler = ssr.as_ptr();
+                }
                 let separate_ssr = bo
                     .framework
                     .server_components
@@ -3004,8 +3045,8 @@ pub mod bv2_impl {
             let tree_shaking = this.transpiler.options.tree_shaking_override.unwrap_or(
                 this.transpiler.options.output_format != options::Format::InternalBakeDev,
             );
-            this.transpiler.options.tree_shaking = tree_shaking;
-            this.transpiler.resolver.opts.tree_shaking = tree_shaking;
+            this.transpiler_mut().options.tree_shaking = tree_shaking;
+            this.transpiler_mut().resolver.opts.tree_shaking = tree_shaking;
 
             // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
             // the resolver lives in `transpiler` which outlives `self` (same `'a`).
@@ -3089,6 +3130,43 @@ pub mod bv2_impl {
             // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
             this.graph.pool().start();
             Ok(this)
+        }
+
+        /// [`BundleV2::init`] for an owner that cannot name the bundle's
+        /// lifetime (bake's dev server keeps the bundle across event-loop turns):
+        /// the bundle takes the heap and frees it last, after everything
+        /// allocated from it. Everything the bundle exposes with lifetime `'a`
+        /// that lives in this heap (`graph.ast`, `heap()`, ...) is valid only
+        /// while the returned box is; the owner must not retain it past that.
+        pub fn init_with_owned_heap(
+            transpiler: bun_ptr::ParentRef<Transpiler<'a>, bun_ptr::Mut>,
+            bake_options: Option<BakeOptions<'a>>,
+            heap: Box<ThreadLocalArena>,
+            event_loop: EventLoop,
+            cli_watch_flag: bool,
+            thread_pool: Option<NonNull<ThreadPoolLib>>,
+        ) -> Result<Box<BundleV2<'a>>, Error> {
+            let heap = super::OwnedHeap(bun_core::heap::into_raw_nn(heap));
+            // SAFETY: `heap` is a live allocation freed only when `OwnedHeap`
+            // drops: after `this` on the error path below, or as the bundle's
+            // last field.
+            let heap_ref: &'a ThreadLocalArena = unsafe { heap.0.as_ref() };
+            let mut this = Self::init(
+                transpiler,
+                bake_options,
+                heap_ref,
+                event_loop,
+                cli_watch_flag,
+                thread_pool,
+                heap_ref,
+            )?;
+            this.owned_heap = Some(heap);
+            Ok(this)
+        }
+
+        /// The bundle heap (`graph.heap`).
+        pub fn heap(&self) -> &ThreadLocalArena {
+            self.graph.heap
         }
 
         pub(crate) fn arena(&self) -> &'a bun_alloc::Arena {
@@ -3195,7 +3273,7 @@ pub mod bv2_impl {
                 }
 
                 // no plugins were matched
-                let mut resolved = match self.transpiler.resolve_entry_point(entry_point) {
+                let mut resolved = match self.transpiler_mut().resolve_entry_point(entry_point) {
                     Ok(r) => r,
                     Err(_) => continue,
                 };
@@ -3244,7 +3322,7 @@ pub mod bv2_impl {
                     if flags.client() && !flags.server() && !flags.ssr() {
                         std::ptr::from_mut(self.transpiler_for_target(Target::Browser))
                     } else {
-                        &raw mut *self.transpiler
+                        self.transpiler.as_mut_ptr()
                     };
                 let server_target = self.transpiler.options.target;
                 let client_loader = flags.html().then_some(Loader::Html);
@@ -3383,7 +3461,7 @@ pub mod bv2_impl {
                 }
 
                 // no plugins matched
-                let mut resolved = match self.transpiler.resolve_entry_point(abs_path) {
+                let mut resolved = match self.transpiler_mut().resolve_entry_point(abs_path) {
                     Ok(r) => r,
                     Err(_) => continue,
                 };
@@ -4012,7 +4090,7 @@ pub mod bv2_impl {
         }
 
         pub fn generate_from_cli(
-            transpiler: &'a mut Transpiler<'a>,
+            transpiler: bun_ptr::ParentRef<Transpiler<'a>, bun_ptr::Mut>,
             alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
             enable_reloading: bool,
@@ -4162,7 +4240,7 @@ pub mod bv2_impl {
         /// worker pool is owned (created with `thread_pool: None`), so tearing
         /// it down does not touch the runtime VM's parse threads.
         pub fn scan_module_graph_from_cli(
-            transpiler: &'a mut Transpiler<'a>,
+            transpiler: bun_ptr::ParentRef<Transpiler<'a>, bun_ptr::Mut>,
             alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
             entry_points: &[&[u8]],
@@ -4192,7 +4270,7 @@ pub mod bv2_impl {
 
         pub fn generate_from_bake_production_cli(
             entry_points: &bake_types::production::EntryPointMap,
-            server_transpiler: &'a mut Transpiler<'a>,
+            server_transpiler: bun_ptr::ParentRef<Transpiler<'a>, bun_ptr::Mut>,
             bake_options: BakeOptions<'a>,
             alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
@@ -7596,7 +7674,7 @@ pub mod bv2_impl {
 
         /// To satisfy the interface from NewHotReloader()
         pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-            self.transpiler.resolver.bust_dir_cache(path)
+            self.transpiler_mut().resolver.bust_dir_cache(path)
         }
     }
 

@@ -2028,15 +2028,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             crate::bake::DevServer::init(crate::bake::DevServer::Options {
                 arena: &bake_options.arena,
-                root: bake_options.root,
+                root: &bake_options.root,
                 vm: jsc::VirtualMachine::get(),
                 server: AnyServer::from(&*server),
-                // LAYERING: `UserOptions` carries the `bake_body` shapes;
-                // `DevServer::Options` consumes the keystone shapes;
-                // `From` impls in `bake/mod.rs` bridge
-                // until the duplicates are collapsed.
-                framework: core::mem::take(&mut bake_options.framework).into(),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
+                framework: core::mem::take(&mut bake_options.framework),
+                bundler_options: core::mem::take(&mut bake_options.bundler_options),
                 broadcast_console_log_from_browser_to_server: config
                     .broadcast_console_log_from_browser_to_server_for_bake,
             })

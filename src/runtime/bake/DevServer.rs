@@ -20,7 +20,7 @@ use bun_alloc::{AllocError, Arena};
 use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, StringHashMap};
-use bun_core::{self as str, String as BunString, ZStr, strings};
+use bun_core::{self as str, String as BunString, strings};
 use bun_core::{Environment, Output};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -185,7 +185,7 @@ pub(crate) use map_log;
 pub struct Options<'a> {
     /// Arena must live until DevServer drops
     pub arena: &'a Arena,
-    pub root: &'a ZStr,
+    pub root: &'a [u8],
     pub vm: &'a VirtualMachine,
     /// The `Bun.serve` instance that owns the dev server.
     pub server: AnyServer,
@@ -197,8 +197,7 @@ pub struct Options<'a> {
 // Note: the fields (`arena`, `root`, `vm`, `server`, `framework`,
 // `bundler_options`, `broadcast_console_log_from_browser_to_server`) are
 // required with no sensible zero value, so `Default` is intentionally NOT
-// implemented. Callers construct `Options` via struct-literal at the call site
-// (see `bake_body.rs::UserOptions::into_dev_server_options`).
+// implemented. Callers construct `Options` via struct-literal at the call site.
 
 #[cfg(debug_assertions)]
 #[repr(u128)]
@@ -243,17 +242,9 @@ pub enum TestingBatchEvents {
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
 pub struct CurrentBundle {
-    /// OWNED (LIFETIMES.tsv): `BundleV2.init()` → `deinitWithoutFreeingArena()`.
-    /// Note: `'static` is a stand-in for the DevServer-self lifetime —
-    /// `BundleV2<'a>` borrows the three `Transpiler<'_>` fields stored inline
-    /// in `DevServer`, so the true bound is the `Box<DevServer>` allocation
-    /// (stable address, never moved post-init). Threading a real `'dev` would
-    /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
-    /// already encodes that contract.
+    /// Owns the bundle heap; holds back-references to the dev server's three
+    /// boxed `Transpiler<'static>`s, which outlive every bundle.
     pub bv2: Box<BundleV2<'static>>,
-    /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
-    /// boxed allocation's stable address; same erasure as `bv2` above).
-    pub heap: Box<bun_alloc::MimallocArena>,
     /// Backs the small `AstVec`s built during bundle setup
     /// (`start_async_bundle`'s AST scope); dropped with the bundle.
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
@@ -284,16 +275,6 @@ pub(crate) struct BundleRequest {
     pub(crate) had_reload_event: bool,
     /// When the work that led to this bundle started.
     pub(crate) timer: Instant,
-}
-
-/// A bundle set up by `start_async_bundle_setup`, before its entry points are
-/// enqueued.
-struct BundleSetup {
-    bv2: Box<BundleV2<'static>>,
-    /// Lives in `heap`; AST nodes built while the entry points are enqueued go
-    /// through it (see `start_async_bundle`).
-    ast_memory_store: &'static mut bun_ast::ASTMemoryAllocator,
-    heap: Box<bun_alloc::MimallocArena>,
 }
 
 pub struct NextBundle {
@@ -509,7 +490,7 @@ pub(crate) fn init(options: Options) -> JsResult<bun_ptr::OwnedThis<DevServerCel
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
-    let root = paths::string_paths::without_trailing_slash_windows_path(options.root.as_bytes());
+    let root = paths::string_paths::without_trailing_slash_windows_path(options.root);
     // FileSystem is a process-lifetime singleton; `init` interns the path into
     // the `DirnameStore` (process-lifetime arena) so no caller-side leak is
     // needed for the `'static` it stores.
@@ -969,7 +950,7 @@ impl Drop for DevServer {
 impl DevServer {
     fn init_server_runtime(&mut self) {
         let runtime = BunString::create_static_external(
-            crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server)
+            crate::bake::bake_body::get_hmr_runtime(bake::Side::Server)
                 .code
                 .as_bytes(),
             true,
@@ -2639,19 +2620,14 @@ impl DevServer {
             had_reload_event,
             timer,
         } = request;
-        // Bound in this order so that on an early return `bv2` (which borrows
-        // `*heap`) drops before `heap`.
-        let BundleSetup {
-            heap,
-            ast_memory_store,
-            mut bv2,
-        } = cell.with_mut(|dev| dev.start_async_bundle_setup(&entry_points))?;
+        // `bv2` owns its heap (dropped last), so an early return frees the
+        // bundle before the arena it points into.
+        let mut bv2 = cell.with_mut(|dev| dev.start_async_bundle_setup(&entry_points))?;
 
         // AST nodes built while the entry points are enqueued live exactly as
         // long as the bundle: the `AstAllocState` is taken into `CurrentBundle`
-        // below and released by the guard on every path.
-        let mut ast_memory_store =
-            scopeguard::guard(ast_memory_store, |store| store.release_ast_state());
+        // below (or released when the allocator drops on an error path).
+        let mut ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(bv2.heap());
         let ast_scope = ast_memory_store.enter();
 
         // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
@@ -2692,7 +2668,6 @@ impl DevServer {
         cell.with_mut(move |dev| {
             dev.current_bundle = Some(CurrentBundle {
                 bv2,
-                heap,
                 ast_alloc_state,
                 timer,
                 start_data,
@@ -2714,7 +2689,7 @@ impl DevServer {
     fn start_async_bundle_setup(
         &mut self,
         entry_points: &EntryPointList,
-    ) -> crate::Result<BundleSetup> {
+    ) -> crate::Result<Box<BundleV2<'static>>> {
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
@@ -2733,40 +2708,36 @@ impl DevServer {
         // Ref server to keep it from closing.
         self.server.on_pending_request();
 
-        // Owned by the `CurrentBundle` alongside `bv2`, which borrows it as
-        // `graph.heap`.
+        // Owned by `bv2` (dropped after everything allocated from it).
         let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
-        let (server_transpiler, heap_ref) = self.bundle_borrows(&heap);
-        let client_transpiler = ::core::ptr::NonNull::from(&mut *self.client_transpiler);
-        let ssr_transpiler = match &mut self.ssr_transpiler {
-            Some(t) => ::core::ptr::NonNull::from(&mut **t),
-            None => ::core::ptr::NonNull::from(&mut *server_transpiler),
-        };
-
-        let ast_memory_store = heap_ref.alloc(bun_ast::ASTMemoryAllocator::borrowing(heap_ref));
-
         // The bundler stores `Option<NonNull<AnyEventLoop>>`; park the value
         // in `heap` so it lives exactly as long as `bv2`.
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(::core::ptr::NonNull::from(heap_ref.alloc(
+            Some(::core::ptr::NonNull::from(heap.alloc(
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
+        let client_transpiler = ::core::ptr::NonNull::from(&mut *self.client_transpiler);
+        let ssr_transpiler = self
+            .ssr_transpiler
+            .as_deref_mut()
+            .map(::core::ptr::NonNull::from);
 
-        let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
-            server_transpiler,
+        // The three boxed transpilers outlive every bundle. The dev server
+        // keeps resolving through `server_transpiler` between bundler turns.
+        let mut bv2: Box<BundleV2<'static>> = BundleV2::init_with_owned_heap(
+            bun_ptr::ParentRef::from_ref_mut(&mut *self.server_transpiler),
             Some(bundler::bundle_v2::BakeOptions {
                 framework: self.framework.as_bundler_view(),
                 client_transpiler,
                 ssr_transpiler,
                 plugins: self.bundler_options.plugin,
             }),
-            heap_ref,
+            heap,
             event_loop,
             false, // watching is handled separately
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
-            heap_ref,
         )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(self.watcher()));
         bv2.asynchronous = true;
@@ -2781,39 +2752,7 @@ impl DevServer {
             self.graph_safety_lock.unlock();
         }
 
-        Ok(BundleSetup {
-            bv2,
-            ast_memory_store,
-            heap,
-        })
-    }
-
-    /// The two borrows a `BundleV2<'static>` holds for the lifetime of a
-    /// bundle: the server transpiler (`bv2.transpiler`) and the bundle's heap
-    /// (`bv2.graph.heap`). `BundleV2<'a>` ties both to one `'a`, which for the
-    /// dev server's `Transpiler<'static>` must be `'static`. Liveness: the
-    /// transpiler is boxed in `self` and the heap is boxed in the
-    /// `CurrentBundle` next to `bv2`, and `finalize_bundle_cleanup` drops `bv2`
-    /// before either. Aliasing: this is NOT exclusive — the dev server keeps
-    /// using `self.server_transpiler` (its resolver) while the bundle runs, as
-    /// the bundler's own `client_transpiler`/`ssr_transpiler` `NonNull`s
-    /// already do. Goes away when `BundleV2` takes its primary transpiler the
-    /// same way (`NonNull`/`BackRef`) and owns the dev-server bundle heap.
-    fn bundle_borrows(
-        &mut self,
-        heap: &bun_alloc::MimallocArena,
-    ) -> (
-        &'static mut Transpiler<'static>,
-        &'static bun_alloc::MimallocArena,
-    ) {
-        // SAFETY: see doc comment (liveness holds; exclusivity is the bundler's
-        // existing shared-transpiler contract, not established here).
-        unsafe {
-            (
-                bun_ptr::detach_lifetime_mut(&mut *self.server_transpiler),
-                bun_ptr::detach_lifetime_ref(heap),
-            )
-        }
+        Ok(bv2)
     }
 
     pub(crate) fn prepare_and_log_resolution_failures(&mut self) -> crate::Result<()> {
@@ -3331,7 +3270,7 @@ fn finalize_bundle_cleanup(
     if let Some(cb) = &mut dev.current_bundle {
         cb.promise.deinit_idempotently();
     }
-    // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
+    // Drops `bv2` and, last, the bundle heap it owns.
     dev.current_bundle = None;
     dev.log.clear_and_free();
 

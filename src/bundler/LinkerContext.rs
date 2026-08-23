@@ -451,13 +451,13 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: field-disjoint with `self` (= `(*bundle).linker`); `parse_graph`
         // is a `*mut Graph` backref so no `&mut` is materialized.
         self.parse_graph = unsafe { core::ptr::addr_of_mut!((*bundle).graph) };
-        // SAFETY: field-disjoint scalar read; `transpiler` is itself a `*mut`.
+        // SAFETY: field-disjoint with `self` (= `(*bundle).linker`).
         let dyn_entry_points =
             unsafe { &mut *core::ptr::addr_of_mut!((*bundle).dynamic_import_entry_points) };
 
-        // SAFETY: `bundle.transpiler` is a `*mut Transpiler` backref valid for
-        // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
-        let transpiler = unsafe { &mut *(*bundle).transpiler };
+        // SAFETY: field-disjoint read of the transpiler back-reference; the
+        // pointee outlives the bundle (see `BundleV2::transpiler`).
+        let transpiler = unsafe { &*core::ptr::addr_of!((*bundle).transpiler) };
         self.graph.code_splitting = transpiler.options.code_splitting;
         // `transpiler.log` is the canonical
         // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).

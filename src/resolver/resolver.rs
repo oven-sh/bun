@@ -2602,6 +2602,7 @@ impl<'a> Resolver<'a> {
 
         // Then check for the package in any enclosing "node_modules" directories
         // or in the package root directory if it's a self-reference
+        let mut tried_store_fallback = false;
         if use_node_module_resolver {
             loop {
                 // Skip directories that are themselves called "node_modules", since we
@@ -2819,7 +2820,36 @@ impl<'a> Resolver<'a> {
                 }
 
                 match dir_info.get_parent() {
-                    Some(p) => dir_info = p,
+                    Some(p) => {
+                        // A module inside the isolated linker's global virtual
+                        // store realpaths into `<cache>/links/<entry>/`, so
+                        // the walk is about to leave the entry for the shared
+                        // cache and would never see the project's hidden
+                        // hoisted layer (`node_modules/.bun/node_modules`).
+                        // Jump to that layer instead, exactly where a
+                        // project-local entry's walk would reach it, so
+                        // packages the project installs stay resolvable and
+                        // the cache's own ancestors are never consulted
+                        // before the project.
+                        if !tried_store_fallback
+                            && is_global_store_entry_dir(dir_info.abs_path, p.abs_path)
+                        {
+                            tried_store_fallback = true;
+                            if let Some(fallback) =
+                                self.store_hoisted_fallback_dir_info(dir_info.abs_path)
+                            {
+                                if let Some(debug) = self.debug_logs.as_mut() {
+                                    debug.add_note_fmt(format_args!(
+                                        "Retrying from the project's store fallback \"{}\"",
+                                        bstr::BStr::new(fallback.abs_path)
+                                    ));
+                                }
+                                dir_info = fallback;
+                                continue;
+                            }
+                        }
+                        dir_info = p;
+                    }
                     None => break,
                 }
             }
@@ -3312,6 +3342,33 @@ impl<'a> Resolver<'a> {
             d.decrease_indent();
         }
         MatchStatus::NotFound
+    }
+
+    /// The isolated linker's hidden hoisted layer for the project this
+    /// process runs in: the `node_modules/.bun` directory (it holds the
+    /// fallback at `node_modules/.bun/node_modules`) of the nearest ancestor
+    /// of `top_level_dir`, including `top_level_dir` itself, whose store
+    /// links `entry_dir`. A global-store entry is shared, so the hoisted
+    /// layer of a project that does not link it must not answer for it.
+    fn store_hoisted_fallback_dir_info(&mut self, entry_dir: &[u8]) -> Option<DirInfoRef> {
+        let entry_name = bun_paths::basename(entry_dir);
+        // Strip the `-<16 hex entry hash>` suffix to get the store key, the
+        // name of the project-side `node_modules/.bun/<store key>` symlink.
+        let store_key = &entry_name[..entry_name.len().checked_sub(17)?];
+
+        let mut dir: &[u8] = self.fs_ref().top_level_dir;
+        loop {
+            if project_store_links_entry(dir, store_key, entry_name)
+                && let Some(abs) = self
+                    .fs_ref()
+                    .abs_buf_checked(&[dir, b"node_modules", b".bun"], bufs!(node_modules_check))
+                && let Ok(Some(info)) = self.dir_info_cached(abs)
+                && info.has_node_modules()
+            {
+                return Some(info);
+            }
+            dir = bun_paths::dirname(dir)?;
+        }
     }
 
     fn dir_info_for_resolution(
@@ -6765,6 +6822,64 @@ fn is_dot_slash(path: &[u8]) -> bool {
     {
         path.len() == 2 && path[0] == b'.' && strings::char_is_any_slash(path[1])
     }
+}
+
+/// Whether `dir`, whose parent is `parent_dir`, is an entry of the isolated
+/// linker's global virtual store: `<cache>/links/<entry>`. The project's
+/// `node_modules/.bun/<store key>` symlinks point there, so a module's
+/// realpath escapes the project. The resolver cannot ask `bun_install` for
+/// the configured cache directory (that would be a dependency cycle), so it
+/// recognizes the layout structurally.
+fn is_global_store_entry_dir(dir: &[u8], parent_dir: &[u8]) -> bool {
+    bun_paths::basename(parent_dir) == b"links"
+        && is_global_store_entry_name(bun_paths::basename(dir))
+}
+
+/// Whether `dir` is a project root whose store links the global entry
+/// `entry_name`: `<dir>/node_modules/.bun/<store_key>` is a link whose
+/// target's last component is `entry_name`. The entry hash in the name pins
+/// the resolved dependency closure, so a matching link from another cache
+/// still names identical content.
+fn project_store_links_entry(dir: &[u8], store_key: &[u8], entry_name: &[u8]) -> bool {
+    use bun_core::ZStr;
+    use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+
+    let mut link_buf = bun_paths::path_buffer_pool::get();
+    let cap = link_buf.len() - 1;
+    let parts: [&[u8]; 4] = [dir, b"node_modules", b".bun", store_key];
+    let Some(joined) = join_abs_string_buf_checked::<platform::Auto>(dir, &mut link_buf[..cap], &parts)
+    else {
+        return false;
+    };
+    let len = joined.len();
+    link_buf[len] = 0;
+    let link_path = ZStr::from_buf(&link_buf[..], len);
+
+    let mut target_buf = bun_paths::path_buffer_pool::get();
+    let Ok(n) = bun_sys::readlink(link_path, &mut target_buf[..]) else {
+        return false;
+    };
+    let mut target: &[u8] = &target_buf[..n];
+    while let Some((&last, rest)) = target.split_last() {
+        if last != b'/' && last != b'\\' {
+            break;
+        }
+        target = rest;
+    }
+    bun_paths::basename(target) == entry_name
+}
+
+/// `<name>@<resolution>[+<16 hex peer hash>]-<16 hex entry hash>`, written by
+/// `fmt_global_store_path` in `src/install/isolated_install/Store.rs`.
+fn is_global_store_entry_name(name: &[u8]) -> bool {
+    let Some(dash) = name.len().checked_sub(17) else {
+        return false;
+    };
+    name[dash] == b'-'
+        && name[dash + 1..]
+            .iter()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        && strings::contains_char(&name[..dash], b'@')
 }
 
 bun_core::comptime_string_map! {

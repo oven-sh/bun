@@ -139,6 +139,9 @@ export interface DevServerTest {
   env?: Record<string, string>;
 }
 
+/** A `DevServerTest` without its body: what one dev server serves. */
+type DevServerProject = Omit<DevServerTest, "test">;
+
 let interactive = false;
 let activeClient: Client | null = null;
 const interactive_timeout = 24 * 60 * 60 * 1000; // 24 hours
@@ -216,7 +219,7 @@ export class Dev extends EventEmitter {
     process: Subprocess<"pipe", "pipe", "pipe">,
     stream: OutputLineStream,
     nodeEnv: "development" | "production",
-    options: DevServerTest,
+    options: DevServerProject,
   ) {
     super();
     this.rootDir = realpathSync(root);
@@ -1926,20 +1929,8 @@ export function indexHtmlScript(htmlFiles: string[]) {
 
 const skipTargets = [process.platform, isCI ? "ci" : null].filter(Boolean);
 
-function testImpl<T extends DevServerTest>(
-  description: string,
-  options: T,
-  NODE_ENV: "development" | "production",
-  caller: string,
-): T {
-  if (interactive) return options;
-
-  const jest = (Bun as any).jest(caller);
-
-  const basename = path.basename(caller, ".test" + path.extname(caller));
-  const count = (counts[basename] = (counts[basename] ?? 0) + 1);
-
-  const name = `${
+function testName(NODE_ENV: "development" | "production", basename: string, count: number, description: string) {
+  return `${
     NODE_ENV === "development" //
       ? Bun.enableANSIColors
         ? " \x1b[35mDEV\x1b[0m"
@@ -1948,36 +1939,42 @@ function testImpl<T extends DevServerTest>(
         ? "\x1b[36mPROD\x1b[0m"
         : "PROD"
   }:${basename}-${count}: ${description}`;
+}
 
-  const isStressTest = stressTestSelect === "ALL" || (stressTestSelect && name.includes(stressTestSelect));
+function testTimeout(options: Pick<DevServerTest, "timeoutMultiplier">) {
+  return (options.timeoutMultiplier ?? 1) * (isWindows ? 45_000 : 30_000) * WAIT_MULTIPLIER;
+}
 
-  async function run() {
-    const root = path.join(tempDir, basename + count);
+/**
+ * Writes the project one dev server serves under `root`: `options.files` (or
+ * the fixture), the `bun.app.ts` that routes its HTML files, and the
+ * `harness_start.ts` entry point the harness drives.
+ */
+async function writeProject(root: string, options: DevServerProject): Promise<void> {
+  // Clean the test directory if it exists
+  cleanTestDir(root);
 
-    // Clean the test directory if it exists
-    cleanTestDir(root);
-
-    const mainDir = path.resolve(root, options.mainDir ?? ".");
-    if (options.files) {
-      const htmlFiles = (options.htmlFiles ?? Object.keys(options.files).filter(file => file.endsWith(".html"))).map(
-        x => path.join(root, x),
-      );
-      await writeAll(root, options.files);
-      const runInstall = options.framework === "react";
-      if (runInstall) {
-        // await copyCachedReactDeps(root);
-        await installReactWithCache(root);
+  const mainDir = path.resolve(root, options.mainDir ?? ".");
+  if (options.files) {
+    const htmlFiles = (options.htmlFiles ?? Object.keys(options.files).filter(file => file.endsWith(".html"))).map(x =>
+      path.join(root, x),
+    );
+    await writeAll(root, options.files);
+    const runInstall = options.framework === "react";
+    if (runInstall) {
+      // await copyCachedReactDeps(root);
+      await installReactWithCache(root);
+    }
+    if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
+      if (!options.framework) {
+        throw new Error("Must specify one of: `options.framework`, `*.html`, or `bun.app.ts`");
       }
-      if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
-        if (!options.framework) {
-          throw new Error("Must specify one of: `options.framework`, `*.html`, or `bun.app.ts`");
-        }
-        if (options.pluginFile) {
-          fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
-        }
-        fs.writeFileSync(
-          path.join(root, "bun.app.ts"),
-          dedent`
+      if (options.pluginFile) {
+        fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
+      }
+      fs.writeFileSync(
+        path.join(root, "bun.app.ts"),
+        dedent`
             ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
             export default {
               app: {
@@ -1986,48 +1983,48 @@ function testImpl<T extends DevServerTest>(
               },
             };
           `,
-        );
-      } else if (htmlFiles.length > 0) {
-        if (options.files["bun.app.ts"]) {
-          throw new Error("Cannot provide both bun.app.ts and index.html");
-        }
-        await Bun.write(
-          path.join(mainDir, "bun.app.ts"),
-          indexHtmlScript(htmlFiles.map(file => path.relative(mainDir, file))),
-        );
+      );
+    } else if (htmlFiles.length > 0) {
+      if (options.files["bun.app.ts"]) {
+        throw new Error("Cannot provide both bun.app.ts and index.html");
       }
-    } else {
-      if (!options.fixture) {
-        throw new Error("Must provide either `fixture` or `files`");
-      }
-      const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
-      fs.cpSync(fixture, root, { recursive: true });
+      await Bun.write(
+        path.join(mainDir, "bun.app.ts"),
+        indexHtmlScript(htmlFiles.map(file => path.relative(mainDir, file))),
+      );
+    }
+  } else {
+    if (!options.fixture) {
+      throw new Error("Must provide either `fixture` or `files`");
+    }
+    const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
+    fs.cpSync(fixture, root, { recursive: true });
 
-      if (!fs.existsSync(path.join(mainDir, "bun.app.ts"))) {
-        if (!fs.existsSync(path.join(mainDir, "index.html"))) {
-          throw new Error(`Fixture ${fixture} must contain a bun.app.ts or index.html file.`);
-        } else {
-          await Bun.write(path.join(root, "bun.app.ts"), indexHtmlScript(["index.html"]));
-        }
-      }
-      if (!fs.existsSync(path.join(root, "node_modules"))) {
-        if (fs.existsSync(path.join(root, "bun.lock"))) {
-          // run bun install
-          Bun.spawnSync({
-            cmd: [process.execPath, "install", "--linker=hoisted"],
-            cwd: root,
-            stdio: ["inherit", "inherit", "inherit"],
-            env: bunEnv,
-          });
-        } else {
-          // link the node_modules directory from test/node_modules to the temp directory
-          fs.symlinkSync(path.join(devTestRoot, "../../node_modules"), path.join(root, "node_modules"), "junction");
-        }
+    if (!fs.existsSync(path.join(mainDir, "bun.app.ts"))) {
+      if (!fs.existsSync(path.join(mainDir, "index.html"))) {
+        throw new Error(`Fixture ${fixture} must contain a bun.app.ts or index.html file.`);
+      } else {
+        await Bun.write(path.join(root, "bun.app.ts"), indexHtmlScript(["index.html"]));
       }
     }
-    fs.writeFileSync(
-      path.join(root, "harness_start.ts"),
-      dedent`
+    if (!fs.existsSync(path.join(root, "node_modules"))) {
+      if (fs.existsSync(path.join(root, "bun.lock"))) {
+        // run bun install
+        Bun.spawnSync({
+          cmd: [process.execPath, "install", "--linker=hoisted"],
+          cwd: root,
+          stdio: ["inherit", "inherit", "inherit"],
+          env: bunEnv,
+        });
+      } else {
+        // link the node_modules directory from test/node_modules to the temp directory
+        fs.symlinkSync(path.join(devTestRoot, "../../node_modules"), path.join(root, "node_modules"), "junction");
+      }
+    }
+  }
+  fs.writeFileSync(
+    path.join(root, "harness_start.ts"),
+    dedent`
         import appConfig from ${JSON.stringify(path.join(mainDir, "bun.app.ts"))};
         import { fullGC } from "bun:jsc";
 
@@ -2069,47 +2066,67 @@ function testImpl<T extends DevServerTest>(
           }
         });
       `,
-    );
+  );
+}
 
-    using _ = {
-      [Symbol.dispose]: () => {
-        for (const proc of danglingProcesses) {
-          proc.kill("SIGKILL");
-        }
-      },
-    };
+/** Kills every client and dev server subprocess that is still running. */
+function killDanglingProcesses() {
+  for (const proc of danglingProcesses) {
+    proc.kill("SIGKILL");
+  }
+}
 
-    await using devProcess = Bun.spawn({
-      cwd: root,
-      cmd: [process.execPath, "./harness_start.ts"],
-      env: mergeWindowEnvs([
-        bunEnv,
-        {
-          FORCE_COLOR: "1",
-          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-          BUN_DEV_SERVER_TEST_RUNNER: "1",
-          BUN_DUMP_STATE_ON_CRASH: "1",
-          NODE_ENV,
-          // BUN_DEBUG_QUIET_LOGS: "0",
-          // BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
-          // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
-          // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
-          BUN_ASSUME_PERFECT_INCREMENTAL: "0",
-          ...options.env,
-        },
-      ]),
-      stdio: ["pipe", "pipe", "pipe"],
-      onExit: (subprocess, exitCode, signalCode, error) => {
-        danglingProcesses.delete(subprocess);
+interface DevServerHandle extends AsyncDisposable {
+  dev: Dev;
+}
+
+/**
+ * Spawns the dev server for a project that `writeProject` wrote, and resolves
+ * once it listens and the harness's HMR socket is connected. Disposing the
+ * handle kills the process; call `dev.gracefulExit()` first for a clean exit.
+ */
+async function spawnDevServer(
+  root: string,
+  options: DevServerProject,
+  NODE_ENV: "development" | "production",
+  isStressTest: boolean,
+): Promise<DevServerHandle> {
+  const devProcess = Bun.spawn({
+    cwd: root,
+    cmd: [process.execPath, "./harness_start.ts"],
+    env: mergeWindowEnvs([
+      bunEnv,
+      {
+        FORCE_COLOR: "1",
+        BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+        BUN_DEV_SERVER_TEST_RUNNER: "1",
+        BUN_DUMP_STATE_ON_CRASH: "1",
+        NODE_ENV,
+        // BUN_DEBUG_QUIET_LOGS: "0",
+        // BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
+        // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
+        // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
+        BUN_ASSUME_PERFECT_INCREMENTAL: "0",
+        ...options.env,
       },
-      ipc(message, subprocess) {},
-    });
-    danglingProcesses.add(devProcess);
-    if (interactive) {
-      console.log("\x1b[35mDev Server PID: " + devProcess.pid + "\x1b[0m");
-    }
-    using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
-    devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
+    ]),
+    stdio: ["pipe", "pipe", "pipe"],
+    onExit: (subprocess, exitCode, signalCode, error) => {
+      danglingProcesses.delete(subprocess);
+    },
+    ipc(message, subprocess) {},
+  });
+  danglingProcesses.add(devProcess);
+  if (interactive) {
+    console.log("\x1b[35mDev Server PID: " + devProcess.pid + "\x1b[0m");
+  }
+  const stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
+  devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
+  const dispose = async () => {
+    stream[Symbol.dispose]();
+    await devProcess[Symbol.asyncDispose]();
+  };
+  try {
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
     if (dev.nodeEnv === "development") {
@@ -2118,35 +2135,96 @@ function testImpl<T extends DevServerTest>(
     if (isStressTest) {
       dev.stressTestEndurance = true;
     }
-
-    await maybeWaitInteractive("start");
-
-    try {
-      await options.test(dev);
-    } catch (err: any) {
-      while (err instanceof SuppressedError) {
-        logErr(err.suppressed);
-        err = err.error;
-      }
-      if (interactive) {
-        logErr(err);
-        await maybeWaitInteractive("exit");
-        process.exit(1);
-      }
-      logErr(err);
-      console.log("\x1b[31mFailed\x1b[0;2m. Files in " + root + "\x1b[0m\r");
-      throw "\r\x1b[K\x1b[A";
-    }
-
-    if (interactive) {
-      console.log("\x1b[32mPASS\x1b[0m");
-      await maybeWaitInteractive("exit");
-      await dev.gracefulExit();
-      process.exit(0);
-    }
-
-    await dev.gracefulExit();
+    return { dev, [Symbol.asyncDispose]: dispose };
+  } catch (e) {
+    await dispose();
+    throw e;
   }
+}
+
+/**
+ * Runs one case against `dev`. A failure is reported with the case's annotated
+ * stack line, and the project is left in `root` for inspection.
+ */
+async function runCase(root: string, dev: Dev, test: (dev: Dev) => Promise<void>): Promise<void> {
+  try {
+    await test(dev);
+  } catch (err: any) {
+    while (err instanceof SuppressedError) {
+      logErr(err.suppressed);
+      err = err.error;
+    }
+    if (interactive) {
+      logErr(err);
+      await maybeWaitInteractive("exit");
+      process.exit(1);
+    }
+    logErr(err);
+    console.log("\x1b[31mFailed\x1b[0;2m. Files in " + root + "\x1b[0m\r");
+    throw "\r\x1b[K\x1b[A";
+  }
+}
+
+/** Runs one `devTest` case on its own dev server, from writing the project to the server's exit. */
+async function runStandalone(
+  root: string,
+  options: DevServerTest,
+  NODE_ENV: "development" | "production",
+  isStressTest: boolean,
+): Promise<void> {
+  await writeProject(root, options);
+
+  using _ = { [Symbol.dispose]: killDanglingProcesses };
+  await using server = await spawnDevServer(root, options, NODE_ENV, isStressTest);
+  const dev = server.dev;
+
+  await maybeWaitInteractive("start");
+
+  await runCase(root, dev, options.test);
+
+  if (interactive) {
+    console.log("\x1b[32mPASS\x1b[0m");
+    await maybeWaitInteractive("exit");
+    await dev.gracefulExit();
+    process.exit(0);
+  }
+
+  await dev.gracefulExit();
+}
+
+/** The `-t` filter of an interactive run (`bun test/bake/dev/foo.test.ts <filter>`), or exits with usage. */
+function interactiveFilter(): string {
+  let arg = process.argv.slice(2).join(" ").trim();
+  if (arg.startsWith("-t")) {
+    arg = arg.slice(2).trim();
+  }
+  if (!arg) {
+    const mainFile = Bun.$.escape(path.relative(process.cwd(), process.argv[1]));
+    console.error("Options for running Dev Server tests:");
+    console.error(" - automated:   bun test " + mainFile);
+    console.error(" - interactive: bun " + mainFile + " [-t] <filter or number for test>");
+    process.exit(1);
+  }
+  return arg;
+}
+
+function testImpl<T extends DevServerTest>(
+  description: string,
+  options: T,
+  NODE_ENV: "development" | "production",
+  caller: string,
+): T {
+  if (interactive) return options;
+
+  const jest = (Bun as any).jest(caller);
+
+  const basename = path.basename(caller, ".test" + path.extname(caller));
+  const count = (counts[basename] = (counts[basename] ?? 0) + 1);
+  const name = testName(NODE_ENV, basename, count, description);
+  const isStressTest = stressTestSelect === "ALL" || (stressTestSelect && name.includes(stressTestSelect));
+  const root = path.join(tempDir, basename + count);
+
+  const run = () => runStandalone(root, options, NODE_ENV, !!isStressTest);
 
   try {
     if (options.skip && options.skip.some(x => skipTargets.includes(x))) {
@@ -2157,26 +2235,12 @@ function testImpl<T extends DevServerTest>(
     (options.only ? jest.test.only : jest.test)(
       name,
       run,
-      isStressTest
-        ? 11 * 60 * 1000
-        : interactive
-          ? interactive_timeout
-          : (options.timeoutMultiplier ?? 1) * (isWindows ? 45_000 : 30_000) * WAIT_MULTIPLIER,
+      isStressTest ? 11 * 60 * 1000 : interactive ? interactive_timeout : testTimeout(options),
     );
     return options;
   } catch {
     // not in bun test. allow interactive use
-    let arg = process.argv.slice(2).join(" ").trim();
-    if (arg.startsWith("-t")) {
-      arg = arg.slice(2).trim();
-    }
-    if (!arg) {
-      const mainFile = Bun.$.escape(path.relative(process.cwd(), process.argv[1]));
-      console.error("Options for running Dev Server tests:");
-      console.error(" - automated:   bun test " + mainFile);
-      console.error(" - interactive: bun " + mainFile + " [-t] <filter or number for test>");
-      process.exit(1);
-    }
+    const arg = interactiveFilter();
     if (name.includes(arg)) {
       interactive = true;
       console.log("\x1b[32;1m" + name + " (Interactive)\x1b[0m");
@@ -2185,6 +2249,125 @@ function testImpl<T extends DevServerTest>(
     }
   }
   return options;
+}
+
+export interface DevServerTestCase {
+  /** Starting files. Every path must be unique across the group's cases. */
+  files: FileObject;
+  /** Execute the case */
+  test: (dev: Dev) => Promise<void>;
+}
+
+export type DevServerTestGroupOptions = Omit<DevServerProject, "files" | "htmlFiles" | "fixture">;
+
+/**
+ * Declares cases that share one dev server. The server starts before the first
+ * case and exits after the last one, so the cost of a dev server process
+ * (startup, and on the ASAN lane the leak check at exit) is paid once per group
+ * instead of once per case. Each case is still its own test.
+ *
+ * The cases share one project and one incremental graph. So each case must use
+ * its own HTML route and its own files, and must leave them building without
+ * errors: the dev server reports every failure it still holds on the next error
+ * page, whichever route the failing file belongs to.
+ */
+export function devTestGroup(
+  description: string,
+  options: DevServerTestGroupOptions,
+  define: (test: (description: string, testCase: DevServerTestCase) => void) => void,
+): void {
+  const callerLocation = snapshotCallerLocation();
+  const caller = stackTraceFileName(callerLocation);
+  assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev, not " + caller);
+  groupImpl(description, options, define, "development", caller);
+}
+
+function groupImpl(
+  description: string,
+  options: DevServerTestGroupOptions,
+  define: (test: (description: string, testCase: DevServerTestCase) => void) => void,
+  NODE_ENV: "development" | "production",
+  caller: string,
+): void {
+  if (interactive) return;
+
+  const jest = (Bun as any).jest(caller);
+
+  const basename = path.basename(caller, ".test" + path.extname(caller));
+  const count = (counts[basename] = (counts[basename] ?? 0) + 1);
+  const name = testName(NODE_ENV, basename, count, description);
+  const root = path.join(tempDir, basename + count);
+  const timeout = testTimeout(options);
+
+  const files: FileObject = {};
+  const cases: { name: string; testCase: DevServerTestCase }[] = [];
+  const addCase = (caseName: string, testCase: DevServerTestCase) => {
+    for (const [file, contents] of Object.entries(testCase.files)) {
+      if (file in files) {
+        throw new Error(
+          `devTestGroup ${JSON.stringify(description)}: two cases declare the file ${JSON.stringify(file)}`,
+        );
+      }
+      files[file] = contents;
+    }
+    cases.push({ name: caseName, testCase });
+  };
+  const project: DevServerProject = { ...options, files };
+
+  try {
+    if (options.skip && options.skip.some(x => skipTargets.includes(x))) {
+      jest.describe(name, () => {
+        define((caseName, testCase) => {
+          addCase(caseName, testCase);
+          jest.test.todo(caseName);
+        });
+      });
+      return;
+    }
+
+    (options.only ? jest.describe.only : jest.describe)(name, () => {
+      let server: DevServerHandle | null = null;
+
+      jest.beforeAll(async () => {
+        await writeProject(root, project);
+        server = await spawnDevServer(root, project, NODE_ENV, false);
+      }, timeout);
+
+      define((caseName, testCase) => {
+        addCase(caseName, testCase);
+        jest.test(
+          caseName,
+          async () => {
+            if (!server) throw new Error("The group's dev server did not start");
+            await runCase(root, server.dev, testCase.test);
+          },
+          timeout,
+        );
+      });
+
+      jest.afterAll(async () => {
+        if (!server) return;
+        try {
+          await server.dev.gracefulExit();
+        } finally {
+          await server[Symbol.asyncDispose]();
+          killDanglingProcesses();
+        }
+      }, timeout);
+    });
+  } catch {
+    // not in bun test. allow interactive use
+    const arg = interactiveFilter();
+    cases.length = 0;
+    for (const file of Object.keys(files)) delete files[file];
+    define(addCase);
+    const match = cases.find(c => `${name} > ${c.name}`.includes(arg));
+    if (match) {
+      interactive = true;
+      console.log("\x1b[32;1m" + name + " > " + match.name + " (Interactive)\x1b[0m");
+      runStandalone(root, { ...project, test: match.testCase.test }, NODE_ENV, false);
+    }
+  }
 }
 
 function logErr(err: any) {

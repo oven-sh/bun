@@ -157,6 +157,76 @@ test("--heap-prof-md generates markdown heap profile on exit", async () => {
   expect(content).toContain("| Type | Count | Self Size | Retained Size | Largest ID |");
 });
 
+test("bun test --heap-prof-md writes a profile", async () => {
+  using dir = tempDir("heap-prof-test-runner", {
+    "profile.test.ts": `
+      import { expect, test } from "bun:test";
+      test("profiled test", () => expect({ value: 42 }).toEqual({ value: 42 }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--heap-prof-md", "--heap-prof-name", "test-profile.md", "./profile.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("bun test");
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toContain("Heap profile written to:");
+  expect(await Bun.file(join(String(dir), "test-profile.md")).text()).toContain("# Bun Heap Profile");
+  expect(exitCode).toBe(0);
+});
+
+test("bun test --heap-prof writes a V8 profile", async () => {
+  using dir = tempDir("heap-prof-test-runner-v8", {
+    "profile.test.ts": `import { test } from "bun:test"; test("profiled test", () => {});`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--heap-prof", "--heap-prof-name", "test-profile.heapprofile", "./profile.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("bun test");
+  expect(stderr).toContain("1 pass");
+  expectV8HeapSnapshotShape(await readProfile(String(dir), "test-profile.heapprofile"));
+  expect(exitCode).toBe(0);
+});
+
+test("bun test rejects heap profiling with multiple parallel workers", async () => {
+  using dir = tempDir("heap-prof-test-parallel", {
+    "first.test.ts": `import { test } from "bun:test"; test("first", () => {});`,
+    "second.test.ts": `import { test } from "bun:test"; test("second", () => {});`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--heap-prof-md"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("");
+  expect(stderr).toBe(
+    "error: profiling is not supported with bun test --parallel\n" +
+      "note: Remove --parallel to profile the test process.\n",
+  );
+  expect(exitCode).toBe(1);
+});
+
 test("--heap-prof-dir specifies the output directory", async () => {
   using dir = tempDir("heap-prof-dir-test", {
     "profiles": {},

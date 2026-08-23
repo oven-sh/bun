@@ -317,6 +317,111 @@ describe.concurrent("--cpu-prof", () => {
     expect(profileContent).toContain("# CPU Profile");
   });
 
+  test("bun test --cpu-prof-md writes a profile", async () => {
+    using dir = tempDir("cpu-prof-test-runner", {
+      "profile.test.ts": `
+        import { expect, test } from "bun:test";
+
+        test("profiled test", () => {
+          const end = performance.now() + 100;
+          let iterations = 0;
+          while (performance.now() < end) iterations++;
+          expect(iterations).toBeGreaterThan(0);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--cpu-prof-md", "--cpu-prof-name", "test-profile.md", "./profile.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("bun test");
+    expect(stderr).toContain("1 pass");
+    expect(await Bun.file(join(String(dir), "test-profile.md")).text()).toContain("# CPU Profile");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun test --cpu-prof writes a JSON profile", async () => {
+    using dir = tempDir("cpu-prof-test-runner-json", {
+      "profile.test.ts": `import { test } from "bun:test"; test("profiled test", () => {});`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--cpu-prof", "--cpu-prof-name", "test-profile.cpuprofile", "./profile.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("bun test");
+    expect(stderr).toContain("1 pass");
+    expect(JSON.parse(await Bun.file(join(String(dir), "test-profile.cpuprofile")).text())).toHaveProperty("nodes");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun test profiling works with --parallel=1", async () => {
+    using dir = tempDir("cpu-prof-test-parallel-one", {
+      "profile.test.ts": `
+        import { expect, test } from "bun:test";
+
+        test("profiled test", () => {
+          const end = performance.now() + 100;
+          let iterations = 0;
+          while (performance.now() < end) iterations++;
+          expect(iterations).toBeGreaterThan(0);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=1", "--cpu-prof-md", "--cpu-prof-name", "test-profile.md"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("1x PARALLEL");
+    expect(stderr).toContain("1 pass");
+    expect(await Bun.file(join(String(dir), "test-profile.md")).text()).toContain("# CPU Profile");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun test rejects CPU profiling with multiple parallel workers", async () => {
+    using dir = tempDir("cpu-prof-test-parallel", {
+      "first.test.ts": `import { test } from "bun:test"; test("first", () => {});`,
+      "second.test.ts": `import { test } from "bun:test"; test("second", () => {});`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--cpu-prof-md"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      "error: profiling is not supported with bun test --parallel\n" +
+        "note: Remove --parallel to profile the test process.\n",
+    );
+    expect(exitCode).toBe(1);
+  });
+
   test("--cpu-prof-md shows function details with relationships", async () => {
     using dir = tempDir("cpu-prof-md-details", {
       "test.js": `

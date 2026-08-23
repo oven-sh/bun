@@ -2340,6 +2340,14 @@ impl TestCommand {
             _ = vm.global().set_time_zone(&ZigString::init(tz_name));
         }
 
+        {
+            let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `ctx` lives in this never-returning test command frame.
+            vm.run_with_api_lock(|| unsafe {
+                crate::cli::profiling::configure(&mut *vm_ptr, &ctx.runtime_options)
+            });
+        }
+
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.

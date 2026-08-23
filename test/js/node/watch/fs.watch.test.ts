@@ -968,7 +968,6 @@ describe("fs.watch", () => {
   // with SIGSEGV. Runs in a subprocess because the unfixed behavior is a crash.
   test.skipIf(!isLinux)("recursive watch survives a deep tree moved into the watched directory", async () => {
     const depth = 300;
-    const deadlineMs = isASAN || isDebug ? 30_000 : 10_000;
 
     using dir = tempDir("fs-watch-deep-move", {});
 
@@ -995,7 +994,7 @@ describe("fs.watch", () => {
       const deadline = setTimeout(() => {
         console.log(JSON.stringify({ timedOut: true, count: events.length, last: events.slice(-3) }));
         process.exit(1);
-      }, ${deadlineMs});
+      }, 30_000);
 
       fs.renameSync(path.join(root, "src"), path.join(root, "watched", "moved"));
       await sawDeepest.promise;

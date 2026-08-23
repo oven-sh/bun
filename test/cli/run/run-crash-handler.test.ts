@@ -141,6 +141,8 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
 // handler and prints its own stack-overflow report.
 describe.if(isPosix)("native stack overflow is reported", () => {
   const expected = isASAN ? "AddressSanitizer: stack-overflow" : "Stack overflow";
+  // The one-line ASAN report is enough; symbolizing its frames takes seconds.
+  const env = { ...noReportEnv, ASAN_OPTIONS: [noReportEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") };
 
   test.concurrent("on the main thread", async () => {
     await using proc = Bun.spawn({
@@ -150,7 +152,7 @@ describe.if(isPosix)("native stack overflow is reported", () => {
         "stackOverflow",
         "--debug-crash-handler-use-trace-string",
       ],
-      env: noReportEnv,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -175,7 +177,7 @@ describe.if(isPosix)("native stack overflow is reported", () => {
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "main.js"],
-      env: noReportEnv,
+      env,
       cwd: String(dir),
       stdio: ["ignore", "pipe", "pipe"],
     });

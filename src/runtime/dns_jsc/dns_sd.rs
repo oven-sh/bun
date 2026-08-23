@@ -246,7 +246,7 @@ impl InflightRequest {
     fn context(&self) -> *const () {
         match self {
             InflightRequest::Jsc(r) => core::ptr::from_ref::<GetAddrInfoRequest>(r).cast(),
-            InflightRequest::Internal(r) => r.as_ptr().cast_const().cast(),
+            InflightRequest::Internal(r) => r.as_const_ptr().cast(),
         }
     }
 
@@ -677,8 +677,8 @@ pub(crate) fn lookup(
     let promise_value = request.head.promise.value();
 
     let name_z = bun::ZBox::from_bytes(query.name.as_ref());
-    // On `None`, dns_sd never accepted it and `start` dropped the request; its
-    // slot goes with it (nothing else could have joined it yet).
+    // On `None`, dns_sd never accepted it and `start` dropped the request;
+    // release its pending slot here (nothing else could have joined it yet).
     let pending_slot = request.pending_slot;
     let Some(()) = shared.start(InflightRequest::Jsc(request), protocol, c_str(&name_z)) else {
         if let Some(pos) = pending_slot {

@@ -27,9 +27,10 @@ export const symbols = [
   // Defined in src/runtime/napi/uv_posix.rs
   // "uv_cancel",
   "uv_chdir",
-  "uv_check_init",
-  "uv_check_start",
-  "uv_check_stop",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_check_init",
+  // "uv_check_start",
+  // "uv_check_stop",
   "uv_clock_gettime",
   // Defined in src/runtime/napi/uv_posix.rs
   // "uv_close",
@@ -132,9 +133,10 @@ export const symbols = [
   // "uv_has_ref",
   // Defined in uv-posix-polyfills.c
   // "uv_hrtime",
-  "uv_idle_init",
-  "uv_idle_start",
-  "uv_idle_stop",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_idle_init",
+  // "uv_idle_start",
+  // "uv_idle_stop",
   "uv_if_indextoiid",
   "uv_if_indextoname",
   "uv_inet_ntop",
@@ -179,7 +181,8 @@ export const symbols = [
   // "uv_mutex_lock",
   // "uv_mutex_trylock",
   // "uv_mutex_unlock",
-  "uv_now",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_now",
   // Defined in uv-posix-polyfills.c
   // "uv_once",
   // "uv_open_osfhandle",
@@ -219,9 +222,10 @@ export const symbols = [
   "uv_poll_init_socket",
   "uv_poll_start",
   "uv_poll_stop",
-  "uv_prepare_init",
-  "uv_prepare_start",
-  "uv_prepare_stop",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_prepare_init",
+  // "uv_prepare_start",
+  // "uv_prepare_stop",
   "uv_print_active_handles",
   "uv_print_all_handles",
   "uv_process_get_pid",
@@ -296,13 +300,14 @@ export const symbols = [
   "uv_thread_setaffinity",
   "uv_thread_setname",
   "uv_thread_setpriority",
-  "uv_timer_again",
-  "uv_timer_get_due_in",
-  "uv_timer_get_repeat",
-  "uv_timer_init",
-  "uv_timer_set_repeat",
-  "uv_timer_start",
-  "uv_timer_stop",
+  // Defined in src/runtime/napi/uv_posix.rs
+  // "uv_timer_again",
+  // "uv_timer_get_due_in",
+  // "uv_timer_get_repeat",
+  // "uv_timer_init",
+  // "uv_timer_set_repeat",
+  // "uv_timer_start",
+  // "uv_timer_stop",
   "uv_translate_sys_error",
   "uv_try_write",
   "uv_try_write2",
@@ -337,7 +342,7 @@ export const symbols = [
   "uv_udp_using_recvmmsg",
   // Defined in src/runtime/napi/uv_posix.rs
   // "uv_unref",
-  "uv_update_time",
+  // "uv_update_time",
   "uv_uptime",
   "uv_utf16_length_as_wtf8",
   "uv_utf16_to_wtf8",

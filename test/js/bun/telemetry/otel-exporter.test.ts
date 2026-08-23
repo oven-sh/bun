@@ -665,6 +665,24 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("start(): an explicit serviceName wins over resourceAttributes['service.name']", async () => {
+    using c = collector();
+    const { stderr, exitCode } = await run(
+      `
+        Bun.otel.start({ endpoint: process.env.C, serviceName: "explicit", resourceAttributes: { "service.name": "from-attrs", team: "x" } });
+        Bun.otel.tracer("t").startSpan("s").end();
+      `,
+      { C: c.url },
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const attrs = Object.fromEntries(
+      c.received[0].body.resourceSpans[0].resource.attributes.map((a: any) => [a.key, Object.values(a.value)[0]]),
+    );
+    expect(attrs["service.name"]).toBe("explicit");
+    expect(attrs.team).toBe("x");
+  });
+
   test("bunfig [telemetry] table enables and configures", async () => {
     using c = collector();
     using dir = tempDir("otel-bunfig", {

@@ -763,7 +763,8 @@ fn encode_head(
     let user = user_attr_count(p);
     let mut a = Attrs {
         w: &mut w,
-        n: user + tail_attr_count(facts).min(budget.saturating_sub(user)),
+        // (unclamped: tail attributes that did not fit count as dropped)
+        n: user + tail_attr_count(facts),
         budget,
     };
     a.put("http.request.method", Value::Str(method));

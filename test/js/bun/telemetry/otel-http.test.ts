@@ -748,7 +748,13 @@ describe("attribute count limit", () => {
     // JS-set attributes are kept first; the rest is reported as dropped.
     expect(srv.attributes.k0).toBe(0);
     expect(srv.attributes.k15).toBe(15);
-    expect(srv.droppedAttributesCount).toBeGreaterThan(4);
+    // everything that did not fit is counted: 20 JS-set + the request's own attributes - 16 kept
+    const [full] = await (async () => {
+      Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], instrumentations: { http: true } });
+      await (await fetch(`http://localhost:${server.port}/p?q=1`)).text();
+      return byName(await collect(), "bun.http.server");
+    })();
+    expect(srv.droppedAttributesCount).toBe(Object.keys(full.attributes).length - 16);
   });
 });
 

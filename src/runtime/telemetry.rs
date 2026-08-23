@@ -505,7 +505,9 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let mut replaces_exporters = false;
 
     if opts.is_object() {
-        if let Some(v) = opt_str(global, opts, "serviceName")? {
+        let explicit_service_name = opt_str(global, opts, "serviceName")?;
+        let has_service_name = explicit_service_name.is_some();
+        if let Some(v) = explicit_service_name {
             cfg.service_name = Some(v);
         }
         if let Some(v) = opts.get(global, "resourceAttributes")? {
@@ -519,7 +521,10 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 };
                 let k = bstr::ByteSlice::to_str_lossy(k).into_owned();
                 if k == "service.name" {
-                    cfg.service_name = Some(vs);
+                    // an explicit serviceName wins (SDK: OTEL_SERVICE_NAME > resource attrs)
+                    if !has_service_name {
+                        cfg.service_name = Some(vs);
+                    }
                 } else {
                     cfg.resource_attributes.retain(|(ek, _)| *ek != k);
                     cfg.resource_attributes.push((k, vs));

@@ -36,6 +36,7 @@ const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypeJoin = Array.prototype.join;
+const SafeMap = Map;
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
@@ -96,7 +97,7 @@ class BunContext {
 
   setValue(key: symbol, value: unknown): BunContext {
     if (key === SPAN_KEY) return new BunContext(toNativeSpan(value), this.#extras);
-    const m = new Map(this.#extras);
+    const m = new SafeMap(this.#extras);
     m.$set(key, value);
     return new BunContext(this.#span, m);
   }
@@ -104,7 +105,7 @@ class BunContext {
   deleteValue(key: symbol): BunContext {
     if (key === SPAN_KEY) return new BunContext(undefined, this.#extras);
     if (this.#extras === undefined || !this.#extras.$has(key)) return this;
-    const m = new Map(this.#extras);
+    const m = new SafeMap(this.#extras);
     m.$delete(key);
     return new BunContext(this.#span, m.size ? m : undefined);
   }
@@ -139,12 +140,12 @@ function unpackContext(ctx: any): [any, Map<symbol, unknown> | null | undefined]
     if ($isMap(values)) {
       let extras: Map<symbol, unknown> | undefined;
       for (const [k, v] of values) {
-        if (k !== SPAN_KEY) (extras ??= new Map()).$set(k, v);
+        if (k !== SPAN_KEY) (extras ??= new SafeMap()).$set(k, v);
       }
       return [span, extras ?? null];
     }
     const bag = ctx.getValue(BAGGAGE_KEY);
-    return [span, bag === undefined ? null : new Map([[BAGGAGE_KEY, bag]])];
+    return [span, bag === undefined ? null : new SafeMap([[BAGGAGE_KEY, bag]])];
   }
   return [undefined, undefined];
 }
@@ -233,7 +234,7 @@ const tracerProvider = {
 class Baggage {
   #entries: Map<string, { value: string; metadata?: unknown }>;
   constructor(entries?: Map<string, { value: string; metadata?: unknown }>) {
-    this.#entries = entries ?? new Map();
+    this.#entries = entries ?? new SafeMap();
   }
   getEntry(key: string) {
     const e = this.#entries.$get(key);
@@ -243,17 +244,17 @@ class Baggage {
     return ArrayFrom(this.#entries, ([k, v]) => [k, { ...v }]);
   }
   setEntry(key: string, entry: { value: string }) {
-    const m = new Map(this.#entries);
+    const m = new SafeMap(this.#entries);
     m.$set(key, entry);
     return new Baggage(m);
   }
   removeEntry(key: string) {
-    const m = new Map(this.#entries);
+    const m = new SafeMap(this.#entries);
     m.$delete(key);
     return new Baggage(m);
   }
   removeEntries(...keys: string[]) {
-    const m = new Map(this.#entries);
+    const m = new SafeMap(this.#entries);
     for (const k of keys) m.$delete(k);
     return new Baggage(m);
   }
@@ -264,7 +265,7 @@ class Baggage {
 
 function parseBaggage(header: string): Baggage | undefined {
   if (typeof header !== "string" || !header || header.length > 8192) return undefined;
-  const m = new Map();
+  const m = new SafeMap();
   const parts: string[] = StringPrototypeSplit.$call(header, ",");
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
@@ -424,7 +425,7 @@ class TraceState {
   #entries(): Map<string, string> {
     let m = this.#map;
     if (m === undefined) {
-      m = new Map();
+      m = new SafeMap();
       const raw = this.#raw;
       if (raw.length) {
         const parts: string[] = StringPrototypeSplit.$call(raw, ",");
@@ -455,7 +456,7 @@ class TraceState {
   }
   unset(key: string): TraceState {
     const next = new TraceState();
-    const m = new Map(this.#entries());
+    const m = new SafeMap(this.#entries());
     m.$delete(key);
     next.#map = m;
     return next;

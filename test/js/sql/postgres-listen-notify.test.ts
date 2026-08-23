@@ -148,6 +148,20 @@ function gate() {
   });
 }
 
+// The rejection of a promise that may still be pending, awaited plainly.
+// `expect(promise).rejects` on a pending promise re-enters the event loop
+// (#33261); from inside a socket callback, which is where a continuation
+// after `await sql.listen()` runs, the inner run drops the outer dispatch's
+// remaining events, and a subprocess test whose exit event is dropped hangs.
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected a rejection");
+}
+
 const connectionClosed = {
   name: "PostgresError",
   code: "ERR_POSTGRES_CONNECTION_CLOSED",
@@ -445,8 +459,8 @@ describe.concurrent("listen", () => {
     const cjk63 = Buffer.alloc(63, "字").toString(); // 21 characters
     const cjk66 = Buffer.alloc(66, "字").toString(); // 22 characters, 66 bytes
     const tooLong = (channel: string) => invalidChannel(channel, "must be at most 63 bytes");
-    await expect(sql.listen(ascii63 + "c", () => {})).rejects.toMatchObject(tooLong(ascii63 + "c"));
-    await expect(sql.listen(cjk66, () => {})).rejects.toMatchObject(tooLong(cjk66));
+    expect(await rejection(sql.listen(ascii63 + "c", () => {}))).toMatchObject(tooLong(ascii63 + "c"));
+    expect(await rejection(sql.listen(cjk66, () => {}))).toMatchObject(tooLong(cjk66));
     expect(() => sql.notify(cjk66)).toThrow(expect.objectContaining(tooLong(cjk66)));
 
     await sql.listen(ascii63, () => {});
@@ -740,7 +754,7 @@ describe.concurrent("listen/unlisten interleavings", () => {
     await using sql = client(server.url);
     await sql.listen("keep", () => {});
     server.failNextListen("bad");
-    await expect(sql.listen("bad", () => {})).rejects.toMatchObject(serverError("cannot LISTEN bad"));
+    expect(await rejection(sql.listen("bad", () => {}))).toMatchObject(serverError("cannot LISTEN bad"));
     await sql.listen("bad", () => {});
     expect(server.queries).toEqual(['LISTEN "keep"', 'LISTEN "bad"', 'LISTEN "bad"']);
   });
@@ -766,7 +780,7 @@ describe.concurrent("listen/unlisten interleavings", () => {
     const { port, server } = await listeningServer(socket => socket.destroy());
     try {
       await using sql = client(`postgres://u@127.0.0.1:${port}/db`);
-      await expect(sql.listen("ch", () => {})).rejects.toMatchObject({
+      expect(await rejection(sql.listen("ch", () => {}))).toMatchObject({
         name: "PostgresError",
         code: "ERR_POSTGRES_CONNECTION_FAILED",
         message: "Connection closed before the connection was established",
@@ -930,9 +944,9 @@ describe.concurrent("close()", () => {
     await server.untilQuery(queries => queries.includes('LISTEN "pending"'));
 
     await sql.close();
-    await expect(pending).rejects.toMatchObject(connectionClosed);
+    expect(await rejection(pending)).toMatchObject(connectionClosed);
     await server.untilClosed(1);
-    await expect(sql.listen("ch", () => {})).rejects.toMatchObject(connectionClosed);
+    expect(await rejection(sql.listen("ch", () => {}))).toMatchObject(connectionClosed);
     expect(await subscription.unlisten()).toBeUndefined();
     expect(server.queries).toEqual(['LISTEN "ch"', 'LISTEN "pending"']);
   });
@@ -960,7 +974,7 @@ describe.concurrent("close()", () => {
       const sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1, connectionTimeout: 60 });
       const listening = sql.listen("ch", () => {});
       await sql.close();
-      await expect(listening).rejects.toMatchObject(connectionClosed);
+      expect(await rejection(listening)).toMatchObject(connectionClosed);
     } finally {
       server.close();
     }
@@ -971,7 +985,7 @@ describe.concurrent("close()", () => {
     await using sql = client(server.url);
     const got = Promise.withResolvers<string>();
     await sql.listen("ch", got.resolve);
-    await expect(sql.close({ timeout: -1 })).rejects.toMatchObject({
+    expect(await rejection(sql.close({ timeout: -1 }))).toMatchObject({
       name: "TypeError",
       code: "ERR_INVALID_ARG_VALUE",
       message: "The property 'options.timeout' must be a non-negative integer less than 2^31. Received -1",
@@ -992,12 +1006,12 @@ describe.concurrent("arguments", () => {
       code: "ERR_INVALID_ARG_TYPE",
       message: `The "payload" argument must be of type string. Received ${received}`,
     });
-    await expect(sql.listen("", callback)).rejects.toMatchObject(emptyChannel);
-    await expect(sql.listen("a\0b", callback)).rejects.toMatchObject(
+    expect(await rejection(sql.listen("", callback))).toMatchObject(emptyChannel);
+    expect(await rejection(sql.listen("a\0b", callback))).toMatchObject(
       invalidChannel("a\\x00b", "must not contain null bytes"),
     );
-    await expect(sql.listen("ch", 1 as any)).rejects.toMatchObject(invalidCallback("onnotify"));
-    await expect(sql.listen("ch", callback, 1 as any)).rejects.toMatchObject(invalidCallback("onlisten"));
+    expect(await rejection(sql.listen("ch", 1 as any))).toMatchObject(invalidCallback("onnotify"));
+    expect(await rejection(sql.listen("ch", callback, 1 as any))).toMatchObject(invalidCallback("onlisten"));
     expect(() => sql.notify("", "p")).toThrow(expect.objectContaining(emptyChannel));
     expect(() => sql.notify("ch", null as any)).toThrow(expect.objectContaining(invalidPayload("null")));
     expect(() => sql.notify("ch", 1 as any)).toThrow(expect.objectContaining(invalidPayload("type number (1)")));
@@ -1006,9 +1020,9 @@ describe.concurrent("arguments", () => {
   test("non-Postgres adapters reject with a clear error", async () => {
     await using sql = new SQL("sqlite://:memory:");
     const unsupported = { name: "Error", message: "LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)" };
-    await expect(sql.listen("ch", () => {})).rejects.toMatchObject(unsupported);
-    await expect(sql.notify("ch", "p")).rejects.toMatchObject(unsupported);
-    await expect(sql.notify("ch")).rejects.toMatchObject(unsupported);
+    expect(await rejection(sql.listen("ch", () => {}))).toMatchObject(unsupported);
+    expect(await rejection(sql.notify("ch", "p"))).toMatchObject(unsupported);
+    expect(await rejection(sql.notify("ch"))).toMatchObject(unsupported);
   });
 
   test("reserved connections expose listen() on the client's shared listen connection; unlisten lives on the subscription only", async () => {
@@ -1090,12 +1104,14 @@ if (isDockerEnabled()) {
         if (payload === "barrier") barrier.open();
       });
 
-      await expect(
-        sql.begin(async tx => {
-          await tx.notify("e2e_tx", "rolled back");
-          throw new Error("abort");
-        }),
-      ).rejects.toThrow("abort");
+      expect(
+        await rejection(
+          sql.begin(async tx => {
+            await tx.notify("e2e_tx", "rolled back");
+            throw new Error("abort");
+          }),
+        ),
+      ).toMatchObject({ message: "abort" });
       await sql.begin(tx => tx.notify("e2e_tx", "committed"));
       await sql.notify("e2e_tx", "barrier");
       await barrier;

@@ -1812,7 +1812,8 @@ mod spawn_process_body {
     /// # Safety
     /// `argv` must point to a null-terminated array of NUL-terminated C
     /// strings with at least one non-null element; `envp` must point to a
-    /// null-terminated array of NUL-terminated C strings. Both must remain
+    /// null-terminated array of NUL-terminated C strings, or be null on
+    /// Windows (libuv then inherits the parent environment). Both must remain
     /// valid for the duration of the call.
     pub unsafe fn spawn_process(
         options: &SpawnOptions,
@@ -1868,8 +1869,9 @@ mod spawn_process_body {
                 env_block.as_ptr()
             }
         };
-        // SAFETY: both blocks are null-terminated arrays of NUL-terminated
-        // strings borrowed for the call; argv[0] is non-null (asserted).
+        // SAFETY: `argv` is a null-terminated array of NUL-terminated strings
+        // with argv[0] non-null (asserted); `envp` is likewise, or null on
+        // Windows for `Inherit`. Both are borrowed for the call.
         unsafe { spawn_process(options, argv.as_ptr(), envp) }
     }
 

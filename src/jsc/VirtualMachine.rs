@@ -2028,7 +2028,10 @@ impl VirtualMachine {
                 rare.detach_socket_groups_from_loop();
             }
             // SAFETY: this thread's loop; nothing ticks it any more.
-            unsafe { (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut() };
+            unsafe {
+                (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut();
+                Async::loop_closing(vm.uws_loop());
+            }
             bun_uws::free_thread_loop();
             teardown_log!("teardown: uSockets loop freed");
             #[cfg(windows)]

@@ -300,6 +300,19 @@ pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     }
 }
 
+/// Call before a uws loop is freed: drops the named-pipe waits that would
+/// otherwise deliver into its kqueue after the descriptor is closed (macOS).
+///
+/// # Safety
+/// `uws` is a live loop.
+pub unsafe fn loop_closing(uws: *mut bun_uws_sys::Loop) {
+    #[cfg(target_os = "macos")]
+    // SAFETY: fn contract.
+    fifo_select::forget_kqueue(Fd::from_native(unsafe { (*uws).fd }));
+    #[cfg(not(target_os = "macos"))]
+    let _ = uws;
+}
+
 pub use posix_event_loop::{AllocatorType, Owner, PollTag, get_vm_ctx, js_vm_ctx};
 
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);

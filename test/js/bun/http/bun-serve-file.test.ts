@@ -1182,6 +1182,69 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   }
 });
 
+// The stream owns the FIFO's fd itself, so it clears the reader's CLOSE_HANDLE
+// flag, and the reader's own teardown skips the FilePoll in that mode: the
+// poll stayed registered after the response ended at EOF and its ref kept the
+// event loop, and so the process, alive.
+// The idle sweep runs every few seconds, so the fixture takes that long to end.
+test.concurrent.skipIf(isWindows)(
+  "process exits after a FIFO file response completes at EOF",
+  async () => {
+    using dir = tempDir("serve-fifo-eof-exit", {
+      "fixture.ts": `
+import { openSync, writeSync, closeSync } from "node:fs";
+
+const fifoPath = process.argv[2];
+const writerFd = openSync(fifoPath, "r+");
+writeSync(writerFd, "fifo-body");
+
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  // How the body ends after the pipe's EOF is not what this test is about;
+  // a short idle timeout ends the connection either way.
+  idleTimeout: 1,
+  fetch() {
+    return new Response(Bun.file(fifoPath));
+  },
+});
+
+const res = await fetch("http://127.0.0.1:" + server.port + "/");
+const reader = res.body.getReader();
+// The first chunk proves the server opened the pipe and drained what we wrote;
+// closing the last writer afterwards delivers EOF to the server's reader.
+const first = await reader.read();
+const body = Buffer.from(first.value).toString();
+closeSync(writerFd);
+try {
+  for (;;) {
+    const { done } = await reader.read();
+    if (done) break;
+  }
+} catch {}
+
+server.stop(true);
+console.log(body);
+`,
+    });
+
+    const fifoPath = join(String(dir), "body.fifo");
+    mkfifo(fifoPath);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "fifo-body", stderr: "", exitCode: 0 });
+  },
+  20_000,
+);
+
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared
 // userdata slot per response, so when the handler returns a file response

@@ -115,12 +115,12 @@ impl Watcher {
         }
     }
 
-    /// Drops every registration of `fd` without delivering, as a kqueue drops
-    /// the knote of a closed fd. Returns whether there was one.
-    fn forget(&self, fd: Fd) -> bool {
+    /// Drops every registration that `keep` rejects without delivering, as a
+    /// kqueue drops the knotes of a closed fd. Returns whether there was one.
+    fn forget(&self, keep: impl Fn(&Armed) -> bool) -> bool {
         let mut armed = self.armed.lock();
         let before = armed.entries.len();
-        armed.entries.retain(|a| a.fd != fd);
+        armed.entries.retain(keep);
         armed.entries.len() != before
     }
 }
@@ -186,6 +186,17 @@ pub(crate) fn arm(kqueue: Fd, fd: Fd, udata: u64, generation: u64) -> sys::Resul
     }
     watcher.wake();
     Ok(())
+}
+
+/// Drops every registration that would deliver into `kqueue`. Call before the
+/// kqueue is closed, so nothing is ever delivered into a reused descriptor.
+pub(crate) fn forget_kqueue(kqueue: Fd) {
+    let Some(watcher) = WATCHER.get() else {
+        return;
+    };
+    if watcher.forget(|a| a.kqueue != kqueue) {
+        watcher.wake();
+    }
 }
 
 /// Stops waiting on `fd` for `kqueue`. Call before the fd is closed.
@@ -260,7 +271,7 @@ fn run(watcher: &'static Watcher) {
                     let mut forgot = false;
                     for (fd, _) in &watched {
                         if sys::get_fcntl_flags(*fd).is_err() {
-                            forgot |= watcher.forget(*fd);
+                            forgot |= watcher.forget(|a| a.fd != *fd);
                         }
                     }
                     if !forgot {

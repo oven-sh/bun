@@ -713,9 +713,8 @@ impl ReadFile {
         }
 
         self.could_block = !bun_sys::is_regular_file(stat.st_mode as _);
-        // pipe(2) pipes are S_IFIFO with st_dev == 0.
         #[cfg(target_os = "macos")]
-        if bun_sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0 {
+        if bun_sys::is_named_pipe(&stat) {
             self.io_poll.flags.insert(io::Flags::NamedFifo);
         }
         self.total_size =

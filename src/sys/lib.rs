@@ -948,6 +948,13 @@ mod linux_syscall;
 pub fn is_regular_file(mode: Mode) -> bool {
     kind_from_mode(mode) == FileKind::File
 }
+/// A FIFO made with `mkfifo`, as opposed to a `pipe(2)` pipe, which XNU's
+/// `pipe_stat` reports with `st_dev == 0`.
+#[cfg(target_os = "macos")]
+#[inline]
+pub fn is_named_pipe(stat: &Stat) -> bool {
+    S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0
+}
 #[cfg(windows)]
 pub use bun_errno::Win32ErrorExt;
 pub use bun_errno::{E, GetErrno, S, SystemErrno, e_from_negated, get_errno};

@@ -333,10 +333,7 @@ impl FilePoll {
     fn is_named_fifo(&mut self, fd: Fd) -> bool {
         if !self.flags.contains(Flags::NamedFifoChecked) {
             self.flags.insert(Flags::NamedFifoChecked);
-            // pipe(2) pipes are S_IFIFO with st_dev == 0.
-            let named = sys::fstat(fd)
-                .is_ok_and(|stat| sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0);
-            if named {
+            if sys::fstat(fd).is_ok_and(|stat| sys::is_named_pipe(&stat)) {
                 self.flags.insert(Flags::NamedFifo);
             }
         }

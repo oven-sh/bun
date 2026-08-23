@@ -3564,6 +3564,7 @@ private:
         // read bun types
         if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end)) {
             JSValue deserialized = JSValue::decode(value.value());
+            // Empty: the record was malformed, or the hook threw (the caller checks its scope first).
             if (deserialized.isEmpty()) {
                 fail();
                 return JSValue();

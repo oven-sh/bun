@@ -2113,7 +2113,7 @@ function generateRust(
     thunk(
       symbolName(typeName, "onStructuredCloneDeserialize"),
       `(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
-      `    host_fn::host_fn_result(global, || ${T}::on_structured_clone_deserialize(global, ptr, end))`,
+      `    host_fn::structured_clone_deserialize_result(global, || ${T}::on_structured_clone_deserialize(global, ptr, end))`,
     );
   }
 

@@ -142,16 +142,6 @@ impl Drop for Process {
     }
 }
 
-/// The type a [`ProcessExitKind`] variant's `link_impl_ProcessExit!` was
-/// written for; implement it next to that macro call.
-///
-/// # Safety
-/// `KIND` must be the variant whose `link_impl_ProcessExit!` names `Self`:
-/// the exit dispatch casts the owner pointer back to that type.
-pub unsafe trait ProcessExitOwner {
-    const KIND: ProcessExitKind;
-}
-
 /// The exit-handler owner's handle on a [`Process`]: one owned ref, and
 /// dropping it detaches the handler before releasing that ref. The owner must
 /// stay live until the handle is dropped or the exit has been dispatched —
@@ -173,11 +163,10 @@ impl ProcessHandle {
     }
 
     /// Dispatch this process's exit to `owner` (see the type-level contract).
-    pub fn set_exit_handler<T: ProcessExitOwner>(&self, owner: bun_ptr::ThisPtr<T>) {
-        // SAFETY: `T::KIND` names `T`'s own `link_impl_ProcessExit!`; `owner`
-        // is live now (`ThisPtr` invariant) and, per the type-level contract,
-        // for every dispatch.
-        let h = unsafe { ProcessExit::new(T::KIND, owner.as_ptr()) };
+    pub fn set_exit_handler<T: crate::ProcessExitOwner>(&self, owner: bun_ptr::ThisPtr<T>) {
+        // SAFETY: `owner` is live now (`ThisPtr` invariant) and, per the
+        // type-level contract, for every dispatch.
+        let h = unsafe { ProcessExit::of(owner.as_ptr()) };
         self.process_mut().set_exit_handler(h);
     }
 

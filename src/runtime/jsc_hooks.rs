@@ -1478,7 +1478,7 @@ mod vm_loader_ctx {
     // (`main`, `blob_loader`) form a transient `&VirtualMachine` scoped to the
     // single call, which never spans the re-entrant path.
     bun_bundler::link_impl_VmLoaderCtx! {
-        Runtime for VirtualMachine => |this| {
+        Runtime for extern VirtualMachine => |this| {
             origin_host() => (*this).origin.host,
             origin_path() => (*this).origin.path,
             loaders() => &raw const (*this).transpiler.options.loaders,

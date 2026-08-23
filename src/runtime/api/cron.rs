@@ -1913,7 +1913,7 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 // ============================================================================
 
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
-trait SpawnCmdTarget: CronJobBase + BufferedReaderParent + spawn::ProcessExitOwner {
+trait SpawnCmdTarget: CronJobBase + BufferedReaderParent + bun_spawn::ProcessExitOwner {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>>;
     #[cfg(unix)]
     fn stdout_reader(&self) -> &JsCell<OutputReader>;
@@ -1937,10 +1937,6 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
-// SAFETY: `link_impl_ProcessExit!` above registers `CronRegister => CronRegisterJob`.
-unsafe impl spawn::ProcessExitOwner for CronRegisterJob {
-    const KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRegister;
-}
 impl SpawnCmdTarget for CronRegisterJob {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {
         &self.process
@@ -1953,10 +1949,6 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn stderr_reader(&self) -> &JsCell<OutputReader> {
         &self.stderr_reader
     }
-}
-// SAFETY: `link_impl_ProcessExit!` above registers `CronRemove => CronRemoveJob`.
-unsafe impl spawn::ProcessExitOwner for CronRemoveJob {
-    const KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
 }
 impl SpawnCmdTarget for CronRemoveJob {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {

@@ -859,8 +859,9 @@ describe("package.json exports targets longer than the maximum path length", () 
 describe("package.json exports targets nested too deeply", () => {
   // Shallow enough for the JSON parser, which stops at about 800 levels on
   // debug builds, yet deep enough to exhaust the native stack that is left at
-  // the deepest JS frame. JS may use 7 MiB of the 8 MiB main stack (the engine
-  // default is 5 MiB), so about 1 MiB remains for the resolver down there.
+  // the deepest JS frame on an 8 MiB main stack: JS may use 7 MiB of it (the
+  // engine default is 5 MiB), so about 1 MiB remains for the resolver down
+  // there. A platform with a larger main stack resolves the target instead.
   const depth = isDebug || isASAN ? 400 : 10000;
   const env = { ...bunEnv, BUN_JSC_maxPerThreadStackUsage: String(7 * 1024 * 1024) };
   const targets = {
@@ -872,7 +873,7 @@ describe("package.json exports targets nested too deeply", () => {
   };
 
   for (const [shape, target] of Object.entries(targets)) {
-    it.concurrent(`reports a resolution error for a deeply nested ${shape} target`, async () => {
+    it.concurrent(`does not crash on a deeply nested ${shape} target`, async () => {
       using dir = tempDir(`resolver-exports-deep-${shape}`, {
         "package.json": JSON.stringify({ name: "host" }),
         "node_modules/test-pkg/package.json": `{"name":"test-pkg","exports":{".":${target},"./shallow":"./t.js"}}`,
@@ -890,7 +891,8 @@ describe("package.json exports targets nested too deeply", () => {
               if (!(e instanceof RangeError)) throw e;
               if (outcome !== undefined) return;
               try {
-                outcome = "resolved " + require.resolve("test-pkg");
+                require.resolve("test-pkg");
+                outcome = "resolved";
               } catch (e2) {
                 // Still too deep to enter the call: the frame above retries.
                 if (e2 instanceof RangeError) throw e2;
@@ -912,7 +914,13 @@ describe("package.json exports targets nested too deeply", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "caught MODULE_NOT_FOUND\n", stderr: "", exitCode: 0 });
+      // The stack check turns the walk into a resolution error when too little
+      // stack remains. With more stack the target resolves. Neither may crash.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: expect.stringMatching(/^(caught MODULE_NOT_FOUND|resolved)\n$/),
+        stderr: "",
+        exitCode: 0,
+      });
     });
   }
 });

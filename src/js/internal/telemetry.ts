@@ -31,6 +31,11 @@ const ObjectKeys = Object.keys;
 const ArrayFrom = Array.from;
 const encodeURIComponent_ = encodeURIComponent;
 const decodeURIComponent_ = decodeURIComponent;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeTrim = String.prototype.trim;
+const ArrayPrototypeJoin = Array.prototype.join;
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
@@ -82,7 +87,11 @@ class BunContext {
 
   getValue(key: symbol): unknown {
     if (key === SPAN_KEY) return this.#span;
-    return this.#extras?.get(key);
+    const extras = this.#extras;
+    if (extras !== undefined && extras.$has(key)) return extras.$get(key);
+    // Baggage a request carried in lives on its span, not in extras.
+    if (key === BAGGAGE_KEY && this.#span !== undefined) return parseBaggage(propagationHeaders(this.#span)[2]);
+    return undefined;
   }
 
   setValue(key: symbol, value: unknown): BunContext {
@@ -254,15 +263,17 @@ class Baggage {
 }
 
 function parseBaggage(header: string): Baggage | undefined {
-  if (!header || header.length > 8192) return undefined;
+  if (typeof header !== "string" || !header || header.length > 8192) return undefined;
   const m = new Map();
-  for (const part of header.split(",")) {
-    const semi = part.indexOf(";");
-    const kv = semi === -1 ? part : part.slice(0, semi);
-    const eq = kv.indexOf("=");
+  const parts: string[] = StringPrototypeSplit.$call(header, ",");
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    const semi = StringPrototypeIndexOf.$call(part, ";");
+    const kv = semi === -1 ? part : StringPrototypeSlice.$call(part, 0, semi);
+    const eq = StringPrototypeIndexOf.$call(kv, "=");
     if (eq <= 0) continue;
-    let key = kv.slice(0, eq).trim();
-    let value = kv.slice(eq + 1).trim();
+    let key = StringPrototypeTrim.$call(StringPrototypeSlice.$call(kv, 0, eq));
+    let value = StringPrototypeTrim.$call(StringPrototypeSlice.$call(kv, eq + 1));
     if (!key) continue;
     try {
       key = decodeURIComponent_(key);
@@ -271,8 +282,11 @@ function parseBaggage(header: string): Baggage | undefined {
       value = decodeURIComponent_(value);
     } catch {}
     const entry: any = { value };
-    if (semi !== -1) entry.metadata = { toString: () => part.slice(semi + 1).trim() };
-    m.set(key, entry);
+    if (semi !== -1) {
+      const meta = StringPrototypeTrim.$call(StringPrototypeSlice.$call(part, semi + 1));
+      entry.metadata = { toString: () => meta };
+    }
+    m.$set(key, entry);
   }
   return m.size ? new Baggage(m) : undefined;
 }
@@ -289,9 +303,9 @@ function serializeBaggage(bag: any): string {
     let s = encodeURIComponent_(k) + "=" + encodeURIComponent_(e.value);
     const metadata = e.metadata;
     if (metadata !== undefined) s += ";" + metadata;
-    parts.push(s);
+    $arrayPush(parts, s);
   }
-  return parts.join(",");
+  return ArrayPrototypeJoin.$call(parts, ",");
 }
 
 const defaultGetter = {
@@ -320,17 +334,20 @@ const propagator = {
   },
   inject(context: any, carrier: any, setter: any = defaultSetter) {
     const [span, extras] = unpackContext(context ?? activeContext());
+    let incomingBaggage: string | undefined;
     if (span) {
       // The native side formats the headers and honours OTEL_PROPAGATORS.
-      const [traceparent, tracestate] = propagationHeaders(span);
+      const [traceparent, tracestate, baggage] = propagationHeaders(span);
       if (traceparent) {
         setter.set(carrier, "traceparent", traceparent);
         if (tracestate) setter.set(carrier, "tracestate", tracestate);
       }
+      incomingBaggage = baggage;
     }
-    const bag = extras?.get(BAGGAGE_KEY);
-    if (bag && nativePropagationFlags() & 2) {
-      const s = serializeBaggage(bag);
+    if (nativePropagationFlags() & 2) {
+      // Baggage set in JS (propagation.setBaggage) wins over what the request carried in.
+      const bag = $isMap(extras) ? extras.$get(BAGGAGE_KEY) : undefined;
+      const s = bag ? serializeBaggage(bag) : incomingBaggage;
       if (s) setter.set(carrier, "baggage", s);
     }
   },
@@ -341,12 +358,12 @@ const propagator = {
     if ($isJSArray(tp)) tp = tp[0];
     if (typeof tp === "string") {
       let traceState = getter.get(carrier, "tracestate");
-      if ($isJSArray(traceState)) traceState = traceState.join(",");
+      if ($isJSArray(traceState)) traceState = ArrayPrototypeJoin.$call(traceState, ",");
       const span = parseTraceparent(tp, typeof traceState === "string" ? traceState : undefined);
       if (span) ctx = ctx.setValue(SPAN_KEY, span);
     }
     let bg = flags & 2 ? getter.get(carrier, "baggage") : undefined;
-    if ($isJSArray(bg)) bg = bg.join(",");
+    if ($isJSArray(bg)) bg = ArrayPrototypeJoin.$call(bg, ",");
     if (typeof bg === "string") {
       const bag = parseBaggage(bg);
       if (bag) ctx = ctx.setValue(BAGGAGE_KEY, bag);
@@ -410,14 +427,14 @@ class TraceState {
       m = new Map();
       const raw = this.#raw;
       if (raw.length) {
-        const parts = raw.split(",");
+        const parts: string[] = StringPrototypeSplit.$call(raw, ",");
         // Right-most duplicate loses; cap at 32 members (spec).
         for (let i = 0; i < parts.length && m.size < 32; i++) {
-          const part = parts[i].trim();
-          const eq = part.indexOf("=");
+          const part = StringPrototypeTrim.$call(parts[i]);
+          const eq = StringPrototypeIndexOf.$call(part, "=");
           if (eq <= 0) continue;
-          const k = part.slice(0, eq);
-          if (!m.has(k)) m.set(k, part.slice(eq + 1));
+          const k = StringPrototypeSlice.$call(part, 0, eq);
+          if (!m.$has(k)) m.$set(k, StringPrototypeSlice.$call(part, eq + 1));
         }
       }
       this.#map = m;

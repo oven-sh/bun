@@ -268,6 +268,30 @@ describe("@opentelemetry/api", () => {
     await collect();
   });
 
+  test("propagation.inject() inside a request handler forwards the baggage the request carried in", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        const carrier: Record<string, string> = {};
+        propagation.inject(context.active(), carrier);
+        const fromApi = propagation.getActiveBaggage()?.getEntry("tenant")?.value;
+        // JS-set baggage takes precedence over the incoming header
+        const overridden: Record<string, string> = {};
+        context.with(propagation.setBaggage(context.active(), propagation.createBaggage({ k: { value: "v" } })), () =>
+          propagation.inject(context.active(), overridden),
+        );
+        return Response.json({ carrier, fromApi, overridden: overridden.baggage });
+      },
+    });
+    const res = await fetch(server.url, { headers: { baggage: "tenant=acme,tier=gold" } });
+    const body = await res.json();
+    expect(body.carrier.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+    expect(body.carrier.baggage).toBe("tenant=acme,tier=gold");
+    expect(body.fromApi).toBe("acme");
+    expect(body.overridden).toBe("k=v");
+    await collect();
+  });
+
   test("api spans inside Bun.serve parent under the request span; trace.getActiveSpan() is the server span", async () => {
     const tracer = trace.getTracer("compat");
     using server = Bun.serve({

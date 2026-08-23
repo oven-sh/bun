@@ -886,6 +886,74 @@ pub mod parse_worker {
                 return result;
             }
             Loader::Text => {
+                if topts.compile_mode.is_executable() {
+                    // In a standalone executable the text is embedded as an
+                    // asset and the module becomes
+                    // `export default import.meta.require("<bunfs path>")`; the
+                    // runtime answers with a string that aliases the section
+                    // bytes (`StandaloneModuleGraph::encode_text_module`).
+                    // Inlining it as a string literal instead would ship the
+                    // text twice (source + bytecode constant) and parse it on
+                    // load.
+                    let mut buf = bun_alloc::ArenaString::new_in(bump);
+                    write!(
+                        &mut buf,
+                        "{}",
+                        crate::chunk::UniqueKey {
+                            prefix: unique_key_prefix,
+                            kind: crate::chunk::QueryKind::Asset,
+                            index: source.index.0,
+                        },
+                    )
+                    .expect("unreachable");
+                    let unique_key = buf.into_bump_str().as_bytes();
+                    *unique_key_for_additional_file = FileLoaderHash {
+                        key: ast::StoreStr::new(unique_key),
+                        content_hash: ContentHasher::run(&source.contents),
+                    };
+                    let import_path = Expr::init(
+                        E::String {
+                            data: unique_key.into(),
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    );
+                    let import_meta = Expr::init(E::ImportMeta {}, Loc { start: 0 });
+                    let require_property = Expr::init(
+                        E::Dot {
+                            target: import_meta,
+                            name_loc: Loc::EMPTY,
+                            name: b"require".into(),
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    );
+                    let require_args = bump.alloc_slice_fill_default::<Expr>(1);
+                    require_args[0] = import_path;
+                    let root = Expr::init(
+                        E::Call {
+                            target: require_property,
+                            // SAFETY: bump-owned slice; never grown via this Vec.
+                            args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    );
+                    let mut ast = JSAst::init(
+                        js_parser::new_lazy_export_ast(
+                            bump,
+                            &mut topts.define,
+                            opts,
+                            log,
+                            root,
+                            source,
+                            b"",
+                        )?
+                        .ok_or(AnyError::ParserError)?,
+                    );
+                    ast.add_url_for_css(bump, source, None, Some(unique_key), false);
+                    return Ok(ast);
+                }
                 let root = Expr::init(
                     E::String {
                         data: source.contents().into(),
@@ -2676,12 +2744,9 @@ pub mod parse_worker {
             loader,
             package_name: task.package_name,
 
-            // Hash the files in here so that we do it in parallel.
-            content_hash_for_additional_file: if loader.should_copy_for_bundling() {
-                unique_key_for_additional_file.content_hash
-            } else {
-                0
-            },
+            // Hash the files in here so that we do it in parallel. Zero unless
+            // the loader registered an asset (`FileLoaderHash` default).
+            content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
         })
     }
 

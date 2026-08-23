@@ -2,7 +2,7 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
-use core::mem::size_of;
+use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -351,6 +351,9 @@ pub enum Encoding {
     Latin1 = 1,
     // Not used yet.
     Utf8 = 2,
+    /// Native-endian UTF-16 code units, 2-byte aligned in the section. Only
+    /// produced for `Loader::Text` modules whose text does not fit in Latin-1.
+    Utf16 = 3,
 }
 
 #[repr(u8)]
@@ -502,6 +505,9 @@ impl File {
     }
 
     pub fn to_wtf_string(&mut self) -> BunString {
+        if self.contents.is_empty() {
+            return BunString::EMPTY;
+        }
         if self.wtf_string.is_empty() {
             match self.encoding {
                 Encoding::Binary | Encoding::Utf8 => {
@@ -510,6 +516,19 @@ impl File {
                 Encoding::Latin1 => {
                     self.wtf_string =
                         BunString::create_static_external(self.contents.as_bytes(), true);
+                }
+                Encoding::Utf16 => {
+                    let bytes = self.contents.as_bytes();
+                    // `to_bytes` pads to an even section offset; the section
+                    // base is page-aligned on every platform (the bytecode
+                    // cache relies on the same property at 128 bytes).
+                    debug_assert!(bytes.as_ptr().addr() % align_of::<u16>() == 0);
+                    // SAFETY: even byte count at a 2-byte-aligned offset of a
+                    // section that is never freed.
+                    let units = unsafe {
+                        core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+                    };
+                    self.wtf_string = BunString::create_static_external_utf16(units);
                 }
             }
         }
@@ -819,6 +838,73 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
+/// A `Loader::Text` import that the bundler emitted as an embedded asset (see
+/// the `Loader::Text` arm of `ParseTask` under `CompileMode::Executable`). The
+/// chunk that imports it does `import.meta.require("<bunfs path>")`, and the
+/// runtime answers with a string that aliases the section bytes, so the bytes
+/// are stored already in WTF string form rather than as UTF-8.
+fn is_text_module(output_file: &OutputFile) -> bool {
+    output_file.loader == Loader::Text && output_file.output_kind == options::OutputKind::Asset
+}
+
+/// Write `utf8` as the in-memory representation of a `WTF::StringImpl`: Latin-1
+/// when every code point fits in a byte (the all-ASCII case needs no
+/// transcoding at all), else native-endian UTF-16 at an even offset so the
+/// runtime can point a `char16_t*` at it. Returns the contents pointer and the
+/// encoding to record on the module.
+fn encode_text_module(
+    string_builder: &mut bun_core::StringBuilder,
+    utf8: &[u8],
+) -> (StringPointer, Encoding) {
+    if strings::first_non_ascii(utf8).is_none() {
+        return (string_builder.append_count_z(utf8), Encoding::Latin1);
+    }
+    // Invalid UTF-8 becomes U+FFFD, matching what the text loader's
+    // `export default "..."` string would have held.
+    let units = match strings::to_utf16_alloc(utf8, false, false) {
+        Ok(Some(units)) => units,
+        // `None` only for all-ASCII input, handled above.
+        Ok(None) => unreachable!("to_utf16_alloc returned None for non-ASCII input"),
+        Err(_) => bun_alloc::out_of_memory(),
+    };
+    if units.iter().all(|&unit| unit <= 0xFF) {
+        let start = string_builder.len;
+        let dst = string_builder.writable();
+        for (dst, &unit) in dst.iter_mut().zip(units.iter()) {
+            *dst = unit as u8;
+        }
+        dst[units.len()] = 0;
+        string_builder.len += units.len() + 1;
+        return (
+            StringPointer {
+                offset: start as u32,
+                length: units.len() as u32,
+            },
+            Encoding::Latin1,
+        );
+    }
+    if string_builder.len % align_of::<u16>() != 0 {
+        string_builder.writable()[0] = 0;
+        string_builder.len += 1;
+    }
+    let start = string_builder.len;
+    let byte_len = units.len() * 2;
+    let dst = string_builder.writable();
+    for (dst, unit) in dst.chunks_exact_mut(2).zip(units.iter()) {
+        dst.copy_from_slice(&unit.to_ne_bytes());
+    }
+    dst[byte_len] = 0;
+    dst[byte_len + 1] = 0;
+    string_builder.len += byte_len + 2;
+    (
+        StringPointer {
+            offset: start as u32,
+            length: byte_len as u32,
+        },
+        Encoding::Utf16,
+    )
+}
+
 pub(crate) fn to_bytes(
     prefix: &[u8],
     output_files: &[OutputFile],
@@ -858,6 +944,11 @@ pub(crate) fn to_bytes(
                 }
 
                 string_builder.count_z(bytes);
+                if is_text_module(output_file) {
+                    // Worst case for `encode_text_module`: every byte widens to
+                    // a UTF-16 unit, plus alignment padding and a 2-byte NUL.
+                    string_builder.cap += bytes.len() + 3;
+                }
                 module_count += 1;
             }
         }
@@ -1026,27 +1117,36 @@ pub(crate) fn to_bytes(
             StringPointer::default()
         };
 
+        let name = string_builder.fmt_append_count_z(format_args!(
+            "{}{}",
+            bstr::BStr::new(prefix),
+            bstr::BStr::new(dest_path)
+        ));
+        let (contents, encoding) = if is_text_module(output_file) {
+            encode_text_module(&mut string_builder, buf_bytes)
+        } else {
+            (
+                string_builder.append_count_z(buf_bytes),
+                // Latin1 lets the runtime wrap the mmapped section bytes in a
+                // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
+                // server-side JS, but `--banner`/`--footer`/hashbang and
+                // client-side (target=browser) chunks are concatenated verbatim
+                // as UTF-8, so verify the final bytes before committing to Latin1.
+                match output_file.loader {
+                    Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
+                        if strings::first_non_ascii(buf_bytes).is_none() =>
+                    {
+                        Encoding::Latin1
+                    }
+                    _ => Encoding::Binary,
+                },
+            )
+        };
         let mut module = CompiledModuleGraphFile {
-            name: string_builder.fmt_append_count_z(format_args!(
-                "{}{}",
-                bstr::BStr::new(prefix),
-                bstr::BStr::new(dest_path)
-            )),
+            name,
             loader: output_file.loader,
-            contents: string_builder.append_count_z(buf_bytes),
-            // Latin1 lets the runtime wrap the mmapped section bytes in a
-            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
-            // server-side JS, but `--banner`/`--footer`/hashbang and
-            // client-side (target=browser) chunks are concatenated verbatim
-            // as UTF-8, so verify the final bytes before committing to Latin1.
-            encoding: match output_file.loader {
-                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
-                    if strings::first_non_ascii(buf_bytes).is_none() =>
-                {
-                    Encoding::Latin1
-                }
-                _ => Encoding::Binary,
-            },
+            contents,
+            encoding,
             module_format: if output_file.loader.is_javascript_like() {
                 match output_format {
                     Format::Cjs => ModuleFormat::Cjs,

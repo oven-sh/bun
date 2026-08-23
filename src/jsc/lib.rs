@@ -1190,10 +1190,13 @@ pub use self::saved_source_map as SavedSourceMap;
 // (`VirtualMachine`, `ModuleLoader`, `EventLoop`, `VirtualMachineInitOptions`)
 // are preserved.
 // ──────────────────────────────────────────────────────────────────────────
+#[path = "Napi.rs"]
+pub mod napi;
 #[path = "VirtualMachine.rs"]
 pub mod virtual_machine;
 #[path = "VmHandle.rs"]
 pub mod vm_handle;
+pub use self::napi::{NapiEnv, NapiEnvRef, NapiHandleScope};
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
 pub use self::vm_handle::{ConcurrentPoster, LoopKind, Posted, Ticket, VmHandle};

@@ -335,13 +335,68 @@ impl VmHandle {
     /// the VM is closed. For posters that hold no ticket (their payload is
     /// their own to free on refusal).
     pub fn post(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        test_gate::weak_post(&self.0, task, |task| {
-            let Some(_a) = self.enter() else {
-                return Posted::Refused(task);
-            };
-            self.0.deliver(kind, task);
+        // SAFETY: handed over by the caller and not yet queued anywhere.
+        let tag = || unsafe { task.as_ref() }.task.tag;
+        if self.post_with(tag, |s| s.deliver(kind, task)) {
             Posted::Queued
-        })
+        } else {
+            Posted::Refused(task)
+        }
+    }
+
+    /// The weak-post gate: `deliver` runs iff the VM is not closed (and then
+    /// inside the gate, so the close waits for it). Whether it ran. `tag` is
+    /// only for the debug build's late-post report.
+    fn post_with(
+        &self,
+        tag: impl FnOnce() -> bun_event_loop::TaskTag,
+        deliver: impl FnOnce(&Shared),
+    ) -> bool {
+        test_gate::before_weak_post(&self.0);
+        let queued = match self.enter() {
+            Some(_a) => {
+                deliver(&self.0);
+                true
+            }
+            None => false,
+        };
+        test_gate::after_weak_post(&self.0, tag, queued);
+        queued
+    }
+
+    /// Queue `H`'s hop for `this` on the VM's `kind` loop and wake it. `false`
+    /// if the VM is closed: nothing was queued, and whatever the hop would have
+    /// carried is still the caller's.
+    pub fn post_hop<H: bun_event_loop::TaskHop>(
+        &self,
+        kind: LoopKind,
+        this: bun_ptr::ThisPtr<H::Target>,
+    ) -> bool {
+        self.post_with(
+            || H::TAG,
+            |s| s.deliver(kind, ConcurrentTaskItem::create(H::task(this))),
+        )
+    }
+
+    /// Queue a [`BoxedTask`](bun_event_loop::BoxedTask) on the VM's `kind`
+    /// loop and wake it, or hand it back if the VM is closed.
+    pub fn post_boxed<T: bun_event_loop::BoxedTask>(
+        &self,
+        kind: LoopKind,
+        task: Box<T>,
+    ) -> Result<(), Box<T>> {
+        let mut task = Some(task);
+        self.post_with(
+            || T::TAG,
+            |s| {
+                let task = task.take().expect("posted once").into_task();
+                s.deliver(kind, ConcurrentTaskItem::create(task));
+            },
+        );
+        match task {
+            None => Ok(()),
+            Some(task) => Err(task),
+        }
     }
 
     /// Queue a C++ `EventLoopTask` on the VM's `kind` loop from another
@@ -543,8 +598,7 @@ pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
 // under the gate, not in production.
 #[cfg(debug_assertions)]
 mod test_gate {
-    use super::{Ordering, Posted, Shared, State, Ticket, VmHandle};
-    type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
+    use super::{Ordering, Shared, State, Ticket, VmHandle};
 
     impl VmHandle {
         pub(crate) fn arm_test_gate(&self) {
@@ -592,20 +646,24 @@ mod test_gate {
             ));
         }
     }
-    pub(super) fn weak_post(s: &Shared, task: Task, post: impl FnOnce(Task) -> Posted) -> Posted {
-        if !armed(s) {
-            return post(task);
+    pub(super) fn before_weak_post(s: &Shared) {
+        if armed(s) {
+            park_until_draining(s);
         }
-        park_until_draining(s);
-        // SAFETY: handed over by the caller and not yet queued anywhere.
-        let tag = unsafe { task.as_ref() }.task.tag;
-        let r = post(task);
-        let outcome = match r {
-            Posted::Queued => "released by the wait",
-            Posted::Refused(_) => "refused",
-        };
-        say(format_args!("late post: {} ({outcome})", tag.name()));
-        r
+    }
+    pub(super) fn after_weak_post(
+        s: &Shared,
+        tag: impl FnOnce() -> bun_event_loop::TaskTag,
+        queued: bool,
+    ) {
+        if armed(s) {
+            let outcome = if queued {
+                "released by the wait"
+            } else {
+                "refused"
+            };
+            say(format_args!("late post: {} ({outcome})", tag().name()));
+        }
     }
     /// The wait began: parked posts go now.
     pub(super) fn draining(h: &VmHandle) {
@@ -621,8 +679,7 @@ mod test_gate {
 }
 #[cfg(not(debug_assertions))]
 mod test_gate {
-    use super::{Posted, Shared, Ticket, VmHandle};
-    type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
+    use super::{Shared, Ticket, VmHandle};
     impl VmHandle {
         #[inline(always)]
         pub(crate) fn arm_test_gate(&self) {}
@@ -630,8 +687,13 @@ mod test_gate {
     #[inline(always)]
     pub(super) fn before_ticket_post(_: &Ticket) {}
     #[inline(always)]
-    pub(super) fn weak_post(_: &Shared, task: Task, post: impl FnOnce(Task) -> Posted) -> Posted {
-        post(task)
+    pub(super) fn before_weak_post(_: &Shared) {}
+    #[inline(always)]
+    pub(super) fn after_weak_post(
+        _: &Shared,
+        _: impl FnOnce() -> bun_event_loop::TaskTag,
+        _: bool,
+    ) {
     }
     #[inline(always)]
     pub(super) fn draining(_: &VmHandle) {}

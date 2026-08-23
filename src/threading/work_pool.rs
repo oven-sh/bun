@@ -38,6 +38,61 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     }
 }
 
+/// A `T` that stays shared (`&T` / [`ThisPtr`](bun_ptr::ThisPtr)) while the
+/// pool holds its embedded task node: the node sits in a [`Cell`](core::cell::Cell)
+/// (built by [`shared_work_task_node`]) and the pool re-enters `T` through a
+/// `ThisPtr`, on a pool thread, concurrently with whatever the scheduling
+/// thread still does to `T`. Implement via [`shared_work_task!`], which
+/// carries the contract; schedule with [`WorkPool::schedule_shared`].
+///
+/// # Safety
+/// Whoever calls `schedule_shared` keeps `T` allocated, and its node
+/// untouched, until `run_work_task` is done with it; and every field of `T`
+/// is either confined to one side (the pool's `run_work_task`, or the
+/// scheduling thread) for that span or synchronized — `T` need not be `Sync`
+/// otherwise, so the type system does not check this.
+pub unsafe trait SharedWorkTask: bun_core::IntrusiveField<core::cell::Cell<Task>> {
+    /// Pool thread.
+    fn run_work_task(this: bun_ptr::ThisPtr<Self>);
+}
+
+/// The task node for a [`SharedWorkTask`], to store in the field its
+/// `IntrusiveField` impl names.
+pub fn shared_work_task_node<T: SharedWorkTask>() -> core::cell::Cell<Task> {
+    /// # Safety
+    /// Only installed by [`shared_work_task_node`], so `task` is the node
+    /// embedded in a live `T` that [`WorkPool::schedule_shared`] handed to the pool.
+    unsafe fn run<T: SharedWorkTask>(task: *mut Task) {
+        // SAFETY: fn contract (`Cell<Task>` is `repr(transparent)` over `Task`).
+        let this = unsafe { T::from_field_ptr(task.cast::<core::cell::Cell<Task>>()) };
+        // SAFETY: fn contract — the scheduler keeps `T` live for this call.
+        T::run_work_task(unsafe { bun_ptr::ThisPtr::new(this) });
+    }
+    core::cell::Cell::new(Task {
+        node: Default::default(),
+        callback: run::<T>,
+    })
+}
+
+/// Implements [`SharedWorkTask`] for a struct that embeds a
+/// `$field: Cell<Task>` node and has an inherent
+/// `fn run_work_task(this: ThisPtr<Self>)` (pool thread). The invocation is
+/// where the trait's contract is vouched for: say next to it which fields the
+/// pool side touches and what keeps the value alive while it is scheduled.
+#[macro_export]
+macro_rules! shared_work_task {
+    ($ty:ty, $field:ident) => {
+        ::bun_core::intrusive_field!($ty, $field: ::core::cell::Cell<$crate::work_pool::Task>);
+        // SAFETY: see macro doc — the invoker states the confinement / liveness at the call site.
+        unsafe impl $crate::work_pool::SharedWorkTask for $ty {
+            #[inline]
+            fn run_work_task(this: ::bun_ptr::ThisPtr<Self>) {
+                <$ty>::run_work_task(this)
+            }
+        }
+    };
+}
+
 /// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
 /// (`Box<Self>`). [`WorkPool::schedule_owned`] performs the `Box` →
 /// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
@@ -148,6 +203,14 @@ impl WorkPool {
 
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
+    }
+
+    /// Hand `this`'s embedded [`SharedWorkTask`] node to the pool (see the
+    /// trait's contract).
+    pub fn schedule_shared<T: SharedWorkTask>(this: bun_ptr::ThisPtr<T>) {
+        // SAFETY: `ThisPtr` invariant — `this` is a live `T`, so projecting to its
+        // node stays in bounds; `Cell<Task>` is `repr(transparent)` over `Task`.
+        Self::schedule(unsafe { T::field_of(this.as_ptr()) }.cast::<Task>());
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of

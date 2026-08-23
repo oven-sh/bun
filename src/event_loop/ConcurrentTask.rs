@@ -119,6 +119,7 @@ pub mod task_tag {
         ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
+        ThreadSafeFunctionFinalize,
         ValkeyDeferredClose,
         WindowsNamedPipeContext,
         Write,
@@ -162,6 +163,98 @@ pub trait Taskable {
     /// # Safety
     /// `this` came off the queue under `Self::TAG` and is not used afterwards.
     unsafe fn release_unrun(this: *mut Self);
+}
+
+/// A task whose queued pointer is a [`ThisPtr`](bun_ptr::ThisPtr) to
+/// `Target`, which keeps itself alive for the task; the dispatcher runs it or
+/// releases it through here. A zero-sized hop type per tag, declared with
+/// [`task_hop!`] next to `Target` so the ref protocol lives there.
+///
+/// # Safety
+/// `TAG` is dispatched (in `bun_runtime::dispatch`) to this impl and no other
+/// task type uses it; and `Target`'s protocol keeps the pointee of every
+/// [`task`](Self::task) it queues alive until `run` / `release_unrun` (a
+/// `RefPtr` slot held for the queued task, or an owner that outlives the queue).
+pub unsafe trait TaskHop {
+    type Target;
+    /// The tag constant from [`task_tag`]; the `bun_runtime::dispatch` match
+    /// arms MUST agree.
+    const TAG: TaskTag;
+    fn run(this: bun_ptr::ThisPtr<Self::Target>) -> crate::JsResult<()>;
+    /// As [`Taskable::release_unrun`].
+    fn release_unrun(this: bun_ptr::ThisPtr<Self::Target>);
+
+    #[inline]
+    fn task(this: bun_ptr::ThisPtr<Self::Target>) -> Task {
+        Task::new(Self::TAG, this.as_ptr().cast::<()>())
+    }
+}
+
+/// Declares `$hop`, the [`TaskHop`] that `task_tag::$tag` dispatches to for
+/// `$target`, forwarding to `$run` / `$release`. The doc comment on the
+/// invocation is where `$target`'s liveness protocol for the queued task is
+/// stated.
+#[macro_export]
+macro_rules! task_hop {
+    ($(#[$m:meta])* $v:vis $hop:ident for $target:ty => $tag:ident; run = $run:expr; release_unrun = $release:expr $(;)?) => {
+        $(#[$m])*
+        $v struct $hop;
+        // SAFETY: see macro doc — one hop per tag; the invoker documents the liveness protocol.
+        unsafe impl $crate::TaskHop for $hop {
+            type Target = $target;
+            const TAG: $crate::TaskTag = $crate::task_tag::$tag;
+            #[inline]
+            fn run(this: ::bun_ptr::ThisPtr<$target>) -> $crate::JsResult<()> {
+                ($run)(this)
+            }
+            #[inline]
+            fn release_unrun(this: ::bun_ptr::ThisPtr<$target>) {
+                ($release)(this)
+            }
+        }
+    };
+}
+
+/// A task that owns its payload: queued as the `Box<Self>` leaked into
+/// [`Task::ptr`], handed back as that box when the dispatcher runs or
+/// releases it. Implement via [`boxed_task!`].
+///
+/// # Safety
+/// `TAG` is dispatched (in `bun_runtime::dispatch`) to this impl and no other
+/// task type uses it, so the dispatcher's `Box::<Self>::from_raw` gets back
+/// what [`into_task`](Self::into_task) leaked.
+pub unsafe trait BoxedTask: Sized {
+    /// The tag constant from [`task_tag`]; the `bun_runtime::dispatch` match
+    /// arms MUST agree.
+    const TAG: TaskTag;
+    fn run(self: Box<Self>) -> crate::JsResult<()>;
+    /// As [`Taskable::release_unrun`].
+    fn release_unrun(self: Box<Self>);
+
+    #[inline]
+    fn into_task(self: Box<Self>) -> Task {
+        Task::new(Self::TAG, Box::into_raw(self).cast::<()>())
+    }
+}
+
+/// Implements [`BoxedTask`] for `$ty` as the task `task_tag::$tag` dispatches
+/// to, forwarding to `$run` / `$release` (each `fn(Box<$ty>)`).
+#[macro_export]
+macro_rules! boxed_task {
+    ($ty:ty => $tag:ident; run = $run:expr; release_unrun = $release:expr $(;)?) => {
+        // SAFETY: see macro doc — one boxed task type per tag.
+        unsafe impl $crate::BoxedTask for $ty {
+            const TAG: $crate::TaskTag = $crate::task_tag::$tag;
+            #[inline]
+            fn run(self: ::std::boxed::Box<Self>) -> $crate::JsResult<()> {
+                ($run)(self)
+            }
+            #[inline]
+            fn release_unrun(self: ::std::boxed::Box<Self>) {
+                ($release)(self)
+            }
+        }
+    };
 }
 
 impl TaskTag {
@@ -302,9 +395,14 @@ impl ConcurrentTask {
         of: *mut T,
         auto_deinit: AutoDeinit,
     ) -> &mut ConcurrentTask {
+        self.from_task(Task::init(of), auto_deinit)
+    }
+
+    /// Load this (intrusive) carrier with `task`, ready to post.
+    pub fn from_task(&mut self, task: Task, auto_deinit: AutoDeinit) -> &mut ConcurrentTask {
         bun_core::mark_binding!();
         *self = ConcurrentTask {
-            task: Task::init(of),
+            task,
             next: Link::new(),
             auto_delete: auto_deinit == AutoDeinit::AutoDeinit,
         };

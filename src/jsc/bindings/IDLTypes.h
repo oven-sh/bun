@@ -196,8 +196,6 @@ template<typename T> struct IDLWrapper : IDLType<RefPtr<T>> {
 
 template<typename T> struct IDLInterface : IDLWrapper<T> {
 };
-template<typename T> struct IDLCallbackInterface : IDLWrapper<T> {
-};
 template<typename T> struct IDLCallbackFunction : IDLWrapper<T> {
 };
 

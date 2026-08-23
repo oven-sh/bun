@@ -195,9 +195,8 @@ impl If {
         Yield::Next(this)
     }
 
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
         log!("If {} deinit", this);
-        interp.as_if_mut(this).base.end_scope();
     }
 }
 

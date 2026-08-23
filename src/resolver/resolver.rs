@@ -6847,7 +6847,8 @@ fn project_store_links_entry(dir: &[u8], store_key: &[u8], entry_name: &[u8]) ->
     let mut link_buf = bun_paths::path_buffer_pool::get();
     let cap = link_buf.len() - 1;
     let parts: [&[u8]; 4] = [dir, b"node_modules", b".bun", store_key];
-    let Some(joined) = join_abs_string_buf_checked::<platform::Auto>(dir, &mut link_buf[..cap], &parts)
+    let Some(joined) =
+        join_abs_string_buf_checked::<platform::Auto>(dir, &mut link_buf[..cap], &parts)
     else {
         return false;
     };

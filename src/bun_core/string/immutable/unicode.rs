@@ -139,16 +139,11 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
 
         let count: usize = replacement.utf8_width() as usize;
         #[cfg(not(target_family = "wasm"))]
-        {
-            let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
-            list.reserve_exact((i + count + list.len() + extra).saturating_sub(list.len()));
-        }
+        let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
         #[cfg(target_family = "wasm")]
-        {
-            list.reserve_exact(
-                (i + count + list.len() + utf16_remaining.len() + 4).saturating_sub(list.len()),
-            );
-        }
+        let extra = utf16_remaining.len() + 4;
+        list.try_reserve_exact(i + count + extra)
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, to_copy);
 
         if SKIP_TRAILING_REPLACEMENT {
@@ -167,8 +162,8 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     }
 
     if !utf16_remaining.is_empty() {
-        let need = utf16_remaining.len() + list.len();
-        list.reserve_exact(need.saturating_sub(list.len()));
+        list.try_reserve_exact(utf16_remaining.len())
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, utf16_remaining);
     }
 

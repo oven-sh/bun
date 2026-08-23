@@ -26,22 +26,19 @@ const ws = new WebSocket(`wss://${server.hostname}:${server.port}`, { tls: { rej
 const { promise: openWS, resolve: onWSOpen } = Promise.withResolvers();
 ws.onopen = onWSOpen;
 await openWS;
-for (let i = 0; i < 1000; i++) {
-  ws.send("hello");
-}
+const MESSAGES = 1000;
+const { promise: allEchoed, resolve: onAllEchoed } = Promise.withResolvers();
 let bytesReceived = 0;
-const { promise: drained, resolve: onDrained, reject: onDrainFailed } = Promise.withResolvers();
 ws.onmessage = event => {
   bytesReceived += event.data.length;
-  if (bytesReceived >= 5000) onDrained();
+  if (bytesReceived >= MESSAGES * "hello".length) onAllEchoed();
 };
-ws.onerror = () => onDrainFailed(new Error(`websocket errored after ${bytesReceived} bytes, before the drain completed`));
-ws.onclose = () => onDrainFailed(new Error(`websocket closed after ${bytesReceived} bytes, before the drain completed`));
-await drained;
-ws.onerror = null;
-ws.onclose = null;
-// Let the loop settle before the first sample window opens.
-await Bun.sleep(500);
+for (let i = 0; i < MESSAGES; i++) {
+  ws.send("hello");
+}
+// Only sample once the echo traffic is over, so every window below measures an
+// idle connection rather than the tail of the burst.
+await allEchoed;
 
 let previousUsage = process.cpuUsage();
 let previousTime = Date.now();
@@ -77,4 +74,4 @@ setInterval(() => {
     // ~15.6ms ticks). Gate on the quietest sample with the same 50% bound as 21654.
     process.exit(minCpuUsagePercentage < 50 ? 0 : 1);
   }
-}, 1000);
+}, 500);

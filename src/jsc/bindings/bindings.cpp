@@ -2634,7 +2634,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
     return JSValue::encode(object);
 }
 
-extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     auto str = Zig::toString(*strPtr);
@@ -2649,19 +2649,13 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
         }
     }
 
-    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     // JSONParseWithException does not propagate exceptions as expected. See #5859
     JSValue result = JSONParse(globalObject, str);
-
-    if (!result && !topExceptionScope.exception())
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!result) {
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
-
-    if (topExceptionScope.exception()) {
-        auto* exception = topExceptionScope.exception();
-        topExceptionScope.clearExceptionExceptTermination();
-        return JSC::JSValue::encode(exception->value());
+        return {};
     }
-
     return JSValue::encode(result);
 }
 

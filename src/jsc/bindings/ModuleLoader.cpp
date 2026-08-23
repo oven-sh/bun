@@ -386,7 +386,7 @@ static JSValue handleVirtualModuleResult(
     const auto rejectOrResolve = [&](JSValue code) -> JSValue {
         if (auto* exception = scope.exception()) {
             if constexpr (allowPromise) {
-                (void)scope.tryClearException();
+                TRY_CLEAR_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
             } else {
                 return exception;
@@ -423,12 +423,12 @@ static JSValue handleVirtualModuleResult(
             const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
             auto esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
             if (scope.exception()) [[unlikely]] {
-                RELEASE_AND_RETURN(scope, reject(scope.exception()));
+                return rejectOrResolve({});
             }
             if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
                 auto defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
                 if (scope.exception()) [[unlikely]] {
-                    RELEASE_AND_RETURN(scope, reject(scope.exception()));
+                    return rejectOrResolve({});
                 }
                 if (defaultValue && !defaultValue.isUndefined()) {
                     commonJSModule->setExportsObject(defaultValue);

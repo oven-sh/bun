@@ -3022,6 +3022,7 @@ template<> struct BufferAccessStorage<double> {
 };
 
 // Reads / stores in the accessor's byte order, on an unaligned pointer.
+static_assert(std::endian::native == std::endian::little);
 template<typename Storage, bool isLittleEndian>
 static ALWAYS_INLINE Storage bufferAccessLoad(const uint8_t* address)
 {
@@ -3291,7 +3292,6 @@ static JSC::EncodedJSValue bufferReadVarWidth(JSC::JSGlobalObject* lexicalGlobal
         return {};
     }
     auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteLength, view->type() != JSC::DataViewType);
-    RETURN_IF_EXCEPTION(scope, {});
     if (!checkedOffset)
         return {};
 
@@ -3356,7 +3356,6 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
     }
     // checkBounds(): the offset type was validated above; the range check is boundsError().
     auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteLength, view->type() != JSC::DataViewType);
-    RETURN_IF_EXCEPTION(scope, {});
     if (!checkedOffset)
         return {};
 

@@ -1767,7 +1767,6 @@ test_napi_dataview_bounds_errors(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
-// Test for napi_typeof with potentially empty/invalid values
 // napi_create_dataview on a detached ArrayBuffer: must fail with the engine's
 // TypeError pending, not return napi_ok with a NULL result.
 static napi_value test_napi_dataview_detached(const Napi::CallbackInfo &info) {
@@ -1790,6 +1789,7 @@ static napi_value test_napi_dataview_detached(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Test for napi_typeof with potentially empty/invalid values
 static napi_value test_napi_typeof_empty_value(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 

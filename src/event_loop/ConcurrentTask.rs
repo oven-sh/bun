@@ -132,20 +132,6 @@ pub struct Task {
     pub ptr: *mut (),
 }
 
-/// What it takes to be queued as a [`Task`]: a tag, and how the task is
-/// freed when it will never run. Implement on every type that can be
-/// enqueued; the impl lives in whatever crate owns the type.
-///
-/// A queued task ends one of two ways: it runs (`bun_runtime::dispatch::
-/// run_task`), or its VM stops before running it —
-/// [`release_unrun`](Self::release_unrun), required here so no type can be
-/// queued without having decided it. (A *weak* poster — `JsPoster` — can also
-/// get its task back unqueued once the VM has closed; that task never entered
-/// a queue and is the poster's own to free: [`ConcurrentTask::release_refused`].)
-///
-/// Re-exported from `bun_jsc` for ergonomics, but defined here (lowest tier on
-/// the hot-dispatch list, see PORTING.md §Dispatch) so that
-/// [`Task::init`] can use it without a dep cycle.
 /// A task whose queued pointer is a [`ThisPtr`](bun_ptr::ThisPtr) to
 /// `Target`, which keeps itself alive for the task; the dispatcher runs it or
 /// releases it through here. Implemented by a zero-sized hop type per tag so
@@ -165,6 +151,20 @@ pub trait TaskHop {
     }
 }
 
+/// What it takes to be queued as a [`Task`]: a tag, and how the task is
+/// freed when it will never run. Implement on every type that can be
+/// enqueued; the impl lives in whatever crate owns the type.
+///
+/// A queued task ends one of two ways: it runs (`bun_runtime::dispatch::
+/// run_task`), or its VM stops before running it —
+/// [`release_unrun`](Self::release_unrun), required here so no type can be
+/// queued without having decided it. (A *weak* poster — `JsPoster` — can also
+/// get its task back unqueued once the VM has closed; that task never entered
+/// a queue and is the poster's own to free: [`ConcurrentTask::release_refused`].)
+///
+/// Re-exported from `bun_jsc` for ergonomics, but defined here (lowest tier on
+/// the hot-dispatch list, see PORTING.md §Dispatch) so that
+/// [`Task::init`] can use it without a dep cycle.
 pub trait Taskable {
     /// The tag constant from [`task_tag`] for this type. Both this and the
     /// `bun_runtime::dispatch` match arms MUST agree.

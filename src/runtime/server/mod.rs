@@ -284,7 +284,8 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// The server's counted ref on the plugin state; released in `Drop`.
     pub(crate) plugins: JsCell<Option<RefPtr<ServePlugins>>>,
 
-    pub(crate) dev_server: JsCell<Option<Box<crate::bake::DevServer::DevServer>>>,
+    pub(crate) dev_server:
+        JsCell<Option<bun_ptr::OwnedThis<crate::bake::DevServer::DevServerCell>>>,
 
     /// Route → index in RouteList.cpp. User routes may be applied multiple
     /// times due to SNI, so we have to store them. Each is its own allocation:
@@ -586,7 +587,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .dev_server
                 .get()
                 .as_ref()
-                .map_or(0, |d| d.memory_cost())
+                .map_or(0, |d| d.get().memory_cost())
     }
 
     pub(crate) fn h3_alt_svc(&self) -> Option<&[u8]> {
@@ -2029,6 +2030,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 arena: &bake_options.arena,
                 root: bake_options.root,
                 vm: jsc::VirtualMachine::get(),
+                server: AnyServer::from(&*server),
                 // LAYERING: `UserOptions` carries the `bake_body` shapes;
                 // `DevServer::Options` consumes the keystone shapes;
                 // `From` impls in `bake/mod.rs` bridge
@@ -2293,13 +2295,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 AnyRoute::Directory(r) => apply!(DirectoryRoute, r),
                 AnyRoute::Html(r) => {
                     apply!(html_bundle::Route, r);
-                    self.dev_server.with_mut(|dev| {
-                        if let Some(dev) = dev {
+                    if let Some(dev) = self.dev_server.get() {
+                        dev.with_mut(|dev| {
                             bun_core::handle_oom(
                                 dev.html_router.put(&entry.path, r.this_ptr().into()),
-                            );
-                        }
-                    });
+                            )
+                        });
+                    }
                     needs_plugins = true;
                 }
                 AnyRoute::FrameworkRouter(_) => {}
@@ -2342,13 +2344,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut has_dev_server_for_star_path = false;
         if has_dev_server {
             // dev.setRoutes might register its own "/*" HTTP handler
-            has_dev_server_for_star_path = self.dev_server.with_mut(|dev| {
-                bun_core::handle_oom(
-                    dev.as_deref_mut()
-                        .expect("checked above")
-                        .set_routes::<SSL, DEBUG>(self),
-                )
-            });
+            has_dev_server_for_star_path = self
+                .dev_server
+                .get()
+                .as_ref()
+                .expect("checked above")
+                .with_mut(|dev| bun_core::handle_oom(dev.set_routes::<SSL, DEBUG>(self)));
             if has_dev_server_for_star_path {
                 // Assume dev server "/*" covers all methods if it exists
                 star_methods_covered_by_user = http_method::Set::all();
@@ -3123,6 +3124,7 @@ pub trait ServerLike {
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
+    fn dev_server_cell(&self) -> Option<bun_ptr::BackRef<crate::bake::DevServer::DevServerCell>>;
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
     fn terminated(&self) -> bool;
@@ -3152,7 +3154,13 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     }
     #[inline]
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
-        self.dev_server.get().as_deref()
+        self.dev_server.get().as_ref().map(|d| d.get())
+    }
+    fn dev_server_cell(&self) -> Option<bun_ptr::BackRef<crate::bake::DevServer::DevServerCell>> {
+        self.dev_server
+            .get()
+            .as_ref()
+            .map(|dev| bun_ptr::BackRef::new(&**dev))
     }
     #[inline(always)]
     fn js_value(&self) -> &jsc::JsRef {
@@ -3363,11 +3371,9 @@ impl AnyServer {
     pub(crate) fn set_inspector_server_id(&self, id: jsc::DebuggerId) {
         any_server_dispatch!(self, |s| {
             s.inspector_server_id.set(id);
-            s.dev_server.with_mut(|dev| {
-                if let Some(dev_server) = dev.as_deref_mut() {
-                    dev_server.inspector_server_id = id;
-                }
-            });
+            if let Some(dev) = s.dev_server.get() {
+                dev.with_mut(|dev| dev.inspector_server_id = id);
+            }
         })
     }
 
@@ -3471,7 +3477,9 @@ impl AnyServer {
     ) -> Option<R> {
         any_server_dispatch!(self, |s| s
             .dev_server
-            .with_mut(|dev| dev.as_deref_mut().map(f)))
+            .get()
+            .as_ref()
+            .map(|dev| dev.with_mut(f)))
     }
 
     /// Returns:

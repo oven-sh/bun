@@ -321,6 +321,73 @@ pub trait WebSocketHandler: Sized + 'static {
     unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]);
 }
 
+/// A [`WebSocketHandler`] that is an intrusively ref-counted heap object.
+/// [`AnyWebSocket::upgrade_ref`] / [`uws::response::Response::upgrade_ref`]
+/// move one ref into the socket's user-data slot; every callback runs under a
+/// fresh ref guard (so `ws.close()` from inside a handler — which dispatches
+/// `on_close` synchronously — cannot free the object under the running
+/// handler); the socket's own ref is released after `on_close` returns.
+pub trait WebSocketHandlerRef:
+    bun_ptr::AnyRefCounted<DestructorCtx = ()> + Sized + 'static
+{
+    const HAS_ON_MESSAGE: bool = true;
+    const HAS_ON_DRAIN: bool = true;
+    const HAS_ON_PING: bool = true;
+    const HAS_ON_PONG: bool = true;
+
+    fn on_open(this: bun_ptr::ThisPtr<Self>, ws: AnyWebSocket);
+    fn on_message(this: bun_ptr::ThisPtr<Self>, ws: AnyWebSocket, message: &[u8], opcode: Opcode);
+    fn on_drain(_this: bun_ptr::ThisPtr<Self>, _ws: AnyWebSocket) {}
+    fn on_ping(_this: bun_ptr::ThisPtr<Self>, _ws: AnyWebSocket, _message: &[u8]) {}
+    fn on_pong(_this: bun_ptr::ThisPtr<Self>, _ws: AnyWebSocket, _message: &[u8]) {}
+    fn on_close(this: bun_ptr::ThisPtr<Self>, ws: AnyWebSocket, code: i32, message: &[u8]);
+}
+
+impl<T: WebSocketHandlerRef> WebSocketHandler for T {
+    const HAS_ON_MESSAGE: bool = <T as WebSocketHandlerRef>::HAS_ON_MESSAGE;
+    const HAS_ON_DRAIN: bool = <T as WebSocketHandlerRef>::HAS_ON_DRAIN;
+    const HAS_ON_PING: bool = <T as WebSocketHandlerRef>::HAS_ON_PING;
+    const HAS_ON_PONG: bool = <T as WebSocketHandlerRef>::HAS_ON_PONG;
+
+    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
+        // SAFETY: trait contract — `this` is the socket's user-data, which holds a ref (`upgrade_ref`).
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
+        let _keep = this.ref_guard();
+        <T as WebSocketHandlerRef>::on_open(this, ws)
+    }
+    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
+        // SAFETY: see `on_open`.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
+        let _keep = this.ref_guard();
+        <T as WebSocketHandlerRef>::on_message(this, ws, message, opcode)
+    }
+    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
+        // SAFETY: see `on_open`.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
+        let _keep = this.ref_guard();
+        <T as WebSocketHandlerRef>::on_drain(this, ws)
+    }
+    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
+        // SAFETY: see `on_open`.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
+        let _keep = this.ref_guard();
+        <T as WebSocketHandlerRef>::on_ping(this, ws, message)
+    }
+    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
+        // SAFETY: see `on_open`.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
+        let _keep = this.ref_guard();
+        <T as WebSocketHandlerRef>::on_pong(this, ws, message)
+    }
+    unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
+        // SAFETY: see `on_open`; uWS dispatches `on_close` exactly once and never
+        // calls back into this user-data afterwards, so the socket's ref is released here.
+        let socket_ref = unsafe { bun_ptr::RefPtr::<T>::from_raw(this) };
+        <T as WebSocketHandlerRef>::on_close(socket_ref.this_ptr(), ws, code, message);
+        socket_ref.deref();
+    }
+}
+
 /// Server type that handles the HTTP→WS upgrade. `this` is the user-data
 /// registered with the `.ws()` route ([`crate::app::App::ws_this`] ties its
 /// type to `Self`; the raw [`crate::app::App::ws`] leaves that to its caller).

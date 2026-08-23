@@ -117,6 +117,15 @@ impl StdAllocator {
 // no longer leaks on grow.
 pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
+
+/// The process allocator as a `'static` [`Arena`] ([`MimallocArena::borrowing_default`]):
+/// for long-lived `Transpiler<'static>`-style holders whose arena must be
+/// genuinely `'static`. Allocations made through it are ordinary global-heap
+/// allocations and are only reclaimed by their own destructors.
+pub fn default_arena() -> &'static Arena {
+    static DEFAULT_ARENA: std::sync::OnceLock<MimallocArena> = std::sync::OnceLock::new();
+    DEFAULT_ARENA.get_or_init(MimallocArena::borrowing_default)
+}
 mod baby_vec;
 pub use baby_vec::BabyVec;
 /// Arena-backed `Vec` with `u32` length/capacity.

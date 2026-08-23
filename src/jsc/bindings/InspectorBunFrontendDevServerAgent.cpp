@@ -127,12 +127,18 @@ void InspectorBunFrontendDevServerAgent__notifyClientDisconnected(InspectorBunFr
     agent->clientDisconnected(devServerId, connectionId);
 }
 
-void InspectorBunFrontendDevServerAgent__notifyBundleStart(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunString* triggerFiles, size_t triggerFilesLen)
+// `bun_core::ffi::FfiSlice<BunString>` (borrowed).
+struct BunStringSlice {
+    const BunString* ptr;
+    size_t len;
+};
+
+void InspectorBunFrontendDevServerAgent__notifyBundleStart(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunStringSlice triggerFiles)
 {
     // Create a JSON array for the triggerFiles
     Ref<JSON::ArrayOf<String>> files = JSON::ArrayOf<String>::create();
-    for (size_t i = 0; i < triggerFilesLen; i++) {
-        files->addItem(triggerFiles[i].transferToWTFString());
+    for (size_t i = 0; i < triggerFiles.len; i++) {
+        files->addItem(triggerFiles.ptr[i].toWTFString());
     }
 
     agent->bundleStart(devServerId, WTF::move(files));

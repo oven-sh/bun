@@ -337,6 +337,18 @@ impl HeadersRef {
         Self(FetchHeaders::create_empty())
     }
 
+    /// [`FetchHeaders::create`], owning the fresh allocation.
+    #[inline]
+    pub fn create(
+        global: &JSGlobalObject,
+        names: *mut StringPointer,
+        values: *mut StringPointer,
+        buf: &ZigString,
+        count_: u32,
+    ) -> Option<Self> {
+        FetchHeaders::create(global, names, values, buf, count_).map(Self)
+    }
+
     /// `FetchHeaders.createFromUWS(req)` — fresh C++ allocation, refcount 1.
     #[inline]
     pub fn create_from_uws(uws_request: *mut c_void) -> Self {

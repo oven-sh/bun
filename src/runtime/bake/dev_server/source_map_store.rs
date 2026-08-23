@@ -15,7 +15,7 @@ use crate::bake::dev_server_body::map_log;
 use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
-use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
+use super::{ChunkKind, EventLoopTimer, TimerTag, packed_map};
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
@@ -92,12 +92,7 @@ impl Entry {
     }
 
     /// `SourceMapStore.Entry.renderJSON`.
-    pub(crate) fn render_json(
-        &self,
-        dev: &mut DevServer,
-        kind: ChunkKind,
-        side: Side,
-    ) -> crate::Result<Vec<u8>> {
+    pub(crate) fn render_json(&self, kind: ChunkKind, side: Side) -> crate::Result<Vec<u8>> {
         let map_files = self.files.as_slice();
         let paths = &self.paths;
 
@@ -217,8 +212,6 @@ impl Entry {
 
         let json_bytes = j.done_with_end(b"\"}")?.into_vec();
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
-
-        let _ = dev;
 
         Ok(json_bytes)
     }
@@ -425,8 +418,6 @@ pub struct SourceMapStore {
     pub(crate) weak_ref_sweep_timer: EventLoopTimer,
 }
 
-bun_event_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
-
 impl Default for SourceMapStore {
     fn default() -> Self {
         Self {
@@ -436,12 +427,6 @@ impl Default for SourceMapStore {
         }
     }
 }
-
-// Intrusive backref: recover the owning DevServer. Caller must guarantee `self`
-// is the `source_maps` field of a live, heap-allocated `DevServer` (always
-// true for production use; the `Default::default()` instance must never call
-// this).
-bun_core::impl_field_parent! { SourceMapStore => DevServer.source_maps; pub fn mut owner; }
 
 impl SourceMapStore {
     /// ArrayHashMap/LinearFifo have no `const fn` ctors; callers use
@@ -606,59 +591,34 @@ impl SourceMapStore {
     }
 
     /// `SourceMapStore.sweepWeakRefs` — pop expired weak-refs, decrement,
-    /// reschedule. Called from the high-tier `EventLoopTimer` dispatch with
-    /// the raw `*EventLoopTimer`.
-    ///
-    /// # Safety
-    /// `timer` must point to the `weak_ref_sweep_timer` field of a live
-    /// `SourceMapStore` that is itself the `source_maps` field of a live
-    /// heap-allocated `DevServer`.
-    // `timer` is never dereferenced in Rust — `from_timer_ptr` only does
-    // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
-    // the deref is of that recovered parent pointer, not the parameter.
-    // not_unsafe_ptr_arg_deref is a false positive on this fieldParentPtr pattern.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn sweep_weak_refs(
-        timer: *mut EventLoopTimer,
-        now_ts: &bun_event_loop::EventLoopTimer::Timespec,
-    ) {
+    /// reschedule. Called from `DevServer::sweep_source_map_weak_refs` (the
+    /// `EventLoopTimerTag::DevServerSweepSourceMaps` handler).
+    pub(crate) fn sweep_weak_refs(&mut self, now_ts: &bun_event_loop::EventLoopTimer::Timespec) {
         map_log!("sweepWeakRefs");
-        // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
-        let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
-        // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
-        debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);
 
         // Mixed-sign comparison: a negative `expire` must count as expired.
         // Keep `now` as i64 (already clamped ≥0) so the comparison stays
         // sign-correct without u64 wrap.
         let now: i64 = now_ts.sec.max(0);
 
-        // `emitMemoryVisualizerMessageIfNeeded` is inlined at both returns
-        // (a scopeguard cannot capture &mut store across the loop body
-        // without aliasing).
-
-        while let Some(item) = store.weak_refs.read_item() {
+        while let Some(item) = self.weak_refs.read_item() {
             if item.expire <= now {
-                store.unref_count(item.key(), item.count);
+                self.unref_count(item.key(), item.count);
             } else {
-                store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
-                store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
+                self.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
+                self.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
                 Self::timer_all().update(
-                    core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
+                    core::ptr::addr_of_mut!(self.weak_ref_sweep_timer),
                     &Timespec {
                         sec: item.expire + 1,
                         nsec: 0,
                     },
                 );
-                // SAFETY: invariant of `owner()`.
-                unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
                 return;
             }
         }
 
-        store.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
-        // SAFETY: invariant of `owner()`.
-        unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
+        self.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
     }
 
     /// This is used in exactly one place: remapping errors.

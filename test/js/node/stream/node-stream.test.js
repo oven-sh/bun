@@ -1,6 +1,6 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -474,6 +474,36 @@ it("Readable.fromWeb on an already-errored web stream emits 'error' and destroys
   expect(err.message).toBe("start-boom");
   expect(r.destroyed).toBe(true);
   expect(r.errored?.message).toBe("start-boom");
+});
+
+// Delivering a 64 KiB file chunk re-enters the native reader: push() over the
+// highWaterMark pauses it, and the next _read unpauses it mid-delivery. On
+// Windows that used to free the buffer an in-flight libuv file read was still
+// writing into, corrupting the heap (#39890).
+it("Readable.fromWeb(Bun.file().stream()) survives pause/unpause during chunk delivery (#39890)", async () => {
+  using dir = tempDir("fromweb-file-39890", {
+    "repro.ts": `
+      import { Readable } from "node:stream";
+      const big = Buffer.alloc(1024 * 1024, 0x61);
+      await Bun.write("big.bin", big);
+      const parts = [];
+      for await (const chunk of Readable.fromWeb(Bun.file("big.bin").stream())) {
+        parts.push(chunk);
+      }
+      const out = Buffer.concat(parts);
+      if (!out.equals(big)) throw new Error("round-trip mismatch: " + out.length);
+      console.log("OK");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repro.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "OK\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 it("Readable.fromWeb piped to a Writable surfaces web stream errors on the destination", async () => {

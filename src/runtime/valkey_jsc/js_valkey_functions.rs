@@ -1845,6 +1845,27 @@ impl JSValkeyClient {
         if !handler_callback.is_callable() {
             return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
         }
+        if !channel_or_many.is_string() && !channel_or_many.is_array() {
+            return Err(global.throw_invalid_argument_type(
+                "subscribe",
+                "channel",
+                "string or array",
+            ));
+        }
+
+        // The walk below stores each listener as it goes. A client that would
+        // reject the SUBSCRIBE outright must not keep the listeners either: a
+        // listener with no subscription behind it pins the event loop and the
+        // client, and cannot be removed with unsubscribe(). The dial comes
+        // after the argument checks, as for every other command, and before
+        // the state check, as in `send()`, so a fresh client with the offline
+        // queue off is rejected the way get() is: connecting, not never
+        // connected.
+        this.ensure_dialing();
+        if let Some(message) = this.client.get().send_rejection() {
+            let error = valkey::ValkeyClient::send_rejection_error(global, message);
+            return Ok(JSPromise::rejected_promise(global, error).to_js());
+        }
 
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
@@ -1874,7 +1895,7 @@ impl JSValkeyClient {
                 // handler.
                 this.upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
-        } else if channel_or_many.is_string() {
+        } else {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
@@ -1882,12 +1903,6 @@ impl JSValkeyClient {
             redis_channels.push(channel);
 
             this.upsert_receive_handler(global, channel_or_many, handler_callback)?;
-        } else {
-            return Err(global.throw_invalid_argument_type(
-                "subscribe",
-                "channel",
-                "string or array",
-            ));
         }
 
         let command = Command {

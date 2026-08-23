@@ -45,12 +45,6 @@ impl WeakPtrData {
     }
 }
 
-impl Default for WeakPtrData {
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
-
 /// Implemented by types that embed a `WeakPtrData` field and can be weakly
 /// referenced via `WeakPtr<T>`.
 ///

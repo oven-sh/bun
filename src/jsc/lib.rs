@@ -347,7 +347,7 @@ pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
-pub use self::js_ref::JsRef;
+pub use self::js_ref::{JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
 
@@ -391,7 +391,6 @@ pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;
-pub use self::zig_error_type::ZigErrorType;
 pub use self::zig_stack_frame_code::ZigStackFrameCode;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
@@ -457,9 +456,7 @@ pub mod zig_exception;
 pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
-// `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
-// every aliased type lives in api/webcore/test_runner/bake, so mounting it
-// here would create a `bun_jsc → bun_runtime` cycle.
+
 #[path = "AsyncModule.rs"]
 pub mod async_module;
 #[path = "bindgen.rs"]
@@ -483,21 +480,23 @@ pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
 
-/// Binding for JSCInitialize in ZigGlobalObject.cpp
-pub fn initialize(eval_mode: bool) {
-    initialize_with(eval_mode, false);
+/// Flags for `JSCInitialize` in ZigGlobalObject.cpp. JSC is set up once per process: the first call's flags win.
+#[derive(Clone, Copy, Default)]
+pub struct InitializeOptions {
+    /// JSC `evalMode`: keeps completion values, for `bun --print` and the REPL.
+    pub eval_mode: bool,
+    /// `bun -e` / `bun -p` ([`is_one_shot_eval_invocation`]): no concurrent JIT or parallel GC marker threads.
+    pub one_shot: bool,
+    /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
+    pub short_lived_globals: bool,
 }
 
-/// `short_lived_globals`: `bun test --isolate`/`--parallel`, where each file gets a fresh global and per-global JIT code is discarded with it.
-pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
+/// Binding for JSCInitialize in ZigGlobalObject.cpp
+pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();
-    // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit before
-    // any long-running event loop; tell JSC to skip the worker threads it
-    // otherwise spawns eagerly at VM creation (see `JSCInitialize`).
-    let one_shot = is_one_shot_eval_invocation();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.
@@ -506,9 +505,9 @@ pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
             env.as_ptr(),
             env.len(),
             on_jsc_invalid_env_var,
-            eval_mode,
-            one_shot,
-            short_lived_globals,
+            options.eval_mode,
+            options.one_shot,
+            options.short_lived_globals,
         )
     };
 }
@@ -519,8 +518,8 @@ pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
 ///
 /// Kept conservative on purpose: only the explicit eval flags qualify. `bun
 /// <file>` is *not* treated as one-shot (it may start a server), so server
-/// workloads keep the default multi-threaded JIT/GC configuration.
-fn is_one_shot_eval_invocation() -> bool {
+/// workloads keep the default multi-threaded JIT/GC configuration. Only valid for the `bun` CLI's own argv.
+pub fn is_one_shot_eval_invocation() -> bool {
     for arg in bun_core::argv().iter().skip(1) {
         if arg == b"-e" || arg == b"--eval" || arg == b"-p" || arg == b"--print" {
             return true;
@@ -921,6 +920,7 @@ pub enum BuiltinName {
     type_,
     signal,
     cmd,
+    errors,
     /// Private name (`$internal` in builtins); user code cannot set it.
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
@@ -1020,8 +1020,6 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn ZigString__toValueGC(this: &bun_core::ZigString, global: &JSGlobalObject) -> JSValue;
     // ZigString__toExternalValue: use the generated `cpp::` re-export (canonical signature).
-    safe fn ZigString__toJSONObject(this: &bun_core::ZigString, global: &JSGlobalObject)
-    -> JSValue;
     // safe: `ZigString`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
     // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
     // pointer C++ stores into the external string's finalizer slot and forwards
@@ -1366,10 +1364,6 @@ pub(crate) fn mark_member_binding(class: &'static str, src: &core::panic::Locati
     }
 }
 
-// LAYERING: no `Subprocess` alias is exported here — that type lives in
-// `bun_runtime::api` (forward-dep); callers reference
-// `bun_runtime::api::Subprocess` directly.
-
 /// Generated classes — re-run generate-classes.ts with .rs output.
 pub mod codegen {
     // GENERATED: re-run src/codegen/generate-classes.ts with .rs output
@@ -1389,8 +1383,6 @@ pub mod codegen {
     }
 }
 pub use self::codegen as Codegen;
-// `GeneratedClassesList` lives in `bun_runtime::GeneratedClassesList`
-// (layering: every aliased type is defined above `bun_jsc`).
 
 /// Extension trait providing JSC-aware methods on `bun_core::String`.
 pub trait StringJsc {
@@ -1482,7 +1474,7 @@ pub trait ZigStringJsc: Sized {
     /// buffer to JSC's external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
     /// `ZigString.toJSONObject` — `JSON.parse` over the bytes.
-    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// `ZigString.external` — like `to_external_value` but with a caller-supplied
     /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
     ///
@@ -1557,8 +1549,9 @@ impl ZigStringJsc for bun_core::ZigString {
         unsafe { cpp::ZigString__toExternalValue(self, global.as_ptr()) }
     }
     #[inline]
-    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toJSONObject(self, global)
+    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `self` is a live `&ZigString` for the duration of the call.
+        unsafe { crate::cpp::ZigString__toJSONObject(self, global) }
     }
     #[inline]
     unsafe fn external(

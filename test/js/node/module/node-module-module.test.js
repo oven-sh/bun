@@ -29,6 +29,29 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("Module._findPath propagates an error thrown by an onResolve plugin", async () => {
+    // Plugins are process-global; run in a child so the throwing resolver can't affect other tests.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.plugin({ name: "throws", setup(b) { b.onResolve({ filter: /\\.findpathprobe$/ }, () => { throw new Error("onResolve threw"); }); } });
+        try {
+          console.log("returned", require("module")._findPath("thing.findpathprobe", [process.cwd()]));
+        } catch (e) {
+          console.log("threw", e.message);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("threw onResolve threw");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("Module.prototype is not enumerable", async () => {
     const Module = require("module");
     const { value, ...descriptor } = Object.getOwnPropertyDescriptor(Module, "prototype");
@@ -380,6 +403,26 @@ console.log("survived", require("./late.js"));`,
     expect(() => Reflect.construct(Module._resolveFilename, ["fs"])).toThrow(TypeError);
     // Calling still works.
     expect(Module._resolveFilename("fs")).toBe("fs");
+  });
+
+  test("Module.runMain propagates an error from stringifying its argument", () => {
+    const boom = new Error("boom");
+    expect(() =>
+      Module.runMain({
+        toString() {
+          throw boom;
+        },
+      }),
+    ).toThrow(boom);
+  });
+
+  test("module.filename/id/path setters propagate a failed string conversion", () => {
+    const m = new Module("x");
+    for (const key of ["filename", "id", "path"]) {
+      expect(() => {
+        m[key] = Symbol("s");
+      }).toThrow(TypeError);
+    }
   });
 
   test("Module._resolveFilename accepts an options object without paths", () => {

@@ -896,14 +896,6 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
-        /// `SetFileTime` (`fileapi.h`). Any of the three `FILETIME` pointers
-        /// may be null to leave that timestamp unchanged.
-        pub fn SetFileTime(
-            hFile: HANDLE,
-            lpCreationTime: *const FILETIME,
-            lpLastAccessTime: *const FILETIME,
-            lpLastWriteTime: *const FILETIME,
-        ) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
         pub fn CreateProcessW(
             lpApplicationName: LPCWSTR,
@@ -1098,27 +1090,7 @@ pub mod ws2_32 {
             res: *mut *mut addrinfo,
         ) -> c_int;
         pub fn freeaddrinfo(ai: *mut addrinfo);
-        /// `WSAStartup` (`winsock2.h`). 0 on success; non-zero is a `WSAE*`.
-        pub fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
     }
-
-    /// `WSADATA` (`winsock2.h`, **`_WIN64` layout** — on 64-bit Windows
-    /// `iMaxSockets`/`iMaxUdpDg`/`lpVendorInfo` come *before* the
-    /// `szDescription`/`szSystemStatus` arrays; the 32-bit header swaps that
-    /// order). Only ever read back from `WSAStartup`; callers zero-initialise
-    /// and never project fields beyond `wVersion`.
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct WSADATA {
-        pub wVersion: u16,
-        pub wHighVersion: u16,
-        pub iMaxSockets: u16,
-        pub iMaxUdpDg: u16,
-        pub lpVendorInfo: *mut u8,
-        pub szDescription: [u8; 257],
-        pub szSystemStatus: [u8; 129],
-    }
-    const _: () = assert!(core::mem::size_of::<WSADATA>() == 408);
 
     /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.
     #[repr(C)]
@@ -1356,11 +1328,6 @@ impl Win32Error {
 
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
-
-#[cfg_attr(windows, link(name = "shell32"))]
-unsafe extern "system" {
-    pub fn CommandLineToArgvW(lpCmdLine: LPCWSTR, pNumArgs: *mut c_int) -> *mut LPWSTR;
-}
 
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
@@ -1643,8 +1610,8 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
     /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. `Fd::cwd()`
-    /// reads the handle so `openat(Fd::cwd(), …)` resolves relative paths
-    /// against the live process cwd via `NtCreateFile`'s `RootDirectory`.
+    /// decodes to this handle so `openat(Fd::cwd(), …)` resolves relative
+    /// paths against the live process cwd via `NtCreateFile`'s `RootDirectory`.
     pub CurrentDirectory: CURDIR,
     pub DllPath: UNICODE_STRING,
     pub ImagePathName: UNICODE_STRING,

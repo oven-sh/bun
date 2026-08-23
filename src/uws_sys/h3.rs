@@ -178,6 +178,10 @@ impl Response {
     pub(crate) fn should_close_connection(&mut self) -> bool {
         self.state().is_http_connection_close()
     }
+    /// `us_quic_on_close` frees the stream right after its close callback: a live handle is never closed.
+    pub(crate) fn is_closed(&self) -> bool {
+        false
+    }
     pub(crate) fn is_corked(&self) -> bool {
         false
     }
@@ -516,16 +520,6 @@ pub struct ListenConfig {
     pub port: u16,
     pub host: *const c_char,
     pub options: i32,
-}
-
-impl Default for ListenConfig {
-    fn default() -> Self {
-        Self {
-            port: 0,
-            host: ptr::null(),
-            options: 0,
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

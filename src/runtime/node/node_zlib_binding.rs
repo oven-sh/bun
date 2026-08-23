@@ -1006,7 +1006,7 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
 ///
 /// `$type_name` is the C++-side class name (matches `.classes.ts`); the macro
 /// emits a `pub mod js { … }` with the cached-property accessors
-/// (`writeCallback` / `errorCallback` / `dictionary`) wired to the
+/// (`writeCallback` / `errorCallback` / …) wired to the
 /// `${TypeName}Prototype__${prop}{Get,Set}CachedValue` extern symbols.
 #[macro_export]
 #[doc(hidden)]
@@ -1026,7 +1026,7 @@ macro_rules! __impl_compression_stream {
         /// `generate-classes.ts` for the `values:` list in `zlib.classes.ts`.
         #[allow(unused)]
         pub(crate) mod js {
-            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary, pendingInput, pendingOutput, writeResult);
+            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, pendingInput, pendingOutput, writeResult);
         }
 
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {

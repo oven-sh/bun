@@ -663,7 +663,19 @@ static napi_value test_reference_unref_underflow(const Napi::CallbackInfo &info)
   return result;
 }
 
+// Returns the this_arg that napi_get_cb_info reports for this call, so JS can
+// check what a callback sees as its receiver for different call shapes.
+static napi_value return_this(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value this_arg;
+  NODE_API_CALL(env,
+                napi_get_cb_info(env, static_cast<napi_callback_info>(info),
+                                 nullptr, nullptr, &this_arg, nullptr));
+  return this_arg;
+}
+
 void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
+  REGISTER_FUNCTION(env, exports, return_this);
   REGISTER_FUNCTION(env, exports, create_ref_with_finalizer);
   REGISTER_FUNCTION(env, exports, was_finalize_called);
   REGISTER_FUNCTION(env, exports, call_and_get_exception);

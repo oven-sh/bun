@@ -50,7 +50,10 @@ const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
 
-const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
+let uvBinding;
+function uv() {
+  return (uvBinding ??= process.binding("uv"));
+}
 const isWindows = process.platform === "win32";
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
@@ -106,8 +109,10 @@ function appendTlsKeylog(line: Buffer) {
     }
   }
 }
-const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
-const BlockList = $rust("node_net_binding.rs", "BlockList");
+let BlockList, SocketAddress;
+function lazyBlockList() {
+  return (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
+}
 const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
@@ -1426,7 +1431,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     // the syscall; surface it as kConnectTcp/Pipe's return value (callers'
     // Node-derived `if (err)` expects that) instead of re-entering oncomplete.
     if (req!.dispatching) {
-      req.errno = error.errno || UV_ECANCELED;
+      req.errno = error.errno || uv().UV_ECANCELED;
       return;
     }
     req!.oncomplete(error.errno, self._handle, req, true, true);
@@ -1726,7 +1731,7 @@ function Socket(options?) {
         if (dest.length === 0) {
           const err = new Error("read ENOBUFS") as Error & { code?: string; errno?: number; syscall?: string };
           err.code = "ENOBUFS";
-          err.errno = UV_ENOBUFS;
+          err.errno = uv().UV_ENOBUFS;
           err.syscall = "read";
           self.destroy(err);
           return;
@@ -1784,7 +1789,7 @@ function Socket(options?) {
   }
   const optsBlockList = opts.blockList;
   if (optsBlockList) {
-    if (!BlockList.isBlockList(optsBlockList)) {
+    if (!lazyBlockList().isBlockList(optsBlockList)) {
       throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", optsBlockList);
     }
     this.blockList = optsBlockList;
@@ -1926,14 +1931,12 @@ Socket.prototype.connect = function connect(...args) {
       this.pause();
     } else {
       process.nextTick(() => {
-        // Honor pause()/resume() calls made while connecting — only start
-        // reading if the user hasn't explicitly paused the stream. Matches
-        // Node's afterConnect, which calls socket.read(0) only when not paused:
+        // An already-open handle (fd, wrapped duplex) starts reading here unless
+        // the user paused; read(0) does that without switching to flowing mode.
+        // A pending connect gets this from afterConnect instead, so a pause()
+        // that lands before then is still honored:
         // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1649
-        // read(0) starts the handle reading without switching the stream into
-        // flowing mode, so data that arrives before a 'data' listener is
-        // attached stays buffered instead of being emitted to nobody.
-        if (!this.isPaused()) this.read(0);
+        if (!this.connecting && !this.isPaused()) this.read(0);
       });
       if (fd == null) this.connecting = true;
     }
@@ -3330,7 +3333,7 @@ function internalConnectMultipleTimeout(context, req, handle) {
   // close() on a still-connecting handle runs no terminal callback and never
   // rejects doConnect's promise (see socket_body.rs), so end the span here.
   traceConnectEnd(req);
-  ArrayPrototypePush.$call(context.errors, createConnectionError(req, UV_ETIMEDOUT));
+  ArrayPrototypePush.$call(context.errors, createConnectionError(req, uv().UV_ETIMEDOUT));
   handle.close();
 
   // Try the next address, unless we were aborted
@@ -3436,7 +3439,7 @@ function afterConnectMultiple(context, current, status, handle, req, readable, w
 
     // Try the next address, unless we were aborted
     if (context.socket.connecting) {
-      internalConnectMultiple(context, status === UV_ECANCELED);
+      internalConnectMultiple(context, status === uv().UV_ECANCELED);
     }
 
     return;
@@ -3532,7 +3535,7 @@ function Server(options?, connectionListener?) {
 
   const optionsBlockList = options.blockList;
   if (optionsBlockList) {
-    if (!BlockList.isBlockList(optionsBlockList)) {
+    if (!lazyBlockList().isBlockList(optionsBlockList)) {
       throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", optionsBlockList);
     }
     this.blockList = optionsBlockList;
@@ -4272,8 +4275,8 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
-    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref().
-    if (self[kUserUnrefed]) handle.unref?.();
+    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref()/pause().
+    if (self[kUserUnrefed] || self[kPausedUnref]) handle.unref?.();
   }
 }
 
@@ -4376,7 +4379,7 @@ Server.prototype[kArmHandshakeTimeout] = function (socket) {
   initAcceptedTLSSocket(this, socket);
 };
 
-export default {
+const netExports = {
   createServer,
   Server,
   createConnection,
@@ -4393,8 +4396,19 @@ export default {
   getDefaultAutoSelectFamilyAttemptTimeout,
   setDefaultAutoSelectFamilyAttemptTimeout,
 
-  BlockList,
-  SocketAddress,
+  get BlockList() {
+    return lazyBlockList();
+  },
+  set BlockList(value) {
+    Object.defineProperty(netExports, "BlockList", { value, writable: true, enumerable: true, configurable: true });
+  },
+  get SocketAddress() {
+    return (SocketAddress ??= $rust("node_net_binding.rs", "SocketAddress"));
+  },
+  set SocketAddress(value) {
+    Object.defineProperty(netExports, "SocketAddress", { value, writable: true, enumerable: true, configurable: true });
+  },
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
 } as any as typeof import("node:net");
+export default netExports;

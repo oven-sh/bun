@@ -587,15 +587,6 @@ struct Column {
     width: u32,
 }
 
-impl Default for Column {
-    fn default() -> Self {
-        Self {
-            name: BunString::empty(),
-            width: 1,
-        }
-    }
-}
-
 enum RowKey {
     /// Property-name UTF-8 slice + visible width (plain-object tabular data).
     /// `to_utf8` refs the WTF impl (or owns a transcoded copy) and Drop
@@ -1295,24 +1286,7 @@ impl FormatOptions {
 
         if arg1.is_object() {
             if let Some(opt) = arg1.get_truthy(global_this, "depth")? {
-                if opt.is_int32() {
-                    let arg = opt.to_int32();
-                    if arg < 0 {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "expected depth to be greater than or equal to 0, got {arg}"
-                        )));
-                    }
-                    self.max_depth = u32::try_from(arg.min(i32::from(u16::MAX))).unwrap() as u16;
-                } else if opt.is_number() {
-                    let v = opt.coerce_f64(global_this)?;
-                    if v.is_infinite() {
-                        self.max_depth = u16::MAX;
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "expected depth to be an integer, got {v}"
-                        )));
-                    }
-                }
+                self.set_depth(global_this, opt)?;
             }
             if let Some(opt) = arg1.get_boolean_loose(global_this, "colors")? {
                 self.enable_colors = opt;
@@ -1326,29 +1300,35 @@ impl FormatOptions {
         } else {
             // formatOptions.show_hidden = arg1.toBoolean();
             if !arguments.is_empty() {
-                let depth_arg = arg1;
-                if depth_arg.is_int32() {
-                    let arg = depth_arg.to_int32();
-                    if arg < 0 {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "expected depth to be greater than or equal to 0, got {arg}"
-                        )));
-                    }
-                    self.max_depth = u32::try_from(arg.min(i32::from(u16::MAX))).unwrap() as u16;
-                } else if depth_arg.is_number() {
-                    let v = depth_arg.coerce_f64(global_this)?;
-                    if v.is_infinite() {
-                        self.max_depth = u16::MAX;
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "expected depth to be an integer, got {v}"
-                        )));
-                    }
-                }
+                self.set_depth(global_this, arg1)?;
                 if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
                     self.enable_colors = arguments[1].to_boolean();
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// `depth`: a non-negative integer (clamped to `u16::MAX`) or `Infinity`; non-numbers are
+    /// ignored. Decided on the number's value, so an integer JSC boxed as a double (a
+    /// `Float64Array` element, `-0`) is accepted like its int32 twin.
+    fn set_depth(&mut self, global_this: &JSGlobalObject, depth: JSValue) -> JsResult<()> {
+        if !depth.is_number() {
+            return Ok(());
+        }
+        let depth = depth.as_number();
+        if depth.is_infinite() {
+            self.max_depth = u16::MAX;
+        } else if depth.trunc() != depth {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "expected depth to be an integer, got {depth}"
+            )));
+        } else if depth < 0.0 {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "expected depth to be greater than or equal to 0, got {depth}"
+            )));
+        } else {
+            self.max_depth = depth.min(f64::from(u16::MAX)) as u16;
         }
         Ok(())
     }
@@ -1802,28 +1782,16 @@ pub mod formatter {
 
     impl core::fmt::Display for ZigFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            // Move the unique `&mut Formatter` out of the cell for the body;
-            // re-seat it (and clear `remaining_values`) on the way out so the
-            // adapter stays reusable.
             let formatter: &mut Formatter<'_> = self
                 .formatter
                 .take()
                 .expect("ZigFormatter::fmt re-entered or used after consumption");
 
-            let one = [self.value];
-            formatter.remaining_values = bun_ptr::RawSlice::new(&one);
+            let mut sink = bun_io::FmtAdapter::new(f);
+            let result = formatter
+                .format_value::<false>(self.value, &mut sink)
+                .map_err(|_| core::fmt::Error);
 
-            let result = (|| {
-                let tag =
-                    Tag::get(self.value, formatter.global_this).map_err(|_| core::fmt::Error)?;
-                let mut sink = bun_io::FmtAdapter::new(f);
-                let global = formatter.global_this;
-                formatter
-                    .format::<false>(tag, &mut sink, self.value, global)
-                    .map_err(|_| core::fmt::Error)
-            })();
-
-            formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
             self.formatter.set(Some(formatter));
             result
         }
@@ -4217,18 +4185,12 @@ pub mod formatter {
             value: JSValue,
         ) -> JsResult<()> {
             if let Some(func) = value.get(self.global_this, "toJSON")? {
-                match func.call(self.global_this, value, &[]) {
-                    Err(_) => {
-                        self.global_this.clear_exception();
-                    }
-                    Ok(result) => {
-                        let prev_quote_keys = self.quote_keys;
-                        self.quote_keys = true;
-                        let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-                        let tag = Tag::get(result, self.global_this)?;
-                        return self.format::<C>(tag, writer_, result, self.global_this);
-                    }
-                }
+                let result = func.call(self.global_this, value, &[])?;
+                let prev_quote_keys = self.quote_keys;
+                self.quote_keys = true;
+                let _r = defer_restore!(self.quote_keys, prev_quote_keys);
+                let tag = Tag::get(result, self.global_this)?;
+                return self.format::<C>(tag, writer_, result, self.global_this);
             }
 
             if writer_.write_all(b"{}").is_err() {
@@ -4605,9 +4567,7 @@ pub mod formatter {
                     self.quote_keys = true;
                     let _r = defer_restore!(self.quote_keys, prev_quote_keys);
 
-                    let result = to_json_function
-                        .call(self.global_this, value, &[])
-                        .unwrap_or_else(|err| self.global_this.take_exception(err));
+                    let result = to_json_function.call(self.global_this, value, &[])?;
                     return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
                 }
 
@@ -5637,38 +5597,45 @@ pub mod formatter {
             writer: &mut WrappedWriter<'_>,
             slice: &[N],
         ) {
-            writer.print(format_args!(
-                "{}{}{}{}",
-                pfmt!("<r><yellow>", C),
-                N::display(slice[0]),
-                if N::IS_BIGINT { "n" } else { "" },
-                pfmt!("<r>", C),
-            ));
-            let leftover = &slice[1..];
+            // Only the per-element `Display` differs by `N`; the loop is shared.
+            Self::write_typed_array_elements::<C>(
+                writer,
+                slice.len(),
+                N::IS_BIGINT,
+                &mut |w, i| w.print(format_args!("{}", N::display(slice[i]))),
+            );
+        }
+
+        fn write_typed_array_elements<const C: bool>(
+            writer: &mut WrappedWriter<'_>,
+            len: usize,
+            is_bigint: bool,
+            print_element: &mut dyn FnMut(&mut WrappedWriter<'_>, usize),
+        ) {
+            let suffix = if is_bigint { "n" } else { "" };
+            writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+            print_element(writer, 0);
+            writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
             const MAX: usize = 512;
-            let leftover = &leftover[..leftover.len().min(MAX)];
-            for &el in leftover {
+            let shown = len.min(MAX + 1);
+            for i in 1..shown {
                 writer.print_comma::<C>();
                 if writer.failed {
                     return;
                 }
                 writer.space();
 
-                writer.print(format_args!(
-                    "{}{}{}{}",
-                    pfmt!("<r><yellow>", C),
-                    N::display(el),
-                    if N::IS_BIGINT { "n" } else { "" },
-                    pfmt!("<r>", C),
-                ));
+                writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+                print_element(writer, i);
+                writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
             }
 
-            if slice.len() > MAX + 1 {
+            if len > MAX + 1 {
                 writer.print(format_args!(
                     "{}{}, ... {} more{}",
                     pfmt!("<r><d>", C),
-                    if N::IS_BIGINT { "n" } else { "" },
-                    slice.len() - MAX - 1,
+                    suffix,
+                    len - MAX - 1,
                     pfmt!("<r>", C),
                 ));
             }

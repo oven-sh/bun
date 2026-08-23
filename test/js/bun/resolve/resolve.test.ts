@@ -859,11 +859,12 @@ describe("package.json exports targets longer than the maximum path length", () 
 describe("package.json exports targets nested too deeply", () => {
   // Shallow enough for the JSON parser, which stops at about 800 levels on
   // debug builds, yet deep enough to exhaust the native stack that is left at
-  // the deepest JS frame on an 8 MiB main stack: JS may use 7 MiB of it (the
-  // engine default is 5 MiB), so about 1 MiB remains for the resolver down
-  // there. A platform with a larger main stack resolves the target instead.
+  // the deepest JS frame. JS may use all but the last 1 to 2 MiB of the main
+  // stack (the engine default is 5 MiB): the linker gives bun an 18 MiB main
+  // stack on macOS and Windows, Linux has the 8 MiB rlimit default.
   const depth = isDebug || isASAN ? 400 : 10000;
-  const env = { ...bunEnv, BUN_JSC_maxPerThreadStackUsage: String(7 * 1024 * 1024) };
+  const jsStackMiB = isMacOS || isWindows ? 16 : 7;
+  const env = { ...bunEnv, BUN_JSC_maxPerThreadStackUsage: String(jsStackMiB * 1024 * 1024) };
   const targets = {
     array: "[".repeat(depth) + '"./t.js"' + "]".repeat(depth),
     conditions:

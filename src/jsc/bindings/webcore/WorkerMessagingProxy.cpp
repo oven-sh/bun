@@ -330,6 +330,16 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
 void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionContext& context)
 {
     auto& globalObject = *defaultGlobalObject(context.globalObject());
+    // The implicit port's message queue is enabled once the entry script's evaluation (including
+    // top-level await) completes, or earlier when the script installs a message handler (HTML's
+    // onmessage setter). Dispatching sooner fires the events at nothing and loses the messages, so
+    // park them: workerEntryModuleSettled() and the first 'message' listener
+    // (GlobalEventScope::onDidChangeListenerImpl) re-schedule this drain.
+    if (!m_entryModuleSettled && !globalObject.globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
+        Locker locker { m_toWorker.lock };
+        m_toWorker.drainScheduled = false;
+        return;
+    }
     bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, [&](Event& event) {
         globalObject.globalEventScope->dispatchEvent(event);
     });
@@ -339,6 +349,33 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
         context.postTaskAfterYield([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             protectedThis->drainMessagesToWorkerGlobalScope(context);
         });
+    }
+}
+
+void WorkerMessagingProxy::workerEntryModuleSettled()
+{
+    m_entryModuleSettled = true;
+    scheduleDrainToWorkerGlobalScope();
+}
+
+void WorkerMessagingProxy::scheduleDrainToWorkerGlobalScope()
+{
+    // Before Running the first drain belongs to workerGlobalScopeStarted(): nothing from the inbox
+    // is dispatched while the entry graph is still loading.
+    if (m_state.load() != State::Running)
+        return;
+    {
+        Locker locker { m_toWorker.lock };
+        if (m_toWorker.queue.isEmpty() || m_toWorker.drainScheduled)
+            return;
+        m_toWorker.drainScheduled = true;
+    }
+    bool posted = ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        protectedThis->drainMessagesToWorkerGlobalScope(context);
+    });
+    if (!posted) {
+        Locker locker { m_toWorker.lock };
+        m_toWorker.drainScheduled = false;
     }
 }
 

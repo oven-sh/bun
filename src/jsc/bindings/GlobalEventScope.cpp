@@ -3,10 +3,13 @@
 #include "GlobalEventScope.h"
 #include "MessagePort.h"
 #include "ScriptExecutionContext.h"
+#include "WorkerMessagingProxy.h"
 #include "ZigGlobalObject.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
+
+extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalEventScope);
 
@@ -18,6 +21,13 @@ void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomStri
         case Add:
             if (global.m_messageEventCount == 0) {
                 global.scriptExecutionContext()->refEventLoop();
+                // The first 'message' listener enables the implicit port's message queue (HTML's
+                // onmessage setter does this): release messages the inbox drain parked while the
+                // entry module was still evaluating.
+                if (auto* jsGlobalObject = global.scriptExecutionContext()->globalObject()) {
+                    if (auto* proxy = WebWorker__getMessagingProxy(defaultGlobalObject(jsGlobalObject)->bunVM()))
+                        proxy->scheduleDrainToWorkerGlobalScope();
+                }
             }
             global.m_messageEventCount++;
             break;

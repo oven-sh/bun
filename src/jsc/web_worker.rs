@@ -163,6 +163,9 @@ unsafe extern "C" {
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
+    /// The entry promise settled (including a top-level await): the proxy's
+    /// inbox drain stops parking messages and delivers what it buffered.
+    safe fn WebWorker__entryModuleSettled(proxy: *mut c_void);
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
@@ -942,6 +945,24 @@ impl WebWorker {
         WebWorker__workerGlobalScopeStarted(self.messaging_proxy, vm.global());
         self.set_status(Status::Running);
 
+        // Per the HTML spec the implicit port's message queue is enabled once the
+        // entry's evaluation — including a top-level await — settles; until then
+        // the proxy parks inbound messages unless a 'message' listener exists.
+        // Report the settlement exactly once, on any outcome.
+        let messaging_proxy = self.messaging_proxy;
+        let mut entry_settled_reported = false;
+        let mut report_entry_settled = || {
+            if entry_settled_reported {
+                return;
+            }
+            // SAFETY: rooted by `entry_promise`.
+            if unsafe { (*promise).status() } != jsc::js_promise::Status::Pending {
+                entry_settled_reported = true;
+                WebWorker__entryModuleSettled(messaging_proxy);
+            }
+        };
+        report_entry_settled();
+
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0 {
             vm.global().vm().release_weak_refs();
@@ -953,10 +974,12 @@ impl WebWorker {
         // Always do a first tick so we call CppTask without delay after
         // workerGlobalScopeStarted.
         vm.as_mut().tick();
+        report_entry_settled();
         let mut stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
 
         while !stopped_by_entry && vm.is_event_loop_alive() {
             vm.as_mut().tick();
+            report_entry_settled();
             if self.has_requested_terminate() {
                 break;
             }
@@ -965,6 +988,7 @@ impl WebWorker {
                 break;
             }
             vm.as_mut().auto_tick_active();
+            report_entry_settled();
             if self.has_requested_terminate() {
                 break;
             }

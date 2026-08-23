@@ -176,6 +176,13 @@ extern "C" void WebWorker__workerGlobalScopeStarted(WorkerMessagingProxy* proxy,
     proxy->workerGlobalScopeStarted(*globalObject);
 }
 
+// The entry module's evaluation promise settled (including any top-level await): the implicit
+// port's message queue is enabled, so parked messages from the parent drain now.
+extern "C" void WebWorker__entryModuleSettled(WorkerMessagingProxy* proxy)
+{
+    proxy->workerEntryModuleSettled();
+}
+
 extern "C" void WebWorker__workerGlobalScopeDestroyed(WorkerMessagingProxy* proxy, int32_t exitCode, bool stoppedByParent)
 {
     proxy->workerGlobalScopeDestroyed(exitCode, stoppedByParent);

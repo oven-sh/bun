@@ -652,14 +652,11 @@ mod draft {
         #[cfg(unix)]
         fn terminal_signal(&self) -> c_int {
             match self {
-                CrashReason::SegmentationFault(_) => libc::SIGSEGV,
+                CrashReason::SegmentationFault(_) | CrashReason::StackOverflow => libc::SIGSEGV,
                 CrashReason::IllegalInstruction(_) => libc::SIGILL,
                 CrashReason::BusError(_) => libc::SIGBUS,
                 CrashReason::FloatingPointError(_) => libc::SIGFPE,
                 CrashReason::Trap(_) => libc::SIGTRAP,
-                // On POSIX a stack overflow arrives as SIGSEGV on the guard
-                // page; re-raise as SIGSEGV so the parent sees the real fault.
-                CrashReason::StackOverflow => libc::SIGSEGV,
                 CrashReason::Abort
                 | CrashReason::Panic(_)
                 | CrashReason::Unreachable
@@ -1591,12 +1588,8 @@ mod draft {
         }
     }
 
-    /// `si_addr` within this distance of the faulting thread's stack pointer
-    /// is classified as a stack overflow rather than a stray dereference.
-    /// x86 exceptions are precise, so `push`/`call` fault with SP still at its
-    /// pre-decrement value and `addr == sp - 8`; explicit `sub rsp, N` runs
-    /// before the faulting store so `addr` is near the already-lowered SP
-    /// regardless of frame size.
+    /// A fault this close to the faulting SP is a guard-page hit, not a stray
+    /// dereference. Same heuristic as the sanitizers' stack-overflow detector.
     #[cfg(unix)]
     const STACK_OVERFLOW_SP_SLOP: usize = 0x10000;
 

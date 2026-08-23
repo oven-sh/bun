@@ -132,9 +132,7 @@ pub(crate) mod js_bindings {
         crash_handler::suppress_core_dumps_if_necessary();
         #[cfg(unix)]
         {
-            // Under ASAN the POSIX handler is not installed (`reset_on_posix`
-            // early-returns so ASAN keeps SIGSEGV): exercise the classifier
-            // directly with a fault address just below the current SP.
+            // ASAN owns SIGSEGV (see `js_segfault`); call the classifier directly.
             if Environment::ENABLE_ASAN {
                 let probe = 0u8;
                 let sp = core::hint::black_box(&probe) as *const u8 as usize;
@@ -144,16 +142,11 @@ pub(crate) mod js_bindings {
                     crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
                 );
             }
-            // JSC's wasm-fault `jscSignalHandler` is installed over Bun's at VM
-            // init without `SA_ONSTACK`, so a guard-page SIGSEGV can't be
-            // delivered on the exhausted stack and the process dies before any
-            // handler runs. Re-arm Bun's handler (now with `SA_ONSTACK` on a
-            // second call) so the real signal path is what the test observes.
+            // JSC's wasm-fault handler replaced Bun's at VM init without
+            // `SA_ONSTACK`; re-arm so the guard-page fault is deliverable.
             crash_handler::reset_on_posix();
-            // CI runs with `ulimit -s unlimited`; cap the main-thread stack so
-            // recursion faults on the guard page instead of exhausting RAM.
-            // SAFETY: get/setrlimit take valid pointers; the process is about
-            // to crash so lowering limits in the test hook is harmless.
+            // `ulimit -s unlimited` on CI: cap so recursion hits a guard page.
+            // SAFETY: get/setrlimit take valid pointers.
             unsafe {
                 let mut lim: libc::rlimit = core::mem::zeroed();
                 if libc::getrlimit(libc::RLIMIT_STACK, &raw mut lim) == 0 {

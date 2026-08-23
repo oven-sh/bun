@@ -32,10 +32,8 @@ struct DeduplicatedImportResult {
 
 /// `get key() { return value }`
 ///
-/// The dev server evaluates `hmr.exports = { ... }` in the instantiate phase
-/// of the module wrapper, before the body runs, so that an import cycle can
-/// read a live namespace object. A getter defers the binding read until the
-/// property is accessed.
+/// The exports object is created in the instantiate phase, before the module
+/// body runs, so a getter defers the binding read to access time.
 fn getter_prop(arena: &bun_alloc::Arena, key: Expr, value: Expr, loc: bun_ast::Loc) -> G::Property {
     let body_stmts = arena.alloc_slice_copy(&[Stmt::alloc(S::Return { value: Some(value) }, loc)]);
     G::Property {
@@ -189,8 +187,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     },
                     js_ast::StmtOrExpr::Expr(e) => match e.data {
                         js_ast::ExprData::EIdentifier(_) => {
-                            // The exports object is evaluated before the body
-                            // runs, so the binding must be read lazily.
                             self.export_props.push(getter_prop(
                                 p.arena,
                                 Expr::init(E::EString::init(b"default"), stmt.loc),
@@ -286,8 +282,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 }
 
                 let class_name_ref = st.class.class_name.unwrap().ref_;
-                // A class binding is in its temporal dead zone when the
-                // exports object is evaluated, so this emits a getter.
                 self.visit_ref_to_export(p, class_name_ref, None, stmt.loc)?;
 
                 st.is_export = false;
@@ -362,9 +356,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 )?;
 
                 if let Some(alias) = &st.alias {
-                    // 'export * as ns from' creates one named property. The
-                    // namespace variable is assigned from `hmr.imports` after
-                    // the exports object is created, so read it lazily.
+                    // 'export * as ns from' creates one named property.
                     self.export_props.push(getter_prop(
                         p.arena,
                         // SAFETY: arena-owned name slice valid for the parse.
@@ -571,12 +563,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         } else {
             Expr::init_identifier(ref_, loc)
         };
-        // The exports object is evaluated in the instantiate phase of the
-        // module wrapper, before the body runs. Only a top-level function
-        // declaration is initialized at that point, so only a function that
-        // is never reassigned can be exported by value. Every other binding
-        // (var/let/const, class, import, re-export) is read through a getter,
-        // which also keeps the binding live.
+        // Only a top-level function declaration is initialized when the
+        // exports object is created (the instantiate phase), so only a
+        // function that is never reassigned can be exported by value.
         let is_function_declaration = matches!(
             kind,
             js_ast::symbol::Kind::HoistedFunction | js_ast::symbol::Kind::GeneratorOrAsyncFunction

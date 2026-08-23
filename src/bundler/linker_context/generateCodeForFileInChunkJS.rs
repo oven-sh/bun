@@ -96,11 +96,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
             }
 
-            // An ESM module without top-level await is printed as a generator
-            // and linked in two phases: `hmr.exports = {...}` and `yield` go
-            // first so that the first resume instantiates the module before
-            // its dependencies evaluate. See the doc comment on
-            // `convert_stmts_for_chunk_for_dev_server`.
+            // Two-phase ESM: the exports assignment and a `yield` go first.
+            // See the doc comment on `convert_stmts_for_chunk_for_dev_server`.
             let two_phase = is_two_phase_esm(&ast);
             let phase_stmts_len = if two_phase {
                 1 + usize::from(exports_assignment.is_some())

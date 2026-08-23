@@ -6738,12 +6738,10 @@ pub(crate) mod __gated_printer {
                 self.print(b"], ");
 
                 // Print the code. A module without top-level await is a
-                // generator: the HMR runtime resumes it once to instantiate
-                // (hoisted declarations and the exports object) and once to
-                // evaluate the body, so an import cycle reads a live
-                // namespace object. A generator cannot suspend on `await`,
-                // so a module with top-level await keeps the one-phase
-                // async form.
+                // generator for the two-phase link (see the doc comment on
+                // `convert_stmts_for_chunk_for_dev_server`). A generator
+                // cannot suspend on `await`, so top-level await keeps the
+                // one-phase async form.
                 let is_async = !ast.top_level_await_keyword.is_empty();
                 if is_async {
                     self.print(b"async");

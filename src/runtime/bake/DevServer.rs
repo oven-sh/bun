@@ -2872,8 +2872,8 @@ impl DevServer {
         if any {
             w.extend_from_slice(b"  ");
         }
-        // The load function is a generator like every non-async ESM module:
-        // the runtime resumes it once to instantiate and once to evaluate.
+        // The runtime expects every non-async ESM load function to be a
+        // generator.
         w.extend_from_slice(b"], [], [], function* () {}, false],\n");
 
         // Avoid-recloning if it is was moved to the heap

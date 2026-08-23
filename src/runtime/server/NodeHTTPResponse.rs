@@ -2688,7 +2688,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
             break 'brk 0;
         };
 
-        *has_body = req_len > 0 || request_ref.header(b"transfer-encoding").is_some();
+        *has_body = req_len > 0 || request_ref.has_transfer_encoding();
     }
 
     let raw_response = if is_ssl != 0 {

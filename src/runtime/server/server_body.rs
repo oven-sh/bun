@@ -283,6 +283,9 @@ where
 // actually needs is exposed.
 trait ReqLike {
     fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
+    /// Whether the transport frames the body with a Transfer-Encoding header.
+    /// This is the parser's verdict, not a lookup of the first header field.
+    fn has_transfer_encoding(&mut self) -> bool;
     fn method(&mut self) -> &[u8];
     fn url(&mut self) -> &[u8];
     fn set_yield(&mut self, y: bool);
@@ -291,6 +294,10 @@ impl ReqLike for uws_sys::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::Request::header(self, name)
+    }
+    #[inline]
+    fn has_transfer_encoding(&mut self) -> bool {
+        uws_sys::Request::has_transfer_encoding(self)
     }
     #[inline]
     fn method(&mut self) -> &[u8] {
@@ -309,6 +316,13 @@ impl ReqLike for uws_sys::h3::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::h3::Request::header(self, name)
+    }
+    /// HTTP/3 has no transfer codings (RFC 9114 4.2): the body ends at the
+    /// QUIC stream FIN, and a request that carries the header is rejected
+    /// before this is consulted.
+    #[inline]
+    fn has_transfer_encoding(&mut self) -> bool {
+        false
     }
     #[inline]
     fn method(&mut self) -> &[u8] {
@@ -3240,7 +3254,7 @@ where
 
         if let Some(req_len) = request_body_length {
             ctx.set_request_body_content_len(req_len);
-            let is_te = ReqLike::header(req, b"transfer-encoding").is_some();
+            let is_te = ReqLike::has_transfer_encoding(req);
             ctx.set_is_transfer_encoding(is_te);
             // HTTP/3 (RFC 9114 §4.2.2): Content-Length is optional and
             // Transfer-Encoding is forbidden; the body is terminated by

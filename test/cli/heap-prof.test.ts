@@ -361,8 +361,9 @@ test("bun test --heap-prof writes a profile", async () => {
     stderr: "pipe",
   });
 
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout).toContain("bun test v");
   expect(stderr).toContain("1 pass");
 
   const profile = await readProfile(String(dir), "test-run.heapprofile");
@@ -390,8 +391,9 @@ test("bun test --heap-prof-md writes a markdown profile", async () => {
     stderr: "pipe",
   });
 
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout).toContain("bun test v");
   expect(stderr).toContain("1 pass");
 
   const content = await Bun.file(join(String(dir), "test-run.md")).text();

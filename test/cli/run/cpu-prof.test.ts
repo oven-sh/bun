@@ -472,17 +472,19 @@ describe.concurrent("--cpu-prof", () => {
       stderr: "pipe",
     });
 
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stdout).toContain("bun test v");
     expect(stderr).toContain("1 pass");
 
     const profileContent = readFileSync(join(String(dir), "test-run.cpuprofile"), "utf-8");
     const profile = JSON.parse(profileContent);
     expect(profile).toHaveProperty("nodes");
-    expect(profile).toHaveProperty("samples");
     expect(profile).toHaveProperty("timeDeltas");
     expect(Array.isArray(profile.nodes)).toBe(true);
     expect(profile.nodes.length).toBeGreaterThan(0);
+    expect(Array.isArray(profile.samples)).toBe(true);
+    expect(profile.samples.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
   });
 
@@ -507,8 +509,9 @@ describe.concurrent("--cpu-prof", () => {
       stderr: "pipe",
     });
 
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stdout).toContain("bun test v");
     expect(stderr).toContain("1 pass");
 
     const mdContent = readFileSync(join(String(dir), "test-run.md"), "utf-8");
@@ -537,16 +540,18 @@ describe.concurrent("--cpu-prof", () => {
       stderr: "pipe",
     });
 
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stdout).toBe("");
     expect(stderr).toBe("");
 
     const profileContent = readFileSync(join(String(dir), "repl-run.cpuprofile"), "utf-8");
     const profile = JSON.parse(profileContent);
     expect(profile).toHaveProperty("nodes");
-    expect(profile).toHaveProperty("samples");
     expect(Array.isArray(profile.nodes)).toBe(true);
     expect(profile.nodes.length).toBeGreaterThan(0);
+    expect(Array.isArray(profile.samples)).toBe(true);
+    expect(profile.samples.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
   });
 });

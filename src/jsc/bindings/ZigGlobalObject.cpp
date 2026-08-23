@@ -746,6 +746,122 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
+// The JSC loader caches every failure, including a transpile error, an
+// unresolved static import, or a link error. That is the browser behavior
+// (a module script that fails to fetch or parse is cached as null). Node never
+// caches those: its ModuleJob is only added to the load cache once the source
+// compiled and every dependency resolved, so the next import() re-reads the
+// file. A module that never started evaluating has no side effects that a
+// second load could duplicate, so drop the stale record and let the loader
+// fetch again. A module whose body threw stays cached, as in Node and the spec.
+static bool isFailedEntryThatNeverEvaluated(JSC::ModuleRegistryEntry* entry)
+{
+    switch (entry->status()) {
+    case JSC::ModuleRegistryEntry::Status::FetchFailed:
+    case JSC::ModuleRegistryEntry::Status::InstantiationFailed:
+        return true;
+    case JSC::ModuleRegistryEntry::Status::EvaluationFailed: {
+        // A dependency that failed to load is stored as an evaluation error on
+        // the importer even though the importer never linked.
+        auto* record = entry->record();
+        if (!record)
+            return true;
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+        return cyclic && cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating;
+    }
+    default:
+        return false;
+    }
+}
+
+static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, const JSC::Identifier& key)
+{
+    // The map is keyed by (specifier, type). Probe each type directly:
+    // registryEntry() falls back to a scan of the whole map for a key that has
+    // no JavaScript entry, and this runs on every resolve.
+    static constexpr JSC::ScriptFetchParameters::Type moduleTypes[] = {
+        JSC::ScriptFetchParameters::Type::None,
+        JSC::ScriptFetchParameters::Type::JavaScript,
+        JSC::ScriptFetchParameters::Type::WebAssembly,
+        JSC::ScriptFetchParameters::Type::JSON,
+        JSC::ScriptFetchParameters::Type::Text,
+        JSC::ScriptFetchParameters::Type::HostDefined,
+    };
+    auto* impl = key.impl();
+    if (!impl)
+        return;
+
+    // An import() of this key is still settling. The loader records a top-level
+    // failure in one microtask and reports it in the next, and the second one
+    // looks the key up by name: it would attach the stale error to any entry a
+    // new fetch registered in between. Keep the failed entry until the import()
+    // promise has settled.
+    if (globalObject->pendingDynamicImports.contains(impl))
+        return;
+
+    auto* loader = globalObject->moduleLoader();
+    bool found = false;
+    const auto& moduleMap = loader->moduleMap();
+    for (auto type : moduleTypes) {
+        auto* entry = moduleMap.get({ impl, type }).get();
+        if (!entry)
+            continue;
+        // removeEntry drops every type variant of the key, so keep them all
+        // while any variant holds a module that may have run.
+        if (!isFailedEntryThatNeverEvaluated(entry))
+            return;
+        found = true;
+    }
+    if (!found)
+        return;
+
+    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+    // under cellLock(); take the same lock so the removal can't race it.
+    WTF::Locker locker { loader->cellLock() };
+    loader->removeEntry(key);
+}
+
+// Reaction on the promise of an import(): argument 1 is the resolved key that
+// importResolvedModule registered in pendingDynamicImports.
+BUN_DEFINE_HOST_FUNCTION(Bun__onDynamicImportSettled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* keyString = dynamicDowncast<JSString>(callFrame->argument(1));
+    if (!keyString) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    auto key = JSC::Identifier::fromString(vm, keyString->value(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    static_cast<Zig::GlobalObject*>(globalObject)->pendingDynamicImports.remove(key.impl());
+    return JSValue::encode(jsUndefined());
+}
+
+// import() of an already resolved key. The key stays in pendingDynamicImports
+// until the returned promise settles, which is after the loader has finished
+// touching the registry for this load. See dropFailedEntryThatNeverEvaluated.
+static JSC::JSPromise* importResolvedModule(Zig::GlobalObject* globalObject, const JSC::Identifier& key, RefPtr<JSC::ScriptFetchParameters>&& parameters, int64_t referrerAsyncOrder)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Before this import() counts as pending, or the resolve hook would see it
+    // and keep the failed entry.
+    dropFailedEntryThatNeverEvaluated(globalObject, key);
+    globalObject->pendingDynamicImports.add(key.impl());
+    auto* result = JSC::importModule(globalObject, key, JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
+    if (scope.exception()) [[unlikely]] {
+        globalObject->pendingDynamicImports.remove(key.impl());
+        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    }
+    ASSERT(result);
+
+    // The key string shares the Identifier's atom, so the handler gets the same
+    // UniquedStringImpl back from Identifier::fromString.
+    JSFunction* onSettled = globalObject->thenable(Bun__onDynamicImportSettled);
+    result->performPromiseThenWithContext(vm, globalObject, onSettled, onSettled, jsUndefined(), jsString(vm, key.string()));
+    return result;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -809,6 +925,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     auto key = JSC::Identifier::fromString(vm, keyString);
 
     auto* loader = globalObject->moduleLoader();
+    // loadModuleSync looks the key up directly, without the resolve hook.
+    dropFailedEntryThatNeverEvaluated(globalObject, key);
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
@@ -3412,11 +3530,8 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPluginRunner(void*);
-JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
-    JSModuleLoader* loader, JSValue key,
-    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
+static JSC::Identifier resolveModuleKey(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -3508,6 +3623,25 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     return Identifier::fromString(vm, resolved);
 }
 
+JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
+    JSModuleLoader*, JSValue key,
+    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
+{
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::Identifier resolved = resolveModuleKey(globalObject, key, referrer);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Every lookup of a module in the registry, whether from import(), a
+    // static import of a module being linked, or the entry point, goes through
+    // resolve() first. Evicting here makes the loader fetch the module again
+    // when its last load never produced a module.
+    dropFailedEntryThatNeverEvaluated(globalObject, resolved);
+    return resolved;
+}
+
 JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool b)
 {
     // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
@@ -3580,12 +3714,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
-
-            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
-            if (scope.exception()) [[unlikely]] {
-                return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-            }
-            return result;
+            RELEASE_AND_RETURN(scope, importResolvedModule(globalObject, resolvedIdentifier, WTF::move(parameters), referrerAsyncOrder));
         }
     }
 
@@ -3620,14 +3749,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
-    auto result = JSC::importModule(globalObject, resolvedIdentifier,
-        JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
-    if (scope.exception()) [[unlikely]] {
-        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-    }
-
-    ASSERT(result);
-    return result;
+    RELEASE_AND_RETURN(scope, importResolvedModule(globalObject, resolvedIdentifier, WTF::move(parameters), referrerAsyncOrder));
 }
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
@@ -4218,6 +4340,8 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onResolveInputStream;
     } else if (handler == Bun__HTMLRewriter__onRejectInputStream) {
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
+    } else if (handler == Bun__onDynamicImportSettled) {
+        return GlobalObject::PromiseFunctions::Bun__onDynamicImportSettled;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

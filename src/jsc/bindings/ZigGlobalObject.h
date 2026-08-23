@@ -55,6 +55,8 @@ struct node_module;
 #include "headers-handwritten.h"
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/Identifier.h>
+#include <wtf/HashCountedSet.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
 #include "DOMConstructors.h"
@@ -411,6 +413,7 @@ public:
         Bun__S3UploadStream__onRejectStream,
         Bun__HTMLRewriter__onResolveInputStream,
         Bun__HTMLRewriter__onRejectInputStream,
+        Bun__onDynamicImportSettled,
         Count_,
     };
     static constexpr size_t promiseFunctionsSize = static_cast<size_t>(PromiseFunctions::Count_);
@@ -727,6 +730,13 @@ public:
 
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};
+
+    // Resolved keys of the import() calls whose promise has not settled yet.
+    // moduleLoaderResolve must not drop a failed registry entry for such a key:
+    // the loader's ModuleLoadTopRejected microtask still looks the key up by
+    // name after the failure is recorded, and would store the stale error on a
+    // fresh entry.
+    WTF::HashCountedSet<RefPtr<UniquedStringImpl>, JSC::IdentifierRepHash> pendingDynamicImports;
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider

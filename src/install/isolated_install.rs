@@ -1193,9 +1193,8 @@ pub(crate) fn install_isolated_packages(
 
             let mut states = vec![State::Unvisited; store.entries.len()].into_boxed_slice();
 
-            // Entries whose lifecycle scripts are allowed to run; their
-            // transitive dependency closure is forced project-local after the
-            // DFS below.
+            // Trusted entries; their transitive dependency closure is forced
+            // project-local after the DFS.
             let mut trusted_entries: Vec<usize> = Vec::new();
 
             // Iterative DFS so dependency cycles (which the isolated graph permits)
@@ -1407,18 +1406,13 @@ pub(crate) fn install_isolated_packages(
                 }
             }
 
-            // A trusted entry's lifecycle scripts run with its dep symlinks in
-            // place, so they can write through `node_modules/<dep>` into
-            // whatever those symlinks target. The trusted entry itself is
-            // already project-local (eligibility check above), but that is not
-            // enough: the npm `bun` wrapper's postinstall, for example, renames
-            // the platform binary out of `@oven/bun-<platform>`, which would
-            // empty the shared store entry underneath every other project (or
-            // fail outright with the store on another filesystem). Force the
-            // trusted entry's transitive dependency closure project-local too.
-            // The walk crosses entries that are already ineligible for other
-            // reasons (patched, workspace) because *their* deps are still
-            // reachable from the script. Dependents of the newly poisoned
+            // A trusted entry's lifecycle scripts can write through its
+            // `node_modules/<dep>` symlinks into whatever they target, so its
+            // transitive dependency closure must be project-local too (the npm
+            // `bun` wrapper's postinstall renames the platform binary out of
+            // the shared `@oven/bun-<platform>` entry). The walk crosses
+            // entries that are already ineligible because *their* deps are
+            // still reachable from the script. Dependents of newly poisoned
             // entries are handled by the fixed-point pass below.
             {
                 let mut visited = vec![false; store.entries.len()].into_boxed_slice();

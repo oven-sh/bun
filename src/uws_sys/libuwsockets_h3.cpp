@@ -299,7 +299,9 @@ void uws_h3_app_on_webtransport(uws_h3_app_t* app, uws_h3_wt_datagram_handler on
 bool uws_h3_req_is_webtransport(uws_h3_req_t* req)
 {
     Http3Request* r = (Http3Request*)req;
-    return r->getCaseSensitiveMethod() == "CONNECT" && r->getHeader(":protocol") == "webtransport";
+    /* getMethod() lowercases into the request's scratch buffer, so match in
+     * lower case: the :method pseudo-header itself is "CONNECT". */
+    return r->getMethod() == "connect" && r->getHeader(":protocol") == "webtransport";
 }
 
 /* Answer the CONNECT with 200 and keep the stream open as a session. Null when

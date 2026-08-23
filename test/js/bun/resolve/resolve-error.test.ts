@@ -170,6 +170,102 @@ describe("ResolveMessage", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/32398 (and #32399, #29076)
+//
+// Bun has no URL-fetching module loader. The resolver marks `http(s)://` /
+// `//protocol-relative` specifiers external (so `Bun.resolveSync` and
+// `import.meta.resolve` echo them back, like Node), but the runtime loader
+// then handed back a synthetic `{ __esModule, default: "<url>" }` namespace,
+// so `import * as x from "https://cdn.pika.dev/..."; x.isNumber` (and the
+// `import x from "https://cdn.skypack.dev/..."; x.tag` default-import variant)
+// was silently `undefined` instead of failing. Importing a URL now fails at
+// load time with a clean module-not-found error. No network is touched.
+//
+// The `@3.0.1-beta.2` tail is load-bearing: it has no recognized file
+// extension, so pre-fix the loader took the `.file` path and produced the stub
+// (rather than the `.js` path, which ENOENTs and would look the same as the
+// fixed behavior).
+describe.concurrent("URL imports at runtime are rejected, not stubbed", () => {
+  const url = "https://cdn.pika.dev/vtils@3.0.1-beta.2";
+
+  // All three externalized schemes, each with the unrecognized `.2` extension
+  // tail so pre-fix they hit the `.file` stub path (not a `.js` ENOENT).
+  it.each([
+    "https://cdn.pika.dev/vtils@3.0.1-beta.2",
+    "http://cdn.pika.dev/vtils@3.0.1-beta.2",
+    "//cdn.pika.dev/vtils@3.0.1-beta.2",
+  ])("dynamic import() of %p rejects with ERR_MODULE_NOT_FOUND", async specifier => {
+    let err: any;
+    try {
+      await import(specifier);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toBe("ERR_MODULE_NOT_FOUND");
+    expect(err.message).toContain("vtils@3.0.1-beta.2");
+  });
+
+  // Static imports of a URL fail at load time, for both namespace (#32398) and
+  // default (#32399) bindings, rather than binding to a bogus stub. Pre-fix the
+  // program ran and printed the undefined member access; post-fix it never runs.
+  it.each([
+    // #32398: `import * as x from "<url>"; x.isNumber` was undefined.
+    { label: "namespace (#32398)", src: `import * as x from %URL%;\nconsole.log("member=" + typeof x.isNumber);` },
+    // #32399: `import X from "<url>"; X.tag(...)` threw "X.tag is not a function".
+    { label: "default (#32399)", src: `import x from %URL%;\nconsole.log("member=" + typeof x.tag);` },
+  ])("static $label import of a URL errors at load time", async ({ src }) => {
+    using dir = tempDir("issue-32398", {
+      "entry.mjs": src.replace("%URL%", JSON.stringify(url)),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Pre-fix: prints "member=undefined" and exits 0 (the bogus stub).
+    // Post-fix: the import fails at load time, so the program never runs.
+    expect(stdout).toBe("");
+    expect(stderr).toContain("vtils@3.0.1-beta.2");
+    expect(stderr).toContain("ERR_MODULE_NOT_FOUND");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // require() is CommonJS, so it gets MODULE_NOT_FOUND (no ERR_ prefix),
+  // matching ResolveMessage and Node. Pre-fix require(url) threw an ENOENT
+  // with no `.code`. Run in a subprocess so it doesn't share the module
+  // registry entry for `url` with the concurrent import() cases above.
+  it("require() of a URL rejects with MODULE_NOT_FOUND", async () => {
+    using dir = tempDir("issue-32398-require", {
+      "entry.cjs": `try { require(${JSON.stringify(url)}); } catch (e) { console.log(e.code + " " + e.message); }`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "entry.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The error is caught and printed to stdout, so stderr stays empty.
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(
+      "MODULE_NOT_FOUND Cannot find module 'https://cdn.pika.dev/vtils@3.0.1-beta.2'. Bun does not support importing from URLs.",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // Resolution still succeeds and echoes the URL (matching Node's
+  // import.meta.resolve); only loading it fails. Guards against a future
+  // "fix" that rejects at resolve time and breaks Bun.resolveSync.
+  it("Bun.resolveSync echoes the URL (resolution is not the failure point)", () => {
+    expect(Bun.resolveSync(url, import.meta.dir)).toBe(url);
+  });
+});
+
 // These tests reproduce panics where the module resolver wrote past fixed-size
 // PathBuffers when given very long import specifiers. The bug triggers when
 // `import_path < PATH_MAX` but `baseUrl + import_path > PATH_MAX` (otherwise a

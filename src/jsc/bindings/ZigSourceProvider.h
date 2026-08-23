@@ -19,6 +19,7 @@ class SourceProvider;
 namespace Zig {
 
 class GlobalObject;
+class NodeCompileCacheCollector;
 
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
@@ -42,24 +43,24 @@ public:
         return m_cachedBytecode.copyRef();
     };
 
+    // Node compile cache hooks; no-ops unless the entry missed on disk.
+    void cacheBytecode(const JSC::BytecodeCacheGenerator&) const final;
+    void updateCache(const JSC::UnlinkedFunctionExecutable*, const JSC::SourceCode&, JSC::CodeSpecializationKind, const JSC::UnlinkedFunctionCodeBlock*) const final;
+    NodeCompileCacheCollector* nodeCompileCache() const { return m_nodeCompileCache.get(); }
+
     ResolvedSource m_resolvedSource;
 
 private:
     SourceProvider(void* bunVM, ResolvedSource resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
         JSC::SourceTaintedOrigin taintedness,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
-        const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-        : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType)
-        , m_bunVM(bunVM)
-        , m_source(sourceImpl)
-    {
-        m_resolvedSource = resolvedSource;
-    }
+        const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType);
 
     // Stored directly (not via the creating global) so the destructor stays
     // valid when the provider outlives its global under --isolate caching.
     void* m_bunVM;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
+    std::unique_ptr<NodeCompileCacheCollector> m_nodeCompileCache;
     Ref<WTF::StringImpl> m_source;
     unsigned m_hash = 0;
 };

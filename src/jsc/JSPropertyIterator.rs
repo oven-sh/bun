@@ -117,18 +117,13 @@ pub struct JSPropertyIterator<'a> {
 }
 
 impl<'a> JSPropertyIterator<'a> {
-    pub(crate) fn get_longest_property_name(&self) -> usize {
-        if let Some(iter) = self.impl_ {
-            // `JSPropertyIteratorImpl`/`JSObject` are opaque ZST handles;
-            // `opaque_mut`/`opaque_ref` are the centralised zero-byte deref proofs.
-            Bun__JSPropertyIterator__getLongestPropertyName(
-                JSPropertyIteratorImpl::opaque_mut(iter.as_ptr()),
-                self.global_object,
-                JSObject::opaque_ref(self.object),
-            )
-        } else {
-            0
-        }
+    /// Restarts iteration from the first property. The property names were
+    /// collected once by [`Self::init`], so a second pass yields the same
+    /// names as the first.
+    pub(crate) fn reset(&mut self) {
+        self.i = 0;
+        self.iter_i = 0;
+        self.value = JSValue::ZERO;
     }
 
     /// `object` should be a `JSC::JSObject`. Non-objects will be runtime converted.
@@ -336,9 +331,4 @@ unsafe extern "C" {
         i: usize,
     );
     fn Bun__JSPropertyIterator__deinit(iter: *mut JSPropertyIteratorImpl);
-    safe fn Bun__JSPropertyIterator__getLongestPropertyName(
-        iter: &mut JSPropertyIteratorImpl,
-        global_object: &JSGlobalObject,
-        object: &JSObject,
-    ) -> usize;
 }

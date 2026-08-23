@@ -324,28 +324,34 @@ export class Dev extends EventEmitter {
     const b = {
       write: resetSeenFilesWithResolvers,
       [Symbol.asyncDispose]: async () => {
-        if (wantsHmrEvent && interactive) {
-          await seenFiles.promise;
-        } else if (wantsHmrEvent) {
-          await Promise.race([seenFiles.promise]);
-        }
-        // One Bun.write can surface as several watcher events (notably on
-        // Windows); let them coalesce so releasing the batch bundles once.
-        await Bun.sleep(50);
-
-        dev.off("watch_synchronization", onSeenFiles);
-
-        this.socket!.send("H");
-        await wait;
-
-        let errors = options.errors;
-        if (errors !== null) {
-          errors ??= [];
-          for (const client of this.connectedClients) {
-            await client.expectErrorOverlay(errors, options.snapshot);
+        // The batch ends even when an assertion below throws. Otherwise the
+        // next write on this `Dev` (the next case of a `devTestGroup`) would
+        // see an open batch and skip its own synchronization.
+        try {
+          if (wantsHmrEvent && interactive) {
+            await seenFiles.promise;
+          } else if (wantsHmrEvent) {
+            await Promise.race([seenFiles.promise]);
           }
+          // One Bun.write can surface as several watcher events (notably on
+          // Windows); let them coalesce so releasing the batch bundles once.
+          await Bun.sleep(50);
+
+          dev.off("watch_synchronization", onSeenFiles);
+
+          this.socket!.send("H");
+          await wait;
+
+          let errors = options.errors;
+          if (errors !== null) {
+            errors ??= [];
+            for (const client of this.connectedClients) {
+              await client.expectErrorOverlay(errors, options.snapshot);
+            }
+          }
+        } finally {
+          this.batchingChanges = null;
         }
-        this.batchingChanges = null;
       },
     };
     this.batchingChanges = b;
@@ -2342,6 +2348,8 @@ function groupImpl(
           caseName,
           async () => {
             if (!server) throw new Error("The group's dev server did not start");
+            // A case that timed out inside a write leaves its batch open.
+            server.dev.batchingChanges = null;
             await runCase(root, server.dev, testCase.test);
           },
           timeout,

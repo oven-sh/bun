@@ -992,6 +992,17 @@ impl JSValue {
         // so aliasing with other `as_class_ref` borrows is fine.
         self.as_::<T>().map(|p| unsafe { &*p })
     }
+
+    /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
+    /// for `m_ctx` payloads that are intrusively refcounted: lets the caller
+    /// take its own ref (`RefPtr::from_this`) or dispatch into a
+    /// `ThisPtr`-taking entry point. Same frame-scoped validity.
+    #[inline]
+    pub fn as_class_this_ptr<T: JsClass>(self) -> Option<bun_ptr::ThisPtr<T>> {
+        // SAFETY: as for `as_class_ref` — the pointer is the live payload of the
+        // cell `self` encodes, which the stack scan keeps alive for this frame.
+        self.as_::<T>().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
+    }
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
     /// Returns a raw pointer; conjuring a
     /// `&'static mut` here would permit aliased `&mut` UB across two calls on

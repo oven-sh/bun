@@ -1619,6 +1619,10 @@ fn connect_finish<const IS_SSL: bool>(
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
         socket_ref.flags.set(f);
     }
+    // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.
+    socket_ref
+        .poll_ref
+        .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     // Note: `do_connect` reads `self.connection` directly so no second
     // borrow is needed here.
     // An already-open fd socket runs `on_open` synchronously; what settling
@@ -1686,14 +1690,6 @@ fn connect_finish<const IS_SSL: bool>(
             }
         }
     };
-
-    // if this is from node:net there's surface where the user can .ref() and .deref()
-    // before the connection starts. make sure we honor that here.
-    if socket_ref.ref_pollref_on_connect.get() && !socket_ref.socket.get().is_closed() {
-        socket_ref
-            .poll_ref
-            .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-    }
 
     // What settling the connect promise in `on_open` left pending (allocation
     // failure, a terminating VM).

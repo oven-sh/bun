@@ -1005,7 +1005,7 @@ pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
 // ──────────────────────────────────────────────────────────────────────────
 
 bun_ast::link_impl_TranspilerCacheImpl! {
-    Jsc for bun_ast::RuntimeTranspilerCache => |this| {
+    Jsc for extern bun_ast::RuntimeTranspilerCache => |this| {
         get(source, parser_options, used_jsx) => {
             let this = &mut *this;
             let parser_options = parser_options.cast::<ParserOptions<'_>>().as_ref();

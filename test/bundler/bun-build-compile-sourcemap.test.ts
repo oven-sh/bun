@@ -21,7 +21,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       sourcemap: sourcemapValue,
     });
 
@@ -66,7 +66,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       // No sourcemap option
     });
 
@@ -99,7 +99,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       sourcemap: "external",
     });
 
@@ -134,7 +134,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "nosourcemap_entry.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "nosourcemap_entry") },
     });
 
     expect(result.success).toBe(true);
@@ -163,7 +163,7 @@ export function greet() {
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "entry.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "entry") },
       splitting: true,
       sourcemap: "external",
     });
@@ -275,7 +275,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       sourcemap: "inline",
     });
 

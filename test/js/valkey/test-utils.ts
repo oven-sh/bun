@@ -682,15 +682,8 @@ export function awaitableCounter(timeoutMs: number = 1000) {
   const incrementBy = (count: number) => {
     currentCount += count;
 
-    for (const [value, alarm, resolve] of activeResolvers) {
-      alarm.close();
-
-      if (currentCount >= value) {
-        resolve(currentCount);
-      }
-    }
-
-    // Remove resolved promises
+    // Resolve the waiters whose target is reached and cancel only their alarms.
+    // A waiter that is still short of its target keeps its timeout.
     const remaining: typeof activeResolvers = [];
     for (const [value, alarm, resolve] of activeResolvers) {
       if (currentCount >= value) {

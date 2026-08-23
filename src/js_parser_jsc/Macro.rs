@@ -559,7 +559,8 @@ impl<'a> Run<'a> {
         };
 
         let global = vm.global();
-        let result = match vm.run_with_api_lock(|| macro_callback.call(global, JSValue::ZERO, args)) {
+        let result = match vm.run_with_api_lock(|| macro_callback.call(global, JSValue::ZERO, args))
+        {
             Ok(result) => result,
             // The macro threw: report it (with its stack) and fail this expansion.
             Err(JsError::Thrown) => {

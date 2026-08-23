@@ -350,7 +350,7 @@ export class Dev extends EventEmitter {
             }
           }
         } finally {
-          this.batchingChanges = null;
+          if (this.batchingChanges === b) this.batchingChanges = null;
         }
       },
     };
@@ -2078,6 +2078,10 @@ async function writeProject(root: string, options: DevServerProject): Promise<vo
   );
 }
 
+function hasExited(proc: Subprocess): boolean {
+  return proc.exitCode !== null || proc.signalCode !== null;
+}
+
 /** Kills every client and dev server subprocess that is still running. */
 function killDanglingProcesses() {
   for (const proc of danglingProcesses) {
@@ -2342,15 +2346,25 @@ function groupImpl(
         server = await spawnDevServer(root, project, NODE_ENV, false);
       }, timeout);
 
+      // `bun test` kills every subprocess of a test that timed out, the shared
+      // server included. That case reported the failure; the cases after it
+      // get a new server on the same project.
+      const serverForCase = async (): Promise<DevServerHandle> => {
+        if (!server) throw new Error("The group's dev server did not start");
+        if (hasExited(server.dev.devProcess)) {
+          await server[Symbol.asyncDispose]();
+          server = await spawnDevServer(root, project, NODE_ENV, false);
+        }
+        return server;
+      };
+
       define((caseName, testCase) => {
         addCase(caseName, testCase);
         jest.test(
           caseName,
           async () => {
-            if (!server) throw new Error("The group's dev server did not start");
-            // A case that timed out inside a write leaves its batch open.
-            server.dev.batchingChanges = null;
-            await runCase(root, server.dev, testCase.test);
+            const { dev } = await serverForCase();
+            await runCase(root, dev, testCase.test);
           },
           timeout,
         );
@@ -2359,7 +2373,11 @@ function groupImpl(
       jest.afterAll(async () => {
         if (!server) return;
         try {
-          await server.dev.gracefulExit();
+          if (hasExited(server.dev.devProcess)) {
+            if (server.dev.panicked) throw new Error("DevServer panicked");
+          } else {
+            await server.dev.gracefulExit();
+          }
         } finally {
           await server[Symbol.asyncDispose]();
           killDanglingProcesses();

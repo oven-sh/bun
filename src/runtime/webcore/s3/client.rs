@@ -76,16 +76,14 @@ pub(crate) fn stat(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Stat(callback),
-        callback_context,
+        s3_simple_request::Callback::stat(callback, callback_context),
     )
 }
 
 pub(crate) fn download(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::DownloadCallback,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -100,7 +98,6 @@ pub(crate) fn download(
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
-        callback_context,
     )
 }
 
@@ -109,8 +106,7 @@ pub(crate) fn download_slice(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::DownloadCallback,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -144,15 +140,13 @@ pub(crate) fn download_slice(
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
-        callback_context,
     )
 }
 
 pub(crate) fn delete(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::DeleteCallback,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -167,15 +161,14 @@ pub(crate) fn delete(
             ..Default::default()
         },
         s3_simple_request::Callback::Delete(callback),
-        callback_context,
     )
 }
 
 pub(crate) fn list_objects(
     this: &S3Credentials,
+    // Only read here, synchronously, to build the search-params string.
     list_options: &S3ListObjectsOptions,
-    callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::ListObjectsCallback,
     proxy_url: Option<&[u8]>,
 ) -> JsResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
@@ -272,13 +265,10 @@ pub(crate) fn list_objects(
             drop(search_params);
 
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
-            callback(
-                S3ListObjectsResult::Failure(Error::S3Error {
-                    code: error_code_and_message.code,
-                    message: error_code_and_message.message,
-                }),
-                callback_context,
-            )?;
+            callback(S3ListObjectsResult::Failure(Error::S3Error {
+                code: error_code_and_message.code,
+                message: error_code_and_message.message,
+            }))?;
 
             return Ok(());
         }
@@ -292,8 +282,7 @@ pub(crate) fn list_objects(
         // Written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
         sign_result: result,
-        callback_context,
-        callback: s3_simple_request::Callback::ListObjects(callback),
+        callback: Some(s3_simple_request::Callback::ListObjects(callback)),
         headers,
         http_ticket: None,
         response_buffer: MutableString::default(),
@@ -385,8 +374,7 @@ pub(crate) fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
-    callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: s3_simple_request::UploadCallback,
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -404,7 +392,6 @@ pub(crate) fn upload(
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),
-        callback_context,
     )
 }
 

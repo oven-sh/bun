@@ -1,8 +1,8 @@
 use bstr::BStr;
+use bun_jsc::JsClass as _;
 
 use crate::node::PathLike;
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
@@ -410,16 +410,10 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        // `Blob::new` heap-promotes and marks `ref_count = 1` so
-        // the JSS3File wrapper's `finalize` knows to free the blob.
-        let blob = crate::webcore::blob::Blob::new(ptr.construct_blob(global, path, options)?);
-        // `to_js` runs `calculate_estimated_byte_size()`
-        // before wrapping the heap Blob in a JSS3File so JSC sees the correct
-        // GC pressure. Route through `BlobExt::to_js` (the `&self` impl, which
-        // hands the heap pointer to the wrapper), same as `S3File::construct_internal_js`.
-        // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Blob::new`;
-        // `to_js` hands ownership of that pointer to the C++ wrapper.
-        Ok(unsafe { &mut *blob }.to_js(global))
+        // `to_js` heap-promotes (so the JSS3File wrapper's `finalize` knows to
+        // free the blob) after `calculate_estimated_byte_size()`, so JSC sees
+        // the correct GC pressure.
+        Ok(ptr.construct_blob(global, path, options)?.to_js(global))
     }
 
     #[bun_jsc::host_fn(method)]

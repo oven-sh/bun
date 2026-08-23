@@ -1,3 +1,4 @@
+use bun_jsc::JsClass as _;
 use std::sync::OnceLock;
 
 use bun_collections::HashMap;
@@ -7,7 +8,6 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, UUID
 use bun_threading::Guarded;
 
 use crate::webcore::Blob;
-use crate::webcore::BlobExt as _;
 
 // The map is wrapped in a `Guarded` (mutex + value).
 //
@@ -86,9 +86,10 @@ impl ObjectURLRegistry {
         pathname: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
-        let blob = Blob::new(self.resolve_and_dupe(pathname, global_object)?);
-        // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
-        Some(unsafe { (*blob).to_js(global_object) })
+        Some(
+            self.resolve_and_dupe(pathname, global_object)?
+                .to_js(global_object),
+        )
     }
 
     pub(crate) fn revoke(&self, pathname: &[u8]) {

@@ -572,6 +572,39 @@ impl ArrayBuffer {
         }
     }
 
+    /// `store.shared_view()[range]` as a JS `typed_array_type` without
+    /// copying: the ref `store` carries keeps the bytes alive (and writable
+    /// through the returned object) until JSC collects it.
+    pub fn to_js_from_store(
+        global: &JSGlobalObject,
+        store: bun_ptr::RefPtr<crate::webcore_types::Store>,
+        range: core::ops::Range<usize>,
+        typed_array_type: JSType,
+    ) -> JsResult<JSValue> {
+        extern "C" fn release_store(_bytes: *mut c_void, ctx: *mut c_void) {
+            if let Some(store) = core::ptr::NonNull::new(ctx.cast::<crate::webcore_types::Store>())
+            {
+                // SAFETY: `ctx` is the ref `to_js_from_store` released with
+                // `into_raw`; JSC calls this once.
+                unsafe { crate::webcore_types::Store::deref(store) };
+            }
+        }
+        let bytes = match crate::webcore_types::Store::data_mut(&store) {
+            crate::webcore_types::store::Data::Bytes(bytes) => &mut bytes.as_array_list()[range],
+            _ => &mut [],
+        };
+        let buffer = Self::from_bytes(bytes, typed_array_type);
+        // SAFETY: `buffer` points into `store`'s bytes, which the ref handed
+        // over here keeps alive until `release_store` runs.
+        unsafe {
+            buffer.to_js_with_context(
+                global,
+                store.into_raw().cast::<c_void>(),
+                Some(release_store),
+            )
+        }
+    }
+
     #[inline]
     pub(crate) fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> ArrayBuffer {
         Self::from_typed_array(ctx, value)

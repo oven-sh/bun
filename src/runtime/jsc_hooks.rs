@@ -267,12 +267,8 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 /// (`RareData.default_client_ssl_ctx`) is in `bun_jsc` but population requires
 /// `RuntimeState.ssl_ctx_cache` (this crate). The cached `SSL_CTX*` is held
 /// for the VM's lifetime so the weak-cache entry never tombstones.
-///
-/// # Safety
-/// `vm` must be the live per-thread VM; called only from the JS thread.
-pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::SslCtx {
-    // SAFETY: per fn contract; `rare_data()` lazy-inits the box.
-    let rare = unsafe { (*vm).rare_data() };
+pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
+    let rare = vm.as_mut().rare_data();
     if rare.default_client_ssl_ctx.is_none() {
         let mut err = bun_uws::create_bun_socket_error_t::none;
         let state = runtime_state();
@@ -306,13 +302,11 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
 /// body. Per-VM digest-keyed weak `SSL_CTX*` cache; returns +1 ref or `None`
 /// on BoringSSL rejection (`err` populated).
 ///
-/// # Safety
-/// `vm` must be the live per-thread VM; called only from the JS thread.
-unsafe fn ssl_ctx_cache_get_or_create(
-    _vm: *mut VirtualMachine,
+fn ssl_ctx_cache_get_or_create(
+    _vm: &VirtualMachine,
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
-) -> Option<*mut bun_uws::SslCtx> {
+) -> Option<bun_boringssl::c::OwnedSslCtx> {
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
@@ -321,7 +315,10 @@ unsafe fn ssl_ctx_cache_get_or_create(
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
     let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache.get_or_create_opts(opts, err)
+    cache
+        .get_or_create_opts(opts, err)
+        // SAFETY: `get_or_create_opts` returns a +1 ref.
+        .and_then(|ctx| unsafe { bun_boringssl::c::OwnedSslCtx::from_raw(ctx) })
 }
 
 // ════════════════════════════════════════════════════════════════════════════

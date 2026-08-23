@@ -6,7 +6,7 @@
 //! [`crate::jsc_hooks::timer_all`] instead.
 
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_ptr::{BackRef, JsCell};
@@ -52,7 +52,6 @@ pub struct WTFTimer {
     /// (§Dispatch); `self` is published as `*mut ()` and `__bun_run_wtf_timer`
     /// (in `dispatch.rs`) recovers the `&WTFTimer`.
     imminent: BackRef<AtomicPtr<()>>,
-    repeat: AtomicBool,
     script_execution_context_id: ScriptExecutionContextIdentifier,
 }
 
@@ -107,7 +106,7 @@ impl WTFTimer {
         f64::INFINITY
     }
 
-    pub(crate) fn update(&self, seconds: f64, repeat: bool) {
+    pub(crate) fn update(&self, seconds: f64, _repeat: bool) {
         // There's only one of these per VM, and each VM has its own imminent_gc_timer.
         // Only set imminent if it's not already set to avoid overwriting another timer.
         if seconds.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
@@ -143,7 +142,6 @@ impl WTFTimer {
         }
 
         self.timers.wtf_arm(self.timer_ref(), interval);
-        self.repeat.store(repeat, Ordering::Relaxed);
     }
 
     pub(crate) fn cancel(&self) {
@@ -206,7 +204,6 @@ pub fn create(
             },
         )),
         run_loop_timer,
-        repeat: AtomicBool::new(false),
         script_execution_context_id: ScriptExecutionContextIdentifier(
             vm.initial_script_execution_context_identifier as u32,
         ),

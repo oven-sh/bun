@@ -907,9 +907,9 @@ pub(crate) fn fire_wtf_timer(t: TimerRef) {
 
 /// The tag→`container_of` match that fires a due timer.
 ///
-/// Reached from [`crate::timer::All::drain_timers`] (every due heap timer),
-/// [`crate::timer::All::get_timeout`] (WTFTimer side-effect) and the fake
-/// clock (`FakeTimers::fire`).
+/// Reached from [`crate::timer::All::drain_timers`] (every due heap timer)
+/// and the fake clock (`FakeTimers::fire`); `WTFTimer`s live in their own
+/// heap and go through [`fire_wtf_timer`] instead.
 ///
 /// Each arm is the owner's timer entry with its result surfaced: an owner
 /// returns the exception it left pending and never reports it; the drain loop
@@ -967,10 +967,7 @@ pub(crate) fn fire_timer(t: TimerRef, now: &ElTimespec, vm: &VirtualMachine) -> 
             );
             Ok(())
         }
-        EventLoopTimerTag::WTFTimer => {
-            fire_wtf_timer(t);
-            Ok(())
-        }
+        EventLoopTimerTag::WTFTimer => unreachable!("WTFTimers are only in All::wtf_timers"),
         EventLoopTimerTag::AbortSignalTimeout => {
             timer_arm!(AbortSignalTimeout, event_loop_timer, |c, _now, vm| {
                 AbortSignalTimeout::run(c, vm)

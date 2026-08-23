@@ -950,6 +950,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
 ///
 /// ```ignore
 /// bun_core::intrusive_field!(ShellCpTask, task: ShellTask);
+/// bun_core::intrusive_field!(ShellCpTask, task.task: WorkPoolTask); // nested field
 /// bun_core::intrusive_field!([T: Send] Wrapper<T>, inner: Mixin<Wrapper<T>>);
 /// ```
 #[macro_export]
@@ -957,14 +958,22 @@ macro_rules! intrusive_field {
     // Bracketed-generics arm MUST come first: the bare `$T:ty` arm below would
     // otherwise try to parse `['a]` as a slice type and hard-error on the
     // lifetime before backtracking to this arm.
-    ([$($gen:tt)*] $T:ty, $field:ident : $F:ty) => {
+    ([$($gen:tt)*] $T:ty, $($field:ident).+ : $F:ty) => {
         unsafe impl<$($gen)*> $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
+            const OFFSET: usize = {
+                // The named field must actually be an `$F`.
+                let _ = |s: &$T| -> *const $F { &raw const s.$($field).+ };
+                ::core::mem::offset_of!($T, $($field).+)
+            };
         }
     };
-    ($T:ty, $field:ident : $F:ty) => {
+    ($T:ty, $($field:ident).+ : $F:ty) => {
         unsafe impl $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
+            const OFFSET: usize = {
+                // The named field must actually be an `$F`.
+                let _ = |s: &$T| -> *const $F { &raw const s.$($field).+ };
+                ::core::mem::offset_of!($T, $($field).+)
+            };
         }
     };
 }

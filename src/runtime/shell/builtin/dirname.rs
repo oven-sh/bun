@@ -19,12 +19,12 @@ enum State {
 
 impl Dirname {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let bltn = Builtin::of(interp, cmd);
-        let argc = bltn.args_slice().len();
+        let argc = Builtin::argc(interp, cmd);
         if argc == 0 {
             return Self::fail(interp, cmd, b"usage: dirname string\n");
         }
 
+        let bltn = Builtin::of(interp, cmd);
         let stdout_needs_io = bltn.stdout.needs_io();
         let mut buf = Vec::new();
         for i in 0..argc {
@@ -34,15 +34,14 @@ impl Dirname {
             buf.extend_from_slice(dir);
             buf.push(b'\n');
         }
+        drop(bltn);
 
         Self::state_mut(interp, cmd).state = State::Done;
         if let Some(safeguard) = stdout_needs_io {
             Self::state_mut(interp, cmd).buf = buf;
             let owned = Self::state_mut(interp, cmd).buf.clone();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &owned, safeguard);
+            return Builtin::write_out(interp, cmd, IoKind::Stdout, child, &owned, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         Builtin::done(interp, cmd, 0)

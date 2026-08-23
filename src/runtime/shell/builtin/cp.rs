@@ -3,8 +3,8 @@ use bun_paths::resolve_path;
 use crate::node::PathLike;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, OutputWrite,
+    ParseFlagResult, ShellTask, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -14,12 +14,11 @@ use crate::shell::{ExitCode, ShellErr};
 pub struct Cp {
     pub(crate) opts: Opts,
     pub(crate) state: State,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
-    /// directly (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not
-    /// `ExecState`) because `print_shell_cp_task` is also driven from
-    /// `State::Ebusy` on Windows; both states must be able to stash/pop.
-    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
+    /// FIFO of in-flight OutputTasks awaiting an IOWriter chunk completion
+    /// (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not `ExecState`)
+    /// because `print_shell_cp_task` is also driven from `State::Ebusy` on
+    /// Windows; both states must be able to park/pop.
+    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Cp>>>,
 }
 
 #[derive(Default)]
@@ -55,7 +54,9 @@ pub struct ExecState {
 #[cfg(windows)]
 #[derive(Default)]
 pub struct EbusyState {
-    pub(crate) tasks: Vec<*mut ShellCpTask>,
+    /// Deferred EBUSY tasks; `None` once `ignore_ebusy_error_if_possible` has
+    /// consumed the slot.
+    pub(crate) tasks: Vec<Option<Box<ShellCpTask>>>,
     pub(crate) idx: usize,
     pub(crate) main_exit_code: ExitCode,
     /// Absolute target paths that some task copied successfully — used to
@@ -68,12 +69,9 @@ impl Cp {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let (sources_start, target_idx) = {
-            let args = Builtin::of(interp, cmd).args_slice();
-            match parse_flags(&mut opts, args) {
-                Ok(Some(rest)) if rest.len() > 1 => {
-                    let start = args.len() - rest.len();
-                    (start, args.len() - 1)
-                }
+            let argc = Builtin::argc(interp, cmd);
+            match Builtin::parse_flags(interp, cmd, &mut opts) {
+                Ok(Some(start)) if argc - start > 1 => (start, argc - 1),
                 Ok(_) => {
                     Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
                     return Builtin::write_failing_error(interp, cmd, Kind::Cp.usage_string(), 1);
@@ -109,6 +107,11 @@ impl Cp {
             },
             #[cfg(windows)]
             Ebusy(ExitCode),
+            #[cfg(windows)]
+            IgnoreEbusy,
+            Suspend,
+            Failed,
+            AlreadyDone,
         }
         let action = match &mut Self::state_mut(interp, cmd).state {
             State::Idle => panic!(
@@ -130,7 +133,7 @@ impl Cp {
                         let act = Action::Done(exit_code);
                         act
                     } else {
-                        return Yield::suspended();
+                        Action::Suspend
                     }
                 } else {
                     exec.started = true;
@@ -143,47 +146,51 @@ impl Cp {
                 }
             }
             #[cfg(windows)]
-            State::Ebusy(_) => return Self::ignore_ebusy_error_if_possible(interp, cmd),
-            State::WaitingWriteErr => return Yield::failed(),
-            State::Done => return Builtin::done(interp, cmd, 0),
+            State::Ebusy(_) => Action::IgnoreEbusy,
+            State::WaitingWriteErr => Action::Failed,
+            State::Done => Action::AlreadyDone,
         };
         match action {
+            Action::Suspend => Yield::suspended(),
+            Action::Failed => Yield::failed(),
+            Action::AlreadyDone => Builtin::done(interp, cmd, 0),
+            #[cfg(windows)]
+            Action::IgnoreEbusy => Self::ignore_ebusy_error_if_possible(interp, cmd),
             Action::Done(code) => {
                 Self::state_mut(interp, cmd).state = State::Done;
                 Builtin::done(interp, cmd, code)
             }
             #[cfg(windows)]
             Action::Ebusy(exit_code) => {
-                let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                    unreachable!()
-                };
-                let mut ebusy = core::mem::take(&mut exec.ebusy);
-                ebusy.idx = 0;
-                ebusy.main_exit_code = exit_code;
-                Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
+                {
+                    let mut me = Self::state_mut(interp, cmd);
+                    let State::Exec(exec) = &mut me.state else {
+                        unreachable!()
+                    };
+                    let mut ebusy = core::mem::take(&mut exec.ebusy);
+                    ebusy.idx = 0;
+                    ebusy.main_exit_code = exit_code;
+                    me.state = State::Ebusy(ebusy);
+                }
                 Self::ignore_ebusy_error_if_possible(interp, cmd)
             }
             Action::Schedule { start, target } => {
-                let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
+                let cwd = Builtin::shell(interp, cmd).borrow().cwd().to_vec();
                 let opts = Self::state_mut(interp, cmd).opts;
-                let evtloop = Builtin::event_loop(interp, cmd);
                 let tgt = Builtin::of(interp, cmd).arg_bytes(target).to_vec();
                 let operands = 1 + (target - start);
-                let interp_ptr = interp.as_ctx_ptr();
                 for i in start..target {
                     let src = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
                     let task = ShellCpTask::create(
                         cmd,
-                        evtloop,
                         opts,
                         operands,
                         src,
                         tgt.clone(),
                         cwd.clone(),
-                        interp_ptr,
+                        interp,
                     );
-                    // SAFETY: freshly heap-allocated.
-                    unsafe { ShellCpTask::schedule(task) };
+                    ShellTask::schedule(task);
                 }
                 Yield::suspended()
             }
@@ -199,10 +206,9 @@ impl Cp {
         if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
             return Builtin::done(interp, cmd, 1);
         }
-        if let Some(task) = Self::state_mut(interp, cmd).output_queue.pop_front() {
-            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
-            // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };
+        let pending = Self::state_mut(interp, cmd).output_queue.pop_front();
+        if let Some(task) = pending {
+            return OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e);
         }
         Self::next(interp, cmd)
     }
@@ -221,17 +227,13 @@ impl Cp {
                     unreachable!()
                 };
                 if eb.idx < eb.tasks.len() {
-                    let t = eb.tasks[eb.idx];
+                    let t = eb.tasks[eb.idx].take().expect("ebusy task consumed once");
                     eb.idx += 1;
-                    // SAFETY: `t` is a live heap-allocated task stashed in
-                    // `on_shell_cp_task_done`; not yet freed.
-                    let tref = unsafe { &*t };
-                    let ignorable = tref
+                    let ignorable = t
                         .tgt_absolute
                         .as_ref()
                         .map_or(false, |p| eb.absolute_targets.contains(p))
-                        || tref
-                            .src_absolute
+                        || t.src_absolute
                             .as_ref()
                             .map_or(false, |p| eb.absolute_srcs.contains(p));
                     Some((t, ignorable))
@@ -240,40 +242,35 @@ impl Cp {
                 }
             };
             match next {
-                Some((t, true)) => {
-                    // SAFETY: paired with `heap::alloc` in `create()`.
-                    drop(unsafe { bun_core::heap::take(t) });
-                }
-                // SAFETY: `t` is a live heap task stashed in
-                // `on_shell_cp_task_done`; reclaim ownership.
-                Some((t, false)) => {
-                    return Self::print_shell_cp_task(interp, cmd, unsafe {
-                        bun_core::heap::take(t)
-                    });
-                }
+                Some((t, true)) => drop(t),
+                Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
                 None => break,
             }
         }
-        let State::Ebusy(eb) = &mut Self::state_mut(interp, cmd).state else {
-            unreachable!()
+        let exit_code = {
+            let me = Self::state_mut(interp, cmd);
+            let State::Ebusy(eb) = &me.state else {
+                unreachable!()
+            };
+            eb.main_exit_code
         };
-        let exit_code = eb.main_exit_code;
         // `Drop` frees the ebusy sets/vec here.
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, exit_code)
     }
 
-    fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
+    fn on_shell_cp_task_done(
+        interp: &Interpreter,
+        cmd: NodeId,
+        #[cfg_attr(not(windows), allow(unused_mut))] mut task: Box<ShellCpTask>,
+    ) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
-        // SAFETY: `task` was heap-allocated in `create()`; ownership transfers
-        // to this completion callback. Re-leaked below only on the EBUSY-defer path.
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut task = unsafe { bun_core::heap::take(task) };
         #[cfg(windows)]
         {
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            let mut me = Self::state_mut(interp, cmd);
+            if let State::Exec(exec) = &mut me.state {
                 if let Some(err) = &task.err {
                     // Defer the task to the ebusy phase. Note the precedence:
                     //   `(is_sys && errno==EBUSY && tgt_match) || src_match`
@@ -287,7 +284,8 @@ impl Cp {
                             || task.src_absolute.as_deref()
                                     .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
-                        exec.ebusy.tasks.push(bun_core::heap::into_raw(task));
+                        exec.ebusy.tasks.push(Some(task));
+                        drop(me);
                         return Self::next(interp, cmd).run(interp);
                     }
                 } else {
@@ -301,6 +299,7 @@ impl Cp {
                     }
                 }
             }
+            drop(me);
         }
         Self::print_shell_cp_task(interp, cmd, task).run(interp);
     }
@@ -316,7 +315,7 @@ impl Cp {
         let output_task = OutputTask::<Cp>::new(cmd, OutputSrc::Arrlist(output));
 
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
-            let s = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
+            let s = Builtin::shell_err_to_string(Kind::Cp, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
@@ -331,25 +330,29 @@ impl OutputTaskVTable for Cp {
     fn write_err(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
+        child: Box<OutputTask<Self>>,
         errbuf: &[u8],
-    ) -> Option<Yield> {
+    ) -> OutputWrite<Self> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // Stash so on_io_writer_chunk can route to the OutputTask state
-            // machine and reclaim the box (stopgap for missing WriterTag).
+        let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
+        if let Some(safeguard) = stderr_needs_io {
+            // Park it so on_io_writer_chunk can route the completion back to
+            // the OutputTask state machine (there is no WriterTag for it).
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
+            return OutputWrite::Enqueued(Builtin::write_out(
+                interp,
+                cmd,
+                IoKind::Stderr,
+                childptr,
+                errbuf,
+                safeguard,
+            ));
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        None
+        OutputWrite::Done(child)
     }
     fn on_write_err(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -359,25 +362,28 @@ impl OutputTaskVTable for Cp {
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield> {
+        child: Box<OutputTask<Self>>,
+    ) -> OutputWrite<Self> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            Self::state_mut(interp, cmd).output_queue.push_back(child);
+        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+        if let Some(safeguard) = stdout_needs_io {
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
+            return OutputWrite::Enqueued(Builtin::write_out_with(
+                interp,
+                cmd,
+                IoKind::Stdout,
+                childptr,
+                safeguard,
+                |buf| {
+                    buf.extend_from_slice(child.output.slice());
+                    Self::state_mut(interp, cmd).output_queue.push_back(child);
+                },
+            ));
         }
-        let buf = output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        None
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, child.output.slice());
+        OutputWrite::Done(child)
     }
     fn on_write_out(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -411,18 +417,23 @@ pub struct ShellCpTask {
     pub task: ShellTask,
 }
 
+// The pool-side body is `run_on_pool`, not `ShellTask::run_owned`: on the
+// success path the copy is handed to a `ShellAsyncCpTask` that posts the
+// bounce-back itself (`cp_on_finish`), so an unconditional post would
+// double-enqueue.
+crate::shell_task!(ShellCpTask, run = ShellCpTask::run_on_pool);
+
 impl ShellCpTask {
     fn create(
         cmd: NodeId,
-        evtloop: EventLoopHandle,
         opts: Opts,
         operands: usize,
         src: Vec<u8>,
         tgt: Vec<u8>,
         cwd_path: Vec<u8>,
-        interp: *mut Interpreter,
-    ) -> *mut ShellCpTask {
-        let mut task = Box::new(ShellCpTask {
+        interp: &Interpreter,
+    ) -> Box<ShellCpTask> {
+        Box::new(ShellCpTask {
             cmd,
             opts,
             operands,
@@ -433,12 +444,8 @@ impl ShellCpTask {
             cwd_path,
             verbose_output: bun_threading::Guarded::new(Vec::new()),
             err: None,
-            task: ShellTask::new(evtloop),
-        });
-        // Back-ref so `ShellTask::run_from_main_thread::<ShellCpTask>` (the
-        // dispatch.rs bounce-back) can recover `&Interpreter`.
-        task.task.interp = interp;
-        bun_core::heap::into_raw(task)
+            task: ShellTask::new(interp),
+        })
     }
 
     /// Appends `"{src} -> {dest}\n"` to the verbose
@@ -476,15 +483,13 @@ impl ShellCpTask {
         }
     }
 
-    /// Called when the node:fs
-    /// async cp completes (success or first error). Records the error (if any)
-    /// and re-queues this `ShellCpTask` onto the JS thread so the interpreter
-    /// can drain `verbose_output` / surface the error.
+    /// Called on the JS thread when the node:fs async cp completes (success or
+    /// first error). Records the error (if any) and finishes this `ShellCpTask`
+    /// in place so the interpreter can drain `verbose_output` / surface it.
     ///
     /// # Safety
-    /// `this` is the live `heap::alloc`'d task originally passed to
-    /// [`schedule`](Self::schedule); not touched again on this thread after
-    /// return.
+    /// `this` is the live task `run_on_pool` released to the
+    /// `ShellAsyncCpTask`; reclaimed here, not touched by the caller after.
     pub(crate) unsafe fn cp_on_finish(
         this: *mut ShellCpTask,
         src: PathLike<'static>,
@@ -492,58 +497,30 @@ impl ShellCpTask {
         result: bun_sys::Maybe<()>,
     ) {
         // SAFETY: caller contract — JS thread, from the `ShellAsyncCpTask`'s
-        // completion; `this` is live and ours. The pool side finished (and
-        // dropped its poster) when it handed the copy to that task, so continue
-        // in place rather than bouncing through the concurrent queue again.
-        unsafe {
-            (*this).src_absolute = Some(src.into_vec());
-            (*this).tgt_absolute = Some(dest.into_vec());
-            if let Err(e) = result {
-                (*this).err = Some(ShellErr::new_sys(&e));
-            }
-            ShellTask::run_from_main_thread::<ShellCpTask>(this);
+        // completion; `this` is live and ours (the box `run_on_pool` released
+        // to it). The pool side finished (and dropped its poster) when it
+        // handed the copy to that task, so continue in place rather than
+        // bouncing through the concurrent queue again.
+        let mut this = unsafe { bun_core::heap::take(this) };
+        this.src_absolute = Some(src.into_vec());
+        this.tgt_absolute = Some(dest.into_vec());
+        if let Err(e) = result {
+            this.err = Some(ShellErr::new_sys(&e));
         }
+        ShellTask::run_from_main_thread::<ShellCpTask>(this);
     }
 
-    /// Unlike most shell builtins this does NOT use the generic
-    /// [`ShellTask::schedule`] trampoline (which auto-enqueues back to main
-    /// on return): on the
-    /// success path the [`ShellAsyncCpTask`](crate::node::fs::ShellAsyncCpTask)
-    /// owns the bounce-back via `cp_on_finish`, so an unconditional post would
-    /// double-enqueue. The embedded [`ShellTask`] is reused for its
-    /// `WorkPoolTask` / `concurrent_task` / `keep_alive` storage.
-    ///
-    /// # Safety
-    /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
-    unsafe fn schedule(this: *mut ShellCpTask) {
-        use bun_threading::work_pool::WorkPool;
-        // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
-        // raw pointers — once `WorkPool::schedule` returns the worker thread
-        // may already be running.
+    /// Pool-side body: run the impl, and on error post back immediately;
+    /// the success path hands the allocation to a `ShellAsyncCpTask`, whose
+    /// completion (`cp_on_finish`) reclaims it.
+    fn run_on_pool(this: Box<ShellCpTask>) {
+        let this = bun_core::heap::into_raw(this);
+        // SAFETY: `this` is the box just released; the worker thread has
+        // exclusive access until it is handed off. Raw because on success the
+        // `ShellAsyncCpTask` it now belongs to may free it from another thread
+        // at once.
         unsafe {
-            let st = &raw mut (*this).task;
-            (*st).task.callback = Self::work_pool_callback;
-            (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
-            (*st).arm();
-            WorkPool::schedule(&raw mut (*st).task);
-        }
-    }
-
-    /// Recover `*ShellCpTask` from the
-    /// intrusive `*WorkPoolTask`, run the impl, and on error post back
-    /// immediately (success path defers the post to `cp_on_finish`).
-    unsafe fn work_pool_callback(task: *mut crate::shell::interpreter::WorkPoolTask) {
-        // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
-        // is embedded in `ShellCpTask` at `TASK_OFFSET`. `this` is a live
-        // heap-allocated task; the worker thread has exclusive access until
-        // the bounce-back is posted.
-        unsafe {
-            let this = bun_ptr::container_of::<ShellCpTask, _>(
-                task,
-                <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
-            );
-            // Moved out first: on success the copy is handed to a
-            // `ShellAsyncCpTask` whose completion may free `*this` at once.
+            // Moved out first: see above.
             let poster = (*this)
                 .task
                 .poster
@@ -552,7 +529,7 @@ impl ShellCpTask {
             if let Some(e) = (*this).run_from_thread_pool_impl(&poster) {
                 (*this).err = Some(e);
                 (*this).task.poster = Some(poster);
-                Self::enqueue_to_event_loop(this);
+                ShellTask::on_finish::<ShellCpTask>(bun_core::heap::take(this));
             } else {
                 // The copy now belongs to a `ShellAsyncCpTask` (holding its
                 // own poster, completing on the JS thread via `cp_on_finish`);
@@ -560,18 +537,6 @@ impl ShellCpTask {
                 drop(poster);
             }
         }
-    }
-
-    /// Post this task to the main-thread
-    /// concurrent queue; routed by `dispatch.rs` → [`run_from_main_thread`].
-    ///
-    /// # Safety
-    /// `this` is the live `heap::alloc`'d task; not touched again on this
-    /// thread after return.
-    unsafe fn enqueue_to_event_loop(this: *mut ShellCpTask) {
-        // Reuse the generic `ShellTask` post-back.
-        // SAFETY: caller contract.
-        unsafe { ShellTask::on_finish::<ShellCpTask>(this) };
     }
 
     fn has_trailing_sep(path: &[u8]) -> bool {
@@ -737,46 +702,27 @@ impl ShellCpTask {
 
         None
     }
-
-    /// # Safety
-    /// `this` must be a live `heap::alloc`'d task (see [`create`](Self::create));
-    /// ownership is consumed via [`Cp::on_shell_cp_task_done`].
-    fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap-allocated task per the caller's contract.
-        let cmd = unsafe { (*this).cmd };
-        Cp::on_shell_cp_task_done(interp, cmd, this);
-    }
 }
 
-impl bun_event_loop::Taskable for ShellCpTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCpTask;
-    /// A pool completion that will not run: drop the keep-alive and the box
-    /// (nothing else frees an unrun one).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the builtin scheduled.
-        unsafe {
-            (*this).task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
-    }
-}
+// `runtime::dispatch::run_task`'s `task_tag::ShellCpTask` arm reboxes the
+// pointer `ShellTask::on_finish` posted; a completion that will not run drops
+// the keep-alive and the box.
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(_this: &mut Self) {
-        // Not reached: `ShellCpTask::schedule` installs `work_pool_callback`
-        // directly (the generic trampoline auto-posts back, which would
-        // double-enqueue when the `ShellAsyncCpTask` later calls
-        // `cp_on_finish`).
-        debug_assert!(
-            false,
-            "ShellCpTask scheduled via ShellTask::schedule; use ShellCpTask::schedule"
-        );
+    fn shell_task(&self) -> &ShellTask {
+        &self.task
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
-        // is the live heap-allocated task posted via `ShellTask::schedule`.
-        Self::run_from_main_thread(this, interp)
+    fn shell_task_mut(&mut self) -> &mut ShellTask {
+        &mut self.task
+    }
+    fn run_from_thread_pool(&mut self) {
+        // Not reached: the pool-side entry is `run_on_pool` (see the
+        // `owned_task!` above), never `ShellTask::run_owned`.
+        debug_assert!(false, "ShellCpTask runs run_on_pool on the pool");
+    }
+    fn run_from_main_thread(self: Box<Self>, interp: &Interpreter) {
+        let cmd = self.cmd;
+        Cp::on_shell_cp_task_done(interp, cmd, self);
     }
 }
 
@@ -810,7 +756,7 @@ impl FlagParser for Opts {
                 Some(ParseFlagResult::ContinueParsing)
             }
             b'n' => Some(ParseFlagResult::ContinueParsing),
-            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
+            _ => Some(ParseFlagResult::IllegalOption(smallflags[i..].into())),
         }
     }
 }

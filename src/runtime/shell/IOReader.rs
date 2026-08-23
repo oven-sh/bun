@@ -1,8 +1,10 @@
 //! Similar to `IOWriter` but for reading.
 //!
-//! *NOTE* This type is reference counted via `Arc`; see the `Drop` impl note.
+//! *NOTE* This type is reference counted via `Rc`; see the `Drop` impl note.
 
-use core::cell::UnsafeCell;
+use bun_jsc::JsCell;
+use bun_ptr::{CellRefCounted as _, RefPtr, ThisPtr};
+use core::cell::{Cell, RefCell};
 #[cfg(not(windows))]
 use core::ffi::c_void;
 
@@ -39,87 +41,39 @@ type Readers = Vec<ChildPtr>;
 
 pub(crate) type ReaderImpl = bun_io::BufferedReader;
 
-struct State {
+/// Read callbacks re-enter the reader (`add_reader`/`remove_reader` from a
+/// child's chunk handler), so every field is interior-mutable behind `&self`
+/// and no borrow is held across a callback.
+#[derive(bun_ptr::CellRefCounted)]
+pub struct IOReader {
+    ref_count: Cell<u32>,
+    self_root: bun_ptr::SelfRoot<IOReader>,
+    /// The io-layer reader. Its callbacks arrive while the read loop holds a
+    /// `&mut` to it (see the `BufferedReaderParent` aliasing contract), so it
+    /// sits in its own cell that the callbacks never touch.
+    reader: JsCell<ReaderImpl>,
     fd: Fd,
-    buf: Vec<u8>,
-    readers: Readers,
+    buf: RefCell<Vec<u8>>,
+    readers: RefCell<Readers>,
     /// The raw `sys::Error`. `SystemError` is not `Clone`
     /// in the Rust port yet, so we keep the source error to re-derive a fresh
     /// `SystemError` per callee in `on_reader_done_cb`.
-    raw_err: Option<sys::Error>,
+    raw_err: RefCell<Option<sys::Error>>,
     evtloop: EventLoopHandle,
     #[cfg(windows)]
-    is_reading: bool,
-    /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
-    /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
-    /// `init()` (the sole constructor).
-    self_weak: std::sync::Weak<IOReader>,
-    read_guards: Vec<std::sync::Arc<IOReader>>,
+    is_reading: Cell<bool>,
     /// Backref so async read callbacks can drive `Yield::run`. See
     /// `IOWriter::interp`.
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
+    interp: Cell<Option<bun_ptr::ParentRef<Interpreter>>>,
 }
-
-pub struct IOReader {
-    /// Split out of `State` so `state()`'s `&mut State` never overlaps the
-    /// `&mut ReaderImpl` the read-loop caller holds while invoking vtable
-    /// callbacks (see `BufferedReaderParent` aliasing contract). Both cells
-    /// root at SharedReadWrite; callbacks touch only `state` fields.
-    reader: UnsafeCell<ReaderImpl>,
-    state: UnsafeCell<State>,
-}
-
-// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
-unsafe impl Send for IOReader {}
-// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
-unsafe impl Sync for IOReader {}
 
 impl IOReader {
     #[inline]
-    #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded
-    fn state(&self) -> &mut State {
-        // SAFETY: shell is single-threaded; no overlapping borrow of `state`
-        // escapes a callback (see struct doc comment).
-        unsafe { &mut *self.state.get() }
+    fn this_ptr(&self) -> ThisPtr<IOReader> {
+        self.self_root.this_ptr(self)
     }
 
-    #[inline]
-    #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded
-    fn reader(&self) -> &mut ReaderImpl {
-        // SAFETY: single-threaded. Split into its own cell so a `&mut ReaderImpl`
-        // held by the bun_io read loop never overlaps a `&mut State` derived in a
-        // vtable callback (see struct doc comment).
-        //
-        // MUST NOT be invoked from within a `BufferedReaderParent` vtable
-        // callback (`on_read_chunk_cb`/`on_reader_done_cb`/`on_reader_error`):
-        // the read loop already holds a live `&mut ReaderImpl` on its stack
-        // while the callback runs (PipeReader.rs aliasing contract), so
-        // re-deriving here would create two simultaneous `&mut` to the same
-        // BufferedReader = Stacked-Borrows UB.
-        unsafe { &mut *self.reader.get() }
-    }
-
-    /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
-    /// whose child callback may drop the last external ref and free us
-    /// mid-method.
-    #[inline]
-    fn keepalive(&self) -> std::sync::Arc<IOReader> {
-        self.state()
-            .self_weak
-            .upgrade()
-            .expect("IOReader::keepalive after last Arc dropped")
-    }
-
-    fn push_read_guard(&self) {
-        let guard = self.keepalive();
-        self.state().read_guards.push(guard);
-    }
-
-    fn pop_read_guard(&self) -> Option<std::sync::Arc<IOReader>> {
-        self.state().read_guards.pop()
-    }
-
-    pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
+    pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> IOReaderRef {
         let mut reader = ReaderImpl::init::<IOReader>();
         #[cfg(not(windows))]
         {
@@ -131,56 +85,42 @@ impl IOReader {
         {
             reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
         }
-        let this = std::sync::Arc::new_cyclic(|w| IOReader {
-            reader: UnsafeCell::new(reader),
-            state: UnsafeCell::new(State {
-                fd,
-                buf: Vec::new(),
-                readers: Readers::new(),
-                raw_err: None,
-                evtloop,
-                #[cfg(windows)]
-                is_reading: false,
-                self_weak: std::sync::Weak::clone(w),
-                read_guards: Vec::new(),
-                interp: None,
-            }),
+        let this = RefPtr::new_cyclic(|self_root| IOReader {
+            ref_count: Cell::new(1),
+            self_root,
+            reader: JsCell::new(reader),
+            fd,
+            buf: RefCell::new(Vec::new()),
+            readers: RefCell::new(Readers::new()),
+            raw_err: RefCell::new(None),
+            evtloop,
+            #[cfg(windows)]
+            is_reading: Cell::new(false),
+            interp: Cell::new(None),
         });
-        // NOTE: set the parent backref after Arc allocation so the
-        // address is stable.
-        let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
-        // SAFETY: `Arc::as_ptr` yields `*const IOReader`, but every field of
-        // `IOReader` is `UnsafeCell`, so all mutation flows through interior
-        // mutability (SharedReadWrite). The `*mut` cast exists solely to satisfy
-        // `set_parent`'s `*mut` signature for the vtable backref; the
-        // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
-        // call `&self` methods — no `&mut IOReader` is materialized from it.
-        unsafe { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
+        let parent: *mut IOReader = this.as_ptr();
+        this.reader.with_mut(|r| r.set_parent(parent.cast()));
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
-        this
+        IOReaderRef(this)
     }
 
-    /// # Safety
-    /// `interp` must be null or point to the live owning `Interpreter` (it
-    /// owns the IO struct that holds this `Arc`) for the lifetime of this
-    /// reader; single-threaded.
+    /// Stash the interpreter backref so async read callbacks can drive
+    /// `Yield::run`. `interp` owns (through its IO structs) every handle to
+    /// this reader.
     #[inline]
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: precondition above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
+    pub(crate) fn set_interp(&self, interp: &Interpreter) {
+        self.interp.set(Some(bun_ptr::ParentRef::new(interp)));
     }
 
     #[inline]
     pub(crate) fn fd(&self) -> Fd {
-        self.state().fd
+        self.fd
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        let s = self.state();
         core::mem::size_of::<IOReader>()
-            + s.buf.capacity()
-            + s.readers.capacity() * core::mem::size_of::<ChildPtr>()
+            + self.buf.borrow().capacity()
+            + self.readers.borrow().capacity() * core::mem::size_of::<ChildPtr>()
     }
 
     /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
@@ -189,9 +129,7 @@ impl IOReader {
     /// vtable can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; vtable consumers treat the pointee as read-only
-        self.state().evtloop.as_event_loop_ctx()
+        self.evtloop.as_event_loop_ctx()
     }
 
     /// Only does things on windows.
@@ -199,37 +137,43 @@ impl IOReader {
     fn set_reading(&self, reading: bool) {
         #[cfg(windows)]
         {
-            self.state().is_reading = reading;
+            self.is_reading.set(reading);
         }
         let _ = reading;
     }
 
     /// Idempotent function to start the reading.
+    ///
+    /// Not called from within a `BufferedReaderParent` callback: the read
+    /// loop already holds the reader mutably there.
     pub(crate) fn start(&self) -> Yield {
         #[cfg(not(windows))]
         {
-            let r = self.reader();
-            let need_start = match &r.handle {
-                bun_io::pipes::PollOrFd::Closed => true,
-                bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
-                bun_io::pipes::PollOrFd::Fd(_) => true,
-            };
-            if need_start {
-                let fd = self.state().fd;
-                if let Err(e) = r.start(fd, true) {
-                    self.on_reader_error(&e);
+            let fd = self.fd;
+            let res = self.reader.with_mut(|r| {
+                let need_start = match &r.handle {
+                    bun_io::pipes::PollOrFd::Closed => true,
+                    bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
+                    bun_io::pipes::PollOrFd::Fd(_) => true,
+                };
+                if need_start {
+                    r.start(fd, true)
+                } else {
+                    Ok(())
                 }
+            });
+            if let Err(e) = res {
+                self.on_reader_error(&e);
             }
             return Yield::suspended();
         }
         #[cfg(windows)]
         {
-            let s = self.state();
-            if s.is_reading {
+            if self.is_reading.get() {
                 return Yield::suspended();
             }
-            s.is_reading = true;
-            if let Err(e) = self.reader().start_with_current_pipe() {
+            self.is_reading.set(true);
+            if let Err(e) = self.reader.with_mut(|r| r.start_with_current_pipe()) {
                 self.on_reader_error(&e);
                 return Yield::failed();
             }
@@ -239,54 +183,52 @@ impl IOReader {
 
     /// Only adds if not already present.
     pub(crate) fn add_reader(&self, reader: ChildPtr) {
-        let s = self.state();
-        if !s.readers.contains(&reader) {
-            s.readers.push(reader);
+        let mut readers = self.readers.borrow_mut();
+        if !readers.contains(&reader) {
+            readers.push(reader);
         }
     }
 
     /// Unregister a listener; no-op if it was never added.
     pub(crate) fn remove_reader(&self, reader: ChildPtr) {
-        let s = self.state();
-        if let Some(idx) = s.readers.iter().position(|r| *r == reader) {
-            s.readers.swap_remove(idx);
+        let mut readers = self.readers.borrow_mut();
+        if let Some(idx) = readers.iter().position(|r| *r == reader) {
+            readers.swap_remove(idx);
         }
     }
 
     /// The `BufferedReader.onReadChunk` hook.
     fn on_read_chunk_cb(&self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
         // `dispatch_read_chunk` → `Cat::on_io_reader_chunk` may drop the last
-        // external Arc; hold one across the whole body so the trailing
-        // `state()` accesses (and `run_yield`'s re-read of `interp`) see live
-        // memory.
-        let _keepalive = self.keepalive();
+        // external ref; hold one across the whole body so the trailing field
+        // accesses (and `run_yield`'s re-read of `interp`) see live memory.
+        let _keepalive = self.this_ptr().ref_guard();
         self.set_reading(false);
-        // NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
-        // both re-derive `state()` (and the interpreter callback may re-enter
-        // `add_reader`/`remove_reader`), so we must NOT hold a long-lived
-        // `&mut State` across the dispatch. Re-derive `state()` per access
-        // instead.
+        // The interpreter callback may re-enter `add_reader`/`remove_reader`,
+        // so `readers` is re-borrowed per access rather than held across the
+        // dispatch.
         let mut i = 0usize;
-        while i < self.state().readers.len() {
-            let r = self.state().readers[i];
-            let interp = self.state().interp;
+        loop {
+            let Some(r) = self.readers.borrow().get(i).copied() else {
+                break;
+            };
+            let interp = self.interp.get();
             let mut remove = false;
             self.run_yield(dispatch_read_chunk(r, chunk, &mut remove, interp));
             if remove {
-                self.state().readers.swap_remove(i);
+                self.readers.borrow_mut().swap_remove(i);
             } else {
                 i += 1;
             }
         }
 
         let should_continue = has_more != bun_io::ReadState::Eof;
-        if should_continue && !self.state().readers.is_empty() {
+        if should_continue && !self.readers.borrow().is_empty() {
             self.set_reading(true);
             // NOTE: no explicit re-arm (`registerPoll()` on posix /
-            // `startWithCurrentPipe()` on windows) here: that would re-derive
-            // a second `&mut ReaderImpl` while the bun_io read loop still
-            // holds one on its stack (PipeReader.rs aliasing contract) —
-            // Stacked-Borrows UB.
+            // `startWithCurrentPipe()` on windows) here: that would touch the
+            // reader while the bun_io read loop still holds it mutably on its
+            // stack (PipeReader.rs aliasing contract).
             // On posix the re-arm is redundant: the read loop re-registers
             // itself after the callback returns based on the `bool` we return
             // (PipeReader.rs:731/755/846/920/986). On Windows the re-arm is
@@ -302,15 +244,14 @@ impl IOReader {
     }
 
     fn on_reader_error(&self, err: &sys::Error) {
-        // `dispatch_reader_done` may drop the last external Arc; keep `self`
+        // `dispatch_reader_done` may drop the last external ref; keep `self`
         // alive across the loop.
-        let _keepalive = self.keepalive();
+        let _keepalive = self.this_ptr().ref_guard();
         self.set_reading(false);
-        let s = self.state();
-        s.raw_err = Some(err.clone());
-        // NOTE: reshaped for borrowck — copy out before dispatching.
-        let readers: Vec<ChildPtr> = s.readers.clone();
-        let interp = s.interp;
+        *self.raw_err.borrow_mut() = Some(err.clone());
+        // Copy out before dispatching (callbacks may re-enter `remove_reader`).
+        let readers: Vec<ChildPtr> = self.readers.borrow().clone();
+        let interp = self.interp.get();
         for r in readers {
             // Re-derive a fresh SystemError per callee (see
             // IOWriter.on_error note).
@@ -321,18 +262,16 @@ impl IOReader {
 
     fn on_reader_done_cb(&self) {
         // `dispatch_reader_done` → `Cat::on_io_reader_done` drops Cat's
-        // `Arc<IOReader>`; if that was the last external ref, `self` is freed
-        // mid-loop and `run_yield`'s `state().interp` reads 0xdfdf poison.
-        // Hold a strong ref across the body.
-        let _keepalive = self.keepalive();
+        // `Rc<IOReader>`; if that was the last external ref, `self` would be
+        // freed mid-loop. Hold a strong ref across the body.
+        let _keepalive = self.this_ptr().ref_guard();
         self.set_reading(false);
-        let s = self.state();
-        let readers: Vec<ChildPtr> = s.readers.clone();
-        let interp = s.interp;
+        let readers: Vec<ChildPtr> = self.readers.borrow().clone();
+        let interp = self.interp.get();
         // `SystemError` isn't `Clone` yet, so we keep the source `sys::Error`
         // (which IS `Clone`) and re-derive a fresh `SystemError` per callee —
         // same approach as `on_reader_error`.
-        let raw_err = s.raw_err.clone();
+        let raw_err = self.raw_err.borrow().clone();
         for r in readers {
             let ee = raw_err.as_ref().map(|e| e.to_shell_system_error());
             self.run_yield(dispatch_reader_done(r, ee, interp));
@@ -340,7 +279,7 @@ impl IOReader {
     }
 
     fn run_yield(&self, y: Yield) {
-        let Some(interp) = self.state().interp else {
+        let Some(interp) = self.interp.get() else {
             debug_assert!(
                 matches!(y, Yield::Done | Yield::Suspended),
                 "IOReader async callback fired without interp backref"
@@ -348,7 +287,7 @@ impl IOReader {
             return;
         };
         // `ParentRef: Deref<Target=Interpreter>` — the interpreter owns the IO
-        // struct holding this Arc and outlives every IOReader. Single-threaded.
+        // struct holding this reader and outlives every IOReader. Single-threaded.
         y.run(&interp);
     }
 }
@@ -357,21 +296,43 @@ impl IOReader {
 // BufferedReaderParent — wires the bun_io BufferedReader vtable
 // ──────────────────────────────────────────────────────────────────────────
 
-// Derefs `this` only to call `&self` inherent methods (autoref → `&*this`);
-// no `&mut IOReader` is materialized, satisfying the init() *const→*mut
-// invariant. Aliasing with the caller's live `&mut ReaderImpl` is handled by
-// the state/reader UnsafeCell split — callbacks touch only `state`, never
-// `reader()`.
+// Every hook views `this` as `&Self` (via `ThisPtr`); no `&mut IOReader` is
+// materialized. Aliasing with the caller's live `&mut ReaderImpl` is handled
+// by the `reader` cell split — callbacks touch only the other fields.
 bun_io::impl_buffered_reader_parent! {
     ShellIoReader for IOReader;
+    borrow = this;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(&chunk, has_more);
-    on_reader_done  = |this| (*this).on_reader_done_cb();
-    on_reader_error = |this, err| (*this).on_reader_error(&err);
-    loop_           = |this| (*this).io_evtloop().native_loop();
-    event_loop      = |this| (*this).io_evtloop();
-    ref_            = |this| (*this).push_read_guard();
-    deref           = |this| drop((*this).pop_read_guard());
+    on_read_chunk   = |this, chunk, has_more| this.on_read_chunk_cb(&chunk, has_more);
+    on_reader_done  = |this| this.on_reader_done_cb();
+    on_reader_error = |this, err| this.on_reader_error(&err);
+    loop_           = |this| this.io_evtloop().native_loop();
+    event_loop      = |this| this.io_evtloop();
+    ref_            = |this| this.ref_();
+    deref           = |this| IOReader::deref_nn(this.into());
+}
+
+/// One owned ref on an [`IOReader`]; clone takes another, drop releases it.
+pub struct IOReaderRef(RefPtr<IOReader>);
+
+impl Clone for IOReaderRef {
+    fn clone(&self) -> Self {
+        IOReaderRef(self.0.dupe_ref())
+    }
+}
+
+impl Drop for IOReaderRef {
+    fn drop(&mut self) {
+        self.0.deref();
+    }
+}
+
+impl core::ops::Deref for IOReaderRef {
+    type Target = IOReader;
+    #[inline]
+    fn deref(&self) -> &IOReader {
+        self.0.data()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -381,30 +342,31 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for IOReader {
     fn drop(&mut self) {
         // The bun_io read loop brackets every event-loop entry with the
-        // parent `ref_`/`deref` hooks (`read_guards`), so the last ref never
+        // parent `ref_`/`deref` hooks (our refcount), so the last ref never
         // drops while BufferedReader is still iterating.
-        let s = self.state.get_mut();
-        let r = self.reader.get_mut();
-        if s.fd != Fd::INVALID {
-            #[cfg(windows)]
-            {
-                // windows reader closes the file descriptor
-                if r.source.is_some() && !r.source.as_ref().is_some_and(|src| src.is_closed()) {
-                    r.close_impl::<false>();
+        let fd = self.fd;
+        self.reader.with_mut(|r| {
+            if fd != Fd::INVALID {
+                #[cfg(windows)]
+                {
+                    // windows reader closes the file descriptor
+                    if r.source.is_some() && !r.source.as_ref().is_some_and(|src| src.is_closed()) {
+                        r.close_impl::<false>();
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    // We cleared CLOSE_HANDLE in init(), so reader Drop will not
+                    // return the FilePoll to its pool. Do it explicitly (without
+                    // closing the fd — we own that and close it ourselves below).
+                    if matches!(r.handle, bun_io::pipes::PollOrFd::Poll(_)) {
+                        r.handle.close_impl(None, None::<fn(*mut c_void)>, false);
+                    }
+                    let _ = sys::close(fd);
                 }
             }
-            #[cfg(not(windows))]
-            {
-                // We cleared CLOSE_HANDLE in init(), so reader Drop will not
-                // return the FilePoll to its pool. Do it explicitly (without
-                // closing the fd — we own that and close it ourselves below).
-                if matches!(r.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                    r.handle.close_impl(None, None::<fn(*mut c_void)>, false);
-                }
-                let _ = sys::close(s.fd);
-            }
-        }
-        r.disable_keeping_process_alive(());
+            r.disable_keeping_process_alive(());
+        });
         // `reader` Drop handles its own deinit.
     }
 }

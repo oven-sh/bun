@@ -3,30 +3,30 @@
 
 use bun_collections::VecExt;
 use bun_jsc::PinnedArrayBuffer;
-use core::ffi::c_char;
+use core::cell::{Ref, RefMut};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode, shell_openat,
+    CapturedBuf, Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode,
+    shell_openat,
 };
 use crate::shell::io::{InKind, OutFd, OutKind};
-use crate::shell::io_reader::IOReader;
-use crate::shell::io_writer::{self, IOWriter};
+use crate::shell::io_reader::{IOReader, IOReaderRef};
+use crate::shell::io_writer::{self, IOWriter, IOWriterRef};
 use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
 
 pub struct Builtin {
     pub(crate) kind: Kind,
-    /// argv[1..] as NUL-terminated strings (argv[0] is the builtin name).
-    /// Points into the Cmd's `args` storage.
-    pub args: Vec<*const c_char>,
+    /// argv[1..], each NUL-terminated (argv[0], the builtin name, stays on
+    /// the Cmd). Moved out of the Cmd's `args` by `init`.
+    pub args: Vec<Vec<u8>>,
     pub(crate) stdin: BuiltinInput,
     pub(crate) stdout: BuiltinIO,
     pub(crate) stderr: BuiltinIO,
-    /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
-    pub(crate) err_buf: Vec<u8>,
     pub(crate) impl_: Impl,
 }
 
@@ -59,10 +59,15 @@ pub(crate) trait BuiltinState: Sized {
     /// Project `&mut Impl` → `&mut Self`. `unreachable!` on variant mismatch.
     fn extract(impl_: &mut Impl) -> &mut Self;
 
+    /// Borrow this builtin's state out of the Cmd node. A `RefMut` into the
+    /// node: keep it short and never hold it across a call that touches the
+    /// same Cmd (`Builtin::of*`, `write_no_io`, `done`, ...).
     #[inline]
     #[track_caller]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Self {
-        Self::extract(&mut Builtin::of_mut(interp, cmd).impl_)
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> RefMut<'_, Self> {
+        RefMut::map(Builtin::of_mut(interp, cmd), |b| {
+            Self::extract(&mut b.impl_)
+        })
     }
 }
 
@@ -256,7 +261,7 @@ pub enum BuiltinIO {
 
 /// Input stream of a builtin.
 pub enum BuiltinInput {
-    Fd(Arc<IOReader>),
+    Fd(IOReaderRef),
     ArrayBuf { buf: PinnedArrayBuffer, i: u32 },
     Blob(Arc<BuiltinBlob>),
     Ignore,
@@ -268,14 +273,14 @@ pub struct BuiltinBlob {
     pub(crate) blob: crate::webcore::Blob,
 }
 // `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,
-// which already asserts `Send + Sync`. No `unsafe impl` needed.
+// which already asserts `Send + Sync`.
 const _: fn() = || {
     fn assert<T: Send + Sync>() {}
     assert::<BuiltinBlob>();
 };
 
 impl BuiltinIO {
-    /// From the Cmd's IO::OutKind. `Arc::clone` (via `OutFd: Clone`) bumps
+    /// From the Cmd's IO::OutKind. `Rc::clone` (via `OutFd: Clone`) bumps
     /// the `IOWriter` refcount; `Drop` decrements it symmetrically. `target`
     /// is the shell-env bytelist this stream flushes to (Stdout or Stderr).
     fn from_out_kind(ok: &OutKind, target: IoKind) -> BuiltinIO {
@@ -314,15 +319,11 @@ impl BuiltinIO {
     /// Body of [`Builtin::write_no_io`] with the Cmd split-borrow already
     /// performed by the caller. Exists so builtins whose payload lives in
     /// `Builtin.impl_` (disjoint from `stdout`/`stderr`) can write a borrowed
-    /// slice without an intermediate heap clone.
-    ///
-    /// # Safety
-    /// `shell` must point to the live `ShellExecEnv` owning this builtin
-    /// (i.e. `cmd.base.shell`); only dereferenced for the [`BuiltinIO::Buf`]
-    /// arm.
-    pub(crate) unsafe fn write_no_io_to(
+    /// slice without an intermediate heap clone. `shell` is the Cmd's env
+    /// (`cmd.base.shell`); only used for the [`BuiltinIO::Buf`] arm.
+    pub(crate) fn write_no_io_to(
         &mut self,
-        shell: *mut crate::shell::interpreter::ShellExecEnv,
+        shell: &crate::shell::interpreter::ShellExecEnv,
         buf: &[u8],
     ) -> bun_sys::Result<usize> {
         if buf.is_empty() {
@@ -337,16 +338,7 @@ impl BuiltinIO {
                 // `target` is the destination identity, fixed at construction
                 // and preserved across `dup_ref` so `2>&1` lands in stdout's
                 // bytelist.
-                // SAFETY: caller contract — shell env outlives the Cmd node
-                // (single-threaded); `captured` points into a live
-                // `ShellExecEnv` Bufio.
-                unsafe {
-                    let captured = match *target {
-                        IoKind::Stdout => (*shell).buffered_stdout(),
-                        IoKind::Stderr => (*shell).buffered_stderr(),
-                    };
-                    (*captured).append_slice(buf)
-                };
+                let _ = shell.captured(*target).borrow_mut().append_slice(buf);
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
@@ -371,44 +363,81 @@ impl BuiltinIO {
         }
     }
 
-    /// Queue `buf` on this stream's IOWriter and arrange for `child`'s
-    /// `on_io_writer_chunk` to fire when the chunk completes. Delegates to
-    /// `fd.writer.enqueue` passing `fd.captured` as the tee bytelist.
-    ///
-    /// `_safeguard` proves the caller checked `needs_io()`.
-    pub(crate) fn enqueue(
-        &mut self,
-        child: io_writer::ChildPtr,
-        buf: &[u8],
-        _safeguard: OutputNeedsIOSafeGuard,
-    ) -> Yield {
+    /// The writer and tee buffer, for callers holding the
+    /// [`OutputNeedsIOSafeGuard`] that proves this is `Fd`.
+    fn out_fd(&self, _safeguard: OutputNeedsIOSafeGuard) -> (IOWriterRef, Option<CapturedBuf>) {
         match self {
-            BuiltinIO::Fd(fd) => fd.writer.enqueue(child, fd.captured, buf),
-            _ => unreachable!("enqueue() on non-fd output; caller must check needs_io()"),
+            BuiltinIO::Fd(fd) => (fd.writer.clone(), fd.captured.clone()),
+            _ => unreachable!("non-fd output; caller must check needs_io()"),
+        }
+    }
+}
+
+impl Builtin {
+    fn out_fd(
+        interp: &Interpreter,
+        cmd: NodeId,
+        to: IoKind,
+        safeguard: OutputNeedsIOSafeGuard,
+    ) -> (IOWriterRef, Option<CapturedBuf>) {
+        let me = Self::of(interp, cmd);
+        match to {
+            IoKind::Stdout => me.stdout.out_fd(safeguard),
+            IoKind::Stderr => me.stderr.out_fd(safeguard),
         }
     }
 
-    /// Format with the optional `"{kind}: "` prefix and enqueue on the
-    /// underlying IOWriter.
-    pub(crate) fn enqueue_fmt(
-        &mut self,
+    /// Queue `buf` on `to`'s IOWriter; `child`'s `on_io_writer_chunk` fires
+    /// when the chunk completes. The Cmd node is not borrowed while the writer
+    /// runs (it may call other children back, or this one on a synchronous
+    /// failure).
+    pub(crate) fn write_out(
+        interp: &Interpreter,
+        cmd: NodeId,
+        to: IoKind,
+        child: io_writer::ChildPtr,
+        buf: &[u8],
+        safeguard: OutputNeedsIOSafeGuard,
+    ) -> Yield {
+        let (writer, captured) = Self::out_fd(interp, cmd, to, safeguard);
+        writer.enqueue(child, captured, buf)
+    }
+
+    /// [`write_out`](Self::write_out) with the bytes appended by `fill` (which
+    /// may borrow the node; the borrow ends before the writer runs).
+    pub(crate) fn write_out_with(
+        interp: &Interpreter,
+        cmd: NodeId,
+        to: IoKind,
+        child: io_writer::ChildPtr,
+        safeguard: OutputNeedsIOSafeGuard,
+        fill: impl FnOnce(&mut Vec<u8>),
+    ) -> Yield {
+        let (writer, captured) = Self::out_fd(interp, cmd, to, safeguard);
+        writer.enqueue_with(child, captured, fill)
+    }
+
+    /// [`write_out`](Self::write_out), formatted with the optional
+    /// `"{kind}: "` prefix.
+    pub(crate) fn write_out_fmt(
+        interp: &Interpreter,
+        cmd: NodeId,
+        to: IoKind,
         child: io_writer::ChildPtr,
         kind: Option<Kind>,
         args: core::fmt::Arguments<'_>,
-        _safeguard: OutputNeedsIOSafeGuard,
+        safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
-        match self {
-            BuiltinIO::Fd(fd) => fd.writer.enqueue_fmt_bltn(child, fd.captured, kind, args),
-            _ => unreachable!("enqueue_fmt() on non-fd output; caller must check needs_io()"),
-        }
+        let (writer, captured) = Self::out_fd(interp, cmd, to, safeguard);
+        writer.enqueue_fmt_bltn(child, captured, kind, args)
     }
 }
 
 impl BuiltinInput {
     fn from_in_kind(ik: &InKind) -> BuiltinInput {
         match ik {
-            // `Arc::clone` bumps the IOReader refcount.
-            InKind::Fd(r) => BuiltinInput::Fd(Arc::clone(r)),
+            // `Rc::clone` bumps the IOReader refcount.
+            InKind::Fd(r) => BuiltinInput::Fd(r.clone()),
             InKind::Ignore => BuiltinInput::Ignore,
         }
     }
@@ -421,8 +450,28 @@ impl BuiltinInput {
 
 impl Builtin {
     #[inline]
-    pub(crate) fn args_slice(&self) -> &[*const c_char] {
+    pub(crate) fn args_slice(&self) -> &[Vec<u8>] {
         &self.args
+    }
+
+    /// [`parse_flags`](crate::shell::interpreter::parse_flags) over this
+    /// builtin's argv. Returns the index of the first non-flag argument
+    /// (`None`: there were no arguments at all).
+    pub(crate) fn parse_flags<O: crate::shell::interpreter::FlagParser>(
+        interp: &Interpreter,
+        cmd: NodeId,
+        opts: &mut O,
+    ) -> Result<Option<usize>, ParseError> {
+        let me = Self::of(interp, cmd);
+        let args = me.args_slice();
+        crate::shell::interpreter::parse_flags(opts, args)
+            .map(|rest| rest.map(|rest| args.len() - rest.len()))
+    }
+
+    /// `argv[1..].len()`.
+    #[inline]
+    pub(crate) fn argc(interp: &Interpreter, cmd: NodeId) -> usize {
+        Self::of(interp, cmd).args.len()
     }
 
     /// `PinnedArrayBuffer::drop`'s unpin would write to a `JSC::ArrayBuffer`
@@ -442,40 +491,27 @@ impl Builtin {
         }
     }
 
-    /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
-    ///
-    /// Every entry in `self.args` borrows into the owning `Cmd`'s
-    /// `args: Vec<Vec<u8>>`, NUL-terminated by `Cmd::transition_to_exec` and
-    /// outliving this `Builtin` (the `Cmd` slot is freed only after
-    /// `Builtin::done`). Localises the per-callsite
-    /// `unsafe { CStr::from_ptr(...) }` that previously appeared at every
-    /// builtin's flag/operand parser.
-    ///
-    /// The returned slice's lifetime is intentionally **decoupled from
-    /// `&self`**: the raw `*const c_char` is copied out of `self.args` first,
-    /// so the borrow of `self` ends before `CStr::from_ptr`. This lets callers
-    /// hold the result across an `interp.as_cmd_mut(...)` reborrow (cat/ls/mv
-    /// flag loops). Soundness rests on the architectural invariant above —
-    /// argv storage is a separate heap allocation that is not freed or
-    /// reallocated while the `Builtin` is live — not on `'a`.
+    /// `arg` (a NUL-terminated argv entry) up to its first NUL — what
+    /// `execve` would see.
     #[inline]
-    pub(crate) fn arg_bytes<'a>(&self, idx: usize) -> &'a [u8] {
-        let p: *const c_char = self.args[idx];
-        // SAFETY: see doc comment — `p` is a valid NUL-terminated pointer
-        // into the Cmd's argv storage, live for the Builtin's lifetime.
-        unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes()
+    pub(crate) fn arg_bytes_of(arg: &[u8]) -> &[u8] {
+        bun_core::slice_to_nul(arg)
     }
 
-    /// Borrow `argv[1..][idx]` as `&ZStr` (NUL-terminated view).
-    ///
-    /// Same invariant and lifetime decoupling as [`arg_bytes`]; for callers
-    /// that need to pass the argument to a `&ZStr`-taking syscall wrapper
-    /// without re-copying.
+    /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
     #[inline]
-    pub(crate) fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
-        let p: *const c_char = self.args[idx];
-        // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
-        bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
+    pub(crate) fn arg_bytes(&self, idx: usize) -> &[u8] {
+        Self::arg_bytes_of(&self.args[idx])
+    }
+
+    /// Borrow `argv[1..][idx]` as `&ZStr` (NUL-terminated view), for callers
+    /// that pass the argument to a `&ZStr`-taking syscall wrapper without
+    /// re-copying.
+    #[inline]
+    pub(crate) fn arg_zstr(&self, idx: usize) -> &bun_core::ZStr {
+        let arg = &self.args[idx];
+        debug_assert_eq!(arg.last(), Some(&0));
+        bun_core::ZStr::from_buf(arg, arg.len() - 1)
     }
 
     /// Construct a `Builtin` for `kind`, install it into the owning Cmd's
@@ -486,35 +522,28 @@ impl Builtin {
     pub(crate) fn init(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         use crate::shell::states::cmd::Exec;
 
-        // Borrow argv[1..] as `*const c_char` into the Cmd's `args` storage.
-        // The Cmd's `args: Vec<Vec<u8>>` are NUL-terminated by
-        // `Cmd::transition_to_exec` before this is called.
-        let (args, stdin, stdout, stderr) = {
-            let me = interp.as_cmd(cmd);
-            let mut argv: Vec<*const c_char> = Vec::with_capacity(me.args.len().saturating_sub(1));
-            for a in me.args.iter().skip(1) {
-                argv.push(a.as_ptr().cast::<c_char>());
-            }
-            // `Arc::clone` (inside `OutFd: Clone` / `InKind: Clone`) bumps
+        // Take argv[1..] from the Cmd's `args` (NUL-terminated by
+        // `Cmd::transition_to_exec` before this is called); argv[0] stays.
+        {
+            let mut me = interp.as_cmd_mut(cmd);
+            let args = me.args.split_off(1);
+            // `Rc::clone` (inside `OutFd: Clone` / `InKind: Clone`) bumps
             // the `IOWriter`/`IOReader` refcount; the builtin's `Drop`
             // decrements it symmetrically. No double-deref.
-            (
-                argv,
+            let (stdin, stdout, stderr) = (
                 BuiltinInput::from_in_kind(&me.io.stdin),
                 BuiltinIO::from_out_kind(&me.io.stdout, IoKind::Stdout),
                 BuiltinIO::from_out_kind(&me.io.stderr, IoKind::Stderr),
-            )
-        };
-
-        interp.as_cmd_mut(cmd).exec = Exec::Builtin(Box::new(Builtin {
-            kind,
-            args,
-            stdin,
-            stdout,
-            stderr,
-            err_buf: Vec::new(),
-            impl_: Self::make_impl(kind),
-        }));
+            );
+            me.exec = Exec::Builtin(Box::new(Builtin {
+                kind,
+                args,
+                stdin,
+                stdout,
+                stderr,
+                impl_: Self::make_impl(kind),
+            }));
+        }
 
         Self::init_redirections(interp, cmd, kind)
     }
@@ -523,7 +552,8 @@ impl Builtin {
     /// `2>&1` (`duplicate_out`).
     fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         // `node` points into the AST arena which outlives every state node (see Cmd::next).
-        let node: &ast::Cmd = &*interp.as_cmd(cmd).node;
+        let node = interp.as_cmd(cmd).node;
+        let node: &ast::Cmd = node.get();
         let redirect = node.redirect;
 
         match &node.redirect_file {
@@ -543,7 +573,8 @@ impl Builtin {
                 // `&mut interp` open call below doesn't overlap a borrow into
                 // the Cmd node.
                 let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(cmd).redirection_file;
+                    let me = interp.as_cmd(cmd);
+                    let raw = &me.redirection_file;
                     let len = raw.len().saturating_sub(1);
                     let mut v = raw[..len].to_vec();
                     v.push(0);
@@ -634,10 +665,9 @@ impl Builtin {
                     }
                 };
 
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if redirect.stdin() {
                     let r = IOReader::init(redirfd, evtloop);
-                    r.set_interp(interp_ptr);
+                    r.set_interp(interp);
                     Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
                 }
 
@@ -658,17 +688,17 @@ impl Builtin {
                     },
                     evtloop,
                 );
-                redirect_writer.set_interp(interp_ptr);
+                redirect_writer.set_interp(interp);
 
                 if redirect.stdout() {
-                    let me = Self::of_mut(interp, cmd);
+                    let mut me = Self::of_mut(interp, cmd);
                     me.stdout = BuiltinIO::Fd(OutFd {
-                        writer: Arc::clone(&redirect_writer),
+                        writer: redirect_writer.clone(),
                         captured: None,
                     });
                 }
                 if redirect.stderr() {
-                    let me = Self::of_mut(interp, cmd);
+                    let mut me = Self::of_mut(interp, cmd);
                     me.stderr = BuiltinIO::Fd(OutFd {
                         writer: redirect_writer,
                         captured: None,
@@ -678,8 +708,6 @@ impl Builtin {
             Some(ast::Redirect::JsBuf(jsbuf)) => {
                 // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
                 let idx = jsbuf.idx as usize;
-                // Safe accessor — single `unsafe` deref lives in
-                // `Interpreter::global_this_ref`.
                 let Some(global) = interp
                     .global_this_ref()
                     .filter(|_| idx < interp.jsobjs.len())
@@ -702,7 +730,7 @@ impl Builtin {
                         }
                         buf
                     };
-                    let me = Self::of_mut(interp, cmd);
+                    let mut me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
                         let Some(buf) = root() else {
                             return Some(Yield::failed());
@@ -721,21 +749,22 @@ impl Builtin {
                         };
                         me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
-                } else if let Some(body) =
-                    crate::webcore::body::Value::from_request_or_response(jsval)
+                } else if let Some(taken) =
+                    crate::webcore::body::Value::with_request_or_response(jsval, |body| {
+                        let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
+                            if !b.needs_to_read_file());
+                        if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
+                            return None;
+                        }
+                        Some(body.use_())
+                    })
                 {
-                    // SAFETY: returned a live JSC-owned `*mut Value` borrowed
-                    // from a Response/Request wrapper.
-                    let body = unsafe { &mut *body };
-                    let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
-                        if !b.needs_to_read_file());
-                    if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
+                    let Some(original_blob) = taken else {
                         let _ = global.throw(format_args!(
                             "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
                         ));
                         return Some(Yield::failed());
-                    }
-                    let original_blob = body.use_();
+                    };
                     if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
                         drop(original_blob);
                         return None;
@@ -744,7 +773,7 @@ impl Builtin {
                         blob: original_blob.dupe(),
                     });
                     drop(original_blob);
-                    let me = Self::of_mut(interp, cmd);
+                    let mut me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
                         me.stdin = BuiltinInput::Blob(Arc::clone(&blob));
                     }
@@ -764,7 +793,7 @@ impl Builtin {
                     let theblob = Arc::new(BuiltinBlob {
                         blob: blob_ref.dupe(),
                     });
-                    let me = Self::of_mut(interp, cmd);
+                    let mut me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
                         me.stdin = BuiltinInput::Blob(theblob);
                     } else if redirect.stdout() {
@@ -783,7 +812,8 @@ impl Builtin {
             None if redirect.duplicate_out() => {
                 // `2>&1` (stderr=true,dup_out=true) → stderr := stdout
                 // `1>&2` (stdout=true,dup_out=true) → stdout := stderr
-                let me = Self::of_mut(interp, cmd);
+                let mut me = Self::of_mut(interp, cmd);
+                let me = &mut *me;
                 if redirect.stdout() {
                     me.stderr = me.stdout.dup_ref();
                 }
@@ -810,29 +840,23 @@ impl Builtin {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
+        let stderr = interp.as_cmd(cmd).io.stderr.clone();
+        if let OutKind::Fd(fd) = stderr {
             // Only the `Fd` arm transitions state.
             interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
-            // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
-            if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
+            return fd.writer.enqueue(child, fd.captured, &buf);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
-        if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
-            // SAFETY: single trampoline frame; no other borrow of the env's
-            // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_cmd_mut(cmd)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
-            stderr.append_slice(&buf);
+        if let OutKind::Pipe = stderr {
+            let _ = interp
+                .as_cmd(cmd)
+                .base
+                .shell()
+                .buffered_stderr
+                .borrow_mut()
+                .append_slice(&buf);
         }
         let parent = interp.as_cmd(cmd).base.parent;
         interp.child_done(parent, cmd, 1)
@@ -845,23 +869,25 @@ impl Builtin {
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
-    /// Look up the Builtin inside a Cmd's `exec` slot.
+    /// Look up the Builtin inside a Cmd's `exec` slot. A `Ref` into the Cmd
+    /// node: it must be released before anything borrows that node mutably.
     #[inline]
     #[track_caller]
-    pub(crate) fn of<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Builtin {
-        match &interp.as_cmd(cmd).exec {
-            crate::shell::states::cmd::Exec::Builtin(b) => b,
+    pub(crate) fn of(interp: &Interpreter, cmd: NodeId) -> Ref<'_, Builtin> {
+        Ref::map(interp.as_cmd(cmd), |c| match &c.exec {
+            crate::shell::states::cmd::Exec::Builtin(b) => &**b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
-        }
+        })
     }
 
+    /// [`of`](Self::of), mutably.
     #[inline]
     #[track_caller]
-    pub(crate) fn of_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Builtin {
-        match &mut interp.as_cmd_mut(cmd).exec {
-            crate::shell::states::cmd::Exec::Builtin(b) => b,
+    pub(crate) fn of_mut(interp: &Interpreter, cmd: NodeId) -> RefMut<'_, Builtin> {
+        RefMut::map(interp.as_cmd_mut(cmd), |c| match &mut c.exec {
+            crate::shell::states::cmd::Exec::Builtin(b) => &mut **b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
-        }
+        })
     }
 
     #[inline]
@@ -871,8 +897,8 @@ impl Builtin {
 
     /// Returns the bytes available on stdin when it is *not* an async fd
     /// (arraybuf / piped buf / blob).
-    pub(crate) fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
-        match &Self::of(interp, cmd).stdin {
+    pub(crate) fn read_stdin_no_io(&self) -> &[u8] {
+        match &self.stdin {
             BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
             BuiltinInput::Blob(b) => b.blob.shared_view(),
             BuiltinInput::Fd(_) | BuiltinInput::Ignore => b"",
@@ -895,8 +921,9 @@ impl Builtin {
         }
         // Split-borrow the Cmd so `shell`
         // and the builtin's stdout/stderr are accessible simultaneously.
-        let cmd_node = interp.as_cmd_mut(cmd);
-        let shell = cmd_node.base.shell;
+        let mut cmd_node = interp.as_cmd_mut(cmd);
+        let cmd_node = &mut *cmd_node;
+        let shell = cmd_node.base.shell.borrow();
         let crate::shell::states::cmd::Exec::Builtin(me) = &mut cmd_node.exec else {
             panic!("Cmd {} is not running a builtin", cmd);
         };
@@ -904,17 +931,14 @@ impl Builtin {
             IoKind::Stdout => &mut me.stdout,
             IoKind::Stderr => &mut me.stderr,
         };
-        // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
-        unsafe { out.write_no_io_to(shell, buf) }
+        out.write_no_io_to(&shell, buf)
     }
 
-    /// Shell exec env of the owning Cmd.
+    /// Shell exec env of the owning Cmd (a clone of the handle, so the Cmd
+    /// node is not borrowed while it is used).
     #[inline]
-    pub fn shell<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-    ) -> &'a crate::shell::interpreter::ShellExecEnv {
-        interp.as_cmd(cmd).base.shell()
+    pub fn shell(interp: &Interpreter, cmd: NodeId) -> crate::shell::interpreter::EnvRc {
+        Rc::clone(&interp.as_cmd(cmd).base.shell)
     }
 
     /// Event loop handle (forwarded from the interpreter).
@@ -929,53 +953,34 @@ impl Builtin {
     /// Cwd fd of the owning Cmd's shell env.
     #[inline]
     pub(crate) fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
-        Self::shell(interp, cmd).cwd_fd
+        interp.as_cmd(cmd).base.shell().cwd_fd
     }
 
     /// Format `"{kind}: {fmt}"` into a fresh heap buffer.
-    ///
-    /// Stored on the `Builtin` so the returned `&[u8]` borrow stays valid
-    /// across the immediate `write_no_io` / `enqueue` call.
-    pub(crate) fn fmt_error_arena<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-        kind: Option<Kind>,
-        args: core::fmt::Arguments<'_>,
-    ) -> &'a [u8] {
+    pub(crate) fn fmt_error_arena(kind: Option<Kind>, args: core::fmt::Arguments<'_>) -> Vec<u8> {
         use std::io::Write as _;
         let mut buf = Vec::new();
         if let Some(k) = kind {
             let _ = write!(&mut buf, "{}: ", k.as_str());
         }
         let _ = buf.write_fmt(args);
-        let me = Self::of_mut(interp, cmd);
-        me.err_buf = buf;
-        &me.err_buf
+        buf
     }
 
     /// Error messages formatted to match bash. Dispatches on the variant;
     /// `Sys` recurses into the system-error formatter.
-    pub(crate) fn shell_err_to_string<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-        kind: Kind,
-        err: &crate::shell::ShellErr,
-    ) -> &'a [u8] {
+    pub(crate) fn shell_err_to_string(kind: Kind, err: &crate::shell::ShellErr) -> Vec<u8> {
         use crate::shell::ShellErr;
         match err {
             ShellErr::Sys(sys) => {
                 // `"{message}\n"` or `"{message}: {path}\n"`.
                 if sys.path.is_empty() {
                     Self::fmt_error_arena(
-                        interp,
-                        cmd,
                         Some(kind),
                         format_args!("{}\n", bstr::BStr::new(sys.message.byte_slice())),
                     )
                 } else {
                     Self::fmt_error_arena(
-                        interp,
-                        cmd,
                         Some(kind),
                         format_args!(
                             "{}: {}\n",
@@ -985,12 +990,9 @@ impl Builtin {
                     )
                 }
             }
-            ShellErr::Custom(s) => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("{}\n", bstr::BStr::new(s)),
-            ),
+            ShellErr::Custom(s) => {
+                Self::fmt_error_arena(Some(kind), format_args!("{}\n", bstr::BStr::new(s)))
+            }
         }
     }
 
@@ -998,36 +1000,19 @@ impl Builtin {
     /// `bun_sys::coreutils_error_map` so output matches GNU coreutils
     /// (e.g. `ENOENT` → "No such file or directory"); falls back to
     /// `"unknown error {errno}"` when unmapped.
-    pub(crate) fn task_error_to_string<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-        kind: Kind,
-        err: &bun_sys::Error,
-    ) -> &'a [u8] {
+    pub(crate) fn task_error_to_string(kind: Kind, err: &bun_sys::Error) -> Vec<u8> {
         if let Some((_code, sys_errno)) = err.get_error_code_tag_name() {
             if let Some(message) = bun_sys::coreutils_error_map::get(sys_errno) {
                 if !err.path.is_empty() {
                     return Self::fmt_error_arena(
-                        interp,
-                        cmd,
                         Some(kind),
                         format_args!("{}: {}\n", bstr::BStr::new(&err.path[..]), message),
                     );
                 }
-                return Self::fmt_error_arena(
-                    interp,
-                    cmd,
-                    Some(kind),
-                    format_args!("{}\n", message),
-                );
+                return Self::fmt_error_arena(Some(kind), format_args!("{}\n", message));
             }
         }
-        Self::fmt_error_arena(
-            interp,
-            cmd,
-            Some(kind),
-            format_args!("unknown error {}\n", err.errno),
-        )
+        Self::fmt_error_arena(Some(kind), format_args!("unknown error {}\n", err.errno))
     }
 
     /// Shared failure path for builtins whose option parser returns
@@ -1044,23 +1029,17 @@ impl Builtin {
     ) -> Yield {
         let buf: Vec<u8> = match e {
             ParseError::IllegalOption(_) => Self::fmt_error_arena(
-                interp,
-                cmd,
                 Some(kind),
                 format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
-            )
-            .to_vec(),
+            ),
             ParseError::ShowUsage => kind.usage_string().to_vec(),
             ParseError::Unsupported(_) => Self::fmt_error_arena(
-                interp,
-                cmd,
                 Some(kind),
                 format_args!(
                     "unsupported option, please open a GitHub issue -- {}\n",
                     bstr::BStr::new(e.opt())
                 ),
-            )
-            .to_vec(),
+            ),
         };
         set_wait_err();
         Self::write_failing_error(interp, cmd, &buf, 1)
@@ -1075,14 +1054,10 @@ impl Builtin {
         buf: &[u8],
         exit_code: crate::shell::ExitCode,
     ) -> Yield {
-        if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
+        let needs_io = Self::of(interp, cmd).stderr.needs_io();
+        if let Some(safeguard) = needs_io {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
-            // Clone buf so the &mut on
-            // `stderr` doesn't overlap a borrow into `err_buf`.
-            let owned = buf.to_vec();
-            return Self::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, &owned, safeguard);
+            return Self::write_out(interp, cmd, IoKind::Stderr, child, buf, safeguard);
         }
         let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Self::done(interp, cmd, exit_code)
@@ -1090,7 +1065,7 @@ impl Builtin {
 }
 
 // Cleanup: every `Impl` variant owns its state via `Box`/`Vec`/`Arc`, and
-// `BuiltinIO`/`BuiltinInput` hold `Arc<IOWriter>` / `Arc<IOReader>` /
+// `BuiltinIO`/`BuiltinInput` hold `Rc<IOWriter>` / `Rc<IOReader>` /
 // `PinnedArrayBuffer` / `Arc<BuiltinBlob>` whose `Drop` already decrements
 // the refcount. So cleanup is fully covered by `Drop` on `Box<Builtin>`
 // (called from `Cmd::deinit`). No explicit deinit needed.

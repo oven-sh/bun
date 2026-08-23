@@ -819,8 +819,6 @@ pub mod testing_apis {
             }
         };
 
-        let arena = Bump::new();
-
         let template_args_js: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {
@@ -842,39 +840,25 @@ pub mod testing_apis {
             marked_argument_buffer,
         )?;
 
-        let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
-        let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
-
-        let script_ast = match interpret::Interpreter::parse(
-            &arena,
-            &script[..],
-            &mut jsobjs[..],
-            &jsstrings[..],
-            &mut out_parser,
-            &mut out_lex_result,
-        ) {
-            Ok(a) => a,
-            Err(err) => {
-                // `out_lex_result` is populated by `parse()` only on lex errors.
-                if let Some(lex) = out_lex_result.as_ref() {
-                    let str = lex.combine_errors(&arena);
-                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
+        let mut parsed = bun_shell_parser::ParsedScript::new();
+        if let Err(err) = parsed.parse(&script[..], &jsstrings[..], jsobjs.len() as u32) {
+            use bun_shell_parser::ParseFailure;
+            return Err(match err {
+                ParseFailure::Diagnostic(msg) => {
+                    global.throw(format_args!("{}", bstr::BStr::new(&msg)))
                 }
-
-                if let Some(p) = out_parser.as_mut() {
-                    let errstr = p.combine_errors();
-                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
+                ParseFailure::Lexer(e) => {
+                    global.throw_error(crate::Error::from(e), "failed to lex/parse shell")
                 }
+                ParseFailure::Other(e) => {
+                    global.throw_error(crate::Error::from(e), "failed to lex/parse shell")
+                }
+            });
+        }
 
-                return Err(global.throw_error(err, "failed to lex/parse shell"));
-            }
-        };
-
-        // `crate::shell::ast::Script` is a `'static`-erased alias of
-        // `bun_shell_parser::ast::Script`, so it formats directly.
         let str = format!(
             "{}",
-            bun_shell_parser::json_fmt::script_json_fmt(&script_ast)
+            bun_shell_parser::json_fmt::script_json_fmt(parsed.root())
         );
         bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
     }

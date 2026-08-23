@@ -252,11 +252,40 @@ pub enum EventLoopTask {
     Mini(AnyTaskWithExtraContext),
 }
 
+/// A leaked box's embedded node, armed and ready to post to its loop
+/// ([`EventLoopTask::arm_boxed`]).
+#[derive(Clone, Copy)]
+pub enum ArmedLoopTask {
+    Js(NonNull<ConcurrentTask>),
+    Mini(NonNull<AnyTaskWithExtraContext>),
+}
+
 impl EventLoopTask {
     pub fn from_event_loop(loop_: EventLoopHandle) -> EventLoopTask {
         match loop_ {
             EventLoopHandle::Js { .. } => EventLoopTask::Js(ConcurrentTask::default()),
             EventLoopHandle::Mini(_) => EventLoopTask::Mini(AnyTaskWithExtraContext::default()),
+        }
+    }
+
+    /// Leak `owner` into the node it embeds (`node(owner)`). The JS arm queues
+    /// `Task { T::TAG, owner }` for `bun_runtime::dispatch` to rebox; the mini
+    /// arm hands the box to `R::run_from_loop_thread`. No allocation.
+    pub fn arm_boxed<T, R>(owner: Box<T>, node: fn(&mut T) -> &mut EventLoopTask) -> ArmedLoopTask
+    where
+        T: crate::Taskable,
+        R: crate::AnyTaskWithExtraContext::BoxedMiniTaskRunner<T>,
+    {
+        let raw: *mut T = bun_core::heap::into_raw(owner);
+        // SAFETY: `raw` was just leaked; this thread owns it exclusively until
+        // the node is queued.
+        match node(unsafe { &mut *raw }) {
+            EventLoopTask::Js(ct) => ArmedLoopTask::Js(NonNull::from(
+                ct.from(raw, crate::ConcurrentTask::AutoDeinit::ManualDeinit),
+            )),
+            EventLoopTask::Mini(at) => {
+                ArmedLoopTask::Mini(AnyTaskWithExtraContext::arm_at::<T, R>(at, raw))
+            }
         }
     }
 }
@@ -506,6 +535,13 @@ impl EventLoopHandle {
         // (`VirtualMachine.transpiler.env`; `MiniEventLoop::env_ptr`), live
         // for the loop's lifetime; the borrow ends with `f`.
         f(unsafe { (*env).get(key) })
+    }
+
+    /// `f(loader)` on the loop's dotenv loader; the borrow ends with `f` (the
+    /// map is mutable at runtime).
+    pub fn with_env<R>(self, f: impl FnOnce(&DotEnvLoader) -> R) -> R {
+        // SAFETY: as `with_env_var`.
+        f(unsafe { &*self.env() })
     }
 
     pub fn top_level_dir(self) -> &'static [u8] {

@@ -74,7 +74,7 @@ impl ExecCommand {
         // other live `&mut` to the same `MiniEventLoop` on this thread).
         let mini_ref = unsafe { &mut *mini };
         let code = match Interpreter::init_and_run_from_source(
-            ctx,
+            &*ctx,
             mini_ref,
             script_path,
             &script,

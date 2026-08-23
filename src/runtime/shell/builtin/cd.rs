@@ -22,8 +22,8 @@ enum State {
 
 impl Cd {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let args = Builtin::of(interp, cmd).args_slice();
-        if args.len() > 1 {
+        let argc = Builtin::of(interp, cmd).args_slice().len();
+        if argc > 1 {
             return Self::write_stderr_non_blocking(
                 interp,
                 cmd,
@@ -31,8 +31,9 @@ impl Cd {
             );
         }
 
-        if args.is_empty() {
-            let home_str = Builtin::shell(interp, cmd).get_homedir();
+        let shell = Builtin::shell(interp, cmd);
+        if argc == 0 {
+            let home_str = shell.borrow().get_homedir();
             let home = home_str.slice().to_vec();
             home_str.deref();
             if home.is_empty() {
@@ -42,21 +43,24 @@ impl Cd {
                     format_args!("HOME not set\n"),
                 );
             }
-            if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&home) {
+            let res = shell.borrow_mut().change_cwd(&home);
+            if let Err(err) = res {
                 return Self::handle_change_cwd_err(interp, cmd, &err, &home);
             }
             return Builtin::done(interp, cmd, 0);
         }
 
-        let first_arg = Builtin::of(interp, cmd).arg_bytes(0);
+        let first_arg = Builtin::of(interp, cmd).arg_bytes(0).to_vec();
         if first_arg == b"-" {
-            let prev = Builtin::shell(interp, cmd).prev_cwd().to_vec();
-            if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_prev_cwd() {
+            let prev = shell.borrow().prev_cwd().to_vec();
+            let res = shell.borrow_mut().change_prev_cwd();
+            if let Err(err) = res {
                 return Self::handle_change_cwd_err(interp, cmd, &err, &prev);
             }
         } else {
-            let target = first_arg.to_vec();
-            if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
+            let target = first_arg;
+            let res = shell.borrow_mut().change_cwd(&target);
+            if let Err(err) = res {
                 return Self::handle_change_cwd_err(interp, cmd, &err, &target);
             }
         }
@@ -102,16 +106,20 @@ impl Cd {
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::WaitingIo;
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
+        if let Some(safeguard) = stderr_needs_io {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
+            return Builtin::write_out_fmt(
+                interp,
+                cmd,
+                IoKind::Stderr,
                 child,
                 Some(Kind::Cd),
                 args,
                 safeguard,
             );
         }
-        let buf = Builtin::fmt_error_arena(interp, cmd, Some(Kind::Cd), args).to_vec();
+        let buf = Builtin::fmt_error_arena(Some(Kind::Cd), args);
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)

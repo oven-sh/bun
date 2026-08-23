@@ -17,21 +17,18 @@ enum State {
 
 impl Exit {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let bltn = Builtin::of(interp, cmd);
-        let code: crate::shell::ExitCode = match bltn.args_slice().len() {
-            0 => 0,
-            1 => {
-                let s = bltn.arg_bytes(0);
-                match parse_exit_code(s) {
-                    Some(c) => c,
-                    None => {
-                        return Self::fail(interp, cmd, b"exit: numeric argument required\n");
-                    }
-                }
+        let code: Result<crate::shell::ExitCode, &'static [u8]> = {
+            let bltn = Builtin::of(interp, cmd);
+            match bltn.args_slice().len() {
+                0 => Ok(0),
+                1 => parse_exit_code(bltn.arg_bytes(0))
+                    .ok_or(b"exit: numeric argument required\n".as_slice()),
+                _ => Err(b"exit: too many arguments\n".as_slice()),
             }
-            _ => {
-                return Self::fail(interp, cmd, b"exit: too many arguments\n");
-            }
+        };
+        let code = match code {
+            Ok(c) => c,
+            Err(msg) => return Self::fail(interp, cmd, msg),
         };
         // Intentional divergence from bash: this completes only the current
         // Cmd rather than unwinding the whole script.

@@ -1,9 +1,10 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{EnvRc, Interpreter, Node, NodeId, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
+use std::rc::Rc;
 
 pub struct Binary {
     pub(crate) base: Base,
@@ -18,7 +19,7 @@ pub struct Binary {
 impl Binary {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: EnvRc,
         node: &ast::Binary,
         parent: NodeId,
         io: IO,
@@ -41,7 +42,13 @@ impl Binary {
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (left_exit, right_exit, parent, shell, node) = {
             let me = interp.as_binary(this);
-            (me.left, me.right, me.base.parent, me.base.shell, me.node)
+            (
+                me.left,
+                me.right,
+                me.base.parent,
+                Rc::clone(&me.base.shell),
+                me.node,
+            )
         };
         let n = node.get();
 
@@ -59,13 +66,13 @@ impl Binary {
                 return interp.child_done(parent, this, left);
             }
             let io = interp.as_binary(this).io.clone();
-            let (child, y) = interp.spawn_expr(shell, &n.right, this, io);
+            let (child, y) = interp.spawn_expr(&shell, &n.right, this, io);
             interp.as_binary_mut(this).currently_executing = child;
             return y;
         }
 
         let io = interp.as_binary(this).io.clone();
-        let (child, y) = interp.spawn_expr(shell, &n.left, this, io);
+        let (child, y) = interp.spawn_expr(&shell, &n.left, this, io);
         interp.as_binary_mut(this).currently_executing = child;
         y
     }
@@ -78,7 +85,7 @@ impl Binary {
     ) -> Yield {
         interp.deinit_node(child);
         {
-            let me = interp.as_binary_mut(this);
+            let mut me = interp.as_binary_mut(this);
             me.currently_executing = None;
             if me.left.is_none() && !me.base.interrupted {
                 me.left = Some(exit_code);

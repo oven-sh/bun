@@ -2,11 +2,12 @@
 //! no effect on the environment of the shell, so we can skip them.
 
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{EnvRc, Interpreter, Node, NodeId, log};
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 use crate::shell::{EnvStr, ExitCode};
+use std::rc::Rc;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AssignCtx {
@@ -16,14 +17,13 @@ pub enum AssignCtx {
 
 pub struct Assigns {
     pub(crate) base: Base,
-    /// Points into the AST arena, which outlives every state node — `RawSlice`
-    /// invariant.
-    pub node: bun_ptr::RawSlice<ast::Assign>,
+    /// Points into the AST arena, which outlives every state node.
+    pub node: bun_ptr::BackRef<[ast::Assign]>,
     pub(crate) state: AssignsState,
     pub ctx: AssignCtx,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub enum AssignsState {
     #[default]
     Idle,
@@ -36,15 +36,14 @@ pub enum AssignsState {
 impl Assigns {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: EnvRc,
         node: &[ast::Assign],
         parent: NodeId,
         ctx: AssignCtx,
     ) -> NodeId {
         interp.alloc_node(Node::Assigns(Assigns {
             base: Base::new(parent, shell),
-            // AST arena outlives every state node — `RawSlice` invariant.
-            node: bun_ptr::RawSlice::new(node),
+            node: bun_ptr::BackRef::new(node),
             state: AssignsState::Idle,
             ctx,
         }))
@@ -58,10 +57,11 @@ impl Assigns {
         loop {
             let (shell, node) = {
                 let me = interp.as_assigns(this);
-                (me.base.shell, me.node)
+                (Rc::clone(&me.base.shell), me.node)
             };
-            let assigns = node.slice();
-            match interp.as_assigns(this).state {
+            let assigns = node.get();
+            let state = interp.as_assigns(this).state;
+            match state {
                 AssignsState::Idle => {
                     interp.as_assigns_mut(this).state = AssignsState::Expanding { idx: 0 };
                     continue;
@@ -71,7 +71,7 @@ impl Assigns {
                         interp.as_assigns_mut(this).state = AssignsState::Done;
                         continue;
                     }
-                    let atom: *const ast::Atom = &raw const assigns[idx as usize].value;
+                    let atom = bun_ptr::BackRef::new(&assigns[idx as usize].value);
                     let child = Expansion::init(interp, shell, atom, this, true);
                     return Expansion::start(interp, child);
                 }
@@ -104,12 +104,16 @@ impl Assigns {
             let me = interp.as_assigns(this);
             (me.node, me.ctx)
         };
-        let AssignsState::Expanding { idx } = &mut interp.as_assigns_mut(this).state else {
-            unreachable!("Assigns child_done outside Expanding")
+        let label = {
+            let mut me = interp.as_assigns_mut(this);
+            let AssignsState::Expanding { idx } = &mut me.state else {
+                unreachable!("Assigns child_done outside Expanding")
+            };
+            // `idx` was bounds-checked in `next` before spawning the child.
+            let label = node.get()[*idx as usize].label;
+            *idx += 1;
+            label
         };
-        // `idx` was bounds-checked in `next` before spawning the child.
-        let label = node.slice()[*idx as usize].label;
-        *idx += 1;
 
         // Join multi-word expansions with a single space. `ExpansionOut` stores all words contiguously in `buf`
         // with `bounds` marking inter-word offsets, so the merged value is
@@ -129,7 +133,7 @@ impl Assigns {
         };
 
         let value_ref = EnvStr::init_ref_counted(value.into_boxed_slice());
-        interp.as_assigns_mut(this).base.shell_mut().assign_var(
+        interp.as_assigns(this).base.shell_mut().assign_var(
             EnvStr::init_slice(label),
             value_ref,
             ctx,

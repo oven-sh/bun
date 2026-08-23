@@ -162,6 +162,35 @@ impl<T: ?Sized> BackRef<T, Mut> {
     }
 }
 
+/// The root pointer of a value built by [`RefPtr::new_cyclic`], stored inside
+/// that value. It has no accessors of its own: the only way to use it is
+/// [`SelfRoot::this_ptr`], which takes the enclosing `&T` — so it cannot be
+/// followed before the value exists or after it is gone.
+#[repr(transparent)]
+pub struct SelfRoot<T>(pub(crate) core::ptr::NonNull<T>);
+
+impl<T> SelfRoot<T> {
+    /// The enclosing value as a [`ThisPtr`]. `owner` must be the value this
+    /// token is stored in (checked in debug builds).
+    #[inline]
+    pub fn this_ptr(&self, owner: &T) -> ThisPtr<T> {
+        debug_assert!(
+            core::ptr::eq(self.0.as_ptr().cast_const(), owner),
+            "SelfRoot used from a value it does not belong to"
+        );
+        let _ = owner;
+        // SAFETY: `owner: &T` proves the value is constructed and live; `self.0`
+        // is its allocation root (minted by `new_cyclic`).
+        unsafe { ThisPtr::new(self.0.as_ptr()) }
+    }
+
+    /// The enclosing value as a root back-reference.
+    #[inline]
+    pub fn backref(&self, owner: &T) -> BackRef<T, Root> {
+        self.this_ptr(owner).into()
+    }
+}
+
 impl<T, P> BackRef<T, P> {
     #[inline]
     pub const fn dangling() -> Self {

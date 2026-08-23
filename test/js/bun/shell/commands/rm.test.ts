@@ -484,3 +484,25 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
   });
   expect(exitCode).toBe(0);
 });
+
+// With stderr on a regular file the error write completes synchronously, from
+// inside the builtin's own step.
+test("rm error with stderr redirected to a file", async () => {
+  using dir = tempDir("rm-stderr-file", {});
+  const errPath = path.join(String(dir), "err.txt");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "exec", "rm does_not_exist_123; echo after"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: Bun.file(errPath),
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("after\n");
+  expect(await Bun.file(errPath).text()).toBe("rm: does_not_exist_123: No such file or directory\n");
+  expect(exitCode).toBe(0);
+
+  const res = await $`rm does_not_exist_456 2> ${Bun.file(errPath)}`.cwd(String(dir)).quiet();
+  expect(await Bun.file(errPath).text()).toBe("rm: does_not_exist_456: No such file or directory\n");
+  expect(res.exitCode).toBe(1);
+});

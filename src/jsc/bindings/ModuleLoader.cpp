@@ -236,18 +236,23 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         return result;
     }
 
-    if (wasModuleMock) {
-        result.type = OnLoadResultTypeObject;
-        result.value.object = objectValue;
-        return result;
-    }
-
     JSC::JSObject* object = objectValue.getObject();
     if (!object) [[unlikely]] {
-        scope.throwException(globalObject, JSC::createError(globalObject, "Expected module mock to return an object"_s));
+        // A mock factory that returns a promise gets here with the promise's
+        // resolution, which JSModuleMock::executeOnce could not check.
+        if (wasModuleMock)
+            scope.throwException(globalObject, JSC::createTypeError(globalObject, "mock(module, fn) requires a function that returns an object"_s));
+        else
+            scope.throwException(globalObject, JSC::createError(globalObject, "Expected module mock to return an object"_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         result.type = OnLoadResultTypeError;
+        return result;
+    }
+
+    if (wasModuleMock) {
+        result.type = OnLoadResultTypeObject;
+        result.value.object = objectValue;
         return result;
     }
 

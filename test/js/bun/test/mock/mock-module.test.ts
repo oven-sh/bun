@@ -8,6 +8,7 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -165,6 +166,38 @@ test("mocking a builtin", async () => {
 
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
+});
+
+test("a factory that resolves to a non-object rejects the import, sync or async", async () => {
+  // The async shape used to reach the object-module generator with a null object and segfault while the
+  // import's fetch settled, so run it in a child process.
+  using dir = tempDir("mock-module-non-object", {
+    "main.test.ts": `
+      import { expect, mock, test } from "bun:test";
+      mock.module("mock-sync-non-object", () => 42 as any);
+      mock.module("mock-async-non-object", async () => {
+        await 1;
+        // no return
+      });
+      test("sync", async () => {
+        await expect(import("mock-sync-non-object")).rejects.toThrow("mock(module, fn) requires a function that returns an object");
+      });
+      test("async", async () => {
+        await expect(import("mock-async-non-object")).rejects.toThrow("mock(module, fn) requires a function that returns an object");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "main.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 2 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
 });
 
 test("a factory export getter that throws fails the import", async () => {

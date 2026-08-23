@@ -301,9 +301,17 @@ function getCoreFileSizeLimit() {
  * crashed test process writes no core even though kernel.core_pattern points
  * at coresDir. Raise this process's soft limit to the hard limit; every test
  * process inherits it. Returns the limit that is in effect afterwards.
+ *
+ * Not for an ASAN build: it prints its own report on a crash, and with
+ * abort_on_error=1 it also aborts on a leak report at exit, so a core there
+ * would turn a passing test file into "core dumped".
+ * @param {string} execPath
  * @returns {Promise<string | undefined>}
  */
-async function raiseCoreFileSizeLimit() {
+async function raiseCoreFileSizeLimit(execPath) {
+  if (basename(execPath).includes("asan")) {
+    return getCoreFileSizeLimit()?.soft;
+  }
   const before = getCoreFileSizeLimit();
   if (!before || before.soft === "unlimited") {
     return before?.soft;
@@ -344,7 +352,6 @@ if (options["coredump-upload"]) {
   } else {
     throw new Error(`Failed to check core_pattern: ${sysctl.error}`);
   }
-  console.log(`core file size limit: ${await raiseCoreFileSizeLimit()}`);
 }
 
 let remapPort = undefined;
@@ -590,6 +597,10 @@ async function runTests() {
     execPath = getExecPath(options["exec-path"]);
   }
   !isQuiet && console.log("Bun:", execPath);
+
+  if (options["coredump-upload"]) {
+    console.log(`core file size limit: ${await raiseCoreFileSizeLimit(execPath)}`);
+  }
 
   const expectations = getTestExpectations();
   const modifiers = getTestModifiers(execPath);

@@ -1,22 +1,25 @@
-use core::ffi::c_void;
-use core::sync::atomic::Ordering;
+use core::cell::Cell;
+use core::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::Arc;
 
 use bun_core::MutableString;
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::{ReusableConcurrentTask, Task, TaskHop, TaskTag, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
-    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
-    Method,
+    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HTTPClientResultHandler,
+    Headers, HeadersExt, InFlight, Method, OwnedRequest, Signals,
 };
 use bun_io::KeepAlive;
+use bun_jsc::InFlightTicket;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_picohttp as picohttp;
+use bun_ptr::{RefPtr, ThisPtr};
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
 use bun_s3_signing::storage_class::StorageClass;
-use bun_threading::thread_pool;
+use bun_threading::{Guarded, thread_pool};
 use bun_url::URL;
 
 use crate::webcore::s3::{list_objects, xml_response};
@@ -105,46 +108,164 @@ pub enum S3PartResult<'a> {
     Failure(S3Error<'a>),
 }
 
-pub struct S3HttpSimpleTask {
-    // `http` is `MaybeUninit` because (a) it is initialised late —
-    // `AsyncHTTP` contains `&'static [u8]` and `fn(...)` fields, so a
-    // zeroed/default value would be instant UB; and (b) `Drop` only calls
-    // `http.clear_data()`, never a full destructor, and `http_callback` does a no-drop bitwise
-    // overwrite. Wrapping in `MaybeUninit` makes both possible: write-without-
-    // drop on assignment, and `clear_data()`-only in `Drop`. Invariant: `http` is initialised by
-    // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
-    // `http_callback` / `Drop`) may `assume_init`.
-    pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// Held while the request is out on the HTTP thread: how it delivers the
-    /// response, and what makes the VM wait for it.
-    pub(crate) http_ticket: Option<bun_jsc::Ticket>,
+/// What a request out on the HTTP thread borrows (URL, header buffer, body,
+/// proxy): kept, untouched, until the HTTP thread hands the request back.
+pub(crate) struct RequestStorage {
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
-    /// `Some` until the response (or failure) is delivered.
-    pub callback: Option<Callback>,
-    pub(crate) response_buffer: MutableString,
-    pub(crate) result: HTTPClientResult<'static>,
-    pub(crate) concurrent_task: ConcurrentTask,
-    /// Owned dupe of the proxy URL. The env-derived proxy slice can be freed
-    /// by a concurrent process.env.HTTP_PROXY write while the HTTP thread is
-    /// in flight, so we must own our copy for the task's lifetime.
-    pub(crate) proxy_url: Box<[u8]>,
-    /// Owned copy of the request body. The HTTP thread reads the body slice
-    /// concurrently for the lifetime of the request, so the task owns its own
-    /// copy instead of borrowing caller memory.
+    /// Owned copy of the request body: the HTTP thread reads it for the
+    /// lifetime of the request.
     pub(crate) body: Box<[u8]>,
-    pub poll_ref: KeepAlive,
-    /// The HTTP client's abort flag: set by the VM's stop phase so a request
-    /// still queued or in flight fails promptly and comes back.
-    pub(crate) signal_store: bun_http::signals::Store,
+    /// Owned copy of the proxy URL: a concurrent `process.env.HTTP_PROXY`
+    /// write can free the env-derived slice while the request is in flight.
+    pub(crate) proxy_url: Box<[u8]>,
 }
 
-impl Taskable for S3HttpSimpleTask {
+impl RequestStorage {
+    /// The request for `sign_result.url` with these headers and body,
+    /// delivering its results to `handler` on the HTTP thread.
+    pub(crate) fn request<H: HTTPClientResultHandler>(
+        self,
+        method: Method,
+        handler: Arc<H>,
+        signals: Signals,
+    ) -> OwnedRequest<Self> {
+        let vm = VirtualMachine::get();
+        let verbose = vm.get_verbose_fetch();
+        let reject_unauthorized = vm.get_tls_reject_unauthorized();
+        OwnedRequest::new(self, |storage| {
+            AsyncHTTP::init(
+                method,
+                URL::parse(&storage.sign_result.url),
+                storage.headers.entries.clone().expect("OOM"),
+                storage.headers.buf.as_slice(),
+                &storage.body,
+                HTTPClientResultCallback::from_handler(handler),
+                FetchRedirect::Follow,
+                HttpOptions {
+                    http_proxy: (!storage.proxy_url.is_empty())
+                        .then(|| URL::parse(&storage.proxy_url)),
+                    verbose: Some(verbose),
+                    reject_unauthorized: Some(reject_unauthorized),
+                    signals: Some(signals),
+                    ..Default::default()
+                },
+            )
+        })
+    }
+
+    pub(crate) fn owned_proxy(proxy_url: Option<&[u8]>) -> Box<[u8]> {
+        match proxy_url {
+            Some(proxy) if !proxy.is_empty() => Box::<[u8]>::from(proxy),
+            _ => Box::default(),
+        }
+    }
+}
+
+/// What the HTTP thread produced, for the JS thread to consume.
+#[derive(Default)]
+struct Response {
+    buffer: MutableString,
+    result: HTTPClientResult<'static>,
+}
+
+/// The part of a simple request shared with the HTTP thread: `bun_http` holds
+/// it (as the request's result handler) until the terminal result; the task
+/// for its whole life.
+pub(crate) struct Shared {
+    response: Guarded<Response>,
+    /// The HTTP client's abort flag: set by the VM's stop phase so a request
+    /// still queued or in flight fails promptly and comes back.
+    signal_store: bun_http::signals::Store,
+    /// The task's address for the JS-thread hop; set once, before the request
+    /// is scheduled. The task keeps itself alive for the hop (`http_ref`).
+    task: AtomicPtr<S3HttpSimpleTask>,
+    /// The hop's queue node (posted once).
+    node: ReusableConcurrentTask,
+    /// How the HTTP thread posts to the JS thread, and what makes the VM wait
+    /// for it; handed back right after the hop is posted.
+    ticket: InFlightTicket,
+}
+
+impl Shared {
+    fn stage(&self, mut result: HTTPClientResult<'_>) {
+        let mut response = self.response.lock();
+        let previous_metadata = response.result.metadata.take();
+        result.body_into(&mut response.buffer.list);
+        response.result = result.into_owned();
+        if response.result.metadata.is_none() {
+            response.result.metadata = previous_metadata;
+        }
+    }
+
+    /// HTTP thread, nothing more to deliver: post the response hop and give
+    /// the ticket back.
+    fn hand_back(&self) {
+        let task = Task::new(
+            task_tag::S3HttpSimpleTask,
+            self.task.load(Ordering::Acquire).cast::<()>(),
+        );
+        let node = self
+            .node
+            .arm(task)
+            .unwrap_or_else(|| ConcurrentTask::create(task));
+        self.ticket.post(node);
+        self.ticket.hand_back();
+    }
+}
+
+impl HTTPClientResultHandler for Shared {
+    /// HTTP thread: fold `result` into the response; the terminal one posts it
+    /// to the JS thread.
+    fn on_result(&self, result: HTTPClientResult<'_>) {
+        let is_done = !result.has_more;
+        self.stage(result);
+        if is_done {
+            self.hand_back();
+        }
+    }
+
+    /// The exiting main thread parked the HTTP thread, which will not call
+    /// back; hand the request back as failed so its VM's wait ends and the JS
+    /// thread releases it.
+    fn release_at_shutdown(&self) {
+        {
+            let mut response = self.response.lock();
+            response.result.fail = Some(bun_http::Error::Aborted);
+            response.result.has_more = false;
+        }
+        self.hand_back();
+    }
+}
+
+/// One S3 request (stat / download / upload / delete / list / a multipart
+/// step). Lives on the JS thread; the HTTP thread only sees [`Shared`].
+#[derive(bun_ptr::CellRefCounted)]
+pub struct S3HttpSimpleTask {
+    ref_count: Cell<u32>,
+    /// The ref the response hop (and the teardown registry) reach this task
+    /// through; released by `on_response`.
+    http_ref: Cell<Option<RefPtr<S3HttpSimpleTask>>>,
+    shared: Arc<Shared>,
+    /// The request out on (or back from) the HTTP thread; taken back on drop.
+    request: InFlight<RequestStorage>,
+    /// `Some` until the response (or failure) is delivered.
+    callback: Cell<Option<Callback>>,
+    poll_ref: KeepAlive,
+}
+
+/// `task_tag::S3HttpSimpleTask`: the HTTP thread handed the request back.
+pub struct ResponseHop;
+impl TaskHop for ResponseHop {
+    type Target = S3HttpSimpleTask;
     const TAG: TaskTag = task_tag::S3HttpSimpleTask;
-    /// A response the HTTP thread handed back during teardown: its native
-    /// completion is what frees the caller's context (and settles a promise
-    /// nobody can observe — script is forbidden), so run it.
-    unsafe fn release_unrun(this: *mut Self) {
+    fn run(this: ThisPtr<S3HttpSimpleTask>) -> bun_jsc::JsResult<()> {
+        S3HttpSimpleTask::on_response(this)
+    }
+    /// The VM is tearing down: the native completion is what releases the
+    /// caller's state (and settles a promise nobody can observe — script is
+    /// forbidden), so run it.
+    fn release_unrun(this: ThisPtr<S3HttpSimpleTask>) {
         let _ = S3HttpSimpleTask::on_response(this);
     }
 }
@@ -165,8 +286,8 @@ pub type CommitCallback = Box<dyn FnOnce(S3CommitResult<'_>) -> bun_jsc::JsResul
 pub type PartCallback = Box<dyn FnOnce(S3PartResult<'_>) -> bun_jsc::JsResult<()>>;
 
 /// What a simple request delivers its outcome to: one completion, called
-/// once. Whatever it captures (a promise, a store ref, a raw context a
-/// C-style receiver recovers) is the receiver's.
+/// once. Whatever it captures (a promise, a store ref, an upload ref) is the
+/// receiver's.
 pub enum Callback {
     Stat(StatCallback),
     Download(DownloadCallback),
@@ -178,42 +299,6 @@ pub enum Callback {
 }
 
 impl Callback {
-    /// Adapt a C-style `(fn, ctx)` receiver.
-    pub fn stat(
-        f: fn(S3StatResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>,
-        ctx: *mut c_void,
-    ) -> Self {
-        Callback::Stat(Box::new(move |r| f(r, ctx)))
-    }
-    /// Adapt a C-style `(fn, ctx)` receiver.
-    pub fn download(
-        f: fn(S3DownloadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>,
-        ctx: *mut c_void,
-    ) -> Self {
-        Callback::Download(Box::new(move |r| f(r, ctx)))
-    }
-    /// Adapt a C-style `(fn, ctx)` receiver.
-    pub fn upload(
-        f: fn(S3UploadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>,
-        ctx: *mut c_void,
-    ) -> Self {
-        Callback::Upload(Box::new(move |r| f(r, ctx)))
-    }
-    /// Adapt a C-style `(fn, ctx)` receiver.
-    pub fn commit(
-        f: fn(S3CommitResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>,
-        ctx: *mut c_void,
-    ) -> Self {
-        Callback::Commit(Box::new(move |r| f(r, ctx)))
-    }
-    /// Adapt a C-style `(fn, ctx)` receiver.
-    pub fn part(
-        f: fn(S3PartResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>,
-        ctx: *mut c_void,
-    ) -> Self {
-        Callback::Part(Box::new(move |r| f(r, ctx)))
-    }
-
     fn fail(self, code: &[u8], message: &[u8]) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
@@ -249,18 +334,7 @@ enum ErrorType {
     Failure,
 }
 
-impl S3HttpSimpleTask {
-    const HOLDS_TICKET: &str = "S3 request on the HTTP thread holds a ticket";
-
-    // bun.TrivialNew(@This()) — heap-allocate; pointer crosses thread boundary via http callback
-    pub(crate) fn new(init: Self) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
-    fn take_callback(&mut self) -> Callback {
-        self.callback.take().expect("S3 request completes once")
-    }
-
+impl Response {
     fn error_with_body(&self, callback: Callback, error_type: ErrorType) -> bun_jsc::JsResult<()> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
@@ -270,7 +344,7 @@ impl S3HttpSimpleTask {
             code = err.name().as_bytes();
             has_error_code = true;
         } else {
-            let bytes = self.response_buffer.list.as_slice();
+            let bytes = self.buffer.list.as_slice();
             if !bytes.is_empty() {
                 message = bytes;
                 parsed = xml_response::parse_error(bytes);
@@ -311,7 +385,7 @@ impl S3HttpSimpleTask {
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
         } else {
-            let bytes = self.response_buffer.list.as_slice();
+            let bytes = self.buffer.list.as_slice();
             if !bytes.is_empty() {
                 message = bytes;
             }
@@ -328,30 +402,16 @@ impl S3HttpSimpleTask {
         Ok(None)
     }
 
-    /// this is the task callback from the last task result and is always in the main thread
-    ///
-    /// # Safety
-    /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` whose ownership
-    /// is being transferred to this call (it is reclaimed and dropped here exactly once).
-    //
-    // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
-    // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn on_response(this: *mut Self) -> bun_jsc::JsResult<()> {
-        crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(this).expect("task"))
-            .unregister();
-        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
-        // reclaimed here exactly once via the ConcurrentTask `AutoDeinit::ManualDeinit` contract;
-        // `this` is dropped at scope exit.
-        let mut this = unsafe { bun_core::heap::take(this) };
-
-        let callback = this.take_callback();
-        if !this.result.is_success() {
-            this.error_with_body(callback, ErrorType::Failure)?;
+    /// Hand the outcome to `callback`. JS thread.
+    fn deliver(mut self, callback: Callback) -> bun_jsc::JsResult<()> {
+        if !self.result.is_success() {
+            self.error_with_body(callback, ErrorType::Failure)?;
             return Ok(());
         }
-        debug_assert!(this.result.metadata.is_some());
-        let response = &this.result.metadata.as_ref().unwrap().response;
+        debug_assert!(self.result.metadata.is_some());
+        // Moved out so the `Download` arm can take `buffer` while reading headers.
+        let metadata = self.result.metadata.take().unwrap();
+        let response = &metadata.response;
         match callback {
             Callback::Stat(callback) => match response.status_code {
                 200 => {
@@ -366,17 +426,17 @@ impl S3HttpSimpleTask {
                             .unwrap_or(0),
                     }))?;
                 }
-                404 => this.error_with_body(Callback::Stat(callback), ErrorType::NotFound)?,
-                _ => this.error_with_body(Callback::Stat(callback), ErrorType::Failure)?,
+                404 => self.error_with_body(Callback::Stat(callback), ErrorType::NotFound)?,
+                _ => self.error_with_body(Callback::Stat(callback), ErrorType::Failure)?,
             },
             Callback::Delete(callback) => match response.status_code {
                 200 | 204 => callback(S3DeleteResult::Success)?,
-                404 => this.error_with_body(Callback::Delete(callback), ErrorType::NotFound)?,
-                _ => this.error_with_body(Callback::Delete(callback), ErrorType::Failure)?,
+                404 => self.error_with_body(Callback::Delete(callback), ErrorType::NotFound)?,
+                _ => self.error_with_body(Callback::Delete(callback), ErrorType::Failure)?,
             },
             Callback::ListObjects(callback) => match response.status_code {
                 200 => {
-                    let body = this.response_buffer.list.as_slice();
+                    let body = self.buffer.list.as_slice();
                     let result = match list_objects::parse_s3_list_objects_result(body) {
                         Some(listing) => S3ListObjectsResult::Success(Box::new(listing)),
                         // Half a listing is worse than none: S3 emits keys
@@ -390,165 +450,112 @@ impl S3HttpSimpleTask {
                     callback(result)?;
                 }
                 404 => {
-                    this.error_with_body(Callback::ListObjects(callback), ErrorType::NotFound)?
+                    self.error_with_body(Callback::ListObjects(callback), ErrorType::NotFound)?
                 }
-                _ => this.error_with_body(Callback::ListObjects(callback), ErrorType::Failure)?,
+                _ => self.error_with_body(Callback::ListObjects(callback), ErrorType::Failure)?,
             },
             Callback::Upload(callback) => match response.status_code {
                 200 => callback(S3UploadResult::Success)?,
-                _ => this.error_with_body(Callback::Upload(callback), ErrorType::Failure)?,
+                _ => self.error_with_body(Callback::Upload(callback), ErrorType::Failure)?,
             },
             Callback::Download(callback) => match response.status_code {
                 200 | 204 | 206 => {
-                    let body = core::mem::take(&mut this.response_buffer);
+                    let body = core::mem::take(&mut self.buffer);
                     callback(S3DownloadResult::Success(S3DownloadSuccess { body }))?;
                 }
-                404 => this.error_with_body(Callback::Download(callback), ErrorType::NotFound)?,
-                _ => this.error_with_body(Callback::Download(callback), ErrorType::Failure)?,
+                404 => self.error_with_body(Callback::Download(callback), ErrorType::NotFound)?,
+                _ => self.error_with_body(Callback::Download(callback), ErrorType::Failure)?,
             },
             commit @ Callback::Commit(_) => {
                 // commit multipart upload can fail with status 200
                 if let Some(Callback::Commit(callback)) =
-                    this.fail_if_contains_error(response.status_code, commit)?
+                    self.fail_if_contains_error(response.status_code, commit)?
                 {
                     callback(S3CommitResult::Success)?;
                 }
             }
             part @ Callback::Part(_) => {
-                if let Some(part) = this.fail_if_contains_error(response.status_code, part)? {
+                if let Some(part) = self.fail_if_contains_error(response.status_code, part)? {
                     if let Some(etag) = response.headers.get(b"etag") {
                         let Callback::Part(callback) = part else {
                             unreachable!()
                         };
                         callback(S3PartResult::Etag(etag))?;
                     } else {
-                        this.error_with_body(part, ErrorType::Failure)?;
+                        self.error_with_body(part, ErrorType::Failure)?;
                     }
                 }
             }
         }
         Ok(())
     }
+}
 
-    fn stage_http_result(
-        &mut self,
-        async_http: *mut AsyncHTTP<'static>,
-        mut result: HTTPClientResult<'_>,
-    ) {
-        let previous_metadata = self.result.metadata.take();
-        result.body_into(&mut self.response_buffer.list);
-        // SAFETY: `result.body` (the only borrowed field) points at `self.response_buffer`,
-        // which lives for the task's lifetime — extending to `'static` here is sound for
-        // self-reference.
-        self.result = unsafe { result.detach_lifetime() };
-        if self.result.metadata.is_none() {
-            self.result.metadata = previous_metadata;
-        }
-        // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
-        // `EntryList`s), so a plain `=` here would (a) drop the old `self.http`, freeing heap
-        // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still
-        // aliases, and (b) leave the http-thread side to drop them again → double-free. We
-        // instead write through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct
-        // overwrite with no destructor on either side. Ownership of the inner heap data
-        // conceptually transfers here; the http-thread side must free only its outer
-        // allocation (TrivialDeinit).
-        // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
-        // `self.http` was previously initialised in `execute_simple_s3_request`.
-        unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
-    }
-
-    /// this is the AsyncHTTP callback and is always called from the HTTPThread
-    ///
-    /// # Safety
-    /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` and exclusively
-    /// owned by the HTTP thread for the duration of this call. `async_http` must be a valid
-    /// pointer to an initialised `AsyncHTTP` for the duration of this call.
-    //
-    // `HTTPClientResultCallback` entrypoint: invoked by the HTTP thread with the raw task and
-    // request pointers it captured at schedule time, both non-null by construction.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn http_callback(
-        this: *mut Self,
-        async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult<'_>,
-    ) {
-        let is_done = !result.has_more;
-        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned
-        // by the HTTP thread until the handoff below; this borrow is scoped to the call.
-        unsafe { (*this).stage_http_result(async_http, result) };
-        if is_done {
-            // SAFETY: same exclusivity as above; the queue takes ownership of the inline
-            // `concurrent_task` field's `next` link. The ticket is moved out first: the
-            // JS thread may free `this` the moment it is queued.
-            unsafe {
-                let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-                let queued = core::ptr::NonNull::from(
-                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-                );
-                ticket.post(queued);
-            }
-        }
-    }
-
-    /// `HTTPClientResultCallback::release_at_shutdown`: the exiting main
-    /// thread parked the HTTP thread, which will not call back; hand the
-    /// request back as failed so its VM's wait ends and the JS thread frees it.
-    ///
-    /// # Safety
-    /// `this` is the live task registered with the callback; HTTP thread parked.
-    pub(crate) unsafe fn release_at_shutdown(this: *mut ()) {
-        let this = this.cast::<Self>();
-        // SAFETY: fn contract — nothing else touches the task now.
-        unsafe {
-            (*this).result.fail = Some(bun_http::Error::Aborted);
-            (*this).result.has_more = false;
-            let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-            let queued = core::ptr::NonNull::from(
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-            );
-            ticket.post(queued);
-        }
+impl S3HttpSimpleTask {
+    /// The response hop (JS thread): the HTTP thread is done with the request.
+    /// Delivers the outcome, then releases the task.
+    fn on_response(this: ThisPtr<Self>) -> bun_jsc::JsResult<()> {
+        crate::jsc_hooks::ActiveHandle::S3Request(this.into()).unregister();
+        let http_ref = this
+            .http_ref
+            .take()
+            .expect("S3 request is handed back once");
+        let callback = this.callback.take().expect("S3 request completes once");
+        let response = core::mem::take(&mut *this.shared.response.lock());
+        let delivered = response.deliver(callback);
+        drop(http_ref);
+        delivered
     }
 
     /// VM teardown's stop phase (JS thread): abort the transport so the HTTP
     /// thread fails the request promptly and hands it back.
-    ///
-    /// # Safety
-    /// `this` is live (registered ⇒ its response has not run); JS thread.
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract; `http` is initialised before the task is registered.
-        unsafe {
-            (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-            bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
-        }
+    pub(crate) fn stop_for_vm_teardown(&self) {
+        self.shared
+            .signal_store
+            .aborted
+            .store(true, Ordering::Relaxed);
+        bun_http::http_thread().schedule_shutdown_by_id(self.request.async_http_id());
     }
 
-    fn release_portable(&mut self) {
-        // SAFETY: `http` is always initialised before the task pointer escapes (see
-        // `execute_simple_s3_request`).
-        let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
-        http.request_headers = Default::default();
-        http.client.header_entries = Default::default();
+    /// Put the request on the HTTP thread; `callback` gets the outcome on this
+    /// (the JS) thread.
+    pub(crate) fn start(method: Method, storage: RequestStorage, callback: Callback) {
+        let shared = Arc::new(Shared {
+            response: Guarded::default(),
+            signal_store: Default::default(),
+            task: AtomicPtr::new(core::ptr::null_mut()),
+            node: ReusableConcurrentTask::default(),
+            ticket: VirtualMachine::get().ticket().in_flight(),
+        });
+        let request = storage.request(method, Arc::clone(&shared), shared.signal_store.to());
+        bun_http::http_thread::init(&Default::default());
+        let mut batch = thread_pool::Batch::default();
+        let request = request.start(&mut batch);
+        let mut poll_ref = KeepAlive::init();
+        poll_ref.ref_(bun_io::js_vm_ctx());
+        let task = RefPtr::new(S3HttpSimpleTask {
+            ref_count: Cell::new(1),
+            http_ref: Cell::new(None),
+            shared,
+            request,
+            callback: Cell::new(Some(callback)),
+            poll_ref,
+        });
+        let this = task.this_ptr();
+        this.shared.task.store(this.as_ptr(), Ordering::Release);
+        // Out on the HTTP thread until the response hop: the VM aborts it at
+        // teardown (registry) and waits for it (the ticket).
+        crate::jsc_hooks::ActiveHandle::S3Request(this.into()).register();
+        this.http_ref.set(Some(task));
+        bun_http::HTTPThread::schedule(batch);
     }
 }
 
 impl Drop for S3HttpSimpleTask {
     fn drop(&mut self) {
-        // Side effects beyond freeing owned fields (which Rust drops automatically):
-        // - poll_ref.unref(vm)
-        // - http.clearData()
-        // Owned-field frees (response_buffer, headers, sign_result, range,
-        // proxy_url, result.certificate_info, result.metadata) are handled by their own Drop impls.
-        // KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
-        // the global hook (registered by crate::init) — same pattern as
-        // `event_loop_handle_to_ctx` in process.rs.
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
-        // Only `http.clear_data()` runs — never a full AsyncHTTP destructor —
-        // so we intentionally do NOT `assume_init_drop`.
-        self.release_portable();
+        self.poll_ref.unref(bun_io::js_vm_ctx());
+        // `request` drops next: the HTTP thread handed it back before the
+        // response hop was posted, so this frees it.
     }
 }
 
@@ -658,96 +665,15 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
-    let mut poll_ref = KeepAlive::init();
-    poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
-        bun_io::AllocatorType::Js,
-    ));
-    let proxy = options.proxy_url.unwrap_or(b"");
-    let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
-        // written below via `MaybeUninit::write` before any read.
-        http: core::mem::MaybeUninit::uninit(),
-        sign_result: result,
-        callback: Some(callback),
-        headers,
-        http_ticket: None,
-        response_buffer: MutableString::default(),
-        result: HTTPClientResult::default(),
-        concurrent_task: ConcurrentTask::default(),
-        proxy_url: if !proxy.is_empty() {
-            Box::<[u8]>::from(proxy)
-        } else {
-            Box::default()
-        },
-        body: Box::<[u8]>::from(options.body),
-        poll_ref,
-        signal_store: Default::default(),
-    });
-    // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
-    // the scoped exclusive `http` writes below.
-    let task = unsafe { &*task_ptr };
-    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
-    // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
-    // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
-    // concurrently; they remain valid until `task` is dropped in `on_response`.
-    let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is heap-owned
-    // by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.body` is a heap-owned
-    // `Box<[u8]>` field of `*task` (an owned copy of the caller's slice) and outlives the
-    // AsyncHTTP request; it is freed only when `task` is dropped in `on_response`.
-    let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&*task.body) };
-    let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is a
-        // heap-owned `Box<[u8]>` field of `*task` and outlives the AsyncHTTP request.
-        Some(URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
-    } else {
-        None
-    };
-    let vm = VirtualMachine::get();
-    let verbose = vm.get_verbose_fetch();
-    let reject_unauthorized = vm.get_tls_reject_unauthorized();
-    let async_http = AsyncHTTP::init(
+    S3HttpSimpleTask::start(
         options.method,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        body,
-        HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
-            // the HTTP thread as a live pointer for the duration of the callback.
-            S3HttpSimpleTask::http_callback,
-            S3HttpSimpleTask::release_at_shutdown,
-        ),
-        FetchRedirect::Follow,
-        HttpOptions {
-            http_proxy,
-            verbose: Some(verbose),
-            reject_unauthorized: Some(reject_unauthorized),
-            // SAFETY: `task_ptr` outlives the request; the store is only read
-            // through these pointers by the HTTP client.
-            signals: Some(unsafe { (*task_ptr).signal_store.to() }),
-            ..Default::default()
+        RequestStorage {
+            sign_result: result,
+            headers,
+            body: Box::<[u8]>::from(options.body),
+            proxy_url: RequestStorage::owned_proxy(options.proxy_url),
         },
+        callback,
     );
-    // SAFETY: `task_ptr` is still the sole pointer (the HTTP thread only sees it after
-    // `schedule` below); scoped exclusive write of the `http` field.
-    unsafe { (*task_ptr).http.write(async_http) };
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = thread_pool::Batch::default();
-    // SAFETY: `http` was initialised immediately above; scoped exclusive access.
-    unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);
-    // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (the ticket).
-    // SAFETY: as above.
-    unsafe { (*task_ptr).http_ticket = Some(VirtualMachine::get().ticket()) };
-    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
-        .register();
-    bun_http::HTTPThread::schedule(batch);
     Ok(())
 }

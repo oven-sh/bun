@@ -84,8 +84,8 @@ use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_sink::FileSink;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
-use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
-use crate::webcore::s3::simple_request::S3HttpSimpleTask;
+use crate::webcore::s3::download_stream as s3_download;
+use crate::webcore::s3::simple_request as s3_request;
 use crate::webcore::streams::Pending as StreamPending;
 
 use crate::api::bun_subprocess::Subprocess;
@@ -188,6 +188,17 @@ pub(crate) fn run_task(
         ($ty:ty) => {
             task.ptr.cast::<$ty>()
         };
+    }
+    /// `<$hop as TaskHop>::run` on the queued `ThisPtr`, SAFETY spelled once.
+    macro_rules! hop {
+        ($hop:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` is `<$hop>::TAG`, set together with
+            // `task.ptr` from a `ThisPtr` whose pointee keeps itself alive for
+            // the queued task; not touched here after the call.
+            <$hop as bun_event_loop::TaskHop>::run(unsafe {
+                bun_ptr::ThisPtr::new(cast_ptr!(<$hop as bun_event_loop::TaskHop>::Target))
+            })
+        }};
     }
     /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
     /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
@@ -344,14 +355,8 @@ pub(crate) fn run_task(
                 ))
             };
         }
-        // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
-        // is the sole owner here.
-        task_tag::S3HttpSimpleTask => {
-            S3HttpSimpleTask::on_response(cast_ptr!(S3HttpSimpleTask))?;
-        }
-        task_tag::S3HttpDownloadStreamingTask => {
-            S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
-        }
+        task_tag::S3HttpSimpleTask => hop!(s3_request::ResponseHop)?,
+        task_tag::S3HttpDownloadStreamingTask => hop!(s3_download::ProgressHop)?,
 
         // ── napi ─────────────────────────────────────────────────────────
         task_tag::NapiAsyncWork => {
@@ -1251,6 +1256,15 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unsafe { <$ty as Taskable>::release_unrun(task.ptr.cast::<$ty>()) }
         }};
     }
+    /// `<$hop as TaskHop>::release_unrun` on the queued `ThisPtr`, SAFETY spelled once.
+    macro_rules! release_hop {
+        ($hop:ty) => {{
+            // SAFETY: as `release!`; the tag is `<$hop>::TAG`.
+            <$hop as bun_event_loop::TaskHop>::release_unrun(unsafe {
+                bun_ptr::ThisPtr::new(task.ptr.cast::<<$hop as bun_event_loop::TaskHop>::Target>())
+            })
+        }};
+    }
     match task.tag {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
@@ -1302,8 +1316,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unsafe { bun_ptr::ThisPtr::new(task.ptr.cast::<FileSink>()) },
         ),
         task_tag::RuntimeTranspilerStore => release!(RuntimeTranspilerStore),
-        task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
-        task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),
+        task_tag::S3HttpDownloadStreamingTask => release_hop!(s3_download::ProgressHop),
+        task_tag::S3HttpSimpleTask => release_hop!(s3_request::ResponseHop),
         task_tag::SendQueueDeferred => release!(crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => release!(ServerAllConnectionsClosedTask),
         task_tag::ShellAsync => release!(crate::shell::dispatch_tasks::ShellAsyncTask),

@@ -102,6 +102,8 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    /// The `Bun.WebView` browser host processes spawned from this thread.
+    pub(crate) webview_hosts: crate::webview::Hosts,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -214,6 +216,19 @@ pub(crate) fn active_handles() -> Option<&'static mut ActiveHandles> {
     }
     // SAFETY: live boxed per-thread `RuntimeState`.
     Some(unsafe { &mut (*state).active_handles })
+}
+
+/// This thread's `Bun.WebView` host-process registry, lent to `f`. `None`
+/// before [`init_runtime_state`] / after teardown.
+#[inline]
+pub(crate) fn with_webview_hosts<R>(f: impl FnOnce(&crate::webview::Hosts) -> R) -> Option<R> {
+    let state = runtime_state();
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: live boxed per-thread `RuntimeState`; the shared borrow ends
+    // with `f`, and nothing `f` reaches frees the state on this thread.
+    Some(f(unsafe { &(*state).webview_hosts }))
 }
 
 impl ActiveHandle {
@@ -409,6 +424,7 @@ unsafe fn init_runtime_state(
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        webview_hosts: crate::webview::Hosts::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -1800,15 +1816,9 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
                 crate::webcore::fetch::FetchTasklet::stop_for_vm_teardown(t.as_ptr())
             },
             // SAFETY: live until they unregister in `on_response`.
-            ActiveHandle::S3Request(t) => unsafe {
-                crate::webcore::s3::simple_request::S3HttpSimpleTask::stop_for_vm_teardown(
-                    t.as_ptr(),
-                )
-            },
+            ActiveHandle::S3Request(t) => unsafe { t.as_ref() }.stop_for_vm_teardown(),
             // SAFETY: as above.
-            ActiveHandle::S3Download(t) => unsafe {
-                crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask::stop_for_vm_teardown(t.as_ptr())
-            },
+            ActiveHandle::S3Download(t) => unsafe { t.as_ref() }.stop_for_vm_teardown(),
             // A live VM cannot cancel a build: hop tasks it already queued here
             // would still be dispatched against the finished pass. The build
             // runs on; its completion lands on the next file's global.

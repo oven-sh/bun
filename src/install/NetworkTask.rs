@@ -346,14 +346,14 @@ impl NetworkTask {
         }
         // SAFETY: the HTTP thread is the sole writer for this call; nothing
         // exclusive to `*this` outlives this block, which ends before the
-        // cross-thread push below. `detach_lifetime` erases the callback-scoped
-        // `'_` to `'static` and clears `body` to `&[]`; the body bytes were
-        // stashed into `(*this).response_buffer` above.
+        // cross-thread push below. `into_owned` drops the callback-scoped
+        // `body` view; the body bytes were stashed into `(*this).response_buffer`
+        // above.
         unsafe {
             // Preserve metadata captured on an earlier streaming callback; the
             // final `result` won't have it.
             let saved_metadata = (*this).response.metadata.take();
-            (*this).response = result.detach_lifetime();
+            (*this).response = result.into_owned();
             if (*this).response.metadata.is_none() {
                 (*this).response.metadata = saved_metadata;
             }

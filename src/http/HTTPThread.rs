@@ -939,11 +939,11 @@ impl HttpThread {
         let release_unstarted = |http: NonNull<AsyncHttp<'static>>| {
             // SAFETY: heap-owned by the caller, alive until its completion,
             // and never touched by us again after this.
-            let release = unsafe { (*http.as_ptr()).result_callback };
-            if let Some(f) = release.release_at_shutdown {
-                // SAFETY: paired ctx/fn from `HTTPClientResultCallback::new_with_release`.
-                unsafe { f(release.ctx) };
-            }
+            unsafe {
+                (*http.as_ptr())
+                    .result_callback
+                    .hand_back_at_shutdown(http.as_ptr())
+            };
         };
         for http in core::mem::take(&mut self.deferred_tasks) {
             release_unstarted(http);
@@ -974,9 +974,11 @@ impl HttpThread {
                 client.close_proxy_tunnel(false);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));
-                if let Some(f) = release.release_at_shutdown {
-                    f(release.ctx);
-                }
+                let real = (*nn.as_ptr())
+                    .async_http
+                    .real
+                    .expect("in-flight copy has an original");
+                release.hand_back_at_shutdown(real.as_ptr());
                 std::alloc::dealloc(
                     nn.as_ptr().cast::<u8>(),
                     std::alloc::Layout::new::<crate::ThreadlocalAsyncHttp<'static>>(),

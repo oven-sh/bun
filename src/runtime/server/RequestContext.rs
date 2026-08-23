@@ -2571,11 +2571,11 @@ where
                         .get_http_proxy(true, None, None)
                         .map(|proxy| proxy.href);
 
+                    let ctx = this.as_ctx_ptr().cast::<c_void>();
                     let _ = S3::client::stat(
                         credentials,
                         path,
-                        Self::on_s3_size_resolved_thunk,
-                        this.as_ctx_ptr().cast::<c_void>(),
+                        Box::new(move |result| Self::on_s3_size_resolved_thunk(result, ctx)),
                         proxy_url,
                         s3.request_payer,
                     ); // TODO: properly propagate exception upwards

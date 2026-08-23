@@ -660,6 +660,14 @@ impl<T> ThisPtr<T> {
         self.0.as_ptr()
     }
 
+    /// Record this pointer as a write-capable back-reference (for handle enums
+    /// whose dispatcher forms the `&mut`). The holder takes on the `BackRef`
+    /// invariant.
+    #[inline]
+    pub fn backref_mut(self) -> BackRef<T, Mut> {
+        BackRef(self.0, core::marker::PhantomData)
+    }
+
     /// Fresh shared borrow of the pointee.
     ///
     /// Sound under the [`new`](Self::new) invariant: the pointee is live and
@@ -687,6 +695,49 @@ impl<T> core::ops::Deref for ThisPtr<T> {
     #[inline]
     fn deref(&self) -> &T {
         self.get()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OwnedThis<T> — single-owner heap allocation that hands out `ThisPtr`s.
+//
+// `Box<T>` asserts unique access on every touch, which is wrong for a callback
+// hub whose address is also held by C / JS / a task queue and re-entered while
+// a method on it is running. `OwnedThis` keeps the ownership (drop frees) but
+// only ever lends the pointee as `ThisPtr<T>` / `&T`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The unique owner of a heap-allocated `T` that is otherwise reached through
+/// [`ThisPtr`] copies. Dropping it drops and frees the `T`; every `ThisPtr`
+/// lent from it must be dead by then (the usual back-reference obligation).
+pub struct OwnedThis<T>(core::ptr::NonNull<T>);
+
+impl<T> OwnedThis<T> {
+    #[inline]
+    pub fn new(value: T) -> Self {
+        OwnedThis(core::ptr::NonNull::from(Box::leak(Box::new(value))))
+    }
+
+    /// A dispatch handle to the pointee (root provenance).
+    #[inline]
+    pub fn this_ptr(&self) -> ThisPtr<T> {
+        ThisPtr(self.0)
+    }
+}
+
+impl<T> core::ops::Deref for OwnedThis<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: we own the live allocation.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> Drop for OwnedThis<T> {
+    fn drop(&mut self) {
+        // SAFETY: `new` leaked exactly this `Box`; we are its unique owner.
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
     }
 }
 

@@ -80,10 +80,10 @@ namespace CDP {
 using namespace JSC;
 
 // Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (0 on Windows, which keeps the pipes), -1 on failure.
-// path overrides auto-detection; extraArgv (count entries, each NUL-
-// terminated) appends after core flags. All pointers nullable.
+// path overrides auto-detection; extraArgv (extraArgvLen bytes of
+// back-to-back NUL-terminated strings) appends after core flags. All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
-    const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
+    const char* path, const char* extraArgv, size_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
 #if OS(WINDOWS)
 // Copies and queues one chunk; a failure arrives later as Bun__Chrome__onPipeClosed.
@@ -292,19 +292,20 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // Chrome falls back to the default profile → ProcessSingleton abort.
     WTF::CString dir = userDataDir.utf8();
     WTF::CString pathC = path.utf8();
-    // Two-level pack: CString owns the bytes, ptrVec holds data() pointers.
-    // Both live until Bun__Chrome__ensure returns (spawn copies argv).
-    WTF::Vector<WTF::CString, 8> argvC;
-    WTF::Vector<const char*, 8> argvPtrs;
+    // Packed back to back, each NUL-terminated; lives until
+    // Bun__Chrome__ensure returns (spawn copies argv).
+    WTF::Vector<char, 256> argvPacked;
     for (auto& s : extraArgv) {
-        argvC.append(s.utf8());
-        argvPtrs.append(argvC.last().data());
+        WTF::CString utf8 = s.utf8();
+        // Up to the first NUL, as an argv entry would be read.
+        argvPacked.append(std::span<const char>(utf8.data(), strlen(utf8.data())));
+        argvPacked.append('\0');
     }
     int32_t rc = Bun__Chrome__ensure(zig,
         dir.length() ? dir.data() : nullptr,
         pathC.length() ? pathC.data() : nullptr,
-        argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
-        static_cast<uint32_t>(argvPtrs.size()),
+        argvPacked.isEmpty() ? nullptr : argvPacked.span().data(),
+        argvPacked.size(),
         stdoutInherit, stderrInherit);
     if (rc < 0) {
         m_dead = true;
@@ -1764,10 +1765,16 @@ extern "C" void Bun__Chrome__died(int32_t signo)
 }
 
 #if OS(WINDOWS)
+/// `bun_core::ffi::FfiSlice` — a borrowed `&[u8]` passed by value.
+struct BunFfiSlice {
+    const char* ptr;
+    size_t len;
+};
+
 // cdpOnData / cdpOnEnd counterparts, called from the tasks ChromeProcess.rs posts.
-extern "C" void Bun__Chrome__onPipeData(const char* data, size_t len)
+extern "C" void Bun__Chrome__onPipeData(BunFfiSlice data)
 {
-    CDP::transport().onData(data, static_cast<int>(len));
+    CDP::transport().onData(data.ptr, static_cast<int>(data.len));
 }
 
 extern "C" void Bun__Chrome__onPipeClosed()

@@ -37,6 +37,20 @@ pub struct S3StatSuccess<'a> {
     pub(crate) content_type: &'a [u8],
 }
 
+impl<'a> S3StatSuccess<'a> {
+    fn from_headers(headers: &picohttp::HeaderList<'a>) -> Self {
+        Self {
+            etag: headers.get(b"etag").unwrap_or(b""),
+            last_modified: headers.get(b"last-modified").unwrap_or(b""),
+            content_type: headers.get(b"content-type").unwrap_or(b""),
+            size: headers
+                .get(b"content-length")
+                .map(bun_http_types::parse_content_length)
+                .unwrap_or(0),
+        }
+    }
+}
+
 pub enum S3StatResult<'a> {
     Success(S3StatSuccess<'a>),
     NotFound(S3Error<'a>),
@@ -311,16 +325,7 @@ impl S3HttpSimpleTask {
             Callback::Stat(callback) => match response.status_code {
                 200 => {
                     callback(
-                        S3StatResult::Success(S3StatSuccess {
-                            etag: response.headers.get(b"etag").unwrap_or(b""),
-                            last_modified: response.headers.get(b"last-modified").unwrap_or(b""),
-                            content_type: response.headers.get(b"content-type").unwrap_or(b""),
-                            size: response
-                                .headers
-                                .get(b"content-length")
-                                .map(bun_http_types::parse_content_length)
-                                .unwrap_or(0),
-                        }),
+                        S3StatResult::Success(S3StatSuccess::from_headers(&response.headers)),
                         this.callback_context,
                     )?;
                 }
@@ -328,16 +333,9 @@ impl S3HttpSimpleTask {
                 _ => this.error_with_body(ErrorType::Failure)?,
             },
             Callback::StatRequestContext(ctx) => match response.status_code {
-                200 => ctx.on_s3_size_resolved(S3StatResult::Success(S3StatSuccess {
-                    etag: response.headers.get(b"etag").unwrap_or(b""),
-                    last_modified: response.headers.get(b"last-modified").unwrap_or(b""),
-                    content_type: response.headers.get(b"content-type").unwrap_or(b""),
-                    size: response
-                        .headers
-                        .get(b"content-length")
-                        .map(bun_http_types::parse_content_length)
-                        .unwrap_or(0),
-                })),
+                200 => ctx.on_s3_size_resolved(S3StatResult::Success(S3StatSuccess::from_headers(
+                    &response.headers,
+                ))),
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
             },

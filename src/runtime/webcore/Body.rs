@@ -248,18 +248,20 @@ pub struct PendingValue {
 
 /// The native consumer waiting on a [`PendingValue`] (`on_receive_value`).
 pub(crate) enum ReceiveValue {
-    /// Called with [`PendingValue::task`], which the registrant retargeted to
-    /// its own context.
-    Ctx(fn(ctx: NonNull<c_void>, value: &mut Value)),
+    /// The registrant's own context, handed back to `callback`.
+    Ctx {
+        callback: fn(ctx: NonNull<c_void>, value: &mut Value),
+        ctx: NonNull<c_void>,
+    },
     /// `Bun.serve` waiting to render a `Response` whose body was still
     /// pending; the context's `body_value_ref` is the ref this holds.
     Server(crate::server::AnyRequestContext),
 }
 
 impl ReceiveValue {
-    fn call(self, task: Option<NonNull<c_void>>, value: &mut Value) {
+    fn call(self, value: &mut Value) {
         match self {
-            ReceiveValue::Ctx(callback) => callback(task.unwrap(), value),
+            ReceiveValue::Ctx { callback, ctx } => callback(ctx, value),
             ReceiveValue::Server(ctx) => ctx.render_pending_body_value(value),
         }
     }
@@ -302,11 +304,7 @@ impl PendingValue {
         self.on_start_buffering = None;
         self.on_start_streaming = None;
         self.on_readable_stream_available = None;
-        if !matches!(self.on_receive_value, Some(ReceiveValue::Ctx(_))) {
-            // A registered `ReceiveValue::Ctx` means `task` is the consumer's
-            // ctx (overwriting the producer), read by `resolve()`.
-            self.task = None;
-        }
+        self.task = None;
         self.producer = streams::SourceHandle::None;
     }
 
@@ -1094,7 +1092,7 @@ impl Value {
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
-                callback.call(locked.task, new);
+                callback.call(new);
                 return Ok(());
             }
 
@@ -1367,9 +1365,7 @@ impl Value {
             }
 
             if let Some(on_receive_value) = locked.on_receive_value.take() {
-                // For `ReceiveValue::Ctx`, `task` is the live consumer pointer
-                // registered alongside this callback.
-                on_receive_value.call(locked.task, self);
+                on_receive_value.call(self);
             }
 
             if was_disturbed {

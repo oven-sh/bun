@@ -192,12 +192,8 @@ impl ChromeProcess {
     unsafe fn on_exit(this: *mut ChromeProcess, process: *mut Process, status: &Status) {
         scoped_log!(Chrome, "chrome exited: {}", status);
         // A retired Chrome was already unpublished by `Bun__Chrome__retire`.
-        let _ = INSTANCE.compare_exchange(
-            this,
-            ptr::null_mut(),
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        );
+        let _ =
+            INSTANCE.compare_exchange(this, ptr::null_mut(), Ordering::Relaxed, Ordering::Relaxed);
         // SAFETY: caller contract; nothing else references the allocation once INSTANCE is cleared.
         let mut chrome = unsafe { bun_core::heap::take(this) };
         debug_assert_eq!(process, chrome.process.as_ptr());

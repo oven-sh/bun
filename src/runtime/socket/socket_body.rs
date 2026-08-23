@@ -1423,6 +1423,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
         this.socket.set(socket);
+        // Stale if node:net reconnected through this wrapper while it was paused.
+        this.update_flags(|f| f.remove(Flags::IS_PAUSED));
+        if !this.ref_pollref_on_connect.replace(true) {
+            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        }
         jsc::mark_binding!();
 
         // Add SNI support for TLS (mongodb and others requires this)
@@ -3220,41 +3225,31 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn js_ref(
         this: &Self,
-        global: &JSGlobalObject,
+        _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_detached() {
+        if this.socket.get().is_established() {
+            this.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
+        } else {
+            // `connect_finish` holds the loop until then; `on_open` applies this.
             this.ref_pollref_on_connect.set(true);
         }
-        if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
-        }
-        let _ = global;
-        this.poll_ref.with_mut(|p| {
-            p.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn js_unref(
         this: &Self,
-        global: &JSGlobalObject,
+        _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_detached() {
+        if this.socket.get().is_established() {
+            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        } else {
             this.ref_pollref_on_connect.set(false);
         }
-        let _ = global;
-        this.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
         Ok(JSValue::UNDEFINED)
     }
 

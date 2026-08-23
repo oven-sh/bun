@@ -4199,6 +4199,7 @@ extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObje
 // workers, ports, channels and sockets are stopped before anything else of the file is swept.
 extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
 {
+    Bun::retireWebViewsForTestIsolation(globalObject);
     globalObject->scriptExecutionContext()->prepareForDestruction();
 }
 

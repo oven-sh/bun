@@ -116,7 +116,7 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ExceptionScope& scope);
 }
 
 // Owned by the addon: allocated by napi_add_async_cleanup_hook and freed only

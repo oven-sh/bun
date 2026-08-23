@@ -9,6 +9,8 @@ use core::ptr;
 use crate::SocketAddress;
 use crate::response::{State, WriteResult};
 use crate::thunk;
+use crate::{AnyRequest, AnyResponse};
+use bun_ptr::ThisPtr;
 
 pub use crate::h3::Request;
 
@@ -296,6 +298,24 @@ enum RouteKind {
     Any,
 }
 
+impl RouteKind {
+    fn from_method(m: bun_http_types::Method::Method) -> Option<RouteKind> {
+        use bun_http_types::Method::Method as M;
+        Some(match m {
+            M::GET => RouteKind::Get,
+            M::POST => RouteKind::Post,
+            M::PUT => RouteKind::Put,
+            M::DELETE => RouteKind::Delete,
+            M::PATCH => RouteKind::Patch,
+            M::OPTIONS => RouteKind::Options,
+            M::HEAD => RouteKind::Head,
+            M::CONNECT => RouteKind::Connect,
+            M::TRACE => RouteKind::Trace,
+            _ => return None,
+        })
+    }
+}
+
 /// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
 /// each forwarding to [`App::route`] with the matching [`RouteKind`].
 /// `connect`/`trace` are intentionally omitted — exposed only via
@@ -365,6 +385,33 @@ impl App {
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
             }
         }
+        Self::route_raw(which, this, pattern, Some(cb::<UD, H>), ud.cast());
+    }
+
+    /// `route` for an intrusively-refcounted `U` as the route userdata; see
+    /// [`method_this`](Self::method_this).
+    fn route_this<U: 'static, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        extern "C" fn cb<U: 'static, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
+        where
+            H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        {
+            // SAFETY: `p` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
+            let this = unsafe { ThisPtr::new(p.cast::<U>()) };
+            thunk::zst::<H>()(this, AnyRequest::H3(req), AnyResponse::H2(res));
+        }
+        Self::route_raw(which, this, pattern, Some(cb::<U, H>), ud.as_ptr().cast());
+    }
+
+    fn route_raw(
+        which: RouteKind,
+        this: &mut App,
+        pattern: &[u8],
+        cb: c::Handler,
+        ud: *mut c_void,
+    ) {
         let f = match which {
             RouteKind::Get => c::uws_h2_app_get,
             RouteKind::Post => c::uws_h2_app_post,
@@ -378,15 +425,7 @@ impl App {
             RouteKind::Any => c::uws_h2_app_any,
         };
         // SAFETY: this is a live FFI handle; pattern ptr/len valid for read; trampoline is `extern "C"`
-        unsafe {
-            f(
-                this,
-                pattern.as_ptr(),
-                pattern.len(),
-                Some(cb::<UD, H>),
-                ud.cast(),
-            )
-        }
+        unsafe { f(this, pattern.as_ptr(), pattern.len(), cb, ud) }
     }
 
     h2_route_methods! {
@@ -404,19 +443,34 @@ impl App {
     where
         H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        use bun_http_types::Method::Method as M;
-        match m {
-            M::GET => self.get(p, ud, h),
-            M::POST => self.post(p, ud, h),
-            M::PUT => self.put(p, ud, h),
-            M::DELETE => self.delete(p, ud, h),
-            M::PATCH => self.patch(p, ud, h),
-            M::OPTIONS => self.options(p, ud, h),
-            M::HEAD => self.head(p, ud, h),
-            M::CONNECT => Self::route(RouteKind::Connect, self, p, ud, h),
-            M::TRACE => Self::route(RouteKind::Trace, self, p, ud, h),
-            _ => {}
+        if let Some(kind) = RouteKind::from_method(m) {
+            Self::route(kind, self, p, ud, h);
         }
+    }
+
+    /// [`method`](Self::method) with an intrusively-refcounted `U` as the
+    /// route userdata. The registrant keeps a ref on `this` for as long as the
+    /// route is registered, so the trampoline can hand the handler a `ThisPtr`.
+    pub fn method_this<U: 'static, H>(
+        &mut self,
+        m: bun_http_types::Method::Method,
+        p: &[u8],
+        _h: H,
+        this: ThisPtr<U>,
+    ) where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        if let Some(kind) = RouteKind::from_method(m) {
+            Self::route_this::<U, H>(kind, self, p, this);
+        }
+    }
+
+    /// [`any`](Self::any) counterpart of [`method_this`](Self::method_this).
+    pub fn any_this<U: 'static, H>(&mut self, p: &[u8], _h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        Self::route_this::<U, H>(RouteKind::Any, self, p, this);
     }
 }
 

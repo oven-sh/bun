@@ -1332,7 +1332,8 @@ pub(crate) fn inject<'a>(
                 match Syscall::open(
                     zname,
                     bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
-                    0,
+                    // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
+                    0o600,
                 ) {
                     Ok(res) => break 'brk2 res,
                     Err(err) => {

@@ -1062,12 +1062,7 @@ impl<'a> Visitor<'a> {
         vloc: json_parser::ValueLocation<'_>,
     ) -> Entry {
         if !self.stack_check.is_safe_to_recurse() {
-            // `ValueLocation::resolve` recurses per `ArrayItem` link: as deep as the nesting that ran out of stack.
-            let mut property = &vloc;
-            while let json_parser::ValueLocation::ArrayItem(parent, _) = property {
-                property = parent;
-            }
-            let loc = property.resolve(&self.source.contents);
+            let loc = vloc.resolve(&self.source.contents);
             return self.too_deep(bun_ast::Range { loc, len: 1 });
         }
         match value {

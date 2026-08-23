@@ -587,6 +587,32 @@ impl ShellCpTask {
         }
     }
 
+    /// The operand as the copy's errors will spell it (`os_path_kernel32` form:
+    /// on Windows a rooted `\dir\file` gains its drive letter), which is what
+    /// `on_shell_cp_task_done` compares those errors against.
+    fn as_copied_operand(path: &[u8]) -> Vec<u8> {
+        #[cfg(windows)]
+        {
+            use crate::node::types::PathLikeExt as _;
+            let operand = bun_jsc::node::PathLike::String(
+                bun_ptr::cow_slice::CowSlice::init_unchecked(path, false),
+            );
+            let mut wide = bun_paths::path_buffer_pool::get();
+            let Ok(converted) = operand.os_path_kernel32(&mut *wide) else {
+                // The copy rejects it as ENAMETOOLONG, naming the operand as given.
+                return path.to_vec();
+            };
+            let mut utf8 = bun_paths::path_buffer_pool::get();
+            bun_paths::strings::from_wpath(&mut utf8[..], converted.as_slice())
+                .as_bytes()
+                .to_vec()
+        }
+        #[cfg(not(windows))]
+        {
+            path.to_vec()
+        }
+    }
+
     /// Resolves src/tgt to absolute paths, classifies them per the three
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
@@ -706,8 +732,8 @@ impl ShellCpTask {
             _copying_many = true;
         }
 
-        self.src_absolute = Some(src.as_bytes().to_vec());
-        self.tgt_absolute = Some(tgt.as_bytes().to_vec());
+        self.src_absolute = Some(Self::as_copied_operand(src.as_bytes()));
+        self.tgt_absolute = Some(Self::as_copied_operand(tgt.as_bytes()));
 
         let args = crate::node::fs::args::Cp {
             src: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(

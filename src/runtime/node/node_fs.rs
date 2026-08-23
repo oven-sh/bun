@@ -453,6 +453,45 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
 }
 
+/// Copies a `cp` operand, in the `os_path_kernel32` form every path derived
+/// from it needs (`mkdir_os_path`, `copy_single_file_sync`), into the buffer
+/// the copy appends entry names to. The result, NUL included, lives in `buf`.
+fn cp_operand<'a>(path: &PathLike, buf: &'a mut OSPathBuffer) -> Maybe<&'a OSPathSliceZ> {
+    let name_too_long = || sys::Error {
+        errno: E::ENAMETOOLONG as _,
+        syscall: sys::Tag::copyfile,
+        path: path.slice().into(),
+        ..Default::default()
+    };
+    let mut scratch = paths::path_buffer_pool::get();
+    let converted = path
+        .os_path_kernel32(&mut *scratch)
+        .map_err(|NameTooLong| name_too_long())?;
+    let len = converted.len();
+    if len >= buf.len() {
+        return Err(name_too_long());
+    }
+    buf[..len].copy_from_slice(&converted[..]);
+    buf[len] = 0;
+    Ok(OSPathSliceZ::from_buf(&buf[..], len))
+}
+
+/// Appends `name` to the directory path in `buf[..dir_len]`, NUL-terminated;
+/// returns the new length. A path already ending in a separator (a root, or an
+/// operand given with one) gets no second one: `\\?\` paths are not normalized.
+fn cp_append_entry(buf: &mut OSPathBuffer, dir_len: usize, name: &[OSPathChar]) -> usize {
+    debug_assert!(dir_len + 1 + name.len() < buf.len());
+    let mut len = dir_len;
+    if len > 0 && !paths::is_sep_native_t::<OSPathChar>(buf[len - 1]) {
+        buf[len] = paths::SEP as OSPathChar;
+        len += 1;
+    }
+    buf[len..len + name.len()].copy_from_slice(name);
+    len += name.len();
+    buf[len] = 0;
+    len
+}
+
 type ReadPosition = i64;
 type Buffer = super::types::Buffer;
 type GidT = node::gid_t;
@@ -1773,30 +1812,24 @@ mod _async_tasks {
             let args = &this.args;
             let mut src_buf = OSPathBuffer::uninit();
             let mut dest_buf = OSPathBuffer::uninit();
-            let name_too_long = |path: &PathLike| sys::Error {
-                errno: E::ENAMETOOLONG as _,
-                syscall: sys::Tag::copyfile,
-                path: path.slice().into(),
-                ..Default::default()
-            };
-            let src = match args.src.os_path(&mut src_buf) {
+            let src = match cp_operand(&args.src, &mut src_buf) {
                 Ok(p) => p,
-                Err(NameTooLong) => {
-                    this.finish_concurrently(Err(name_too_long(&args.src)));
+                Err(err) => {
+                    this.finish_concurrently(Err(err));
                     return;
                 }
             };
-            let dest = match args.dest.os_path(&mut dest_buf) {
+            let dest = match cp_operand(&args.dest, &mut dest_buf) {
                 Ok(p) => p,
-                Err(NameTooLong) => {
-                    this.finish_concurrently(Err(name_too_long(&args.dest)));
+                Err(err) => {
+                    this.finish_concurrently(Err(err));
                     return;
                 }
             };
 
             #[cfg(windows)]
             {
-                // SAFETY: src is NUL-terminated (os_path); GetFileAttributesW is the Win32 FFI
+                // SAFETY: src is NUL-terminated (cp_operand); GetFileAttributesW is the Win32 FFI
                 let attributes = unsafe { bun_sys::c::GetFileAttributesW(src.as_ptr()) };
                 if attributes == bun_sys::c::INVALID_FILE_ATTRIBUTES {
                     this.finish_concurrently(Err(sys::Error {
@@ -1975,37 +2008,14 @@ mod _async_tasks {
             };
             let _close = scopeguard::guard(fd, |fd| fd.close());
 
-            #[cfg(windows)]
-            let mut buf = OSPathBuffer::uninit();
-            #[cfg(windows)]
-            let normdest: &OSPathSliceZ = match sys::normalize_path_windows_opts(
-                FD::INVALID,
-                dest.as_slice(),
-                &mut buf[..],
-                // No NT prefix — `normdest` feeds
-                // `mkdirRecursiveOSPath` / `CopyFileW` which expect Win32 paths,
-                // not `\??\` NT object paths.
-                sys::NormalizePathWindowsOpts {
-                    add_nt_prefix: false,
-                },
-            ) {
-                Err(err) => {
-                    this_ref.finish_concurrently(Err(err));
-                    return false;
-                }
-                Ok(n) => n,
-            };
-            #[cfg(not(windows))]
-            let normdest: &OSPathSliceZ = dest;
-
-            let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
+            let mkdir_ = nodefs.mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false);
             match mkdir_ {
                 Err(err) => {
                     this_ref.finish_concurrently(Err(err));
                     return false;
                 }
                 Ok(_) => {
-                    this_ref.on_copy(src, normdest);
+                    this_ref.on_copy(src, dest);
                 }
             }
 
@@ -2049,25 +2059,19 @@ mod _async_tasks {
                     return false;
                 }
 
+                let src_len = cp_append_entry(src_buf, src_dir_len as usize, cname);
+                let dest_len = cp_append_entry(dest_buf, dest_dir_len as usize, cname);
+
                 match current.kind {
                     crate::node::dirent::Kind::Directory => {
-                        let sd = src_dir_len as usize;
-                        let dd = dest_dir_len as usize;
-                        src_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
-                        src_buf[sd] = paths::SEP as OSPathChar;
-                        src_buf[sd + 1 + cname.len()] = 0;
-                        dest_buf[dd + 1..dd + 1 + cname.len()].copy_from_slice(cname);
-                        dest_buf[dd] = paths::SEP as OSPathChar;
-                        dest_buf[dd + 1 + cname.len()] = 0;
-
                         let should_continue = Self::cp_async_directory(
                             nodefs,
                             args,
                             this,
                             src_buf,
-                            (sd + 1 + cname.len()) as PathInt,
+                            src_len as PathInt,
                             dest_buf,
-                            (dd + 1 + cname.len()) as PathInt,
+                            dest_len as PathInt,
                         );
                         if !should_continue {
                             return false;
@@ -2075,30 +2079,11 @@ mod _async_tasks {
                     }
                     _ => {
                         this_ref.subtask_count.fetch_add(1, Ordering::Relaxed);
-                        let sd = src_dir_len as usize;
-                        let dd = dest_dir_len as usize;
-                        let total = sd + 1 + cname.len() + 1 + dd + 1 + cname.len() + 1;
-
-                        // Allocate a path buffer for the path data
-                        let mut path_buf = vec![0 as OSPathChar; total].into_boxed_slice();
-
-                        path_buf[..sd].copy_from_slice(&src_buf[..sd]);
-                        path_buf[sd] = paths::SEP as OSPathChar;
-                        path_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
-                        path_buf[sd + 1 + cname.len()] = 0;
-                        let dest_off = sd + 1 + cname.len() + 1;
-                        path_buf[dest_off..dest_off + dd].copy_from_slice(&dest_buf[..dd]);
-                        path_buf[dest_off + dd] = paths::SEP as OSPathChar;
-                        path_buf[dest_off + dd + 1..dest_off + dd + 1 + cname.len()]
-                            .copy_from_slice(cname);
-                        path_buf[dest_off + dd + 1 + cname.len()] = 0;
-
-                        CpSingleTask::<IS_SHELL>::create(
-                            this,
-                            path_buf,
-                            sd + 1 + cname.len(),
-                            dd + 1 + cname.len(),
-                        );
+                        // `<src>\0<dest>\0`, the layout `CpSingleTask` reads back.
+                        let path_buf = [&src_buf[..=src_len], &dest_buf[..=dest_len]]
+                            .concat()
+                            .into_boxed_slice();
+                        CpSingleTask::<IS_SHELL>::create(this, path_buf, src_len, dest_len);
                     }
                 }
                 entry = iterator.next();
@@ -8119,20 +8104,8 @@ impl NodeFS {
     pub(crate) fn cp(&mut self, args: &args::Cp, _: Flavor) -> Maybe<ret::Cp> {
         let mut src_buf = OSPathBuffer::uninit();
         let mut dest_buf = OSPathBuffer::uninit();
-        let name_too_long = |path: &PathLike| sys::Error {
-            errno: E::ENAMETOOLONG as _,
-            syscall: sys::Tag::copyfile,
-            path: path.slice().into(),
-            ..Default::default()
-        };
-        let src_len = match args.src.os_path(&mut src_buf) {
-            Ok(p) => p.len(),
-            Err(NameTooLong) => return Err(name_too_long(&args.src)),
-        };
-        let dest_len = match args.dest.os_path(&mut dest_buf) {
-            Ok(p) => p.len(),
-            Err(NameTooLong) => return Err(name_too_long(&args.dest)),
-        };
+        let src_len = cp_operand(&args.src, &mut src_buf)?.len();
+        let dest_len = cp_operand(&args.dest, &mut dest_buf)?.len();
         self.cp_sync_inner(
             &mut src_buf,
             PathInt::try_from(src_len).expect("int cast"),
@@ -8327,29 +8300,24 @@ impl NodeFS {
                 });
             }
 
-            src_buf[sd + 1..sd + 1 + name_slice.len()].copy_from_slice(name_slice);
-            src_buf[sd] = paths::SEP as OSPathChar;
-            src_buf[sd + 1 + name_slice.len()] = 0;
-
-            dest_buf[dd + 1..dd + 1 + name_slice.len()].copy_from_slice(name_slice);
-            dest_buf[dd] = paths::SEP as OSPathChar;
-            dest_buf[dd + 1 + name_slice.len()] = 0;
+            let src_len = cp_append_entry(src_buf, sd, name_slice);
+            let dest_len = cp_append_entry(dest_buf, dd, name_slice);
 
             match current.kind {
                 sys::FileKind::Directory => {
                     let r = self.cp_sync_inner(
                         src_buf,
-                        (sd + 1 + name_slice.len()) as PathInt,
+                        src_len as PathInt,
                         dest_buf,
-                        (dd + 1 + name_slice.len()) as PathInt,
+                        dest_len as PathInt,
                         args,
                     );
                     r?;
                 }
                 _ => {
-                    // NUL written at [len] above; `from_buf` debug-asserts it.
-                    let src_z = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + name_slice.len());
-                    let dest_z = OSPathSliceZ::from_buf(&dest_buf[..], dd + 1 + name_slice.len());
+                    // NUL written at [len] by `cp_append_entry`; `from_buf` debug-asserts it.
+                    let src_z = OSPathSliceZ::from_buf(&src_buf[..], src_len);
+                    let dest_z = OSPathSliceZ::from_buf(&dest_buf[..], dest_len);
                     let r = self.copy_single_file_sync(
                         src_z,
                         dest_z,

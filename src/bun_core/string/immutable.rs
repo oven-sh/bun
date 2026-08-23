@@ -934,6 +934,19 @@ pub fn starts_with(self_: &[u8], str: &[u8]) -> bool {
     eql_long(&self_[0..str.len()], str, false)
 }
 
+/// Strips the `file:` scheme from an absolute file URL, returning the path
+/// bytes: `file:///p` and `file:/p` both denote the path `/p` (WHATWG). Does
+/// not percent-decode. Returns the input unchanged for anything else.
+pub fn strip_file_url_prefix(self_: &[u8]) -> &[u8] {
+    if let Some(rest) = self_.strip_prefix(b"file://".as_slice()) {
+        return rest;
+    }
+    if self_.starts_with(b"file:/") {
+        return &self_[b"file:".len()..];
+    }
+    self_
+}
+
 /// Transliterated from:
 /// https://github.com/rust-lang/rust/blob/91376f416222a238227c84a848d168835ede2cc3/library/core/src/str/mod.rs#L188
 pub fn is_on_char_boundary(self_: &[u8], idx: usize) -> bool {

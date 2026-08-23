@@ -388,12 +388,18 @@ describe("bundler", () => {
     });
   }
   // https://github.com/oven-sh/bun/issues/8697
+  // Also covers fetch() of the embedded file's file: URL: fetch() rejects a
+  // file: URL whose path is not on disk, and an embedded file only exists
+  // inside the executable, so it has to keep resolving.
   itBundled("compile/EmbeddedFileOutfile", {
     compile: true,
     files: {
       "/entry.ts": /* js */ `
+        import { pathToFileURL } from "node:url";
         import bar from './foo.file' with {type: "file"};
         if ((await Bun.file(bar).text()).trim() !== "abcd") throw "fail";
+        const response = await fetch(pathToFileURL(bar));
+        if (response.status !== 200 || (await response.text()).trim() !== "abcd") throw "fetch fail";
         console.log("Hello, world!");
       `,
       "/foo.file": /* js */ `

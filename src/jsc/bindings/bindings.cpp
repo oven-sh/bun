@@ -3333,12 +3333,15 @@ JSC::JSObject* JSC__JSCell__toObject(JSC::JSCell* cell, JSC::JSGlobalObject* glo
 
 #pragma mark - JSC::JSString
 
-void JSC__JSString__toZigString(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, ZigString* arg2)
+// Throws (and leaves *arg2 empty) when resolving a rope runs out of memory.
+[[ZIG_EXPORT(check_slow)]] void JSC__JSString__toZigString(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, ZigString* arg2)
 {
+    auto& vm = JSC::getVM(arg1);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = arg0->value(arg1);
+    RETURN_IF_EXCEPTION(scope, void());
+    // ->value returns a reference to the same string as the one owned by the JSString.
     *arg2 = Zig::toZigString(value.data.impl());
-
-    // We don't need to assert here because ->value returns a reference to the same string as the one owned by the JSString.
 }
 
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };

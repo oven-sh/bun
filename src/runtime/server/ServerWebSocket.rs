@@ -849,7 +849,7 @@ impl ServerWebSocket {
         // triggers GC, so both are converted (and their JSStrings held) before
         // the handler state is read.
         let topic_string = topic_value.to_js_string(global_this)?;
-        let topic_slice = topic_string.view(global_this).to_slice();
+        let topic_slice = topic_string.view(global_this)?.to_slice();
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publish requires a non-empty topic")));
         }
@@ -874,7 +874,7 @@ impl ServerWebSocket {
             (slice, Opcode::Binary)
         } else {
             let string = message_value.to_js_string(global_this)?;
-            message_slice = string.view(global_this).to_slice();
+            message_slice = string.view(global_this)?.to_slice();
             message_string = Some(string);
             (message_slice.slice(), Opcode::Text)
         };
@@ -912,7 +912,7 @@ impl ServerWebSocket {
         }
 
         let topic_string = topic_value.to_js_string(global_this)?;
-        let topic_slice = topic_string.view(global_this).to_slice();
+        let topic_slice = topic_string.view(global_this)?.to_slice();
 
         let compress = Self::parse_compress_arg(
             global_this,
@@ -926,7 +926,7 @@ impl ServerWebSocket {
         }
 
         let message_string = message_value.to_js_string(global_this)?;
-        let message_slice = message_string.view(global_this).to_slice();
+        let message_slice = message_string.view(global_this)?.to_slice();
 
         let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
@@ -966,7 +966,7 @@ impl ServerWebSocket {
         }
 
         let topic_string = topic_value.to_js_string(global_this)?;
-        let topic_slice = topic_string.view(global_this).to_slice();
+        let topic_slice = topic_string.view(global_this)?.to_slice();
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
         }
@@ -1097,7 +1097,7 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
-            let view = js_string.view(global_this);
+            let view = js_string.view(global_this)?;
             let slice = view.to_slice();
 
             let buffer = slice.slice();
@@ -1142,7 +1142,7 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
-        let view = js_string.view(global_this);
+        let view = js_string.view(global_this)?;
         let slice = view.to_slice();
 
         let buffer = slice.slice();
@@ -1263,7 +1263,7 @@ impl ServerWebSocket {
                     return Ok(ret);
                 } else if value.is_string() {
                     // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
-                    let string_value = value.to_js_string(global_this)?.to_slice(global_this);
+                    let string_value = value.to_js_string(global_this)?.to_slice(global_this)?;
                     let buffer = string_value.slice();
                     if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
                         return Err(throw_control_frame_too_large(global_this, buffer.len()));

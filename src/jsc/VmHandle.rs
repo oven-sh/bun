@@ -336,8 +336,8 @@ impl VmHandle {
     /// their own to free on refusal).
     pub fn post(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
         // SAFETY: handed over by the caller and not yet queued anywhere.
-        let tag = || unsafe { task.as_ref() }.task.tag;
-        if self.post_with(tag, |s| s.deliver(kind, task)) {
+        let tag = unsafe { task.as_ref() }.task.tag;
+        if self.post_with(|| tag, |s| s.deliver(kind, task)) {
             Posted::Queued
         } else {
             Posted::Refused(task)

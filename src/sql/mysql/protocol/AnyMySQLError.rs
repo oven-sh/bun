@@ -30,7 +30,6 @@ pub enum Error {
 
     InvalidLocalInfileRequest,
     InvalidAuthSwitchRequest,
-    InvalidQueryBinding,
     InvalidResultRow,
     InvalidBinaryValue,
     InvalidEncodedInteger,

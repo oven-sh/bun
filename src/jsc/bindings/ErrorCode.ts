@@ -175,7 +175,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_INVALID_CHARACTER", TypeError, "PostgresError"],
   ["ERR_POSTGRES_INVALID_MESSAGE_LENGTH", Error, "PostgresError"],
   ["ERR_POSTGRES_INVALID_MESSAGE", Error, "PostgresError"],
-  ["ERR_POSTGRES_INVALID_QUERY_BINDING", Error, "PostgresError"],
   ["ERR_POSTGRES_INVALID_SERVER_KEY", Error, "PostgresError"],
   ["ERR_POSTGRES_INVALID_SERVER_SIGNATURE", Error, "PostgresError"],
   ["ERR_POSTGRES_INVALID_TRANSACTION_STATE", Error, "PostgresError"],

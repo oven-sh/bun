@@ -1231,6 +1231,31 @@ pub(crate) fn install_isolated_packages(
                         let dep_id = node_dep_ids[node_id.get() as usize];
                         let pkg_res = &pkg_resolutions[pkg_id as usize];
 
+                        // Intentionally *not* gated on `do.run_scripts`
+                        // (a later install without `--ignore-scripts`
+                        // would run the postinstall through the project
+                        // symlink and mutate the shared directory) *or*
+                        // on `meta.hasInstallScript()` (that flag is not
+                        // serialised in `bun.lock`, so it reads `false`
+                        // on every install after the first; a trusted
+                        // scripted package would flip from project-local
+                        // on the cold install to global on the warm one).
+                        // Over-excludes the rare "trusted but actually no
+                        // scripts" case in exchange for not needing a
+                        // lockfile-format change.
+                        let is_trusted = {
+                            let dep_name = if dep_id != invalid_dependency_id {
+                                dependencies[dep_id as usize].name.slice(string_buf)
+                            } else {
+                                pkg_names[pkg_id as usize].slice(string_buf)
+                            };
+                            lockfile.has_trusted_dependency(
+                                dep_name,
+                                pkg_names[pkg_id as usize].slice(string_buf),
+                                pkg_res,
+                            ) || trusted_from_update.contains(&pkg_id)
+                        };
+
                         let eligible = match pkg_res.tag {
                             ResolutionTag::Npm
                             | ResolutionTag::Git
@@ -1241,30 +1266,7 @@ pub(crate) fn install_isolated_packages(
                                 // mutate (or may mutate) their install directory, so a
                                 // shared global copy would either diverge from the
                                 // patch or be mutated underneath other projects.
-                                //
-                                // Intentionally *not* gated on `do.run_scripts`
-                                // (a later install without `--ignore-scripts`
-                                // would run the postinstall through the project
-                                // symlink and mutate the shared directory) *or*
-                                // on `meta.hasInstallScript()` (that flag is not
-                                // serialised in `bun.lock`, so it reads `false`
-                                // on every install after the first; a trusted
-                                // scripted package would flip from project-local
-                                // on the cold install to global on the warm one).
-                                // Over-excludes the rare "trusted but actually no
-                                // scripts" case in exchange for not needing a
-                                // lockfile-format change.
-                                let dep_name = if dep_id != invalid_dependency_id {
-                                    dependencies[dep_id as usize].name.slice(string_buf)
-                                } else {
-                                    pkg_names[pkg_id as usize].slice(string_buf)
-                                };
-                                if lockfile.has_trusted_dependency(
-                                    dep_name,
-                                    pkg_names[pkg_id as usize].slice(string_buf),
-                                    pkg_res,
-                                ) || trusted_from_update.contains(&pkg_id)
-                                {
+                                if is_trusted {
                                     trusted_entries.push(entry_idx);
                                     break 'eligible false;
                                 }
@@ -1306,17 +1308,7 @@ pub(crate) fn install_isolated_packages(
                                 // scripts also run, but poisoning their
                                 // closures would force most of the graph out
                                 // of the global store.
-                                let dep_name = if dep_id != invalid_dependency_id {
-                                    dependencies[dep_id as usize].name.slice(string_buf)
-                                } else {
-                                    pkg_names[pkg_id as usize].slice(string_buf)
-                                };
-                                if lockfile.has_trusted_dependency(
-                                    dep_name,
-                                    pkg_names[pkg_id as usize].slice(string_buf),
-                                    pkg_res,
-                                ) || trusted_from_update.contains(&pkg_id)
-                                {
+                                if is_trusted {
                                     trusted_entries.push(entry_idx);
                                 }
                                 false

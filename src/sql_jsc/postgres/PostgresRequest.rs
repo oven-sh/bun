@@ -51,7 +51,7 @@ const MAX_PARAMETERS: usize = u16::MAX as usize;
 
 pub(crate) fn write_bind<Context: WriterContext>(
     name: &[u8],
-    cursor_name: BunString,
+    cursor_name: &BunString,
     global: &JSGlobalObject,
     values_array: JSValue,
     columns_value: JSValue,
@@ -63,7 +63,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
     let length = writer.length()?;
 
     // The bun.String overload is `bun_string` on NewWriter.
-    writer.bun_string(&cursor_name)?;
+    writer.bun_string(cursor_name)?;
     writer.string(name)?;
 
     if parameter_fields.len() > MAX_PARAMETERS {
@@ -296,7 +296,7 @@ pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     )?;
     write_bind(
         &signature.prepared_statement_name,
-        BunString::empty(),
+        &BunString::empty(),
         global,
         array_value,
         JSValue::ZERO,
@@ -326,7 +326,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
 ) -> Result<(), AnyPostgresError> {
     write_bind(
         &statement.signature.prepared_statement_name,
-        BunString::empty(),
+        &BunString::empty(),
         global,
         array_value,
         columns_value,
@@ -395,7 +395,7 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
 
     write_bind(
         name,
-        BunString::empty(),
+        &BunString::empty(),
         global,
         array_value,
         columns_value,

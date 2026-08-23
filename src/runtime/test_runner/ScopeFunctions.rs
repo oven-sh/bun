@@ -65,24 +65,23 @@ pub struct ScopeFunctions {
 }
 
 pub(crate) mod strings {
-    use bun_core::String as BunString;
-    #[allow(non_snake_case)] #[inline] pub(crate) fn DESCRIBE() -> BunString { BunString::static_str("describe") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn XDESCRIBE() -> BunString { BunString::static_str("xdescribe") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn TEST() -> BunString { BunString::static_str("test") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn XTEST() -> BunString { BunString::static_str("xtest") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP() -> BunString { BunString::static_str("skip") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO() -> BunString { BunString::static_str("todo") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING() -> BunString { BunString::static_str("failing") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT() -> BunString { BunString::static_str("concurrent") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL() -> BunString { BunString::static_str("serial") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn ONLY() -> BunString { BunString::static_str("only") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn IF() -> BunString { BunString::static_str("if") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP_IF() -> BunString { BunString::static_str("skipIf") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO_IF() -> BunString { BunString::static_str("todoIf") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING_IF() -> BunString { BunString::static_str("failingIf") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT_IF() -> BunString { BunString::static_str("concurrentIf") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL_IF() -> BunString { BunString::static_str("serialIf") }
-    #[allow(non_snake_case)] #[inline] pub(crate) fn EACH() -> BunString { BunString::static_str("each") }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn DESCRIBE() -> &'static str { "describe" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn XDESCRIBE() -> &'static str { "xdescribe" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn TEST() -> &'static str { "test" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn XTEST() -> &'static str { "xtest" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP() -> &'static str { "skip" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO() -> &'static str { "todo" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING() -> &'static str { "failing" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT() -> &'static str { "concurrent" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL() -> &'static str { "serial" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn ONLY() -> &'static str { "only" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn IF() -> &'static str { "if" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SKIP_IF() -> &'static str { "skipIf" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn TODO_IF() -> &'static str { "todoIf" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn FAILING_IF() -> &'static str { "failingIf" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn CONCURRENT_IF() -> &'static str { "concurrentIf" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn SERIAL_IF() -> &'static str { "serialIf" }
+    #[allow(non_snake_case)] #[inline] pub(crate) fn EACH() -> &'static str { "each" }
 }
 
 impl ScopeFunctions {
@@ -463,7 +462,7 @@ impl ScopeFunctions {
         conditional_cfg: BaseScopeCfg,
         name: &[u8],
         invert: bool,
-        fn_name: BunString,
+        fn_name: &'static str,
     ) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
@@ -484,7 +483,7 @@ impl ScopeFunctions {
         global: &JSGlobalObject,
         cfg: BaseScopeCfg,
         name: &[u8],
-        fn_name: BunString,
+        fn_name: &'static str,
     ) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
@@ -794,12 +793,12 @@ fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseS
     value
 }
 
-fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JSValue> {
+fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult<JSValue> {
     // `#[bun_jsc::host_fn]` on `call_as_function` emits the C-ABI thunk
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.
-    let call_fn = bun_jsc::JSFunction::create(global, name.clone(), __jsc_host_call_as_function, 1, Default::default());
-    let bound = JSValueTestExt::bind(call_fn, global, value, &name, 1.0, &[])?;
+    let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
+    let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_str(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)
 }
@@ -819,7 +818,7 @@ pub(crate) fn create_bound(
     mode: Mode,
     each: JSValue,
     cfg: BaseScopeCfg,
-    name: BunString,
+    name: &'static str,
 ) -> JsResult<JSValue> {
     let _g = group_log::begin();
 

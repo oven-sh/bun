@@ -145,8 +145,8 @@ pub fn verify_error_to_js(
     let reason: &[u8] = err.reason_bytes();
 
     let fallback = SystemError {
-        code: String::clone_utf8(code).into(),
-        message: String::clone_utf8(reason).into(),
+        code: String::clone_utf8(code),
+        message: String::clone_utf8(reason),
         ..Default::default()
     };
 

@@ -61,9 +61,9 @@ unsafe extern "C" {
 }
 
 impl JSFunction {
-    pub fn create(
+    pub fn create<'a>(
         global: &JSGlobalObject,
-        fn_name: impl Into<BunString>,
+        fn_name: impl Into<bun_core::StringView<'a>>,
         implementation: JSHostFn,
         function_length: u32,
         options: CreateJSFunctionOptions,

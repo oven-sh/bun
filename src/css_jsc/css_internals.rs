@@ -81,7 +81,7 @@ fn eat_string_arg(
             "{fn_name}: expected {arg_label} to be a string"
         )));
     }
-    Ok(arg.to_bun_string(global)?)
+    arg.to_bun_string(global)
 }
 
 fn testing_impl(

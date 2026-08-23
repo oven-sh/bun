@@ -156,8 +156,8 @@ impl AsyncModule {
         promise: JSValue,
         resolved_source: ResolvedSource,
         err: Option<crate::CrateError>,
-        specifier: BunString,
-        referrer: BunString,
+        specifier: &BunString,
+        referrer: &BunString,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
@@ -181,8 +181,8 @@ impl AsyncModule {
                     );
                     crate::virtual_machine::process_fetch_log(
                         global_this,
-                        &specifier,
-                        &referrer,
+                        specifier,
+                        referrer,
                         log,
                         &mut errorable,
                         e,
@@ -194,7 +194,7 @@ impl AsyncModule {
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
         jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, &specifier, &referrer)
+            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, specifier, referrer)
         })
     }
 }

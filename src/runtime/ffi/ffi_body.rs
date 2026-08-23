@@ -1521,9 +1521,9 @@ impl FFI {
                                 BStr::new(&dlerror_msg)
                             );
                             let system_error = SystemError {
-                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED").into(),
-                                message: bun_core::String::clone_utf8(&msg).into(),
-                                syscall: bun_core::String::clone_utf8(b"dlopen").into(),
+                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
+                                message: bun_core::String::clone_utf8(&msg),
+                                syscall: bun_core::String::clone_utf8(b"dlopen"),
                                 ..Default::default()
                             };
                             return Ok(system_error.to_error_instance(global));

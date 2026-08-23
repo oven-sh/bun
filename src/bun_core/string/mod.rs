@@ -132,10 +132,8 @@ impl String {
     /// Release ownership to whoever receives the bits (C++, a `#[repr(C)]`
     /// struct). No refcount traffic; `Drop` will not run.
     #[inline]
-    pub const fn into_raw(self) -> RawString {
-        let raw = self.0;
-        core::mem::forget(self);
-        raw
+    pub fn into_raw(self) -> RawString {
+        core::mem::ManuallyDrop::new(self).0
     }
     /// View the FFI representation without giving up ownership. For filling
     /// a `#[repr(C)]` struct that C++ only reads while `self` is alive.
@@ -148,12 +146,12 @@ impl String {
     #[inline]
     pub const fn from_raw_ref(raw: &RawString) -> &Self {
         // SAFETY: `String` is `#[repr(transparent)]` over `RawString`.
-        unsafe { &*(raw as *const RawString as *const Self) }
+        unsafe { &*core::ptr::from_ref::<RawString>(raw).cast::<Self>() }
     }
     #[inline]
     pub const fn from_raw_mut(raw: &mut RawString) -> &mut Self {
         // SAFETY: `String` is `#[repr(transparent)]` over `RawString`.
-        unsafe { &mut *(raw as *mut RawString as *mut Self) }
+        unsafe { &mut *core::ptr::from_mut::<RawString>(raw).cast::<Self>() }
     }
 
     #[inline]
@@ -1283,6 +1281,30 @@ impl<'a> StringView<'a> {
     #[inline]
     pub fn to_owned(&self) -> String {
         String::clone(self)
+    }
+}
+impl<'a> From<&'a String> for StringView<'a> {
+    #[inline]
+    fn from(s: &'a String) -> Self {
+        Self::new(s)
+    }
+}
+impl<'a> From<&'a [u8]> for StringView<'a> {
+    #[inline]
+    fn from(s: &'a [u8]) -> Self {
+        Self::from_bytes(s)
+    }
+}
+impl<'a, const N: usize> From<&'a [u8; N]> for StringView<'a> {
+    #[inline]
+    fn from(s: &'a [u8; N]) -> Self {
+        Self::from_bytes(s)
+    }
+}
+impl<'a> From<&'a str> for StringView<'a> {
+    #[inline]
+    fn from(s: &'a str) -> Self {
+        Self::from_bytes(s.as_bytes())
     }
 }
 impl core::ops::Deref for StringView<'_> {

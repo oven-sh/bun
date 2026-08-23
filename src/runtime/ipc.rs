@@ -827,7 +827,7 @@ fn close_sent_handle(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JsR
 fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
     jsc::JSFunction::create(
         global,
-        BunString::empty(),
+        "",
         __jsc_host_close_sent_handle,
         1,
         Default::default(),

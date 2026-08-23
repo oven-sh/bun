@@ -4664,8 +4664,8 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()).into(),
-                    message: bun_core::String::static_(err.label()).into(),
+                    code: bun_core::String::static_(err.code()),
+                    message: bun_core::String::static_(err.label()),
                     ..Default::default()
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
@@ -5417,9 +5417,9 @@ impl Resolver {
                 let syscall = bun_core::String::create_atom(&query.name);
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()).into(),
-                    message: bun_core::String::static_(err.label()).into(),
-                    syscall: syscall.into(),
+                    code: bun_core::String::static_(err.code()),
+                    message: bun_core::String::static_(err.label()),
+                    syscall,
                     ..Default::default()
                 };
                 return Err(global_this.throw_value(system_error.to_error_instance(global_this)));

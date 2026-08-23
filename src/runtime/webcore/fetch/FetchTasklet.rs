@@ -649,9 +649,8 @@ impl FetchTasklet {
             let err = jsc::SystemError {
                 code: BunString::static_(<&'static str>::from(
                     jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
-                ))
-                .into(),
-                message: BunString::static_("Stream already used, please create a new one").into(),
+                )),
+                message: BunString::static_("Stream already used, please create a new one"),
                 ..Default::default()
             };
             let err_instance = err.to_error_instance(&global_this);
@@ -1367,7 +1366,7 @@ impl FetchTasklet {
                     b"getaddrinfo",
                     hostname,
                 );
-                err.path = path.into();
+                err.path = path;
                 return BodyValueError::SystemTypeError(err);
             }
         }
@@ -1602,9 +1601,9 @@ impl FetchTasklet {
         };
 
         let fetch_error = jsc::SystemError {
-            code: code.into(),
-            message: message.into(),
-            path: path.into(),
+            code,
+            message,
+            path,
             ..Default::default()
         };
 
@@ -1927,7 +1926,7 @@ impl FetchTasklet {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
                 status_code,
-                status_text: status_text.into(),
+                status_text,
                 ..Default::default()
             },
             Body::new(body),

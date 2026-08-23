@@ -7971,9 +7971,9 @@ impl NodeFS {
                 );
                 let _ = global_this.throw_value(
                     bun_jsc::SystemError {
-                        message: BunString::init(&buf[..]).into(),
-                        code: BunString::init(err.name()).into(),
-                        path: BunString::init(path.as_slice()).into(),
+                        message: BunString::init(&buf[..]),
+                        code: BunString::init(err.name()),
+                        path: BunString::init(path.as_slice()),
                         ..Default::default()
                     }
                     .to_error_instance(&global_this),

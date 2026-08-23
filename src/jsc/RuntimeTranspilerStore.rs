@@ -556,8 +556,8 @@ impl TranspilerJob {
             promise,
             resolved_source,
             parse_error,
-            specifier,
-            referrer,
+            &specifier,
+            &referrer,
             &mut log,
         )
     }

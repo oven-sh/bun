@@ -27,7 +27,7 @@ impl<T> Errorable<T> {
             // is ManuallyDrop so the value is moved out exactly once.
             unsafe {
                 Ok(ManuallyDrop::into_inner(core::ptr::read(
-                    &this.result.value,
+                    &raw const this.result.value,
                 )))
             }
         } else {

@@ -11,7 +11,7 @@ pub mod bun_install_js_bindings {
             b"parseLockfile",
             JSFunction::create(
                 global,
-                bun_core::String::static_(b"parseLockfile"),
+                "parseLockfile",
                 // `#[bun_jsc::host_fn]` on the module-scope `js_parse_lockfile`
                 // emits this `JSHostFn`-ABI shim.
                 __jsc_host_js_parse_lockfile,

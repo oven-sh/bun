@@ -2411,7 +2411,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 if self.looks_like_js_string_ref() {
                     if let Some(bunstr) = self.eat_js_string_ref() {
                         self.break_word(AddDelimiter::No)?;
-                        self.handle_js_string_ref(bunstr)?;
+                        self.handle_js_string_ref(&bunstr)?;
                         continue;
                     }
                 } else if self.looks_like_js_obj_ref() {
@@ -3199,10 +3199,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn handle_js_string_ref(
-        &mut self,
-        bunstr: bun_core::StringView<'bump>,
-    ) -> Result<(), LexerError> {
+    fn handle_js_string_ref(&mut self, bunstr: &bun_core::String) -> Result<(), LexerError> {
         if bunstr.length() == 0 {
             // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
             // The parser converts this to a quoted_empty atom, preserving the empty arg.
@@ -3216,7 +3213,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return Ok(());
         }
         let start = self.j;
-        self.append_string_to_str_pool(&bunstr)?;
+        self.append_string_to_str_pool(bunstr)?;
         self.js_string_ranges.push(TextRange { start, end: self.j });
         // Interpolated values are data, not shell syntax. If the value would
         // begin its Text token with `~`, flush it as a quoted-text token so the

@@ -723,9 +723,9 @@ impl UDPSocket {
                 };
                 let sys_err = SystemError {
                     errno: err,
-                    code: BunString::static_(code).into(),
-                    message: message.into(),
-                    syscall: BunString::static_(syscall).into(),
+                    code: BunString::static_(code),
+                    message,
+                    syscall: BunString::static_(syscall),
                     ..Default::default()
                 };
                 let error_value = sys_err.to_error_instance(global_this);

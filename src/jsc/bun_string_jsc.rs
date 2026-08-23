@@ -36,7 +36,7 @@ unsafe extern "C" {
 pub fn into_js(mut this: String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: `this` is a live `&mut String`; C++ moves the ref out (leaving it
     // Dead) and the cppbind wrapper opens its own validation scope.
-    unsafe { crate::cpp::BunString__transferToJS(&mut this, global_this) }
+    unsafe { crate::cpp::BunString__transferToJS(&raw mut this, global_this) }
 }
 
 pub fn to_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {

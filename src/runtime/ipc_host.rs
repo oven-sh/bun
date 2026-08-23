@@ -70,7 +70,7 @@ fn do_send_err(
     if from == FromEnum::Process {
         let target = bun_jsc::JSFunction::create(
             global_object,
-            BunString::empty(),
+            "",
             // `#[bun_jsc::host_fn]` emits the C-ABI shim under this name; the
             // safe `emit_process_error_event` is `JSHostFnZig`, not `JSHostFn`.
             __jsc_host_emit_process_error_event,

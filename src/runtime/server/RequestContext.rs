@@ -1777,8 +1777,7 @@ where
                     }
                 };
                 let mut sys: jsc::SystemError = err.to_system_error().into();
-                sys.message =
-                    BunString::static_("Cannot stream a directory as a response body").into();
+                sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
             (bun_io::FileType::File, false)
@@ -3146,12 +3145,10 @@ where
                         let err = jsc::SystemError {
                             code: BunString::static_(<&'static str>::from(
                                 jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
-                            ))
-                            .into(),
+                            )),
                             message: BunString::static_(
                                 "Stream already used, please create a new one",
-                            )
-                            .into(),
+                            ),
                             ..Default::default()
                         };
                         stream.value.unprotect();

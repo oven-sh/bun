@@ -264,8 +264,8 @@ mod _impl {
             Ok(v) => Ok(v),
             Err(_) => {
                 let err = SystemError {
-                    message: BunString::static_("Failed to get CPU information").into(),
-                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
+                    message: BunString::static_("Failed to get CPU information"),
+                    code: BunString::static_("ERR_SYSTEM_ERROR"),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance(global)))
@@ -686,13 +686,13 @@ mod _impl {
         let result = get_process_priority(pid);
         if result == i32::MAX {
             let err = SystemError {
-                message: BunString::static_("no such process").into(),
-                code: BunString::static_("ESRCH").into(),
+                message: BunString::static_("no such process"),
+                code: BunString::static_("ESRCH"),
                 #[cfg(not(windows))]
                 errno: -(bun_sys::posix::E::ESRCH as c_int),
                 #[cfg(windows)]
                 errno: libuv::UV_ESRCH,
-                syscall: BunString::static_("uv_os_getpriority").into(),
+                syscall: BunString::static_("uv_os_getpriority"),
                 ..Default::default()
             };
             return Err(global.throw_value(err.to_error_instance_with_info_object(global)));
@@ -916,11 +916,10 @@ mod _impl {
             let err = SystemError {
                 message: BunString::static_(
                     "A system error occurred: getifaddrs returned an error",
-                )
-                .into(),
-                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
+                ),
+                code: BunString::static_("ERR_SYSTEM_ERROR"),
                 errno: errno as c_int,
-                syscall: BunString::static_("getifaddrs").into(),
+                syscall: BunString::static_("getifaddrs"),
                 ..Default::default()
             };
 
@@ -1430,39 +1429,39 @@ mod _impl {
         match errcode {
             bun_sys::E::ESRCH => {
                 let err = SystemError {
-                    message: BunString::static_("no such process").into(),
-                    code: BunString::static_("ESRCH").into(),
+                    message: BunString::static_("no such process"),
+                    code: BunString::static_("ESRCH"),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    syscall: BunString::static_("uv_os_getpriority"),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
             bun_sys::E::EACCES => {
                 let err = SystemError {
-                    message: BunString::static_("permission denied").into(),
-                    code: BunString::static_("EACCES").into(),
+                    message: BunString::static_("permission denied"),
+                    code: BunString::static_("EACCES"),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::EACCES as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_EACCES,
-                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    syscall: BunString::static_("uv_os_getpriority"),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
             bun_sys::E::EPERM => {
                 let err = SystemError {
-                    message: BunString::static_("operation not permitted").into(),
-                    code: BunString::static_("EPERM").into(),
+                    message: BunString::static_("operation not permitted"),
+                    code: BunString::static_("EPERM"),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    syscall: BunString::static_("uv_os_getpriority"),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))

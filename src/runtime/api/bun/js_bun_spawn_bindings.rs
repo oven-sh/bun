@@ -2106,11 +2106,10 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         message: BunString::create_format(format_args!(
             "Executable not found in $PATH: \"{}\"",
             bstr::BStr::new(command)
-        ))
-        .into(),
-        code: BunString::static_("ENOENT").into(),
+        )),
+        code: BunString::static_("ENOENT"),
         errno: -UV_E::NOENT,
-        path: BunString::clone_utf8(command).into(),
+        path: BunString::clone_utf8(command),
         ..Default::default()
     };
     global_this.throw_value(err.to_error_instance(global_this))

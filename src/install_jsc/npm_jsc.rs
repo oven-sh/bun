@@ -64,7 +64,7 @@ impl ManifestBindings {
             b"parseManifest",
             JSFunction::create(
                 global,
-                bun_core::String::static_(b"parseManifest"),
+                "parseManifest",
                 // `#[bun_jsc::host_fn]` on the module-scope `js_parse_manifest`
                 // emits this `JSHostFn`-ABI shim.
                 __jsc_host_js_parse_manifest,

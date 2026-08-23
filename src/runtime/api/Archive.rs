@@ -1124,8 +1124,7 @@ impl TaskContext for FilesContext {
 
                 for entry in entries.iter_mut() {
                     let data = core::mem::take(&mut entry.data); // Ownership transferred
-                    let blob_ptr = Blob::create_with_bytes_and_allocator(data, global, false);
-                    let blob = blob_ptr;
+                    let blob = Blob::create_with_bytes_and_allocator(data, global, false);
                     blob.is_jsdom_file.set(true);
                     blob.name.set(bun_core::String::clone_utf8(&entry.path));
                     blob.last_modified.set((entry.mtime * 1000) as f64);

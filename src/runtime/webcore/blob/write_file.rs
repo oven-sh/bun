@@ -118,8 +118,8 @@ impl FileOpener for WriteFile {
     fn set_system_error(&mut self, e: SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &jsc::node_path::PathOrFileDescriptor<'static> {
-        &self
+    fn pathlike(&self) -> blob::PathOrFdRef<'_> {
+        (&self
             .file_blob
             .store
             .get()
@@ -127,7 +127,8 @@ impl FileOpener for WriteFile {
             .unwrap()
             .data
             .as_file()
-            .pathlike
+            .pathlike)
+            .into()
     }
     fn try_mkdirp(
         &mut self,

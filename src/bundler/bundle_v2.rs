@@ -7098,6 +7098,15 @@ pub mod bv2_impl {
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
                     if !result.unique_key_for_additional_file.is_empty()
+                        && result.loader == Loader::Text
+                    {
+                        // Text embedded as an asset by `--compile` (ParseTask);
+                        // the importer-side bookkeeping for copied loaders
+                        // never saw it, so count it here or
+                        // `process_files_to_copy` skips the whole pass.
+                        this.graph.estimated_file_loader_count += 1;
+                    }
+                    if !result.unique_key_for_additional_file.is_empty()
                         && result.loader.should_copy_for_bundling()
                     {
                         if let Some(dev) = this.dev_server {

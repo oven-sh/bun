@@ -3896,7 +3896,7 @@ fn get_hardcoded_module(
 /// `jsc_vm` is the live per-thread VM; `out` is a valid out-param.
 unsafe fn fetch_builtin_module(
     jsc_vm: *mut VirtualMachine,
-    _global: *mut JSGlobalObject,
+    global: *mut JSGlobalObject,
     specifier: &bun_core::String,
     _referrer: &bun_core::String,
     out: *mut ErrorableResolvedSource,
@@ -4002,6 +4002,33 @@ export default db;
                         specifier: specifier.dupe_ref(),
                         source_url: specifier.dupe_ref(),
                         source_code_needs_deref: false,
+                        ..ResolvedSource::default()
+                    });
+                }
+                return FetchBuiltinResult::Found;
+            }
+
+            if file.loader == Loader::Text {
+                // A text import embedded by `--compile`. The bytes are already
+                // a Latin-1/UTF-16 string body (`encode_text_module`), so the
+                // default export is a JSString over the section — no parse, no
+                // bytecode, no copy.
+                // SAFETY: per fn contract — `global` is the live global object.
+                let global = unsafe { &*global };
+                let string = file.to_wtf_string();
+                // `jsString(vm, String(impl))` over the cached static impl;
+                // only a `Dead` string throws and `to_wtf_string` never
+                // produces one.
+                let value = bun_jsc::bun_string_jsc::to_js(&string, global)
+                    .expect("embedded text module string is never dead");
+                string.deref();
+                // SAFETY: per fn contract — `out` is a valid out-param.
+                unsafe {
+                    *out = ErrorableResolvedSource::ok(ResolvedSource {
+                        jsvalue_for_export: value,
+                        specifier: specifier.dupe_ref(),
+                        source_url: specifier.dupe_ref(),
+                        tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
                         ..ResolvedSource::default()
                     });
                 }

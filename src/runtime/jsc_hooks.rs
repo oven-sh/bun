@@ -3329,6 +3329,7 @@ fn transpile_source_code_inner(
                     if let Some((ptr, size)) = node_compile_cache_blob {
                         resolved_source.bytecode_cache = ptr;
                         resolved_source.bytecode_cache_size = size;
+                        resolved_source.bytecode_cache_is_static = true; // accepted blobs are retired, never freed (NodeCompileCache RETIRED_BLOBS)
                     }
                     return Ok(OwnedResolvedSource::from(resolved_source));
                 }
@@ -4055,6 +4056,7 @@ export default db;
                         core::ptr::null_mut()
                     },
                     bytecode_cache_size: bytecode_len,
+                    bytecode_cache_is_static: true,
                     module_info: if module_info_len > 0 {
                         bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
                             ::create_from_cached_record(&*file.module_info)

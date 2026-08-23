@@ -76,10 +76,6 @@ Ref<SourceProvider> SourceProvider::create(
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 
-    // Bytecode that arrives with needsDeref unset (the standalone executable's modules, served through the builtin path) is a
-    // section of the running executable: mapped for the life of the process.
-    const bool bytecodeIsEmbeddedInExecutable = resolvedSource.bytecode_cache && !resolvedSource.needsDeref;
-
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 
     bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(resolvedSource.source_url);
@@ -121,7 +117,7 @@ Ref<SourceProvider> SourceProvider::create(
             auto origin = getSourceOrigin();
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
-            if (bytecodeIsEmbeddedInExecutable)
+            if (resolvedSource.bytecode_cache_is_static)
                 bytecode->setPayloadIsPersistent(); // decoded instruction streams and expression info alias these bytes instead of copying them
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),

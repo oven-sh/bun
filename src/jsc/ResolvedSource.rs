@@ -53,6 +53,9 @@ pub struct ResolvedSource {
     pub bytecode_origin_path: BunString,
     /// `WTF::StringImpl::hash()` of `source_code`, when known ahead of time (0 = compute on demand).
     pub source_code_hash: u32,
+    /// `bytecode_cache` is never freed (an executable section, or a compile-cache blob that is retired rather than
+    /// freed), so JSC may alias it instead of copying out of it.
+    pub bytecode_cache_is_static: bool,
 }
 
 impl Default for ResolvedSource {
@@ -73,6 +76,7 @@ impl Default for ResolvedSource {
             module_info: core::ptr::null_mut(),
             bytecode_origin_path: BunString::empty(),
             source_code_hash: 0,
+            bytecode_cache_is_static: false,
         }
     }
 }

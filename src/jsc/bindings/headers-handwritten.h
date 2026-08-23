@@ -135,6 +135,7 @@ typedef struct ResolvedSource {
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
     uint32_t source_code_hash;
+    bool bytecode_cache_is_static;
 } ResolvedSource;
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

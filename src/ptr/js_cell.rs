@@ -41,6 +41,13 @@ impl<T> JsCell<T> {
         Self(core::cell::UnsafeCell::new(value))
     }
 
+    /// View exclusively-borrowed storage as a cell (like `Cell::from_mut`).
+    #[inline(always)]
+    pub fn from_mut(value: &mut T) -> &mut JsCell<T> {
+        // SAFETY: `JsCell<T>` is `repr(transparent)` over `UnsafeCell<T>`.
+        unsafe { &mut *core::ptr::from_mut(core::cell::UnsafeCell::from_mut(value)).cast() }
+    }
+
     /// Shared-reference read. Caller must not hold a live `get_mut()` borrow
     /// across this call (single-JS-thread reentrancy makes overlap rare but
     /// possible — keep borrows short).

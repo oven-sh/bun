@@ -14,7 +14,7 @@ use bun_jsc::{
 use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 use super::callbacks;
@@ -1582,9 +1582,7 @@ impl QuicEndpoint {
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
         timer_all().update(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
+            crate::timer::TimerRef::new(self, |e| &e.event_loop_timer),
             &next,
         );
     }
@@ -1625,9 +1623,7 @@ impl QuicEndpoint {
                 ms as i64,
             );
             timer_all().update(
-                core::ptr::addr_of!(self.event_loop_timer)
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                    .cast_mut(),
+                crate::timer::TimerRef::new(self, |e| &e.event_loop_timer),
                 &next,
             );
         }
@@ -2077,7 +2073,7 @@ impl QuicEndpoint {
         // Unlink first: the driver walk must never reach a freed endpoint.
         self.unlink_loop_driver();
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            timer_all().remove(crate::timer::TimerRef::new(self, |e| &e.event_loop_timer));
         }
         for engine in [
             self.server_engine.replace(null_mut()),
@@ -2126,9 +2122,7 @@ impl QuicEndpoint {
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
         timer_all().update(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
+            crate::timer::TimerRef::new(self, |e| &e.event_loop_timer),
             &next,
         );
     }
@@ -2652,7 +2646,7 @@ impl QuicEndpoint {
         // Remove the timer before the backing storage drops, or a later heap
         // operation dereferences the freed node.
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            timer_all().remove(crate::timer::TimerRef::new(&*self, |e| &e.event_loop_timer));
         }
         self.release_native();
     }

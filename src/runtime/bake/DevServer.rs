@@ -1070,8 +1070,10 @@ impl Drop for DevServer {
         }
 
         if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
-            let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
-            self.timer_heap().remove(timer_ptr);
+            let heap = self.timer_heap();
+            heap.remove(crate::timer::TimerRef::from_mut(self, |d| {
+                &mut d.memory_visualizer_timer
+            }));
         }
         self.graph_safety_lock.lock();
         // Hand ownership of the heap allocation to the watcher thread (which frees it in
@@ -1115,8 +1117,11 @@ impl Drop for DevServer {
             value.ref_count = 0;
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
-            let timer_ptr: *mut EventLoopTimer = &raw mut self.source_maps.weak_ref_sweep_timer;
-            self.timer_heap().remove(timer_ptr);
+            let heap = self.timer_heap();
+            heap.remove(crate::timer::TimerRef::from_mut(
+                &mut self.source_maps,
+                |s| &mut s.weak_ref_sweep_timer,
+            ));
         }
 
         // `Watcher::shutdown` serialises with `dispatch_file_updates` on
@@ -5494,8 +5499,8 @@ impl DevServer {
     pub fn emit_visualizer_message_if_needed(&mut self) {}
 
     #[inline]
-    fn timer_heap(&self) -> &mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
+    fn timer_heap(&self) -> &'static crate::timer::All {
+        crate::jsc_hooks::timer_all()
     }
 
     pub fn emit_memory_visualizer_message_timer(

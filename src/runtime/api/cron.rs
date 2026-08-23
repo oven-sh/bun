@@ -40,7 +40,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
     self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
 };
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, TimerRef};
 use bun_core::ZStr;
 use bun_core::strings;
 use bun_io::pipe_reader::BufferedReaderParent;
@@ -62,7 +62,7 @@ fn vm_mut<'a>() -> &'a mut VirtualMachine {
     VirtualMachine::get_mut()
 }
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 // ============================================================================
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
@@ -1434,11 +1434,16 @@ impl CronJob {
         }
     }
 
+    #[inline]
+    fn timer_ref(&self) -> TimerRef {
+        TimerRef::new(self, |job| &job.event_loop_timer)
+    }
+
     /// Idempotent — every step checks its own state.
     fn stop_internal(&self, _vm: &VirtualMachine) {
         self.stopped.set(true);
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            timer_all().remove(self.timer_ref());
         }
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         self.maybe_downgrade();
@@ -1541,12 +1546,7 @@ impl CronJob {
         let Some(next_time) = this.compute_next_timespec() else {
             return Self::finish_deferred_stop(this, vm);
         };
-        timer_all().update(
-            this.event_loop_timer
-                .as_ptr()
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>(),
-            &next_time,
-        );
+        timer_all().update(this.timer_ref(), &next_time);
     }
 
     /// The tick's callback runs here as a top-level call (what it throws
@@ -1754,12 +1754,7 @@ impl CronJob {
         );
 
         job.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-        timer_all().update(
-            job.event_loop_timer
-                .as_ptr()
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>(),
-            &next_time,
-        );
+        timer_all().update(job.timer_ref(), &next_time);
 
         Ok(js_value)
     }

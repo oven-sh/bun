@@ -206,7 +206,7 @@ impl<'a> TestRunner<'a> {
             return;
         }
         let _ = vm;
-        bun_test::vm_timer().remove(&raw mut active_file.timer);
+        bun_test::vm_timer().remove(crate::timer::TimerRef::from_mut(active_file, |t| &mut t.timer));
     }
 
 

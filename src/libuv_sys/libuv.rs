@@ -1506,6 +1506,20 @@ impl Timer {
             panic!("internal error: uv_timer_stop failed");
         }
     }
+    /// Milliseconds until the timer is due (0 if overdue or stopped).
+    #[inline]
+    pub fn get_due_in(&self) -> u64 {
+        debug_assert!(!self.loop_.is_null());
+        // SAFETY: timer was `init`ed (reads `self.timeout` and `loop_->time`).
+        unsafe { uv_timer_get_due_in(self) }
+    }
+    /// `uv_update_time` on the loop this timer was `init`ed on.
+    #[inline]
+    pub fn update_loop_time(&self) {
+        debug_assert!(!self.loop_.is_null());
+        // SAFETY: timer was `init`ed, so `loop_` is the live loop it is registered on.
+        unsafe { uv_update_time(self.loop_) }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

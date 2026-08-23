@@ -172,7 +172,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
 #[bun_jsc::host_fn]
 pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [prev, opts] = frame.arguments_as_array::<2>();
-    let maybe_tcp = prev.as_::<TCPSocket>();
-    let maybe_tls = prev.as_::<TLSSocket>();
+    let maybe_tcp = prev.as_class_this_ptr::<TCPSocket>();
+    let maybe_tls = prev.as_class_this_ptr::<TLSSocket>();
     Listener::connect_inner(global, maybe_tcp, maybe_tls, opts)
 }

@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_core::Utf8Bytes;
@@ -17,14 +16,6 @@ use super::SocketMode;
 use super::js_socket_handlers::{CALLBACK_COUNT, JSSocketHandlers};
 use super::listener::ListenerType;
 use super::{SSLConfig, SSLConfigFromJs};
-
-// ─── local shims (upstream-crate gaps) ──────────────────────────────────────
-unsafe extern "C" {
-    safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: &JSGlobalObject,
-        callback: JSValue,
-    ) -> JSValue;
-}
 
 bun_output::declare_scope!(Listener, visible);
 
@@ -54,16 +45,16 @@ pub struct Handlers {
     pub(crate) mode: SocketMode,
     /// The listener that accepted these sockets, for `mode == Server`.
     ///
-    /// Deliberately a nullable raw pointer and not a `BackRef`: a `BackRef`
-    /// promises the pointee outlives the holder, and this one does not. Every
-    /// accepted socket holds an `Rc<Handlers>` that routinely outlives the
-    /// `Listener` (uws defers the close of a force-closed socket past
-    /// `Listener::deinit`). What keeps it sound is that `deinit` clears this
-    /// field before freeing itself — so reads must go through [`listener`] and
-    /// handle `None`.
+    /// Every accepted socket holds an `Rc<Handlers>` that routinely outlives
+    /// the `Listener` (uws defers the close of a force-closed socket past the
+    /// listener's finalizer), so the back-reference obligation is discharged
+    /// by the listener itself: it registers here with [`set_listener`] and its
+    /// `Drop` clears the slot before its storage is released. Reads go through
+    /// [`listener`] and handle `None`.
     ///
+    /// [`set_listener`]: Self::set_listener
     /// [`listener`]: Self::listener
-    listener: Cell<Option<NonNull<SocketListener>>>,
+    listener: Cell<Option<bun_ptr::BackRef<SocketListener>>>,
 }
 
 /// Output of [`Handlers::prepare_reload`]: everything `reload` needs, parsed
@@ -100,22 +91,25 @@ impl Handlers {
         self.cell.root(global)
     }
 
-    /// Records the listener that accepted these sockets (server mode only), or
-    /// clears it as that listener frees itself.
-    pub(crate) fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
-        debug_assert!(self.mode == SocketMode::Server || listener.is_none());
-        self.listener.set(listener);
+    /// Records the listener that accepted these sockets (server mode only).
+    /// `self` must be `listener.handlers`: that listener's `Drop` (or its
+    /// teardown, earlier) calls [`clear_listener`](Self::clear_listener) on
+    /// its own handlers, which is what keeps the back-reference live.
+    pub(crate) fn set_listener(&self, listener: &SocketListener) {
+        debug_assert!(self.mode == SocketMode::Server);
+        debug_assert!(core::ptr::eq(Rc::as_ptr(&listener.handlers), self));
+        self.listener.set(Some(bun_ptr::BackRef::new(listener)));
+    }
+
+    /// Forget the accepting listener as it tears itself down.
+    pub(crate) fn clear_listener(&self) {
+        self.listener.set(None);
     }
 
     /// The accepting listener, or `None` for client-mode handlers and for a
-    /// listener already torn down by `Listener::deinit`.
-    pub(crate) fn listener(&self) -> Option<&SocketListener> {
-        // SAFETY: `Listener::listen` stores its `heap::into_raw` allocation root
-        // here, and `Listener::deinit` clears it before freeing that allocation
-        // (after force-closing every accepted socket), so a `Some` is live. The
-        // borrow cannot outlive `&self`, and nothing frees a `Listener` while a
-        // caller holds one — `deinit` runs from GC finalize, not from dispatch.
-        self.listener.get().map(|l| unsafe { &*l.as_ptr() })
+    /// listener already torn down.
+    pub(crate) fn listener(&self) -> Option<bun_ptr::BackRef<SocketListener>> {
+        self.listener.get()
     }
 
     pub(crate) fn on_open(&self) -> JSValue {
@@ -176,7 +170,7 @@ impl Handlers {
             if value.is_empty() {
                 JSValue::ZERO
             } else {
-                AsyncContextFrame__withAsyncContextIfNeeded(global_object, value)
+                value.with_async_context_if_needed(global_object)
             }
         })
     }
@@ -252,7 +246,7 @@ impl Handlers {
         // Let the listener's JS wrapper be GC'd once the last connection is
         // closed and it's not listening anymore.
         if let Some(listener) = self.listener() {
-            if matches!(listener.listener.get(), ListenerType::None) {
+            if matches!(*listener.listener.get(), ListenerType::None) {
                 listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
                 listener.this_value.with_mut(|r| r.downgrade());
             }

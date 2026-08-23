@@ -669,6 +669,25 @@ impl<T> OwnedThis<T> {
         OwnedThis(core::ptr::NonNull::from(Box::leak(Box::new(value))))
     }
 
+    /// Re-own a heap `T` from its root pointer.
+    ///
+    /// # Safety
+    /// `p` is what `Box::into_raw` / `heap::into_raw` returned (or an
+    /// intrusively-refcounted `T` allocated that way whose count just reached
+    /// zero), and nothing else owns or frees it.
+    #[inline]
+    pub unsafe fn from_raw(p: *mut T) -> Self {
+        // SAFETY: caller contract — non-null root pointer.
+        OwnedThis(unsafe { core::ptr::NonNull::new_unchecked(p) })
+    }
+
+    /// Give the allocation up as its root pointer (to park it in an untyped
+    /// slot); re-own it with [`from_raw`](Self::from_raw).
+    #[inline]
+    pub fn into_raw(self) -> *mut T {
+        core::mem::ManuallyDrop::new(self).0.as_ptr()
+    }
+
     /// A dispatch handle to the pointee (root provenance).
     #[inline]
     pub fn this_ptr(&self) -> ThisPtr<T> {

@@ -374,7 +374,7 @@ impl BlockList {
         let array = JSValue::create_empty_array(global, rules.len())?;
 
         for (i, rule) in rules.iter().enumerate() {
-            let mut s = match rule {
+            let s = match rule {
                 Rule::Addr(a) => {
                     let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
                     BunString::create_format(format_args!(
@@ -403,7 +403,7 @@ impl BlockList {
                     ))
                 }
             };
-            array.put_index(global, i as u32, s.transfer_to_js(global)?)?;
+            array.put_index(global, i as u32, s.into_js(global)?)?;
         }
         Ok(array)
     }

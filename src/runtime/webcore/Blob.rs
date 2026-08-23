@@ -16,9 +16,7 @@ use crate::webcore::jsc::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
 use bun_core::Output;
-use bun_core::{
-    OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice, strings,
-};
+use bun_core::{String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::StringJsc as _;
 use bun_sys::{self, Fd};
@@ -248,7 +246,7 @@ pub trait BlobExt {
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_mime_type_or_content_type(&self) -> Option<MimeType>;
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue;
-    fn get_name_string(&self) -> Option<BunString>;
+    fn get_name_string(&self) -> Option<bun_core::StringView<'_>>;
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue>;
     fn set_name(
         &self,
@@ -1114,7 +1112,8 @@ impl BlobExt for Blob {
                         writer,
                         ENABLE_ANSI_COLORS,
                         "name<d>:<r> <green>\"{f}\"<r>",
-                        self.get_name_string().unwrap_or_else(BunString::empty),
+                        self.get_name_string()
+                            .unwrap_or(bun_core::StringView::EMPTY),
                     )?;
                     if !self.content_type_slice().is_empty()
                         || self.offset.get() > 0
@@ -2036,7 +2035,7 @@ impl BlobExt for Blob {
         JscZigString::EMPTY.to_js(global_this)
     }
 
-    fn get_name_string(&self) -> Option<BunString> {
+    fn get_name_string(&self) -> Option<bun_core::StringView<'_>> {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
@@ -2068,12 +2067,9 @@ impl BlobExt for Blob {
             return Ok(());
         }
         if value.is_string() {
-            let _old_name = self.name.replace(BunString::empty());
-            // error rollback of `name` is handled by the replace above.
+            self.name.set(BunString::empty());
             self.name.set(BunString::from_js(value, global_this)?);
-            // We don't need to increment the reference count since try_from_js already did it.
             bun_jsc::generated::JSBlob::name_set_cached(js_this, global_this, value);
-            drop(_old_name); // OwnedString — Drop derefs
         }
         Ok(())
     }
@@ -2569,13 +2565,11 @@ impl BlobExt for Blob {
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
             // Reinterpret as u16: drop a trailing odd byte.
-            // +1 WTF ref; `OwnedString` releases it on scope exit.
-            //
             // This branch intentionally does NOT `self.detach()` for
             // `Lifetime::Transfer`, unlike the toJSON path.
             let buf = &buf[..buf.len() & !1];
             let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
-                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+                Ok(units) => BunString::clone_utf16(units),
                 Err(_) => {
                     let units: Vec<u16> = buf
                         .as_chunks::<2>()
@@ -2583,7 +2577,7 @@ impl BlobExt for Blob {
                         .iter()
                         .map(|pair| u16::from_le_bytes(*pair))
                         .collect();
-                    OwnedString::new(BunString::clone_utf16(&units))
+                    BunString::clone_utf16(&units)
                 }
             };
             return out.to_js(global);
@@ -2685,8 +2679,7 @@ impl BlobExt for Blob {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
                 // external doesn't support this case here yet.
                 if buf.len() != raw_slice.len() {
-                    // +1 WTF ref; `OwnedString` releases it on scope exit.
-                    let out = OwnedString::new(BunString::clone_latin1(buf));
+                    let out = BunString::clone_latin1(buf);
                     // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                     return out.to_js(global);
@@ -2802,10 +2795,9 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             // Reinterpret as u16: drop a trailing odd byte.
-            // +1 WTF ref; `OwnedString` releases it on scope exit.
             let buf = &buf[..buf.len() & !1];
-            let mut out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
-                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+                Ok(units) => BunString::clone_utf16(units),
                 Err(_) => {
                     let units: Vec<u16> = buf
                         .as_chunks::<2>()
@@ -2813,7 +2805,7 @@ impl BlobExt for Blob {
                         .iter()
                         .map(|pair| u16::from_le_bytes(*pair))
                         .collect();
-                    OwnedString::new(BunString::clone_utf16(&units))
+                    BunString::clone_utf16(&units)
                 }
             };
             // Compute the
@@ -3219,10 +3211,7 @@ impl BlobExt for Blob {
                 | jsc::JSType::StringObject
                 | jsc::JSType::DerivedStringObject => {
                     if !fail_if_top_value_is_not_typed_array_like {
-                        // +1 WTF ref; `OwnedString` releases it on scope exit.
-                        // `to_owned_slice` only
-                        // borrows `&self` — it does not consume the ref.
-                        let str = OwnedString::new(top_value.to_bun_string(global)?);
+                        let str = top_value.to_bun_string(global)?;
                         let bytes = str.to_owned_slice();
                         let ascii = strings::is_all_ascii(&bytes);
                         return Ok(Blob::init_with_all_ascii(bytes, global, ascii));
@@ -4244,11 +4233,11 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
+pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> bun_core::RawString {
     if let Some(filename) = this.get_file_name() {
-        return BunString::from_bytes(filename);
+        return BunString::from_bytes(filename).into_raw();
     }
-    BunString::empty()
+    BunString::empty().into_raw()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4940,8 +4929,7 @@ pub(crate) fn write_file_internal(
             if data.is_string() {
                 let len = data.get_length(global_this)?;
                 if len < 256 * 1024 {
-                    // +1 WTF ref; `OwnedString` releases it on scope exit.
-                    let str = OwnedString::new(data.to_bun_string(global_this)?);
+                    let str = data.to_bun_string(global_this)?;
                     let pathlike: PathOrFileDescriptor = match &*path_or_blob {
                         PathOrBlob::Path(p) => p.clone(),
                         PathOrBlob::Blob(b) => b
@@ -4956,14 +4944,14 @@ pub(crate) fn write_file_internal(
                         write_string_to_file_fast::<true>(
                             global_this,
                             &pathlike,
-                            str.get(),
+                            &str,
                             &mut needs_async,
                         )
                     } else {
                         write_string_to_file_fast::<false>(
                             global_this,
                             &pathlike,
-                            str.get(),
+                            &str,
                             &mut needs_async,
                         )
                     };
@@ -5322,7 +5310,7 @@ const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
-    str: BunString,
+    str: &BunString,
     needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
@@ -5528,10 +5516,7 @@ pub(crate) fn jsdom_file_construct(
     }
     {
         use bun_jsc::StringJsc as _;
-        // +1 WTF ref; `OwnedString` releases it at scope exit.
-        // Every consumer below either
-        // copies bytes (`to_owned_slice`) or takes its own ref (`dupe_ref`).
-        let name_value_str = OwnedString::new(BunString::from_js(args[1], global_this)?);
+        let name_value_str = BunString::from_js(args[1], global_this)?;
 
         blob = Blob::get::<false, true>(global_this, args[0])?;
         if let Some(store_) = blob.store.get() {
@@ -5544,7 +5529,7 @@ pub(crate) fn jsdom_file_construct(
                     bytes.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
                 }
                 store::Data::S3(_) | store::Data::File(_) => {
-                    blob.name.set(name_value_str.dupe_ref());
+                    blob.name.set(name_value_str);
                 }
             }
         } else if !name_value_str.is_empty() {
@@ -6483,12 +6468,8 @@ impl Any {
                 str
             }
             Any::WTFStringImpl(impl_) => {
-                // Adopts a +1 WTF ref; `OwnedString` releases it on every exit
-                // path.
-                let mut str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
-                    impl_,
-                    core::ptr::null_mut(),
-                )));
+                let str =
+                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
@@ -6559,13 +6540,10 @@ impl Any {
                 Ok(owned)
             }
             Any::WTFStringImpl(impl_) => {
-                // Adopts a +1 WTF ref; `OwnedString` releases it on scope exit.
-                let str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
-                    impl_,
-                    core::ptr::null_mut(),
-                )));
+                let str =
+                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
-                str.to_js(global)
+                str.into_js(global)
             }
         }
     }
@@ -6604,12 +6582,8 @@ impl Any {
                 ))
             }
             Any::WTFStringImpl(impl_) => {
-                // Adopts a +1 WTF ref; `OwnedString` releases it on scope exit,
-                // after `out_bytes` (which borrows it) is consumed below.
-                let str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
-                    impl_,
-                    core::ptr::null_mut(),
-                )));
+                let str =
+                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
 
                 let out_bytes = str.to_utf8_without_ref();
@@ -6745,8 +6719,7 @@ impl Internal {
             return Ok(return_value);
         } else if bytes_without_bom.len() != self.bytes.len() {
             // If there was a UTF8 BOM, we clone it.
-            // +1 WTF ref; `OwnedString` releases it on scope exit.
-            let out = OwnedString::new(BunString::clone_latin1(&self.bytes[3..]));
+            let out = BunString::clone_latin1(&self.bytes[3..]);
             self.bytes = Vec::new();
             return out.to_js(global_this);
         } else {

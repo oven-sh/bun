@@ -5089,17 +5089,16 @@ pub mod testing_apis {
                 return Err(global.throw_invalid_argument_type_value("rule", "object", opts));
             }
 
-            let syscall_str =
-                bun_core::OwnedString::new(match opts.get_truthy(global, "syscall")? {
-                    Some(v) => v.to_bun_string(global)?,
-                    None => {
-                        return Err(global.throw_invalid_argument_type_value(
-                            "rule.syscall",
-                            "string",
-                            JSValue::UNDEFINED,
-                        ));
-                    }
-                });
+            let syscall_str = match opts.get_truthy(global, "syscall")? {
+                Some(v) => v.to_bun_string(global)?,
+                None => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "rule.syscall",
+                        "string",
+                        JSValue::UNDEFINED,
+                    ));
+                }
+            };
             let syscall: c_int = if syscall_str.eql_comptime(b"recv") {
                 fi::RECV
             } else if syscall_str.eql_comptime(b"send") {
@@ -5128,17 +5127,16 @@ pub mod testing_apis {
                 )));
             };
 
-            let action_str =
-                bun_core::OwnedString::new(match opts.get_truthy(global, "action")? {
-                    Some(v) => v.to_bun_string(global)?,
-                    None => {
-                        return Err(global.throw_invalid_argument_type_value(
-                            "rule.action",
-                            "string",
-                            JSValue::UNDEFINED,
-                        ));
-                    }
-                });
+            let action_str = match opts.get_truthy(global, "action")? {
+                Some(v) => v.to_bun_string(global)?,
+                None => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "rule.action",
+                        "string",
+                        JSValue::UNDEFINED,
+                    ));
+                }
+            };
             let action: c_int = if action_str.eql_comptime(b"errno") {
                 fi::ACTION_ERRNO
             } else if action_str.eql_comptime(b"short") {
@@ -5184,7 +5182,7 @@ pub mod testing_apis {
                 None => 0,
                 Some(v) if v.is_number() => v.coerce_to_i32(global)?,
                 Some(v) => {
-                    let name = bun_core::OwnedString::new(v.to_bun_string(global)?);
+                    let name = v.to_bun_string(global)?;
                     parse_errno_name(&name).ok_or_else(|| {
                         global.throw(format_args!(
                             "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH, EPROTOTYPE)"
@@ -5241,7 +5239,7 @@ pub mod testing_apis {
     }
 
     #[cfg(socket_fault_injection)]
-    fn parse_errno_name(name: &bun_core::OwnedString) -> Option<c_int> {
+    fn parse_errno_name(name: &bun_core::String) -> Option<c_int> {
         macro_rules! map {
             ($($s:literal => $v:expr,)*) => {
                 $(if name.eql_comptime($s) { return Some($v as c_int); })*

@@ -11,7 +11,7 @@
 //! accepts either shape and always emits well-formed XML or throws.
 
 use bun_collections::HashMap;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_core::{StackCheck, strings};
 use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
@@ -209,7 +209,7 @@ enum Space {
     Minified,
     Number(u32),
     /// +1 WTF ref owned for the lifetime of the `Stringifier`.
-    Str(OwnedString),
+    Str(bun_core::String),
 }
 
 impl Space {
@@ -224,7 +224,7 @@ impl Space {
             return Ok(Space::Number(if n > 10.0 { 10 } else { n as u32 }));
         }
         if space.is_string() {
-            let str = OwnedString::new(space.to_bun_string(global)?);
+            let str = space.to_bun_string(global)?;
             if str.length() == 0 {
                 return Ok(Space::Minified);
             }
@@ -244,7 +244,7 @@ enum Scalar {
     Skip,
     /// An empty element / absent text (null).
     Empty,
-    Text(OwnedString),
+    Text(bun_core::String),
 }
 
 struct Stringifier {
@@ -308,7 +308,7 @@ impl Stringifier {
         name: Option<JSValue>,
     ) -> StringifyResult<()> {
         let name = match name {
-            Some(name) if name.is_string() => OwnedString::new(name.to_bun_string(global)?),
+            Some(name) if name.is_string() => name.to_bun_string(global)?,
             _ => {
                 return Err(global
                     .throw(format_args!("XML.stringify: element children must be strings, {{ name, attributes, children }} elements, {{ comment }} or {{ target, data }}"))
@@ -318,7 +318,7 @@ impl Stringifier {
         self.check_name(global, &name, "element")?;
 
         self.builder.append_lchar(b'<');
-        self.builder.append_string(*name);
+        self.builder.append_string(&name);
 
         if let Some(attributes) = node.get(global, "attributes")? {
             if !attributes.is_null() {
@@ -421,7 +421,7 @@ impl Stringifier {
             self.indent -= 1;
             self.newline();
         }
-        self.append_end_tag(*name);
+        self.append_end_tag(&name);
         Ok(())
     }
 
@@ -443,7 +443,7 @@ impl Stringifier {
                     ))
                     .into());
             }
-            let text = OwnedString::new(comment.to_bun_string(global)?);
+            let text = comment.to_bun_string(global)?;
             let len = text.length();
             let mut i = 0;
             let mut prev_dash = false;
@@ -468,7 +468,7 @@ impl Stringifier {
                 prev_dash = cp == 0x2D;
             }
             self.builder.append_latin1(b"<!--");
-            self.builder.append_string(*text);
+            self.builder.append_string(&text);
             self.builder.append_latin1(b"-->");
             return Ok(true);
         }
@@ -480,7 +480,7 @@ impl Stringifier {
                     ))
                     .into());
             }
-            let target = OwnedString::new(target.to_bun_string(global)?);
+            let target = target.to_bun_string(global)?;
             self.check_name(global, &target, "processing instruction target")?;
             if target.length() == 3 {
                 let lower = |i| target.char_at(i) | 0x20;
@@ -492,12 +492,12 @@ impl Stringifier {
                 }
             }
             self.builder.append_latin1(b"<?");
-            self.builder.append_string(*target);
+            self.builder.append_string(&target);
             match child.get(global, "data")? {
                 None => {}
                 Some(data) if data.is_null() => {}
                 Some(data) if data.is_string() => {
-                    let data = OwnedString::new(data.to_bun_string(global)?);
+                    let data = data.to_bun_string(global)?;
                     let len = data.length();
                     if len > 0 {
                         let mut i = 0;
@@ -514,7 +514,7 @@ impl Stringifier {
                             prev_q = cp == 0x3F;
                         }
                         self.builder.append_lchar(b' ');
-                        self.builder.append_string(*data);
+                        self.builder.append_string(&data);
                     }
                 }
                 Some(_) => {
@@ -550,7 +550,7 @@ impl Stringifier {
         global: &JSGlobalObject,
         document: JSValue,
     ) -> StringifyResult<()> {
-        let mut root: Option<(OwnedString, JSValue)> = None;
+        let mut root: Option<(bun_core::StringView<'_>, JSValue)> = None;
         let mut iter =
             jsc::JSPropertyIterator::init(global, document.to_object(global)?, iter_options())?;
         while let Some(key) = iter.next()? {
@@ -576,7 +576,7 @@ impl Stringifier {
                     .throw(format_args!("XML.stringify: the root element '{}' cannot be an array (an XML document has exactly one root element)", key))
                     .into());
             }
-            root = Some((OwnedString::new(key.dupe_ref()), value));
+            root = Some((key, value));
         }
         let Some((name, value)) = root else {
             return Err(global
@@ -677,14 +677,14 @@ impl Stringifier {
         self.check_name(global, name, "element")?;
         match self.scalar(global, value, "element content")? {
             Scalar::Skip => {}
-            Scalar::Empty => self.append_empty_element(*name),
-            Scalar::Text(text) if text.length() == 0 => self.append_empty_element(*name),
+            Scalar::Empty => self.append_empty_element(name),
+            Scalar::Text(text) if text.length() == 0 => self.append_empty_element(name),
             Scalar::Text(text) => {
                 self.builder.append_lchar(b'<');
-                self.builder.append_string(*name);
+                self.builder.append_string(name);
                 self.builder.append_lchar(b'>');
                 self.append_text(global, &text)?;
-                self.append_end_tag(*name);
+                self.append_end_tag(name);
             }
         }
         Ok(())
@@ -702,7 +702,7 @@ impl Stringifier {
 
         // Pass 1: the start tag with `@` attributes; note what content follows.
         self.builder.append_lchar(b'<');
-        self.builder.append_string(*name);
+        self.builder.append_string(name);
         let mut has_elements = false;
         let mut has_text = false;
         let mut iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
@@ -768,7 +768,7 @@ impl Stringifier {
             self.indent -= 1;
             self.newline();
         }
-        self.append_end_tag(*name);
+        self.append_end_tag(name);
         Ok(())
     }
 
@@ -789,7 +789,7 @@ impl Stringifier {
             return Ok(Scalar::Empty);
         }
         if value.is_string() || value.is_number() || value.is_boolean() || value.is_big_int() {
-            return Ok(Scalar::Text(OwnedString::new(value.to_bun_string(global)?)));
+            return Ok(Scalar::Text(value.to_bun_string(global)?));
         }
         if value.is_date() {
             let mut buf = [0u8; 64];
@@ -800,7 +800,7 @@ impl Stringifier {
                     ))
                     .into());
             };
-            return Ok(Scalar::Text(OwnedString::new(BunString::clone_utf8(iso))));
+            return Ok(Scalar::Text(BunString::clone_utf8(iso)));
         }
         Err(global
             .throw(format_args!(
@@ -844,13 +844,13 @@ impl Stringifier {
 
     // ── output pieces ──────────────────────────────────────────────────────
 
-    fn append_empty_element(&mut self, name: BunString) {
+    fn append_empty_element(&mut self, name: &BunString) {
         self.builder.append_lchar(b'<');
         self.builder.append_string(name);
         self.builder.append_latin1(b"/>");
     }
 
-    fn append_end_tag(&mut self, name: BunString) {
+    fn append_end_tag(&mut self, name: &BunString) {
         self.builder.append_latin1(b"</");
         self.builder.append_string(name);
         self.builder.append_lchar(b'>');
@@ -867,7 +867,7 @@ impl Stringifier {
     ) -> StringifyResult<()> {
         self.check_name(global, name, "attribute")?;
         self.builder.append_lchar(b' ');
-        self.builder.append_string(*name);
+        self.builder.append_string(name);
         self.builder.append_latin1(b"=\"");
         self.append_escaped(global, value, true)?;
         self.builder.append_lchar(b'"');
@@ -928,13 +928,13 @@ impl Stringifier {
             }
             Space::Str(s) => {
                 self.builder.append_lchar(b'\n');
-                let clamped: BunString = if s.length() > 10 {
+                let clamped = if s.length() > 10 {
                     s.substring_with_len(0, 10)
                 } else {
-                    **s
+                    bun_core::StringView::new(s)
                 };
                 for _ in 0..self.indent {
-                    self.builder.append_string(clamped);
+                    self.builder.append_string(&clamped);
                 }
             }
         }

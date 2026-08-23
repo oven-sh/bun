@@ -4604,16 +4604,16 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     if (!thisObject || !jsString) {
         return false;
     }
+    WTF::String wtfStr = jsString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
 #if !OS(WINDOWS)
-    BunString str = Bun::toStringRef(globalObject, jsString);
+    BunString str = Bun::toString(wtfStr);
     Bun__Process__setTitle(globalObject, &str);
     return true;
 #else
-    WTF::String wtfStr = jsString->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
     // Update the store first so the getter reflects the assignment; the uv
     // call is best-effort (it fails in console-less processes).
-    BunString str = Bun::toStringRef(globalObject, jsString);
+    BunString str = Bun::toString(wtfStr);
     Bun__Process__setTitle(globalObject, &str);
     CString cstr = wtfStr.utf8();
     uv_set_process_title(cstr.data());

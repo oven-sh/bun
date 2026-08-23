@@ -128,7 +128,7 @@ impl FetchFlags {
 pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
-    pub input_specifier: bun_core::String,
+    pub input_specifier: &'a bun_core::String,
     pub log: *mut bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source>,
     pub global_object: *mut JSGlobalObject,
@@ -299,8 +299,8 @@ pub(crate) fn fetch_builtin_module(
 /// [`crate::virtual_machine::process_fetch_log`].
 pub fn process_fetch_log(
     global: &JSGlobalObject,
-    specifier: bun_core::String,
-    referrer: bun_core::String,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
     log: &mut bun_ast::Log,
     errorable: &mut ErrorableResolvedSource,
     err: crate::CrateError,
@@ -420,20 +420,17 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
-    specifier: *mut bun_core::String,
+    specifier: *const bun_core::String,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
     // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
     let specifier = unsafe { &*specifier };
     let spec_utf8 = specifier.to_utf8();
-    if let Some((name, tag)) = exposed_internal_tag(spec_utf8.slice()) {
+    if let Some((_, tag)) = exposed_internal_tag(spec_utf8.slice()) {
+        // The `InternalModuleRegistryFlag` consumer reads only `tag`.
         let resolved = ResolvedSource {
-            source_code: bun_core::String::empty(),
-            specifier: *specifier,
-            source_url: bun_core::String::clone_utf8(&name),
             tag,
-            source_code_needs_deref: false,
             ..ResolvedSource::default()
         };
         // SAFETY: C++ passed a valid out-param.
@@ -591,8 +588,8 @@ unsafe extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        bun_core::String::init(bun_core::ZigString::init(namespace)),
-        bun_core::String::init(bun_core::ZigString::init(after_namespace)),
+        &bun_core::String::init(bun_core::ZigString::init(namespace)),
+        &bun_core::String::init(bun_core::ZigString::init(after_namespace)),
         crate::BunPluginTarget::Bun,
     ) {
         Ok(Some(v)) => v,

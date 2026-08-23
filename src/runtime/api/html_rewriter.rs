@@ -2457,8 +2457,7 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     value
 }
 
-/// lol-html error `Display` text → owned `bun.String` (a `+1` ref, consumed
-/// by `to_error_instance` / `ValueError::Message`).
+/// lol-html error `Display` text → owned `bun.String`.
 fn lol_err_string(e: impl core::fmt::Display) -> BunString {
     BunString::clone_utf8(e.to_string().as_bytes())
 }

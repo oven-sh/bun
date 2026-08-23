@@ -166,16 +166,14 @@ pub(crate) fn write_bind<Context: WriterContext>(
         };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                let mut str = BunString::empty();
                 // Use jsonStringifyFast for SIMD-optimized serialization
-                value
-                    .json_stringify_fast(global, &mut str)
+                let str = value
+                    .json_stringify_fast(global)
                     .map_err(js_error_to_postgres)?;
                 let slice = str.to_utf8_without_ref();
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
             }
             types::Tag::bool => {
                 let l = writer.length()?;
@@ -218,9 +216,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
             }
 
             _ => {
-                let str = bun_core::OwnedString::new(
-                    BunString::from_js(value, global).map_err(js_error_to_postgres)?,
-                );
+                let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
                 if str.tag() == bun_core::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
                 }

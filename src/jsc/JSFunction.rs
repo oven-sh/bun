@@ -49,7 +49,7 @@ pub struct CreateJSFunctionOptions {
 unsafe extern "C" {
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
-        fn_name: BunString,
+        fn_name: &BunString,
         implementation: JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,
@@ -70,7 +70,7 @@ impl JSFunction {
     ) -> JSValue {
         JSFunction__createFromZig(
             global,
-            fn_name.into(),
+            &fn_name.into(),
             implementation,
             function_length,
             options.implementation_visibility,

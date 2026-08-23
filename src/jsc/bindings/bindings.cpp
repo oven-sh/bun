@@ -3726,11 +3726,11 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, message, cause, nullptr, JSC::TypeNothing, false)));
 }
-JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, BunString message, JSValue cause)
+JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, const BunString* message, JSValue cause)
 {
     auto& vm = JSC::getVM(global);
     JSC::Structure* errorStructure = global->errorStructure(JSC::ErrorType::AggregateError);
-    WTF::String messageString = message.toWTFString();
+    WTF::String messageString = message->toWTFString();
     return JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, messageString, cause, nullptr, JSC::TypeNothing, false));
 }
 
@@ -6185,7 +6185,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue v
     }
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject* globalObject, BunString* str)
+extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
     auto& vm = JSC::getVM(globalObject);
     return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
@@ -6628,7 +6628,7 @@ extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* global
 
 extern "C" EncodedJSValue JSFunction__createFromZig(
     JSC::JSGlobalObject* global,
-    BunString fn_name,
+    const BunString* fn_name,
     NativeFunction implementation,
     unsigned arg_count,
     ImplementationVisibility implementation_visibility,
@@ -6636,7 +6636,7 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
     NativeFunction constructorOrNull)
 {
     VM& vm = global->vm();
-    auto name = fn_name.toWTFString();
+    auto name = fn_name->toWTFString();
     return JSValue::encode(JSFunction::create(
         vm,
         global,

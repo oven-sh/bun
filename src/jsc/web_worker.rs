@@ -282,8 +282,8 @@ impl WebWorker {
     pub(crate) unsafe extern "C" fn create(
         proxy: *mut c_void,
         parent: *mut VirtualMachine,
-        name_str: BunString,
-        specifier_str: BunString,
+        name_str: &BunString,
+        specifier_str: &BunString,
         error_message: &mut BunString,
         _parent_context_id: u32,
         this_context_id: u32,
@@ -836,12 +836,12 @@ impl WebWorker {
                     // to `err`, which is dropped immediately after).
                     vm_log.add_error(None, bun_ast::Loc::EMPTY, err.slice().to_vec());
                 }
-                resolve_error.deref();
+                drop(resolve_error);
                 self.flush_logs(vm);
                 return self.shutdown();
             }
         };
-        resolve_error.deref();
+        drop(resolve_error);
 
         // Terminated while resolving — exit code 0, no error.
         if self.has_requested_terminate() {
@@ -1153,7 +1153,7 @@ impl WebWorker {
             let str = err.to_bun_string(global)?;
             Ok((err, str))
         })();
-        let (err, str) = match result {
+        let (err, mut str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(err) => {
@@ -1163,7 +1163,6 @@ impl WebWorker {
                 return;
             }
         };
-        let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
             WebWorker__dispatchError(global, self.messaging_proxy, &mut str, err)
         });
@@ -1242,7 +1241,7 @@ fn on_unhandled_rejection(
     // (declares + checks a TopExceptionScope around the FFI call, same as
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
-    let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
+    let mut error_message = BunString::clone_utf8(&array);
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         WebWorker__dispatchError(
             global_object,

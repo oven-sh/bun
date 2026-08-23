@@ -422,7 +422,7 @@ impl ScopeFunctions {
                         // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
                         // `TestRunner` for the process lifetime; single-threaded here so the
                         // exclusive borrow is unaliased.
-                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(str);
+                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(&str);
 
                         bun_test.collection.filter_buffer.clear();
                     }
@@ -563,7 +563,6 @@ fn get_description(
         }
 
         let description_name = description.get_name(global)?;
-        // `description_name.deref()` handled by Drop on bun_core::String
         return Ok(description_name.to_owned_slice());
     }
 

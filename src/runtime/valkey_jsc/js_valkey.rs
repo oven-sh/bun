@@ -531,7 +531,6 @@ impl JSValkeyClient {
                 None => BunString::static_(b"valkey://localhost:6379"),
             }
         };
-        // `defer url_str.deref();` — bun_core::String drops on scope exit.
         let mut fallback_url_buf = [0u8; 2048];
 
         // Parse and validate the URL using `URL::from_string`, which returns null for invalid URLs

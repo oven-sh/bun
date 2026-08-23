@@ -3,14 +3,15 @@
 //! Referenced from `PathInlines.h`.
 
 use crate::JSGlobalObject;
-use bun_core::String as BunString;
+use bun_core::{RawString, String as BunString};
 use bun_paths::resolve_path;
 
+/// Returns +1; the C++ caller `transferToWTFString()`s it.
 #[unsafe(no_mangle)]
 extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     global_object: &JSGlobalObject,
-    input: BunString,
-) -> BunString {
+    input: &BunString,
+) -> RawString {
     let str = input.to_utf8_without_ref();
 
     // The cwd is the FileSystem singleton's top_level_dir (resolver_jsc.rs
@@ -29,5 +30,5 @@ extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
         &[str.slice()],
     );
 
-    BunString::clone_utf8(out_slice)
+    BunString::clone_utf8(out_slice).into_raw()
 }

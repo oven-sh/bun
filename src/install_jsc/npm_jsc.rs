@@ -94,13 +94,10 @@ fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         )));
     }
 
-    // `defer manifest_filename_str.deref()` — release the +1 WTFStringImpl ref
-    // returned by `toBunString`; `bun_core::String` has no `Drop` impl.
-    let manifest_filename_str = scopeguard::guard(args[0].to_bun_string(global)?, |s| s.deref());
+    let manifest_filename_str = args[0].to_bun_string(global)?;
     let manifest_filename = manifest_filename_str.to_utf8();
 
-    // `defer registry_str.deref()` — see above.
-    let registry_str = scopeguard::guard(args[1].to_bun_string(global)?, |s| s.deref());
+    let registry_str = args[1].to_bun_string(global)?;
     let registry = registry_str.to_utf8();
 
     let manifest_file = match bun_sys::openat_a(
@@ -169,6 +166,6 @@ fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
     }
 
-    let mut result = BunString::borrow_utf8(&buf);
-    bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut result, global)
+    let result = BunString::borrow_utf8(&buf);
+    bun_jsc::bun_string_jsc::to_js_by_parse_json(&result, global)
 }

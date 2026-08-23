@@ -164,7 +164,7 @@ pub struct RequestContext<
     pub(crate) response_body_readable_stream_ref: JsCell<readable_stream::Strong>,
 
     /// Used in errors
-    pub(crate) pathname: Cell<BunString>,
+    pub(crate) pathname: bun_core::StringCell,
 
     /// Used either for temporary blob data or fallback
     /// When the response body is a temporary value
@@ -1370,7 +1370,7 @@ where
                 sink: Cell::new(None),
                 byte_stream: Cell::new(None),
                 response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
-                pathname: Cell::new(BunString::empty()),
+                pathname: bun_core::StringCell::new(BunString::empty()),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
@@ -1568,11 +1568,7 @@ where
         self.response_body_readable_stream_ref
             .with_mut(|s| s.deinit());
 
-        let pathname = self.pathname.get();
-        if !pathname.is_empty() {
-            pathname.deref();
-            self.pathname.set(BunString::empty());
-        }
+        self.pathname.set(BunString::empty());
     }
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
@@ -2326,7 +2322,7 @@ where
         ctx_log!("toAsync");
         self.to_async_without_abort_handler(req, request_object);
         if DEBUG_MODE {
-            self.pathname.set(request_object.url.get().clone());
+            self.pathname.set(request_object.url.get().to_owned());
         }
         self.set_abort_handler();
     }

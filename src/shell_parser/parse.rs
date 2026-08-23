@@ -3158,7 +3158,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn append_string_to_str_pool(&mut self, bunstr: BunString) -> Result<(), LexerError> {
+    fn append_string_to_str_pool(&mut self, bunstr: &BunString) -> Result<(), LexerError> {
         let start = self.strpool.len();
         if bunstr.is_utf16() {
             let utf16 = bunstr.utf16();
@@ -3199,7 +3199,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn handle_js_string_ref(&mut self, bunstr: BunString) -> Result<(), LexerError> {
+    fn handle_js_string_ref(
+        &mut self,
+        bunstr: bun_core::StringView<'bump>,
+    ) -> Result<(), LexerError> {
         if bunstr.length() == 0 {
             // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
             // The parser converts this to a quoted_empty atom, preserving the empty arg.
@@ -3213,7 +3216,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return Ok(());
         }
         let start = self.j;
-        self.append_string_to_str_pool(bunstr)?;
+        self.append_string_to_str_pool(&bunstr)?;
         self.js_string_ranges.push(TextRange { start, end: self.j });
         // Interpolated values are data, not shell syntax. If the value would
         // begin its Text token with `~`, flush it as a quoted-text token so the
@@ -3370,14 +3373,17 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         None
     }
 
-    /// __NOTE__: Do not store references to the returned BunString, it does not have its ref count incremented
-    fn eat_js_string_ref(&mut self) -> Option<BunString> {
+    fn eat_js_string_ref(&mut self) -> Option<bun_core::StringView<'bump>> {
         if let Some(idx) = self.eat_js_substitution_idx(
             LEX_JS_STRING_PREFIX,
             "JS string ref",
             Self::validate_js_string_ref_idx,
         ) {
-            return Some(self.string_refs[idx]);
+            // SAFETY: `string_refs` is `&'bump [String]`; elements are neither
+            // moved nor dropped for `'bump`.
+            return Some(unsafe {
+                bun_core::StringView::from_raw(*self.string_refs[idx].as_raw())
+            });
         }
         None
     }
@@ -3956,7 +3962,7 @@ pub(crate) const SPECIAL_CHARS_TABLE: ByteTable = {
 pub(crate) const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 
 pub fn escape_bun_str<const ADD_QUOTES: bool>(
-    bunstr: BunString,
+    bunstr: &BunString,
     outbuf: &mut Vec<u8>,
 ) -> Result<bool, bun_alloc::AllocError> {
     if bunstr.is_utf16() {
@@ -4061,7 +4067,7 @@ pub(crate) fn escape_utf16<const ADD_QUOTES: bool>(
     Ok(EscapeUtf16Result { is_invalid: false })
 }
 
-pub fn needs_escape_bunstr(bunstr: BunString) -> bool {
+pub fn needs_escape_bunstr(bunstr: &BunString) -> bool {
     if bunstr.is_utf16() {
         return needs_escape_utf16(bunstr.utf16());
     }
@@ -4098,7 +4104,7 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
     false
 }
 
-pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
+pub fn is_if_clause_keyword_bunstr(bunstr: &BunString) -> bool {
     use IfClauseTok::{Elif, Else, Fi, If, Then};
     [If, Else, Elif, Then, Fi]
         .iter()

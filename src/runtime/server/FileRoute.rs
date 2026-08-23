@@ -87,9 +87,9 @@ impl FileRoute {
     pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
-                let mut string = BunString::borrow_utf8(last_modified);
+                let string = BunString::borrow_utf8(last_modified);
                 let global = VirtualMachine::get().as_mut().global();
-                let date_f64 = bun_jsc::bun_string_jsc::parse_date(&mut string, global)?;
+                let date_f64 = bun_jsc::bun_string_jsc::parse_date(&string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {
                     return Ok(Some(date_f64 as u64));
                 }

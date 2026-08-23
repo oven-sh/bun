@@ -548,7 +548,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
         auto filenameWtfStr = filename.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         BunString filenameStr = Bun::toString(filenameWtfStr);
-        JSValue paths = JSValue::decode(Resolver__nodeModulePathsJSValue(filenameStr, globalObject, true));
+        JSValue paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filenameStr, globalObject, true));
         RETURN_IF_EXCEPTION(scope, {});
         thisObject->m_paths.set(globalObject->vm(), thisObject, paths);
         return JSValue::encode(paths);
@@ -1375,14 +1375,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     ErrorableResolvedSource res;
-    res.success = false;
-    memset(&res.result, 0, sizeof res.result);
     BunString specifierStr = Bun::toString(specifier);
     auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (result) {
-        if (res.success)
-            return JSC::JSValue::encode(result);
+    if (result && !(result.isNumber() && result.asNumber() == -1)) {
+        return JSC::JSValue::encode(result);
     }
     throwScope.assertNoExceptionExceptTermination();
     return throwVMError(globalObject, throwScope, "Failed to fetch builtin module"_s);
@@ -1409,17 +1406,15 @@ void JSCommonJSModule::evaluate(
         auto string = source.source_code.toWTFString(BunString::ZeroCopy);
         auto trimStart = string.find('\n');
         if (trimStart != WTF::notFound) {
-            if (source.needsDeref && !isBuiltIn) {
-                source.needsDeref = false;
-                source.source_code.deref();
-            }
             auto wrapperStart = globalObject->m_moduleWrapperStart;
             auto wrapperEnd = globalObject->m_moduleWrapperEnd;
-            source.source_code = Bun::toStringRef(makeString(
+            auto wrapped = makeString(
                 wrapperStart,
                 string.substring(trimStart, string.length() - trimStart - 4),
-                wrapperEnd));
-            source.needsDeref = true;
+                wrapperEnd);
+            string = {};
+            source.source_code.deref();
+            source.source_code = Bun::toStringRef(wrapped);
         }
     }
 
@@ -1467,12 +1462,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;
         }
-        WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
-        RETURN_IF_EXCEPTION(scope, );
-        if (source.needsDeref) {
-            source.needsDeref = false;
-            source.source_code.deref();
-        }
+        WTF::String sourceString = source.source_code.transferToWTFString();
         // Remove the wrapper from the source string, since the transpiler has added it.
         auto trimStart = sourceString.find('\n');
         WTF::String sourceStringWithoutWrapper;
@@ -1536,9 +1526,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
             auto concat = makeString(
                 globalObject->m_moduleWrapperStart,
-                source.source_code.toWTFString(BunString::ZeroCopy),
+                source.source_code.transferToWTFString(),
                 globalObject->m_moduleWrapperEnd);
-            source.source_code.deref();
             source.source_code = Bun::toStringRef(concat);
         }
 

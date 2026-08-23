@@ -861,12 +861,9 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__toZigString(self, out, global))
     }
     pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
-        // `to_bun_string` returns a +1 ref; `bun_core::String` is
-        // `Copy` (no `Drop`), so wrap in `OwnedString` for the scope-exit
-        // `deref()`. `to_utf8()` takes its own ref (or owned alloc) so the
-        // slice survives the drop.
-        let s = bun_core::OwnedString::new(self.to_bun_string(global)?);
-        Ok(s.to_utf8())
+        // `to_utf8()` takes its own ref (or owned alloc) so the slice survives
+        // dropping the `to_bun_string` result.
+        Ok(self.to_bun_string(global)?.to_utf8())
     }
     /// Call `toString()` on the JSValue and clone the result.
     /// On exception or out of memory, this returns a `JsError`.
@@ -880,14 +877,8 @@ impl JSValue {
         self.to_js_string(global)?.to_slice_clone(global)
     }
     /// Call `toString()` on the JSValue and clone the result.
-    ///
-    /// `bun_core::String` is `Copy` and has NO `Drop`; `OwnedString` provides
-    /// the scope-exit `deref()`. `to_utf8()` refs the
-    /// underlying WTFStringImpl (or heap-clones) so the slice survives the
-    /// `OwnedString` drop.
     pub fn to_slice_or_null(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
-        let s = bun_core::OwnedString::new(self.to_bun_string(global)?);
-        Ok(s.to_utf8())
+        Ok(self.to_bun_string(global)?.to_utf8())
     }
     pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
         JSC__JSValue__toZigException(self, global, exception)
@@ -1594,23 +1585,22 @@ impl JSValue {
         self,
         global: &JSGlobalObject,
         indent: u32,
-        out: &mut bun_core::String,
-    ) -> JsResult<()> {
+    ) -> JsResult<bun_core::String> {
+        let mut out = bun_core::String::empty();
         host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jsonStringify(self, global, indent, out)
-        })
+            JSC__JSValue__jsonStringify(self, global, indent, &mut out)
+        })?;
+        Ok(out)
     }
 
     /// `JSValue.jsonStringifyFast` — `JSON.stringify(this)`
     /// with no indent / no replacer (fast path used by SQL value binders).
-    pub fn json_stringify_fast(
-        self,
-        global: &JSGlobalObject,
-        out: &mut bun_core::String,
-    ) -> JsResult<()> {
+    pub fn json_stringify_fast(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
+        let mut out = bun_core::String::empty();
         host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jsonStringifyFast(self, global, out)
-        })
+            JSC__JSValue__jsonStringifyFast(self, global, &mut out)
+        })?;
+        Ok(out)
     }
 
     pub fn temporal_type(self) -> TemporalType {
@@ -1842,16 +1832,8 @@ impl FromAny for &str {
     }
 }
 impl FromAny for Box<[bun_core::String]> {
-    /// The boxed
-    /// slice is consumed: every element's WTF refcount is dropped and the
-    /// backing allocation freed via `Box` drop. `bun_core::String` is `Copy`
-    /// with no `Drop`, so the explicit `deref()` loop is required.
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let result = bun_string_jsc::to_js_array(global, &self);
-        for out in self.iter() {
-            out.deref();
-        }
-        result
+        bun_string_jsc::to_js_array(global, &self)
     }
 }
 impl<T: FromAny> FromAny for Option<T> {
@@ -2252,11 +2234,7 @@ pub struct StringFormatter<'a> {
 impl core::fmt::Display for StringFormatter<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.value.to_bun_string(self.global) {
-            Ok(s) => {
-                let r = core::fmt::Display::fmt(&s, f);
-                s.deref();
-                r
-            }
+            Ok(s) => core::fmt::Display::fmt(&s, f),
             Err(_) => Err(core::fmt::Error),
         }
     }

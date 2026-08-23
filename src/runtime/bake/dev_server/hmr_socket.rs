@@ -164,7 +164,6 @@ impl HmrSocket {
                 if let Some(agent) = dev.inspector() {
                     if self.inspector_connection_id > -1 {
                         let mut pattern_str = bun_core::String::init(pattern);
-                        // `defer pattern_str.deref()` → Drop on bun_core::String
                         agent.notify_client_navigated(
                             dev.inspector_server_id,
                             self.inspector_connection_id,
@@ -259,7 +258,6 @@ impl HmrSocket {
 
                 if let Some(agent) = dev.inspector() {
                     let mut log_str = bun_core::String::init(data);
-                    // `defer log_str.deref()` → Drop on bun_core::String
                     agent.notify_console_log(dev.inspector_server_id, kind as u8, &mut log_str);
                 }
 

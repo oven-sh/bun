@@ -33,7 +33,7 @@ impl IniTestingAPIs {
         use bun_install::npm::Registry;
 
         let arg = frame.argument(0);
-        let npmrc_contents = bun_core::OwnedString::new(arg.to_bun_string(global)?);
+        let npmrc_contents = arg.to_bun_string(global)?;
         let npmrc_utf8 = npmrc_contents.to_utf8();
         let source = Source::init_path_string(b"<js>", npmrc_utf8.slice());
 
@@ -112,8 +112,6 @@ impl IniTestingAPIs {
                 BunString::from_bytes(&default_registry.email),
             )
         };
-        // `defer { *.deref() }` deleted — bun_core::String impls Drop.
-
         // Rust has no field reflection; mirror struct-literal object creation with
         // a local `PojoFields` impl (the bun_jsc-convention until `#[derive(PojoFields)]`
         // lands) so each `bun.String → JSValue` encoding interleaves with `put()` and
@@ -173,7 +171,7 @@ impl IniTestingAPIs {
         let arguments = frame.arguments();
 
         let jsstr = arguments[0];
-        let bunstr = bun_core::OwnedString::new(jsstr.to_bun_string(global)?);
+        let bunstr = jsstr.to_bun_string(global)?;
         let utf8str = bunstr.to_utf8();
 
         let env = global.bun_vm().as_mut().transpiler.env();

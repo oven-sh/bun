@@ -2241,27 +2241,9 @@ mod _async_tasks {
     impl ResultListEntryValue {
         pub(crate) fn deinit(&mut self) {
             match self {
-                ResultListEntryValue::WithFileTypes(res) => {
-                    for item in res.iter() {
-                        item.deref();
-                    }
-                    res.clear();
-                }
-                ResultListEntryValue::Buffers(res) => {
-                    // `MarkedArrayBuffer::destroy` frees the owned byte slice when
-                    // `owns_buffer` (set by `Buffer::from_string` in
-                    // `ReaddirEntry::append_entry*`).
-                    for item in res.iter_mut() {
-                        item.destroy();
-                    }
-                    res.clear();
-                }
-                ResultListEntryValue::Files(res) => {
-                    for item in res.iter() {
-                        item.deref();
-                    }
-                    res.clear();
-                }
+                ResultListEntryValue::WithFileTypes(res) => res.clear(),
+                ResultListEntryValue::Buffers(res) => res.clear(),
+                ResultListEntryValue::Files(res) => res.clear(),
             }
         }
     }
@@ -2416,9 +2398,7 @@ mod _async_tasks {
                     );
                     match res {
                         Err(err) => {
-                            for item in &mut entries {
-                                <$T as ReaddirEntry>::destroy_entry(item);
-                            }
+                            entries.clear();
                             {
                                 let _lock = self.pending_err_mutex.lock_guard();
                                 if self.pending_err.is_none() {
@@ -3093,7 +3073,6 @@ pub mod args {
                     if next_val.is_string() {
                         arguments.eat();
                         let str = next_val.to_bun_string(ctx)?;
-                        let str = scopeguard::guard(str, |s| s.deref());
                         if str.eql_comptime("dir") {
                             break 'link_type SymlinkLinkType::Dir;
                         }
@@ -3103,7 +3082,7 @@ pub mod args {
                         if str.eql_comptime("junction") {
                             break 'link_type SymlinkLinkType::Junction;
                         }
-                        return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", *str)).throw());
+                        return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw());
                     }
                     // not a string. fallthrough to auto detect.
                     return Err(ctx
@@ -3890,9 +3869,7 @@ pub mod args {
                 if position.order(-1i64) == core::cmp::Ordering::Less
                     || position.order(max_position) == core::cmp::Ordering::Greater
                 {
-                    let position_str = position.to_string(ctx)?;
-                    let position_bytes = position_str.to_owned_slice();
-                    position_str.deref();
+                    let position_bytes = position.to_string(ctx)?.to_owned_slice();
                     return Err(ctx.throw_range_error(
                         &position_bytes[..],
                         bun_jsc::RangeErrorOptions {
@@ -4366,7 +4343,7 @@ impl StringOrUndefined {
     fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             StringOrUndefined::String(s) => {
-                bun_jsc::bun_string_jsc::transfer_to_js(s, global_object)
+                bun_jsc::bun_string_jsc::into_js(core::mem::take(s), global_object)
             }
             StringOrUndefined::None => Ok(JSValue::UNDEFINED),
         }
@@ -6269,21 +6246,14 @@ impl NodeFS {
         }
 
         let mut dirent_path = BunString::DEAD;
-        // `dirent_path.deref()` cannot be expressed as a scope guard
-        // (the loop body needs `&mut dirent_path`); deref is idempotent on DEAD/EMPTY
-        // so it is called inline on every exit path below instead.
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         loop {
             let current = match iterator.next() {
                 Err(err) => {
-                    for item in entries.iter_mut() {
-                        item.destroy_entry();
-                    }
                     // The caller owns the Vec; drain it on error so the caller's
                     // `T::into_readdir` never sees stale entries.
                     entries.clear();
-                    dirent_path.deref();
                     return Err(err.with_path(args.path.slice()));
                 }
                 Ok(None) => break,
@@ -6311,7 +6281,6 @@ impl NodeFS {
             T::append_entry(entries, utf8_name, &dirent_path, kind, args.encoding);
         }
 
-        dirent_path.deref();
         Ok(())
     }
 
@@ -6340,11 +6309,7 @@ impl NodeFS {
         loop {
             let current = match iterator.next() {
                 Err(err) => {
-                    for item in entries.iter_mut() {
-                        item.destroy_entry();
-                    }
                     entries.clear();
-                    dirent_path.deref();
                     return Err(err.with_path(args.path.slice()));
                 }
                 Ok(None) => break,
@@ -6371,7 +6336,6 @@ impl NodeFS {
             );
         }
 
-        dirent_path.deref();
         Ok(())
     }
 
@@ -6459,7 +6423,6 @@ impl NodeFS {
                 Ok(None) => break,
                 Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => break,
                 Err(err) => {
-                    dirent_path_prev.deref();
                     if !is_root
                         && root_basename.len() + 1 + basename.as_bytes().len() + 1
                             < paths::MAX_PATH_BYTES
@@ -6539,7 +6502,6 @@ impl NodeFS {
                 );
                 let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                 if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
-                    dirent_path_prev.deref();
                     dirent_path_prev = BunString::clone_utf8(path_u8);
                 }
             }
@@ -6555,7 +6517,6 @@ impl NodeFS {
             );
         }
 
-        dirent_path_prev.deref();
         Ok(())
     }
 
@@ -6651,7 +6612,6 @@ impl NodeFS {
                     Ok(None) => break,
                     Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => break,
                     Err(err) => {
-                        dirent_path_prev.deref();
                         return Err(err.with_path(args.path.slice()));
                     }
                 };
@@ -6715,7 +6675,6 @@ impl NodeFS {
                     );
                     let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                     if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
-                        dirent_path_prev.deref();
                         dirent_path_prev = webcore::encoding::to_bun_string(
                             without_nt_prefix::<u8>(path_u8),
                             encoding_to_node(args.encoding),
@@ -6733,7 +6692,6 @@ impl NodeFS {
                     true,
                 );
             }
-            dirent_path_prev.deref();
         }
 
         Ok(())
@@ -6791,12 +6749,7 @@ impl NodeFS {
                 path,
                 &mut entries,
             ) {
-                Err(err) => {
-                    for result in &mut entries {
-                        result.destroy_entry();
-                    }
-                    Err(err)
-                }
+                Err(err) => Err(err),
                 Ok(()) => Ok(T::into_readdir(entries)),
             };
         }
@@ -6875,6 +6828,7 @@ impl NodeFS {
                     Some(i) => (&name[i + 1..], &name[..i]),
                     None => (&name[..], b"".as_slice()),
                 };
+                let joined_path;
                 let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
                     joined.clear();
                     joined.extend_from_slice(args.path.slice());
@@ -6882,25 +6836,24 @@ impl NodeFS {
                         joined.push(paths::SEP);
                     }
                     joined.extend_from_slice(parent);
-                    BunString::clone_utf8(&joined)
+                    joined_path = BunString::clone_utf8(&joined);
+                    &joined_path
                 } else {
-                    root_path.dupe_ref()
+                    &root_path
                 };
                 T::append_entry_recursive(
                     &mut entries,
                     base,
                     &name,
-                    &dirent_path,
+                    dirent_path,
                     kind,
                     args.encoding,
                     flavor == Flavor::Sync,
                 );
-                dirent_path.deref();
             } else {
                 T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
             }
         }
-        root_path.deref();
         Ok(T::into_readdir(entries))
     }
 
@@ -9272,7 +9225,6 @@ pub trait ReaddirEntry: Sized {
     const IS_DIRENT: bool;
     /// Windows: entry names arrive as UTF-16 (`append_entry_w`).
     const IS_U16: bool;
-    fn destroy_entry(&mut self);
     /// Windows-only: append from a UTF-16 directory entry name.
     /// Non-recursive readdir; `re_encoding_buffer` is the pooled scratch for
     /// `strings::from_w_path` when `encoding != utf8`. Only ever invoked when
@@ -9315,9 +9267,6 @@ pub trait ReaddirEntry: Sized {
 impl ReaddirEntry for BunString {
     const IS_DIRENT: bool = false;
     const IS_U16: bool = Environment::IS_WINDOWS;
-    fn destroy_entry(&mut self) {
-        self.deref();
-    }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::Files(v.into_boxed_slice())
     }
@@ -9370,9 +9319,6 @@ impl ReaddirEntry for BunString {
 impl ReaddirEntry for Dirent {
     const IS_DIRENT: bool = true;
     const IS_U16: bool = Environment::IS_WINDOWS;
-    fn destroy_entry(&mut self) {
-        self.deref();
-    }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::WithFileTypes(v.into_boxed_slice())
     }
@@ -9385,7 +9331,7 @@ impl ReaddirEntry for Dirent {
     ) {
         entries.push(Dirent {
             name: webcore::encoding::to_bun_string(utf8_name, encoding),
-            path: dirent_path.dupe_ref(),
+            path: dirent_path.clone(),
             kind,
         });
     }
@@ -9401,7 +9347,7 @@ impl ReaddirEntry for Dirent {
         // name (no re-encoding) and skips the lstatat() DT_UNKNOWN fallback.
         entries.push(Dirent {
             name: BunString::clone_utf16(utf16_name),
-            path: dirent_path.dupe_ref(),
+            path: dirent_path.clone(),
             kind,
         });
     }
@@ -9420,7 +9366,7 @@ impl ReaddirEntry for Dirent {
             } else {
                 BunString::clone_utf8(utf8_name)
             },
-            path: dirent_path.dupe_ref(),
+            path: dirent_path.clone(),
             kind,
         });
     }
@@ -9428,9 +9374,6 @@ impl ReaddirEntry for Dirent {
 impl ReaddirEntry for Buffer {
     const IS_DIRENT: bool = false;
     const IS_U16: bool = false;
-    fn destroy_entry(&mut self) {
-        self.destroy();
-    }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::Buffers(v.into_boxed_slice())
     }

@@ -471,7 +471,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 }
 
 #if OS(WINDOWS)
-extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
+extern "C" void Bun__Process__editWindowsEnvVar(const BunString*, const BunString*);
 
 // Windows Proxy set/defineProperty write path: DEP0104 + ToString via coerceEnvValue,
 // plus the TZ side effect so it survives `delete process.env.TZ`. Returns the string.
@@ -531,9 +531,13 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     if (arg2.isCell()) {
         WTF::String string2 = arg2.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, {});
-        Bun__Process__editWindowsEnvVar(Bun::toString(string1), Bun::toString(string2));
+        BunString k = Bun::toString(string1);
+        BunString v = Bun::toString(string2);
+        Bun__Process__editWindowsEnvVar(&k, &v);
     } else {
-        Bun__Process__editWindowsEnvVar(Bun::toString(string1), { .tag = BunStringTag::Dead });
+        BunString k = Bun::toString(string1);
+        BunString v = { .tag = BunStringTag::Dead };
+        Bun__Process__editWindowsEnvVar(&k, &v);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
@@ -549,10 +553,9 @@ static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& ke
 #if OS(WINDOWS)
     if (!store || !store->isMainRooted())
         return;
-    if (value)
-        Bun__Process__editWindowsEnvVar(Bun::toString(key), Bun::toString(*value));
-    else
-        Bun__Process__editWindowsEnvVar(Bun::toString(key), { .tag = BunStringTag::Dead });
+    BunString k = Bun::toString(key);
+    BunString v = value ? Bun::toString(*value) : BunString { .tag = BunStringTag::Dead };
+    Bun__Process__editWindowsEnvVar(&k, &v);
 #else
     UNUSED_PARAM(store);
     UNUSED_PARAM(key);

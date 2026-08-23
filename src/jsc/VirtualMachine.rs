@@ -580,13 +580,15 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
-        out: &mut bun_core::String,
+        out: &mut core::mem::MaybeUninit<bun_core::String>,
     ) {
-        *out = if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
-            bun_core::String::static_(MAIN_FILE_NAME)
-        } else {
-            bun_core::String::borrow_utf8(vm.main())
-        };
+        out.write(
+            if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
+                bun_core::String::static_(MAIN_FILE_NAME)
+            } else {
+                bun_core::String::borrow_utf8(vm.main())
+            },
+        );
     }
 
     #[unsafe(no_mangle)]
@@ -2727,7 +2729,6 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
-        self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
@@ -2908,8 +2909,8 @@ impl VirtualMachine {
 /// than `&mut VirtualMachine` because the body never touches VM state.
 pub(crate) fn process_fetch_log(
     global_this: &JSGlobalObject,
-    specifier: bun_core::String,
-    referrer: bun_core::String,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
     log: &mut bun_ast::Log,
     ret: &mut ErrorableResolvedSource,
     err: crate::CrateError,
@@ -3422,7 +3423,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 #[inline]
 pub(crate) fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
     if s.eql_utf8(other) {
-        return s.dupe_ref();
+        return s.clone();
     }
     bun_core::String::clone_utf8(other)
 }
@@ -4111,44 +4112,30 @@ impl VirtualMachine {
     }
 
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
-    pub fn ref_counted_resolved_source<const ADD_DOUBLE_REF: bool>(
+    pub fn ref_counted_resolved_source(
         &mut self,
         code: &[u8],
-        specifier: bun_core::String,
+        specifier: &bun_core::String,
         source_url: &[u8],
         hash_: Option<u32>,
     ) -> ResolvedSource {
         // refCountedString will panic if the code is empty
         if code.is_empty() {
             return ResolvedSource {
-                source_code: bun_core::String::init(b""),
-                specifier,
-                source_url: create_if_different(&specifier, source_url),
-                source_code_needs_deref: false,
+                source_code: bun_core::String::empty(),
+                source_url: create_if_different(specifier, source_url),
                 ..Default::default()
             };
         }
-        // Const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
-        let source = if ADD_DOUBLE_REF {
-            self.ref_counted_string::<false>(code, hash_)
-        } else {
-            self.ref_counted_string::<true>(code, hash_)
-        };
+        let source = self.ref_counted_string::<true>(code, hash_);
         // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
-        // `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
-        // external-string finalizer.
+        // `self.ref_strings` until JSC calls the external-string finalizer.
         let source_ref = unsafe { &*source };
-        if ADD_DOUBLE_REF {
-            source_ref.ref_();
-            source_ref.ref_();
-        }
 
         ResolvedSource {
-            source_code: bun_core::String::adopt_wtf_impl(source_ref.impl_),
-            specifier,
-            source_url: create_if_different(&specifier, source_url),
+            source_code: bun_core::String::retain_wtf_impl(source_ref.impl_),
+            source_url: create_if_different(specifier, source_url),
             allocator: source.cast::<c_void>(),
-            source_code_needs_deref: false,
             ..Default::default()
         }
     }
@@ -4234,8 +4221,8 @@ impl VirtualMachine {
     pub(crate) fn fetch_without_on_load_plugins(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
-        specifier: bun_core::String,
-        referrer: bun_core::String,
+        specifier: &bun_core::String,
+        referrer: &bun_core::String,
         log: &mut bun_ast::Log,
         flags: FetchFlags,
     ) -> crate::CrateResult<ResolvedSource> {
@@ -4244,7 +4231,7 @@ impl VirtualMachine {
         let global_ptr = core::ptr::NonNull::from(global_object);
         let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
         let builtin =
-            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, &specifier, &referrer, &mut ret);
+            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, specifier, referrer, &mut ret);
         match builtin {
             ModuleLoader::FetchBuiltinResult::Found | ModuleLoader::FetchBuiltinResult::Errored => {
                 return ret.unwrap().map_err(Into::into);
@@ -4554,8 +4541,8 @@ impl VirtualMachine {
     pub(crate) fn resolve(
         res: &mut ErrorableString,
         global: &JSGlobalObject,
-        specifier: bun_core::String,
-        source: bun_core::String,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
     ) -> JsResult<()> {
@@ -4573,8 +4560,8 @@ impl VirtualMachine {
     pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>(
         res: &mut ErrorableString,
         global: &JSGlobalObject,
-        specifier: bun_core::String,
-        source: bun_core::String,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
     ) -> JsResult<()> {
@@ -4624,8 +4611,8 @@ impl VirtualMachine {
                 };
                 if let Some(resolved_path) = plugin_runner_on_resolve_jsc(
                     global,
-                    bun_core::String::init(namespace),
-                    bun_core::String::borrow_utf8(after_namespace),
+                    &bun_core::String::init(namespace),
+                    &bun_core::String::borrow_utf8(after_namespace),
                     source,
                     crate::BunPluginTarget::Bun,
                 )? {
@@ -4642,7 +4629,7 @@ impl VirtualMachine {
         ) {
             *res = ErrorableString::ok(
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
-                    specifier.dupe_ref()
+                    specifier.clone()
                 } else {
                     bun_core::String::init(hardcoded.path.as_bytes())
                 },
@@ -4652,7 +4639,7 @@ impl VirtualMachine {
 
         // Node's `--expose-internals`.
         if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
-            *res = ErrorableString::ok(specifier.dupe_ref());
+            *res = ErrorableString::ok(specifier.clone());
             return Ok(());
         }
 
@@ -4818,6 +4805,7 @@ impl VirtualMachine {
         unsafe { self.transpiler.deinit() };
 
         drop(core::mem::take(&mut self.resolved_path_dups));
+        drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
 
@@ -4880,7 +4868,6 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
-        self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
@@ -5140,7 +5127,6 @@ impl VirtualMachine {
         self.has_patched_run_main = false;
         self.set_main(b"");
         self.main_hash = 0;
-        self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
         self.unhandled_error_counter = 0;
         // The finished file's plugins are dropped with its global; the next
@@ -5526,7 +5512,6 @@ impl VirtualMachine {
                 bun_sourcemap::SourceContentHandling::NoSourceContents,
             ) {
                 if let Some(source_url) = lookup.display_source_url_if_needed(path) {
-                    frame.source_url.deref();
                     frame.source_url = source_url;
                 }
                 // Direct copy; both sides are
@@ -5773,7 +5758,6 @@ impl VirtualMachine {
             };
 
             if let Some(src) = display_url {
-                frames[top].source_url.deref();
                 frames[top].source_url = src;
             }
 
@@ -5792,10 +5776,8 @@ impl VirtualMachine {
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
                     self,
                     global,
-                    // `top.source_url` is passed by
-                    // value (no `dupeRef`); `bun_core::String` is `Copy`.
-                    frames[top].source_url,
-                    bun_core::String::empty(),
+                    &frames[top].source_url,
+                    &bun_core::String::empty(),
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {
@@ -5803,23 +5785,8 @@ impl VirtualMachine {
                     break 'code bun_core::ZigStringSlice::EMPTY;
                 };
                 *must_reset_parser_arena_later = true;
-                // Note: the transpile path `clone_utf8`s the source for
-                // `.print_source`
-                // (the backing `parse_result` drops on return — see
-                // jsc_hooks.rs Note at the `PrintSource` arm), leaving
-                // `source_code` with a +1 strong ref this caller never
-                // consumed. `to_utf8()` takes its own ref via
-                // `ZigStringSlice::WTF`, so balance the clone here. Also
-                // release the `dupe_ref` / `create_if_different` refs on
-                // `specifier` / `source_url` — this caller never reads them.
-                // Skipping the `source_code` deref leaks one WTFStringImpl
-                // (~file-size) per `Bun.inspect(new Error)` and fails
-                // inspect-error-leak.test.js.
-                let code = original_source.source_code.to_utf8();
-                original_source.source_code.deref();
-                original_source.specifier.deref();
-                original_source.source_url.deref();
-                code
+                // `to_utf8()` takes its own ref; `original_source` drops here.
+                original_source.source_code.to_utf8()
             };
 
             if enable_source_code_preview.get() && code.slice().is_empty() {
@@ -5886,7 +5853,6 @@ impl VirtualMachine {
                     bun_sourcemap::SourceContentHandling::NoSourceContents,
                 ) {
                     if let Some(src) = lookup.display_source_url_if_needed(source_url.slice()) {
-                        frames[i].source_url.deref();
                         frames[i].source_url = src;
                     }
                     let mapping = lookup.mapping;
@@ -6158,8 +6124,8 @@ impl VirtualMachine {
         }
         let _ = last_pad;
 
-        let name = exception.name;
-        let message = exception.message;
+        let name = &exception.name;
+        let message = &exception.message;
 
         let is_error_instance = error_instance != JSValue::ZERO
             && error_instance.is_cell()
@@ -6169,37 +6135,20 @@ impl VirtualMachine {
         // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
         // borrow. `global()` returns `&'static` so the borrow detaches.
         let global_ref = self.global();
-        // Note: hold the owning `bun_core::String`
-        // alongside the slice so the latin1 view stays live for this fn.
-        // `bun_core::String` is `Copy` (no `Drop`), so use a scopeguard to
-        // run `.deref()` on every exit path.
-        let mut code_string_guard = scopeguard::guard(None::<bun_core::String>, |s| {
-            if let Some(s) = s {
-                s.deref();
-            }
-        });
+        // Holds the owning `bun_core::String` so the latin1 view below stays
+        // live for this fn.
+        let code_string: Option<bun_core::String>;
         let code: Option<&[u8]> = if is_error_instance {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
             let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
             if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
                 if code_value.is_string() {
                     match code_value.to_bun_string(global_ref) {
-                        Ok(code_string) if code_string.is_8bit() => {
-                            // SAFETY: `code_string` is moved into
-                            // `code_string_guard` and outlives the borrow.
-                            let bytes: &[u8] = unsafe {
-                                bun_core::ffi::slice(
-                                    code_string.latin1().as_ptr(),
-                                    code_string.latin1().len(),
-                                )
-                            };
-                            *code_string_guard = Some(code_string);
-                            Some(bytes)
+                        Ok(s) if s.is_8bit() => {
+                            code_string = Some(s);
+                            code_string.as_ref().map(|s| s.latin1())
                         }
-                        Ok(s) => {
-                            s.deref();
-                            None
-                        }
+                        Ok(_) => None,
                         Err(_) => bun_core::out_of_memory(),
                     }
                 } else {
@@ -6549,8 +6498,8 @@ impl VirtualMachine {
     }
 
     fn print_error_name_and_message(
-        name: bun_core::String,
-        message: bun_core::String,
+        name: &bun_core::String,
+        message: &bun_core::String,
         is_browser_error: bool,
         optional_code: Option<&[u8]>,
         writer: &mut bun_core::io::Writer,
@@ -6597,20 +6546,26 @@ impl VirtualMachine {
                             };
                             if has_prefix {
                                 break 'brk (
-                                    bun_core::String::init(code),
+                                    bun_core::StringView::from_bytes(code),
                                     message.substring(code.len() + 2),
                                 );
                             }
                         }
                     }
-                    (bun_core::String::empty(), message)
+                    (
+                        bun_core::StringView::EMPTY,
+                        bun_core::StringView::new(message),
+                    )
                 }
             } else {
-                (name, message)
+                (
+                    bun_core::StringView::new(name),
+                    bun_core::StringView::new(message),
+                )
             };
             pretty_write!(
                 "{}<b>{}<r>\n",
-                error_display_level.formatter(display_name, allow_ansi_color, Colon::IncludeColon),
+                error_display_level.formatter(&display_name, allow_ansi_color, Colon::IncludeColon),
                 display_message,
             )?;
         } else if !name.is_empty() {
@@ -6623,7 +6578,7 @@ impl VirtualMachine {
             pretty_write!(
                 "{}<b>{}<r>\n",
                 error_display_level.formatter(
-                    bun_core::String::empty(),
+                    &bun_core::String::empty(),
                     allow_ansi_color,
                     Colon::IncludeColon
                 ),
@@ -6633,7 +6588,7 @@ impl VirtualMachine {
             pretty_write!(
                 "{}\n",
                 error_display_level.formatter(
-                    bun_core::String::empty(),
+                    &bun_core::String::empty(),
                     allow_ansi_color,
                     Colon::ExcludeColon
                 ),
@@ -6869,17 +6824,18 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
-    namespace: bun_core::String,
-    specifier: bun_core::String,
-    importer: bun_core::String,
+    namespace: &bun_core::String,
+    specifier: &bun_core::String,
+    importer: &bun_core::String,
     target: crate::BunPluginTarget,
 ) -> JsResult<Option<ErrorableString>> {
     use crate::StringJsc as _;
+    let empty = bun_core::String::EMPTY;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         if namespace.length() > 0 && !namespace.eql_comptime(b"file") {
             namespace
         } else {
-            bun_core::String::static_(b"")
+            &empty
         },
         specifier,
         importer,
@@ -6905,7 +6861,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         )));
     }
 
-    let file_path = bun_core::OwnedString::new(path_value.to_bun_string(global)?);
+    let file_path = path_value.to_bun_string(global)?;
 
     if file_path.length() == 0 {
         return Ok(Some(ErrorableString::err(
@@ -6941,37 +6897,30 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
                 break 'brk bun_core::String::static_(b"file");
             }
             if namespace_str.eql_comptime(b"file") {
-                namespace_str.deref();
                 break 'brk bun_core::String::static_(b"file");
             }
             if namespace_str.eql_comptime(b"bun") {
-                namespace_str.deref();
                 break 'brk bun_core::String::static_(b"bun");
             }
             if namespace_str.eql_comptime(b"node") {
-                namespace_str.deref();
                 break 'brk bun_core::String::static_(b"node");
             }
             break 'brk namespace_str;
         }
         break 'brk bun_core::String::static_(b"file");
     };
-    // `bun_core::String`
-    // is `Copy` (no `Drop`), so guard the WTF refcount across the remaining
-    // early-return paths.
-    let user_namespace = scopeguard::guard(user_namespace, |s| s.deref());
 
     // A `file`-namespace result (the default) is a filesystem path, not a new
     // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
     // form the module loader dispatches on.
     if user_namespace.eql_comptime(b"file") {
-        return Ok(Some(ErrorableString::ok(file_path.into_inner())));
+        return Ok(Some(ErrorableString::ok(file_path)));
     }
 
     // Our slow way of cloning the string into memory owned by JSC.
     use std::io::Write as _;
     let mut combined_string: Vec<u8> = Vec::new();
-    write!(&mut combined_string, "{}:{}", *user_namespace, file_path).expect("unreachable");
+    write!(&mut combined_string, "{}:{}", user_namespace, file_path).expect("unreachable");
     let out_ = bun_core::String::borrow_utf8(&combined_string);
     let out = out_.to_js(global)?.to_bun_string(global)?;
     Ok(Some(ErrorableString::ok(out)))

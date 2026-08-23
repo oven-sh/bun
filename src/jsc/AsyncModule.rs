@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
-use bun_core::{OwnedString, String as BunString, ZigString};
+use bun_core::{String as BunString, ZigString};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
 use bun_io::KeepAlive;
@@ -154,91 +154,47 @@ impl AsyncModule {
     pub(crate) fn fulfill(
         global_this: &JSGlobalObject,
         promise: JSValue,
-        resolved_source: &mut ResolvedSource,
+        resolved_source: ResolvedSource,
         err: Option<crate::CrateError>,
-        specifier_: BunString,
-        referrer_: BunString,
+        specifier: BunString,
+        referrer: BunString,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
-        let mut specifier = specifier_;
-        let mut referrer = referrer_;
-        // BunString is `Copy` (no Drop), so deref the held
-        // refcounts explicitly via scopeguard. The `TopExceptionScope` is
-        // omitted: `from_js_host_call_generic` already checks the VM for a
-        // pending exception after the FFI call (host_fn.rs).
-        //
-        // The guard captures raw pointers to the locals (not by-value copies)
-        // so the deref observes the *post-FFI* value of the variable —
-        // `Bun__onFulfillAsyncModule` receives
-        // `&mut specifier`/`&mut referrer` and is free to overwrite them.
-        // Safety: `specifier`/`referrer` are declared above this guard, so
-        // they outlive it (locals drop in reverse order); the `&mut` reborrow
-        // passed to FFI below is dead by the time the guard runs.
-        let sp: *mut BunString = &raw mut specifier;
-        let rp: *mut BunString = &raw mut referrer;
-        let _strings_guard = scopeguard::guard((), move |()| {
-            // SAFETY: `sp`/`rp` point at `specifier`/`referrer` declared above
-            // this guard; locals drop in reverse order so they outlive it, and
-            // the `&mut` reborrows passed to FFI are dead by the time this runs.
-            unsafe {
-                (*sp).deref();
-                (*rp).deref();
+        let mut errorable = match err {
+            None => ErrorableResolvedSource::ok(resolved_source),
+            Some(e) => {
+                drop(resolved_source);
+                if e == crate::CrateError::JSError {
+                    ErrorableResolvedSource::err(
+                        ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                        global_this.take_error(JsError::Thrown),
+                    )
+                } else {
+                    // `process_fetch_log` synthesizes a JS Error/AggregateError
+                    // from the parser log and writes it into
+                    // `errorable.result.err.value`; without it the import
+                    // promise would reject with `undefined`.
+                    let mut errorable = ErrorableResolvedSource::err(
+                        ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                        JSValue::UNDEFINED,
+                    );
+                    crate::virtual_machine::process_fetch_log(
+                        global_this,
+                        &specifier,
+                        &referrer,
+                        log,
+                        &mut errorable,
+                        e,
+                    );
+                    errorable
+                }
             }
-        });
-
-        let mut errorable: ErrorableResolvedSource;
-        if let Some(e) = err {
-            // `OwnedString` derefs on Drop at the end
-            // of this `if` arm; `None` is the no-op path.
-            let _source_code_guard = if resolved_source.source_code_needs_deref {
-                resolved_source.source_code_needs_deref = false;
-                Some(OwnedString::new(resolved_source.source_code))
-            } else {
-                None
-            };
-
-            if e == crate::CrateError::JSError {
-                errorable = ErrorableResolvedSource::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    global_this.take_error(JsError::Thrown),
-                );
-            } else {
-                // `process_fetch_log` synthesizes a JS
-                // Error/AggregateError from the parser log and writes it into
-                // `errorable.result.err.value`. Without this the import promise
-                // would reject with `undefined` (ModuleLoader.cpp:473).
-                // call the `virtual_machine` impl directly (takes
-                // `&JSGlobalObject`) instead of the `module_loader` shim that
-                // takes `*mut` — avoids a `&T as *const T as *mut T` cast,
-                // which is UB-adjacent under Stacked Borrows even when the
-                // callee never writes through it.
-                errorable = ErrorableResolvedSource::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    JSValue::UNDEFINED,
-                );
-                crate::virtual_machine::process_fetch_log(
-                    global_this,
-                    specifier,
-                    referrer,
-                    log,
-                    &mut errorable,
-                    e,
-                );
-            }
-        } else {
-            errorable = ErrorableResolvedSource::ok(*resolved_source);
-        }
+        };
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
         jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(
-                global_this,
-                promise,
-                &mut errorable,
-                &mut specifier,
-                &mut referrer,
-            )
+            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, &specifier, &referrer)
         })
     }
 }
@@ -250,16 +206,15 @@ impl AsyncModule {
 // bun.default_allocator.free(this.expr_blocks);
 
 // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-// ABI-identical to non-null `*const`); `ErrorableResolvedSource`/`BunString`
-// are `#[repr(C)]` payloads whose `&mut` is exclusive for the call. C++ reads
-// from / writes through these in-place; no caller-side raw-pointer precondition.
+// ABI-identical to non-null `*const`); `res` stays owned by this frame — C++
+// takes the fields it keeps by transfer (zeroing them) and the rest drops here.
 unsafe extern "C" {
     safe fn Bun__onFulfillAsyncModule(
         global_object: &JSGlobalObject,
         promise_value: JSValue,
         res: &mut ErrorableResolvedSource,
-        specifier: &mut BunString,
-        referrer: &mut BunString,
+        specifier: &BunString,
+        referrer: &BunString,
     );
 }
 
@@ -727,8 +682,8 @@ impl AsyncModule {
                 );
                 crate::virtual_machine::process_fetch_log(
                     global_this,
-                    BunString::init(ZigString::init(this.specifier())),
-                    BunString::init(ZigString::init(this.referrer())),
+                    &BunString::init(ZigString::init(this.specifier())),
+                    &BunString::init(ZigString::init(this.referrer())),
                     &mut log,
                     &mut errorable,
                     err,
@@ -739,15 +694,15 @@ impl AsyncModule {
         let mut errorable = errorable;
         // log dropped at scope exit (defer log.deinit()).
 
-        let mut spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
-        let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
+        let spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
+        let ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
         jsc::from_js_host_call_generic(global_this, || {
             Bun__onFulfillAsyncModule(
                 global_this,
                 this.promise.get().unwrap(),
                 &mut errorable,
-                &mut spec,
-                &mut ref_,
+                &spec,
+                &ref_,
             )
         })
     }
@@ -1307,9 +1262,9 @@ impl AsyncModule {
         if unsafe { (*jsc_vm).is_watcher_enabled() } {
             // SAFETY: per-thread VM.
             let mut resolved_source = unsafe {
-                (*jsc_vm).ref_counted_resolved_source::<false>(
+                (*jsc_vm).ref_counted_resolved_source(
                     printer.ctx.get_written(),
-                    BunString::init(specifier),
+                    &BunString::init(specifier),
                     path.text,
                     None,
                 )
@@ -1322,7 +1277,6 @@ impl AsyncModule {
 
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
-            specifier: BunString::init(specifier),
             source_url: BunString::init(path.text),
             is_commonjs_module,
             ..Default::default()

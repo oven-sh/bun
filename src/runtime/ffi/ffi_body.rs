@@ -1423,14 +1423,7 @@ impl FFI {
             strs.push(bun_core::String::clone_utf8(&arraylist));
         }
 
-        let ret = strings_to_js_array(global, &strs)?;
-
-        for str in strs.iter() {
-            str.deref();
-        }
-        // symbols freed by Drop
-
-        Ok(ret)
+        strings_to_js_array(global, &strs)
     }
 }
 

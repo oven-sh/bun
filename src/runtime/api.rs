@@ -265,10 +265,8 @@ fn with_text_format_source_encoded<R>(
     // Hold whichever input storage applies; all expose the bytes.
     // Conditional-init + drop-flag — only the taken branch's holder is live.
     let _blob_hold: BlobOrStringOrBuffer;
-    // `SliceWithUnderlyingString` has no `Drop`; `StringOrBuffer`'s releases
-    // the string's ref.
     let _str_hold: StringOrBuffer;
-    let _latin1_hold: bun_core::OwnedString;
+    let _latin1_hold: bun_core::String;
     let mut encoding = SourceEncoding::Utf8Text;
     let bytes: &[u8] = 'bytes: {
         if blob_or_buffer_input == BlobOrBufferInput::Bytes && !input_value.is_string() {
@@ -280,7 +278,7 @@ fn with_text_format_source_encoded<R>(
         }
         let mut s = input_value.to_bun_string(global)?;
         if string_input == StringInput::AsIs {
-            _latin1_hold = bun_core::OwnedString::new(s);
+            _latin1_hold = s;
             if _latin1_hold.is_8bit() {
                 encoding = SourceEncoding::Latin1Text;
                 break 'bytes _latin1_hold.latin1();

@@ -124,7 +124,6 @@ impl ResolveMessage {
                 };
 
                 let atom = bun_core::String::create_atom(code);
-                // `defer atom.deref()` — `String` derefs on Drop.
                 atom.to_js(global)
             }
             _ => Ok(JSValue::UNDEFINED),

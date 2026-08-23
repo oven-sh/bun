@@ -855,8 +855,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
-        let mut msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
-        let msg_value = match msg_str.transfer_to_js(global_this) {
+        let msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
+        let msg_value = match msg_str.into_js(global_this) {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -868,9 +868,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
-        let mut code_str =
-            BunString::create_format(format_args!("{}", bstr::BStr::new(code_bytes)));
-        let code_value = match code_str.transfer_to_js(global_this) {
+        let code_str = BunString::create_format(format_args!("{}", bstr::BStr::new(code_bytes)));
+        let code_value = match code_str.into_js(global_this) {
             Ok(v) => v,
             Err(_) => return,
         };

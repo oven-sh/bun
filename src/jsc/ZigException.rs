@@ -54,31 +54,6 @@ impl ZigException {
         ZigException__collectSourceLines(value, global, self);
     }
 
-    // Kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI
-    // payload whose lifetime is gated by `Holder.loaded`; C++ constructs/populates it.
-    pub(crate) fn deinit(&mut self) {
-        self.syscall.deref();
-        self.system_code.deref();
-        self.path.deref();
-
-        self.name.deref();
-        self.message.deref();
-
-        for line in self.stack.source_lines_mut() {
-            line.deref();
-        }
-
-        for frame in self.stack.frames_mutable() {
-            frame.deinit();
-        }
-
-        if let Some(source) = self.stack.referenced_source_provider {
-            // Pointer was set by JSC (C++) and is valid until this deref releases it.
-            // `SourceProvider` is an opaque ZST handle.
-            crate::SourceProvider::opaque_mut(source.as_ptr()).deref();
-        }
-    }
-
     // `ZigException__fromException` is declared in headers.h but has no C++
     // body (bindings.cpp dropped it; the only producer is
     // `JSC__JSValue__toZigException` which writes through an out-param), so
@@ -138,19 +113,10 @@ impl Holder {
         Self::zero()
     }
 
-    // Not just `Drop` — takes the `vm` parameter for `reset_arena`. Callers
-    // should call this explicitly at the tail (it does the arena reset which
-    // `Drop` cannot), but the string-ref release half is also covered by
-    // `Drop` below so an early `?`/return between population and the tail
-    // call won't leak WTF string refs.
-    pub(crate) fn deinit(&mut self, vm: &mut VirtualMachine) {
-        if self.loaded {
-            // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
-            unsafe { self.zig_exception.assume_init_mut() }.deinit();
-            // Make idempotent so the subsequent `Drop` is a no-op.
-            self.loaded = false;
-        }
-        if self.need_to_clear_parser_arena_on_deinit {
+    /// `Drop` releases the strings; this additionally resets the parser arena,
+    /// which needs `vm`.
+    pub(crate) fn deinit(mut self, vm: &mut VirtualMachine) {
+        if core::mem::take(&mut self.need_to_clear_parser_arena_on_deinit) {
             ModuleLoader::reset_arena(vm);
         }
     }
@@ -191,15 +157,16 @@ impl Holder {
 }
 
 impl Drop for Holder {
-    // Covers the string-ref-release half of cleanup. The explicit
-    // `deinit(&mut self, vm)` clears `loaded` after running, so this is a
-    // no-op on the happy path; it only fires when an early-return/`?`/panic
-    // skips the tail `deinit` call.
     fn drop(&mut self) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
-            unsafe { self.zig_exception.assume_init_mut() }.deinit();
-            self.loaded = false;
+            // `source_lines`/`frames` are fields and drop after this.
+            let exception = unsafe { self.zig_exception.assume_init_mut() };
+            if let Some(source) = exception.stack.referenced_source_provider.take() {
+                crate::SourceProvider::opaque_mut(source.as_ptr()).deref();
+            }
+            // SAFETY: as above; not read again.
+            unsafe { self.zig_exception.assume_init_drop() };
         }
     }
 }

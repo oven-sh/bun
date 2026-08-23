@@ -156,15 +156,15 @@ impl Default for Debugger {
 }
 
 // SAFETY (safe fn): `JSGlobalObject` is an opaque `UnsafeCell`-backed handle
-// (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]` POD
-// out-param. Remaining args are by-value scalars.
+// (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]`
+// in-param C++ only reads. Remaining args are by-value scalars.
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
-        url: &mut BunString,
+        url: &BunString,
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
@@ -487,15 +487,15 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let mut url = BunString::clone_utf8(from_env);
+            let url = BunString::borrow_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
+            Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let mut url = BunString::clone_utf8(path_or_port);
+            let url = BunString::borrow_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
+            Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }
 
         let _ = this.global().handle_rejected_promises();

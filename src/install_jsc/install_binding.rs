@@ -33,7 +33,7 @@ pub mod bun_install_js_bindings {
         use core::ptr::NonNull;
 
         use bstr::BStr;
-        use bun_core::{OwnedString, String as BunString};
+        use bun_core::String as BunString;
         use bun_install::lockfile::lockfile_json_stringify_for_debugging::{
             WriteStream, WriteStreamOptions, json_stringify,
         };
@@ -111,11 +111,6 @@ pub mod bun_install_js_bindings {
         json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");
         let stringified = w.into_bytes();
 
-        // `bun_core::String` is `Copy` (no `Drop`),
-        // so the +1 from `clone_utf8` must be released via `OwnedString`'s RAII
-        // — `to_js_by_parse_json` borrows, it does not consume.
-        let mut str = OwnedString::new(BunString::clone_utf8(&stringified));
-
-        bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut str, global)
+        bun_jsc::bun_string_jsc::to_js_by_parse_json(&BunString::clone_utf8(&stringified), global)
     }
 }

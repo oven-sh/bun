@@ -37,7 +37,7 @@ impl ScanOpts {
         absolute: bool,
         fn_name: &'static str,
     ) -> JsResult<Box<[u8]>> {
-        let cwd_string = bun_core::OwnedString::new(BunString::from_js(cwd_val, global_this)?);
+        let cwd_string = BunString::from_js(cwd_val, global_this)?;
         if cwd_string.is_empty() {
             return Ok(Box::default());
         }

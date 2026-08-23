@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
 use bun_core::StackCheck;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
@@ -108,7 +108,7 @@ enum Space {
     Minified,
     Number(u32),
     /// +1 WTF ref owned for the lifetime of the `Stringifier`.
-    Str(OwnedString),
+    Str(bun_core::String),
 }
 
 impl Space {
@@ -125,7 +125,7 @@ impl Space {
             return Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }));
         }
         if space.is_string() {
-            let str = OwnedString::new(space.to_bun_string(global)?);
+            let str = space.to_bun_string(global)?;
             if str.length() == 0 {
                 return Ok(Space::Minified);
             }
@@ -192,7 +192,7 @@ impl Stringifier {
         }
 
         if unwrapped.is_string() {
-            let str = OwnedString::new(unwrapped.to_bun_string(global)?);
+            let str = unwrapped.to_bun_string(global)?;
             self.append_quoted_string(&str);
             return Ok(());
         }
@@ -361,7 +361,7 @@ impl Stringifier {
         };
 
         if is_identifier {
-            self.builder.append_string(*name);
+            self.builder.append_string(name);
         } else {
             self.append_quoted_string(name);
         }
@@ -408,13 +408,13 @@ impl Stringifier {
             }
             Space::Str(space_str) => {
                 self.builder.append_lchar(b'\n');
-                let clamped: BunString = if space_str.length() > 10 {
+                let clamped = if space_str.length() > 10 {
                     space_str.substring_with_len(0, 10)
                 } else {
-                    **space_str
+                    bun_core::StringView::new(space_str)
                 };
                 for _ in 0..self.indent {
-                    self.builder.append_string(clamped);
+                    self.builder.append_string(&clamped);
                 }
             }
         }

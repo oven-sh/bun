@@ -21,10 +21,7 @@ fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsRes
     if T::IS_U16 {
         // T == u16 when IS_U16; bytemuck statically checks the layout.
         let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
-        let bs = bun_core::String::clone_utf16(s16);
-        let r = bs.to_js(global);
-        bs.deref();
-        r
+        bun_core::String::clone_utf16(s16).into_js(global)
     } else {
         // T == u8 when !IS_U16; bytemuck statically checks the layout.
         let s8: &[u8] = bytemuck::cast_slice::<T, u8>(s);
@@ -1387,13 +1384,13 @@ unsafe extern "C" fn Bun__Node__Path_joinWTF(
     {
         let win = join_windows_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
         // SAFETY: result is a valid out-pointer.
-        unsafe { *result = bun_core::String::clone_utf8(win) };
+        unsafe { result.write(bun_core::String::clone_utf8(win)) };
     }
     #[cfg(not(windows))]
     {
         let posix = join_posix_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
         // SAFETY: result is a valid out-pointer.
-        unsafe { *result = bun_core::String::clone_utf8(posix) };
+        unsafe { result.write(bun_core::String::clone_utf8(posix)) };
     }
 }
 

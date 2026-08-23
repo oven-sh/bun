@@ -464,7 +464,7 @@ pub mod random {
                 }
             }
 
-            let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+            let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
             let uuid = if disable_entropy_cache {
                 UUID::init()
@@ -477,7 +477,7 @@ pub mod random {
                     .try_into()
                     .expect("infallible: size matches"),
             );
-            str.transfer_to_js(global)
+            str.into_js(global)
         }
 
         #[bun_jsc::host_fn]
@@ -518,13 +518,13 @@ pub mod random {
             }
             let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
 
-            let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+            let (str, bytes) = BunString::create_uninitialized_latin1(36);
             uuid.print(
                 (&mut bytes[..36])
                     .try_into()
                     .expect("infallible: size matches"),
             );
-            str.transfer_to_js(global)
+            str.into_js(global)
         }
 
         fn assert_offset(

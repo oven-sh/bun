@@ -7,7 +7,7 @@ use core::cell::RefCell;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_paths::resolve_path::{self, platform};
 use bun_wyhash::hash as wyhash;
 
@@ -44,6 +44,7 @@ use route_param::List as ParamsList;
 pub mod whatwg {
     use super::BunString as String;
     use super::strings;
+    use bun_core::RawString;
 
     /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
     /// Construct via `from_string`/`from_utf8`; free via `deinit`.
@@ -52,49 +53,37 @@ pub mod whatwg {
         _opaque: [u8; 0],
     }
 
-    // Getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
-    // WTF::URL on read. `URL__deinit` keeps `*mut` (it `delete`s). `BunString*` inputs stay
-    // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
-    // SAFETY (safe fn): `URL` is an opaque ZST handle (never null when behind `&`);
-    // `String` is a `#[repr(C)]` Copy POD that C++ reads (`BunString::toWTFString() const`).
-    // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL` (consumes).
-    // `URL__originLength` keeps a raw `(*const u8, usize)` slice pair → stays `unsafe fn`.
+    // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL`
+    // (it `delete`s). String inputs are `const BunString*` on the C++ side, so
+    // `&String`; every `RawString` return is a fresh +1 from `Bun::toStringRef`.
     unsafe extern "C" {
         // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
-        safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
-        safe fn URL__protocol(url: &URL) -> String;
-        safe fn URL__href(url: &URL) -> String;
-        safe fn URL__hostname(url: &URL) -> String;
+        safe fn URL__fromString(str: &String) -> Option<core::ptr::NonNull<URL>>;
+        safe fn URL__protocol(url: &URL) -> RawString;
+        safe fn URL__href(url: &URL) -> RawString;
+        safe fn URL__hostname(url: &URL) -> RawString;
         safe fn URL__deinit(url: &mut URL);
-        safe fn URL__pathname(url: &URL) -> String;
-        safe fn URL__getHref(input: &mut String) -> String;
-        safe fn URL__getFileURLString(input: &mut String) -> String;
-        safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
-        safe fn URL__fragmentIdentifier(url: &URL) -> String;
+        safe fn URL__pathname(url: &URL) -> RawString;
+        safe fn URL__getHref(input: &String) -> RawString;
+        safe fn URL__getFileURLString(input: &String) -> RawString;
+        safe fn URL__getHrefJoin(base: &String, relative: &String) -> RawString;
+        safe fn URL__fragmentIdentifier(url: &URL) -> RawString;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
-
-    // The C ABI wants a mutable address. We take `&String` (matching existing call sites
-    // in this crate) and — since `bun_core::String: Copy` — bit-copy into a mutable
-    // local and pass `&mut local`. This avoids casting
-    // a shared-ref-derived pointer to `*mut` (read-only provenance). The C++ side
-    // (`BunString::toWTFString() const`) does not mutate, but the local-copy form is
-    // sound regardless.
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
-        let mut input = *str;
-        URL__getHref(&mut input)
+        // SAFETY: fresh +1 from `Bun::toStringRef`.
+        unsafe { String::from_raw(URL__getHref(str)) }
     }
     pub fn join(base: &String, relative: &String) -> String {
-        let mut base_str = *base;
-        let mut relative_str = *relative;
-        URL__getHrefJoin(&mut base_str, &mut relative_str)
+        // SAFETY: fresh +1 from `Bun::toStringRef`.
+        unsafe { String::from_raw(URL__getHrefJoin(base, relative)) }
     }
     pub fn file_url_from_string(str: &String) -> String {
-        let mut input = *str;
-        URL__getFileURLString(&mut input)
+        // SAFETY: fresh +1 from `Bun::toStringRef`.
+        unsafe { String::from_raw(URL__getFileURLString(str)) }
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
@@ -115,21 +104,23 @@ pub mod whatwg {
 
     impl URL {
         pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
-            let mut input = *str;
-            URL__fromString(&mut input)
+            URL__fromString(str)
         }
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
         }
         /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
-            URL__fragmentIdentifier(self)
+            // SAFETY: fresh +1 from `Bun::toStringRef`.
+            unsafe { String::from_raw(URL__fragmentIdentifier(self)) }
         }
         pub fn protocol(&self) -> String {
-            URL__protocol(self)
+            // SAFETY: fresh +1 from `Bun::toStringRef`.
+            unsafe { String::from_raw(URL__protocol(self)) }
         }
         pub fn href(&self) -> String {
-            URL__href(self)
+            // SAFETY: fresh +1 from `Bun::toStringRef`.
+            unsafe { String::from_raw(URL__href(self)) }
         }
         /// Returns the host WITH the port.
         ///
@@ -140,10 +131,12 @@ pub mod whatwg {
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
         /// ```
         pub fn hostname(&self) -> String {
-            URL__hostname(self)
+            // SAFETY: fresh +1 from `Bun::toStringRef`.
+            unsafe { String::from_raw(URL__hostname(self)) }
         }
         pub fn pathname(&self) -> String {
-            URL__pathname(self)
+            // SAFETY: fresh +1 from `Bun::toStringRef`.
+            unsafe { String::from_raw(URL__pathname(self)) }
         }
         pub fn deinit(&mut self) {
             URL__deinit(self)
@@ -353,11 +346,9 @@ impl<'a> URL<'a> {
         if href.tag() == BunStringTag::Dead {
             return Err(crate::Error::InvalidURL);
         }
-        // `to_owned_slice` is infallible so explicit
-        // ordering suffices (no error path between alloc and deref).
-        let owned = href.to_owned_slice().into_boxed_slice();
-        href.deref();
-        Ok(OwnedURL { href: owned })
+        Ok(OwnedURL {
+            href: href.to_owned_slice().into_boxed_slice(),
+        })
     }
 
     /// `input` is `[scheme://]host[:port][/prefix]`, `https` by default. `None` when it has no host.
@@ -377,10 +368,10 @@ impl<'a> URL<'a> {
                 is_http: as_written.is_http(),
             });
         };
-        let is_http = OwnedString::new(url.protocol()).eql_comptime(b"http");
+        let is_http = url.protocol().eql_comptime(b"http");
         // `whatwg::URL::hostname` is the host with its port.
-        let mut host_with_path = OwnedString::new(url.hostname()).to_utf8_bytes();
-        let pathname = OwnedString::new(url.pathname());
+        let mut host_with_path = url.hostname().to_utf8_bytes();
+        let pathname = url.pathname();
         let path = pathname.to_utf8();
         host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));
         Some(S3Endpoint {

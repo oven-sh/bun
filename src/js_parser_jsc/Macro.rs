@@ -809,7 +809,7 @@ impl<'a> Run<'a> {
                 ));
             }
             T::String => {
-                let bun_str = bun_core::OwnedString::new(value.to_bun_string(self.global)?);
+                let bun_str = value.to_bun_string(self.global)?;
 
                 // encode into utf16 so the printer escapes the string correctly
                 // UTF-16 → memcpy, Latin-1 → byte-widen. JS-sourced WTF

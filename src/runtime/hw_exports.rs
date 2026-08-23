@@ -136,11 +136,8 @@ pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue
 pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
     if let Some(eval_source) = this.module_loader.eval_source.as_ref() {
         let global = this.global();
-        // `bun_core::String` is
-        // `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that derefs.
-        let specifier_str = bun_core::OwnedString::new(
-            bun_jsc::bun_string_jsc::from_js(specifier, global).expect("unexpected exception"),
-        );
+        let specifier_str =
+            bun_jsc::bun_string_jsc::from_js(specifier, global).expect("unexpected exception");
         return specifier_str.eql_utf8(eval_source.path.text);
     }
     false
@@ -159,7 +156,6 @@ pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
     let Ok(specifier_str) = bun_jsc::bun_string_jsc::from_js(specifier, global) else {
         return;
     };
-    let specifier_str = bun_core::OwnedString::new(specifier_str);
     if specifier_str.eql_utf8(this.main()) {
         this.entry_point_result.evaluated_as_cjs = true;
     }
@@ -386,12 +382,9 @@ pub fn bindgen_bunobject_dispatch_braces(
     arg_input: *const bun_core::String,
     arg_options: *const crate::api::bun_object::r#gen::BracesOptions,
 ) -> JSValue {
-    // SAFETY: `arg_input`/`arg_options` are valid C++ stack locals.
-    // The C++ caller retains ownership of the ref-counted handle — we take a
-    // bitwise copy with **no** refcount bump. `bun_core::String` is `Copy`
-    // with no `Drop`, so a plain deref does exactly that; `braces` only
-    // borrows the bytes via `to_utf8()` and never derefs the handle.
-    let input = unsafe { *arg_input };
+    // SAFETY: `arg_input`/`arg_options` are valid C++ stack locals; the C++
+    // caller retains ownership of the string.
+    let input = unsafe { &*arg_input };
     // SAFETY: `arg_options` points to a `BracesOptions` on the C++ caller's stack.
     let opts = unsafe { *arg_options };
     bun_jsc::host_fn::to_js_host_call(global, || {
@@ -441,8 +434,8 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
     let formatter = unsafe { *arg_formatter };
     match bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter) {
         Ok(s) => {
-            // SAFETY: `out` is a valid C++ stack out-param.
-            unsafe { *out = s };
+            // SAFETY: `out` is an uninitialized C++ stack out-param.
+            unsafe { out.write(s) };
             true
         }
         // OOM is the one `JsError` variant that does **not** leave a pending
@@ -660,9 +653,10 @@ pub fn bindgen_node_os_dispatch_user_info(
     arg_options: *const crate::node::os::gen_::UserInfoOptions,
 ) -> JSValue {
     // SAFETY: `arg_options` is a valid C++ stack local; `UserInfoOptions` is
-    // `#[repr(C)]` matching the bindgen `extern struct`.
-    let options = unsafe { core::ptr::read(arg_options) };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, &options))
+    // `#[repr(C)]` matching the bindgen `extern struct`. Borrowed: its strings
+    // are `Bun::toString` views owned by the C++ frame.
+    let options = unsafe { &*arg_options };
+    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, options))
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchVersion1, c)

@@ -30,7 +30,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{OwnedString, String as BunString, ZigString};
+use bun_core::{String as BunString, ZigString};
 use bun_options_types::schema::api;
 
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
@@ -303,7 +303,6 @@ impl Config {
                     break 'tsconfig;
                 }
                 let kind = tsconfig.js_type();
-                let mut out = OwnedString::new(BunString::empty());
 
                 if kind.is_array() {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -311,12 +310,12 @@ impl Config {
                     )));
                 }
 
-                if !kind.is_string_like() {
+                let out = if !kind.is_string_like() {
                     // Use jsonStringifyFast for SIMD-optimized serialization
-                    tsconfig.json_stringify_fast(global, &mut out)?;
+                    tsconfig.json_stringify_fast(global)?
                 } else {
-                    out = OwnedString::new(tsconfig.to_bun_string(global)?);
-                }
+                    tsconfig.to_bun_string(global)?
+                };
 
                 if out.is_empty() {
                     break 'tsconfig;
@@ -355,14 +354,13 @@ impl Config {
                     );
                 }
 
-                let mut out = OwnedString::new(BunString::empty());
                 // TODO: write a converter between JSC types and Bun AST types
-                if is_object {
+                let out = if is_object {
                     // Use jsonStringifyFast for SIMD-optimized serialization
-                    macros.json_stringify_fast(global, &mut out)?;
+                    macros.json_stringify_fast(global)?
                 } else {
-                    out = OwnedString::new(macros.to_bun_string(global)?);
-                }
+                    macros.to_bun_string(global)?
+                };
 
                 if out.is_empty() {
                     break 'macros;
@@ -593,8 +591,7 @@ impl Config {
                                 export_replacement_value(replacement_value, global, arena)?
                             {
                                 let replacement_key = value.get_index(global, 0)?;
-                                let slice =
-                                    OwnedString::new(replacement_key.to_bun_string(global)?);
+                                let slice = replacement_key.to_bun_string(global)?;
                                 let replacement_name = slice.to_owned_slice();
 
                                 if !JSLexer::is_identifier(&replacement_name) {
@@ -886,7 +883,10 @@ impl TransformTask {
     }
 
     fn finish(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
-        promise.settle(global, self.output_code.transfer_to_js(global))
+        promise.settle(
+            global,
+            core::mem::take(&mut self.output_code).into_js(global),
+        )
     }
 }
 

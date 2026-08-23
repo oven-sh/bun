@@ -812,10 +812,7 @@ mod _impl {
             unsafe { windows::libuv::uv__winsock_ensure() };
             // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
-                let str = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
-                let js = str.to_js(global);
-                str.deref();
-                return js;
+                return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
             }
 
             return Ok(ZigString::init(b"unknown").with_encoding().to_js(global));
@@ -1559,9 +1556,8 @@ mod _impl {
         let result = JSValue::create_empty_object(global_this, 5);
 
         let home = homedir(global_this)?;
-        let home = scopeguard::guard(home, |h| h.deref());
 
-        result.put(global_this, b"homedir", home.to_js(global_this)?);
+        result.put(global_this, b"homedir", home.into_js(global_this)?);
 
         #[cfg(windows)]
         {

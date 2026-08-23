@@ -231,7 +231,7 @@ extern "C" fn on_data(
 
         let span = hostname.unwrap();
         #[allow(unused_labels)]
-        let mut hostname_string = if let Some(id) = scope_id {
+        let hostname_string = if let Some(id) = scope_id {
             'blk: {
                 #[cfg(not(windows))]
                 {
@@ -279,7 +279,7 @@ extern "C" fn on_data(
                 return;
             }
         };
-        let hostname_js = match hostname_string.transfer_to_js(global_this) {
+        let hostname_js = match hostname_string.into_js(global_this) {
             Ok(v) => v,
             Err(_) => {
                 loop_.exit();
@@ -416,8 +416,6 @@ impl UDPSocketConfig {
             ..Default::default()
         };
 
-        // `config` cleanup: Drop handles this on `?` paths.
-
         if let Some(socket) = options.get_truthy(global_this, "socket")? {
             if !socket.is_object() {
                 return Err(global_this
@@ -501,9 +499,6 @@ impl UDPSocketConfig {
         Ok(config)
     }
 }
-
-// `UDPSocketConfig::deinit` becomes Drop: `hostname.deref()` and `connect.address.deref()` are
-// handled by `bun_core::String`'s own Drop. No explicit body needed.
 
 #[derive(Clone, Copy)]
 struct ConnectInfo {
@@ -1575,7 +1570,7 @@ impl UDPSocket {
         storage: &mut sockaddr_storage,
     ) -> JsResult<bool> {
         let _ = self;
-        let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
+        let str = address_val.to_bun_string(global_this)?;
         let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
         let bytes_len = address_slice.len() - 1; // exclude trailing NUL
 
@@ -1895,7 +1890,7 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
         }
 
-        let str = bun_core::OwnedString::new(args[0].to_bun_string(global_this)?);
+        let str = args[0].to_bun_string(global_this)?;
         let connect_host = str.to_owned_slice_z();
 
         let connect_port_js = args[1];
@@ -2303,7 +2298,7 @@ pub(crate) fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
     #[cfg(not(windows))]
     {
         let fd = dgram_owned_fd_arg(global, frame.argument(0))?;
-        let address = bun_core::OwnedString::new(frame.argument(1).to_bun_string(global)?);
+        let address = frame.argument(1).to_bun_string(global)?;
         let address_z = address.to_owned_slice_z();
         let port_num = frame.argument(2).coerce_to_i32(global)?;
         let port: u16 = if (0..=0xffff).contains(&port_num) {

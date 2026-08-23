@@ -1088,7 +1088,6 @@ impl ServerConfig {
             arg.get_stringish(global, "host")?
         };
         if let Some(host) = host {
-            let host = bun_core::OwnedString::new(host);
             let host_str = host.to_utf8();
 
             if !host_str.slice().is_empty() {

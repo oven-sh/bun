@@ -6,6 +6,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 #include <set>
+#include <string.h>
 
 #ifndef HEADERS_HANDWRITTEN
 #define HEADERS_HANDWRITTEN
@@ -116,8 +117,11 @@ typedef struct ErrorableString {
     ErrorableStringResult result;
     bool success;
 } ErrorableString;
+struct bun_ModuleInfoDeserialized;
+// Every BunString here is owned by whichever frame holds the struct (see
+// ~ErrorableResolvedSource / Rust `Drop`). Consumers that keep a string take it
+// with `transferToWTFString()`, which leaves the field empty.
 typedef struct ResolvedSource {
-    BunString specifier;
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
@@ -125,25 +129,57 @@ typedef struct ResolvedSource {
     void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
-    bool needsDeref;
     bool already_bundled;
     // -- Bytecode cache fields --
+    // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
+    // borrowed from the standalone module graph / compile cache.
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
-    void* module_info;
+    bool bytecode_cache_owned;
+    // Owned; Zig::SourceProvider takes it (nulling the field).
+    bun_ModuleInfoDeserialized* module_info;
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
 } ResolvedSource;
+static_assert(sizeof(ResolvedSource) == 144, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
     ZigErrorType err;
 } ErrorableResolvedSourceResult;
-typedef struct ErrorableResolvedSource {
+extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized* info);
+extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
+struct ErrorableResolvedSource {
     ErrorableResolvedSourceResult result;
     bool success;
-} ErrorableResolvedSource;
+
+    ErrorableResolvedSource()
+        : success(false)
+    {
+        // Zeroed BunString is BunStringTag::Dead; zeroed EncodedJSValue is empty.
+        memset(&result, 0, sizeof result);
+    }
+    ErrorableResolvedSource(const ErrorableResolvedSource&) = delete;
+    ErrorableResolvedSource& operator=(const ErrorableResolvedSource&) = delete;
+    ~ErrorableResolvedSource() { reset(); }
+
+    /// Release an owned `value` (if any) and return to the empty `!success` state.
+    void reset()
+    {
+        if (!success)
+            return;
+        success = false;
+        result.value.source_code.deref();
+        result.value.source_url.deref();
+        result.value.bytecode_origin_path.deref();
+        if (result.value.bytecode_cache_owned && result.value.bytecode_cache)
+            ResolvedSource__freeBytecode(result.value.bytecode_cache);
+        if (result.value.module_info)
+            zig__ModuleInfoDeserialized__deinit(result.value.module_info);
+        memset(&result, 0, sizeof result);
+    }
+};
 
 typedef struct SystemError {
     int errno_;
@@ -311,7 +347,6 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
-BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toString(const char* bytes, size_t length);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);

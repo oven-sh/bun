@@ -1347,10 +1347,10 @@ impl<'a> Formatter<'a> {
                 Tag::Error => {
                     let mut classname = ZigString::EMPTY;
                     value.get_class_name(self.global_this, &mut classname)?;
-                    let mut message_string = bun_core::OwnedString::new(bun_core::String::empty());
+                    let mut message_string = bun_core::String::empty();
 
                     if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
-                        message_string = bun_core::OwnedString::new(message_prop.to_bun_string(self.global_this)?);
+                        message_string = message_prop.to_bun_string(self.global_this)?;
                     }
 
                     if message_string.is_empty() {
@@ -1818,9 +1818,7 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let mut str = bun_core::String::empty();
-
-                    value.json_stringify(self.global_this, self.indent, &mut str)?;
+                    let str = value.json_stringify(self.global_this, self.indent)?;
                     self.add_for_new_line(str.length());
                     if js_type == JSType::JSDate {
                         // in the code for printing dates, it never exceeds this amount

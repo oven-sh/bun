@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
 use bun_core::StackCheck;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf,
 };
@@ -261,7 +261,7 @@ impl Stringifier {
                 Layout::Table => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(prop_name);
+                    self.path.push(prop_name.to_owned());
                     self.stringify_table_body(global, value, true)?;
                     self.path.pop();
                     self.visiting.remove(&value);
@@ -269,7 +269,7 @@ impl Stringifier {
                 Layout::ArrayOfTables => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(prop_name);
+                    self.path.push(prop_name.to_owned());
                     let mut items = value.array_iterator(global)?;
                     while let Some(item) = items.next()? {
                         let item = item.unwrap_boxed_primitive(global)?;
@@ -335,7 +335,7 @@ impl Stringifier {
         }
 
         if value.is_string() {
-            let str = OwnedString::new(value.to_bun_string(global)?);
+            let str = value.to_bun_string(global)?;
             self.append_basic_quoted(&str);
             return Ok(());
         }
@@ -419,7 +419,7 @@ impl Stringifier {
             // Inlined `append_key_segment` to avoid borrowing `self.path`
             // across a `&mut self` call.
             if is_bare_key(seg) {
-                self.builder.append_string(*seg);
+                self.builder.append_string(seg);
             } else {
                 append_basic_quoted_to(&mut self.builder, seg);
             }
@@ -431,7 +431,7 @@ impl Stringifier {
 
     fn append_key_segment(&mut self, name: &BunString) {
         if is_bare_key(name) {
-            self.builder.append_string(*name);
+            self.builder.append_string(name);
         } else {
             append_basic_quoted_to(&mut self.builder, name);
         }

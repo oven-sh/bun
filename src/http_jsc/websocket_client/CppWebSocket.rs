@@ -118,10 +118,10 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_close(&self, code: u16, reason: &mut BunString) {
+    pub(crate) fn did_close(&self, code: u16, mut reason: BunString) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        WebSocket__didClose(self, code, reason);
+        WebSocket__didClose(self, code, &mut reason);
         event_loop.exit();
     }
 
@@ -188,9 +188,9 @@ impl CppWebSocket {
         WebSocket__releasePendingActivityForClient(self);
     }
 
-    pub(crate) fn set_protocol(&self, protocol: &mut BunString) {
+    pub(crate) fn set_protocol(&self, mut protocol: BunString) {
         bun_jsc::mark_binding!();
-        WebSocket__setProtocol(self, protocol);
+        WebSocket__setProtocol(self, &mut protocol);
     }
 }
 

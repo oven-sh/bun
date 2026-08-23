@@ -14,7 +14,7 @@ use crate::{
 };
 
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{OwnedString, String as BunString, strings};
+use bun_core::{String as BunString, strings};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -397,7 +397,6 @@ impl JSGlobalObject {
 
     /// "The {argname} argument is invalid. Received {value}"
     pub fn throw_invalid_argument_value(&self, argname: &[u8], value: JSValue) -> JsError {
-        // `defer actual_string_value.deref()` → OwnedString's Drop releases the +1 ref.
         let actual_string_value = match Self::determine_specific_type(self, value) {
             Ok(s) => s,
             Err(e) => return e,
@@ -473,29 +472,27 @@ impl JSGlobalObject {
         }
     }
 
-    /// Returns a +1-ref'd `BunString` describing `value`'s type for error messages.
-    /// The result is wrapped in [`OwnedString`] so the ref is released on drop —
-    /// `bun_core::String` is `Copy` and has no `Drop`, so a bare `BunString`
-    /// here would leak.
-    pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<OwnedString> {
+    /// Describes `value`'s type for error messages.
+    pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<bun_core::String> {
         // The C++ side opens a `DECLARE_THROW_SCOPE`; under
         // `BUN_JSC_validateExceptionChecks=1` its dtor sets `m_needExceptionCheck`, so we
         // must have a Rust-side scope live across the FFI call (and query it) rather than
         // post-hoc `has_exception()` (whose own scope ctor would assert first).
         crate::top_scope!(scope, global);
-        // `errdefer str.deref()` → wrapping immediately in OwnedString releases the
-        // +1 ref on the early-return path below.
-        let str = OwnedString::new(Bun__ErrorCode__determineSpecificType(global, value));
+        // SAFETY: `Bun::toStringRef` (+1); dropped on the early-return path below.
+        let str =
+            unsafe { BunString::from_raw(Bun__ErrorCode__determineSpecificType(global, value)) };
         scope.return_if_exception()?;
         Ok(str)
     }
 
     /// Renders `value` the way Node's `ERR_INVALID_ARG_VALUE` does (`util.inspect`
-    /// quoting, via the same C++ formatter the C++ overloads use). Returns a
-    /// +1-ref'd string wrapped in [`OwnedString`] so the ref is released on drop.
-    pub fn inspect_for_error_message(global: &Self, value: JSValue) -> JsResult<OwnedString> {
+    /// quoting, via the same C++ formatter the C++ overloads use).
+    pub fn inspect_for_error_message(global: &Self, value: JSValue) -> JsResult<bun_core::String> {
         crate::top_scope!(scope, global);
-        let str = OwnedString::new(Bun__ErrorCode__inspectForErrorMessage(global, value));
+        // SAFETY: `Bun::toStringRef` (+1).
+        let str =
+            unsafe { BunString::from_raw(Bun__ErrorCode__inspectForErrorMessage(global, value)) };
         scope.return_if_exception()?;
         Ok(str)
     }
@@ -698,14 +695,14 @@ impl JSGlobalObject {
 
     pub(crate) fn run_on_load_plugins(
         &self,
-        namespace_: BunString,
-        path: BunString,
+        namespace_: &BunString,
+        path: &BunString,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        let ns = (namespace_.length() > 0).then_some(namespace_);
         let result =
-            crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, &path, target))?;
+            crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, path, target))?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
@@ -714,15 +711,15 @@ impl JSGlobalObject {
 
     pub(crate) fn run_on_resolve_plugins(
         &self,
-        namespace_: BunString,
-        path: BunString,
-        source: BunString,
+        namespace_: &BunString,
+        path: &BunString,
+        source: &BunString,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        let ns = (namespace_.length() > 0).then_some(namespace_);
         let result = crate::from_js_host_call(self, || {
-            Bun__runOnResolvePlugins(self, ns, &path, &source, target)
+            Bun__runOnResolvePlugins(self, ns, path, source, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -965,7 +962,7 @@ impl JSGlobalObject {
 
     pub fn create_aggregate_error_with_array(
         &self,
-        message: BunString,
+        message: &BunString,
         error_array: JSValue,
     ) -> JsResult<JSValue> {
         debug_assert!(error_array.is_array());
@@ -1445,15 +1442,14 @@ use bun_core::fmt::VecWriter as WriteVec;
 unsafe extern "C" fn Zig__GlobalObject__resolve(
     res: *mut ErrorableString,
     global: *const JSGlobalObject,
-    specifier: *mut BunString,
-    source: *mut BunString,
+    specifier: *const BunString,
+    source: *const BunString,
     query: *mut BunString,
 ) {
     crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers. `BunString` is `Copy`, so
-    // `*specifier` / `*source` is a bitwise load — no refcount bump (the
-    // caller still owns the ref).
-    let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
+    // SAFETY: C++ passes valid non-null pointers; the caller keeps ownership
+    // of `specifier`/`source`.
+    let (global, specifier, source) = unsafe { (&*global, &*specifier, &*source) };
     // SAFETY: C++ passes valid non-null pointers.
     let (res, query) = unsafe { (&mut *res, &mut *query) };
     match VirtualMachine::resolve(
@@ -1511,12 +1507,12 @@ unsafe extern "C" {
     safe fn Bun__ErrorCode__determineSpecificType(
         global: &JSGlobalObject,
         value: JSValue,
-    ) -> BunString;
+    ) -> bun_core::RawString;
 
     safe fn Bun__ErrorCode__inspectForErrorMessage(
         global: &JSGlobalObject,
         value: JSValue,
-    ) -> BunString;
+    ) -> bun_core::RawString;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
@@ -1570,7 +1566,7 @@ unsafe extern "C" {
     safe fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         global: &JSGlobalObject,
         error_array: JSValue,
-        message: BunString,
+        message: &BunString,
         options: JSValue,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;

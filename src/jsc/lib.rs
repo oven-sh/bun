@@ -1124,10 +1124,7 @@ impl FromJsEnum for bun_sys::SignalCode {
             );
         }
         let s = bun_string_jsc::from_js(v, global)?;
-        let utf8 = s.to_utf8();
-        let hit = bun_sys::signal_code::from_name(utf8.slice());
-        drop(utf8);
-        s.deref();
+        let hit = bun_sys::signal_code::from_name(s.to_utf8().slice());
         match hit {
             Some(code) => Ok(code),
             None => {
@@ -1387,9 +1384,11 @@ pub use self::codegen as Codegen;
 /// Extension trait providing JSC-aware methods on `bun_core::String`.
 pub trait StringJsc {
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_core::String>;
+    /// Borrow: JSC takes its own ref (or copies borrowed bytes).
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn to_js_by_parse_json(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    /// Consume: the +1 moves into the `JSString`.
+    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
@@ -1401,10 +1400,10 @@ impl StringJsc for bun_core::String {
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::to_js(self, global)
     }
-    fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::transfer_to_js(self, global)
+    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_string_jsc::into_js(self, global)
     }
-    fn to_js_by_parse_json(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::to_js_by_parse_json(self, global)
     }
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
@@ -1420,11 +1419,11 @@ impl StringJsc for bun_core::String {
 
 /// Extension trait providing JSC-aware methods on
 /// `bun_core::SliceWithUnderlyingString` (lower-tier, no JSC dep) —
-/// `to_js`, `transfer_to_js`, `report_extra_memory`; the free-function bodies
+/// `to_js`, `into_js`, `report_extra_memory`; the free-function bodies
 /// live in [`bun_string_jsc`].
 pub trait SliceWithUnderlyingStringJsc {
     fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn report_extra_memory(&mut self, vm: &VM);
 }
 impl SliceWithUnderlyingStringJsc for bun_core::SliceWithUnderlyingString {
@@ -1433,8 +1432,8 @@ impl SliceWithUnderlyingStringJsc for bun_core::SliceWithUnderlyingString {
         bun_string_jsc::slice_with_underlying_string_to_js(self, global)
     }
     #[inline]
-    fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::slice_with_underlying_string_transfer_to_js(self, global)
+    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_string_jsc::slice_with_underlying_string_into_js(self, global)
     }
     /// Account `utf8`'s backing allocation against the GC heap unless it is
     /// already JSC-owned (WTF-backed) or borrowed.

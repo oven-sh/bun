@@ -829,7 +829,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 BStr::new(public_path),
                 BStr::new(&pt.output_file(client_file).dest_path),
             ))
-            .to_js(global)
+            .into_js(global)
             .map_err(js_err)?;
             client_entry_urls
                 .put_index(global, u32::try_from(i).expect("int cast"), str)
@@ -933,7 +933,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 BStr::new(public_path),
                 BStr::new(&output_file.dest_path),
             ))
-            .to_js(global)
+            .into_js(global)
             .map_err(js_err)?
             .protected(),
         );
@@ -1086,11 +1086,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                pattern_string.to_js(global).map_err(js_err)?,
+                pattern_string.into_js(global).map_err(js_err)?,
             )
             .map_err(js_err)?;
 
-        let mut src_path = BunString::clone_utf8(resolve_path::relative(
+        let src_path = BunString::clone_utf8(resolve_path::relative(
             cwd,
             pt.input_file(main_file_route_index).abs_path(),
         ));
@@ -1098,7 +1098,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                jsc::bun_string_jsc::transfer_to_js(&mut src_path, global).map_err(js_err)?,
+                jsc::bun_string_jsc::into_js(src_path, global).map_err(js_err)?,
             )
             .map_err(js_err)?;
 
@@ -1160,7 +1160,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
-            BunString::init(&*root_dir_path),
+            &BunString::init(&*root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,
@@ -1264,14 +1264,14 @@ fn bake_get_on_module_namespace(
 }
 
 // Renders all routes for static site generation by calling the JavaScript implementation.
-// All args are by-value `JSValue`/`BunString` plus a live `&JSGlobalObject`
+// All args are by-value `JSValue` / borrowed `&BunString` plus a live `&JSGlobalObject`
 // (UnsafeCell-backed); C++ allocates and returns a non-null `JSPromise*`.
 // No caller-side precondition for the call itself — declare `safe fn`.
 unsafe extern "C" {
     safe fn BakeRenderRoutesForProdStatic(
         global: &JSGlobalObject,
         // Output directory path (e.g., "./dist")
-        out_base: BunString,
+        out_base: &BunString,
         // Server module paths (e.g., ["bake://page.js", "bake://layout.js"])
         all_server_files: JSValue,
         // Framework prerender functions by router type
@@ -1296,7 +1296,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
+extern "C" fn BakeToWindowsPath(input: &BunString) -> bun_core::RawString {
     #[cfg(unix)]
     {
         let _ = input;
@@ -1308,16 +1308,16 @@ extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
         let input_slice = input_utf8.slice();
         let mut output = bun_paths::w_path_buffer_pool::get();
         let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
-        BunString::clone_utf16(output_slice.as_slice())
+        BunString::clone_utf16(output_slice.as_slice()).into_raw()
     }
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn BakeProdResolve(
     global: &JSGlobalObject,
-    a_str: BunString,
-    specifier_str: BunString,
-) -> BunString {
+    a_str: &BunString,
+    specifier_str: &BunString,
+) -> bun_core::RawString {
     let specifier = specifier_str.to_utf8();
 
     if let Some(alias) = bun_resolve_builtins::Alias::get(
@@ -1325,7 +1325,7 @@ extern "C" fn BakeProdResolve(
         bun_ast::Target::Bun,
         bun_resolve_builtins::Cfg::default(),
     ) {
-        return BunString::static_(alias.path.as_bytes());
+        return BunString::static_(alias.path.as_bytes()).into_raw();
     }
 
     let referrer = a_str.to_utf8();
@@ -1336,7 +1336,7 @@ extern "C" fn BakeProdResolve(
             bun_core::fmt::quote(specifier.slice()),
             bun_core::fmt::quote(referrer.slice()),
         ));
-        return BunString::dead();
+        return BunString::dead().into_raw();
     }
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
@@ -1353,6 +1353,7 @@ extern "C" fn BakeProdResolve(
             specifier.slice(),
         ))
     ))
+    .into_raw()
 }
 
 /// After a production bundle is generated, prerendering needs to be able to
@@ -1587,7 +1588,7 @@ impl Drop for PerThread {
 
 /// Given a key, returns the source code to load.
 #[unsafe(no_mangle)]
-extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
+extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> bun_core::RawString {
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
     let pt = unsafe { &*pt };
@@ -1599,9 +1600,10 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
         // the lifetime of the attached `PerThread` (see `Value::to_bun_string_ref`).
         return pt.bundled_outputs[value.get() as usize]
             .value
-            .to_bun_string_ref();
+            .to_bun_string_ref()
+            .into_raw();
     }
-    BunString::dead()
+    BunString::dead().into_raw()
 }
 
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)

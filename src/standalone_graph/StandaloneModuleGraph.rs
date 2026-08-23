@@ -539,8 +539,8 @@ impl File {
                 }
             }
         }
-        // We don't want this to free.
-        self.wtf_string.dupe_ref()
+        // The cached `wtf_string` keeps the impl alive for the process; hand the caller its own ref.
+        self.wtf_string.clone()
     }
 }
 

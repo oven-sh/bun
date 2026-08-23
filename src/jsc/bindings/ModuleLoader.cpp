@@ -48,24 +48,6 @@ using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
 
-class ResolvedSourceCodeHolder {
-public:
-    ResolvedSourceCodeHolder(ErrorableResolvedSource* res_)
-        : res(res_)
-    {
-    }
-
-    ~ResolvedSourceCodeHolder()
-    {
-        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
-            res->result.value.needsDeref = false;
-            res->result.value.source_code.impl.wtf->deref();
-        }
-    }
-
-    ErrorableResolvedSource* res;
-};
-
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
@@ -362,7 +344,6 @@ static JSValue handleVirtualModuleResult(
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, wasModuleMock);
     RETURN_IF_EXCEPTION(scope, {});
-    ResolvedSourceCodeHolder sourceCodeHolder(res);
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {
         if constexpr (allowPromise) {
@@ -479,10 +460,9 @@ extern "C" void Bun__onFulfillAsyncModule(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedPromiseValue,
     ErrorableResolvedSource* res,
-    BunString* specifier,
-    BunString* referrer)
+    const BunString* specifier,
+    const BunString* referrer)
 {
-    ResolvedSourceCodeHolder sourceCodeHolder(res);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
@@ -563,8 +543,9 @@ JSValue fetchBuiltinModuleWithoutResolution(
             return globalObject->processObject();
         }
 
+        // Populated `res`, but not servable as a `require()` fast-path value;
+        // the caller decides (evaluate as CJS / go through the ESM loader).
         case SyntheticModuleType::ESM: {
-            res->success = false;
             RELEASE_AND_RETURN(scope, jsNumber(-1));
         }
 
@@ -580,7 +561,6 @@ JSValue fetchBuiltinModuleWithoutResolution(
                 RETURN_IF_EXCEPTION(scope, {});
                 return result;
             } else {
-                res->success = false;
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
             }
         }
@@ -597,8 +577,6 @@ JSValue resolveAndFetchBuiltinModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource res;
-    res.success = false;
-    memset(&res.result, 0, sizeof res.result);
     if (Bun__resolveAndFetchBuiltinModule(bunVM, specifier, &res)) {
         ASSERT(res.success);
 
@@ -673,11 +651,7 @@ JSValue fetchCommonJSModule(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
-    resValue.success = false;
-    memset(&resValue.result, 0, sizeof resValue.result);
-
     ErrorableResolvedSource* res = &resValue;
-    ResolvedSourceCodeHolder sourceCodeHolder(res);
 
     BunString specifier = Bun::toString(specifierWtfString);
 
@@ -731,13 +705,13 @@ JSValue fetchCommonJSModule(
     auto builtin = fetchBuiltinModuleWithoutResolution(globalObject, &specifier, res);
     RETURN_IF_EXCEPTION(scope, {});
     if (builtin) {
-        if (!res->success) {
+        if (builtin.isNumber() && builtin.asNumber() == -1) {
             // A file embedded in a standalone executable is served by the builtin probe.
             // A CommonJS one is evaluated right here like any require()d CJS file (the
             // module loader path would find `target` already in the require map and
-            // never give it its source); only ES modules go through the loader.
+            // never give it its source); only ES modules go through the loader, which
+            // fetches its own copy — this one is released with `res`.
             if (res->result.value.isCommonJSModule) {
-                res->success = true;
                 target->evaluate(globalObject, specifierWtfString, res->result.value);
                 RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, target);
@@ -808,7 +782,7 @@ JSValue fetchCommonJSModule(
                 // The wrapper override only affects CJS evaluation; if it's
                 // active, fall through and re-transpile so the override can run.
                 if (!globalObject->hasOverriddenModuleWrapper) {
-                    target->evaluate(globalObject, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
+                    target->evaluate(globalObject, Ref(*cached), cached->m_tag == ResolvedSourceTagPackageJSONTypeModule);
                     RETURN_IF_EXCEPTION(scope, {});
                     RELEASE_AND_RETURN(scope, target);
                 }
@@ -964,7 +938,6 @@ static JSValue fetchESMSourceCode(
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ResolvedSourceCodeHolder sourceCodeHolder(res);
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {
         if constexpr (allowPromise) {
@@ -1119,7 +1092,7 @@ static JSValue fetchESMSourceCode(
             // affects CJS evaluation, so don't serve a cached Program-type provider
             // when one is active in this global — fall through to re-transpile.
             if (!globalObject->hasOverriddenModuleWrapper) {
-                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
+                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*cached), cached->m_tag == ResolvedSourceTagPackageJSONTypeModule);
                 EXCEPTION_ASSERT(created.has_value() == !scope.exception());
                 if (created.has_value()) {
                     RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1281,8 +1254,6 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
 {
     auto& vm = JSC::getVM(globalObject);
     ErrorableResolvedSource res;
-    res.success = false;
-    memset(&res.result, 0, sizeof res.result);
     JSC::JSValue objectResult = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = uncheckedDowncast<PendingVirtualModuleResult>(callFrame->argument(1));
     JSC::JSValue specifierString = pendingModule->internalField(0).get();
@@ -1291,9 +1262,13 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSPromise* promise = pendingModule->internalPromise();
 
-    BunString specifier = Bun::toString(globalObject, specifierString);
-    BunString referrer = Bun::toString(globalObject, referrerString);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String specifierWtf = specifierString.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    WTF::String referrerWtf = referrerString.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    BunString specifier = Bun::toString(specifierWtf);
+    BunString referrer = Bun::toString(referrerWtf);
 
     bool wasModuleMock = pendingModule->wasModuleMock;
 

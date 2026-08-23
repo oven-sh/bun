@@ -2893,8 +2893,7 @@ pub(crate) fn create_shell_interpreter(
 
     let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
 
-    let cwd = cwd.map(bun_core::OwnedString::new);
-    let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
+    let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
     // bun_vm() returns the live thread-local VM for a Bun-owned global; that
     // pointer is the live `jsc::EventLoop` `EventLoopHandle::init` expects.

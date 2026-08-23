@@ -12,7 +12,7 @@ use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
 use bun_collections::HashMap;
 use bun_core::{Output, StackCheck};
-use bun_core::{OwnedString, String as BunString, strings};
+use bun_core::{String as BunString, strings};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below can use the `JSLexer.isLatin1Identifier` /
@@ -768,22 +768,16 @@ impl<'a> TablePrinter<'a> {
 
                     // find or create the column for the property
                     let col_idx: usize = 'brk: {
-                        let col_str = BunString::init(col_key);
-
                         // reshaped for borrowck — split find/append.
                         if let Some(idx) =
-                            columns[1..].iter().position(|col| col.name.eql(&col_str))
+                            columns[1..].iter().position(|col| col.name.eql(&col_key))
                         {
                             break 'brk 1 + idx;
                         }
 
-                        // Need to ref this string because JSPropertyIterator
-                        // uses `toString` instead of `toStringRef` for property
-                        // names.
-                        col_str.ref_();
-
+                        // The column outlives the iterator that lends `col_key`.
                         columns.push(Column {
-                            name: col_str,
+                            name: col_key.to_owned(),
                             width: 1,
                         });
                         break 'brk columns.len() - 1;
@@ -878,13 +872,7 @@ impl<'a> TablePrinter<'a> {
         let global_object = self.global_object;
 
         let mut columns: Vec<Column> = Vec::with_capacity(16);
-        let mut _deref_names = scopeguard::guard(&mut columns, |cols| {
-            for col in cols.iter_mut() {
-                col.name.deref();
-            }
-        });
-        // reshaped for borrowck — re-borrow through the guard.
-        let columns: &mut Vec<Column> = &mut **_deref_names;
+        let columns = &mut columns;
 
         // create the first column " " which is always present
         columns.push(Column {
@@ -981,7 +969,7 @@ impl<'a> TablePrinter<'a> {
                 )?;
 
                 while let Some(row_key) = rows_iter.next()? {
-                    let key = RowKey::str(&BunString::init(row_key));
+                    let key = RowKey::str(&row_key);
                     let row = self.collect_row::<ENABLE_ANSI_COLORS>(
                         &mut cell_text,
                         columns,
@@ -1147,10 +1135,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
 
     let err = ZigString::init(b"trace output").to_error_instance(global);
-    {
-        let exception = holder.zig_exception();
-        err.to_zig_exception(global, exception);
-    }
+    // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
     // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
     // two simultaneous `&mut` into `holder`. Capture the flag in a local and
     // write it back after.
@@ -1223,14 +1208,14 @@ pub enum Colon {
     ExcludeColon,
 }
 
-pub struct ErrorDisplayLevelFormatter {
-    pub name: BunString,
+pub struct ErrorDisplayLevelFormatter<'a> {
+    pub name: &'a BunString,
     pub(crate) level: ErrorDisplayLevel,
     pub(crate) enable_colors: bool,
     pub(crate) colon: Colon,
 }
 
-impl core::fmt::Display for ErrorDisplayLevelFormatter {
+impl core::fmt::Display for ErrorDisplayLevelFormatter<'_> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.enable_colors {
             match self.level {
@@ -1241,7 +1226,7 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
         }
 
         if !self.name.is_empty() {
-            core::fmt::Display::fmt(&self.name, writer)?;
+            core::fmt::Display::fmt(self.name, writer)?;
         } else if self.level == ErrorDisplayLevel::Warn {
             writer.write_str("warn")?;
         } else {
@@ -1267,10 +1252,10 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
 impl ErrorDisplayLevel {
     pub(crate) fn formatter(
         self,
-        error_name: BunString,
+        error_name: &BunString,
         enable_colors: bool,
         colon: Colon,
-    ) -> ErrorDisplayLevelFormatter {
+    ) -> ErrorDisplayLevelFormatter<'_> {
         ErrorDisplayLevelFormatter {
             name: error_name,
             level: self,
@@ -2604,10 +2589,7 @@ pub mod formatter {
                             PercentTag::J => {
                                 // JSON.stringify the value using FastStringifier
                                 // for SIMD optimization
-                                // `OwnedString` releases the
-                                // +1 WTF ref on every exit (incl. the `?` below).
-                                let mut str = OwnedString::new(BunString::empty());
-                                next_value.json_stringify_fast(global, &mut str)?;
+                                let str = next_value.json_stringify_fast(global)?;
                                 writer.add_for_new_line(str.length());
                                 writer.print(format_args!("{str}"));
                             }
@@ -3551,7 +3533,7 @@ pub mod formatter {
         ) -> JsResult<()> {
             // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
-            let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
+            let str = BunString::from_js(value, self.global_this)?;
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3924,7 +3906,7 @@ pub mod formatter {
             // `Function.prototype.constructor === Function`, returning
             // "Function". The `.name` property is set to the real class name
             // on the constructor itself. See #29225.
-            let printable = OwnedString::new(value.get_name(self.global_this)?);
+            let printable = value.get_name(self.global_this)?;
             writer.add_for_new_line(printable.length());
 
             // Only report `extends` when the parent is itself a class
@@ -3935,11 +3917,11 @@ pub mod formatter {
             let proto_is_class = !proto.is_empty_or_undefined_or_null()
                 && proto.is_cell()
                 && proto.is_class(self.global_this);
-            let printable_proto = OwnedString::new(if proto_is_class {
+            let printable_proto = if proto_is_class {
                 proto.get_name(self.global_this)?
             } else {
                 BunString::empty()
-            });
+            };
             writer.add_for_new_line(printable_proto.length());
 
             if printable.is_empty() {
@@ -3995,11 +3977,11 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            let printable = OwnedString::new(value.get_name(self.global_this)?);
+            let printable = value.get_name(self.global_this)?;
 
             let proto = value.get_prototype(self.global_this)?;
             // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
-            let func_name = OwnedString::new(proto.get_name(self.global_this)?);
+            let func_name = proto.get_name(self.global_this)?;
 
             if printable.is_empty() || func_name.eql(&printable) {
                 if func_name.is_empty() {
@@ -4211,9 +4193,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let mut str = OwnedString::new(BunString::empty());
-
-            value.json_stringify(self.global_this, self.indent, &mut str)?;
+            let str = value.json_stringify(self.global_this, self.indent)?;
             writer.add_for_new_line(str.length());
             if js_type == jsc::JSType::JSDate {
                 // in the code for printing dates, it never exceeds this amount

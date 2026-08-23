@@ -485,9 +485,7 @@ pub(crate) fn validate_string_enum<T: StringEnum>(
     value: JSValue,
     name: impl fmt::Display,
 ) -> JsResult<T> {
-    // `bun_core::String` is `Copy` with no `Drop`;
-    // `OwnedString` is the RAII guard that releases the +1 ref on scope exit.
-    let str = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
+    let str = value.to_bun_string(global_this)?;
     if let Some(v) = T::from_bun_string(&str) {
         return Ok(v);
     }

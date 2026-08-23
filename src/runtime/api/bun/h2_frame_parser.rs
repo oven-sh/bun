@@ -3689,11 +3689,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         if !self.custom_settings.get().is_empty() {
             let custom = JSValue::create_empty_object(&g, self.custom_settings.get().len());
             for (id, value) in self.custom_settings.get().iter() {
-                // Custom-setting ids are numeric property keys: route through the index-aware put.
-                let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
                 // Left pending: the engine stops before the next frame
                 // (`Sink::should_stop`) and `read()`/`on_native_read` return it.
-                let put = custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64));
+                let put = custom.put_index(&g, u32::from(*id), JSValue::js_number(*value as f64));
                 let Some(()) = self.or_stop(put) else {
                     return;
                 };
@@ -3747,11 +3745,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         if !self.remote_custom_settings.get().is_empty() {
             let custom = JSValue::create_empty_object(&g, self.remote_custom_settings.get().len());
             for (id, value) in self.remote_custom_settings.get().iter() {
-                // Custom-setting ids are numeric property keys: route through the index-aware put.
-                let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
                 // Left pending: the engine stops before the next frame
                 // (`Sink::should_stop`) and `read()`/`on_native_read` return it.
-                let put = custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64));
+                let put = custom.put_index(&g, u32::from(*id), JSValue::js_number(*value as f64));
                 let Some(()) = self.or_stop(put) else {
                     return;
                 };

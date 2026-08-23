@@ -16,7 +16,10 @@ unsafe extern "C" {
     safe fn JSC__JSBigInt__orderUint64(this: &JSBigInt, num: u64) -> i8;
     safe fn JSC__JSBigInt__orderInt64(this: &JSBigInt, num: i64) -> i8;
     safe fn JSC__JSBigInt__toInt64(this: &JSBigInt) -> i64;
-    safe fn JSC__JSBigInt__toString(this: &JSBigInt, global: &JSGlobalObject) -> BunString;
+    safe fn JSC__JSBigInt__toString(
+        this: &JSBigInt,
+        global: &JSGlobalObject,
+    ) -> bun_core::RawString;
 }
 
 /// Types that can be compared against a `JSBigInt` via the FFI order functions.
@@ -73,6 +76,9 @@ impl JSBigInt {
     }
 
     pub fn to_string(&self, global: &JSGlobalObject) -> JsResult<BunString> {
-        crate::host_fn::from_js_host_call_generic(global, || JSC__JSBigInt__toString(self, global))
+        // SAFETY: `toStringRef` (+1) or an inert Empty tag on exception.
+        crate::host_fn::from_js_host_call_generic(global, || unsafe {
+            BunString::from_raw(JSC__JSBigInt__toString(self, global))
+        })
     }
 }

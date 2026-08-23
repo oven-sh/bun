@@ -547,11 +547,7 @@ impl AnyRoute {
             &mut path_string,
             false,
         )?);
-        // NOTE: `from_bun_string` clones
-        // the bytes (or bumps the WTF ref) into the PathLike payload, so we can
-        // release the source ref immediately — `bun_core::String` has no `Drop`.
-        path_string.deref();
-        // path is dropped at scope end
+        drop(path_string);
 
         // Construct the route by stripping paths above the root.
         //
@@ -2622,11 +2618,7 @@ where
     pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.config.address {
             server_config::Address::Unix(unix) => {
-                let value = BunString::clone_utf8(unix.as_bytes());
-                // Must release the cloned ref even
-                // on the `to_js` error path.
-                let value = scopeguard::guard(value, |v| v.deref());
-                value.to_js(global)
+                jsc::bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
             }
             server_config::Address::Tcp { port: tcp_port, .. } => {
                 let mut port: u16 = *tcp_port;
@@ -2676,14 +2668,10 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let mut url = self
+        let url = self
             .get_url_as_string()
             .map_err(|_| global.throw_out_of_memory())?;
-        // `to_jsdomurl` may throw (invalid URL → JS TypeError); deref the
-        // backing string on both Ok/Err paths, then propagate.
-        let r = bun_string_jsc::to_jsdomurl(&mut url, global);
-        url.deref();
-        r
+        bun_string_jsc::to_jsdomurl(&url, global)
     }
 
     #[bun_jsc::host_fn(getter)]

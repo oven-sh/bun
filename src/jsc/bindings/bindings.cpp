@@ -3683,8 +3683,7 @@ CPP_DECL void JSC__JSValue__putIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
-    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(value);
-    array->putDirectIndex(arg1, arg2, value2);
+    value.getObject()->putDirectIndex(arg1, arg2, value2);
 }
 
 CPP_DECL void JSC__JSValue__push(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue3)

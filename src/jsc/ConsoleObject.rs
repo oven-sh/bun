@@ -872,7 +872,6 @@ impl<'a> TablePrinter<'a> {
         let global_object = self.global_object;
 
         let mut columns: Vec<Column> = Vec::with_capacity(16);
-        let columns = &mut columns;
 
         // create the first column " " which is always present
         columns.push(Column {
@@ -919,7 +918,7 @@ impl<'a> TablePrinter<'a> {
                 let mut ctx = Ctx {
                     this: self,
                     cell_text: &mut cell_text,
-                    columns,
+                    columns: &mut columns,
                     rows: &mut rows,
                     idx: 0,
                     err: None,
@@ -972,7 +971,7 @@ impl<'a> TablePrinter<'a> {
                     let key = RowKey::str(&row_key);
                     let row = self.collect_row::<ENABLE_ANSI_COLORS>(
                         &mut cell_text,
-                        columns,
+                        &mut columns,
                         key,
                         rows_iter.value,
                     )?;
@@ -1047,7 +1046,7 @@ impl<'a> TablePrinter<'a> {
 
         // render pass: replay each row's pre-formatted cell bytes
         for row in rows.iter() {
-            self.print_row(writer, columns, row, &cell_text);
+            self.print_row(writer, &columns, row, &cell_text);
         }
 
         // print the table bottom border

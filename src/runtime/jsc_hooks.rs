@@ -3714,7 +3714,6 @@ fn get_hardcoded_module(
             use bun_jsc::resolved_source::Tag;
             Some(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(&ep.contents),
-                // +1 each: ~SourceProvider() derefs `specifier` and
                 source_url: specifier.clone(),
                 tag: Tag::Esm,
                 ..ResolvedSource::default()

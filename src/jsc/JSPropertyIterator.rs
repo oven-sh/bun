@@ -168,7 +168,9 @@ impl<'a> JSPropertyIterator<'a> {
     }
 
     /// The name is borrowed from the iterator (C++ `Bun::toString`, no ref);
-    /// it is valid until the iterator is dropped.
+    /// it is valid until the iterator is dropped. `'a` (the global borrow) is
+    /// wider than that, but tying the view to `&mut self` would forbid reading
+    /// `self.value` while holding the name, which every caller does.
     pub fn next(&mut self) -> JsResult<Option<bun_core::StringView<'a>>> {
         // Reuse stack space.
         loop {

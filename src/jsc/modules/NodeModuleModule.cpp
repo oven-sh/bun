@@ -448,8 +448,6 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
         globalObject->hasOverriddenModuleResolveFilenameFunction = false;
         globalObject->m_moduleResolveFilenameOverride.clear();
     } else {
-        // Any value is accepted, as with Node's plain data property; whether it
-        // is callable is checked when require() goes to call it.
         globalObject->m_moduleResolveFilenameOverride.set(
             lexicalGlobalObject->vm(), globalObject, value);
         globalObject->hasOverriddenModuleResolveFilenameFunction = true;

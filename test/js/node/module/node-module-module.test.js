@@ -790,7 +790,7 @@ console.log("survived", require("./late.js"));`,
       `,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.cjs"],
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",

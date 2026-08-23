@@ -486,9 +486,7 @@ public:
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleResolveFilenameFunction)                       \
-    /* Whatever user code assigned to require("module")._resolveFilename. Like Node's plain data */          \
-    /* property it holds any value; require() throws if it is not callable. Only meaningful while */         \
-    /* hasOverriddenModuleResolveFilenameFunction is set. */                                                 \
+    /* The user-assigned Module._resolveFilename value; require() throws if it is not callable. */           \
     V(public, WriteBarrier<JSC::Unknown>, m_moduleResolveFilenameOverride)                                   \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \

@@ -208,7 +208,13 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
         let mut handle: Option<NonNull<CachedBytecode>> = None;
         // SAFETY: out-params are initialized locals; C++ fills them on success.
         if !unsafe {
-            Bun__generateInternalModuleBytecode(id, depth, &raw mut bytes, &raw mut size, &raw mut handle)
+            Bun__generateInternalModuleBytecode(
+                id,
+                depth,
+                &raw mut bytes,
+                &raw mut size,
+                &raw mut handle,
+            )
         } {
             continue;
         }

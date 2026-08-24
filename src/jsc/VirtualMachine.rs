@@ -312,6 +312,10 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
+    /// Set by `bun repl` so `uncaught_exception_fatal` stays at print-and-continue instead of
+    /// terminating the session. Node's REPL wraps evaluation in a domain for the same reason:
+    /// https://github.com/nodejs/node/blob/main/lib/repl.js
+    pub suppress_fatal_uncaught: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
@@ -1227,14 +1231,13 @@ impl VirtualMachine {
             .platform_loop_opt()
             .map(|h| h.is_active())
             .unwrap_or(false);
-        self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + el.yield_tasks.len()
-                + (el.has_concurrent_tasks() as usize)
-                + (el.has_pending_refs() as usize)
-                > 0)
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + el.yield_tasks.len()
+            + (el.has_concurrent_tasks() as usize)
+            + (el.has_pending_refs() as usize)
+            > 0
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
@@ -1547,6 +1550,25 @@ impl VirtualMachine {
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
+        self.uncaught_exception_impl(global_object, err, origin, false)
+    }
+
+    pub fn uncaught_exception_fatal(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+        origin: UncaughtExceptionOrigin,
+    ) -> bool {
+        self.uncaught_exception_impl(global_object, err, origin, true)
+    }
+
+    fn uncaught_exception_impl(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+        origin: UncaughtExceptionOrigin,
+        fatal_exit: bool,
+    ) -> bool {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
         if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
@@ -1606,6 +1628,27 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
+            if fatal_exit
+                && !self.suppress_fatal_uncaught
+                && self.is_main_thread()
+                && self.hot_reload == HotReload::None
+                && origin != UncaughtExceptionOrigin::EntryPointRejection
+            {
+                self.unhandled_error_counter += 1;
+                self.exit_handler.exit_code = 1;
+                (self.on_unhandled_rejection)(self, global_object, err);
+                bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
+                bun_core::pretty_errorln!(
+                    "<r>\n<d>{}<r>",
+                    bun_core::Global::unhandled_error_bun_version_string,
+                );
+                self.is_handling_uncaught_exception = false;
+                self.exit_on_uncaught_exception = true;
+                // SAFETY: see above.
+                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                panic!("made it past process.exit()");
+            }
+            // --abort-on-uncaught-exception already handled in Bun__handleUncaughtException.
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
@@ -3729,7 +3772,19 @@ impl VirtualMachine {
                 if handle_unhandled() {
                     return;
                 }
-                // continue to default handler
+                if self.hot_reload == HotReload::None {
+                    let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
+                    if self.uncaught_exception_fatal(
+                        global_object,
+                        wrapped,
+                        UncaughtExceptionOrigin::Rejection,
+                    ) {
+                        drain(self);
+                        return;
+                    }
+                    let _ = self.event_loop_mut().drain_microtasks();
+                    return;
+                }
             }
             Mode::None => {
                 let _ = handle_unhandled();
@@ -3756,13 +3811,12 @@ impl VirtualMachine {
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                let _ = self.uncaught_exception(
+                let _ = self.uncaught_exception_fatal(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,
                 );
-                let handled = handle_unhandled();
-                if !handled {
+                if !handle_unhandled() {
                     emit_warning(self);
                 }
                 drain(self);
@@ -3774,7 +3828,7 @@ impl VirtualMachine {
                     return;
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                if self.uncaught_exception(
+                if self.uncaught_exception_fatal(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,
@@ -3782,12 +3836,8 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                // continue to default handler — but RETURN if this drain
-                // errors (the VM is dead; don't bump the counter or invoke the
-                // handler).
-                if self.event_loop_mut().drain_microtasks().is_err() {
-                    return;
-                }
+                let _ = self.event_loop_mut().drain_microtasks();
+                return;
             }
         }
         self.unhandled_error_counter += 1;
@@ -6849,7 +6899,7 @@ fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bo
     })
 }
 
-/// What `--unhandled-rejections=strict|throw` hand to the uncaught-exception path for `reason`. If describing the
+/// What `--unhandled-rejections=bun|strict|throw` hand to the uncaught-exception path for `reason`. If describing the
 /// rejection itself throws (a hostile Proxy under isErrorLike, an OOM resolving a rope), that failure does not
 /// replace the thing being reported: the rejection is the user's bug, so it is reported as-is — unless what was
 /// thrown is a termination, which has to win.

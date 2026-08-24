@@ -83,7 +83,9 @@ function wrapStoreRun(store, data, next, transform = defaultTransform) {
     try {
       context = transform(data);
     } catch (err) {
-      process.nextTick(() => reportError(err));
+      process.nextTick(() => {
+        throw err;
+      });
       return next();
     }
 
@@ -144,7 +146,9 @@ class ActiveChannel {
         const onMessage = this._subscribers[i];
         onMessage(data, this.name);
       } catch (err) {
-        process.nextTick(() => reportError(err));
+        process.nextTick(() => {
+          throw err;
+        });
       }
     }
   }

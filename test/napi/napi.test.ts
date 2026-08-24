@@ -732,6 +732,26 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("done 3");
     });
 
+    // Node dispatches the callback via CallbackIntoModule, so a throw is a
+    // fatal uncaught exception (enforced by default since node 26). A
+    // keep-alive report would leave the fixture's interval ticking forever.
+    it("a throw from the JS callback is a fatal uncaught exception", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/tsfn-throw-fixture.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(stderr).toContain("tsfn-boom");
+      expect(stdout).not.toContain("callback 2");
+      expect(exitCode).toBe(1);
+    });
+
     // Items still queued when the function stops being dispatched. Node's
     // process.exit() leaves them alone; an addon's call_js is usually written
     // for a live env and aborts when handed a null one at exit (the finalizer

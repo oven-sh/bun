@@ -390,6 +390,28 @@ WTF::String formatStackTrace(
     return sb.toString();
 }
 
+void addErrorInfoWithSourceMap(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* object, const WTF::String& name, const WTF::String& message)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    std::unique_ptr<Vector<StackFrame>> stackTrace = JSC::getStackTrace(vm, object, /* useCurrentFrame */ true);
+    if (!stackTrace)
+        return;
+
+    OrdinalNumber line = OrdinalNumber::beforeFirst();
+    OrdinalNumber column = OrdinalNumber::beforeFirst();
+    WTF::String sourceURL;
+    WTF::String stack = formatStackTrace(vm, defaultGlobalObject(lexicalGlobalObject), lexicalGlobalObject, name, message, line, column, sourceURL, *stackTrace, object);
+
+    constexpr unsigned attributes = JSC::PropertyAttribute::DontEnum | 0;
+    if (line != OrdinalNumber::beforeFirst()) {
+        object->putDirect(vm, vm.propertyNames->line, jsNumber(line.oneBasedInt()), attributes);
+        object->putDirect(vm, vm.propertyNames->column, jsNumber(column.oneBasedInt()), attributes);
+    }
+    if (!sourceURL.isEmpty())
+        object->putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(sourceURL)), attributes);
+    object->putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stack)), attributes);
+}
+
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(
     JSC::VM& vm,

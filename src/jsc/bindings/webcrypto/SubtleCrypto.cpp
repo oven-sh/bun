@@ -686,7 +686,9 @@ static void rejectWithCause(Ref<DeferredPromise>&& promise, ExceptionCode ec, co
 {
     promise->rejectWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
         auto& vm = globalObject.vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::JSValue cause = makeCause(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         auto exception = createDOMException(&globalObject, ec, message);
         if (auto* exceptionObject = exception.getObject(); exceptionObject && cause)
             exceptionObject->putDirect(vm, vm.propertyNames->cause, cause);

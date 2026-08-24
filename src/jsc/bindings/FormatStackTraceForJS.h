@@ -70,6 +70,9 @@ WTF::String formatStackTrace(
     WTF::Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance);
 
+// JSC::addErrorInfo() for objects that are not ErrorInstances (DOMException), putting what an ErrorInstance materializes: source-mapped positions and a Bun-format stack.
+void addErrorInfoWithSourceMap(JSC::JSGlobalObject*, JSC::JSObject*, const WTF::String& name, const WTF::String& message);
+
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);

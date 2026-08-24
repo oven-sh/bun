@@ -52,17 +52,52 @@ function validateWorkerFilename(filename) {
   throw $ERR_WORKER_PATH(message);
 }
 
+const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
+
+const isMainThread = Bun.isMainThread;
 const {
-  MessageChannel,
-  BroadcastChannel: WebBroadcastChannel,
-  Worker: WebWorker,
-} = globalThis as typeof globalThis & {
+  0: _workerData,
+  1: _threadId,
+  2: _receiveMessageOnPort,
+  3: environmentData,
+  4: _threadName,
+  5: _isMessagePortActive,
+  6: _markAsUntransferable,
+  7: _isMarkedAsUntransferable,
+  8: _markAsUncloneable,
+  9: _setEntryEvaluatedHook,
+  10: _isNodeWorker,
+  11: _setParentPort,
+  12: _setStdioPorts,
+  // The intrinsic web constructors, captured natively so user code replacing the
+  // globals (e.g. happy-dom's registrator) before this module loads cannot break
+  // worker_threads (#40268).
+  13: _MessagePort,
+  14: MessageChannel,
+  15: WebBroadcastChannel,
+  16: WebWorker,
+} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
+  unknown,
+  number,
+  (port: unknown) => unknown,
+  Map<unknown, unknown>,
+  string,
+  (port: unknown) => boolean,
+  (value: unknown) => void,
+  (value: unknown) => boolean,
+  (value: unknown) => void,
+  (hook: () => void) => void,
+  boolean,
+  (port: MessagePort) => void,
+  (ports: object) => void,
+  typeof globalThis.MessagePort,
+  typeof globalThis.MessageChannel,
+  typeof globalThis.BroadcastChannel,
   // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
   // instance. This is so that it can emit the `worker` event on the process with the
   // node:worker_threads instance instead of the Web Worker instance.
-  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
-};
-const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
+  new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
+];
 
 // node's BroadcastChannel (lib/internal/worker/io.js) argument handling on top of the WHATWG class.
 class BroadcastChannel extends WebBroadcastChannel {
@@ -110,37 +145,6 @@ class BroadcastChannel extends WebBroadcastChannel {
     return this;
   }
 }
-
-const isMainThread = Bun.isMainThread;
-const {
-  0: _workerData,
-  1: _threadId,
-  2: _receiveMessageOnPort,
-  3: environmentData,
-  4: _threadName,
-  5: _isMessagePortActive,
-  6: _markAsUntransferable,
-  7: _isMarkedAsUntransferable,
-  8: _markAsUncloneable,
-  9: _setEntryEvaluatedHook,
-  10: _isNodeWorker,
-  11: _setParentPort,
-  12: _setStdioPorts,
-} = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
-  unknown,
-  number,
-  (port: unknown) => unknown,
-  Map<unknown, unknown>,
-  string,
-  (port: unknown) => boolean,
-  (value: unknown) => void,
-  (value: unknown) => boolean,
-  (value: unknown) => void,
-  (hook: () => void) => void,
-  boolean,
-  (port: MessagePort) => void,
-  (ports: object) => void,
-];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -328,7 +332,6 @@ function injectFakeEmitter(Class) {
   Object.setPrototypeOf(proto, inherited);
 }
 
-const _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
 
 const MessagePort = _MessagePort;
@@ -638,7 +641,7 @@ let parentPort: MessagePort | null = null;
 // postMessageToThread (Node 22+): the Worker ctor always smuggles a control
 // MessagePort to the worker by wrapping workerData; unwrap it here.
 const messaging = require("internal/worker/messaging");
-messaging.initThreadInfo(threadId, isMainThread);
+messaging.initThreadInfo(threadId, isMainThread, MessageChannel);
 // Captured stdio + the messaging control port ride inside workerData (wrapped;
 // ports transferred). Unwrap and bind the worker's stdio / messaging hub.
 // Gate on _isNodeWorker so a raw `new globalThis.Worker` that loads this module

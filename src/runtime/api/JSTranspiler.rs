@@ -30,7 +30,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{OwnedString, String as BunString, ZigString};
+use bun_core::{String as BunString, ZigString};
 use bun_options_types::schema::api;
 
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
@@ -185,8 +185,7 @@ impl Config {
 
                 // SAFETY: `define_obj` is a non-null *mut JSObject (just returned by get_object()).
                 let define_obj_ref = unsafe { &*define_obj };
-                let mut define_iter =
-                    JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
+                let define_iter = JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
                 // `defer define_iter.deinit()` → Drop
 
                 // `define_iter.i` is the property position, not a dense index of yielded
@@ -198,8 +197,7 @@ impl Config {
                 names.reserve_exact(define_iter.len);
                 values.reserve_exact(define_iter.len);
 
-                while let Some(prop) = define_iter.next()? {
-                    let property_value = define_iter.value;
+                while let Some((prop, property_value)) = define_iter.next()? {
                     let value_type = property_value.js_type();
 
                     if !value_type.is_string_like() {
@@ -210,14 +208,12 @@ impl Config {
                     }
 
                     names.push(prop.to_owned_slice().into());
-                    let mut val = ZigString::init(b"");
-                    property_value.to_zig_string(&mut val, global)?;
-                    if val.len == 0 {
-                        val = ZigString::init(b"\"\"");
-                    }
-                    let mut buf = Vec::new();
-                    write!(&mut buf, "{}", val).expect("unreachable");
-                    values.push(buf.into_boxed_slice());
+                    let val = property_value.to_js_string_view(global)?;
+                    values.push(if val.is_empty() {
+                        Box::from(&b"\"\""[..])
+                    } else {
+                        val.to_owned_slice().into_boxed_slice()
+                    });
                 }
 
                 self.transform.define = Some(api::StringMap {
@@ -235,16 +231,11 @@ impl Config {
 
                 let toplevel_type = external.js_type();
                 if toplevel_type.is_string_like() {
-                    let mut zig_str = ZigString::init(b"");
-                    external.to_zig_string(&mut zig_str, global)?;
-                    if zig_str.len == 0 {
+                    let str = external.to_bun_string(global)?;
+                    if str.is_empty() {
                         break 'external;
                     }
-                    let mut single_external: Vec<Box<[u8]>> = Vec::with_capacity(1);
-                    let mut buf = Vec::new();
-                    write!(&mut buf, "{}", zig_str).expect("unreachable");
-                    single_external.push(buf.into_boxed_slice());
-                    self.transform.external = single_external;
+                    self.transform.external = vec![str.to_owned_slice().into_boxed_slice()];
                 } else if toplevel_type.is_array() {
                     let count = external.get_length(global)?;
                     if count == 0 {
@@ -260,14 +251,11 @@ impl Config {
                             )));
                         }
 
-                        let mut zig_str = ZigString::init(b"");
-                        entry.to_zig_string(&mut zig_str, global)?;
-                        if zig_str.len == 0 {
+                        let str = entry.to_bun_string(global)?;
+                        if str.is_empty() {
                             continue;
                         }
-                        let mut buf = Vec::new();
-                        write!(&mut buf, "{}", zig_str).expect("unreachable");
-                        externals.push(buf.into_boxed_slice());
+                        externals.push(str.to_owned_slice().into_boxed_slice());
                     }
 
                     self.transform.external = externals;
@@ -303,7 +291,6 @@ impl Config {
                     break 'tsconfig;
                 }
                 let kind = tsconfig.js_type();
-                let mut out = OwnedString::new(BunString::empty());
 
                 if kind.is_array() {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -311,12 +298,12 @@ impl Config {
                     )));
                 }
 
-                if !kind.is_string_like() {
+                let out = if !kind.is_string_like() {
                     // Use jsonStringifyFast for SIMD-optimized serialization
-                    tsconfig.json_stringify_fast(global, &mut out)?;
+                    tsconfig.json_stringify_fast(global)?
                 } else {
-                    out = OwnedString::new(tsconfig.to_bun_string(global)?);
-                }
+                    tsconfig.to_bun_string(global)?
+                };
 
                 if out.is_empty() {
                     break 'tsconfig;
@@ -355,14 +342,13 @@ impl Config {
                     );
                 }
 
-                let mut out = OwnedString::new(BunString::empty());
                 // TODO: write a converter between JSC types and Bun AST types
-                if is_object {
+                let out = if is_object {
                     // Use jsonStringifyFast for SIMD-optimized serialization
-                    macros.json_stringify_fast(global, &mut out)?;
+                    macros.json_stringify_fast(global)?
                 } else {
-                    out = OwnedString::new(macros.to_bun_string(global)?);
-                }
+                    macros.to_bun_string(global)?
+                };
 
                 if out.is_empty() {
                     break 'macros;
@@ -508,8 +494,8 @@ impl Config {
                             if !value.is_string() {
                                 continue;
                             }
-                            let str = value.get_zig_string(global)?;
-                            if str.len == 0 {
+                            let str = value.to_js_string_view(global)?;
+                            if str.is_empty() {
                                 continue;
                             }
                             // The capacity bound is sized from UTF-16 code-unit
@@ -548,7 +534,7 @@ impl Config {
 
                 // SAFETY: `replace_obj` is non-null (just returned by get_object()).
                 let replace_obj_ref = unsafe { &*replace_obj };
-                let mut iter = JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
+                let iter = JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
 
                 if iter.len > 0 {
                     bun_core::handle_oom(replacements.ensure_unused_capacity(iter.len));
@@ -560,8 +546,7 @@ impl Config {
                     // early return drops it — freeing the `Box<[u8]>` keys and
                     // clearing the map.
 
-                    while let Some(key_) = iter.next()? {
-                        let value = iter.value;
+                    while let Some((key_, value)) = iter.next()? {
                         if value.is_empty() {
                             continue;
                         }
@@ -593,8 +578,7 @@ impl Config {
                                 export_replacement_value(replacement_value, global, arena)?
                             {
                                 let replacement_key = value.get_index(global, 0)?;
-                                let slice =
-                                    OwnedString::new(replacement_key.to_bun_string(global)?);
+                                let slice = replacement_key.to_bun_string(global)?;
                                 let replacement_name = slice.to_owned_slice();
 
                                 if !JSLexer::is_identifier(&replacement_name) {
@@ -886,7 +870,10 @@ impl TransformTask {
     }
 
     fn finish(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
-        promise.settle(global, self.output_code.transfer_to_js(global))
+        promise.settle(
+            global,
+            core::mem::take(&mut self.output_code).into_js(global),
+        )
     }
 }
 
@@ -926,14 +913,13 @@ fn export_replacement_value(
     }
 
     if value.is_string() {
-        let zig_str = value.get_zig_string(global)?;
-        let mut buf = Vec::new();
-        write!(&mut buf, "{}", zig_str).expect("unreachable");
+        let str = value.to_js_string_view(global)?;
+        let utf8 = str.to_utf8();
         // Bump-allocate so the bytes
         // live as long as the JSTranspiler arena that owns the resulting Expr;
         // `E::EString::init` erases the borrow to `'static` per the AST
         // crate's `Str` convention (see ast/E.rs).
-        let data = arena.alloc_slice_copy(&buf);
+        let data = arena.alloc_slice_copy(utf8.slice());
         return Ok(Some(Expr::init(
             bun_ast::E::EString::init(data),
             bun_ast::Loc::EMPTY,
@@ -979,10 +965,6 @@ impl JSTranspiler {
         // no-op when we never handed out refs. `bun.destroy(this)` → Box not yet created.
 
         config.from_js(global, config_arg, arena_ref)?;
-
-        if global.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
-        }
 
         if (config.log.warnings + config.log.errors) > 0 {
             return Err(
@@ -1306,10 +1288,6 @@ impl JSTranspiler {
             }
             break 'brk None;
         };
-
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1656,18 +1634,12 @@ impl JSTranspiler {
             ));
         };
 
-        let code_holder = match StringOrBuffer::from_js(global, code_arg)? {
-            Some(h) => h,
-            None => {
-                if !global.has_exception() {
-                    return Err(global.throw_invalid_argument_type(
-                        "scanImports",
-                        "code",
-                        "string or Uint8Array",
-                    ));
-                }
-                return Ok(JSValue::ZERO);
-            }
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                "scanImports",
+                "code",
+                "string or Uint8Array",
+            ));
         };
         args.eat();
         let code = code_holder.slice();

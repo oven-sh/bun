@@ -54,9 +54,9 @@ pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
-    HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell,
-    SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
-    WTFStringImplStruct, ZigString, ZigStringSlice,
+    HashedString, MutableString, NodeEncoding, SliceWithUnderlyingString, SmolStr, String,
+    StringBuilder, StringView, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct, ZigString,
+    ZigStringSlice,
 };
 pub use string::{
     STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,

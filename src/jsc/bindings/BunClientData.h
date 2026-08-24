@@ -124,6 +124,7 @@ private:
 
 namespace JSC {
 struct HashTableValue;
+class DecoderStringTable;
 }
 
 namespace Bun {
@@ -272,8 +273,12 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
+    JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
+    void setDecoderStringTable(std::span<const uint8_t>);
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
+    std::unique_ptr<JSC::DecoderStringTable> m_decoderStringTable;
 
     // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
     // singleton alone (it is shared by every VM). On the default `!useGlobalGC`

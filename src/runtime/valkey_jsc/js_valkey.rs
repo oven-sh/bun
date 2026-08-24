@@ -1,6 +1,5 @@
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
@@ -19,7 +18,7 @@ use super::protocol_jsc;
 use super::valkey;
 use super::valkey_command_body as command;
 use super::valkey_command_body::Command;
-use bun_jsc::url::URL;
+use bun_jsc::url::Parsed;
 use bun_valkey::valkey_protocol as protocol;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -250,10 +249,7 @@ impl JSValkeyClient {
         let Some(callbacks) = self.get_callbacks(global_object, channel_name)? else {
             debug!(
                 "No callbacks found for channel {}",
-                // `JSString` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
-                // deref (`as_string()` returns a live cell for string values).
-                bun_jsc::JSString::opaque_ref(channel_name.as_string())
-                    .get_zig_string(global_object)
+                channel_name.to_js_string_view(global_object)?
             );
             return Ok(());
         };
@@ -531,16 +527,15 @@ impl JSValkeyClient {
                 None => BunString::static_(b"valkey://localhost:6379"),
             }
         };
-        // `defer url_str.deref();` — bun_core::String drops on scope exit.
         let mut fallback_url_buf = [0u8; 2048];
 
-        // Parse and validate the URL using `URL::from_string`, which returns null for invalid URLs
+        // Parse and validate the URL using `Parsed::from_utf8`, which returns null for invalid URLs
         // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
         // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
         // the case right now and I do not understand why. It will take some work in JSC to
         // understand why this is happening, but since I need to uncork valkey, I'm adding this as
         // a stop-gap.
-        let parsed_url: NonNull<URL> = 'get_url: {
+        let parsed_url = 'get_url: {
             let url_slice = url_str.to_utf8();
             let url_byte_slice = url_slice.slice();
 
@@ -551,7 +546,7 @@ impl JSValkeyClient {
             }
 
             if strings::contains(url_byte_slice, b"://") {
-                break 'get_url match URL::from_utf8(url_byte_slice) {
+                break 'get_url match Parsed::from_utf8(url_byte_slice) {
                     Some(u) => u,
                     None => {
                         return Err(global_object
@@ -576,7 +571,7 @@ impl JSValkeyClient {
                 break 'get_url_slice &fallback_url_buf[..written];
             };
 
-            match URL::from_utf8(corrected_url) {
+            match Parsed::from_utf8(corrected_url) {
                 Some(u) => u,
                 None => {
                     return Err(
@@ -585,13 +580,6 @@ impl JSValkeyClient {
                 }
             }
         };
-        // SAFETY: `from_utf8` heap-allocates; release on scope exit.
-        let _parsed_url_drop =
-            scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
-        // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
-        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
-        // `NonNull::as_ref` site.
-        let parsed_url = bun_ptr::BackRef::from(parsed_url);
 
         // Extract protocol string
         let protocol_str = parsed_url.protocol();

@@ -19,7 +19,7 @@ use bun_core::{ZigString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
-use bun_ptr::{BackRef, JsCell, Mut, RefPtr, ThisPtr};
+use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -106,7 +106,7 @@ pub struct WebSocket<const SSL: bool> {
     /// The queued `InitialDataTask` (handshake-overflow bytes) until it runs or
     /// `handle_data` drains it first; detached in `Drop` so a task that
     /// outlives us does nothing.
-    pending_initial_task: Cell<Option<BackRef<InitialDataTask<SSL>, Mut>>>,
+    pending_initial_task: Cell<Option<BackRef<InitialDataTask<SSL>, Root>>>,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
     /// Track if current message is compressed
@@ -183,9 +183,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.clear_send_buffers(true);
         self.control_frame_started.set(false);
         self.ping_len.set(0);
-        if let Some((_, reason)) = self.close_dispatch_pending.take() {
-            reason.deref();
-        }
+        self.close_dispatch_pending.take();
         self.receiving_compressed.set(false);
         self.message_is_compressed.set(false);
         self.deflate.replace(None);
@@ -294,13 +292,13 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+        if let Some((code, reason)) = self.close_dispatch_pending.take() {
             // The socket closed while our close frame was mid-flush; the peer
             // either got it or didn't, but JS should still see the
             // user-initiated code/reason (not an abrupt 1006).
             self.detach_tcp();
             self.clear_data();
-            self.dispatch_close(code, &mut reason);
+            self.dispatch_close(code, reason);
             // For the socket.
             self.release_io_ref();
             return;
@@ -1152,7 +1150,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();
                 self.clear_data();
-                self.dispatch_close(dispatch_code, &mut reason);
+                self.dispatch_close(dispatch_code, reason);
             } else {
                 // The close frame was only partially written; the remainder is
                 // in send_buffer. clear_data() would discard it (and the
@@ -1178,10 +1176,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn finish_pending_close(&self) {
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+        if let Some((code, reason)) = self.close_dispatch_pending.take() {
             self.shutdown_after_close_frame();
             self.clear_data();
-            self.dispatch_close(code, &mut reason);
+            self.dispatch_close(code, reason);
         }
     }
 
@@ -1374,7 +1372,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// May free `self`.
-    fn dispatch_close(&self, code: u16, reason: &mut bun_core::String) {
+    fn dispatch_close(&self, code: u16, reason: bun_core::String) {
         let Some((out, cpp_ref)) = self.outgoing_websocket.replace(None) else {
             return;
         };
@@ -1860,7 +1858,7 @@ impl InitialDataHandler {
 pub(crate) struct InitialDataTask<const SSL: bool> {
     /// Detached by `WebSocket`'s `Drop` (or by `handle_data` draining `data`
     /// first) so a task that outlives its client does nothing.
-    ws: Cell<Option<BackRef<WebSocket<SSL>, Mut>>>,
+    ws: Cell<Option<BackRef<WebSocket<SSL>, Root>>>,
     data: JsCell<Option<InitialDataHandler>>,
 }
 

@@ -1,6 +1,6 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_css::targets::{Browsers, Targets};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
@@ -61,8 +61,8 @@ pub fn _test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 /// Shared arg-validation for the test-only CSS internals: pulls the next arg,
 /// throws "{fn_name}: expected {expected_n} arguments, got {got_n}" if absent,
 /// throws "{fn_name}: expected {arg_label} to be a string" if not a string,
-/// otherwise returns the +1-ref BunString wrapped in `OwnedString` for RAII deref.
-/// Caller does `.to_utf8()` (borrows the OwnedString, so can't be returned here).
+/// otherwise returns the +1-ref `bun_core::String`.
+/// Caller does `.to_utf8()` (borrows the bun_core::String, so can't be returned here).
 fn eat_string_arg(
     arguments: &mut bun_jsc::ArgumentsSlice<'_>,
     global: &JSGlobalObject,
@@ -70,7 +70,7 @@ fn eat_string_arg(
     expected_n: u32,
     got_n: u32,
     arg_label: &str,
-) -> JsResult<OwnedString> {
+) -> JsResult<bun_core::String> {
     let Some(arg) = arguments.next_eat() else {
         return Err(global.throw(format_args!(
             "{fn_name}: expected {expected_n} arguments, got {got_n}"
@@ -81,7 +81,7 @@ fn eat_string_arg(
             "{fn_name}: expected {arg_label} to be a string"
         )));
     }
-    Ok(OwnedString::new(arg.to_bun_string(global)?))
+    arg.to_bun_string(global)
 }
 
 fn testing_impl(
@@ -238,8 +238,7 @@ fn parser_options_from_js(
         if val.is_array() {
             let mut iter = val.array_iterator(global)?;
             while let Some(item) = iter.next()? {
-                // `OwnedString` releases the +1 ref at the end of each iteration.
-                let bunstr = OwnedString::new(item.to_bun_string(global)?);
+                let bunstr = item.to_bun_string(global)?;
                 let str = bunstr.to_utf8();
                 if str.slice() == b"DEEP_SELECTOR_COMBINATOR" {
                     opts.flags |= bun_css::ParserFlags::DEEP_SELECTOR_COMBINATOR;

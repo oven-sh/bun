@@ -540,8 +540,8 @@ impl File {
                 }
             }
         }
-        // We don't want this to free.
-        self.wtf_string.dupe_ref()
+        // The cached `wtf_string` keeps the impl alive for the process; hand the caller its own ref.
+        self.wtf_string.clone()
     }
 }
 
@@ -969,9 +969,8 @@ pub(crate) fn to_bytes(
 
     string_builder.allocate()?;
 
-    let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_count);
     let mut module_files: Vec<&OutputFile> = Vec::with_capacity(module_count);
-    let mut entry_point_id: Option<usize> = None;
+    let mut entry_point_file: Option<&OutputFile> = None;
     // `Graph::from_bytes` keys files by path; a repeat would shift `entry_point_id`.
     let mut seen_paths: StringArrayHashMap<()> = StringArrayHashMap::new();
 
@@ -980,9 +979,9 @@ pub(crate) fn to_bytes(
             continue;
         }
 
-        let options::OutputFileValue::Buffer { bytes: buf_bytes } = &output_file.value else {
+        if !matches!(output_file.value, options::OutputFileValue::Buffer { .. }) {
             continue;
-        };
+        }
 
         // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
         if seen_paths
@@ -991,9 +990,26 @@ pub(crate) fn to_bytes(
         {
             continue;
         }
-        if entry_point_id.is_none() && is_entry_point(output_file) {
-            entry_point_id = Some(modules.len());
+        if entry_point_file.is_none() && is_entry_point(output_file) {
+            entry_point_file = Some(output_file);
         }
+        module_files.push(output_file);
+    }
+    let Some(entry_point_file) = entry_point_file else {
+        return Ok(Vec::new());
+    };
+    // Every per-module region below is written in load order (entry point's
+    // static imports first, then dynamic imports breadth-first) so the modules
+    // a process actually loads share pages instead of each dragging in its own.
+    module_files.sort_by_key(|f| f.load_order);
+    let entry_point_id = module_files
+        .iter()
+        .position(|f| core::ptr::eq(*f, entry_point_file))
+        .unwrap();
+
+    let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_files.len());
+    for &output_file in &module_files {
+        let buf_bytes = output_file.value.as_slice();
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
@@ -1141,7 +1157,6 @@ pub(crate) fn to_bytes(
             },
             sourcemap: StringPointer::default(),
         });
-        module_files.push(output_file);
     }
 
     // Region layout after the bytecode/module_info run above: source maps
@@ -1198,9 +1213,6 @@ pub(crate) fn to_bytes(
             modules.as_ptr().cast::<u8>(),
             modules.len() * size_of::<CompiledModuleGraphFile>(),
         )
-    };
-    let Some(entry_point_id) = entry_point_id else {
-        return Ok(Vec::new());
     };
     let offsets = Offsets {
         entry_point_id: entry_point_id as u32,

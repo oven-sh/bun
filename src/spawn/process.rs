@@ -2737,6 +2737,8 @@ mod spawn_process_body {
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_ = options.windows.loop_.platform_event_loop();
+            // All stdio inherited: the child is the foreground program on our console.
+            let _child = crate::ctrl_c::Child::enter();
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
                     Err(err) => return Ok(Err(err)),

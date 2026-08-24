@@ -2,7 +2,7 @@ use core::ffi::c_int;
 use std::io::Write as _;
 
 use crate::VM;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
 use bun_paths::{AutoAbsPathChecked, PathBuffer};
@@ -67,11 +67,6 @@ pub(crate) fn stop_and_write_profile(
         config.json_format.then_some(&mut json_string),
         config.md_format.then_some(&mut text_string),
     );
-    // C++ handed back +1 refs into json_string/text_string. `bun_core::String`
-    // is `Copy` (no Drop), so wrap in `OwnedString` for scope-exit `deref()`.
-    let json_string = OwnedString::new(json_string);
-    let text_string = OwnedString::new(text_string);
-
     // Write JSON format if requested and not empty
     if config.json_format && !json_string.is_empty() {
         write_profile_to_file(&json_string, config, false)?;

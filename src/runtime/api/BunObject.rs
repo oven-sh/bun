@@ -76,8 +76,8 @@ use std::io::Write as _;
 
 use bun_core::Output;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, ConsoleObject, ErrorableString, JSFunction,
-    JSGlobalObject, JSObject, JSPromise, JSValue, JsResult,
+    self as jsc, ArrayBuffer, CallFrame, ConsoleObject, JSFunction, JSGlobalObject, JSObject,
+    JSPromise, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
@@ -395,30 +395,24 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    use bun_jsc::StringJsc as _;
     let [jsval] = callframe.arguments_as_array::<1>();
     if callframe.arguments_count() < 1 {
         return Err(global_this.throw(format_args!("shell escape expected at least 1 argument")));
     }
 
     let bunstr = jsval.to_bun_string(global_this)?;
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-    let bunstr = scopeguard::guard(bunstr, |s| s.deref());
 
     let mut outbuf: Vec<u8> = Vec::new();
 
-    if bun_shell_parser::needs_escape_bunstr(*bunstr) {
-        let result = bun_shell_parser::escape_bun_str::<true>(*bunstr, &mut outbuf)?;
+    if bun_shell_parser::needs_escape_bunstr(&bunstr) {
+        let result = bun_shell_parser::escape_bun_str::<true>(&bunstr, &mut outbuf)?;
         if !result {
             return Err(global_this.throw(format_args!(
                 "String has invalid utf-16: {}",
                 bstr::BStr::new(bunstr.byte_slice()),
             )));
         }
-        let mut str = BunString::clone_utf8(&outbuf[..]);
-        return str.transfer_to_js(global_this);
+        return bun_string_jsc::create_utf8_for_js(global_this, &outbuf);
     }
 
     Ok(jsval)
@@ -426,7 +420,7 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 pub(crate) fn braces(
     global: &JSGlobalObject,
-    brace_str: BunString,
+    brace_str: &BunString,
     opts: r#gen::BracesOptions,
 ) -> JsResult<JSValue> {
     let brace_slice = brace_str.to_utf8();
@@ -481,7 +475,7 @@ pub(crate) fn braces(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, &[brace_str]);
+        return bun_string_jsc::to_js_array(global, core::slice::from_ref(brace_str));
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -540,9 +534,6 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
     }
 
     let bin_str = path_arg.to_slice(global_this)?;
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     if bin_str.slice().len() >= MAX_PATH_BYTES {
         return Err(global_this.throw(format_args!("bin path is too long")));
@@ -635,16 +626,14 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
     table_printer.value_formatter.single_line = format_options.single_line;
 
-    let print_result = if format_options.enable_colors {
-        table_printer.print_table::<true>(&mut array)
+    if format_options.enable_colors {
+        table_printer.print_table::<true>(&mut array)?;
     } else {
-        table_printer.print_table::<false>(&mut array)
-    };
-    if print_result.is_err() {
-        if !global_this.has_exception() {
-            return Err(global_this.throw_out_of_memory());
-        }
-        return Ok(JSValue::ZERO);
+        table_printer.print_table::<false>(&mut array)?;
+    }
+    // print_table() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
+    if global_this.has_exception() {
+        return Err(jsc::JsError::Thrown);
     }
 
     // writer.flush(): Vec<u8> writer is unbuffered; nothing to flush.
@@ -703,6 +692,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         &mut array,
         format_options,
     )?;
+    // format2() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
     if global_this.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
@@ -753,11 +743,10 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
         2,
         Default::default(),
     );
-    let mut str = bun_core::ZigString::init(b"nodejs.util.inspect.custom");
     fun.put(
         global_object,
         b"custom",
-        JSValue::symbol_for(global_object, &mut str),
+        JSValue::symbol_for(global_object, b"nodejs.util.inspect.custom"),
     );
     fun.put(
         global_object,
@@ -1126,33 +1115,8 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     }
 
     let specifier_str = specifier.to_bun_string(global_this)?;
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
     let from_str = from.to_bun_string(global_this)?;
-    let from_str = scopeguard::guard(from_str, |s| s.deref());
-    do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, mode)
-}
-
-/// Single Drop point for the three `BunString`s `do_resolve_with_args` may own.
-/// Replaces three separate `scopeguard::guard(_, |s| s.deref())` closures —
-/// each of which generated its own drop frame and landing pad — with one
-/// contiguous cleanup. Fields default to `BunString::empty()`, whose `deref()`
-/// is a single tag-compare no-op, so unused slots cost effectively nothing.
-struct ResolveDerefOnDrop {
-    query_string: BunString,
-    /// Only set when the specifier had a `file://` prefix and we allocated a
-    /// decoded copy. On the fast path the caller's `specifier` is borrowed
-    /// directly and this stays empty (no refcount traffic).
-    decoded_specifier: BunString,
-    result_value: BunString,
-}
-impl Drop for ResolveDerefOnDrop {
-    #[inline]
-    fn drop(&mut self) {
-        // LIFO relative to original declaration order.
-        self.result_value.deref();
-        self.decoded_specifier.deref();
-        self.query_string.deref();
-    }
+    do_resolve_with_args::<false>(global_this, &specifier_str, &from_str, mode)
 }
 
 enum Resolved {
@@ -1163,8 +1127,8 @@ enum Resolved {
 
 fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
-    specifier: BunString,
-    from: BunString,
+    specifier: &BunString,
+    from: &BunString,
     mode: ResolveMode,
 ) -> JsResult<JSValue> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
@@ -1175,61 +1139,44 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
 
 fn resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
-    specifier: BunString,
-    from: BunString,
+    specifier: &BunString,
+    from: &BunString,
     mode: ResolveMode,
 ) -> JsResult<Resolved> {
-    let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
-    let mut owned = ResolveDerefOnDrop {
-        query_string: BunString::empty(),
-        decoded_specifier: BunString::empty(),
-        result_value: BunString::empty(),
-    };
+    let mut query_string = BunString::empty();
 
-    // Fast path: no `file://` prefix → forward the caller-owned `specifier`
-    // by value without `dupe_ref()`/`deref()` refcount churn. Only the
-    // URL-decoded branch produces a string we must release.
+    let decoded_specifier;
     let specifier_for_resolve = if specifier.has_prefix_comptime(b"file://") {
-        owned.decoded_specifier = jsc::URL::path_from_file_url(specifier);
-        owned.decoded_specifier
+        decoded_specifier = bun_url::path_from_file_url(specifier);
+        &decoded_specifier
     } else {
         specifier
     };
 
-    VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
-        &mut errorable,
+    let result_value = match VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
         ctx,
         specifier_for_resolve,
         from,
-        Some(&mut owned.query_string),
+        Some(&mut query_string),
         mode,
-    )?;
-
-    if !errorable.success {
-        // SAFETY: !success → `err` arm of the #[repr(C)] union is active.
-        let err = unsafe { errorable.result.err }.value;
-        if err.as_class_ref::<jsc::ResolveMessage>().is_some() {
+    )? {
+        Ok(path) => path,
+        Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
             return Ok(Resolved::NotFound(err));
         }
         // e.g. an onResolve plugin returned an invalid result
-        return Err(ctx.throw_value(err));
-    }
-    // SAFETY: success → `value` arm of the #[repr(C)] union is active.
-    owned.result_value = unsafe { errorable.result.value };
+        Err(err) => return Err(ctx.throw_value(err)),
+    };
 
-    if !owned.query_string.is_empty() {
+    if !query_string.is_empty() {
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
         // Vec<u8> writes are infallible.
-        let _ = write!(
-            &mut arraylist,
-            "{}{}",
-            owned.result_value, owned.query_string
-        );
+        let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
 
         return Ok(Resolved::Found(ZigString::init_utf8(&arraylist).to_js(ctx)));
     }
 
-    Ok(Resolved::Found(owned.result_value.to_js(ctx)?))
+    Ok(Resolved::Found(result_value.into_js(ctx)?))
 }
 
 #[bun_jsc::host_fn]
@@ -1265,7 +1212,6 @@ pub fn bun_resolve_sync(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
 
     if specifier_str.length() == 0 {
         let _ = global
@@ -1280,13 +1226,12 @@ pub fn bun_resolve_sync(
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let source_str = scopeguard::guard(source_str, |s| s.deref());
 
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
             global,
-            *specifier_str,
-            *source_str,
+            &specifier_str,
+            &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
@@ -1321,7 +1266,6 @@ pub fn bun_resolve_sync_with_paths(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
 
     if specifier_str.length() == 0 {
         let _ = global
@@ -1336,7 +1280,6 @@ pub fn bun_resolve_sync_with_paths(
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let source_str = scopeguard::guard(source_str, |s| s.deref());
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let bun_vm = global.bun_vm().as_mut();
@@ -1352,8 +1295,8 @@ pub fn bun_resolve_sync_with_paths(
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
             global,
-            *specifier_str,
-            *source_str,
+            &specifier_str,
+            &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
@@ -1377,8 +1320,8 @@ pub fn bun_resolve_sync_with_strings(
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
             global,
-            *specifier,
-            *source,
+            specifier,
+            source,
             ResolveMode::from_ffi_bools(is_esm, false),
         )
     })
@@ -1398,12 +1341,11 @@ pub fn bun_resolve_sync_with_source_if_exists(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
     jsc::to_js_host_call(global, || {
         resolve_with_args::<true>(
             global,
-            *specifier_str,
-            *source,
+            &specifier_str,
+            source,
             ResolveMode::from_ffi_bools(is_esm, false),
         )
         .map(|r| match r {
@@ -1474,11 +1416,6 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 previous_routes: false,
             },
         )?;
-
-        if global_object.has_exception() {
-            drop(config);
-            return Ok(JSValue::ZERO);
-        }
 
         break 'brk config;
     };
@@ -1997,7 +1934,7 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         let blob = Blob::new(input_blob.dupe_with_content_type(true));
         // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set(input_blob.name.get().dupe_ref()) };
+        unsafe { (*blob).name.set(input_blob.name.get().clone()) };
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
         array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
     }
@@ -2126,21 +2063,19 @@ pub(crate) mod environment_variables {
         false
     }
 
-    /// BunString variant of Bun__getEnvValue. The returned value borrows from
-    /// the env map; caller must copy before the map can mutate.
+    /// The value borrows the env map; the caller copies before the map can
+    /// mutate. `Dead` when absent.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValueBunString(
-        global_object: &JSGlobalObject,
+    extern "C" fn Bun__getEnvValueBunString<'a>(
+        global_object: &'a JSGlobalObject,
         name: &BunString,
-        value: &mut core::mem::MaybeUninit<BunString>,
-    ) -> bool {
+    ) -> bun_core::StringView<'a> {
         let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
-        let Some(val) = vm.env_loader().get(name_slice.slice()) else {
-            return false;
-        };
-        value.write(BunString::borrow_utf8(val));
-        true
+        match vm.env_loader().get(name_slice.slice()) {
+            Some(val) => bun_core::StringView::borrow_utf8(val),
+            None => bun_core::StringView::DEAD,
+        }
     }
 
     /// Sync a process.env write back to the native env map so that native
@@ -2434,10 +2369,6 @@ pub mod JSZlib {
             }
         }
 
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
 
@@ -2598,14 +2529,7 @@ pub mod JSZlib {
 
             if let Some(level_value) = options_val.get(global_this, "level")? {
                 level = Some(level_value.coerce::<i32>(global_this)?);
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
-        }
-
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
         }
 
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
@@ -2716,9 +2640,6 @@ pub mod JSZstd {
         if let Some(option_obj) = options_val {
             if let Some(level_val) = option_obj.get(global_this, "level")? {
                 let value = level_val.coerce::<i32>(global_this)?;
-                if global_this.has_exception() {
-                    return Err(jsc::JsError::Thrown);
-                }
 
                 if value < 1 || value > 22 {
                     return Err(global_this.throw_invalid_arguments(format_args!(

@@ -3739,9 +3739,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 window_grew = true;
             }
         }
-        // Flush only when a window grew: nothing needs resuming otherwise, and an
-        // unconditional flush pushes the just-queued SETTINGS ACK through a detached
-        // transport in the post-close drain, where the EBADF preempts a pending GOAWAY.
+        // Resume queued sends only when a window actually grew; there is nothing to flush otherwise.
         if window_grew {
             let _ = self.flush();
         }

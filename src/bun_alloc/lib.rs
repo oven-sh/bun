@@ -805,13 +805,13 @@ const UNTAG_MASK: usize = (1usize << 53) - 1;
 #[derive(Clone, Copy)]
 pub struct EncodedSlice {
     /// Tagged pointer — never dereference directly; use `untagged()`.
-    ptr: *const u8,
+    _unsafe_ptr_do_not_use: *const u8,
     pub len: usize,
 }
 
 impl EncodedSlice {
     pub const EMPTY: EncodedSlice = EncodedSlice {
-        ptr: b"".as_ptr(),
+        _unsafe_ptr_do_not_use: b"".as_ptr(),
         len: 0,
     };
 
@@ -819,14 +819,17 @@ impl EncodedSlice {
     /// verbatim — tag bits are not touched.
     #[inline]
     pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> EncodedSlice {
-        EncodedSlice { ptr, len }
+        EncodedSlice {
+            _unsafe_ptr_do_not_use: ptr,
+            len,
+        }
     }
 
     /// Raw tagged pointer (top-bit flags intact). Pair with
     /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
     #[inline]
     pub const fn tagged_ptr(&self) -> *const u8 {
-        self.ptr
+        self._unsafe_ptr_do_not_use
     }
 
     #[inline]
@@ -835,27 +838,30 @@ impl EncodedSlice {
     }
     #[inline]
     pub fn is_16bit(&self) -> bool {
-        (self.ptr as usize) & TAG_UTF16_BIT != 0
+        (self._unsafe_ptr_do_not_use as usize) & TAG_UTF16_BIT != 0
     }
     #[inline]
     pub fn is_utf8(&self) -> bool {
-        (self.ptr as usize) & TAG_UTF8_BIT != 0
+        (self._unsafe_ptr_do_not_use as usize) & TAG_UTF8_BIT != 0
     }
     #[inline]
     pub fn is_globally_allocated(&self) -> bool {
-        (self.ptr as usize) & TAG_GLOBAL_BIT != 0
+        (self._unsafe_ptr_do_not_use as usize) & TAG_GLOBAL_BIT != 0
     }
     #[inline]
     pub fn mark_utf16(&mut self) {
-        self.ptr = ((self.ptr as usize) | TAG_UTF16_BIT) as *const u8;
+        self._unsafe_ptr_do_not_use =
+            ((self._unsafe_ptr_do_not_use as usize) | TAG_UTF16_BIT) as *const u8;
     }
     #[inline]
     pub fn mark_utf8(&mut self) {
-        self.ptr = ((self.ptr as usize) | TAG_UTF8_BIT) as *const u8;
+        self._unsafe_ptr_do_not_use =
+            ((self._unsafe_ptr_do_not_use as usize) | TAG_UTF8_BIT) as *const u8;
     }
     #[inline]
     pub fn mark_global(&mut self) {
-        self.ptr = ((self.ptr as usize) | TAG_GLOBAL_BIT) as *const u8;
+        self._unsafe_ptr_do_not_use =
+            ((self._unsafe_ptr_do_not_use as usize) | TAG_GLOBAL_BIT) as *const u8;
     }
 
     /// Strip the flag bits — truncate to the low 53 bits.

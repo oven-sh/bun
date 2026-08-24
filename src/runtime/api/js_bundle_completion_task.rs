@@ -287,8 +287,8 @@ impl JSBundleCompletionTask {
         Ok(())
     }
 
-    /// Port of `JSBundleCompletionTask.doCompilation`.
-    fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
+    /// Port of `JSBundleCompletionTask.doCompilation`. Bundle thread: nothing in here may touch JS.
+    fn do_compilation(&self, output_files: &mut Vec<OutputFile>) -> CompileResult {
         let compile_options = self
             .config
             .compile
@@ -426,10 +426,7 @@ impl JSBundleCompletionTask {
             root_dir.fd,
             module_prefix,
             outfile_for_executable,
-            // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
-            // construction; valid for the lifetime of the VirtualMachine, and
-            // nothing inside `to_executable` reaches it otherwise.
-            unsafe { &mut *self.env },
+            &compile_options.download,
             self.config.format,
             &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,
@@ -559,6 +556,36 @@ impl JSBundleCompletionTask {
         result
     }
 
+    /// `Bun.build({ compile })`: the bundle becomes the executable before `on_complete` gets it.
+    fn compile_on_bundle_thread(&mut self) {
+        if self.config.compile.is_none()
+            || self.cancelled.load(core::sync::atomic::Ordering::Acquire)
+        {
+            return;
+        }
+        let mut build = match core::mem::replace(&mut self.result, BundleV2Result::Pending) {
+            BundleV2Result::Value(build) => build,
+            not_bundled => {
+                self.result = not_bundled;
+                return;
+            }
+        };
+        let compile_result = self.do_compilation(&mut build.output_files);
+        // Nothing else flushes this thread's buffered stderr, which the above reports failures to.
+        bun_core::Output::flush();
+        self.result = match compile_result {
+            CompileResult::Success => BundleV2Result::Value(build),
+            CompileResult::Err(err) => {
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("{}", bstr::BStr::new(err.slice())),
+                );
+                BundleV2Result::Err(bun_bundler::Error::CompilationFailed)
+            }
+        };
+    }
+
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
         crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(ctx).expect("completion")).unregister();
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
@@ -642,7 +669,7 @@ impl JSBundleCompletionTask {
         }
 
         // Copy the BackRef out (it is `Copy`) so `global_this` borrows a local
-        // instead of `*this` — `do_compilation`/`to_js_error` below need `&mut *this`.
+        // instead of `*this` — `to_js_error` below needs `&mut *this`.
         let global_this_ref = this.global_this;
         let global_this = global_this_ref.get();
         // `Strong::swap` ties the returned `&mut JSPromise` to
@@ -651,40 +678,6 @@ impl JSBundleCompletionTask {
         // for `result`/`config`/`log` below.
         let promise: *mut JSPromise = this.promise.swap();
         let promise = JSPromise::opaque_mut(promise);
-
-        // `do_compilation` borrows `&mut self` while needing
-        // `&mut output_files` from inside `self.result`. Temporarily move the
-        // Vec out via `take` so the method gets a disjoint `&mut self`.
-        if matches!(this.result, BundleV2Result::Value(_)) && this.config.compile.is_some() {
-            let mut output_files = match &mut this.result {
-                BundleV2Result::Value(build) => core::mem::take(&mut build.output_files),
-                // SAFETY: arm checked above.
-                _ => unsafe { core::hint::unreachable_unchecked() },
-            };
-            let compile_result = this.do_compilation(&mut output_files);
-            // `defer compile_result.deinit()` — `CompileResult` is a Rust enum
-            // with owned `Vec<u8>` payloads; drops at end of scope.
-
-            if let CompileResult::Err(err) = &compile_result {
-                // `bun.handleOom(log.addError(..., bun.handleOom(dupe(..))))`
-                this.log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("{}", bstr::BStr::new(err.slice())),
-                );
-                // `this.result.value.deinit()` — owned fields drop with the
-                // overwrite below; `output_files` (moved out above) drops here.
-                drop(output_files);
-                this.result = BundleV2Result::Err(bun_bundler::Error::CompilationFailed);
-            } else {
-                // Put the compacted output_files back.
-                match &mut this.result {
-                    BundleV2Result::Value(build) => build.output_files = output_files,
-                    // SAFETY: arm checked above.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
-                }
-            }
-        }
 
         // `to_js_error` borrows `&mut self`, which would overlap a
         // `&mut this.result` match scrutinee. Dispatch the pending/err arms
@@ -1112,6 +1105,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
+        self.compile_on_bundle_thread();
         // The bundle thread's last touch of this task and of the VM's memory:
         // move the ticket out (the JS thread may free `self` once queued),
         // hand it back, drop the ticket.

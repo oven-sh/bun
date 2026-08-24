@@ -681,14 +681,14 @@ function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
     });
   };
 
+  const starNamesMemo = new Map<Id, StarNames>();
   for (const starId of stars) {
     const unloaded = unloadedModuleRegistry[starId];
     if (Array.isArray(unloaded)) {
       // ESM: resolve every name the dependency provides to the module that
       // declares it. The walk starts with this module on the stack, so a
       // star chain that comes back here contributes nothing.
-      const names = new Map<string, Id>();
-      const sawDynamic = resolveStarNames(starId, [mod.id], names, new Set());
+      const { names, sawDynamic } = resolveStarNames(starId, [mod.id], starNamesMemo);
       for (const [key, ownerId] of names) {
         defineForward(ownerId, key);
       }
@@ -717,29 +717,55 @@ function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
   return lateIds;
 }
 
+/** The names an ESM module provides: every key maps to the module that
+ * declares it. */
+interface StarNames {
+  names: Map<string, Id>;
+  /** A CommonJS module was met; its names are only known after it runs. */
+  sawDynamic: boolean;
+  /** The walk was cut by a cycle through an ancestor other than the root,
+   * so this map depends on the path and must not be cached. */
+  cut: boolean;
+}
+
 /** Maps every name that the ESM module `id` provides to the module that
  * declares it, with the precedence of a namespace object: an own name wins
  * over a star, and a later star wins over an earlier one. `stack` holds the
  * modules whose stars are being resolved, so a circular star re-export is cut
- * where it closes. `resolved` holds the modules this walk already resolved,
- * so a shared subtree of a diamond-shaped barrel graph is walked once.
- * Returns whether a CommonJS module was met: its names are only known after
- * it runs. */
-function resolveStarNames(id: Id, stack: Id[], names: Map<string, Id>, resolved: Set<Id>): boolean {
+ * where it closes. `memo` caches the finished map of a module and replays it
+ * for every star edge, so a shared subtree of a diamond-shaped barrel graph
+ * is walked once without a loss of the edge order. */
+function resolveStarNames(id: Id, stack: Id[], memo: Map<Id, StarNames>): StarNames {
+  const cached = memo.get(id);
+  if (cached) return cached;
+  const result: StarNames = { names: new Map(), sawDynamic: false, cut: false };
   const unloaded = unloadedModuleRegistry[id];
-  if (!Array.isArray(unloaded)) return true;
-  let sawDynamic = false;
+  if (!Array.isArray(unloaded)) {
+    result.sawDynamic = true;
+    memo.set(id, result);
+    return result;
+  }
   stack.push(id);
   for (const nested of unloaded[ESMProps.stars]) {
-    if (stack.includes(nested) || resolved.has(nested)) continue;
-    if (resolveStarNames(nested, stack, names, resolved)) sawDynamic = true;
+    if (stack.includes(nested)) {
+      // The root is on every stack of this walk, so only a cycle through
+      // another ancestor makes the result path-dependent.
+      if (nested !== stack[0]) result.cut = true;
+      continue;
+    }
+    const sub = resolveStarNames(nested, stack, memo);
+    if (sub.sawDynamic) result.sawDynamic = true;
+    if (sub.cut) result.cut = true;
+    for (const [key, ownerId] of sub.names) {
+      result.names.set(key, ownerId);
+    }
   }
   stack.pop();
-  resolved.add(id);
   for (const key of unloaded[ESMProps.exports]) {
-    names.set(key, id);
+    result.names.set(key, id);
   }
-  return sawDynamic;
+  if (!result.cut) memo.set(id, result);
+  return result;
 }
 
 /** Second half of `mergeStarExports`, after the dependencies load. Only adds

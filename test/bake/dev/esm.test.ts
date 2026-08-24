@@ -215,6 +215,40 @@ devTest("export star chain (barrel -> barrel -> lib) preserves live bindings", {
     await c.expectMessage("PASS");
   },
 });
+devTest("a later star re-export wins through a shared barrel", {
+  // b and c share d inside one star walk. c does not declare k, so its view
+  // of k is d's, and c comes after b: the merged k must be d's, not b's.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "d.ts": `
+      export const k = "from-d";
+    `,
+    "b.ts": `
+      export * from './d';
+      export const k = "from-b";
+    `,
+    "c.ts": `
+      export * from './d';
+    `,
+    "s.ts": `
+      export * from './b';
+      export * from './c';
+    `,
+    "p.ts": `
+      export * from './s';
+    `,
+    "index.ts": `
+      import { k } from './p';
+      console.log(k);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("from-d");
+  },
+});
 devTest("export star tolerates circular star re-exports", {
   files: {
     "index.html": emptyHtmlFile({

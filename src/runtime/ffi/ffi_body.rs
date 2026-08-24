@@ -1440,7 +1440,7 @@ impl FFI {
             ) {
                 // NUL-terminate in place so `DynLib::open`
                 // can pass the slice to libc without copying. `resolve_*_to_buf`
-                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
+                // is bounded by `bun_paths::fs::tmpname` + a tmpdir join (both
                 // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
                 filepath_buf[len] = 0;
                 break 'brk &filepath_buf[0..len];

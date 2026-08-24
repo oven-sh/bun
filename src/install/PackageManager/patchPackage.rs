@@ -447,7 +447,7 @@ pub fn do_patch_commit(
             }
         }
 
-        let cwd = bun_core::cwd::z();
+        let cwd = bun_core::cwd::get_z();
         let mut gitbuf = PathBuffer::uninit();
         let git = match bun_which::which(
             &mut gitbuf,

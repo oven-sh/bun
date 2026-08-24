@@ -206,9 +206,7 @@ impl<'a> Transpiler<'a> {
     pub(crate) fn fs(&self) -> &Fs::FileSystem {
         // SAFETY: `self.fs` is set in `Transpiler::init` to the
         // `Fs::FileSystem::instance` singleton (process-lifetime, never null,
-        // never freed). Reads of `top_level_dir` (the dominant use) are sound
-        // even concurrently with `fs_mut()` callers because that field is
-        // `&'static [u8]` written once at init.
+        // never freed).
         unsafe { &*self.fs }
     }
 
@@ -351,7 +349,6 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
-                from.fs,
             ),
             env: from.env,
             // `MacroContext::init(transpiler)` takes the
@@ -378,7 +375,6 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
-            self.fs,
         );
         self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
@@ -712,7 +708,6 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
-            self.fs,
         );
 
         if auto_jsx {
@@ -1306,7 +1301,6 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
-                fs,
             ));
             core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);

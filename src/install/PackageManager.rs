@@ -1080,7 +1080,7 @@ fn configure_env_for_scripts_run(
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
-            value: Box::<[u8]>::from(strings::without_trailing_slash(bun_core::cwd::get())),
+            value: Box::<[u8]>::from(bun_core::cwd::get()),
         };
     }
 
@@ -1453,6 +1453,17 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
+/// Writes `<dir>/package.json` (NUL-terminated) into `buf`, byte-for-byte from
+/// `dir` so prefixes of it compare equal to the directories they came from.
+fn set_package_json_path(buf: &mut Vec<u8>, dir: &[u8]) {
+    buf.clear();
+    buf.extend_from_slice(dir);
+    if dir.last().is_some_and(|&c| !bun_paths::is_sep_any(c)) {
+        buf.push(SEP);
+    }
+    buf.extend_from_slice(b"package.json\0");
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1488,15 +1499,9 @@ pub fn init(
     let fs = FileSystem::instance();
     let original_cwd: &'static [u8] = bun_core::cwd::get();
 
-    // `<dir>/package.json`, starting at the working directory; the walk below
-    // rewrites the directory part in place as it moves up.
-    let mut original_package_json_path_buf: Vec<u8> = ZBox::from_bytes(
-        resolve_path::join_abs_string::<resolve_path::platform::Auto>(
-            original_cwd,
-            &[b"package.json"],
-        ),
-    )
-    .into_vec_with_nul();
+    let mut original_package_json_path_buf: Vec<u8> =
+        Vec::with_capacity(original_cwd.len() + b"/package.json\0".len());
+    set_package_json_path(&mut original_package_json_path_buf, original_cwd);
     let original_cwd_clone = Box::<[u8]>::from(original_cwd);
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
@@ -1602,20 +1607,8 @@ pub fn init(
             return Err(crate::Error::MissingPackageJSON);
         };
 
-        debug_assert!(strings::eql_long(
-            &original_package_json_path_buf[..this_cwd.len()],
-            this_cwd,
-            true,
-        ));
-        original_package_json_path_buf.truncate(this_cwd.len());
-        original_package_json_path_buf.push(SEP);
-        original_package_json_path_buf.extend_from_slice(b"package.json");
-        original_package_json_path_buf.push(0);
-
-        let new_path_len = this_cwd.len() + "/package.json".len();
-        let original_package_json_path =
-            ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
-        let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];
+        set_package_json_path(&mut original_package_json_path_buf, this_cwd);
+        let child_cwd = this_cwd;
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
@@ -1782,11 +1775,12 @@ pub fn init(
         cli.config,
         ctx,
     )?;
-    let root_package_json_path: Box<[u8]> = Box::from(resolve_path::join_abs_string::<
-        resolve_path::platform::Auto,
-    >(
-        bun_core::cwd::get(), &[b"package.json"]
-    ));
+    let root_package_json_path: Box<[u8]> = {
+        let mut buf = Vec::new();
+        set_package_json_path(&mut buf, bun_core::cwd::get());
+        buf.pop();
+        buf.into_boxed_slice()
+    };
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
@@ -2365,11 +2359,11 @@ fn init_with_runtime_once(
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
-    let original_package_json_path = ZBox::from_bytes(resolve_path::join_abs_string::<
-        resolve_path::platform::Auto,
-    >(
-        bun_core::cwd::get(), &[b"package.json"]
-    ));
+    let original_package_json_path = {
+        let mut buf = Vec::new();
+        set_package_json_path(&mut buf, bun_core::cwd::get());
+        ZBox::from_vec_with_nul(buf)
+    };
 
     // SAFETY: manager_ptr points to uninitialized memory; fully initialize
     // field-by-field via `addr_of_mut!((*p).field).write(..)`. See the PERF

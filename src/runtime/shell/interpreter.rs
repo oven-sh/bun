@@ -448,7 +448,7 @@ impl Interpreter {
     }
 
     /// Builds the root `ShellExecEnv` (export env from the event loop's
-    /// `DotEnv::Loader`, cwd from `getcwd()`, cwd_fd from `open(O_DIRECTORY)`),
+    /// `DotEnv::Loader`, cwd from `bun_core::cwd`, cwd_fd from `open(O_DIRECTORY)`),
     /// dups stdin into an `IOReader`, and heap-allocates the interpreter.
     /// stdout/stderr stay `.pipe` here — `setup_io_before_run()` (called from
     /// `run()`) upgrades them to real `IOWriter`s unless `quiet` was set.
@@ -493,27 +493,14 @@ impl Interpreter {
         };
 
         // ── cwd / cwd_fd ───────────────────────────────────────────────────
-        // Hoisted PathBuffer so the error's borrowed `.path` stays valid until
-        // we've converted it to an owned `ShellErr`. Heap-pooled (not stack) —
-        // on Windows `MAX_PATH_BYTES` is ~96 KiB and `init` runs from
-        // JS-triggered paths that may already be deep on the stack.
-        let mut pathbuf = bun_paths::path_buffer_pool::get();
-        let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
-            Ok(n) => n,
-            Err(e) => return Err(ShellErr::new_sys(&e)),
-        };
-        // NUL-terminate for `open()`; downstream `cwd()` strips the trailing 0.
-        pathbuf[cwd_len] = 0;
-        let cwd_z = bun_core::ZStr::from_buf(pathbuf.as_slice(), cwd_len);
+        let cwd_z = bun_core::cwd::get_z();
 
         let cwd_fd = match bun_sys::open(cwd_z, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
             Ok(fd) => fd,
             Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
-        let mut cwd_arr = Vec::with_capacity(cwd_len + 1);
-        cwd_arr.extend_from_slice(&pathbuf[..cwd_len + 1]);
-        debug_assert_eq!(*cwd_arr.last().unwrap(), 0);
+        let cwd_arr = cwd_z.as_bytes_with_nul().to_vec();
 
         // ── stdin ──────────────────────────────────────────────────────────
         log!("Duping stdin");

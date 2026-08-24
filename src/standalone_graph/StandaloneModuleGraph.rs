@@ -1520,17 +1520,7 @@ pub(crate) fn inject<'a>(
     target: &CompileTarget,
     temp_path_buf: &'a mut PathBuffer,
 ) -> Option<Injected<'a>> {
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-        Ok(len) => &cwd_buf[..len],
-        Err(err) => {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r><d>:<r> failed to get the current directory\n{}",
-                err
-            );
-            return None;
-        }
-    };
+    let cwd = bun_core::cwd::get();
     let mut buf = PathBuffer::uninit();
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
@@ -2320,22 +2310,13 @@ pub fn to_executable(
 
         // Build the absolute destination path
         // On Windows, we need an absolute path for MoveFileExW
-        // Get the current working directory and join with outfile
-        let mut cwd_buf = PathBuffer::uninit();
-        let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-            Ok(len) => &cwd_buf[..len],
-            Err(e) => {
-                fd.close();
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "Failed to get current directory: {}",
-                    bstr::BStr::new(e.name())
-                )));
-            }
-        };
         let dest_path = if bun_paths::is_absolute(outfile) {
             outfile
         } else {
-            path::resolve_path::join_abs_string::<path::platform::Auto>(cwd_path, &[outfile])
+            path::resolve_path::join_abs_string::<path::platform::Auto>(
+                bun_core::cwd::get(),
+                &[outfile],
+            )
         };
 
         // Convert paths to Windows UTF-16

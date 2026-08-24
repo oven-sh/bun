@@ -1,7 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -132,24 +132,58 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
 
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.
 describe.if(isPosix)("cwd deleted before startup", () => {
-  test.concurrent.each(["install", "test"])("bun %s prints the cwd-deleted hint", async cmd => {
-    using dir = tempDir("cwd-unlinked", {});
-    const gone = String(dir);
+  test.concurrent.each([["install"], ["test"], ["run", "--filter", "*", "dev"], ["--workspaces", "dev"]])(
+    "bun %s prints the cwd-deleted hint",
+    async (...cmd) => {
+      using dir = tempDir("cwd-unlinked", {});
+      const gone = String(dir);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          "/bin/sh",
+          "-c",
+          `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" ${cmd.map(a => `'${a}'`).join(" ")}`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining("The current working directory was deleted"),
+        exitCode: 1,
+      });
+      expect(stderr).not.toContain("Bun could not find a file");
+    },
+  );
+
+  // `-g` commands act on the global directory, so the unreadable starting
+  // directory does not matter to them.
+  test.concurrent("bun pm ls -g runs", async () => {
+    using dir = tempDir("cwd-unlinked-global", { "global/package.json": "{}" });
+    const gone = path.join(String(dir), "gone");
+    mkdirSync(gone);
 
     await using proc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" '${cmd}'`],
-      env: bunEnv,
+      cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" pm ls -g`],
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_GLOBAL_DIR: path.join(String(dir), "global"),
+        BUN_INSTALL_BIN: path.join(String(dir), "bin"),
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "",
-      stderr: expect.stringContaining("The current working directory was deleted"),
-      exitCode: 1,
-    });
-    expect(stderr).not.toContain("Bun could not find a file");
+    // It got as far as looking for the global lockfile: the starting
+    // directory was never needed.
+    expect(stderr).not.toContain("The current working directory was deleted");
+    expect(stderr).toContain("missing lockfile, nothing to list");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
   });
 
   test.concurrent("bun -e boots via the exe-dir fallback instead", async () => {

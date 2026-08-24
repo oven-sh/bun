@@ -746,9 +746,9 @@ impl<'a> PackageInstaller<'a> {
             if self.trees[tree_id].binaries.count() > 0 {
                 self.seen_bin_links.clear();
                 let cwd = bun_core::cwd::get();
-                self.node_modules
-                    .path
-                    .truncate(cwd.len() + usize::from(cwd.last() != Some(&SEP)));
+                self.node_modules.path.truncate(
+                    cwd.len() + usize::from(!cwd.last().is_some_and(|&c| bun_paths::is_sep_any(c))),
+                );
                 let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
                     { lockfile::tree::IteratorPathStyle::NodeModules },
                 >(

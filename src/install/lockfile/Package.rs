@@ -2796,11 +2796,7 @@ impl Package<u64> {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
-                        let mut cwd_buf = PathBuffer::uninit();
-                        // `bun_sys::getcwd` returns the byte length — slice
-                        // the buffer ourselves.
-                        let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
-                        let cwd: &[u8] = &cwd_buf.0[..cwd_len];
+                        let cwd = bun_core::cwd::get();
 
                         let num_notes = 'count: {
                             let mut i: usize = 0;

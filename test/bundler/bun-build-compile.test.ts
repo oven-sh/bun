@@ -803,8 +803,7 @@ if (process.platform === "android") {
 // A compiled executable launched from a directory that has been removed
 // starts like any other program (and like `node app.js`): the executable's
 // directory stands in for the unreadable one, and `process.cwd()` reports the
-// error if the program asks. It once segfaulted here, and later refused to
-// start.
+// error if the program asks.
 //
 // POSIX-only: a process can keep a deleted directory as its cwd until the last
 // fd to it closes, whereas Windows refuses to remove a directory that is any

@@ -609,13 +609,7 @@ fn read_and_extract(
     log: &mut Log,
 ) -> crate::Result<ExtractData> {
     let bytes = if normalize {
-        // Resolves
-        // a user-provided relative path against `bun.fs.FileSystem.instance.top_level_dir`
-        // (the absolute project root cached at startup — NOT the live process cwd).
-        // `bun_sys::File::read_from_user_input` takes that base
-        // explicitly (T1 `bun_sys` cannot depend on T5 `bun_resolver::fs`), so thread it
-        // through here from the install crate's `FileSystem` shim.
-        File::read_from_user_input(Fd::cwd(), bun_core::cwd::get(), tarball_path)?
+        File::read_from_user_input(Fd::cwd(), tarball_path)?
     } else {
         File::read_from(Fd::cwd(), tarball_path)?
     };

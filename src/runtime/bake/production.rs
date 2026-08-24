@@ -83,17 +83,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Global::crash();
     }
 
-    let mut cwd_buf = PathBuffer::uninit();
-    let cwd = match bun_core::getcwd(&mut cwd_buf) {
-        Ok(cwd) => cwd.as_bytes(),
-        Err(err) => {
-            Output::err(err, "Could not query current working directory", ());
-            Global::crash();
-        }
-    };
-    // Note: reshaped for borrowck — clone the cwd slice so the PathBuffer
-    // borrow doesn't span the rest of the function (the buffer is never reused).
-    let cwd: Box<[u8]> = Box::from(cwd);
+    let cwd = bun_core::cwd::get();
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
@@ -210,7 +200,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    match build_with_vm(ctx, &cwd, &mut pt) {
+    match build_with_vm(ctx, cwd, &mut pt) {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
             // SAFETY: vm.global is live for VM lifetime.

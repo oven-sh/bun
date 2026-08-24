@@ -78,17 +78,16 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     let mut filename_buf = PathBuffer::uninit();
     let mut filename: &[u8] = source.path.text;
     let top_level_dir: &[u8] = bun_core::cwd::get();
-    // Keep the separator that follows the directory (a root's own, otherwise
-    // the one after it) as the relative name's leading `/`.
+    // The separator after the directory (a root's own) becomes the leading `/`.
     let dir_len = top_level_dir.len()
         - usize::from(
             top_level_dir
                 .last()
-                .is_some_and(|&c| bun_paths::is_sep_native(c)),
+                .is_some_and(|&c| bun_paths::is_sep_any(c)),
         );
     if filename.len() > dir_len
         && strings::has_prefix(filename, top_level_dir)
-        && bun_paths::is_sep_native(filename[dir_len])
+        && bun_paths::is_sep_any(filename[dir_len])
     {
         filename = &filename[dir_len..];
         if cfg!(windows) {

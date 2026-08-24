@@ -2,6 +2,8 @@ import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { realpathSync } from "fs";
+import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -309,6 +311,34 @@ it("process.chdir() on root dir", () => {
     expect(process.cwd()).toBe(root);
     process.chdir(cwd);
     expect(process.cwd()).toBe(cwd);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+it("process.chdir() to a missing directory reports the current directory and leaves it unchanged", () => {
+  const cwd = process.cwd();
+  try {
+    process.chdir(tmpdir());
+    const from = process.cwd();
+    expect(from).toBe(realpathSync(tmpdir()));
+    expect(resolve("x")).toBe(join(from, "x"));
+    const dest = join(from, "does-not-exist");
+    let err;
+    try {
+      process.chdir(dest);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({
+      code: "ENOENT",
+      syscall: "chdir",
+      path: from,
+      dest,
+      message: `ENOENT: no such file or directory, chdir '${from}' -> '${dest}'`,
+    });
+    expect(process.cwd()).toBe(from);
+    expect(resolve("x")).toBe(join(from, "x"));
   } finally {
     process.chdir(cwd);
   }

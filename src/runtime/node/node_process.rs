@@ -494,7 +494,7 @@ mod _impl {
             return Err(global_object.throw(format_args!("Invalid path")));
         };
 
-        let prev_cwd = bun_core::cwd::z();
+        let prev_cwd = bun_core::cwd::get_z();
         match bun_sys::chdir(slice) {
             bun_sys::Result::Ok(()) => {
                 vm.test_isolation_scope(|state| {
@@ -503,11 +503,6 @@ mod _impl {
                 bun_string_jsc::create_utf8_for_js(global_object, bun_core::cwd::get())
             }
             bun_sys::Result::Err(e) => {
-                if e.syscall == bun_sys::Tag::getcwd {
-                    // Moved, but the new directory's name could not be read:
-                    // go back rather than run with a stale `process.cwd()`.
-                    let _ = bun_sys::chdir(prev_cwd);
-                }
                 // path=cwd, dest=target so the resulting Node SystemError
                 // carries `path: cwd`, `dest: target` and the
                 // `chdir '<cwd>' -> '<target>'` message format

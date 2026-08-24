@@ -517,6 +517,8 @@ pub mod fs {
 
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
+    /// A unique NUL-terminated temp filename,
+    /// `.<hex(hash^nanos)>-<HEX(counter)>.<extname>`, written into `buf`.
     pub fn tmpname<'b>(
         extname: &[u8],
         buf: &'b mut [u8],
@@ -529,11 +531,11 @@ pub mod fs {
         // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
         write!(
             &mut cursor,
-            ".{:016x}-{:08X}.{}",
+            ".{:016x}-{:08X}.",
             hex_value,
             TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-            bun_core::fmt::s(extname),
         )
+        .and_then(|()| cursor.write_all(extname))
         .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
         let written = len - cursor.len();
         if written >= len {

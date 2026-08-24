@@ -261,8 +261,8 @@ pub mod fs {
             MAX_FD.load(Ordering::Relaxed)
         }
 
-        /// Joins `parts` against `top_level_dir` into `buf`, returning the
-        /// absolute path slice.
+        /// Joins `parts` against the working directory into `buf`, returning
+        /// the absolute path slice.
         pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{join_abs_string_buf, platform};
             join_abs_string_buf::<platform::Loose>(bun_core::cwd::get(), buf, parts)
@@ -280,8 +280,8 @@ pub mod fs {
             normalize_string_buf::<false, platform::Auto, false>(str, buf)
         }
 
-        /// Joins against `top_level_dir`
-        /// into the resolver-shared threadlocal join buffer.
+        /// Joins against the working directory into the resolver-shared
+        /// threadlocal join buffer.
         pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
             use bun_paths::resolve_path::{join_abs_string, platform};
             join_abs_string::<platform::Loose>(bun_core::cwd::get(), parts)

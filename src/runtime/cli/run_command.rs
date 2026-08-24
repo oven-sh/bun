@@ -1402,10 +1402,7 @@ impl Run<'_> {
         }
 
         if entry == b"." {
-            let tld = bun_core::cwd::get();
-            if !tld.is_empty() {
-                entry = tld;
-            }
+            entry = bun_core::cwd::get();
         }
 
         match vm.load_entry_point(entry) {
@@ -2472,12 +2469,12 @@ impl RunCommand {
         // ── module resolution fallback ───────────────────────────────────────
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
-        let fs_top_level_dir = bun_core::cwd::get();
+        let top_level_dir = bun_core::cwd::get();
         bun_core::scoped_log!(
             RUN_LOG,
             "Try resolve `{}` in `{}`",
             bstr::BStr::new(target_name),
-            bstr::BStr::new(fs_top_level_dir),
+            bstr::BStr::new(top_level_dir),
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve.
@@ -2488,7 +2485,6 @@ impl RunCommand {
                     || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
                         .get()
                         .unwrap_or(false);
-            let top_level_dir = bun_core::cwd::get();
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
@@ -2725,14 +2721,8 @@ impl RunCommand {
             target.len()
         } else {
             // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
-            let mut cwd_buf = PathBuffer::uninit();
-            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
-                return false;
-            };
-            let cwd_len = cwd.as_bytes().len();
-            cwd_buf[cwd_len] = paths::SEP;
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                &cwd_buf[..cwd_len + 1],
+                bun_core::cwd::get(),
                 &mut script_name_buf.0,
                 &[target],
             );
@@ -3383,25 +3373,16 @@ impl RunCommand {
         // that sits next to README.md. Resolve to an absolute dir first
         // so joinAbsString downstream doesn't double-apply cwd.
         let mut base_buf = PathBuffer::uninit();
-        let mut cwd_buf = PathBuffer::uninit();
-        let abs_md_path: &[u8] = 'blk: {
-            if paths::is_absolute(path) {
-                break 'blk path;
-            }
-            let cwd: &[u8] = match sys::getcwd(&mut cwd_buf.0[..]) {
-                Ok(n) => &cwd_buf[..n],
-                Err(_) => break 'blk path,
-            };
+        let abs_md_path: &[u8] = if paths::is_absolute(path) {
+            path
+        } else {
             paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                cwd,
+                bun_core::cwd::get(),
                 &mut base_buf.0,
                 &[path],
             )
         };
         let dir = paths::resolve_path::dirname::<paths::platform::Auto>(abs_md_path);
-        // When dirname returns empty (bare filename + getcwd failed), fall
-        // back to "." instead of abs_md_path — otherwise joinAbsString
-        // downstream would treat the file path itself as a directory.
         let image_base_dir: &[u8] = if !dir.is_empty() { dir } else { b"." };
 
         let theme = md::AnsiTheme {

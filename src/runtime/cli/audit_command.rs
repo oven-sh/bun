@@ -136,15 +136,10 @@ impl AuditCommand {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
-                    let mut cwd_buf = bun_paths::PathBuffer::uninit();
-                    if let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) {
-                        Output::err_generic(
-                            "No package.json was found for directory \"{s}\"",
-                            (BStr::new(cwd.as_bytes()),),
-                        );
-                    } else {
-                        Output::err_generic("No package.json was found", ());
-                    }
+                    Output::err_generic(
+                        "No package.json was found for directory \"{s}\"",
+                        (BStr::new(bun_core::cwd::get()),),
+                    );
                     bun_core::note!("Run \"bun init\" to initialize a project");
                     Global::exit(1);
                 }

@@ -1772,8 +1772,6 @@ pub mod command {
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_core::ZStr;
 
-        bun_core::cwd::init()?;
-
         // These are templates from the legacy `bun create`
         // most of them aren't useful but these few are kinda nice.
         bun_core::comptime_string_set! {
@@ -1857,6 +1855,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             Global::exit(1);
         }
 
+        bun_core::cwd::init()?;
         let create_command_info = CreateCommand::extract_info(&ctx)?;
         let template = create_command_info.template;
         let example_tag = create_command_info.example_tag;

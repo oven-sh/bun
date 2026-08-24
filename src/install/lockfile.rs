@@ -1603,53 +1603,21 @@ impl<'a> Printer<'a> {
         let mut lockfile_path_buf1 = PathBuffer::uninit();
         let mut lockfile_path_buf2 = PathBuffer::uninit();
 
-        let mut lockfile_path: &ZStr = ZStr::EMPTY;
-        // Track which buffer backs `lockfile_path` so the chdir NUL-terminate
-        // step below can write into the *other* buffer. `resolve_path::z` does
-        // `output[..n].copy_from_slice(input)` (→ `ptr::copy_nonoverlapping`);
-        // passing a slice of `bufN` as `input` while taking `&mut bufN` as
-        // `output` is UB on overlapping ranges and would also corrupt
-        // `lockfile_path` (printed in the NotFound arm).
-        let mut path_in_buf2 = false;
-
-        if !bun_paths::is_absolute(path) {
-            // `bun_sys::getcwd` returns the length written into the
-            // caller-owned buffer.
-            let cwd_len = bun_sys::getcwd(&mut lockfile_path_buf1[..])?;
-            let parts = [path];
-            // Copy `cwd` out of `buf1` so the
-            // join can write into `buf2` while `cwd` borrows `buf1` only.
-            let cwd = &lockfile_path_buf1[..cwd_len];
-            let lockfile_path__len = resolve_path::join_abs_string_buf::<platform::Auto>(
-                cwd,
-                &mut lockfile_path_buf2.0,
-                &parts,
+        let lockfile_path: &ZStr = if !bun_paths::is_absolute(path) {
+            resolve_path::join_abs_string_buf_z::<platform::Auto>(
+                bun_core::cwd::get(),
+                &mut lockfile_path_buf1.0,
+                &[path],
             )
-            .len();
-            lockfile_path_buf2[lockfile_path__len] = 0;
-            // SAFETY: NUL written at [len] above. Not `from_buf`: borrowck
-            // can't see that the `path_in_buf2` flag picks the *other* buffer
-            // for the chdir scratch write below, so the borrow must be detached.
-            lockfile_path =
-                unsafe { ZStr::from_raw(lockfile_path_buf2.as_ptr(), lockfile_path__len) };
-            path_in_buf2 = true;
         } else if !path.is_empty() {
-            lockfile_path_buf1[..path.len()].copy_from_slice(path);
-            lockfile_path_buf1[path.len()] = 0;
-            // SAFETY: NUL written at [len] above. See note above re. borrowck.
-            lockfile_path = unsafe { ZStr::from_raw(lockfile_path_buf1.as_ptr(), path.len()) };
-        }
+            resolve_path::z(path, &mut lockfile_path_buf1)
+        } else {
+            ZStr::EMPTY
+        };
 
         if !lockfile_path.as_bytes().is_empty() && lockfile_path.as_bytes()[0] == SEP {
             let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
-            // NUL-terminate into the buffer that does NOT back `lockfile_path`
-            // (see `path_in_buf2` note above). `buf1`'s cwd contents are dead
-            // after the join, so it is free for reuse here.
-            let dir_z = if path_in_buf2 {
-                resolve_path::z(dir, &mut lockfile_path_buf1)
-            } else {
-                resolve_path::z(dir, &mut lockfile_path_buf2)
-            };
+            let dir_z = resolve_path::z(dir, &mut lockfile_path_buf2);
             let _ = sys::chdir(dir_z);
         }
 

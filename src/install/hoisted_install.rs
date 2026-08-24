@@ -420,7 +420,12 @@ pub(crate) fn install_hoisted_packages(
             };
         };
 
-        if installer.node_modules.path.last() != Some(&SEP) {
+        if !installer
+            .node_modules
+            .path
+            .last()
+            .is_some_and(|&c| bun_paths::is_sep_any(c))
+        {
             installer.node_modules.path.push(SEP);
         }
         let top_level_len = installer.node_modules.path.len();

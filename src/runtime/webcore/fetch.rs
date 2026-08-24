@@ -1371,27 +1371,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 }
 
-                #[cfg(windows)]
-                let mut cwd_buf = PathBuffer::uninit();
-                #[cfg(windows)]
-                // `bun_sys::getcwd` returns the byte length written into
-                // `cwd_buf`; slice it here.
-                let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-                    Ok(len) => &cwd_buf[..len],
-                    Err(err) => {
-                        return Err(global_this.throw_error(err, "Failed to resolve file url"));
-                    }
-                };
-                #[cfg(not(windows))]
-                let cwd = bun_core::cwd::get();
-
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 let main = global_this.bun_vm().as_mut().main();
-                let fullpath = bun_paths::resolve_path::join_abs_string_buf::<
-                    bun_paths::platform::Auto,
-                >(
-                    cwd, &mut path_buf, &[main, b"../", url_path_decoded]
-                );
+                let fullpath =
+                    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                        bun_core::cwd::get(),
+                        &mut path_buf,
+                        &[main, b"../", url_path_decoded],
+                    );
                 #[cfg(windows)]
                 {
                     break 'brk match PosixToWinNormalizer::resolve_cwd_with_external_buf_z(

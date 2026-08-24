@@ -135,6 +135,13 @@ function secureProtocolToVersionRange(secureProtocol) {
   return null;
 }
 
+// Option-ingestion rule only (node v26.3.0 internal/tls/wrap.js:1368,1686,1762):
+// `!== false`, so undefined keeps verification on. Read-sites of the stored
+// field use plain truthiness there (:490,:845,:1220) — do not reuse this here.
+function normalizeRejectUnauthorized(value) {
+  return value !== false;
+}
+
 let NativeSecureContext;
 
 /**
@@ -179,6 +186,7 @@ function processPfxOptions(options) {
 }
 
 export {
+  normalizeRejectUnauthorized,
   processPfxOptions,
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,

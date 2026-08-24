@@ -292,6 +292,24 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
+/// Terminate a node:http response whose handler failed (threw or rejected), closing the
+/// connection either way. Nothing sent yet → a well-formed 500. Status/body bytes already
+/// sent → they stay on the wire as written and the close ends the message without its
+/// terminating chunk (RFC 9112 §7; the bytes node produces), so a failed handler never reads
+/// as a complete response.
+pub(crate) fn end_failed_node_http_response(raw: uws::AnyResponse) {
+    let state = raw.state();
+    if state.is_http_status_called() || state.is_http_write_called() {
+        raw.end_without_body(true);
+        // No-op inside the request dispatch (still corked: the uncork closes); closes the
+        // uncorked async-rejection path, which nothing else would otherwise close.
+        raw.close_if_done_and_marked();
+    } else {
+        raw.write_status(b"500 Internal Server Error");
+        raw.end_stream(true);
+    }
+}
+
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
@@ -528,16 +546,33 @@ impl NodeHTTPResponse {
         );
     }
 
+    /// Every precondition under which [`Self::upgrade`] refuses. `server.upgrade()` checks it
+    /// before committing the one-shot 101 preamble to the socket and again after its option
+    /// getters ran user JS (which may have ended this response, closed the socket, or upgraded
+    /// it re-entrantly); `upgrade()` itself starts with it, so the callers and the upgrade can
+    /// never drift.
+    pub(crate) fn can_upgrade(&self) -> bool {
+        // `AnyServer` is a `Copy` type-erased pointer to the long-lived server, not `*self`.
+        let mut server = self.server;
+        !self
+            .flags
+            .get()
+            .intersects(Flags::ENDED | Flags::SOCKET_CLOSED | Flags::UPGRADED)
+            && !self.upgrade_context.get().context.is_null()
+            && server.web_socket_handler().is_some()
+            && !self.get_server_socket_value().is_empty()
+    }
+
     pub(crate) fn upgrade(
         &self,
         data_value: JSValue,
         sec_websocket_protocol: ZigString,
         sec_websocket_extensions: ZigString,
     ) -> bool {
-        let upgrade_ctx = self.upgrade_context.get().context;
-        if upgrade_ctx.is_null() {
+        if !self.can_upgrade() {
             return false;
         }
+        let upgrade_ctx = self.upgrade_context.get().context;
         // `AnyServer` is a `Copy` type-erased pointer; copy it so the
         // `&mut self`-taking accessor can be called from this `&self` body.
         // The pointee is the long-lived server, not `*self`.
@@ -549,10 +584,6 @@ impl NodeHTTPResponse {
         // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
         let ws_handler: &mut crate::server::WebSocketServerHandler =
             unsafe { &mut *std::ptr::from_mut(ws_handler) };
-        let socket_value = self.get_server_socket_value();
-        if socket_value.is_empty() {
-            return false;
-        }
         self.resume_socket();
 
         data_value.ensure_still_alive();
@@ -1539,10 +1570,7 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            if !raw_response.state().is_http_status_called() {
-                raw_response.write_status(b"500 Internal Server Error");
-            }
-            raw_response.end_stream(raw_response.state().is_http_connection_close());
+            end_failed_node_http_response(raw_response);
         }
 
         this.on_request_complete();

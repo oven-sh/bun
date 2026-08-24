@@ -1,5 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { isWindows, tempDir, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
@@ -204,6 +205,25 @@ describe("unix option validation", () => {
       expect(url).toBeInstanceOf(URL);
       expect(url.protocol).toBe("unix:");
       expect(decodeURIComponent(url.hostname)).toBe("my app.sock");
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/40182
+  test("server.url parses for a path with a drive letter and backslashes", () => {
+    using dir = tempDir("unix-opt-drive", {});
+    // On Windows the temp dir already starts with `C:\`. Elsewhere a relative
+    // socket file named `C:\test` puts the same bytes into the URL.
+    const cwd = process.cwd();
+    process.chdir(String(dir));
+    try {
+      const p = isWindows ? join(String(dir), "test.sock") : "C:\\test";
+      using server = serve({ unix: p, fetch: () => new Response("ok") });
+      const url = server.url;
+      expect(url).toBeInstanceOf(URL);
+      expect(url.protocol).toBe("unix:");
+      expect(decodeURIComponent(url.hostname)).toBe(p);
     } finally {
       process.chdir(cwd);
     }

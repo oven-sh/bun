@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
@@ -597,6 +597,120 @@ describe("slice bounds are respected when streaming and serving", () => {
     const get = await fetch(`http://localhost:${server.port}/`);
     expect(get.headers.get("content-length")).toBe("4");
     expect(await get.text()).toBe("3456");
+  });
+});
+
+// A slice shares its parent's backing store. Once the parent and the slice
+// objects have been collected, a stream made from the slice holds the only
+// reference to that store, and the buffered consumers (Bun.readableStreamTo*,
+// stream.text(), Response.text() after .body was materialized) take a fast
+// path that hands the store itself to JS. That path used to ignore the slice's
+// offset and size and return every byte in the store.
+describe("consuming a slice's stream after the Blobs were collected", () => {
+  // Bytes on both sides of the slice, non-ASCII after it. The slice is valid
+  // JSON so that every consumer can be checked against the same fixture.
+  const parts = ["xx", '"abc"', "héllo wörld ✓"];
+  const start = 2;
+  const end = 7;
+  const sliced = '"abc"';
+
+  // Resolves once every Blob passed to `track` has been finalized, which is
+  // when it releases its reference on the store.
+  async function afterBlobsAreCollected<T>(make: (track: (blob: Blob) => Blob) => T): Promise<T> {
+    let tracked = 0;
+    let collected = 0;
+    const registry = new FinalizationRegistry(() => collected++);
+    const result = make(blob => {
+      tracked++;
+      registry.register(blob, undefined);
+      return blob;
+    });
+    while (collected < tracked) await gcTick();
+    return result;
+  }
+
+  function collectedSliceStream(makeStream: (slice: Blob) => ReadableStream) {
+    return afterBlobsAreCollected(track => {
+      const parent = track(new Blob(parts));
+      const slice = track(parent.slice(start, end));
+      return makeStream(slice);
+    });
+  }
+
+  const sources: [string, (slice: Blob) => ReadableStream][] = [
+    ["slice.stream()", slice => slice.stream()],
+    ["new Response(slice).body", slice => new Response(slice).body!],
+  ];
+
+  const consumers: [string, (stream: ReadableStream) => Promise<unknown>, unknown][] = [
+    ["Bun.readableStreamToText", stream => Bun.readableStreamToText(stream), sliced],
+    [
+      "Bun.readableStreamToBytes",
+      async stream => Buffer.from(await Bun.readableStreamToBytes(stream)).toString(),
+      sliced,
+    ],
+    [
+      "Bun.readableStreamToArrayBuffer",
+      async stream => Buffer.from(await Bun.readableStreamToArrayBuffer(stream)).toString(),
+      sliced,
+    ],
+    ["Bun.readableStreamToJSON", stream => Bun.readableStreamToJSON(stream), "abc"],
+    [
+      "Bun.readableStreamToBlob",
+      async stream => {
+        const blob = await Bun.readableStreamToBlob(stream);
+        return [blob.size, await blob.text()];
+      },
+      [sliced.length, sliced],
+    ],
+    ["stream.text()", stream => stream.text(), sliced],
+    ["stream.json()", stream => stream.json(), "abc"],
+    ["stream.bytes()", async stream => Buffer.from(await stream.bytes()).toString(), sliced],
+  ];
+
+  describe.each(sources)("%s", (_, makeStream) => {
+    test.each(consumers)("%s", async (_, consume, expected) => {
+      const stream = await collectedSliceStream(makeStream);
+      expect(await consume(stream)).toEqual(expected);
+    });
+  });
+
+  test("Response.text() after .body was accessed", async () => {
+    const response = await afterBlobsAreCollected(track => {
+      const parent = track(new Blob(parts));
+      const response = new Response(track(parent.slice(start, end)));
+      expect(response.body).toBeInstanceOf(ReadableStream);
+      return response;
+    });
+    expect(await response.text()).toBe(sliced);
+  });
+
+  test("slice of a slice", async () => {
+    const stream = await afterBlobsAreCollected(track => {
+      const parent = track(new Blob(parts));
+      const outer = track(parent.slice(1));
+      return track(outer.slice(start - 1, end - 1)).stream();
+    });
+    expect(await Bun.readableStreamToText(stream)).toBe(sliced);
+  });
+
+  test("empty slice", async () => {
+    const stream = await afterBlobsAreCollected(track => {
+      const parent = track(new Blob(parts));
+      return track(parent.slice(start, start)).stream();
+    });
+    expect(await Bun.readableStreamToBytes(stream)).toHaveLength(0);
+  });
+
+  // An unsliced Blob views its whole store, so handing the store over is fine.
+  // A type makes the stream go through the same code a slice does, with a
+  // view that happens to cover the store.
+  test.each([
+    ["untyped", undefined],
+    ["typed", { type: "text/plain" }],
+  ])("%s unsliced Blob still yields everything", async (_, options) => {
+    const stream = await afterBlobsAreCollected(track => track(new Blob(parts, options)).stream());
+    expect(await Bun.readableStreamToText(stream)).toBe(parts.join(""));
   });
 });
 

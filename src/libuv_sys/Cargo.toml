@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 strum.workspace = true
-libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true

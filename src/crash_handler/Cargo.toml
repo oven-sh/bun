@@ -13,7 +13,6 @@ workspace = true
 thiserror.workspace = true
 bun_errno.workspace = true
 bstr.workspace = true
-scopeguard.workspace = true
 const_format.workspace = true
 libc.workspace = true
 bitflags.workspace = true

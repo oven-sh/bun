@@ -206,7 +206,6 @@ unsafe extern "C" {
     ) -> *mut lsquic_engine;
     pub fn us_nq_spec_dest(s: *const lsquic_out_spec) -> *const sockaddr;
     pub fn us_nq_spec_local(s: *const lsquic_out_spec) -> *const sockaddr;
-    pub fn us_nq_spec_peer_ctx(s: *const lsquic_out_spec) -> *mut c_void;
     pub fn us_nq_spec_iov(s: *const lsquic_out_spec, n: *mut usize) -> *const iovec;
     pub fn us_nq_spec_stride() -> usize;
     pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);

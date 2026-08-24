@@ -105,10 +105,8 @@ enum {
   POLL_TYPE_POLLING_IN = 16,
 };
 
-#define POLL_TYPE_BITSIZE 5 // make sure to update epoll_kqueue.h if you change this
 #define POLL_TYPE_KIND_MASK 0b111
 #define POLL_TYPE_POLLING_MASK 0b11000
-#define POLL_TYPE_MASK (POLL_TYPE_KIND_MASK | POLL_TYPE_POLLING_MASK)
 
 /* Bun APIs implemented in Zig */
 void Bun__lock(zig_mutex_t *lock);

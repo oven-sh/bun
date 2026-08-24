@@ -469,8 +469,6 @@ public:
     using Super::close;
 
     /* See AsyncSocket */
-    using Super::getRemoteAddress;
-    using Super::getRemoteAddressAsText;
     using Super::getNativeHandle;
 
     /* Throttle reads and writes */
@@ -837,13 +835,6 @@ public:
         }
     }
 
-    /* Get the current byte write offset for this Http response */
-    uint64_t getWriteOffset() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        return httpResponseData->offset;
-    }
-
     /* Checking if we have fully responded and are ready for another request */
     bool hasResponded() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
@@ -967,20 +958,9 @@ public:
         data->received_bytes_per_timeout = 0;
     }
 
-    void* getSocketData() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        return httpResponseData->socketData;
-    }
     bool isConnectRequest() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         return httpResponseData->isConnectRequest;
-    }
-
-    void setWriteOffset(uint64_t offset) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        httpResponseData->offset = offset;
     }
 
 };

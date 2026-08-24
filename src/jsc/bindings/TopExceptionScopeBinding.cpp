@@ -64,13 +64,6 @@ extern "C" bool TopExceptionScope__takeTerminationOutsideScript(void* ptr)
     return Bun::takeTerminationOutsideScript(scope->vm(), *scope);
 }
 
-extern "C" void TopExceptionScope__clearException(void* ptr)
-{
-    ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
-    auto* scope = static_cast<TopExceptionScope*>(ptr);
-    scope->clearException();
-}
-
 extern "C" void TopExceptionScope__clearExceptionExceptTermination(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);

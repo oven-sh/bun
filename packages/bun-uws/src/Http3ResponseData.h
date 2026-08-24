@@ -40,7 +40,6 @@ struct Http3ResponseData {
      * peer stalls or aborts mid-stream. Keep the onWritable context
      * pointer in its own slot, same as HttpResponseData<SSL>. */
     void *writableUserData = nullptr;
-    void *socketData = nullptr;
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;
     OnDataCallback inStream = nullptr;

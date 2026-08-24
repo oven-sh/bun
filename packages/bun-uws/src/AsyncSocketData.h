@@ -44,7 +44,6 @@ struct BackPressure {
 
     /* Unsent bytes. data() points at length() contiguous bytes. */
     size_t length() const { return tail - head; }
-    size_t size() const { return length(); }
     const char *data() const { return buf + head; }
     /* Allocation footprint for memoryCost / GC reporting. */
     size_t totalLength() const { return cap; }

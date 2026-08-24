@@ -11,4 +11,3 @@ workspace = true
 
 [dependencies]
 libc.workspace = true
-bun_core.workspace = true

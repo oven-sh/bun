@@ -259,13 +259,7 @@ impl TopExceptionScope {
         NonNull::new(TopExceptionScope__pureException(&mut self.bytes))
     }
 
-    pub fn clear_exception(&mut self) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
-        TopExceptionScope__clearException(&mut self.bytes)
-    }
-
-    /// As `clear_exception`, but a TerminationException stays pending (JSC's
+    /// Clears a pending exception, but a TerminationException stays pending (JSC's
     /// `clearExceptionExceptTermination`): it belongs to whoever is unwinding above.
     pub fn clear_exception_except_termination(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
@@ -741,7 +735,6 @@ unsafe extern "C" {
     /// only returns exceptions that have already been thrown. does not check traps
     safe fn TopExceptionScope__pureException(ptr: &mut [u8; SIZE]) -> *mut Exception;
     safe fn TopExceptionScope__takeTerminationOutsideScript(ptr: &mut [u8; SIZE]) -> bool;
-    safe fn TopExceptionScope__clearException(ptr: &mut [u8; SIZE]);
     safe fn TopExceptionScope__clearExceptionExceptTermination(ptr: &mut [u8; SIZE]);
     /// returns if an exception was already thrown, or if a trap (like another thread requesting
     /// termination) causes an exception to be thrown

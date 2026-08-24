@@ -425,12 +425,6 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     loop->data.post_cb(loop);
 }
 
-#ifdef WIN32
-#define us_ioctl ioctlsocket
-#else
-#define us_ioctl ioctl
-#endif
-
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -1081,5 +1075,3 @@ void us_loop_integrate(struct us_loop_t *loop) {
 __attribute__((always_inline)) void *us_loop_ext(struct us_loop_t *loop) {
     return loop + 1;
 }
-
-#undef us_ioctl

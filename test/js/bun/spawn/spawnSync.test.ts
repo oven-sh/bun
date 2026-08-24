@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isAndroid, isLinux, isMusl, isPosix, isWindows } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 
@@ -87,7 +87,10 @@ describe("spawnSync", () => {
   });
 
   // With no pipes, spawnSync blocks in waitpid instead of running its event
-  // loop. On Linux a buffer stdin becomes a memfd, which keeps that fast path.
+  // loop. Where memfd is compiled in (Linux and Android, see can_use_memfd in
+  // src/runtime/api/bun/spawn/stdio.rs) a buffer stdin becomes a memfd, which
+  // keeps that fast path. Elsewhere the buffer goes through a pipe on the event
+  // loop, so neither counter moves.
   it.skipIf(!isPosix)("should use the blocking fast path, and memfd for a buffer stdin on Linux", async () => {
     const { stdout, stderr, exitCode, signalCode } = await bunRun(
       join(import.meta.dir, "spawnSync-counters-fixture.ts"),
@@ -95,9 +98,10 @@ describe("spawnSync", () => {
     expect({ counters: JSON.parse(stdout || "null"), stderr, exitCode, signalCode }).toEqual({
       counters: {
         inherit: { exitCode: 0, spawnSync_blocking: 1, spawn_memfd: 0 },
-        bufferStdin: isLinux
-          ? { exitCode: 0, spawnSync_blocking: 1, spawn_memfd: 1 }
-          : expect.objectContaining({ exitCode: 0 }),
+        bufferStdin:
+          isLinux || isAndroid
+            ? { exitCode: 0, spawnSync_blocking: 1, spawn_memfd: 1 }
+            : { exitCode: 0, spawnSync_blocking: 0, spawn_memfd: 0 },
       },
       stderr: "",
       exitCode: 0,

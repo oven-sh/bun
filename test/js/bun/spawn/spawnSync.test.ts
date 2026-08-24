@@ -2,6 +2,23 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
+
+// The fields of a spawnSync result that the assertions compare, with the
+// Buffers turned into strings. `signalCode`, `exitedDueToTimeout` and
+// `exitedDueToMaxBuffer` are undefined unless a signal, a timeout or a
+// maxBuffer applied; `stdout` and `stderr` are undefined unless piped.
+function summary(result: Bun.SyncSubprocess<any, any>) {
+  return {
+    exitCode: result.exitCode,
+    signalCode: result.signalCode,
+    success: result.success,
+    exitedDueToTimeout: result.exitedDueToTimeout,
+    exitedDueToMaxBuffer: result.exitedDueToMaxBuffer,
+    stdout: result.stdout?.toString(),
+    stderr: result.stderr?.toString(),
+  };
+}
+
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {
     expect(() =>
@@ -10,16 +27,26 @@ describe("spawnSync", () => {
         env: bunEnv,
         timeout: -1,
       }),
-    ).toThrowErrorMatchingInlineSnapshot(
-      `"The value of "timeout" is out of range. It must be >= 0 and <= 9007199254740991. Received -1"`,
+    ).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "timeout" is out of range. It must be >= 0 and <= 9007199254740991. Received -1',
+      }),
     );
   });
 
-  for (const ioOption of ["ignore", "pipe", "inherit"]) {
-    it(`should not set a timeout if timeout is 0 and ${ioOption} is used for stdout`, () => {
-      const start = performance.now();
+  // The child outlives a 0 ms timeout, and when piped it also writes bytes
+  // that a 0 byte maxBuffer would reject. Either limit wrongly applied would
+  // kill it. With "inherit" the child writes nothing, to keep the test output clean.
+  for (const ioOption of ["ignore", "pipe", "inherit"] as const) {
+    const output = ioOption === "inherit" ? "" : "hi";
+    const child = isWindows
+      ? [bunExe(), "-e", `process.stdout.write(${JSON.stringify(output)}); setTimeout(() => {}, 50)`]
+      : ["/bin/sh", "-c", `printf '${output}'; sleep 0.05`];
+    it(`should not set a timeout or maxBuffer if both are 0 and ${ioOption} is used for stdout`, () => {
       const result = Bun.spawnSync({
-        cmd: [bunExe(), "-e", "setTimeout(() => {}, 5)"],
+        cmd: child,
         env: bunEnv,
         stdin: "ignore",
         stdout: ioOption,
@@ -27,10 +54,15 @@ describe("spawnSync", () => {
         timeout: 0,
         maxBuffer: 0,
       });
-      const end = performance.now();
-      expect(end - start).toBeLessThan(1000);
-      expect(!!result.exitedDueToTimeout).toBe(false);
-      expect(result.exitCode).toBe(0);
+      expect(summary(result)).toEqual({
+        exitCode: 0,
+        signalCode: undefined,
+        success: true,
+        exitedDueToTimeout: undefined,
+        exitedDueToMaxBuffer: undefined,
+        stdout: ioOption === "pipe" ? "hi" : undefined,
+        stderr: ioOption === "pipe" ? "" : undefined,
+      });
     });
   }
 
@@ -54,60 +86,83 @@ describe("spawnSync", () => {
     }).toEqual({ stdout: "ok", exitedDueToTimeout: false, exitCode: 0 });
   });
 
-  it.skipIf(process.platform !== "linux")("should use memfd when possible", async () => {
-    expect(await bunRun(join(import.meta.dir, "spawnSync-memfd-fixture.ts"))).toSpawn();
-  });
-
-  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", async () => {
-    expect(await bunRun(join(import.meta.dir, "spawnSync-counters-fixture.ts"))).toSpawn();
+  // With no pipes, spawnSync blocks in waitpid instead of running its event
+  // loop. On Linux a buffer stdin becomes a memfd, which keeps that fast path.
+  it.skipIf(!isPosix)("should use the blocking fast path, and memfd for a buffer stdin on Linux", async () => {
+    const { stdout, stderr, exitCode, signalCode } = await bunRun(
+      join(import.meta.dir, "spawnSync-counters-fixture.ts"),
+    );
+    expect({ counters: JSON.parse(stdout), stderr, exitCode, signalCode }).toEqual({
+      counters: {
+        inherit: { exitCode: 0, spawnSync_blocking: 1, spawn_memfd: 0 },
+        bufferStdin: isLinux
+          ? { exitCode: 0, spawnSync_blocking: 1, spawn_memfd: 1 }
+          : expect.objectContaining({ exitCode: 0 }),
+      },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   describe.skipIf(!isPosix)("drains piped stdio to EOF after the direct child exits", () => {
-    // Grandchild inherits the pipe and writes after the direct child has exited.
-    const sh = (fd: number) => [
+    // The grandchild inherits both pipes and writes to them after the direct
+    // child has exited. The first pause lets spawnSync see the exit before more
+    // output arrives; the second keeps B and C in separate reads.
+    const cmd = [
       "/bin/sh",
       "-c",
-      `printf A >&${fd}; ( sleep 0.3; printf B >&${fd}; sleep 0.1; printf C >&${fd} ) & exit 0`,
+      "printf A; printf a >&2; ( sleep 0.1; printf B; printf b >&2; sleep 0.05; printf C; printf c >&2 ) & exit 0",
     ];
     for (const maxBuffer of [undefined, 1024 * 1024]) {
-      it(`stdout (maxBuffer=${maxBuffer})`, () => {
-        const { stdout, exitCode } = Bun.spawnSync({
-          cmd: sh(1),
-          stdio: ["ignore", "pipe", "ignore"],
-          maxBuffer,
+      it(`stdout and stderr (maxBuffer=${maxBuffer})`, () => {
+        const result = Bun.spawnSync({ cmd, stdio: ["ignore", "pipe", "pipe"], maxBuffer });
+        expect(summary(result)).toEqual({
+          exitCode: 0,
+          signalCode: undefined,
+          success: true,
+          exitedDueToTimeout: undefined,
+          exitedDueToMaxBuffer: maxBuffer === undefined ? undefined : false,
+          stdout: "ABC",
+          stderr: "abc",
         });
-        expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "ABC", exitCode: 0 });
-      });
-      it(`stderr (maxBuffer=${maxBuffer})`, () => {
-        const { stderr, exitCode } = Bun.spawnSync({
-          cmd: sh(2),
-          stdio: ["ignore", "ignore", "pipe"],
-          maxBuffer,
-        });
-        expect({ stderr: stderr.toString(), exitCode }).toEqual({ stderr: "ABC", exitCode: 0 });
       });
     }
 
     it("timeout still bounds the wait when a grandchild never closes the pipe", () => {
-      const { stdout, exitedDueToTimeout } = Bun.spawnSync({
-        cmd: ["/bin/sh", "-c", "printf A; sleep 5 & exit 0"],
+      const result = Bun.spawnSync({
+        cmd: ["/bin/sh", "-c", "printf A; sleep 2 & exit 0"],
         stdio: ["ignore", "pipe", "ignore"],
-        timeout: 500,
+        timeout: 300,
       });
-      // The grandchild holds the pipe open and writes nothing; timeout must fire.
-      expect({ stdout: stdout.toString(), exitedDueToTimeout }).toEqual({ stdout: "A", exitedDueToTimeout: true });
+      // The direct child exited 0 on its own. The grandchild holds the pipe
+      // open and writes nothing, so the timeout must end the wait.
+      expect(summary(result)).toEqual({
+        exitCode: 0,
+        signalCode: undefined,
+        success: true,
+        exitedDueToTimeout: true,
+        exitedDueToMaxBuffer: undefined,
+        stdout: "A",
+        stderr: undefined,
+      });
     });
   });
 });
+
+const GiB = 1024 ** 3;
 
 // A Buffer holds at most kMaxLength (2^32) bytes. spawnSync hands the captured
 // output to JSC without a copy, and a larger output used to kill the process at
 // that hand-off instead of throwing the RangeError an allocation of that size
 // throws. An output of exactly 2^32 bytes used to die in a length cast on the
 // same path. Each case makes the child hold 4 GiB of zeros (the read buffer
-// doubles to 8 GiB on the way), so the cases run one at a time, in a child
-// process, with a long timeout, and only on machines with room.
-describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("spawnSync output at the Buffer length limit", () => {
+// doubles to 8 GiB on the way, for a peak RSS near 8.5 GiB), so the cases run
+// in a child process, with a long timeout, and only on machines with room.
+// Most of the time goes to page faults in that child, so the two cases run at
+// the same time when there is room for both.
+const describeAtLimit = totalmem() >= 32 * GiB ? describe.concurrent : describe;
+describeAtLimit.skipIf(!isPosix || totalmem() < 16 * GiB)("spawnSync output at the Buffer length limit", () => {
   async function captureZeros(size: number) {
     await using proc = Bun.spawn({
       cmd: [
@@ -121,7 +176,7 @@ describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("spawnSync output at th
             stdout: "pipe",
             stderr: "pipe",
           });
-          result = { isBuffer: Buffer.isBuffer(stdout), length: stdout.length, exitCode };
+          result = { isBuffer: Buffer.isBuffer(stdout), length: stdout.length, lastByte: stdout[stdout.length - 1], exitCode };
         } catch (e) {
           result = { isRangeError: e instanceof RangeError, message: e.message };
         }
@@ -147,7 +202,7 @@ describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("spawnSync output at th
 
   it("an output of exactly 2^32 bytes is returned whole", async () => {
     expect(await captureZeros(2 ** 32)).toEqual({
-      result: { isBuffer: true, length: 2 ** 32, exitCode: 0 },
+      result: { isBuffer: true, length: 2 ** 32, lastByte: 0, exitCode: 0 },
       stderr: "",
       exitCode: 0,
       signalCode: null,

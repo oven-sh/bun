@@ -90,22 +90,26 @@ using namespace Zig;
 // - if env is nullptr, return napi_invalid_arg
 // - if there is a pending exception, return napi_pending_exception
 // No do..while is used as this declares a variable that other macros need to use
-#define NAPI_PREAMBLE(_env)                                                     \
-    NAPI_LOG_CURRENT_FUNCTION;                                                  \
-    NAPI_CHECK_ARG(_env, _env);                                                 \
-    /* The top of its own scope: the caller is addon C code, which learns  */   \
-    /* of an exception from the returned status, not from a scope. Nothing */   \
-    /* is thrown into the VM from here (see latchException); to raise an   */   \
-    /* error use env->scheduleException().                                 */   \
-    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_EXCEPTION(_env);                                             \
-    /* Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...) */       \
-    if (WebCore::clientData(_env->vm())->isStoppingOrStopped(_env->vm()))       \
-        [[unlikely]]                                                            \
+#define NAPI_PREAMBLE(_env)                                                        \
+    NAPI_LOG_CURRENT_FUNCTION;                                                     \
+    NAPI_CHECK_ARG(_env, _env);                                                    \
+    /* The top of its own scope: the caller is addon C code, which learns  */      \
+    /* of an exception from the returned status, not from a scope. Nothing */      \
+    /* is thrown into the VM from here (see latchException); to raise an   */      \
+    /* error use env->scheduleException().                                 */      \
+    auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm());    \
+    /* Node: if (!env->last_exception.IsEmpty()) return napi_pending_exception; */ \
+    /* a termination already on the VM refuses the call the same way.        */    \
+    if (_env->hasPendingException() || napi_preamble_throw_scope__.exception())    \
+        [[unlikely]]                                                               \
+        return napi_set_last_error(_env, napi_pending_exception);                  \
+    /* Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...) */          \
+    if (WebCore::clientData(_env->vm())->isStoppingOrStopped(_env->vm()))          \
+        [[unlikely]]                                                               \
         return napi_set_last_error(_env, _env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
 
-// Only use this for functions that need their own throw or catch scope. Functions that call into
-// JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.
+// For entry points that neither enter the VM nor consult the pending exception (pure argument checks, or ones
+// that delegate to a helper that sets up its own scope).
 #define NAPI_PREAMBLE_NO_THROW_SCOPE(_env) \
     do {                                   \
         NAPI_LOG_CURRENT_FUNCTION;         \
@@ -113,9 +117,10 @@ using namespace Zig;
     } while (0)
 
 // What the value constructors/accessors Node gates with CHECK_ENV only run under (NAPI_PREAMBLE_NO_PENDING_CHECK
-// here, `ungated!` in napi_body.rs): callable with an exception pending (stashed for the call; only then, since the
-// restore is unconditional) and never where a worker.terminate() / node:vm timeout is delivered (DeferTraps: the
-// next exception check after the call delivers it, as in Node). No JS or addon code may run under it.
+// here, `ungated!` in napi_body.rs): callable with an exception latched on the env or a termination pending on the
+// VM (the latter is stashed for the call; only then, since the restore is unconditional), and never where a
+// worker.terminate() / node:vm timeout is delivered (DeferTraps: the next exception check after the call delivers
+// it, as in Node). No JS or addon code may run under it.
 struct NapiUngatedScope {
     explicit NapiUngatedScope(JSC::VM& vm)
         : deferTraps(vm)
@@ -183,34 +188,22 @@ static void latchException(napi_env env, JSC::TopExceptionScope& scope)
     env->scheduleException(exception->value());
 }
 
+// After a step that may have thrown: latch what it threw (see latchException) and return `_status` to the addon.
+#define NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(_env, _scope, _status) \
+    do {                                                           \
+        if ((_scope).exception()) [[unlikely]] {                   \
+            latchException((_env), (_scope));                      \
+            return napi_set_last_error((_env), (_status));         \
+        }                                                          \
+    } while (0)
+#define NAPI_RETURN_STATUS_IF_EXCEPTION(_env, _status) NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE((_env), napi_preamble_throw_scope__, (_status))
+#define NAPI_RETURN_IF_EXCEPTION(_env) NAPI_RETURN_STATUS_IF_EXCEPTION((_env), napi_pending_exception)
+
 // Node's CHECK_TO_OBJECT: ToObject coerces primitives and throws on null/undefined, in which case the call returns
 // napi_object_expected with the TypeError pending. Declares `_result` in the enclosing scope.
 #define NAPI_CHECK_TO_OBJECT(_env, _globalObject, _result, _src) \
     JSObject* _result = (_src).toObject((_globalObject));        \
     NAPI_RETURN_STATUS_IF_EXCEPTION((_env), napi_object_expected)
-
-#define NAPI_RETURN_IF_VM_EXCEPTION(_env) NAPI_RETURN_STATUS_IF_EXCEPTION((_env), napi_pending_exception)
-
-#define NAPI_RETURN_STATUS_IF_EXCEPTION(_env, _status)              \
-    do {                                                            \
-        if (napi_preamble_throw_scope__.exception()) [[unlikely]] { \
-            latchException((_env), napi_preamble_throw_scope__);    \
-            return napi_set_last_error((_env), (_status));          \
-        }                                                           \
-    } while (0)
-
-#define NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(_env, _scope)               \
-    do {                                                                \
-        if ((_scope).exception()) [[unlikely]] {                        \
-            latchException((_env), (_scope));                           \
-            return napi_set_last_error((_env), napi_pending_exception); \
-        }                                                               \
-        if ((_env)->hasPendingException()) [[unlikely]] {               \
-            return napi_set_last_error((_env), napi_pending_exception); \
-        }                                                               \
-    } while (0)
-
-#define NAPI_RETURN_IF_EXCEPTION(_env) NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE((_env), napi_preamble_throw_scope__)
 
 // Return indicating that no error occurred in a NAPI function, and an exception is not expected
 #define NAPI_RETURN_SUCCESS(_env)                        \
@@ -1095,29 +1088,14 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
     return napi_set_last_error(env, napi_ok);
 }
 
-// code must be a string or nullptr (no code)
-// msg must be a string
-//
-// Matches Node.js, where napi_create_error is a pure value producer that
-// does not check the VM exception state on entry. Bun previously used a
-// throw scope + RETURN_IF_EXCEPTION here, so a *pre-existing* VM exception
-// made napi_create_error return napi_pending_exception. That broke
-// node-addon-api's `Error::New(env)` during env cleanup: the helper calls
-// napi_is_exception_pending (which Bun deliberately skips the VM check for
-// during cleanup, so it reports "no pending exception"), then falls through
-// to napi_create_error; when a prior finalizer left a VM exception on the
-// scope, the mismatch tripped NAPI_FATAL_IF_FAILED -> napi_fatal_error ->
-// panic. See #30286 and #22259.
-//
-// We use a TopExceptionScope (not a throw scope) so a pre-existing exception
-// does not force an early return. A *new* exception (getString() resolving a
-// rope can throw OutOfMemoryError) is left pending and reported as
-// napi_pending_exception, like any other napi call that threw.
-static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi_value message, JSC::ErrorType type, napi_value* result)
+// code must be a string or nullptr (no code); msg must be a string.
+// As in Node, the napi_create_*error functions are value producers callable with an exception pending (node-addon-api's
+// Error::New(env) relies on that during env cleanup, #30286 / #22259), hence NAPI_PREAMBLE_NO_PENDING_CHECK in the
+// callers. Resolving a rope for the message can still throw (out of memory); that is latched like any other throw.
+static napi_status createErrorWithNapiValues(napi_env env, JSC::TopExceptionScope& scope, napi_value code, napi_value message, JSC::ErrorType type, napi_value* result)
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, message);
@@ -1127,20 +1105,12 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
-    JSC::Exception* preExisting = scope.exception();
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
-    if (scope.exception() != preExisting) [[unlikely]]
-        return napi_set_last_error(env, napi_pending_exception);
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope, napi_pending_exception);
     auto wtf_message = js_message.getString(globalObject);
-    if (scope.exception() != preExisting) [[unlikely]]
-        return napi_set_last_error(env, napi_pending_exception);
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope, napi_pending_exception);
 
-    *result = toNapi(
-        createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
-        globalObject);
-
-    if (scope.exception() != preExisting) [[unlikely]]
-        return napi_set_last_error(env, napi_pending_exception);
+    *result = toNapi(createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type), globalObject);
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -1368,8 +1338,9 @@ extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
 
-    // What a Node-API call or napi_throw latched, or a termination still on the VM.
-    *result = env->hasPendingException() || (!env->isFinishingFinalizers() && env->vm().exceptionForInspection());
+    // Node: `*result = !env->last_exception.IsEmpty()`. A termination on the VM is not the addon's and is not
+    // reported here (napi_get_and_clear_last_exception could never hand it out).
+    *result = env->hasPendingException();
     return napi_clear_last_error(env);
 }
 
@@ -1450,9 +1421,9 @@ extern "C" napi_status node_api_create_syntax_error(napi_env env,
     napi_value msg,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
-    return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::SyntaxError, result);
+    return createErrorWithNapiValues(env, napi_preamble_throw_scope__, code, msg, JSC::ErrorType::SyntaxError, result);
 }
 
 extern "C" napi_status node_api_throw_syntax_error(napi_env env,
@@ -1474,9 +1445,9 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
     napi_value msg,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
-    return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::TypeError, result);
+    return createErrorWithNapiValues(env, napi_preamble_throw_scope__, code, msg, JSC::ErrorType::TypeError, result);
 }
 
 // On `disposeNow` the caller runs the addon's finalizer, which must not run under this function's preamble.
@@ -1788,9 +1759,9 @@ extern "C" napi_status napi_create_error(napi_env env, napi_value code,
     napi_value msg,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
-    return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::Error, result);
+    return createErrorWithNapiValues(env, napi_preamble_throw_scope__, code, msg, JSC::ErrorType::Error, result);
 }
 extern "C" napi_status napi_throw_range_error(napi_env env, const char* code,
     const char* msg)
@@ -1841,9 +1812,9 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
     napi_value msg,
     napi_value* result)
 {
-    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
-    return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::RangeError, result);
+    return createErrorWithNapiValues(env, napi_preamble_throw_scope__, code, msg, JSC::ErrorType::RangeError, result);
 }
 
 extern "C" napi_status napi_get_new_target(napi_env env,
@@ -2622,9 +2593,9 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSString* jsString = jsValue.toString(globalObject);
-    NAPI_RETURN_IF_VM_EXCEPTION(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
     const auto view = jsString->view(globalObject);
-    NAPI_RETURN_IF_VM_EXCEPTION(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     if (buf == nullptr) {
         // they just want to know the length
@@ -2934,7 +2905,7 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
     *result = jsValue.toBigInt64(toJS(env));
-    NAPI_RETURN_IF_VM_EXCEPTION(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     JSBigInt* bigint = jsValue.asHeapBigInt();
     auto length = bigint->length();
@@ -2967,7 +2938,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
     *result = jsValue.toBigUInt64(toJS(env));
-    NAPI_RETURN_IF_VM_EXCEPTION(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
     // value is positive
@@ -3084,7 +3055,7 @@ extern "C" napi_status napi_create_bigint_uint64(napi_env env, uint64_t value, n
     NAPI_CHECK_ARG(env, result);
     auto* globalObject = toJS(env);
     auto* bigint = JSBigInt::createFrom(globalObject, value);
-    NAPI_RETURN_IF_VM_EXCEPTION(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
     *result = toNapi(bigint, globalObject);
     ensureStillAliveHere(bigint);
     NAPI_RETURN_SUCCESS(env);
@@ -3096,7 +3067,7 @@ extern "C" napi_status napi_create_bigint_int64(napi_env env, int64_t value, nap
     NAPI_CHECK_ARG(env, result);
     auto* globalObject = toJS(env);
     auto* bigint = JSBigInt::createFrom(globalObject, value);
-    NAPI_RETURN_IF_VM_EXCEPTION(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
     *result = toNapi(bigint, globalObject);
     ensureStillAliveHere(bigint);
     NAPI_RETURN_SUCCESS(env);
@@ -3150,7 +3121,7 @@ extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
         NAPI_RETURN_EARLY_IF_FALSE(env, descriptionValue.isString(), napi_string_expected);
 
         WTF::String descriptionString = descriptionValue.getString(globalObject);
-        NAPI_RETURN_IF_VM_EXCEPTION(env);
+        NAPI_RETURN_IF_EXCEPTION(env);
 
         *result = toNapi(JSC::Symbol::createWithDescription(vm, descriptionString), globalObject);
         NAPI_RETURN_SUCCESS(env);
@@ -3279,7 +3250,7 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
     NAPI_CHECK_ARG(env, type_tag);
     Zig::GlobalObject* globalObject = toJS(env);
     JSObject* js_object = toJS(value).toObject(globalObject);
-    NAPI_RETURN_IF_VM_EXCEPTION(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
     JSValue napiTypeTagValue = globalObject->napiTypeTags()->get(js_object);
 
     auto* existing_tag = dynamicDowncast<Bun::NapiTypeTag>(napiTypeTagValue);
@@ -3299,7 +3270,7 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
     NAPI_CHECK_ARG(env, type_tag);
     Zig::GlobalObject* globalObject = toJS(env);
     JSObject* js_object = toJS(value).toObject(globalObject);
-    NAPI_RETURN_IF_VM_EXCEPTION(env);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     bool match = false;
     auto* found_tag = dynamicDowncast<Bun::NapiTypeTag>(globalObject->napiTypeTags()->get(js_object));
@@ -3394,6 +3365,11 @@ extern "C" void napi_internal_remove_finalizer(napi_env env, napi_finalize callb
 extern "C" void napi_internal_check_gc(napi_env env)
 {
     env->checkGC();
+}
+
+extern "C" bool NapiEnv__throwPendingException(napi_env env)
+{
+    return env->throwPendingException();
 }
 
 extern "C" void NapiEnv__latchException(napi_env env)

@@ -179,9 +179,11 @@ void node_module_register(void* opaque_mod)
         return;
     }
 
+    // This runs under dlopen(); process.dlopen throws slot 0 once dlopen() returns. Take the latch even when a VM
+    // exception is also pending (that one wins), so it cannot fire from a later, unrelated callback.
+    JSC::JSValue thrown = isolate->globalInternals()->takePendingException();
     RETURN_IF_EXCEPTION(scope, void());
-    // This runs under dlopen(); process.dlopen throws slot 0 once dlopen() returns.
-    if (JSC::JSValue thrown = isolate->globalInternals()->takePendingException()) [[unlikely]] {
+    if (thrown) [[unlikely]] {
         globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, thrown);
         return;
     }

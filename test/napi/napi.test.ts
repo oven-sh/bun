@@ -1402,6 +1402,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("an addon registered with napi_module_register whose init throws makes require() throw that error", async () => {
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "throwing_init_addon.node");
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { require(${JSON.stringify(addonPath)}); console.log("no throw"); } catch (e) { console.log(e.code, e.message); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ERR_THROWING_INIT init threw on purpose");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });
@@ -1893,24 +1911,6 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("napi_create_array_with_length(10) created array with correct length");
       expect(output).not.toContain("FAIL");
     });
-  });
-
-  it("an addon registered with napi_module_register whose init throws makes require() throw that error", async () => {
-    const addonPath = join(__dirname, "napi-app", "build", "Debug", "throwing_init_addon.node");
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `try { require(${JSON.stringify(addonPath)}); console.log("no throw"); } catch (e) { console.log(e.code, e.message); }`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("ERR_THROWING_INIT init threw on purpose");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
   });
 
   describe("napi_create_dataview", () => {

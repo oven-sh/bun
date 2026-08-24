@@ -142,10 +142,10 @@ void Isolate::RequestInterrupt(InterruptCallback callback, void* data)
 
 // The value is not thrown into the VM here: addon code keeps running after ThrowException() and cannot check a JS
 // exception. The trampoline that called into the addon (FunctionTemplate call/construct, accessor callbacks, module
-// registration) throws it when the addon returns — see GlobalInternals::takePendingException.
+// registration) throws it when the addon returns — see GlobalInternals::throwPendingException.
 Local<Value> Isolate::ThrowException(Local<Value> exception)
 {
-    m_globalInternals->setPendingException(exception->localToJSValue());
+    m_globalInternals->scheduleException(exception->localToJSValue());
     return exception;
 }
 
@@ -155,7 +155,7 @@ Local<Value> Isolate::ThrowError(Local<String> message)
     // tryGetValue(): an unresolvable rope yields a null message here rather than a second exception.
     WTF::String wtfMessage = message->localToJSString()->tryGetValue();
     JSC::JSObject* error = JSC::createError(m_globalObject, wtfMessage);
-    m_globalInternals->setPendingException(error);
+    m_globalInternals->scheduleException(error);
     return currentHandleScope()->createLocal<Value>(vm, error);
 }
 

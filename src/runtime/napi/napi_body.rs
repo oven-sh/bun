@@ -154,8 +154,8 @@ impl NapiEnv {
         Self::set_last_error(Some(self), status)
     }
 
-    /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
-    /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
+    /// The gate Node's `NAPI_PREAMBLE` enforces: an exception latched on the env (by `napi_throw*` or by an earlier
+    /// call that threw), or a termination pending on the VM.
     pub(crate) fn has_pending_exception(&self) -> bool {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
@@ -177,11 +177,10 @@ impl NapiEnv {
         None
     }
 
-    /// After a native addon callback (a `complete`, a finalizer, a `call_js`):
-    /// what it raised through Node-API — latched on the env — or left on the VM
-    /// is that call's exception, surfaced as `Err` with it pending on the VM.
-    /// If both exist the VM's own wins and the latched one is discarded (it
-    /// cannot be reported without running JS over the pending one).
+    /// After a native addon callback (a `complete`, a finalizer, a `call_js`): what it raised through Node-API —
+    /// latched on the env — is that call's exception, surfaced as `Err` with it pending on the VM. If the VM
+    /// already has one (a termination; or a nested trampoline already threw), that wins and the latched one is
+    /// discarded, as it would be by any catch of the first.
     pub(crate) fn surface_exception(&self, global: &JSGlobalObject) -> JsResult<()> {
         let latched = self.get_and_clear_pending_exception();
         if global.has_exception() {

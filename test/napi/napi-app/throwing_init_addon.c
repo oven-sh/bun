@@ -11,7 +11,13 @@ static napi_value init(napi_env env, napi_value exports) {
 }
 
 static napi_module mod = {
-    1, 0, "throwing_init_addon.c", init, "throwing_init_addon", NULL, {NULL},
+    1,                       // nm_version
+    0,                       // nm_flags
+    "throwing_init_addon.c", // nm_filename
+    init,                    // nm_register_func
+    "throwing_init_addon",   // nm_modname
+    NULL,                    // nm_priv
+    {NULL}                   // reserved
 };
 
 #if defined(_MSC_VER)

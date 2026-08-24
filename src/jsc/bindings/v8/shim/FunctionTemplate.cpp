@@ -250,11 +250,8 @@ JSC::JSValue FunctionTemplate::invokeCallback(JSC::JSGlobalObject* globalObject,
         functionTemplate->m_callback(info);
     }
 
-    if (JSC::JSValue thrown = isolate->globalInternals()->takePendingException()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        JSC::throwException(globalObject, scope, thrown);
+    if (isolate->globalInternals()->throwPendingException(globalObject)) [[unlikely]]
         return {};
-    }
 
     TaggedPointer& return_value = slot(Info::kReturnValueIndex);
     if (return_value.isEmpty()) {

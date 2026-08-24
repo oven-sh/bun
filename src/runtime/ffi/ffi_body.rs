@@ -2226,8 +2226,10 @@ impl Function {
         writer.write_all(b"    ")?;
 
         if self.needs_handle_scope() {
+            // What the C code raised through Node-API (napi_throw, or an API call that threw) is latched on the
+            // env; this is the trampoline that throws it.
             writer.write_all(
-                b"  NapiHandleScope__close(&Bun__thisFFIModuleNapiEnv, handleScope);\n",
+                b"  NapiHandleScope__close(&Bun__thisFFIModuleNapiEnv, handleScope);\n  if (NapiEnv__throwPendingException(&Bun__thisFFIModuleNapiEnv)) return ValueEmpty.asZigRepr;\n",
             )?;
         }
 
@@ -2581,6 +2583,7 @@ impl CompilerRT {
         unsafe extern "C" {
             fn NapiHandleScope__open(env: *mut napi::NapiEnv, escapable: bool) -> *mut c_void;
             fn NapiHandleScope__close(env: *mut napi::NapiEnv, current: *mut c_void);
+            fn NapiEnv__throwPendingException(env: *mut napi::NapiEnv) -> bool;
         }
         state
             .add_symbol(
@@ -2592,6 +2595,12 @@ impl CompilerRT {
             .add_symbol(
                 zstr!("NapiHandleScope__close"),
                 NapiHandleScope__close as *const c_void,
+            )
+            .expect("unreachable");
+        state
+            .add_symbol(
+                zstr!("NapiEnv__throwPendingException"),
+                NapiEnv__throwPendingException as *const c_void,
             )
             .expect("unreachable");
 

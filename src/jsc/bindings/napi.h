@@ -178,17 +178,12 @@ public:
 
     void cleanup()
     {
-        // The VM can already have a pending exception when cleanup starts:
-        // a Worker torn down via terminate() has JSC's TerminationException
-        // set (termination is trap-based, so clearing the exception object
-        // does not cancel the termination request -- re-entering JS
-        // re-throws it). Cleanup hooks and finalizers are native callbacks
-        // with no JS frame above them to catch anything, so, matching
-        // Node.js, each starts from a clean exception state. Without this,
-        // the first napi call in the first callback that checks the VM
-        // (e.g. napi_create_string_utf8 in a node-addon-api ObjectWrap
-        // finalizer) fails with napi_pending_exception and the addon's
-        // error path escalates to napi_fatal_error. See #30286.
+        // The VM can already have a termination pending when cleanup starts (a Worker torn down via terminate();
+        // termination is trap-based, so clearing the exception object does not cancel the request -- re-entering
+        // JS re-throws it), and the env can hold a latched exception nothing will ever throw. Cleanup hooks and
+        // finalizers are native callbacks with no JS frame above them to catch anything, so, matching Node.js, each
+        // starts from a clean exception state; otherwise the first gated napi call in a node-addon-api ObjectWrap
+        // finalizer fails with napi_pending_exception and its error path escalates to napi_fatal_error. See #30286.
         clearExceptionsBetweenFinalizers();
 
         while (!m_cleanupHooks.empty()) {
@@ -237,13 +232,8 @@ public:
             // Whatever the call appended sits after `current`; remove `current` itself by value
             // (still a live node: deactivate() only marks the running entry).
             m_finalizers.remove(*current);
-            // Each finalizer starts from a clean exception state: Node.js
-            // never propagates one finalizer's throw into the next (there
-            // is no JS frame to catch in between). Leaving a pending
-            // exception also breaks later finalizers in subtle ways --
-            // napi_is_exception_pending skips the VM check during cleanup
-            // for safety, so user code thinks there is no exception, but
-            // the next napi call with a throw scope sees it. See #30286.
+            // Each finalizer starts from a clean exception state: Node.js never propagates one finalizer's throw
+            // (latched on the env) into the next -- there is no JS frame to catch in between. See #30286.
             clearExceptionsBetweenFinalizers();
         }
         m_isFinishingFinalizers = false;
@@ -412,10 +402,7 @@ public:
 
     void scheduleException(JSC::JSValue exception)
     {
-        if (exception.isEmpty()) {
-            m_pendingException.clear();
-        }
-
+        ASSERT(!exception.isEmpty());
         m_pendingException.set(m_vm, exception);
     }
 

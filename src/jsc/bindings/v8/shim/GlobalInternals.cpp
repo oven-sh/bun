@@ -69,5 +69,17 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, GlobalInternals);
 
+bool GlobalInternals::throwPendingException(JSC::JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue thrown = takePendingException();
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!thrown) [[likely]]
+        return false;
+    JSC::throwException(globalObject, scope, thrown);
+    return true;
+}
+
 } // namespace shim
 } // namespace v8

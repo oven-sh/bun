@@ -54,8 +54,8 @@ static std::string describe(Isolate *isolate, Local<Value> value) {
     return result;
   } else if (value->IsFunction()) {
     char buf[1024] = {0};
-    value.As<Function>()->GetName().As<String>()->WriteUtf8V2(isolate, buf,
-                                                              sizeof(buf) - 1);
+    value.As<Function>()->GetName().As<String>()->WriteUtf8V2(
+        isolate, buf, sizeof(buf) - 1);
     std::string result = "function ";
     result += buf;
     result += "()";
@@ -268,8 +268,7 @@ void test_v8_string_write_utf8(const FunctionCallbackInfo<Value> &info) {
 // in that case; WriteUtf8V2 instead refuses to write partial sequences and
 // stops before the astral character. The encoder that backs this on Bun
 // previously wrote U+FFFD (0xEF 0xBF 0xBD) here, diverging from V8.
-void test_v8_string_write_utf8_surrogate(
-    const FunctionCallbackInfo<Value> &info) {
+void test_v8_string_write_utf8_surrogate(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
 
   struct {
@@ -1651,14 +1650,16 @@ void test_v8_function_call(const FunctionCallbackInfo<Value> &info) {
       String::NewFromUtf8(isolate, "hello").ToLocalChecked(),
       Boolean::New(isolate, true),
   };
-  MaybeLocal<Value> result = f->Call(context, Undefined(isolate), 3, argv);
+  MaybeLocal<Value> result =
+      f->Call(context, Undefined(isolate), 3, argv);
   LOG_EXPR(result.IsEmpty());
   if (!result.IsEmpty()) {
     LOG_EXPR(describe(isolate, result.ToLocalChecked()));
   }
 
   Local<Object> recv = Object::New(isolate);
-  (void)recv->Set(context, String::NewFromUtf8(isolate, "tag").ToLocalChecked(),
+  (void)recv->Set(context,
+                  String::NewFromUtf8(isolate, "tag").ToLocalChecked(),
                   Number::New(isolate, 99.0));
   MaybeLocal<Value> result2 = f->Call(context, recv, 0, nullptr);
   LOG_EXPR(result2.IsEmpty());
@@ -1705,7 +1706,8 @@ void test_v8_function_new_instance(const FunctionCallbackInfo<Value> &info) {
           .ToLocalChecked();
   LOG_EXPR(describe(isolate, constructed));
   Local<Value> arg0 =
-      inst->Get(context, String::NewFromUtf8(isolate, "arg0").ToLocalChecked())
+      inst->Get(context,
+                String::NewFromUtf8(isolate, "arg0").ToLocalChecked())
           .ToLocalChecked();
   LOG_EXPR(describe(isolate, arg0));
 
@@ -1791,12 +1793,12 @@ void test_v8_exception(const FunctionCallbackInfo<Value> &info) {
 
   Local<Value> err = Exception::Error(msg);
   LOG_EXPR(err->IsObject());
-  LOG_EXPR(describe(
-      isolate,
-      err.As<Object>()
-          ->Get(isolate->GetCurrentContext(),
-                String::NewFromUtf8(isolate, "message").ToLocalChecked())
-          .ToLocalChecked()));
+  LOG_EXPR(
+      describe(isolate,
+               err.As<Object>()
+                   ->Get(isolate->GetCurrentContext(),
+                         String::NewFromUtf8(isolate, "message").ToLocalChecked())
+                   .ToLocalChecked()));
 
   Local<Value> type_err = Exception::TypeError(
       String::NewFromUtf8(isolate, "wrong type").ToLocalChecked());
@@ -1806,9 +1808,9 @@ void test_v8_exception(const FunctionCallbackInfo<Value> &info) {
   isolate->ThrowException(err);
 }
 
-// ThrowException() with the addon still running afterwards: it keeps allocating
-// through the API before it returns, and what it threw — a non-Error here — is
-// what the JS caller catches.
+// ThrowException() with the addon still running afterwards: it keeps
+// allocating through the API before it returns, and what it threw — a
+// non-Error here — is what the JS caller catches.
 void test_v8_throw_then_continue(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   isolate->ThrowException(Number::New(isolate, 42));
@@ -1880,8 +1882,7 @@ void test_v8_cpu_profiler(const FunctionCallbackInfo<Value> &info) {
   // Do a little work so at least the root node exists; do NOT assert on sample
   // counts because those are timing-dependent and differ across engines.
   volatile double sink = 0;
-  for (int i = 0; i < 100000; i++)
-    sink += i * 0.5;
+  for (int i = 0; i < 100000; i++) sink += i * 0.5;
   (void)sink;
 
   CpuProfile *profile = profiler->Stop(start_result.id);
@@ -1918,8 +1919,7 @@ void test_v8_cpu_profiler_overlapping_sessions(
 
   auto busy = [] {
     volatile double sink = 0;
-    for (int i = 0; i < 100000; i++)
-      sink += i * 0.5;
+    for (int i = 0; i < 100000; i++) sink += i * 0.5;
     (void)sink;
   };
 
@@ -1928,14 +1928,14 @@ void test_v8_cpu_profiler_overlapping_sessions(
   Local<String> title_b =
       String::NewFromUtf8(isolate, "bun-v8-test-b").ToLocalChecked();
 
-  CpuProfilingResult a = profiler->Start(title_a, kLeafNodeLineNumbers, true,
-                                         CpuProfilingOptions::kNoSampleLimit);
+  CpuProfilingResult a = profiler->Start(
+      title_a, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
   LOG_EXPR((int)a.status);
   busy();
 
   // Second session while the first is still running.
-  CpuProfilingResult b = profiler->Start(title_b, kLeafNodeLineNumbers, true,
-                                         CpuProfilingOptions::kNoSampleLimit);
+  CpuProfilingResult b = profiler->Start(
+      title_b, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
   LOG_EXPR((int)b.status);
   LOG_EXPR(a.id != b.id);
 
@@ -1996,8 +1996,7 @@ void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
 
   auto busy = [] {
     volatile double sink = 0;
-    for (int i = 0; i < 100000; i++)
-      sink += i * 0.5;
+    for (int i = 0; i < 100000; i++) sink += i * 0.5;
     (void)sink;
   };
 

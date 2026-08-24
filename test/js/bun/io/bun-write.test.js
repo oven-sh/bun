@@ -767,6 +767,72 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     });
   });
 
+  // A zero-byte Blob/Response/array source takes the truncate() path, which
+  // cannot create a file on its own. The fallback that creates it must also
+  // run when there is no directory to create first: a bare filename relative
+  // to cwd, or { createPath: false } with the directory already present.
+  it("empty source creates a missing destination without a directory to create", async () => {
+    using dir = tempDir("bun-write-empty-source-bare", {
+      "existing.bin": "stale contents",
+      sub: {},
+    });
+    const fixture = `
+      const results = {};
+      const attempt = async (label, write) => {
+        try {
+          results[label] = await write();
+        } catch (e) {
+          results[label] = e.code;
+        }
+      };
+      await attempt("blob.bin", () => Bun.write("blob.bin", new Blob([])));
+      await attempt("response.bin", () => Bun.write("response.bin", new Response("")));
+      await attempt("array.bin", () => Bun.write("array.bin", []));
+      await attempt("bunfile.bin", () => Bun.write(Bun.file("bunfile.bin"), new Blob([])));
+      await attempt("bunfile-write.bin", () => Bun.file("bunfile-write.bin").write(new Blob([])));
+      await attempt("existing.bin", () => Bun.write("existing.bin", new Blob([])));
+      await attempt("no-create-path.bin", () => Bun.write("no-create-path.bin", new Blob([]), { createPath: false }));
+      await attempt("sub/no-create-path.bin", () =>
+        Bun.write("sub/no-create-path.bin", new Blob([]), { createPath: false }),
+      );
+      await attempt("created/dir/file.bin", () => Bun.write("created/dir/file.bin", new Blob([])));
+      await attempt("missing/file.bin", () => Bun.write("missing/file.bin", new Blob([]), { createPath: false }));
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const expected = {
+      "blob.bin": 0,
+      "response.bin": 0,
+      "array.bin": 0,
+      "bunfile.bin": 0,
+      "bunfile-write.bin": 0,
+      "existing.bin": 0,
+      "no-create-path.bin": 0,
+      "sub/no-create-path.bin": 0,
+      "created/dir/file.bin": 0,
+      "missing/file.bin": "ENOENT",
+    };
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+
+    // Every write that resolved 0 left a zero-byte file behind (existing.bin
+    // was truncated); the rejected one created nothing.
+    const sizesOnDisk = Object.fromEntries(
+      Object.keys(expected).map(name => {
+        const file = join(String(dir), name);
+        return [name, fs.existsSync(file) ? fs.statSync(file).size : "missing"];
+      }),
+    );
+    expect(sizesOnDisk).toEqual({ ...expected, "missing/file.bin": "missing" });
+  });
+
   test("timed output should work", async () => {
     const producer_file = path.join(import.meta.dir, "timed-stderr-output.js");
 

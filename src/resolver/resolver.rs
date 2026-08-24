@@ -562,14 +562,10 @@ pub struct Resolver<'a> {
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 }
 
-/// Cache keys (`BSSMapInner::key_hash`) of every directory the resolution in
-/// progress on this thread read from `dir_cache` or `fs.entries`. Filled only
-/// between `Resolver::start_recording_touched_dirs` and
-/// `stop_recording_touched_dirs`, so a caller that got `NotFound` can drop
-/// exactly the cached state the lookup depended on (`bust_touched_dirs`) and
-/// resolve again. Thread-local rather than a `Resolver` field: the runtime
-/// copies its `Transpiler`, `Resolver` included, bytewise into every
-/// transpiler job, and a `Vec` must have one owner.
+/// Cache keys of the directories the resolution in progress on this thread
+/// read; see `Resolver::bust_touched_dirs`. Thread-local, not a `Resolver`
+/// field: the runtime copies its `Transpiler` bytewise into every transpiler
+/// job, and a `Vec` must have one owner.
 struct TouchedDirs {
     recording: bool,
     hashes: Vec<u64>,
@@ -580,8 +576,7 @@ impl Drop for TouchedDirsSlot {
     fn drop(&mut self) {
         let p = self.0.get();
         if !p.is_null() {
-            // SAFETY: produced by `heap::into_raw` in `touched_dirs_init`; the
-            // thread is exiting, so no resolver call frame uses it.
+            // SAFETY: from `heap::into_raw` in `touched_dirs_init`; the thread is exiting.
             unsafe { bun_core::heap::destroy(p) };
         }
     }
@@ -590,8 +585,7 @@ thread_local! {
     static TOUCHED_DIRS: TouchedDirsSlot = const { TouchedDirsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
-/// Null until this thread records for the first time, so threads that never
-/// retry a resolution pay one TLS load per lookup.
+/// Null until this thread records for the first time.
 #[inline(always)]
 fn touched_dirs_get() -> *mut TouchedDirs {
     TOUCHED_DIRS.with(|s| s.0.get())
@@ -2487,16 +2481,13 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
-    /// Record the directory cache keys that the following resolution on this
-    /// thread reads. Pair with `stop_recording_touched_dirs`, then
-    /// `bust_touched_dirs` on a miss.
+    /// Record the directory cache keys the next resolution on this thread reads.
     pub fn start_recording_touched_dirs(&mut self) {
         let mut p = touched_dirs_get();
         if p.is_null() {
             p = touched_dirs_init();
         }
-        // SAFETY: thread-local, and no reference into it outlives a single
-        // `Resolver` method.
+        // SAFETY: thread-local; no reference into it outlives one `Resolver` method.
         let touched = unsafe { &mut *p };
         touched.hashes.clear();
         touched.recording = true;
@@ -2537,23 +2528,15 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Drop every directory recorded since `start_recording_touched_dirs` from
-    /// both caches, so the next lookup reads them from disk again. Returns
-    /// whether any of them was cached, that is whether a retry can see
-    /// something new.
-    ///
-    /// A resolution caches what it finds, including a directory or a file
-    /// that does not exist, and nothing outside watch mode invalidates it. A
-    /// package installed, a build output written, or a `package.json` fixed
-    /// after a failed lookup would otherwise stay invisible for the life of
-    /// the process.
+    /// Drop every recorded directory from both caches so a retry reads them
+    /// from disk. A miss caches what it did not find, and nothing outside watch
+    /// mode invalidates that. Returns whether anything was cached.
     pub fn bust_touched_dirs(&mut self) -> bool {
         let p = touched_dirs_get();
         if p.is_null() {
             return false;
         }
-        // SAFETY: see `start_recording_touched_dirs`. The borrow ends before
-        // the cache calls below.
+        // SAFETY: see `start_recording_touched_dirs`; the borrow ends before the cache calls.
         let mut hashes = {
             let touched = unsafe { &mut *p };
             touched.recording = false;
@@ -2693,8 +2676,7 @@ impl<'a> Resolver<'a> {
         // or in the package root directory if it's a self-reference
         if use_node_module_resolver {
             loop {
-                // The cached "has a node_modules folder" bit decides whether
-                // this directory is searched at all.
+                // Its cached has_node_modules bit decides whether it is searched.
                 self.record_touched_dir(dir_info.abs_path);
                 // Skip directories that are themselves called "node_modules", since we
                 // don't ever want to search for "node_modules/node_modules"

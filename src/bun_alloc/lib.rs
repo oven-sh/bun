@@ -2681,8 +2681,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         self.remove_hash(Self::key_hash(denormalized_key))
     }
 
-    /// `remove` for a key already hashed with `key_hash`. Returns true if the
-    /// entry was removed.
+    /// `remove` for a key already hashed with `key_hash`.
     pub fn remove_hash(&mut self, hash: u64) -> bool {
         let _guard = self.mutex.lock();
         self.index.remove(&hash).is_some()

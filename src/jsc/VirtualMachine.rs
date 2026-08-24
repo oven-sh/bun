@@ -4419,12 +4419,8 @@ impl VirtualMachine {
                     }
                     retry_on_not_found = false;
 
-                    // The miss may have come from the directory cache rather
-                    // than from disk: a package dir listed before its entry file
-                    // was written, a package.json parsed while half written, a
-                    // `node_modules` created after its parent was read. Drop
-                    // every directory this lookup consulted and try once more.
-                    // Only re-query if we previously had something cached.
+                    // The miss may be the cache's, not the disk's. Drop every
+                    // directory this lookup read and re-query once if any was cached.
                     if self.transpiler.resolver.bust_touched_dirs() {
                         continue;
                     }

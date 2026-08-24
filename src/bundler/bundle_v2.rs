@@ -2301,8 +2301,7 @@ pub mod bv2_impl {
                     Ok(r) => break r,
                     Err(err) => {
                         if err == _resolver::Error::ModuleNotFound {
-                            // The miss may have come from the directory cache;
-                            // drop what this lookup read and try once more.
+                            // Drop what this lookup read from the cache and try once more.
                             if !had_busted_dir_cache {
                                 had_busted_dir_cache = true;
                                 // Only re-query if we previously had something cached.
@@ -6273,10 +6272,8 @@ pub mod bv2_impl {
                             };
 
                             if err == _resolver::Error::ModuleNotFound {
-                                // The directory cache is shared by every build in
-                                // the process, so a package installed after an
-                                // earlier build failed is still "missing" here.
-                                // Drop what this lookup read and try once more.
+                                // Every build in the process shares the directory
+                                // cache; drop what this lookup read and try once more.
                                 if !had_busted_dir_cache {
                                     had_busted_dir_cache = true;
                                     bun_core::scoped_log!(

@@ -452,8 +452,8 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// Resolve an entry-point specifier. On a miss, drop every directory the
-    /// lookup read from the cache and retry once before reporting the error.
+    /// Resolve an entry-point specifier, retrying once after a miss with the
+    /// directories it read dropped from the cache.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         self.resolver.start_recording_touched_dirs();
         let first = self._resolve_entry_point(entry_point);
@@ -1424,10 +1424,8 @@ impl<'a> Transpiler<'a> {
             ) {
                 Ok(e) => e,
                 Err(err) => {
-                    // The resolver found this path in a cached directory listing
-                    // that is now stale: the file was removed, or the package was
-                    // reinstalled with another entry file. Drop that directory so
-                    // the next resolution reads it again.
+                    // The cached listing that produced this path is stale (file
+                    // removed, package reinstalled); drop it for the next resolution.
                     if matches!(
                         err,
                         resolver::Error::Sys(bun_errno::SystemErrno::ENOENT)

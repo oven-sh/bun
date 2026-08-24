@@ -1358,8 +1358,7 @@ pub mod fs {
             self.entries.remove(file_path)
         }
 
-        /// `bust_entries_cache` for a key already hashed with
-        /// `EntriesOptionMap::key_hash`.
+        /// `bust_entries_cache` for a key already hashed with `key_hash`.
         pub(crate) fn bust_entries_cache_hash(&mut self, hash: u64) -> bool {
             let _g = self.entries_mutex.lock_guard();
             self.entries.remove_hash(hash)

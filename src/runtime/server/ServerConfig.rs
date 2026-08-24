@@ -1188,9 +1188,6 @@ impl ServerConfig {
         if let Some(v) = arg.get(global, "http2")? {
             args.http2 = v.to_boolean();
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(v) = arg.get(global, "http1")? {
             args.http1 = v.to_boolean();

@@ -1398,6 +1398,9 @@ pub mod bv2_impl {
             }
         }
 
+        /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
+        pub(crate) enum EncoderStringTable {}
+
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
             /// "generate JSC bytecode off the main JS thread" helper — marks the
@@ -1409,6 +1412,7 @@ pub mod bv2_impl {
                 format: crate::options_impl::Format,
                 source: &[u8],
                 source_provider_url: &bun_core::String,
+                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
 
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`: (registry id, bytecode) for the internal modules named
@@ -1417,6 +1421,11 @@ pub mod bv2_impl {
                 specifiers: &[&[u8]],
                 depth: u32,
             ) -> Vec<(u32, Box<[u8]>)>;
+
+            safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
+            safe fn __bun_jsc_encoder_string_table_take(
+                table: core::ptr::NonNull<EncoderStringTable>,
+            ) -> Box<[u8]>;
         }
 
         unsafe extern "Rust" {
@@ -1454,8 +1463,26 @@ pub mod bv2_impl {
             format: crate::options_impl::Format,
             source: &[u8],
             source_provider_url: &bun_core::String,
+            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {
-            __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
+            __bun_jsc_generate_cached_bytecode(
+                format,
+                source,
+                source_provider_url,
+                external_strings,
+            )
+        }
+
+        #[inline]
+        pub(crate) fn encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable> {
+            __bun_jsc_encoder_string_table_new()
+        }
+
+        #[inline]
+        pub(crate) fn encoder_string_table_take(
+            table: core::ptr::NonNull<EncoderStringTable>,
+        ) -> Box<[u8]> {
+            __bun_jsc_encoder_string_table_take(table)
         }
 
         #[inline]

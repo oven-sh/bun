@@ -32,4 +32,8 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn builtin_module_bytecode(&self, _id: u32) -> Option<*mut [u8]> {
         None
     }
+    /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; empty when the executable has none.
+    fn bytecode_string_table(&self) -> &'static [u8] {
+        &[]
+    }
 }

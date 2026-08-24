@@ -47,6 +47,8 @@ pub struct StandaloneModuleGraph {
     pub flags: Flags,
     /// InternalModuleRegistry id → its bytecode inside `bytes` (JSC reads it in place; see `File::bytecode`).
     pub builtin_bytecode: Vec<(u32, *mut [u8])>,
+    /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; installed on the VM's `DecoderStringTable` at startup.
+    pub bytecode_string_table: &'static [u8],
 }
 
 // We never want to hit the filesystem for these files
@@ -320,6 +322,9 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     }
     fn builtin_module_bytecode(&self, id: u32) -> Option<*mut [u8]> {
         StandaloneModuleGraph::builtin_module_bytecode(self, id)
+    }
+    fn bytecode_string_table(&self) -> &'static [u8] {
+        self.bytecode_string_table
     }
 }
 
@@ -666,7 +671,9 @@ bitflags::bitflags! {
         /// After the source hashes: `u32 count`, then `count` × `{ u32 id, StringPointer bytes }` — ahead-of-time
         /// bytecode for internal modules (InternalModuleRegistry ids), read by InternalModuleRegistry::generateModule.
         const HAS_BUILTIN_BYTECODE          = 1 << 6;
-        // _padding: u25
+        /// After the builtin-bytecode table: one `StringPointer` to the shared bytecode string table (`JSC::EncoderStringTable::serialize`), which every chunk's payload references by ordinal.
+        const HAS_BYTECODE_STRING_TABLE     = 1 << 7;
+        // _padding: u24
     }
 }
 
@@ -696,6 +703,7 @@ impl StandaloneModuleGraph {
                 compile_exec_argv: b"",
                 flags: Flags::default(),
                 builtin_bytecode: Vec::new(),
+                bytecode_string_table: &[],
             });
         }
 
@@ -766,6 +774,40 @@ impl StandaloneModuleGraph {
                 builtin_bytecode.push((id, bytes));
             }
         }
+
+        let bytecode_string_table: &'static [u8] =
+            if offsets.flags.contains(Flags::HAS_BYTECODE_STRING_TABLE) {
+                let builtin_count = if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
+                    builtin_bytecode.len()
+                } else {
+                    0
+                };
+                let record_at = offsets.modules_ptr.offset as usize
+                    + offsets.modules_ptr.length as usize
+                    + if source_hashes.is_some() {
+                        modules_list_count * size_of::<u32>()
+                    } else {
+                        0
+                    }
+                    + if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
+                        size_of::<u32>() + builtin_count * 3 * size_of::<u32>()
+                    } else {
+                        0
+                    };
+                let read_u32 = |at: usize| -> u32 {
+                    debug_assert!(at + 4 <= raw_len);
+                    // SAFETY: `to_bytes` wrote a `StringPointer` right here; unaligned-safe read within `[0, raw_len)`.
+                    unsafe { core::ptr::read_unaligned(raw_const.add(at).cast::<u32>()) }
+                };
+                let ptr = StringPointer {
+                    offset: read_u32(record_at),
+                    length: read_u32(record_at + 4),
+                };
+                // SAFETY: `to_bytes` placed the serialized table via `append_bytecode_aligned` into a read-only, disjoint subrange.
+                unsafe { slice_to(raw_const, raw_len, ptr) }
+            } else {
+                &[]
+            };
 
         let mut modules = StringArrayHashMap::<File>::new();
         modules.reserve(modules_list_count);
@@ -868,6 +910,7 @@ impl StandaloneModuleGraph {
             .as_bytes(),
             flags: offsets.flags,
             builtin_bytecode,
+            bytecode_string_table,
         })
     }
 
@@ -1020,6 +1063,7 @@ pub(crate) fn to_bytes(
                 string_builder.cap += bytes.len() * 2;
             } else if output_file.output_kind == options::OutputKind::Bytecode
                 || output_file.output_kind == options::OutputKind::BuiltinBytecode
+                || output_file.output_kind == options::OutputKind::BytecodeStringTable
             {
                 // Allocate up to 256 byte alignment for bytecode (+ a table record for builtin bytecode)
                 string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
@@ -1244,6 +1288,17 @@ pub(crate) fn to_bytes(
         builtin_bytecode_table[0..4].copy_from_slice(&count.to_le_bytes());
     }
 
+    let mut bytecode_string_table_ptr = StringPointer::default();
+    for output_file in output_files {
+        if output_file.output_kind != options::OutputKind::BytecodeStringTable {
+            continue;
+        }
+        let options::OutputFileValue::Buffer { bytes } = &output_file.value else {
+            continue;
+        };
+        bytecode_string_table_ptr = append_bytecode_aligned(&mut string_builder, bytes);
+    }
+
     // Region layout after the bytecode/module_info run above: source maps
     // (unread until an error prints), then every file's source text as one run
     // (`Flags::SOURCE_TEXT_CONTIGUOUS`, so `hint_source_pages_dont_need` can
@@ -1319,15 +1374,23 @@ pub(crate) fn to_bytes(
         builtin_table_ptr.offset,
         hashes_ptr.offset + hashes_ptr.length
     );
+    let mut flags = flags
+        | Flags::SOURCE_TEXT_CONTIGUOUS
+        | Flags::HAS_SOURCE_HASHES
+        | Flags::HAS_BUILTIN_BYTECODE;
+    if bytecode_string_table_ptr.length != 0 {
+        let mut record = [0u8; 8];
+        record[0..4].copy_from_slice(&bytecode_string_table_ptr.offset.to_le_bytes());
+        record[4..8].copy_from_slice(&bytecode_string_table_ptr.length.to_le_bytes());
+        let _ = string_builder.append_count(&record);
+        flags |= Flags::HAS_BYTECODE_STRING_TABLE;
+    }
     let offsets = Offsets {
         entry_point_id: entry_point_id as u32,
         modules_ptr,
         compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
         byte_count: string_builder.len,
-        flags: flags
-            | Flags::SOURCE_TEXT_CONTIGUOUS
-            | Flags::HAS_SOURCE_HASHES
-            | Flags::HAS_BUILTIN_BYTECODE,
+        flags,
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.

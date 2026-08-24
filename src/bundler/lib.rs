@@ -271,6 +271,9 @@ pub mod options {
         /// InternalModuleRegistry id in decimal.
         #[strum(serialize = "builtin-bytecode")]
         BuiltinBytecode,
+        /// The one shared string table every chunk's bytecode references by ordinal (`EncoderStringTable::serialize`).
+        #[strum(serialize = "bytecode-string-table")]
+        BytecodeStringTable,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -285,6 +288,7 @@ pub mod options {
                     | OutputKind::Bytecode
                     | OutputKind::ModuleInfo
                     | OutputKind::BuiltinBytecode
+                    | OutputKind::BytecodeStringTable
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )

@@ -619,6 +619,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let resolver = c.resolver.expect("resolver set in load()");
     let root_path: &[u8] = &resolver.opts.output_dir;
     let is_standalone = c.options.compile_mode.is_standalone_html();
+    let external_string_table = (c.options.generate_bytecode_cache
+        && c.options.compile_mode.is_executable())
+    .then(crate::bundle_v2::dispatch::encoder_string_table_new);
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
             || c.options.generate_bytecode_cache
@@ -1081,6 +1084,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             c.options.output_format,
                             &code_result.buffer,
                             &source_provider_url,
+                            external_string_table,
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
@@ -1342,6 +1346,25 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let mut result = output_files.take();
     if c.options.generate_internal_module_bytecode && c.options.compile_mode.is_executable() {
         append_internal_module_bytecode(c, &mut result);
+    }
+    if let Some(table) = external_string_table {
+        let bytes = crate::bundle_v2::dispatch::encoder_string_table_take(table);
+        debug!("Bytecode external string table: {} bytes", bytes.len());
+        result.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: b".bytecode-strings".to_vec().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::File,
+            hash: None,
+            output_kind: options::OutputKind::BytecodeStringTable,
+            loader: Loader::File,
+            size: Some(bytes.len()),
+            display_size: bytes.len() as u32,
+            data: options::OutputFileData::Buffer { data: bytes },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
     }
     Ok(result)
 }

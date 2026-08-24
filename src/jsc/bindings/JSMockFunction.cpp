@@ -266,10 +266,9 @@ public:
     mutable JSC::WriteBarrier<JSC::JSArray> instances;
     mutable JSC::WriteBarrier<JSC::JSArray> returnValues;
 
-    // Both are GC references, not C++ handles, so this cell needs no destructor
-    // and a spy that is collected without mockRestore() leaks nothing.
+    // This cell has no destructor, so spy state must be GC references, not C++ handles.
     JSC::WriteBarrier<JSObject> spyTarget;
-    // The property name as a JSString, or a Symbol for a symbol key.
+    // A JSString, or a Symbol for a symbol key.
     JSC::WriteBarrier<JSC::Unknown> spyPropertyKey;
     unsigned spyAttributes = 0;
 

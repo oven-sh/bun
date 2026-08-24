@@ -289,7 +289,7 @@ fn apply_fingerprint_options(
             result.ssl_ciphers = dupe_z(&ja3.ciphers);
             result.is_using_default_ciphers = false;
         }
-        if result.ecdh_curve.is_null() && !ja3.groups.is_empty() {
+        if result.ecdh_curve.is_null() {
             result.ecdh_curve = dupe_z(&ja3.groups);
         }
         if result.ssl_min_version == 0 {

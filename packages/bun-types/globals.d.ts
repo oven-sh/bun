@@ -1933,7 +1933,8 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
    *
    * BoringSSL sends the extensions in its own fixed order (or shuffled with
    * `permuteExtensions`), so only the set of extensions is reproduced, not
-   * their order. A string whose cipher suites, groups or extension set
+   * their order. A resumed TLS session adds `pre_shared_key` (41), as in
+   * browsers. A string whose cipher suites, groups or extension set
    * BoringSSL cannot reproduce throws a `TypeError`.
    *
    * @example

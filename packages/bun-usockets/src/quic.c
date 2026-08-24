@@ -1404,6 +1404,15 @@ void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int
     }
 }
 
+unsigned int us_quic_socket_rtt(us_quic_socket_t *s) {
+    struct lsquic_conn_info info;
+    /* Only the post-handshake conn implements ci_get_info, but a stream to
+     * hang this question on exists only after the handshake, so the failure
+     * left is a conn already gone. */
+    if (!s->conn || lsquic_conn_get_info(s->conn, &info) != 0) return 0;
+    return info.lci_rtt;
+}
+
 void us_quic_socket_close(us_quic_socket_t *s) { if (s->conn) lsquic_conn_close(s->conn); }
 
 /* ───── client ─────

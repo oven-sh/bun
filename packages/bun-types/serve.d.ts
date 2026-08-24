@@ -598,6 +598,17 @@ declare module "bun" {
 
     /** Whether the session has ended. */
     readonly closed: boolean;
+
+    /**
+     * Smoothed round-trip time to the peer, in milliseconds.
+     *
+     * The connection's live estimate, the same figure the W3C API reports as
+     * `smoothedRtt` — a server relaying between peers can report the leg a
+     * client cannot measure itself. `0` means the session has ended: a live
+     * session always has samples, because its handshake took at least one
+     * round trip.
+     */
+    readonly rtt: number;
   }
 
   /**
@@ -623,21 +634,27 @@ declare module "bun" {
      * server. Authentication and routing by path belong here. This is the only
      * point where the request is still visible and refusing is still possible.
      *
+     * `server.requestIP(request)` answers here and only here — per-address
+     * limits belong in this handler, and a session that should know its peer's
+     * address later should return it into {@link WebTransportSession.data}.
+     * After `upgrade` returns it answers `null`, as it does for any request
+     * whose connection context is gone.
+     *
      * This handler is synchronous. Bun does not await a returned promise, and
      * treats it as an ordinary truthy value. The `CONNECT` has to be answered
      * while the request is still in hand.
      *
      * ```ts
-     * upgrade(req) {
+     * upgrade(req, server) {
      *   const url = new URL(req.url);
      *   if (url.pathname !== "/game") return new Response(null, { status: 404 });
      *   const user = verify(req.headers.get("authorization"));
      *   if (!user) return new Response(null, { status: 401 });
-     *   return { user };
+     *   return { user, address: server.requestIP(req)?.address };
      * }
      * ```
      */
-    upgrade?(request: Request): Response | T | void;
+    upgrade?(request: Request, server: Server<unknown>): Response | T | void;
 
     /** A session was accepted. */
     open?(session: WebTransportSession<T>): void | Promise<void>;

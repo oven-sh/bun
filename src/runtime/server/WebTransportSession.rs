@@ -58,7 +58,14 @@ pub(crate) enum Decision {
 /// The CONNECT as a `Request` for the `upgrade` handler. `:authority` reaches
 /// Rust as `host`, `url()` is the path with its query, and HTTP/3 is always
 /// TLS, so the URL the browser asked for is recoverable.
-fn build_request(global: &JSGlobalObject, req: &mut Request) -> Option<JSValue> {
+///
+/// Also returns the raw allocation: the request context set here borrows
+/// `res`, and `decide` must sever it before the stream's owner resumes.
+fn build_request(
+    global: &JSGlobalObject,
+    req: &mut Request,
+    res: &mut Response,
+) -> Option<(JSValue, *mut crate::webcore::Request)> {
     use crate::webcore::Request as WebRequest;
     use crate::webcore::response::HeadersRef;
     use bun_core::fmt as bun_fmt;
@@ -98,15 +105,18 @@ fn build_request(global: &JSGlobalObject, req: &mut Request) -> Option<JSValue> 
         url.extend_from_slice(path);
     }
 
-    let request = bun_core::heap::into_raw(Box::new(WebRequest::init2(
+    let mut request = Box::new(WebRequest::init2(
         bun_core::String::clone_utf8(&url),
         Some(headers),
         crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null),
         bun_http_types::Method::Method::CONNECT,
-    )));
+    ));
+    request.request_context =
+        crate::server::AnyRequestContext::webtransport_connect(core::ptr::from_mut(res));
+    let request = bun_core::heap::into_raw(request);
     // SAFETY: just allocated; `to_js` hands the allocation to the JS wrapper,
     // whose finalizer frees it.
-    Some(unsafe { (*request).to_js(global) })
+    Some((unsafe { (*request).to_js(global) }, request))
 }
 
 impl WebTransportSession {
@@ -149,6 +159,8 @@ impl WebTransportSession {
         global: &JSGlobalObject,
         on_upgrade: JSValue,
         req: &mut Request,
+        res: &mut Response,
+        server_value: JSValue,
     ) -> Decision {
         if !req.is_webtransport() {
             return Decision::Yield;
@@ -156,17 +168,30 @@ impl WebTransportSession {
         if on_upgrade.is_empty_or_undefined_or_null() {
             return Decision::Accept(JSValue::UNDEFINED);
         }
-        // `init2` copies the URL and headers and holds no request context, so
-        // a handler that keeps the Request keeps something valid. The fetch
-        // path would drag a RequestContext, abort signal and body slot along
-        // for a CONNECT that has none.
-        let request_value = match build_request(global, req) {
+        // `init2` copies the URL and headers, so a handler that keeps the
+        // Request keeps something valid. The fetch path would drag a
+        // RequestContext, abort signal and body slot along for a CONNECT that
+        // has none — but the one piece a session cannot do without is
+        // `server.requestIP()`, the only handle on a peer opening sessions
+        // faster than it should. So the request borrows the CONNECT stream
+        // for exactly the `upgrade` call, and is severed below.
+        let (request_value, request_ptr) = match build_request(global, req, res) {
             Some(v) => v,
             None => return Decision::Failed,
         };
         let vm = VirtualMachine::get();
         let _loop_guard = vm.enter_event_loop_scope();
-        let returned = match on_upgrade.call(global, JSValue::UNDEFINED, &[request_value]) {
+        // `server` is the second argument, as in `fetch`: `requestIP` lives
+        // there, and the handler-declared-separately pattern has no other way
+        // to reach it before `Bun.serve` returns.
+        let returned = on_upgrade.call(global, JSValue::UNDEFINED, &[request_value, server_value]);
+        // On every path out of the call, throwing included: a kept Request now
+        // answers `requestIP` with null, as a fetch request does once its
+        // response is gone.
+        // SAFETY: the JS wrapper holds the allocation live, and no reference
+        // to it exists in this frame.
+        unsafe { (*request_ptr).request_context = crate::server::AnyRequestContext::NULL };
+        let returned = match returned {
             Ok(v) => v,
             Err(e) => {
                 let err = global.take_exception(e);
@@ -388,6 +413,19 @@ impl WebTransportSession {
         // SAFETY: as in send_datagram.
         let n = unsafe { session.as_mut() }.max_datagram_size();
         JSValue::js_number(n as f64)
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_rtt(&self, _global: &JSGlobalObject) -> JSValue {
+        let Some(mut session) = self.session.get() else {
+            return JSValue::js_number(0.0);
+        };
+        // Milliseconds because that is the unit the web platform reports this
+        // in (WebTransportConnectionStats.smoothedRtt); lsquic keeps it in
+        // microseconds, so the fraction carries the precision.
+        // SAFETY: as in send_datagram.
+        let us = unsafe { session.as_mut() }.rtt_us();
+        JSValue::js_number(f64::from(us) / 1000.0)
     }
 
     #[bun_jsc::host_fn(getter)]

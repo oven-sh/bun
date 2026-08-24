@@ -349,6 +349,8 @@ unsigned int uws_h3_wt_max_datagram_size(uws_h3_wt_t* wt)
     return ((Http3WebTransportSession*)wt)->maxDatagramSize();
 }
 
+uint32_t uws_h3_wt_rtt(uws_h3_wt_t* wt) { return ((Http3WebTransportSession*)wt)->rtt(); }
+
 void uws_h3_wt_close(uws_h3_wt_t* wt, uint32_t code, const char* reason, size_t reason_len)
 {
     ((Http3WebTransportSession*)wt)->close(code, sv(reason, reason_len));

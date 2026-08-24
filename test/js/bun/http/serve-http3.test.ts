@@ -1969,6 +1969,98 @@ describe("Bun.serve WebTransport", () => {
     }
   });
 
+  test("requestIP answers inside upgrade, and refusing on it refuses", async () => {
+    const addresses: Array<{ address: string; family: string; port: number } | null> = [];
+    let heldRequest: Request | null = null;
+    let seenServer: unknown = null;
+    let afterUpgrade: unknown = "unset";
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        upgrade(req, srv) {
+          seenServer = srv;
+          const ip = srv.requestIP(req);
+          addresses.push(ip);
+          heldRequest = req;
+          // The documented per-address cap, at its smallest: the first
+          // session from an address is let in, the second refused.
+          if (addresses.length > 1) return new Response(null, { status: 429 });
+          return { ip };
+        },
+        open(session) {
+          const { ip } = session.data as { ip: { address: string } };
+          session.sendDatagram(Buffer.from(ip.address));
+        },
+        datagram() {},
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const first = await webTransportSession(server.port);
+    try {
+      expect(first.status).toBe("200");
+      expect(await first.until(() => first.datagrams.length >= 1)).toBe(true);
+      // The loopback client's own address, in requestIP's ordinary shape —
+      // through `session.data`, which is where an address needed after
+      // `upgrade` belongs.
+      expect(first.text()).toEqual(["127.0.0.1"]);
+      expect(addresses).toEqual([{ address: "127.0.0.1", family: "IPv4", port: expect.any(Number) }]);
+      expect(addresses[0]!.port).toBeGreaterThan(0);
+      expect(seenServer).toBe(server);
+    } finally {
+      await first.close();
+    }
+
+    const second = await webTransportSession(server.port);
+    try {
+      expect(second.status).toBe("429");
+      // Answered after `upgrade` returned, on a Request the handler kept:
+      // null, exactly as a fetch request answers once its response is done.
+      afterUpgrade = server.requestIP(heldRequest!);
+      expect(afterUpgrade).toBeNull();
+    } finally {
+      await second.close();
+    }
+  });
+
+  test("session.rtt reports the connection's estimate, then 0 once closed", async () => {
+    const live: number[] = [];
+    let atClose = -1;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        open(session) {
+          live.push(session.rtt);
+        },
+        datagram(session) {
+          session.close(0, "done");
+        },
+        close(session) {
+          atClose = session.rtt;
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("go");
+      expect(await wt.until(() => atClose !== -1)).toBe(true);
+      // The handshake took at least one round trip, so a session never opens
+      // without an estimate. No upper bound: CI decides how slow loopback is.
+      expect(live).toHaveLength(1);
+      expect(live[0]).toBeGreaterThan(0);
+      expect(Number.isFinite(live[0])).toBe(true);
+      expect(atClose).toBe(0);
+    } finally {
+      await wt.close();
+    }
+  });
+
   test("a throwing upgrade() answers 500 rather than opening a session", async () => {
     let opened = 0;
     await using server = Bun.serve({

@@ -74,6 +74,13 @@ struct Http3WebTransportSession {
      * datagrams at all. */
     unsigned maxDatagramSize() { return us_quic_wt_max_datagram_size(stream()); }
 
+    /* Smoothed RTT of the underlying connection, microseconds; 0 when the
+     * connection has gone. */
+    unsigned rtt() {
+        us_quic_socket_t *qs = us_quic_stream_socket(stream());
+        return qs ? us_quic_socket_rtt(qs) : 0;
+    }
+
     /* Ask the peer to wind up without ending the session: capsule only, no
      * FIN and no close report. Browsers surface it as WebTransport.draining. */
     void drain() {

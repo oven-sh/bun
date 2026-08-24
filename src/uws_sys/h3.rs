@@ -654,6 +654,12 @@ impl WebTransport {
     pub fn max_datagram_size(&mut self) -> usize {
         c::uws_h3_wt_max_datagram_size(self) as usize
     }
+    /// Smoothed RTT of the underlying connection, in microseconds. `0` means
+    /// the connection is gone: by the time a session exists the handshake has
+    /// already produced samples.
+    pub fn rtt_us(&mut self) -> u32 {
+        c::uws_h3_wt_rtt(self)
+    }
     /// WT_CLOSE_SESSION then FIN. The close handler runs before this returns,
     /// with the code and reason given here.
     pub fn close(&mut self, code: u32, reason: &[u8]) {
@@ -897,6 +903,7 @@ mod c {
             len: c_uint,
         ) -> c_int;
         pub(super) safe fn uws_h3_wt_max_datagram_size(wt: &mut WebTransport) -> c_uint;
+        pub(super) safe fn uws_h3_wt_rtt(wt: &mut WebTransport) -> u32;
         pub(super) fn uws_h3_wt_close(
             wt: *mut WebTransport,
             code: u32,

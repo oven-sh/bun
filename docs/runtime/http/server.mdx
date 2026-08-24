@@ -300,6 +300,28 @@ webtransport: {
 Without an `upgrade` handler, Bun accepts every WebTransport `CONNECT` on the server. Authentication and routing by path
 belong here — there are no `routes` for sessions.
 
+`upgrade` receives the server as its second argument, as `fetch` does, and `server.requestIP(req)` answers inside
+`upgrade` — and only there, since it needs the connection the request arrived on. Per-address limits belong here for the
+same reason the rest of the gatekeeping does: a server that relays datagrams and cannot cap sessions per source address
+is an amplifier waiting for a spoofed peer. A session that should know its address later should return it into
+`session.data`.
+
+```ts
+const perAddress = new Map<string, number>();
+webtransport: {
+  upgrade(req, server) {
+    const ip = server.requestIP(req);
+    if (!ip || (perAddress.get(ip.address) ?? 0) >= 64) return new Response(null, { status: 429 });
+    perAddress.set(ip.address, (perAddress.get(ip.address) ?? 0) + 1);
+    return { address: ip.address };
+  },
+  close(session) {
+    const n = perAddress.get(session.data.address) ?? 1;
+    perAddress.set(session.data.address, n - 1);
+  },
+},
+```
+
 `upgrade` is synchronous. The `CONNECT` has to be answered while the request is still in hand, so Bun does not await a
 returned promise and treats it as an ordinary truthy value. A refusing `Response` needs a buffered body and a real
 status: Bun cannot send a streaming body, an already-read body, or `Response.error()` on a `CONNECT`, and answers `500`
@@ -335,6 +357,11 @@ A `0` means drop it. There is no retransmission on this path, and the next datag
 session's frame prefix. A `0` there means the peer offered no datagram support at all — that session carries no
 datagrams and every `sendDatagram` returns `-1`. A closed session also reports `0`, so check `session.closed` to tell
 the two apart.
+
+`session.rtt` is the connection's smoothed round-trip time to the peer, in milliseconds — the figure the browser's API
+reports as `smoothedRtt`, read from the server's side. A relay puts it in its own telemetry so a client can see the leg
+it cannot measure itself. It reads `0` once the session has ended; a live session always has an estimate, because its
+handshake took at least one round trip.
 
 ### Closing and draining
 

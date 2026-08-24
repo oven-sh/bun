@@ -2365,10 +2365,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // this path needs it most: an HTTP/3 stream is not in the
                     // connection accounting, so a CONNECT can still arrive after
                     // the drain, and `decide` runs the user's `upgrade` handler.
-                    if server.js_value_for_dispatch().is_none() {
+                    let Some(server_value) = server.js_value_for_dispatch() else {
                         server_body::respond_stopped_503(res);
                         return;
-                    }
+                    };
                     let global = server.global_this();
                     let Some(on_upgrade) = server
                         .config
@@ -2381,7 +2381,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         return;
                     };
                     // Borrow ends here: refusing needs `server` again.
-                    match WebTransportSession::decide(global, on_upgrade, req) {
+                    match WebTransportSession::decide(global, on_upgrade, req, res, server_value) {
                         web_transport_session::Decision::Yield => req.set_yield(true),
                         web_transport_session::Decision::Failed => {
                             res.write_status(b"500 Internal Server Error");

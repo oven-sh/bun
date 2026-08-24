@@ -208,6 +208,10 @@ void us_quic_socket_context_on_wt_datagram(us_quic_socket_context_t *ctx,
 void *us_quic_socket_ext(us_quic_socket_t *s);
 us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s);
 void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6);
+/* Smoothed RTT in microseconds, from lsquic's per-connection estimator.
+ * 0 when there is no estimate, which after the handshake means the
+ * connection is gone. */
+unsigned int us_quic_socket_rtt(us_quic_socket_t *s);
 void us_quic_socket_close(us_quic_socket_t *s);
 
 #ifdef __cplusplus

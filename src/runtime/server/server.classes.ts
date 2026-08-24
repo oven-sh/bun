@@ -406,6 +406,9 @@ export default [
       maxDatagramSize: {
         getter: "getMaxDatagramSize",
       },
+      rtt: {
+        getter: "getRtt",
+      },
       closed: {
         getter: "getClosed",
       },

@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
+import { mkfifo } from "mkfifo";
 import {
   bunEnv,
   bunExe,
@@ -724,6 +725,20 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       },
     );
   }
+
+  it.skipIf(isWindows)("an empty Blob source creates a missing file with the requested mode", async () => {
+    using dir = tempDir("empty-blob-mode", {});
+    const file = join(String(dir), "secret.txt");
+    expect(await Bun.write(file, new Blob([]), { mode: 0o600 })).toBe(0);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it.skipIf(isWindows)("an empty Blob source to a FIFO with no reader rejects instead of hanging", async () => {
+    using dir = tempDir("empty-blob-fifo", {});
+    const fifo = join(String(dir), "fifo");
+    mkfifo(fifo, 0o666);
+    await expect(Bun.write(fifo, new Blob([]))).rejects.toThrow();
+  });
 
   // The empty-source path truncates through open + ftruncate. The open must
   // ask for write access only, so a mode-0o222 file stays truncatable.

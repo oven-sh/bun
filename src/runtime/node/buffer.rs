@@ -22,7 +22,7 @@ mod _impl {
         ) -> bool {
             // SAFETY: caller (C++) passes a valid EncodedSlice pointer.
             let str = unsafe { &*str };
-            if str.len == 0 {
+            if str.is_empty() {
                 return true;
             }
 
@@ -66,7 +66,7 @@ mod _impl {
                 return false;
             };
 
-            if written == 0 && str.len > 0 {
+            if written == 0 && !str.is_empty() {
                 return false;
             }
 

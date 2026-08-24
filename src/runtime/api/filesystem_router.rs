@@ -51,10 +51,6 @@ pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemR
 const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
 use bun_jsc::EncodedSliceJsc as _;
-#[inline]
-fn bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
-    EncodedSlice::from_bytes(bytes).to_js(global)
-}
 
 // ── ResolverLike bridge ───────────────────────────────────────────────────
 // `bun_router::ResolverLike` is the duck-typed seam for `Router::load_routes`;
@@ -126,11 +122,14 @@ impl FileSystemRouter {
         let vm = global_this.bun_vm().as_mut();
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
-        let mut root_dir_path: Utf8Bytes<'_> = Utf8Bytes::Borrowed(vm.top_level_dir());
-        let mut origin_str: Utf8Bytes = Utf8Bytes::EMPTY;
-        let mut asset_prefix_slice: Utf8Bytes = Utf8Bytes::EMPTY;
+        let mut root_dir_path = Utf8Bytes::Borrowed(vm.top_level_dir());
+        let mut origin_str = Utf8Bytes::EMPTY;
+        let mut asset_prefix_slice = Utf8Bytes::EMPTY;
         if let Some(style_val) = argument.get(global_this, "style")? {
-            if !style_val.to_js_string_view(global_this)?.eq_ascii("nextjs") {
+            if !style_val
+                .to_js_string_view(global_this)?
+                .eq_ascii(b"nextjs")
+            {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Only 'nextjs' style is currently implemented"
                 )));
@@ -190,12 +189,12 @@ impl FileSystemRouter {
                 if val.get_length(global_this)? == 0 {
                     continue;
                 }
-                let bytes = val.to_utf8(global_this)?.into_vec();
+                let utf8 = val.to_utf8(global_this)?;
                 // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`, so the
                 // backing allocation outlives this slice. Cast through raw ptr to detach the
                 // borrow from `arena` so it can be moved below.
                 let leaked: &'static [u8] =
-                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&bytes)) };
+                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(utf8.slice())) };
                 extensions.push(&leaked[1..]);
             }
         }
@@ -206,14 +205,7 @@ impl FileSystemRouter {
                     .throw_invalid_arguments(format_args!("Expected assetPrefix to be a string")));
             }
 
-            // Copy into the arena so the slice always owns stable bytes (Utf8Bytes
-            // has no clone-if-borrowed helper; the copy only happens at construction).
-            let s = asset_prefix.to_utf8(global_this)?;
-            // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`; allocation
-            // outlives this slice. Detach borrow via raw ptr so `arena` can be moved below.
-            let leaked: &'static [u8] =
-                unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(s.slice())) };
-            asset_prefix_slice = Utf8Bytes::Borrowed(leaked);
+            asset_prefix_slice = asset_prefix.to_utf8(global_this)?;
         }
         let mut log = Log::Log::new();
         // `defer vm.transpiler.resolver.log = orig_log` — RAII guard restores on
@@ -646,7 +638,7 @@ impl FileSystemRouter {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(ref origin) = this.origin {
-            return Ok(bytes_to_js(origin.leak(), global_this));
+            return Ok(EncodedSlice::from_bytes(origin.leak()).to_js(global_this));
         }
 
         Ok(JSValue::NULL)
@@ -657,7 +649,7 @@ impl FileSystemRouter {
         let router = this.router.get();
         let paths = router.get_entry_points();
         let names = router.get_names();
-        let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::default(); names.len() * 2];
+        let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; names.len() * 2];
         // `defer free(name_strings)` → Drop
         let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
         for (i, name) in names.iter().enumerate() {
@@ -746,7 +738,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_name(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(bytes_to_js(this.route().name, global_this))
+        Ok(EncodedSlice::from_bytes(this.route().name).to_js(global_this))
     }
 
     pub(crate) fn init(
@@ -845,7 +837,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_file_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(bytes_to_js(this.route().file_path, global_this))
+        Ok(EncodedSlice::from_bytes(this.route().file_path).to_js(global_this))
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -854,15 +846,12 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_pathname(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(bytes_to_js(this.route().pathname, global_this))
+        Ok(EncodedSlice::from_bytes(this.route().pathname).to_js(global_this))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(bytes_to_js(
-            kind_enum::classify(this.route().name),
-            global_this,
-        ))
+        Ok(EncodedSlice::from_bytes(kind_enum::classify(this.route().name)).to_js(global_this))
     }
 
     pub(crate) fn create_query_object(
@@ -940,7 +929,7 @@ impl MatchedRoute {
             &mut writer,
             path::Platform::Posix,
         );
-        Ok(bytes_to_js(writer.as_bytes(), global_this))
+        Ok(EncodedSlice::from_bytes(writer.as_bytes()).to_js(global_this))
     }
 
     #[bun_jsc::host_fn(getter)]

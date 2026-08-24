@@ -1059,7 +1059,6 @@ impl ServerConfig {
             let sliced = base_uri.to_utf8(global)?;
 
             if !sliced.slice().is_empty() {
-                // sliced drops at scope end
                 args.base_uri = Box::<[u8]>::from(sliced.slice());
             }
         }

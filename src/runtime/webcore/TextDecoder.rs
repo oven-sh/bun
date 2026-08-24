@@ -610,7 +610,6 @@ impl TextDecoder {
 
         if encoding_value.is_string() {
             let str = encoding_value.to_utf8(global_this)?;
-            // `str` drops at scope exit (matches `defer str.deinit()`).
 
             match EncodingLabel::which(str.slice()) {
                 // https://encoding.spec.whatwg.org/#dom-textdecoder: "If

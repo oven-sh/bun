@@ -1810,7 +1810,7 @@ impl CommandLineReporter {
                     // Ensure the directory exists
                     let mut fs = crate::node::fs::NodeFS::default();
                     let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-                        path: crate::node::PathLike::String(
+                        path: crate::node::PathLike::Bytes(
                             bun_ptr::cow_slice::CowSlice::init_unchecked(
                                 &opts.reports_directory,
                                 false,
@@ -3216,7 +3216,7 @@ impl TestCommand {
             // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
                 vm.clear_entry_point()?;
-                let entry = EncodedSlice::latin1(file_path);
+                let entry = EncodedSlice::from_bytes(file_path);
                 vm.global().delete_module_registry_entry(&entry)?;
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.

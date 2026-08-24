@@ -3020,16 +3020,9 @@ pub fn process_fetch_log(
                 };
             }
 
-            // C++ `Zig::toString` does `createWithoutCopying`, so the buffer
-            // must outlive the AggregateError. Mark it global so JSC adopts it
-            // as an ExternalStringImpl and frees it via `free_global_string`.
-            let message_text: &'static mut [u8] = bun_core::heap::release(
-                format!("{len} errors building \"{specifier}\"")
-                    .into_bytes()
-                    .into_boxed_slice(),
-            );
-            let mut message = bun_core::EncodedSlice::latin1(message_text);
-            message.mark_global();
+            let message = bun_core::String::create_format(format_args!(
+                "{len} errors building \"{specifier}\""
+            ));
             take(global_this.create_aggregate_error(&errors_stack[..len], &message))
         }
     }
@@ -5596,17 +5589,17 @@ impl VirtualMachine {
             unsafe { &mut *_tail.source_code_slice.cast_mut() };
 
         fn is_noisy_builtin(name: &bun_core::String) -> bool {
-            name.eq_ascii("asyncModuleEvaluation")
-                || name.eq_ascii("link")
-                || name.eq_ascii("linkAndEvaluateModule")
-                || name.eq_ascii("moduleEvaluation")
-                || name.eq_ascii("processTicksAndRejections")
+            name.eq_ascii(b"asyncModuleEvaluation")
+                || name.eq_ascii(b"link")
+                || name.eq_ascii(b"linkAndEvaluateModule")
+                || name.eq_ascii(b"moduleEvaluation")
+                || name.eq_ascii(b"processTicksAndRejections")
         }
         fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
-            f.source_url.eq_ascii("bun:wrap") || f.function_name.eq_ascii("::bunternal::")
+            f.source_url.eq_ascii(b"bun:wrap") || f.function_name.eq_ascii(b"::bunternal::")
         }
         fn is_unknown_source(url: &bun_core::String) -> bool {
-            url.is_empty() || url.eq_ascii("[unknown]") || url.starts_with_ascii(b"[source:")
+            url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
         }
 
         let mut frames_len = exception.stack.frames_len as usize;
@@ -5664,9 +5657,9 @@ impl VirtualMachine {
                 if frame.source_url.starts_with_ascii(b"bun:")
                     || frame.source_url.starts_with_ascii(b"node:")
                     || frame.source_url.is_empty()
-                    || frame.source_url.eq_ascii("native")
-                    || frame.source_url.eq_ascii("unknown")
-                    || frame.source_url.eq_ascii("[unknown]")
+                    || frame.source_url.eq_ascii(b"native")
+                    || frame.source_url.eq_ascii(b"unknown")
+                    || frame.source_url.eq_ascii(b"[unknown]")
                     || frame.source_url.starts_with_ascii(b"[source:")
                 {
                     top_frame_is_builtin = true;
@@ -5680,7 +5673,7 @@ impl VirtualMachine {
 
         // Don't show source code preview for REPL frames — it would show the
         // transformed IIFE wrapper code, not what the user typed.
-        if frames[top].source_url.eq_ascii("[repl]") {
+        if frames[top].source_url.eq_ascii(b"[repl]") {
             enable_source_code_preview.set(false);
         }
 

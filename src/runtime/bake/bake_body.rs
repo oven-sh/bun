@@ -758,7 +758,7 @@ impl Framework {
             let str = opts.to_bun_string(global)?;
 
             // Deprecated
-            if str.eq_ascii("react-server-components") {
+            if str.eq_ascii(b"react-server-components") {
                 bun_core::warn!(
                     "deprecation notice: 'react-server-components' will be renamed to 'react'"
                 );
@@ -766,7 +766,7 @@ impl Framework {
                     .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }
 
-            if str.eq_ascii("react") {
+            if str.eq_ascii(b"react") {
                 return Framework::react(arena)
                     .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }

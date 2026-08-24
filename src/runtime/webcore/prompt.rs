@@ -385,8 +385,7 @@ pub mod prompt {
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        let mut result = EncodedSlice::latin1(&input);
-        result.mark_utf8();
+        let result = EncodedSlice::utf8(&input);
 
         // 9. Invoke WebDriver BiDi user prompt closed with this, false if
         //    result is null or true otherwise, and result.

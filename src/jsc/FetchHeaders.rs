@@ -219,7 +219,7 @@ impl FetchHeaders {
     pub fn get(&mut self, name_: &[u8], global: &JSGlobalObject) -> Option<EncodedSlice<'_>> {
         let mut out = EncodedSlice::EMPTY;
         self.get_(&EncodedSlice::latin1(name_), &mut out, global);
-        if out.len > 0 {
+        if !out.is_empty() {
             // Returns the EncodedSlice view (borrows C++-owned header
             // storage); caller may `.slice()` it. Returning `&[u8]` directly
             // would borrow the local `out`, not the underlying buffer.
@@ -236,7 +236,7 @@ impl FetchHeaders {
     pub fn fast_get(&mut self, name_: HTTPHeaderName) -> Option<EncodedSlice<'_>> {
         let mut str = EncodedSlice::EMPTY;
         self.fast_get_(name_ as u8, &mut str);
-        if str.len == 0 {
+        if str.is_empty() {
             return None;
         }
 

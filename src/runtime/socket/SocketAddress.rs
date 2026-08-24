@@ -790,10 +790,10 @@ impl AF {
             } else {
                 // not full ignore-case since that would require converting
                 // utf16 -> latin1 and the allocation isn't worth it.
-                if fam_str.eq_ascii("ipv4") || fam_str.eq_ascii("IPv4") {
+                if fam_str.eq_ascii(b"ipv4") || fam_str.eq_ascii(b"IPv4") {
                     return Ok(AF::INET);
                 }
-                if fam_str.eq_ascii("ipv6") || fam_str.eq_ascii("IPv6") {
+                if fam_str.eq_ascii(b"ipv6") || fam_str.eq_ascii(b"IPv6") {
                     return Ok(AF::INET6);
                 }
                 Err(global.throw_invalid_argument_property_value(

@@ -13,8 +13,8 @@ use crate::{
 };
 use bun_core::EncodedSlice;
 
+use bun_core::String as BunString;
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{String as BunString, strings};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -721,11 +721,7 @@ impl JSGlobalObject {
         // `core::fmt::Arguments::as_str()` returns `Some(&'static str)` when
         // there are no interpolated args — fast path for constant messages.
         if let Some(fmt) = args.as_str() {
-            if strings::is_all_ascii(fmt.as_bytes()) {
-                return BunString::static_(fmt).to_error_instance(self);
-            } else {
-                return EncodedSlice::utf8(fmt.as_bytes()).to_error_instance(self);
-            }
+            return EncodedSlice::from_bytes(fmt.as_bytes()).to_error_instance(self);
         }
 
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
@@ -744,7 +740,7 @@ impl JSGlobalObject {
 
     pub fn create_type_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
-            return EncodedSlice::latin1(fmt.as_bytes()).to_type_error_instance(self);
+            return EncodedSlice::from_bytes(fmt.as_bytes()).to_type_error_instance(self);
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
@@ -762,7 +758,9 @@ impl JSGlobalObject {
         args: Arguments<'_>,
     ) -> JsResult<JSValue> {
         if let Some(fmt) = args.as_str() {
-            return Ok(EncodedSlice::latin1(fmt.as_bytes()).to_dom_exception_instance(self, code));
+            return Ok(
+                EncodedSlice::from_bytes(fmt.as_bytes()).to_dom_exception_instance(self, code)
+            );
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
@@ -773,7 +771,7 @@ impl JSGlobalObject {
 
     pub fn create_syntax_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
-            return EncodedSlice::latin1(fmt.as_bytes()).to_syntax_error_instance(self);
+            return EncodedSlice::from_bytes(fmt.as_bytes()).to_syntax_error_instance(self);
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
@@ -787,7 +785,7 @@ impl JSGlobalObject {
 
     pub fn create_range_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
-            return EncodedSlice::latin1(fmt.as_bytes()).to_range_error_instance(self);
+            return EncodedSlice::from_bytes(fmt.as_bytes()).to_range_error_instance(self);
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
@@ -941,7 +939,7 @@ impl JSGlobalObject {
     pub fn create_aggregate_error(
         &self,
         errors: &[JSValue],
-        message: &bun_core::EncodedSlice,
+        message: &BunString,
     ) -> JsResult<JSValue> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
@@ -1544,7 +1542,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         errors: *const JSValue,
         len: usize,
-        message: &bun_core::EncodedSlice,
+        message: &BunString,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         global: &JSGlobalObject,

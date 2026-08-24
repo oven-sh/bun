@@ -3,7 +3,7 @@
 //! `console.count`/`time`/`timeEnd`, and the C ABI shims that JavaScriptCore
 //! calls into.
 
-use crate::{ComptimeStringMapExt as _, EncodedSliceJsc as _};
+use crate::ComptimeStringMapExt as _;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
@@ -1128,7 +1128,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
 
     let mut source_code_slice: Option<bun_core::Utf8Bytes> = None;
 
-    let err = EncodedSlice::latin1(b"trace output").to_error_instance(global);
+    let err = global.create_error_instance(format_args!("trace output"));
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
     // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
     // two simultaneous `&mut` into `holder`. Capture the flag in a local and
@@ -5086,7 +5086,7 @@ pub mod formatter {
                             props_iter.len - usize::from(children_prop.is_some());
 
                         while let Some((prop, property_value)) = props_iter.next()? {
-                            if prop.eq_ascii("children") {
+                            if prop.eq_ascii(b"children") {
                                 continue;
                             }
 

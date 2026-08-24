@@ -46,24 +46,16 @@ impl BuildMessage {
         )
         .expect("infallible: in-memory write");
 
-        let mut str = EncodedSlice::latin1(&text);
-        str.set_output_encoding();
+        let str = EncodedSlice::from_bytes(&text);
         if str.is_utf8() {
-            let out = str.to_js(global);
-            // default_allocator.free(text) → `text` drops on return.
-            return out;
+            return str.to_js(global);
         }
 
         // All-ASCII path: hand the buffer to JSC as an external Latin-1 string.
-        // Ownership transfers via `heap::alloc`; the external-string finalizer
+        // Ownership transfers via `heap::release`; the external-string finalizer
         // calls `mi_free` on the block (global allocator is mimalloc).
-        let len = text.len();
-        let ptr = bun_core::heap::into_raw(text.into_boxed_slice()).cast::<u8>();
-        // SAFETY: ptr/len describe a contiguous mimalloc-owned buffer just
-        // released by `heap::alloc`; it stays live until JSC frees it.
-        let mut str = EncodedSlice::latin1(unsafe { bun_core::ffi::slice(ptr, len) });
-        str.set_output_encoding();
-        str.to_external_value(global)
+        EncodedSlice::latin1(bun_core::heap::release(text.into_boxed_slice()))
+            .to_external_value(global)
     }
 
     /// Clone `msg` into a

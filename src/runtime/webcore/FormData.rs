@@ -2,10 +2,7 @@
 
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{EncodedSlice, Utf8Bytes, strings};
-use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError,
-    JsResult,
-};
+use bun_jsc::{AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
 
@@ -35,7 +32,7 @@ impl AsyncFormDataExt for AsyncFormData {
                 );
                 promise.reject(
                     global,
-                    EncodedSlice::latin1(b"FormData missing boundary").to_error_instance(global),
+                    global.create_error_instance(format_args!("FormData missing boundary")),
                 )?;
                 return Ok(());
             }

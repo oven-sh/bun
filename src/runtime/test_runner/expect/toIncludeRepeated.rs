@@ -60,7 +60,6 @@ impl Expect {
 
         let expect_string_as_str_owned = expect_string.to_utf8(global)?;
         let sub_string_as_str_owned = substring.to_utf8(global)?;
-        // cleanup handled by Drop
 
         let expect_string_as_str = expect_string_as_str_owned.slice();
         let sub_string_as_str = sub_string_as_str_owned.slice();

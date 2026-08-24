@@ -500,7 +500,6 @@ impl Glob {
         }
 
         let str = str_arg.to_utf8(global_this)?;
-        // `str` drops at scope exit.
 
         Ok(JSValue::from(
             bun_glob::r#match(&self.pattern, str.slice()).matches(),

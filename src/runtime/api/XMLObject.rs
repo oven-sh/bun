@@ -716,7 +716,7 @@ impl Stringifier {
                         self.append_attribute(global, &key.substring(1), &text)?
                     }
                 }
-            } else if key.eq_ascii("#text") {
+            } else if key.eq_ascii(b"#text") {
                 match self.scalar(global, child, "#text")? {
                     Scalar::Text(text) if text.length() > 0 => has_text = true,
                     _ => {}
@@ -747,7 +747,7 @@ impl Stringifier {
             if skipped(child) || key.starts_with_ascii(b"@") {
                 continue;
             }
-            if key.eq_ascii("#text") {
+            if key.eq_ascii(b"#text") {
                 if let Scalar::Text(text) = self.scalar(global, child, "#text")? {
                     self.append_text(global, &text)?;
                 }

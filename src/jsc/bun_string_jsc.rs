@@ -1,6 +1,6 @@
-//! JSC bridges for `bun.String` and `Utf8WithString`. Keeps
-//! `src/string/` free of `JSValue`/`JSGlobalObject`/`CallFrame` types — the
-//! original methods are aliased to the free fns here.
+//! JSC bridges for `bun_core::String` and `Utf8WithString`. Keeps
+//! `bun_core::string` free of `JSValue`/`JSGlobalObject`/`CallFrame` types;
+//! the `StringJsc`/`Utf8WithStringJsc` extension traits forward here.
 
 use bun_core::{EncodedSlice, String, Tag, Utf8WithString, strings};
 
@@ -39,7 +39,7 @@ pub(crate) fn into_js(mut this: String, global_this: &JSGlobalObject) -> JsResul
     unsafe { crate::cpp::BunString__transferToJS(&raw mut this, global_this) }
 }
 
-pub fn to_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
+pub(crate) fn to_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
     JSC__createError(global_object, this)
 }
 
@@ -131,27 +131,13 @@ pub fn parse_date(this: &String, global_object: &JSGlobalObject) -> JsResult<f64
 }
 
 // ── Utf8WithString methods ───────────────────────────────────────
-pub(crate) fn utf8_with_string_to_js(
-    this: &mut Utf8WithString,
-    global_object: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    utf8_with_string_to_js_with_options(this, global_object, false)
-}
-
 pub(crate) fn utf8_with_string_into_js(
-    mut this: Utf8WithString,
+    this: Utf8WithString,
     global_object: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    utf8_with_string_to_js_with_options(&mut this, global_object, true)
-}
-
-fn utf8_with_string_to_js_with_options(
-    this: &mut Utf8WithString,
-    global_object: &JSGlobalObject,
-    transfer: bool,
-) -> JsResult<JSValue> {
-    if this.string.tag() == Tag::Dead || this.string.tag() == Tag::Empty {
-        if let Some(utf8) = this.utf8.take_if(|v| !v.is_empty()) {
+    let (utf8, string) = this.into_parts();
+    if string.is_empty() {
+        if let Some(utf8) = utf8.filter(|v| !v.is_empty()) {
             if let Some(utf16) = strings::to_utf16_alloc(&utf8, false, false)
                 .map_err(|_| global_object.throw_out_of_memory())?
             {
@@ -166,22 +152,13 @@ fn utf8_with_string_to_js_with_options(
                     encoded_slice::to_external_u16(utf16.as_ptr(), utf16.len(), global_object)
                 });
             }
-            // Ownership of the utf8 bytes is transferred to JSC via
+            // All-ASCII: ownership of the bytes is transferred to JSC via
             // `to_external_value` (mimalloc-freed by JSC).
-            let mut utf8 = core::mem::ManuallyDrop::new(utf8);
-            utf8.shrink_to_fit();
-            // SAFETY: `utf8` is a leaked, contiguous mimalloc-owned buffer.
-            let bytes: &'static [u8] = unsafe { bun_core::ffi::slice(utf8.as_ptr(), utf8.len()) };
-            return Ok(EncodedSlice::from_bytes(bytes).to_external_value(global_object));
+            let bytes = bun_core::heap::release(utf8.into_boxed_slice());
+            return Ok(EncodedSlice::latin1(bytes).to_external_value(global_object));
         }
     }
-
-    if transfer {
-        this.utf8 = None;
-        into_js(core::mem::take(&mut this.string), global_object)
-    } else {
-        to_js(&this.string, global_object)
-    }
+    into_js(string, global_object)
 }
 
 // ── escapeRegExp host fns ───────────────────────────────────────────────────

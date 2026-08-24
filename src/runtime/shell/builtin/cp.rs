@@ -710,11 +710,11 @@ impl ShellCpTask {
         self.tgt_absolute = Some(tgt.as_bytes().to_vec());
 
         let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+            src: bun_jsc::node::PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
                 self.src_absolute.as_deref().unwrap(),
                 false,
             )),
-            dest: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+            dest: bun_jsc::node::PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
                 self.tgt_absolute.as_deref().unwrap(),
                 false,
             )),

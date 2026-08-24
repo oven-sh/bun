@@ -2601,29 +2601,27 @@ impl DevServer {
         };
 
         // Extract route params by re-matching the URL
-        let mut params: framework_router::MatchedParams = Default::default();
-        let url_bunstr = match &req {
-            // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
-            SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
-            SavedRequestUnion::Saved(data) => {
-                // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
-                bun_core::StringView::new(unsafe { (*data.request).url.get() })
-            }
-        };
-        let url = url_bunstr.to_utf8();
-
-        // Extract pathname from URL (remove protocol, host, query, hash)
-        let pathname = extract_pathname_from_url(url.slice());
-
-        // Create params JSValue
         // TODO: lazy structure caching since we are making these objects a lot
         let global = self.vm().global();
-        let params_js_value = if self.router.match_slow(pathname, &mut params).is_some() {
-            params.to_js(global)
-        } else {
-            JSValue::NULL
+        let params_js_value = {
+            let mut params: framework_router::MatchedParams = Default::default();
+            let url_bunstr = match &req {
+                // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
+                SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
+                SavedRequestUnion::Saved(data) => {
+                    // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
+                    bun_core::StringView::new(unsafe { (*data.request).url.get() })
+                }
+            };
+            let url = url_bunstr.to_utf8();
+            // Extract pathname from URL (remove protocol, host, query, hash)
+            let pathname = extract_pathname_from_url(url.slice());
+            if self.router.match_slow(pathname, &mut params).is_some() {
+                params.to_js(global)
+            } else {
+                JSValue::NULL
+            }
         };
-        drop(url);
 
         let server_request_callback = self
             .server_fetch_function_callback

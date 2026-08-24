@@ -236,7 +236,6 @@ fn parse_compression_options(
         }
 
         let compress_str = compress_val.to_utf8(global)?;
-        // Drop handles compress_str.deinit()
 
         if compress_str.slice() != b"gzip" {
             return Err(global.throw_invalid_arguments(format_args!(

@@ -482,7 +482,7 @@ mod _impl {
     }
 
     fn set_cwd(global_object: &JSGlobalObject, to: &EncodedSlice) -> JsResult<JSValue> {
-        if to.len == 0 {
+        if to.is_empty() {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
         }

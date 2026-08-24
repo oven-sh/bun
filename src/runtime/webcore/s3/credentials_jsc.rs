@@ -248,8 +248,7 @@ pub(crate) fn get_credentials_with_options(
                         "contentDisposition must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_disposition = Some(bun_ptr::RawSlice::new(utf8.slice()));
-                new_credentials._content_disposition_slice = Some(utf8);
+                new_credentials.content_disposition = Some(utf8);
             }
 
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"type", true)? {
@@ -258,8 +257,7 @@ pub(crate) fn get_credentials_with_options(
                         "type must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_type = Some(bun_ptr::RawSlice::new(utf8.slice()));
-                new_credentials._content_type_slice = Some(utf8);
+                new_credentials.content_type = Some(utf8);
             }
 
             if let Some(utf8) =
@@ -270,8 +268,7 @@ pub(crate) fn get_credentials_with_options(
                         "contentEncoding must not contain newline characters (CR/LF)"
                     )));
                 }
-                new_credentials.content_encoding = Some(bun_ptr::RawSlice::new(utf8.slice()));
-                new_credentials._content_encoding_slice = Some(utf8);
+                new_credentials.content_encoding = Some(utf8);
             }
 
             if let Some(request_payer) = opts.get_boolean_strict(global_object, "requestPayer")? {

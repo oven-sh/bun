@@ -2261,8 +2261,9 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    EncodedSlice::latin1(b"fetch() requires the server to have a fetch handler")
-                        .to_error_instance(ctx),
+                    ctx.create_error_instance(format_args!(
+                        "fetch() requires the server to have a fetch handler"
+                    )),
                 ),
             );
         }
@@ -2351,7 +2352,7 @@ where
                         Err(_) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                 ctx,
-                                EncodedSlice::latin1(b"fetch() received invalid body").to_error_instance(ctx),
+                                ctx.create_error_instance(format_args!("fetch() received invalid body")),
                             ));
                         }
                     }
@@ -2413,7 +2414,7 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    EncodedSlice::latin1(b"fetch() returned an empty value").to_error_instance(ctx),
+                    ctx.create_error_instance(format_args!("fetch() returned an empty value")),
                 ),
             );
         }

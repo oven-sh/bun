@@ -1542,10 +1542,7 @@ impl JSTranspiler {
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let mut out = EncodedSlice::latin1(buffer_writer.written());
-        out.set_output_encoding();
-
-        let result = out.to_js(global);
+        let result = EncodedSlice::from_bytes(buffer_writer.written()).to_js(global);
         self.buffer_writer.set(Some(buffer_writer));
         Ok(result)
     }
@@ -1604,7 +1601,7 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = EncodedSlice::latin1(record.path.text).to_js(global);
+        let path = EncodedSlice::from_bytes(record.path.text).to_js(global);
         let kind = EncodedSlice::latin1(record.kind.label()).to_js(global);
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;

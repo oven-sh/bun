@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult,
-    ProtectedJSValue, SystemError, bun_string_jsc,
+    ProtectedJSValue, StringJsc as _, SystemError, bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -2447,7 +2447,7 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     // prefers it over the generic message, so only lol-html-internal
     // parse/encoding errors reach here.
     let err = lol_err_string(message);
-    let value = bun_string_jsc::to_error_instance(&err, global);
+    let value = err.to_error_instance(global);
     value.put(
         global,
         b"name",

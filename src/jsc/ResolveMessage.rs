@@ -244,21 +244,16 @@ impl ResolveMessage {
         if write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(message)).is_err() {
             return global.throw_out_of_memory_value();
         }
-        let mut str = EncodedSlice::latin1(&text);
-        str.set_output_encoding();
+        let str = EncodedSlice::from_bytes(&text);
         if str.is_utf8() {
-            let out = str.to_js(global);
-            drop(text);
-            return out;
+            return str.to_js(global);
         }
 
         // `to_external_value` transfers ownership of `text` to JSC: the Box is
         // leaked here (single transfer via `heap::release`) and freed exactly
         // once by JSC's external-string finalizer with the global allocator.
-        let leaked = text.into_boxed_slice();
-        let mut str = EncodedSlice::latin1(bun_core::heap::release(leaked));
-        str.set_output_encoding();
-        str.to_external_value(global)
+        EncodedSlice::latin1(bun_core::heap::release(text.into_boxed_slice()))
+            .to_external_value(global)
     }
 
     #[crate::host_fn(method)]

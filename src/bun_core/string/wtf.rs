@@ -13,7 +13,7 @@ pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 pub use crate::external_shared::WTFString;
 
 /// Extension methods on [`WTFStringImplStruct`] that depend on
-/// `bun_string` types ([`Utf8Bytes`], `crate::ZBox`) or
+/// `bun_core` types ([`Utf8Bytes`], `crate::ZBox`) or
 /// `crate::strings::*` transcoding. Kept as a trait because the struct is
 /// defined in `bun_alloc` and an inherent `impl` here would violate the orphan
 /// rule. Glob-imported via `bun_core::WTFStringImplExt` so method-call syntax

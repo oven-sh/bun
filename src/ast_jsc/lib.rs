@@ -5,7 +5,6 @@
 use std::borrow::Cow;
 
 use bun_ast::{Data, Location, Log, Metadata, Msg};
-use bun_core::EncodedSlice;
 
 use bun_jsc::{self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage};
 
@@ -44,7 +43,7 @@ fn msg_to_js(this: Msg, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     }
 }
 
-pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResult<JSValue> {
+pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &'static [u8]) -> JsResult<JSValue> {
     let msgs: &[Msg] = this.msgs.as_slice();
     // On-stack array: conservative GC stack scan keeps these JSValues alive (see PORTING.md §JSC).
     let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
@@ -69,9 +68,10 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
                     }
                 };
             }
-            let out = EncodedSlice::latin1(message);
-            let agg = global.create_aggregate_error(&errors_stack[..usize::from(count)], &out)?;
-            Ok(agg)
+            global.create_aggregate_error(
+                &errors_stack[..usize::from(count)],
+                &bun_core::String::static_(message),
+            )
         }
     }
 }

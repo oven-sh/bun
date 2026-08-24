@@ -99,9 +99,9 @@ impl<T: Unprotect + Default> Default for ThreadSafe<T> {
 
 /// `node.PathLike`.
 pub enum PathLike {
-    String(CowSlice<u8>),
+    Bytes(CowSlice<u8>),
     Buffer(MarkedArrayBuffer),
-    Utf8WithString(Utf8WithString),
+    String(Utf8WithString),
     ThreadsafeString(Utf8WithString),
     Utf8(Utf8Bytes<'static>),
 }
@@ -109,7 +109,7 @@ pub enum PathLike {
 impl Default for PathLike {
     #[inline]
     fn default() -> Self {
-        PathLike::String(CowSlice::EMPTY)
+        PathLike::Bytes(CowSlice::EMPTY)
     }
 }
 
@@ -121,7 +121,7 @@ impl Clone for PathLike {
         match self {
             // An owned path must be duped so the clone is independently
             // droppable; a borrowed path shares the backing (non-owning).
-            Self::String(s) => Self::String(if s.is_owned() {
+            Self::Bytes(s) => Self::Bytes(if s.is_owned() {
                 bun_core::handle_oom(CowSlice::init_dupe(s.slice()))
             } else {
                 s.borrow()
@@ -133,7 +133,7 @@ impl Clone for PathLike {
                 owns_buffer: false,
                 pinned: false,
             }),
-            Self::Utf8WithString(s) => Self::Utf8WithString(s.clone()),
+            Self::String(s) => Self::String(s.clone()),
             Self::ThreadsafeString(s) => Self::ThreadsafeString(s.clone()),
             Self::Utf8(s) => Self::Utf8(s.clone()),
         }
@@ -145,42 +145,39 @@ impl Drop for PathLike {
         match self {
             // `CowSlice` frees its backing in its own `Drop` iff it owns it;
             // a borrowed path is a no-op.
-            Self::String(_) => {}
+            Self::Bytes(_) => {}
             Self::Buffer(b) => {
                 if b.pinned {
                     b.pinned = false;
                     b.buffer.unpin();
                 }
             }
-            // `Utf8WithString` derefs `string` in its own `Drop`.
-            Self::Utf8WithString(_) | Self::ThreadsafeString(_) => {}
-            // `Utf8Bytes` releases its WTF ref / owned buffer in its own `Drop`.
-            Self::Utf8(_) => {}
+            Self::String(_) | Self::ThreadsafeString(_) | Self::Utf8(_) => {}
         }
     }
 }
 
 impl PathLike {
     #[inline]
-    pub fn is_string(&self) -> bool {
-        matches!(self, Self::String(_))
+    pub fn is_bytes(&self) -> bool {
+        matches!(self, Self::Bytes(_))
     }
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
         match self {
-            Self::String(s) => s.slice(),
+            Self::Bytes(s) => s.slice(),
             Self::Buffer(b) => b.slice(),
-            Self::Utf8WithString(s) | Self::ThreadsafeString(s) => s.slice(),
+            Self::String(s) | Self::ThreadsafeString(s) => s.slice(),
             Self::Utf8(s) => s.slice(),
         }
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
         match self {
-            Self::String(s) => s.length(),
+            Self::Bytes(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),
-            Self::Utf8WithString(_) | Self::ThreadsafeString(_) => 0,
+            Self::String(_) | Self::ThreadsafeString(_) => 0,
             Self::Utf8(s) => s.slice().len(),
         }
     }
@@ -196,7 +193,7 @@ impl PathLike {
     /// `to_thread_safe`.
     pub fn to_thread_safe(&mut self) {
         match self {
-            Self::Utf8WithString(s) => {
+            Self::String(s) => {
                 s.to_thread_safe();
                 let owned = core::mem::take(s);
                 *self = Self::ThreadsafeString(owned);
@@ -204,7 +201,7 @@ impl PathLike {
             Self::Buffer(b) => {
                 b.buffer.value.protect();
             }
-            Self::String(_) | Self::ThreadsafeString(_) | Self::Utf8(_) => {}
+            Self::Bytes(_) | Self::ThreadsafeString(_) | Self::Utf8(_) => {}
         }
     }
 }

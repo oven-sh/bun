@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
-use bun_core::{String as BunString, ZStr};
+use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
@@ -168,7 +168,6 @@ pub use super::types::{Flavor, PathOrFileDescriptor};
 mod node {
     pub(super) use super::super::statfs::StatFS;
     pub(super) use super::super::time_like::from_js as time_like_from_js;
-    pub(super) use super::super::types::Utf8WithString;
     pub(super) use super::super::{gid_t, uid_t};
 
     /// Thin alias to `super::types::mode_from_js` so the dozens of call
@@ -590,7 +589,7 @@ mod _async_tasks {
                 // runs (it points into caller-owned state, not this box).
                 let path = unsafe { &*self.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                    path: PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
                         path, false,
                     )),
                     recursive: true,
@@ -3069,13 +3068,13 @@ pub mod args {
                     if next_val.is_string() {
                         arguments.eat();
                         let str = next_val.to_bun_string(ctx)?;
-                        if str.eq_ascii("dir") {
+                        if str.eq_ascii(b"dir") {
                             break 'link_type SymlinkLinkType::Dir;
                         }
-                        if str.eq_ascii("file") {
+                        if str.eq_ascii(b"file") {
                             break 'link_type SymlinkLinkType::File;
                         }
-                        if str.eq_ascii("junction") {
+                        if str.eq_ascii(b"junction") {
                             break 'link_type SymlinkLinkType::Junction;
                         }
                         return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw());
@@ -6852,33 +6851,24 @@ impl NodeFS {
                             &args.path,
                         ));
                     }
-                    Ok(StringOrBuffer::String(node::Utf8WithString {
-                        string: str,
-                        ..Default::default()
-                    }))
+                    Ok(StringOrBuffer::String(Utf8WithString::for_js(str)))
                 }
                 ret::ReadFileWithOptions::String(s) => {
-                    // `Utf8WithString::transcodeFromOwnedSlice` lives in
-                    // bun_string but depends on `webcore::encoding` (higher tier).
-                    // Inline its body here to keep the layering clean.
                     let str = if s.is_empty() {
-                        node::Utf8WithString::default()
+                        bun_core::String::EMPTY
                     } else {
-                        node::Utf8WithString {
-                            string: webcore::encoding::to_bun_string_from_owned_slice(
-                                s.into_vec(),
-                                args.encoding,
-                            ),
-                            ..Default::default()
-                        }
+                        webcore::encoding::to_bun_string_from_owned_slice(
+                            s.into_vec(),
+                            args.encoding,
+                        )
                     };
-                    if str.string.is_dead() {
+                    if str.is_dead() {
                         return Err(with_path_like(
                             sys::Error::from_code(E::ENOMEM, sys::Tag::read),
                             &args.path,
                         ));
                     }
-                    Ok(StringOrBuffer::String(str))
+                    Ok(StringOrBuffer::String(Utf8WithString::for_js(str)))
                 }
                 _ => unreachable!(),
             },
@@ -7413,7 +7403,7 @@ impl NodeFS {
         };
         let link_path: &[u8] = &outbuf[..link_len];
         if args.encoding == Encoding::Utf8 {
-            if let PathLike::Utf8WithString(s) = &args.path {
+            if let PathLike::String(s) = &args.path {
                 if strings::eql_long(s.slice(), link_path, true) {
                     return Ok(StringOrBuffer::String(s.clone()));
                 }
@@ -7503,7 +7493,7 @@ impl NodeFS {
                 }
             }
             if args.encoding == Encoding::Utf8 {
-                if let PathLike::Utf8WithString(s) = &args.path {
+                if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
                         return Ok(StringOrBuffer::String(s.clone()));
                     }
@@ -7556,7 +7546,7 @@ impl NodeFS {
 
             let _ = variant;
             if args.encoding == Encoding::Utf8 {
-                if let PathLike::Utf8WithString(s) = &args.path {
+                if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
                         return Ok(StringOrBuffer::String(s.clone()));
                     }
@@ -9010,7 +9000,7 @@ impl NodeFS {
                         len -= 1;
                     }
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                        path: PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
                             &bytes[..len],
                             false,
                         )),
@@ -9468,7 +9458,7 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
         unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
     node_fs
         .mkdir_recursive(&args::Mkdir {
-            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+            path: PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
                 path_bytes, false,
             )),
             recursive: true,

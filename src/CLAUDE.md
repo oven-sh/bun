@@ -96,25 +96,34 @@ let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
 let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
 let s = String::static_(b"literal");       // 'static ASCII slice, never freed
 
-let utf8: Utf8Bytes<'_>      = s.to_utf8();    // borrows `s` (ASCII/UTF-8) or transcodes; for locals
-let utf8: Utf8Bytes<'static> = s.into_utf8();  // moves `s`'s ref in / copies; for storing in fields
+let utf8: Utf8Bytes<'_>      = s.to_utf8();             // borrows `s` (ASCII/UTF-8) or transcodes; for locals
+let utf8: Utf8Bytes<'static> = s.into_utf8();           // moves `s`'s ref in / copies; for storing in fields
+let utf8: Utf8Bytes<'static> = s.clone().into_utf8();   // from `&String`: shares the WTF ref when 8-bit ASCII, else transcodes
+let utf8: Utf8Bytes<'static> = x.to_utf8().into_owned(); // from a borrowed view: always an independent copy
 let owned: Vec<u8>           = s.to_owned_slice();
 ```
 
 Rule: a `Utf8Bytes<'static>` field/element must come from an owning producer
 (`into_utf8()`, `value.to_utf8(global)?`, `x.to_utf8().into_owned()`,
 `Utf8Bytes::Owned(..)`) — never from `to_utf8()` on a `&String`/`StringView`
-reached through a `&'static` accessor.
+reached through a `&'static` accessor. Prefer `s.clone().into_utf8()` when
+you hold a `&String` (no copy for ASCII); use `.into_owned()` only when the
+source is a bare `&[u8]`/`EncodedSlice` view.
 
 `Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared(String)`
 (`Shared` holds an 8-bit all-ASCII WTF-backed `String` and reads its buffer);
 it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
+`Utf8WithString` (`String::into_utf8_with_string[_thread_safe]()`) keeps the
+UTF-8 bytes _and_ the source `String` so the value can go back to JS without
+re-encoding; it is the string arm of `PathLike`/`StringOrBuffer`.
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
-borrowed view: `EncodedSlice::latin1(bytes)` (Latin-1/ASCII, also for `'static`
-literals), `utf8(bytes)`, `utf16(units)`, `from_bytes(bytes)` (scans;
-tags UTF-8 if non-ASCII), `String::to_encoded_slice()`,
-`StringView::from_encoded(..)`, `EncodedSlice::to_utf8() -> Utf8Bytes<'a>`;
-`bun_jsc::EncodedSliceJsc` adds `to_js`/`to_error_instance`/….
+borrowed view: `EncodedSlice::latin1(bytes)` only for ASCII literals or bytes
+known to be Latin-1; runtime data (paths, hostnames, messages, user input) is
+`from_bytes(bytes)` (scans; tags UTF-8 if non-ASCII) or `utf8(bytes)` when
+known UTF-8; `utf16(units)`; `String::to_encoded_slice()`,
+`EncodedSlice::to_utf8() -> Utf8Bytes<'a>`; `bun_jsc::EncodedSliceJsc` adds
+`to_js`/`to_error_instance`/…. Bytes → JS string in one step:
+`bun_string_jsc::create_utf8_for_js(global, bytes)`.
 
 JSValue → string: `value.to_bun_string(global)?` (owned `String`),
 `value.to_utf8(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or

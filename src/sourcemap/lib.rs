@@ -372,7 +372,7 @@ impl SourceProvider for SourceProviderMap {
 /// default-`None` optional capabilities so each provider only overrides what
 /// it actually has.
 pub trait SourceProvider {
-    /// `Bun::toStringView`: a EncodedSlice view into the provider's source.
+    /// `Bun::toStringView`: a `StringView` into the provider's source.
     fn get_source_slice(&self) -> bun_core::StringView<'_>;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
 

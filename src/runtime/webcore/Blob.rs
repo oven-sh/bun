@@ -903,7 +903,7 @@ impl BlobExt for Blob {
             // erased lifetime is the caller's stack frame in `from_dom_form_data`.
             let ctx = unsafe { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
             let entry = if is_blob == 0 {
-                // SAFETY: when `is_blob == 0`, `value_ptr` points to a `EncodedSlice`.
+                // SAFETY: when `is_blob == 0`, `value_ptr` points to an `EncodedSlice`.
                 FormDataEntry::String(unsafe { *value_ptr.cast::<EncodedSlice>() })
             } else {
                 FormDataEntry::File {
@@ -1553,7 +1553,6 @@ impl BlobExt for Blob {
                         bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
                     ),
                 };
-                // input_path drops at scope exit.
 
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     input_path,
@@ -2853,7 +2852,7 @@ impl BlobExt for Blob {
         buf: *mut [u8],
     ) -> JSValue {
         let Some(encoder) = self.get_form_data_encoding() else {
-            return EncodedSlice::latin1(b"Invalid encoding").to_error_instance(global);
+            return global.create_error_instance(format_args!("Invalid encoding"));
         };
 
         // `crate::webcore::form_data::Encoding` re-exports
@@ -3539,7 +3538,7 @@ impl BlobExt for Blob {
                     let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
                     let copy = core::mem::replace(
                         path_or_fd,
-                        PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
+                        PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::Bytes(
                             bun_ptr::cow_slice::CowSlice::EMPTY,
                         )),
                     );
@@ -3562,7 +3561,7 @@ impl BlobExt for Blob {
                     // the caller-owned path) as part of the `*path_or_fd = …`
                     // write.
                     *path_or_fd =
-                        PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
+                        PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::Bytes(
                             // Heap-dupe: this buffer is freed by `Blob.Store.deinit`.
                             bun_ptr::cow_slice::CowSlice::init_owned(
                                 b"\\\\.\\NUL".to_vec().into_boxed_slice(),
@@ -3586,13 +3585,9 @@ impl BlobExt for Blob {
                     if let Some(file) = unsafe { &mut *graph }.find(path_or_fd.path().slice()) {
                         use crate::api::standalone_graph_jsc::FileJsc as _;
                         let blob = file.file_blob(global_this).dupe();
-                        // Release a SliceWithUnderlying / encoded-slice
-                        // path the graph short-circuit would otherwise leak.
-                        // The reassignment below drops the old payload via
-                        // `Drop for PathLike`; no explicit `.deinit()` needed.
-                        if !path_or_fd.path().is_string() {
+                        if !path_or_fd.path().is_bytes() {
                             *path_or_fd = PathOrFileDescriptor::Path(
-                                crate::webcore::node_types::PathLike::String(
+                                crate::webcore::node_types::PathLike::Bytes(
                                     bun_ptr::cow_slice::CowSlice::EMPTY,
                                 ),
                             );
@@ -3604,7 +3599,7 @@ impl BlobExt for Blob {
                 path_or_fd.to_thread_safe();
                 core::mem::replace(
                     path_or_fd,
-                    PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
+                    PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::Bytes(
                         bun_ptr::cow_slice::CowSlice::EMPTY,
                     )),
                 )
@@ -4076,7 +4071,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     // adopts the `Box<[u8]>` so the store frees it in
                     // `PathLike::drop`; borrowing here would drop `path` at scope
                     // end and leave the store dangling.
-                    let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
+                    let mut dest = PathOrFileDescriptor::Path(node::PathLike::Bytes(
                         bun_ptr::cow_slice::CowSlice::init_owned(path.into_boxed_slice()),
                     ));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
@@ -4261,7 +4256,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                path: node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                path: node::PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
                     dirname, false,
                 )),
                 recursive: true,
@@ -4397,7 +4392,7 @@ fn write_file_with_empty_source_to_destination(
                                 };
                                 let mkdir_result =
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: node::PathLike::String(
+                                        path: node::PathLike::Bytes(
                                             bun_ptr::cow_slice::CowSlice::init_unchecked(
                                                 dirpath, false,
                                             ),
@@ -6666,15 +6661,10 @@ impl Internal {
             return out.into_js(global_this);
         } else {
             // All-ASCII fast path: hand the heap buffer to JSC's external-string
-            // finalizer (mark_global → freed by mimalloc on GC). `to_owned_slice`
-            // moves `self.bytes` out, so the allocation is no longer owned by us.
-            let owned: *mut [u8] =
-                bun_core::heap::into_raw(self.to_owned_slice().into_boxed_slice());
-            // SAFETY: `owned` is a fresh heap allocation released via `into_raw`;
-            // EncodedSlice borrows ptr+len, then `to_external_value` adopts it.
-            let mut str = EncodedSlice::latin1(unsafe { &*owned });
-            str.mark_global();
-            return Ok(str.to_external_value(global_this));
+            // finalizer (freed by mimalloc on GC). `to_owned_slice` moves
+            // `self.bytes` out, so the allocation is no longer owned by us.
+            let owned = bun_core::heap::release(self.to_owned_slice().into_boxed_slice());
+            return Ok(EncodedSlice::latin1(owned).to_external_value(global_this));
         }
     }
 

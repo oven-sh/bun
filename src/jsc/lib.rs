@@ -1412,35 +1412,15 @@ impl StringJsc for bun_core::String {
 }
 
 /// Extension trait providing JSC-aware methods on
-/// `bun_core::Utf8WithString` (lower-tier, no JSC dep) —
-/// `to_js`, `into_js`, `report_extra_memory`; the free-function bodies
-/// live in [`bun_string_jsc`].
+/// `bun_core::Utf8WithString` (lower-tier, no JSC dep) — `into_js`; the
+/// free-function body lives in [`bun_string_jsc`].
 pub trait Utf8WithStringJsc {
-    fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn report_extra_memory(&mut self, vm: &VM);
 }
 impl Utf8WithStringJsc for bun_core::Utf8WithString {
     #[inline]
-    fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::utf8_with_string_to_js(self, global)
-    }
-    #[inline]
     fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::utf8_with_string_into_js(self, global)
-    }
-    /// Account `utf8`'s backing allocation against the GC heap unless it is
-    /// already JSC-owned (WTF-backed) or borrowed.
-    fn report_extra_memory(&mut self, vm: &VM) {
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!self.did_report_extra_memory_debug);
-            self.did_report_extra_memory_debug = true;
-        }
-        // Only a transcoded copy is ours; the rest is owned by JSC.
-        if let Some(utf8) = &self.utf8 {
-            vm.report_extra_memory(utf8.len());
-        }
     }
 }
 
@@ -1587,7 +1567,7 @@ impl SysErrorJsc for bun_sys::Error {
 
 /// Extension trait providing JSC-aware methods on `bun_ast::Log`.
 pub trait LogJsc {
-    fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue>;
+    fn to_js(&self, global: &JSGlobalObject, message: &'static str) -> JsResult<JSValue>;
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
 /// Wrap a single `Msg` in
@@ -1599,7 +1579,7 @@ fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
     }
 }
 impl LogJsc for bun_ast::Log {
-    fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue> {
+    fn to_js(&self, global: &JSGlobalObject, message: &'static str) -> JsResult<JSValue> {
         let msgs = &self.msgs;
         // Cap at 256 — the consumer's stack buffer holds at most 256 JSValues.
         let count = msgs.len().min(256);
@@ -1615,8 +1595,10 @@ impl LogJsc for bun_ast::Log {
                 for (i, msg) in msgs[0..count].iter().enumerate() {
                     errors_stack[i] = msg_to_js(msg, global)?;
                 }
-                let out = bun_core::EncodedSlice::latin1(message.as_bytes());
-                global.create_aggregate_error(&errors_stack[..count], &out)
+                global.create_aggregate_error(
+                    &errors_stack[..count],
+                    &bun_core::String::static_(message),
+                )
             }
         }
     }

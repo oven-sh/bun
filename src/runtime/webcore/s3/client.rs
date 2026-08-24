@@ -7,7 +7,7 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult};
 
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
@@ -845,8 +845,7 @@ pub(crate) fn upload_stream(
         credentials.deref();
         return Ok(bun_jsc::JSPromise::rejected_promise(
             global_this,
-            bun_core::String::static_("ReadableStream is already disturbed")
-                .to_error_instance(global_this),
+            global_this.create_error_instance(format_args!("ReadableStream is already disturbed")),
         )
         .to_js());
     }
@@ -856,8 +855,7 @@ pub(crate) fn upload_stream(
             credentials.deref();
             return Ok(bun_jsc::JSPromise::rejected_promise(
                 global_this,
-                bun_core::String::static_("ReadableStream is invalid")
-                    .to_error_instance(global_this),
+                global_this.create_error_instance(format_args!("ReadableStream is invalid")),
             )
             .to_js());
         }

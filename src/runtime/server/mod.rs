@@ -2269,7 +2269,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let mut paths: Vec<bun_core::EncodedSlice<'_>> = self
                 .user_routes
                 .iter()
-                .map(|r| bun_core::EncodedSlice::latin1(r.route.path.as_bytes()))
+                .map(|r| bun_core::EncodedSlice::from_bytes(r.route.path.as_bytes()))
                 .collect();
             // `global_this` is the live VM global; scratch slices are valid for
             // `len` elements; C++ copies paths/callbacks into the returned JS

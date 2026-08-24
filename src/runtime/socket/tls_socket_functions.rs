@@ -1391,7 +1391,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         boringssl::ERR_clear_error();
     }
 
-    if message.len == 0 {
+    if message.is_empty() {
         message = EncodedSlice::latin1(default_message);
     }
 

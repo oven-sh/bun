@@ -5,11 +5,9 @@ use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
 use crate::Error;
-use bun_core::EncodedSlice;
 use bun_io as io;
 #[cfg(not(windows))]
 use bun_io::IntrusiveIoRequest as _;
-use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
@@ -1330,8 +1328,9 @@ impl WriteFileWaitFromLockedValueTask {
                 unsafe {
                     (*promise).reject(
                         global_this,
-                        Ok(EncodedSlice::latin1(b"Body was used after it was consumed")
-                            .to_error_instance(global_this)),
+                        Ok(global_this.create_error_instance(format_args!(
+                            "Body was used after it was consumed"
+                        ))),
                     )?;
                 }
             }

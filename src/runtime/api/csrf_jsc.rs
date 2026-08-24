@@ -217,7 +217,6 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
     // Default values
     let mut secret: Option<Utf8Bytes> = None;
-    // `secret` is freed by Drop.
     let mut max_age: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
     let mut session_id: Option<Utf8Bytes> = None;

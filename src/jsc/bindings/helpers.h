@@ -265,11 +265,6 @@ static void appendToBuilder(EncodedSlice str, WTF::StringBuilder& builder)
     builder.append({ untag(str.ptr), str.len });
 }
 
-static const JSC::JSString* toJSString(EncodedSlice str, JSC::JSGlobalObject* global)
-{
-    return JSC::jsOwnedString(global->vm(), toString(str));
-}
-
 static JSC::JSString* toJSStringGC(EncodedSlice str, JSC::JSGlobalObject* global)
 {
     return JSC::jsString(global->vm(), toStringCopy(str));
@@ -283,14 +278,6 @@ static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
 }
 
-static EncodedSlice toEncodedSlice(WTF::StringImpl& str)
-{
-    return str.isEmpty()
-        ? EncodedSliceEmpty
-        : EncodedSlice { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
-              str.length() };
-}
-
 // Overload for `StringImpl*` so callers like `toEncodedSlice(string.impl())` resolve here
 // instead of implicitly constructing a temporary `WTF::StringView` (which, in debug builds
 // with CHECK_STRINGVIEW_LIFETIME, takes a lock and heap-allocates an UnderlyingString entry).
@@ -300,14 +287,6 @@ static EncodedSlice toEncodedSlice(const WTF::StringImpl* str)
         ? EncodedSliceEmpty
         : EncodedSlice { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
               str->length() };
-}
-
-static EncodedSlice toEncodedSlice(WTF::StringView& str)
-{
-    return str.isEmpty()
-        ? EncodedSliceEmpty
-        : EncodedSlice { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
-              str.length() };
 }
 
 static EncodedSlice toEncodedSlice(const WTF::StringView& str)
@@ -355,7 +334,7 @@ static const WTF::String toStringStatic(EncodedSlice str)
 
 static JSC::JSValue getErrorInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject)
 {
-    WTF::String message = toString(*str);
+    WTF::String message = toStringCopy(*str);
     if (message.isNull() && str->len > 0) [[unlikely]] {
         // pending exception while creating an error.
         return {};

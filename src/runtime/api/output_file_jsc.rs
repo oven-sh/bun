@@ -93,12 +93,12 @@ impl OutputFileJsc for OutputFile {
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
 
-                // An owned `PathLike::String` (a `CowSlice`) frees its buffer in
+                // An owned `PathLike::Bytes` (a `CowSlice`) frees its buffer in
                 // `PathLike::drop`, so the backing buffer must be owned by the
                 // store. `owned_pathname` is a borrow here (the caller drops its
                 // `Box<[u8]>` after this returns), so dupe it.
                 let store_path = match owned_pathname {
-                    Some(p) => PathLike::String(bun_ptr::cow_slice::CowSlice::init_owned(
+                    Some(p) => PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_owned(
                         p.to_vec().into_boxed_slice(),
                     )),
                     None => dupe_path_like(self.src_path.text),

@@ -113,7 +113,6 @@ fn get_argv0(
     first_cmd: JSValue,
 ) -> JsResult<Argv0Result> {
     let arg0 = first_cmd.to_utf8(global_this)?;
-    // `arg0` drops at scope exit (was `defer arg0.deinit()`).
 
     // Check for null bytes in command (security: prevent null byte injection)
     if strings::index_of_char(arg0.slice(), 0).is_some() {

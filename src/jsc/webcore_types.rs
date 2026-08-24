@@ -989,7 +989,7 @@ pub mod store {
         /// `Box` handles the allocation. Every `Data` variant self-frees on
         /// field drop: `Bytes::drop` frees its buffer + `stored_name`; the
         /// `File.pathlike` / `S3` payloads (including an owned
-        /// `PathLike::String`, which owns its buffer via `CowSlice`) release in
+        /// `PathLike::Bytes`, which owns its buffer via `CowSlice`) release in
         /// `PathLike::drop`.
         fn drop(&mut self) {}
     }

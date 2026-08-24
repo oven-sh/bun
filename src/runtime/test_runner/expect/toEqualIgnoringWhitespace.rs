@@ -40,7 +40,6 @@ pub(crate) fn to_equal_ignoring_whitespace(
     if pass {
         let value_slice = value.to_utf8(global)?;
         let expected_slice = expected.to_utf8(global)?;
-        // `defer ….deinit()` deleted — Drop handles it.
 
         let value_utf8: &[u8] = value_slice.slice();
         let expected_utf8: &[u8] = expected_slice.slice();

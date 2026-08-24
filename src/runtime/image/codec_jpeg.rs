@@ -267,7 +267,7 @@ pub(crate) fn decode(
     if cmyk {
         // Adobe-convention inverted CMYK (stored byte = 255 − ink) → RGB,
         // the same non-CMS formula Skia and Firefox use: R = C·K/255.
-        for px in out.chunks_exact_mut(4) {
+        for px in out.as_chunks_mut::<4>().0 {
             let k = u32::from(px[3]);
             px[0] = u8::try_from((u32::from(px[0]) * k + 127) / 255).expect("int cast");
             px[1] = u8::try_from((u32::from(px[1]) * k + 127) / 255).expect("int cast");

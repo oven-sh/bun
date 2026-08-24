@@ -2547,9 +2547,8 @@ function advanceResponsePipeline(server, socket) {
   // Replay the writes buffered while the response was queued.
   // The buffered bytes are handed to the native handle below, so they no
   // longer count as pending output (Node's _flush does the same).
-  // The ops were buffered by the prototype write/end, so the replay calls
-  // those directly: res.write/res.end may be monkey-patched own properties
-  // (compression middleware) that must not see the replayed bytes again.
+  // The prototype write/end buffered the ops; monkey-patched res.write/res.end
+  // (compression middleware) must not see them again.
   res.outputSize = 0;
   const ops = queued.ops;
   const opsLength = ops.length;

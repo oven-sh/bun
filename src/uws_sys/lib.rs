@@ -29,6 +29,7 @@ pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: core::ffi::c_int = 2;
 pub const LIBUS_LISTEN_REUSE_PORT: core::ffi::c_int = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
+pub const LIBUS_SOCKET_OPEN_PAUSED: core::ffi::c_int = 256;
 
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;

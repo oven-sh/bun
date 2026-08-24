@@ -551,17 +551,11 @@ impl AnyRoute {
         let Some(path_js) = argument.get(init_ctx.global, b"path")? else {
             return Ok(None);
         };
-        let mut path_string = BunString::from_js(path_js, init_ctx.global)?;
         let mut path = Node::PathOrFileDescriptor::Path(Node::PathLike::from_bun_string(
             init_ctx.global,
-            &mut path_string,
+            BunString::from_js(path_js, init_ctx.global)?,
             false,
         )?);
-        // NOTE: `from_bun_string` clones
-        // the bytes (or bumps the WTF ref) into the PathLike payload, so we can
-        // release the source ref immediately — `bun_core::String` has no `Drop`.
-        path_string.deref();
-        // path is dropped at scope end
 
         // Construct the route by stripping paths above the root.
         //
@@ -1436,7 +1430,8 @@ where
             )));
         }
 
-        let topic = topic_value.to_slice(global)?;
+        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic = topic_view.to_utf8();
 
         if topic.slice().is_empty() {
             return Ok(JSValue::js_number(0.0));
@@ -1508,19 +1503,17 @@ where
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        // Converting `message_value` can run user JS / GC; the JSString keeps the
-        // topic bytes alive across it.
-        let topic_string = topic_value.to_js_string(global)?;
-        let topic = topic_string.view(global)?.to_slice();
+        // Converting `message_value` can run user JS / GC; `topic_view` keeps
+        // the topic bytes alive across it.
+        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic = topic_view.to_utf8();
         // jsc.JSValue
         let message_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
         // ?jsc.JSValue
         let compress_value = iter.next_eat();
-        let result = self.publish(global, topic.slice(), message_value, compress_value);
-        topic_string.ensure_still_alive();
-        result
+        self.publish(global, topic.slice(), message_value, compress_value)
     }
 
     /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
@@ -1649,7 +1642,7 @@ where
         // Resolve the payload before reading `self.app`: `to_js_string` can run
         // user JS that stops the server.
         let array_buffer = message_value.as_array_buffer(global);
-        let mut js_string: Option<&jsc::JSString> = None;
+        let message_view;
         let string_slice;
         let (buffer, opcode): (&[u8], uws_sys::Opcode) = if let Some(buffer) = &array_buffer {
             (buffer.slice(), uws_sys::Opcode::Binary)
@@ -1658,9 +1651,8 @@ where
         {
             (slice, uws_sys::Opcode::Binary)
         } else {
-            let js_str = message_value.to_js_string(global)?;
-            js_string = Some(js_str);
-            string_slice = js_str.view(global)?.to_slice();
+            message_view = message_value.to_js_string_view(global)?;
+            string_slice = message_view.to_utf8();
             (string_slice.slice(), uws_sys::Opcode::Text)
         };
 
@@ -1677,12 +1669,7 @@ where
         );
         let result =
             super::server_web_socket::send_status_to_js(status, buffer.len(), "publish", "bytes");
-        // When the input was not already a JSString, `to_js_string` allocates a
-        // fresh GC cell not reachable from `message_value`; keep both alive.
         message_value.ensure_still_alive();
-        if let Some(js_string) = js_string {
-            js_string.ensure_still_alive();
-        }
         Ok(result)
     }
 
@@ -2598,11 +2585,7 @@ where
     pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.config.address {
             server_config::Address::Unix(unix) => {
-                let value = BunString::clone_utf8(unix.as_bytes());
-                // Must release the cloned ref even
-                // on the `to_js` error path.
-                let value = scopeguard::guard(value, |v| v.deref());
-                value.to_js(global)
+                jsc::bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
             }
             server_config::Address::Tcp { port: tcp_port, .. } => {
                 let mut port: u16 = *tcp_port;
@@ -2652,14 +2635,10 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let mut url = self
+        let url = self
             .get_url_as_string()
             .map_err(|_| global.throw_out_of_memory())?;
-        // `to_jsdomurl` may throw (invalid URL → JS TypeError); deref the
-        // backing string on both Ok/Err paths, then propagate.
-        let r = bun_string_jsc::to_jsdomurl(&mut url, global);
-        url.deref();
-        r
+        bun_string_jsc::to_jsdomurl(&url, global)
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -438,7 +438,8 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
-    int rc = us_poll_start_rc(p1, group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    int open_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
+    int rc = us_poll_start_rc(p1, group->loop, (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE);
     if (rc != 0) {
         us_poll_free(p1, group->loop);
         return 0;
@@ -452,7 +453,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN) != 0;
-    s->flags.is_paused = 0;
+    s->flags.is_paused = open_paused;
     s->flags.is_ipc = ipc;
     s->flags.is_closed = 0;
     s->flags.adopted = 0;

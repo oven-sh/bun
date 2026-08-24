@@ -38,14 +38,14 @@ impl From<Error> for bun_errno::SystemErrno {
 pub struct SystemError {
     pub errno: core::ffi::c_int,
     /// label for errno
-    pub code: bun_core::OwnedString,
+    pub code: bun_core::String,
     /// it is illegal to have an empty message
-    pub message: bun_core::OwnedString,
-    pub path: bun_core::OwnedString,
-    pub syscall: bun_core::OwnedString,
-    pub hostname: bun_core::OwnedString,
+    pub message: bun_core::String,
+    pub path: bun_core::String,
+    pub syscall: bun_core::String,
+    pub hostname: bun_core::String,
     pub fd: Option<core::ffi::c_int>,
-    pub dest: bun_core::OwnedString,
+    pub dest: bun_core::String,
 }
 impl SystemError {
     /// (`Error::to_system_error` stores `errno` negated to match Node.)

@@ -3980,9 +3980,9 @@ static JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexicalGlob
             RETURN_IF_EXCEPTION(throwScope, {});
             if (byteLength) {
                 uint8Array->setFromTypedArray(lexicalGlobalObject, 0, view, 0, byteLength, CopyType::LeftToRight);
+                RETURN_IF_EXCEPTION(throwScope, {});
             }
-            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
-            break;
+            return JSC::JSValue::encode(uint8Array);
         }
         case DataViewType:
         case Uint8ArrayType:

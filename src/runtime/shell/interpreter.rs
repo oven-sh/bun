@@ -414,7 +414,7 @@ impl Interpreter {
         arena: &'a bun_alloc::Arena,
         src: &'a [u8],
         jsobjs: &'a mut [crate::jsc::JSValue],
-        jsstrings_to_escape: &'a mut [bun_core::String],
+        jsstrings_to_escape: &'a [bun_core::String],
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
@@ -693,7 +693,7 @@ impl Interpreter {
                 arena,
                 src,
                 &mut [],
-                &mut [],
+                &[],
                 &mut out_parser,
                 &mut out_lex_result,
             ) {
@@ -2971,8 +2971,7 @@ pub(crate) fn create_shell_interpreter(
 
     let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
 
-    let cwd = cwd.map(bun_core::OwnedString::new);
-    let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
+    let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
     // bun_vm() returns the live thread-local VM for a Bun-owned global; that
     // pointer is the live `jsc::EventLoop` `EventLoopHandle::init` expects.

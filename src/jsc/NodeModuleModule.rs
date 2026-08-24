@@ -1,10 +1,10 @@
 use crate::{
-    self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
+    self as jsc, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
     VirtualMachineRef as VirtualMachine,
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
-use bun_core::{OwnedString, String as BunString, strings};
+use bun_core::{String as BunString, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 
@@ -36,7 +36,7 @@ impl ApiLoader {
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
-    request_bun_str: BunString,
+    request_bun_str: &BunString,
     paths_maybe: *mut JSArray,
 ) -> JSValue {
     // `JSArray` is an `opaque_ffi!` ZST handle; `opaque_ref` is the centralised
@@ -49,7 +49,7 @@ extern "C" fn NodeModuleModule__findPath(
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
 fn find_path(
     global: &JSGlobalObject,
-    request_bun_str: BunString,
+    request_bun_str: &BunString,
     paths_maybe: Option<&JSArray>,
 ) -> JsResult<JSValue> {
     let request_slice = request_bun_str.to_utf8();
@@ -61,14 +61,13 @@ fn find_path(
     }
 
     // for each path
-    let mut found = if let Some(paths) = paths_maybe {
+    let found = if let Some(paths) = paths_maybe {
         'found: {
             let mut iter = paths.iterator(global)?;
             while let Some(path) = iter.next()? {
-                // `OwnedString` releases the +1 from `from_js` on drop.
-                let cur_path = OwnedString::new(BunString::from_js(path, global)?);
+                let cur_path = BunString::from_js(path, global)?;
 
-                if let Some(found) = find_path_inner(request_bun_str, cur_path.get(), global)? {
+                if let Some(found) = find_path_inner(request_bun_str, &cur_path, global)? {
                     break 'found Some(found);
                 }
             }
@@ -76,34 +75,29 @@ fn find_path(
             break 'found None;
         }
     } else {
-        find_path_inner(request_bun_str, BunString::static_(b""), global)?
+        find_path_inner(request_bun_str, &BunString::EMPTY, global)?
     };
 
-    if let Some(str) = found.as_mut() {
-        return str.transfer_to_js(global);
+    if let Some(str) = found {
+        return str.into_js(global);
     }
 
     Ok(JSValue::FALSE)
 }
 
 fn find_path_inner(
-    request: BunString,
-    cur_path: BunString,
+    request: &BunString,
+    cur_path: &BunString,
     global: &JSGlobalObject,
 ) -> JsResult<Option<BunString>> {
-    // SAFETY: zero-init is the documented `ErrorableString` "empty" state; the
-    // callee fully overwrites it on both ok/err paths.
-    let mut errorable: ErrorableString = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // `bun_core::String` is `Copy` — passing by value makes no refcount change.
-    VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
-        &mut errorable,
+    Ok(VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         global,
         request,
         cur_path,
         None,
         crate::virtual_machine::ResolveMode::RequireResolve,
-    )?;
-    Ok(errorable.unwrap().ok())
+    )?
+    .ok())
 }
 
 pub fn stat(path: &[u8]) -> i32 {

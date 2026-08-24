@@ -104,4 +104,3 @@ test("pipelined response replay does not re-enter monkey-patched write/end (#403
   expect(stdout).toBe("OK\n");
   expect(exitCode).toBe(0);
 });
-

@@ -1130,10 +1130,6 @@ impl Request {
                             Ok(None) => {}
                             Err(e) => bail!(Err(e)),
                         }
-
-                        if global_this.has_exception() {
-                            bail!(Err(JsError::Thrown));
-                        }
                     }
 
                     if !fields.contains(Fields::Body) {
@@ -1198,10 +1194,6 @@ impl Request {
                             }
                         }
                     }
-
-                    if global_this.has_exception() {
-                        bail!(Err(JsError::Thrown));
-                    }
                 }
             }
 
@@ -1233,6 +1225,7 @@ impl Request {
                     Err(e) => bail!(Err(e)),
                 }
 
+                // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
                 if global_this.has_exception() {
                     bail!(Err(JsError::Thrown));
                 }
@@ -1277,10 +1270,6 @@ impl Request {
                     }
                     Err(e) => bail!(Err(e)),
                 }
-
-                if global_this.has_exception() {
-                    bail!(Err(JsError::Thrown));
-                }
             }
 
             if !fields.contains(Fields::Signal) {
@@ -1298,27 +1287,17 @@ impl Request {
                             // `ref_from_js` already ref'd.
                             req.signal.set(Some(signal));
                         } else {
-                            if !global_this.has_exception() {
-                                bail!(Err(global_this.throw_type_error(format_args!(
-                                    "Failed to construct 'Request': signal is not of type AbortSignal."
-                                ))));
-                            }
-                            bail!(Err(JsError::Thrown));
+                            bail!(Err(global_this.throw_type_error(format_args!(
+                                "Failed to construct 'Request': signal is not of type AbortSignal."
+                            ))));
                         }
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
-
-                if global_this.has_exception() {
-                    bail!(Err(JsError::Thrown));
-                }
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                if global_this.has_exception() {
-                    bail!(Err(JsError::Thrown));
-                }
                 match crate::webcore::response::Init::init(global_this, value) {
                     Ok(Some(response_init)) => {
                         let header_check = !explicit_check
@@ -1339,10 +1318,6 @@ impl Request {
                             }
                         }
 
-                        if global_this.has_exception() {
-                            bail!(Err(JsError::Thrown));
-                        }
-
                         let method_check = !explicit_check
                             || (explicit_check
                                 && match value.fast_get(global_this, bun_jsc::BuiltinName::Method) {
@@ -1355,16 +1330,9 @@ impl Request {
                                 fields.insert(Fields::Method);
                             }
                         }
-                        if global_this.has_exception() {
-                            bail!(Err(JsError::Thrown));
-                        }
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
-                }
-
-                if global_this.has_exception() {
-                    bail!(Err(JsError::Thrown));
                 }
             }
 
@@ -1405,10 +1373,6 @@ impl Request {
             }
         }
 
-        if global_this.has_exception() {
-            bail!(Err(JsError::Thrown));
-        }
-
         if req.url.get().is_empty() {
             bail!(Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': url is required."
@@ -1417,16 +1381,13 @@ impl Request {
 
         let href = bun_url::href_from_string(req.url.get());
         if href.is_empty() {
-            if !global_this.has_exception() {
-                // globalThis.throw can cause GC, which could cause the above string to be freed.
-                // so we must increment the reference count before calling it.
-                let err = global_this.err_invalid_url(format_args!(
-                    "Failed to construct 'Request': Invalid URL \"{}\"",
-                    req.url.get()
-                ));
-                bail!(Err(global_this.throw_value(err)));
-            }
-            bail!(Err(JsError::Thrown));
+            // globalThis.throw can cause GC, which could cause the above string to be freed.
+            // so we must increment the reference count before calling it.
+            let err = global_this.err_invalid_url(format_args!(
+                "Failed to construct 'Request': Invalid URL \"{}\"",
+                req.url.get()
+            ));
+            bail!(Err(global_this.throw_value(err)));
         }
 
         // hrefFromString increments the reference count if they end up being

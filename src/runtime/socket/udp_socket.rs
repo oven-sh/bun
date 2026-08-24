@@ -1425,7 +1425,7 @@ impl UDPSocket {
                 }
                 // Phase 1 stored the primitive JSString; `as_string()` is a
                 // plain cast (no `toPrimitive`, no user JS).
-                string_slices.push(val.as_string().view(global_this).to_utf8());
+                string_slices.push(val.as_string().view(global_this)?.to_utf8());
                 break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();

@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::StringView;
 use bun_core::zig_string::Slice as ZigStringSlice;
 
@@ -29,12 +29,11 @@ impl JSString {
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
-    #[inline]
-    pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JSStringView<'a> {
-        JSStringView {
-            cell: self,
-            view: JSC__JSString__view(self, global),
-        }
+    /// Throws when resolving a rope runs out of memory.
+    #[track_caller]
+    pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JsResult<JSStringView<'a>> {
+        let view = crate::call_check_slow(global, || JSC__JSString__view(self, global))?;
+        Ok(JSStringView { cell: self, view })
     }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {

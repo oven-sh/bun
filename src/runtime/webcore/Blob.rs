@@ -3451,10 +3451,6 @@ impl BlobExt for Blob {
 
                 _ => {
                     let sliced = current.to_slice(global)?;
-                    if global.has_exception() {
-                        let _end_result = joiner.done();
-                        return Err(jsc::JsError::Thrown);
-                    }
                     could_have_non_ascii = could_have_non_ascii || !sliced.is_wtf_backed();
                     joiner.push_cloned(sliced.slice());
                 }

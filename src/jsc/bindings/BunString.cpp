@@ -790,7 +790,6 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
         scope.throwException(global, createTypeError(global, "Target must be an object"_s));
         return {};
     }
-    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue newValue = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
     WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();

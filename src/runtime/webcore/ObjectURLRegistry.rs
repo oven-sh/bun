@@ -177,10 +177,6 @@ fn js_function_resolve_object_url(
     }
     let str = url_arg.to_bun_string(global_object)?;
 
-    if global_object.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-
     if !str.has_prefix_comptime(b"blob:") || str.length() < SPECIFIER_LEN {
         return Ok(JSValue::UNDEFINED);
     }

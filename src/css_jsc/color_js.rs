@@ -312,9 +312,6 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             } else {
                 None
             };
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
 
             break 'brk Ok(CssColor::Rgba(RGBA {
                 alpha: a.unwrap_or(255),

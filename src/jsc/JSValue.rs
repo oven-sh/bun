@@ -894,10 +894,11 @@ impl JSValue {
     /// Never throws; the backing cell is GC-rooted by the VM's SmallStrings
     /// table.
     pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
-        crate::js_string::JSC__JSString__view(
-            JSString::opaque_ref::<'a>(JSC__jsTypeStringForValue(global, self)),
-            global,
-        )
+        let cell = JSString::opaque_ref::<'a>(JSC__jsTypeStringForValue(global, self));
+        crate::validation_scope!(scope, global);
+        let view = crate::js_string::JSC__JSString__view(cell, global);
+        scope.assert_no_exception();
+        view
     }
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         let mut out = ArrayBuffer::default();

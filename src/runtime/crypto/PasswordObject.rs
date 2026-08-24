@@ -2,7 +2,7 @@ use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
-use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::ZigStringJsc as _;
@@ -750,19 +750,14 @@ fn js_password_object_verify(
 
         let algorithm_string = arguments[2].to_bun_string(global_object)?;
 
-        algorithm = match algorithm_from_string(&algorithm_string) {
-            Some(a) => Some(a),
-            None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "verify",
-                        "algorithm",
-                        UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    ));
-                }
-                return Err(JsError::Thrown);
-            }
+        let Some(a) = algorithm_from_string(&algorithm_string) else {
+            return Err(global_object.throw_invalid_argument_type(
+                "verify",
+                "algorithm",
+                UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
+            ));
         };
+        algorithm = Some(a);
     }
 
     // TODO: this most likely should error like `verifySync` instead of stringifying.
@@ -830,19 +825,14 @@ fn js_password_object_verify_sync(
 
         let algorithm_string = arguments[2].to_bun_string(global_object)?;
 
-        algorithm = match algorithm_from_string(&algorithm_string) {
-            Some(a) => Some(a),
-            None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "verify",
-                        "algorithm",
-                        UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    ));
-                }
-                return Ok(JSValue::ZERO);
-            }
+        let Some(a) = algorithm_from_string(&algorithm_string) else {
+            return Err(global_object.throw_invalid_argument_type(
+                "verify",
+                "algorithm",
+                UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
+            ));
         };
+        algorithm = Some(a);
     }
 
     let Some(mut password) = StringOrBuffer::from_js(global_object, arguments[0])? else {

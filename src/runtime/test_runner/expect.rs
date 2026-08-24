@@ -697,11 +697,7 @@ impl Expect {
         let mut custom_label = bun_core::String::empty();
         if arguments.len() > 1 {
             if arguments[1].is_string() || arguments[1].implements_to_string(global_this)? {
-                let label = arguments[1].to_bun_string(global_this)?;
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
-                custom_label = label;
+                custom_label = arguments[1].to_bun_string(global_this)?;
             }
         }
 
@@ -1908,7 +1904,7 @@ impl ExpectStatic {
     ) -> JsResult<JSValue> {
         //const this: *ExpectStatic = ExpectStatic.fromJS(callFrame.this());
         let instance_jsvalue = T::invoke(global_this, call_frame)?;
-        if !instance_jsvalue.is_empty() && !instance_jsvalue.is_any_error() {
+        if !instance_jsvalue.is_any_error() {
             let Some(instance) = T::from_js_ptr(instance_jsvalue) else {
                 return Err(global_this.throw_out_of_memory());
             };
@@ -2484,11 +2480,6 @@ impl ExpectAny {
         }
 
         let asymmetric_matcher_constructor_type = AsymmetricMatcherConstructorType::from_js(global_this, constructor)?;
-
-        // I don't think this case is possible, but just in case!
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         let mut flags = Flags::default();
         flags.set_asymmetric_matcher_constructor_type(asymmetric_matcher_constructor_type);

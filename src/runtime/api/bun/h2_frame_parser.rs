@@ -6137,18 +6137,15 @@ impl H2FrameParser {
                         continue;
                     }
                     if !is_valid_request_pseudo_header(validated_name) {
-                        if !global_object.has_exception() {
-                            return Err(global_object
-                                .err(
-                                    JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
-                                    format_args!(
-                                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
-                                        BStr::new(name)
-                                    ),
-                                )
-                                .throw());
-                        }
-                        return Ok(JSValue::ZERO);
+                        return Err(global_object
+                            .err(
+                                JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                                format_args!(
+                                    "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                                    BStr::new(name)
+                                ),
+                            )
+                            .throw());
                     }
                 } else if ignore_pseudo_headers == 0 {
                     continue;
@@ -6601,16 +6598,18 @@ impl H2FrameParser {
 
                         if this.is_server.get() {
                             if !is_valid_response_pseudo_header(validated_name) {
-                                if !global_object.has_exception() {
-                                    return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
-                                }
-                                return Ok(JSValue::ZERO);
-                            }
-                        } else if !is_valid_request_pseudo_header(validated_name) {
-                            if !global_object.has_exception() {
                                 return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
                             }
-                            return Ok(JSValue::ZERO);
+                        } else if !is_valid_request_pseudo_header(validated_name) {
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                                    format_args!(
+                                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                                        BStr::new(name)
+                                    ),
+                                )
+                                .throw());
                         }
                     } else if ignore_pseudo_headers == 0 {
                         continue;
@@ -6734,17 +6733,27 @@ impl H2FrameParser {
 
                     if this.is_server.get() {
                         if !is_valid_response_pseudo_header(validated_name) {
-                            if !global_object.has_exception() {
-                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
-                            }
-                            return Ok(JSValue::ZERO);
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                                    format_args!(
+                                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                                        BStr::new(name)
+                                    ),
+                                )
+                                .throw());
                         }
                     } else {
                         if !is_valid_request_pseudo_header(validated_name) {
-                            if !global_object.has_exception() {
-                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
-                            }
-                            return Ok(JSValue::ZERO);
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                                    format_args!(
+                                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                                        BStr::new(name)
+                                    ),
+                                )
+                                .throw());
                         }
                     }
                 } else if ignore_pseudo_headers == 0 {
@@ -6765,35 +6774,29 @@ impl H2FrameParser {
 
                     if let Some(idx) = this.single_value_index_checked(validated_name) {
                         if value_iter.len > 1 || single_value_headers[idx] {
-                            if !global_object.has_exception() {
-                                let exception = global_object.to_type_error(
-                                    bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
-                                    format_args!(
-                                        "Header field \"{}\" must only have a single value",
-                                        BStr::new(validated_name)
-                                    ),
-                                );
-                                return Err(global_object.throw_value(exception));
-                            }
-                            return Ok(JSValue::ZERO);
+                            let exception = global_object.to_type_error(
+                                bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                format_args!(
+                                    "Header field \"{}\" must only have a single value",
+                                    BStr::new(validated_name)
+                                ),
+                            );
+                            return Err(global_object.throw_value(exception));
                         }
                         single_value_headers[idx] = true;
                     }
 
                     while let Some(item) = value_iter.next()? {
                         if item.is_empty_or_undefined_or_null() {
-                            if !global_object.has_exception() {
-                                return Err(global_object
-                                    .err(
-                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                        format_args!(
-                                            "Invalid value for header \"{}\"",
-                                            BStr::new(validated_name)
-                                        ),
-                                    )
-                                    .throw());
-                            }
-                            return Ok(JSValue::ZERO);
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                    format_args!(
+                                        "Invalid value for header \"{}\"",
+                                        BStr::new(validated_name)
+                                    ),
+                                )
+                                .throw());
                         }
 
                         let value_view = item.to_js_string_view(global_object)?;

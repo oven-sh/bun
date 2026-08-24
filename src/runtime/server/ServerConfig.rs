@@ -15,7 +15,7 @@ pub use http_method::{Method, Optional as MethodOptional};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
-use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult, Strong};
+use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
 pub use crate::socket::ssl_config::SSLConfig;
@@ -690,9 +690,6 @@ impl ServerConfig {
             }
             args.reuse_port = args.development == DevelopmentOption::Production;
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(static_) = get_routes_object(global, arg)? {
             let Some(static_obj) = static_.get_object() else {
@@ -989,10 +986,6 @@ impl ServerConfig {
             }
         }
 
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         if let Some(value) = arg.get(global, "idleTimeout")? {
             if !value.is_undefined_or_null() {
                 if !value.is_any_int() {
@@ -1031,9 +1024,6 @@ impl ServerConfig {
                 websocket_object,
             )?);
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(port_) = arg.get_truthy(global, "port")? {
             let number = port_.to_number(global)?;
@@ -1064,9 +1054,6 @@ impl ServerConfig {
             }
             port = p;
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
             let sliced = base_uri.to_slice(global)?;
@@ -1075,9 +1062,6 @@ impl ServerConfig {
                 // sliced drops at scope end
                 args.base_uri = Box::<[u8]>::from(sliced.slice());
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         let host = if let Some(h) = arg.get_stringish(global, "hostname")? {
@@ -1098,9 +1082,6 @@ impl ServerConfig {
                 has_hostname = true;
             }
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(unix) = arg.get_stringish(global, "unix")? {
             let unix_str = unix.to_utf8();
@@ -1114,9 +1095,6 @@ impl ServerConfig {
                 args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
             }
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(id) = arg.get(global, "id")? {
             if id.is_undefined_or_null() {
@@ -1129,9 +1107,6 @@ impl ServerConfig {
                     args.allow_hot = false;
                 }
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if opts.allow_bake_config {
@@ -1161,29 +1136,17 @@ impl ServerConfig {
         if let Some(dev) = arg.get(global, "reusePort")? {
             args.reuse_port = dev.to_boolean();
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(dev) = arg.get(global, "ipv6Only")? {
             args.ipv6_only = dev.to_boolean();
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(v) = arg.get(global, "http3")? {
             args.http3 = v.to_boolean();
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(v) = arg.get(global, "http1")? {
             args.http1 = v.to_boolean();
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(max_request_body_size) = arg.get_truthy(global, "maxRequestBodySize")? {
@@ -1191,9 +1154,6 @@ impl ServerConfig {
                 args.max_request_body_size = u64::try_from(max_request_body_size.to_int64().max(0))
                     .expect("int cast") as usize;
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(on_error) = arg.get_truthy(global, "error")? {
@@ -1206,9 +1166,6 @@ impl ServerConfig {
             // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
             // rooted by the wrapper's WriteBarrier slot the moment it exists.
             args.on_error = on_error;
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "onNodeHTTPRequest")? {
@@ -1234,9 +1191,6 @@ impl ServerConfig {
             && !(opts.previous_routes && !args.had_routes_object)
             && opts.is_fetch_required
         {
-            if global.has_exception() {
-                return Err(JsError::Thrown);
-            }
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.serve() needs either:\n\n\
                  \x20 - A routes object:\n\
@@ -1251,10 +1205,6 @@ impl ServerConfig {
                  \x20    }}\n\n\
                  Learn more at https://bun.com/docs/api/http",
             )));
-        } else {
-            if global.has_exception() {
-                return Err(JsError::Thrown);
-            }
         }
 
         if let Some(tls) = arg.get_truthy(global, "tls")? {
@@ -1266,15 +1216,9 @@ impl ServerConfig {
                     // Empty TLS array means no TLS - this is valid
                 } else {
                     while let Some(item) = value_iter.next()? {
-                        let ssl_config = match SSLConfig::from_js(vm, global, item)? {
-                            Some(c) => c,
-                            None => {
-                                if global.has_exception() {
-                                    return Err(JsError::Thrown);
-                                }
-                                // Backwards-compatibility; we ignored empty tls objects.
-                                continue;
-                            }
+                        let Some(ssl_config) = SSLConfig::from_js(vm, global, item)? else {
+                            // Backwards-compatibility; we ignored empty tls objects.
+                            continue;
                         };
 
                         if args.ssl_config.is_none() {
@@ -1298,13 +1242,7 @@ impl ServerConfig {
                 if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? {
                     args.ssl_config = Some(ssl_config);
                 }
-                if global.has_exception() {
-                    return Err(JsError::Thrown);
-                }
             }
-        }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         // @compatibility Bun v0.x - v0.2.1
@@ -1312,9 +1250,6 @@ impl ServerConfig {
         if args.ssl_config.is_none() {
             if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
                 args.ssl_config = Some(ssl_config);
-            }
-            if global.has_exception() {
-                return Err(JsError::Thrown);
             }
         }
 

@@ -588,9 +588,6 @@ impl AnyRoute {
                 bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
             }
         });
-        if init_ctx.global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
         let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
@@ -1753,10 +1750,6 @@ where
                         data_value = headers_value;
                     }
 
-                    if global.has_exception() {
-                        return Err(JsError::Thrown);
-                    }
-
                     if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::headers)? {
                         if headers_value.is_empty_or_undefined_or_null() {
                             break 'getter;
@@ -1775,21 +1768,14 @@ where
                                             break 'brk fetch_headers.as_ptr();
                                         }
                                     }
-                                    if !global.has_exception() {
-                                        return Err(global.throw_invalid_arguments(format_args!(
-                                            "upgrade options.headers must be a Headers or an object"
-                                        )));
-                                    }
-                                    return Err(JsError::Thrown);
+                                    return Err(global.throw_invalid_arguments(format_args!(
+                                        "upgrade options.headers must be a Headers or an object"
+                                    )));
                                 }
                             };
                         // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                         let fetch_headers_to_use =
                             bun_opaque::opaque_deref_mut(fetch_headers_to_use);
-
-                        if global.has_exception() {
-                            return Err(JsError::Thrown);
-                        }
 
                         if let Some(protocol) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
@@ -1821,10 +1807,6 @@ where
                                 raw_response.socket().cast::<c_void>(),
                             );
                         }
-                    }
-
-                    if global.has_exception() {
-                        return Err(JsError::Thrown);
                     }
                 }
             }
@@ -2008,9 +1990,6 @@ where
                 if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? {
                     data_value = v;
                 }
-                if global.has_exception() {
-                    return Err(JsError::Thrown);
-                }
 
                 if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::Headers)? {
                     if headers_value.is_empty_or_undefined_or_null() {
@@ -2019,33 +1998,21 @@ where
                     use jsc::HTTPHeaderName;
                     let fh: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
                         Some(h) => h,
-                        None => {
+                        None => 'brk: {
                             if headers_value.is_object() {
                                 if let Some(created) =
                                     FetchHeaders::create_from_js(global, headers_value)?
                                 {
                                     *fetch_headers_to_deref = Some(created.as_ptr());
-                                    created.as_ptr()
-                                } else if !global.has_exception() {
-                                    return Err(global.throw_invalid_arguments(format_args!(
-                                        "upgrade options.headers must be a Headers or an object"
-                                    )));
-                                } else {
-                                    return Err(JsError::Thrown);
+                                    break 'brk created.as_ptr();
                                 }
-                            } else if !global.has_exception() {
-                                return Err(global.throw_invalid_arguments(format_args!(
-                                    "upgrade options.headers must be a Headers or an object"
-                                )));
-                            } else {
-                                return Err(JsError::Thrown);
                             }
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "upgrade options.headers must be a Headers or an object"
+                            )));
                         }
                     };
                     fetch_headers_to_use = Some(fh);
-                    if global.has_exception() {
-                        return Err(JsError::Thrown);
-                    }
 
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                     let fh = bun_opaque::opaque_deref_mut(fh);
@@ -2061,9 +2028,6 @@ where
                             ZigString::init(_sec_websocket_extensions_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }
-                }
-                if global.has_exception() {
-                    return Err(JsError::Thrown);
                 }
             }
         }
@@ -2321,10 +2285,6 @@ where
                 previous_routes: !self.user_routes.is_empty(),
             },
         )?;
-        if global.has_exception() {
-            drop(new_config);
-            return Err(JsError::Thrown);
-        }
 
         // `on_reload_from_zig` moves `new_config.websocket` into the unscanned
         // `self.config` heap box before `write_ws_handler_slots` roots the 7

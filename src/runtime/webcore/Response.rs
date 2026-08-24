@@ -930,10 +930,6 @@ impl Response {
             // than jsonStringify which passes 0 for space and uses the slower Stringifier.
             let str = json_value.json_stringify_fast(global_this)?;
 
-            if global_this.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
-
             if !str.is_empty() {
                 debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
                 let value = &response.body.get().value;
@@ -951,11 +947,8 @@ impl Response {
                         u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
                 });
             } else {
-                match Init::init(global_this, arg_init) {
-                    Ok(Some(init)) => response.init.set(init),
-                    Ok(None) => {}
-                    Err(bun_jsc::JsError::Thrown) => return Ok(JSValue::ZERO),
-                    Err(_) => {}
+                if let Some(init) = Init::init(global_this, arg_init)? {
+                    response.init.set(init);
                 }
             }
         }
@@ -1047,9 +1040,6 @@ impl Response {
                 }
             }
 
-            if global_this.has_exception() {
-                return Err(bun_jsc::JsError::Thrown);
-            }
             break 'brk response;
         };
 
@@ -1166,17 +1156,10 @@ impl Response {
             if arguments[1].is_object() {
                 break 'brk Init::init(global_this, arguments[1])?.expect("unreachable");
             }
-            if !global_this.has_exception() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
-                )));
-            }
-            return Err(bun_jsc::JsError::Thrown);
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
+            )));
         };
-
-        if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
-        }
 
         let body: Body = 'brk: {
             if arguments[0].is_undefined_or_null() {
@@ -1189,6 +1172,7 @@ impl Response {
         // error returns below release the extracted body payload.
         let body = scopeguard::guard(body, |b| b.reset());
 
+        // extract() throws without returning Err; see Blob::from_dom_form_data
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
@@ -1313,10 +1297,6 @@ impl Init {
             }
         }
 
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
             // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
             // FetchHeaders is a hand-bound opaque, so use its dedicated
@@ -1337,28 +1317,17 @@ impl Init {
             }
         }
 
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
             let number = status_value.coerce_to_int64(global_this)?;
             if (200 <= number && number < 600) || number == 101 {
                 result.status_code = (u32::try_from(number).expect("int cast")) as u16;
             } else {
-                if !global_this.has_exception() {
-                    let err = global_this.create_range_error_instance(format_args!(
-                        "The status provided ({}) must be 101 or in the range of [200, 599]",
-                        number
-                    ));
-                    return Err(global_this.throw_value(err));
-                }
-                return Err(JsError::Thrown);
+                let err = global_this.create_range_error_instance(format_args!(
+                    "The status provided ({}) must be 101 or in the range of [200, 599]",
+                    number
+                ));
+                return Err(global_this.throw_value(err));
             }
-        }
-
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(status_text) =

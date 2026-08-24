@@ -113,7 +113,7 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
             ));
         }
         if data.is_string_literal() {
-            data_view = data.as_string().view(global_this);
+            data_view = data.as_string().view(global_this)?;
             break 'blk data_view.to_utf8();
         }
         let Some(buffer) = data.as_array_buffer(global_this) else {

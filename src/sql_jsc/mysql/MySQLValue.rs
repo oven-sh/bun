@@ -3,7 +3,7 @@
 //! `JSValue` references.
 
 use crate::jsc::{
-    IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
+    IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult,
     MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
 };
 use bun_core::String as BunString;
@@ -54,10 +54,6 @@ pub(crate) fn field_type_from_js(
                     u64::MAX
                 ))
                 .throw());
-        }
-
-        if global_object.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         // Ban these types:

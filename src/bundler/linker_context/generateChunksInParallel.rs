@@ -398,7 +398,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             {
                 write!(
                     &mut rel_path,
-                    "./{}.{}",
+                    "./_{}.{}",
                     compact_chunk_index,
                     bstr::BStr::new(&chunk.template.placeholder.ext)
                 )

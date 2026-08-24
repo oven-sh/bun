@@ -182,8 +182,8 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
             None => specifier,
         };
         if let Some(tag) = crate::ResolvedSourceTag::try_from_name(canonical) {
-            if tag.0 >= 512 {
-                push(tag.0 - 512, &mut wanted);
+            if tag.0 >= crate::ResolvedSourceTag::INTERNAL_MODULE_REGISTRY_FLAG {
+                push(tag.0 - crate::ResolvedSourceTag::INTERNAL_MODULE_REGISTRY_FLAG, &mut wanted);
             }
         }
     }

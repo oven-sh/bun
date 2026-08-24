@@ -668,6 +668,13 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
+    // Once .stack is materialized the frames are gone and materializeErrorInfoIfNeeded never runs
+    // again, so frames stored now would never render and would stay alive for the whole life of
+    // the destination. Same no-op as Bun__attachAsyncStackFromPromise.
+    if (destination->hasMaterializedErrorInfo()) {
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
     if (!destination->stackTrace()) {
         destination->captureStackTrace(vm, globalObject, 1);
     }

@@ -8428,8 +8428,7 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
-        /// First address past the `PT_LOAD` segment that spans the looked-up
-        /// address. Reads at or beyond it are outside the mapping.
+        /// First address past the `PT_LOAD` segment that spans the looked-up address.
         pub segment_end: usize,
     }
 

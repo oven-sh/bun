@@ -505,27 +505,18 @@ mod elf {
         if vaddr == 0 {
             return None;
         }
-        // BUN_COMPILED.size holds the link-time virtual address of the
-        // appended data. For a PIE executable (mandatory on Android) the
-        // kernel maps every PT_LOAD at that vaddr plus a load bias, which is
-        // `dlpi_addr` of the object containing BUN_COMPILED itself; for
-        // non-PIE it is 0. Look the module up by the runtime address of the
-        // BUN_COMPILED symbol (`vaddr_ptr`), not the link-time `vaddr`, which
-        // is not a mapped address under PIE.
-        // Format at target: [u64 payload_len][payload bytes]
-        //
-        // The vaddr and the length prefix it points at are untrusted
-        // (truncated download, AV rewriting, post-build tampering). Bound the
-        // payload by the PT_LOAD segment that maps BUN_COMPILED (the writer
-        // appends the payload to that same extended segment); otherwise the
-        // reads below would fault before startup can fall back gracefully.
+        // BUN_COMPILED.size is the link-time vaddr of the appended data. Under
+        // PIE (mandatory on Android) the runtime address is that vaddr plus the
+        // load bias (`dlpi_addr`); non-PIE bias is 0. Look the module up by the
+        // symbol's runtime address (`vaddr_ptr`), since the link-time `vaddr` is
+        // not a mapped address under PIE. Format at target: [u64 len][payload].
         let module = bun_sys::elf::find_loaded_module(vaddr_ptr as usize)?;
         let header_size = size_of::<u64>();
-        // Synthesize a `*mut u8` directly so the provenance carries write
-        // permission for the in-place bytecode mutation done by JSC.
+        // `target` carries write provenance for the in-place bytecode mutation.
         let target = (vaddr as usize).wrapping_add(module.base_address);
-        // `[target, target + header_size)` must lie inside the segment to read
-        // the length prefix, and the declared payload must fit after it.
+        // vaddr and the length prefix are untrusted (post-build corruption), so
+        // bound the payload by the PT_LOAD segment that maps BUN_COMPILED (the
+        // writer appends the payload to that same extended segment).
         let payload_capacity = module
             .segment_end
             .checked_sub(target)

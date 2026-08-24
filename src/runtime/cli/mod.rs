@@ -1500,9 +1500,11 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_init() -> CmdResult {
-        // InitCommand parses its own argv (no Context).
+        // InitCommand parses its own argv (no Context). Skip past argv[0],
+        // the NODE_OPTIONS-injected window, and the "init" keyword.
         let argv = argv_zslice();
-        super::init_command::InitCommand::exec(&argv[2.min(argv.len())..])
+        let start = 2 + bun::node_options_argc();
+        super::init_command::InitCommand::exec(&argv[start.min(argv.len())..])
     }
 
     #[cold]
@@ -1941,10 +1943,11 @@ To create a project with the official Next.js scaffolding tool, run\n\
         let mut package_name: &[u8] = b"";
         let mut property_path: Option<&[u8]> = None;
 
-        // Find non-flag arguments starting from argv[2] (after "bun info").
+        // Find non-flag arguments starting after "bun info" plus the
+        // NODE_OPTIONS-injected window.
         let mut found_package = false;
         let argv = bun::argv();
-        for arg in argv.iter().skip(2) {
+        for arg in argv.iter().skip(2 + bun::node_options_argc()) {
             // Skip flags
             if !arg.is_empty() && arg[0] == b'-' {
                 continue;

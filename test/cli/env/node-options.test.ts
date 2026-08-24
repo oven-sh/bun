@@ -219,8 +219,57 @@ describe("NODE_OPTIONS environment variable", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("not allowed");
     expect(exitCode).toBe(0);
+  });
+
+  // The injected tokens shift argv. Subcommands that index raw argv must
+  // skip the injected window, or they read their own keyword as an argument.
+  test.concurrent("bun init initializes the cwd, not a directory named 'init'", async () => {
+    using dir = tempDir("node-options-init", {});
+    const { exitCode } = await run(String(dir), ["init", "-y"], "--title=from-env");
+    expect(await Bun.file(`${String(dir)}/package.json`).exists()).toBe(true);
+    expect(await Bun.file(`${String(dir)}/init/package.json`).exists()).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bun info queries the requested package, not 'info'", async () => {
+    const requested: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requested.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+    using dir = tempDir("node-options-info", {
+      "package.json": `{"name":"x","version":"1.0.0"}`,
+    });
+    await Bun.write(
+      `${String(dir)}/bunfig.toml`,
+      `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+    );
+    await run(String(dir), ["info", "react"], "--title=from-env");
+    expect(requested[0]).toBe("/react");
+  });
+
+  test.concurrent("bun whoami still resolves to whoami", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/-/whoami") return Response.json({ username: "testuser" });
+        return new Response("{}", { status: 404 });
+      },
+    });
+    using dir = tempDir("node-options-whoami", {
+      "package.json": `{"name":"x","version":"1.0.0"}`,
+    });
+    await Bun.write(
+      `${String(dir)}/.npmrc`,
+      `//localhost:${server.port}/:_authToken=dummy\nregistry=http://localhost:${server.port}/\n`,
+    );
+    const { stdout, exitCode } = await run(String(dir), ["whoami"], "--title=from-env");
+    expect({ stdout, exitCode }).toEqual({ stdout: "testuser\n", exitCode: 0 });
   });
 });

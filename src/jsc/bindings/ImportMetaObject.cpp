@@ -212,8 +212,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue parentModule = callFrame->argument(5);
     JSValue resolveFilenameOptions = callFrame->argument(6);
 
-    RETURN_IF_EXCEPTION(scope, {});
-
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
             auto moduleString = moduleName.toWTFString(globalObject);

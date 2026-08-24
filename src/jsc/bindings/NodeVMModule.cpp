@@ -37,7 +37,6 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     for (const auto& [key, value] : m_importAttributes) {
         attributes->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), key), JSC::jsString(globalObject->vm(), value),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
-        RETURN_IF_EXCEPTION(scope, {});
     }
     array->putDirectIndex(globalObject, 1, attributes);
     RETURN_IF_EXCEPTION(scope, {});

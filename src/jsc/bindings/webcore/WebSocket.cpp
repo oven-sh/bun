@@ -1724,9 +1724,9 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::We
 {
     webSocket->didFailWithErrorCode(errorCode);
 }
-extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString reason)
 {
-    WTF::String wtf_reason = reason->transferToWTFString();
+    WTF::String wtf_reason = reason.transferToWTFString();
     // The Rust client only calls this after a completed close handshake
     // (received Close → echoed Close, or sent Close on ws.close()). For a
     // server-initiated close m_state is still OPEN here; transition to
@@ -1829,7 +1829,7 @@ void WebCore::WebSocket::setProtocol(const String& protocol)
     m_subprotocol = protocol;
 }
 
-extern "C" void WebSocket__setProtocol(WebCore::WebSocket* webSocket, BunString* protocol)
+extern "C" void WebSocket__setProtocol(WebCore::WebSocket* webSocket, BunString protocol)
 {
-    webSocket->setProtocol(protocol->transferToWTFString());
+    webSocket->setProtocol(protocol.transferToWTFString());
 }

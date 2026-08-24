@@ -80,7 +80,7 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
 pub fn log_to_js_aggregate_error(
     this: &Log,
     global: &JSGlobalObject,
-    message: bun_core::String,
+    message: &bun_core::String,
 ) -> JsResult<JSValue> {
     global.create_aggregate_error_with_array(message, log_to_js_array(this, global)?)
 }

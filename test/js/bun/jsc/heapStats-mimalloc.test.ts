@@ -66,19 +66,39 @@ describe("heapStats() mimalloc integration", () => {
 
   // mimalloc tags its arena mmaps with an app-reserved VM tag (240-255). The old default,
   // 100, is VM_MEMORY_IOACCELERATOR, so profilers reported Bun's heap as GPU memory.
+  // The tags are read back from the kernel (mach_vm_region's user_tag), not from vmmap's
+  // summary: vmmap's names for them change between releases (macOS 26 prints tag 240 as
+  // "Memory Tag 240", macOS 27 as "App-Specific Tag 1").
   test.skipIf(!isMacOS)("arena memory is tagged as application memory, not IOAccelerator", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const keep = [];
+        `import { dlopen, ptr } from "bun:ffi";
+         const keep = [];
          for (let i = 0; i < 96; i++) keep.push(Buffer.alloc(1 << 20, i).toString("latin1"));
-         const summary = Bun.spawnSync({ cmd: ["vmmap", "--summary", String(process.pid)] }).stdout.toString();
-         const mb = name => summary.split("\\n").filter(l => l.startsWith(name)).reduce((n, l) => {
-           const m = l.slice(name.length).match(/([\\d.]+)([KMG])/);
-           return m ? n + parseFloat(m[1]) * { K: 1 / 1024, M: 1, G: 1024 }[m[2]] : n;
-         }, 0);
-         console.log(JSON.stringify({ ioaccelerator: mb("IOAccelerator"), appTag: mb("Memory Tag 24") + mb("Memory Tag 25"), kept: keep.length }));`,
+         const { task_self_trap, mach_vm_region } = dlopen("libSystem.B.dylib", {
+           task_self_trap: { args: [], returns: "u32" },
+           mach_vm_region: { args: ["u32", "ptr", "ptr", "i32", "ptr", "ptr", "ptr"], returns: "i32" },
+         }).symbols;
+         const task = task_self_trap();
+         const VM_REGION_EXTENDED_INFO = 13, VM_REGION_EXTENDED_INFO_COUNT = 9; // sizeof(vm_region_extended_info_data_t) / 4
+         const address = new BigUint64Array(1), size = new BigUint64Array(1);
+         const info = new Uint32Array(VM_REGION_EXTENDED_INFO_COUNT), count = new Uint32Array(1), object = new Uint32Array(1);
+         const bytesByTag = new Map();
+         for (;;) {
+           count[0] = VM_REGION_EXTENDED_INFO_COUNT;
+           if (mach_vm_region(task, ptr(address), ptr(size), VM_REGION_EXTENDED_INFO, ptr(info), ptr(count), ptr(object)) !== 0) break;
+           const tag = info[1]; // vm_region_extended_info.user_tag, after the protection field
+           bytesByTag.set(tag, (bytesByTag.get(tag) ?? 0) + Number(size[0]));
+           address[0] += size[0];
+         }
+         const mb = (from, to) => {
+           let bytes = 0;
+           for (let tag = from; tag <= to; tag++) bytes += bytesByTag.get(tag) ?? 0;
+           return bytes / (1 << 20);
+         };
+         console.log(JSON.stringify({ ioaccelerator: mb(100, 100), appTag: mb(240, 255), kept: keep.length }));`,
       ],
       env: bunEnv,
       stdout: "pipe",

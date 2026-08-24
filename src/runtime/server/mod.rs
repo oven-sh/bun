@@ -525,9 +525,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         port: None,
                     }
                 } else {
+                    #[cfg(windows)]
+                    let hostname = {
+                        // On Windows, convert backslashes to forward slashes for valid URL format
+                        // Also handle drive letters like C:\test -> C:/test
+                        let path = std::str::from_utf8(unix).unwrap_or("");
+                        let converted = path.replace('\\', "/");
+                        converted.into_bytes()
+                    };
+                    #[cfg(not(windows))]
+                    let hostname = unix.to_vec();
                     URLFormatter {
                         proto: URLProto::Unix,
-                        hostname: Some(unix),
+                        hostname: Some(&hostname),
                         port: None,
                     }
                 }

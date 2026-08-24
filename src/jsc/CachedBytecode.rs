@@ -31,6 +31,17 @@ unsafe extern "C" {
     // `UnsafeCell`); `&mut` is ABI-identical to a non-null `*mut` and the C++
     // refcount decrement is interior to the cell.
     safe fn CachedBytecode__deref(this: &mut CachedBytecode);
+
+    /// InternalModuleRegistry.cpp: bytecode for internal JS module `id`, as the registry will consume it.
+    fn Bun__generateInternalModuleBytecode(
+        id: u32,
+        depth: u32,
+        output_byte_code: *mut Option<NonNull<u8>>,
+        output_byte_code_size: *mut usize,
+        cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
+    ) -> bool;
+    /// InternalModuleRegistry.cpp: the internal JS modules `id` statically requires.
+    fn Bun__internalModuleDependencies(id: u32, out: *mut *const u16) -> usize;
 }
 
 impl CachedBytecode {
@@ -143,4 +154,63 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     // centralised zero-byte deref proof.
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
     Some(owned)
+}
+
+/// `bun build --compile --bytecode`: for the builtin module specifiers a bundle imports (e.g. `b"node:fs"`), the
+/// InternalModuleRegistry ids of those modules and everything they statically require, each with bytecode generated the
+/// way InternalModuleRegistry::generateModule consumes it. Specifiers that are not JS internal modules are skipped.
+#[unsafe(no_mangle)]
+/// `depth` bounds nested-function code blocks (`u32::MAX` = all of them; 0 = just each module wrapper's own).
+pub(crate) fn __bun_jsc_generate_internal_module_bytecode(specifiers: &[&[u8]], depth: u32) -> Vec<(u32, Box<[u8]>)> {
+    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
+    crate::initialize(crate::InitializeOptions::default());
+
+    let mut wanted: Vec<u32> = Vec::new();
+    let push = |id: u32, wanted: &mut Vec<u32>| {
+        if !wanted.contains(&id) {
+            wanted.push(id);
+        }
+    };
+    for specifier in specifiers {
+        let alias = bun_resolve_builtins::Alias::get(specifier, bun_ast::Target::Bun, Default::default());
+        let canonical: &[u8] = match &alias {
+            Some(alias) => alias.path.as_bytes(),
+            None => specifier,
+        };
+        if let Some(tag) = crate::ResolvedSourceTag::try_from_name(canonical) {
+            if tag.0 >= 512 {
+                push(tag.0 - 512, &mut wanted);
+            }
+        }
+    }
+    // Transitive static requires, breadth-first.
+    let mut i = 0;
+    while i < wanted.len() {
+        let mut deps: *const u16 = core::ptr::null();
+        // SAFETY: C++ returns a pointer into a static table and its length.
+        let count = unsafe { Bun__internalModuleDependencies(wanted[i], &mut deps) };
+        for k in 0..count {
+            // SAFETY: k < count.
+            let dep = unsafe { *deps.add(k) } as u32;
+            push(dep, &mut wanted);
+        }
+        i += 1;
+    }
+
+    let mut out = Vec::with_capacity(wanted.len());
+    for id in wanted {
+        let mut bytes: Option<NonNull<u8>> = None;
+        let mut size: usize = 0;
+        let mut handle: Option<NonNull<CachedBytecode>> = None;
+        // SAFETY: out-params are initialized locals; C++ fills them on success.
+        if !unsafe { Bun__generateInternalModuleBytecode(id, depth, &mut bytes, &mut size, &mut handle) } {
+            continue;
+        }
+        let (Some(bytes), Some(handle)) = (bytes, handle) else { continue };
+        // SAFETY: `bytes[..size]` is the CachedBytecode's payload, valid until the deref below.
+        let owned = Box::<[u8]>::from(unsafe { core::slice::from_raw_parts(bytes.as_ptr(), size) });
+        CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
+        out.push((id, owned));
+    }
+    out
 }

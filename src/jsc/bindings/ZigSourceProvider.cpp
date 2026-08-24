@@ -186,17 +186,18 @@ extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)
     cachedBytecode->deref();
 }
 
-static JSC::VM& getVMForBytecodeCache()
+JSC::VM& vmForBytecodeCache();
+JSC::VM& vmForBytecodeCache()
 {
-    static thread_local JSC::VM* vmForBytecodeCache = nullptr;
-    if (!vmForBytecodeCache) {
+    static thread_local JSC::VM* vm = nullptr;
+    if (!vm) {
         const auto heapSize = JSC::HeapType::Small;
         auto vmPtr = JSC::VM::tryCreate(heapSize);
         vmPtr->refSuppressingSaferCPPChecking();
-        vmForBytecodeCache = vmPtr.get();
+        vm = vmPtr.get();
         vmPtr->heap.acquireAccess();
     }
-    return *vmForBytecodeCache;
+    return *vm;
 }
 
 extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
@@ -204,7 +205,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
-    JSC::VM& vm = getVMForBytecodeCache();
+    JSC::VM& vm = vmForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
@@ -239,7 +240,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
 
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
-    JSC::VM& vm = getVMForBytecodeCache();
+    JSC::VM& vm = vmForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = NoLexicallyScopedFeatures;

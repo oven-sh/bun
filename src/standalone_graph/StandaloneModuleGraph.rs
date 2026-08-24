@@ -45,6 +45,8 @@ pub struct StandaloneModuleGraph {
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
+    /// InternalModuleRegistry id → its bytecode inside `bytes` (JSC reads it in place; see `File::bytecode`).
+    pub builtin_bytecode: Vec<(u32, *mut [u8])>,
 }
 
 // We never want to hit the filesystem for these files
@@ -315,6 +317,9 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
 
     fn compile_exec_argv(&self) -> &[u8] {
         self.compile_exec_argv
+    }
+    fn builtin_module_bytecode(&self, id: u32) -> Option<*mut [u8]> {
+        StandaloneModuleGraph::builtin_module_bytecode(self, id)
     }
 }
 
@@ -658,6 +663,9 @@ bitflags::bitflags! {
         /// the module table, so loading a module from bytecode never has to
         /// hash — i.e. page in — its source text.
         const HAS_SOURCE_HASHES             = 1 << 5;
+        /// After the source hashes: `u32 count`, then `count` × `{ u32 id, StringPointer bytes }` — ahead-of-time
+        /// bytecode for internal modules (InternalModuleRegistry ids), read by InternalModuleRegistry::generateModule.
+        const HAS_BUILTIN_BYTECODE          = 1 << 6;
         // _padding: u26
     }
 }
@@ -687,6 +695,7 @@ impl StandaloneModuleGraph {
                 entry_point_id: 0,
                 compile_exec_argv: b"",
                 flags: Flags::default(),
+                builtin_bytecode: Vec::new(),
             });
         }
 
@@ -727,6 +736,28 @@ impl StandaloneModuleGraph {
 
         if offsets.entry_point_id as usize > modules_list_count {
             return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
+        }
+
+        let mut builtin_bytecode: Vec<(u32, *mut [u8])> = Vec::new();
+        if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
+            let table_offset = offsets.modules_ptr.offset as usize
+                + offsets.modules_ptr.length as usize
+                + if source_hashes.is_some() { modules_list_count * size_of::<u32>() } else { 0 };
+            // SAFETY: `to_bytes` wrote `u32 count` + `count` records right here; read-only, unaligned-safe reads.
+            let read_u32 = |at: usize| -> u32 {
+                debug_assert!(at + 4 <= raw_len);
+                unsafe { core::ptr::read_unaligned(raw_const.add(at).cast::<u32>()) }
+            };
+            let count = read_u32(table_offset) as usize;
+            builtin_bytecode.reserve(count);
+            for i in 0..count {
+                let record = table_offset + size_of::<u32>() + i * 3 * size_of::<u32>();
+                let id = read_u32(record);
+                let pointer = StringPointer { offset: read_u32(record + 4), length: read_u32(record + 8) };
+                // SAFETY: same provenance rules as `File::bytecode`: a writable subrange JSC may patch in place.
+                let bytes = unsafe { core::ptr::slice_from_raw_parts_mut(raw_ptr.add(pointer.offset as usize), pointer.length as usize) };
+                builtin_bytecode.push((id, bytes));
+            }
         }
 
         let mut modules = StringArrayHashMap::<File>::new();
@@ -829,7 +860,13 @@ impl StandaloneModuleGraph {
             }
             .as_bytes(),
             flags: offsets.flags,
+            builtin_bytecode,
         })
+    }
+
+    /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.
+    pub fn builtin_module_bytecode(&self, id: u32) -> Option<*mut [u8]> {
+        self.builtin_bytecode.iter().find(|(candidate, _)| *candidate == id).map(|(_, bytes)| *bytes)
     }
 }
 
@@ -971,9 +1008,11 @@ pub(crate) fn to_bytes(
                 // the exact amount is not possible without allocating as it
                 // involves a JSON parser.
                 string_builder.cap += bytes.len() * 2;
-            } else if output_file.output_kind == options::OutputKind::Bytecode {
-                // Allocate up to 256 byte alignment for bytecode
-                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256;
+            } else if output_file.output_kind == options::OutputKind::Bytecode
+                || output_file.output_kind == options::OutputKind::BuiltinBytecode
+            {
+                // Allocate up to 256 byte alignment for bytecode (+ a table record for builtin bytecode)
+                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
             } else {
@@ -996,7 +1035,7 @@ pub(crate) fn to_bytes(
     string_builder.cap +=
         (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
     string_builder.cap += TRAILER.len();
-    string_builder.cap += 16;
+    string_builder.cap += 16 + size_of::<u32>();
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
 
@@ -1049,31 +1088,7 @@ pub(crate) fn to_bytes(
                 let bytecode = output_files[output_file.bytecode_index as usize]
                     .value
                     .as_slice();
-                let current_offset = string_builder.len;
-                // Calculate padding so that (current_offset + padding) % 128 == 120
-                // This accounts for the 8-byte section header on PE/Mach-O platforms.
-                let target_mod: usize = 128 - size_of::<u64>(); // 120 = accounts for 8-byte header
-                let current_mod = current_offset % 128;
-                let padding = if current_mod <= target_mod {
-                    target_mod - current_mod
-                } else {
-                    128 - current_mod + target_mod
-                };
-                // Zero the padding bytes to ensure deterministic output
-                let writable = string_builder.writable();
-                writable[0..padding].fill(0);
-                string_builder.len += padding;
-                let aligned_offset = string_builder.len;
-                let writable_after_padding = string_builder.writable();
-                writable_after_padding[0..bytecode.len()]
-                    .copy_from_slice(&bytecode[0..bytecode.len()]);
-                let unaligned_space = &writable_after_padding[bytecode.len()..];
-                let len = bytecode.len() + unaligned_space.len().min(128);
-                string_builder.len += len;
-                break 'brk StringPointer {
-                    offset: aligned_offset as u32,
-                    length: len as u32,
-                };
+                break 'brk append_bytecode_aligned(&mut string_builder, bytecode);
             } else {
                 break 'brk StringPointer::default();
             }
@@ -1177,6 +1192,26 @@ pub(crate) fn to_bytes(
         module_files.push(output_file);
     }
 
+    // Ahead-of-time bytecode for internal modules rides in the same front region as module bytecode.
+    let mut builtin_bytecode_table: Vec<u8> = Vec::new();
+    {
+        let mut count: u32 = 0;
+        builtin_bytecode_table.extend_from_slice(&0u32.to_le_bytes());
+        for output_file in output_files {
+            if output_file.output_kind != options::OutputKind::BuiltinBytecode {
+                continue;
+            }
+            let options::OutputFileValue::Buffer { bytes } = &output_file.value else { continue };
+            let Some(id) = core::str::from_utf8(&output_file.dest_path).ok().and_then(|s| s.parse::<u32>().ok()) else { continue };
+            let pointer = append_bytecode_aligned(&mut string_builder, bytes);
+            builtin_bytecode_table.extend_from_slice(&id.to_le_bytes());
+            builtin_bytecode_table.extend_from_slice(&pointer.offset.to_le_bytes());
+            builtin_bytecode_table.extend_from_slice(&pointer.length.to_le_bytes());
+            count += 1;
+        }
+        builtin_bytecode_table[0..4].copy_from_slice(&count.to_le_bytes());
+    }
+
     // Region layout after the bytecode/module_info run above: source maps
     // (unread until an error prints), then every file's source text as one run
     // (`Flags::SOURCE_TEXT_CONTIGUOUS`, so `hint_source_pages_dont_need` can
@@ -1250,12 +1285,14 @@ pub(crate) fn to_bytes(
     let modules_ptr = string_builder.append_count(modules_as_bytes);
     let hashes_ptr = string_builder.append_count(&source_hashes);
     debug_assert_eq!(hashes_ptr.offset, modules_ptr.offset + modules_ptr.length);
+    let builtin_table_ptr = string_builder.append_count(&builtin_bytecode_table);
+    debug_assert_eq!(builtin_table_ptr.offset, hashes_ptr.offset + hashes_ptr.length);
     let offsets = Offsets {
         entry_point_id: entry_point_id as u32,
         modules_ptr,
         compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
         byte_count: string_builder.len,
-        flags: flags | Flags::SOURCE_TEXT_CONTIGUOUS | Flags::HAS_SOURCE_HASHES,
+        flags: flags | Flags::SOURCE_TEXT_CONTIGUOUS | Flags::HAS_SOURCE_HASHES | Flags::HAS_BUILTIN_BYTECODE,
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.
@@ -2512,6 +2549,24 @@ impl StandaloneModuleGraph {
 
 /// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
 /// populates it from bytes, sets it globally, and returns the pointer.
+/// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins
+/// 8 bytes after a page-aligned address (the length header), so the offset must be 120 mod 128.
+fn append_bytecode_aligned(string_builder: &mut bun_core::StringBuilder, bytecode: &[u8]) -> StringPointer {
+    let target_mod: usize = 128 - size_of::<u64>();
+    let current_mod = string_builder.len % 128;
+    let padding = if current_mod <= target_mod { target_mod - current_mod } else { 128 - current_mod + target_mod };
+    let writable = string_builder.writable();
+    writable[0..padding].fill(0);
+    string_builder.len += padding;
+    let aligned_offset = string_builder.len;
+    let writable_after_padding = string_builder.writable();
+    writable_after_padding[0..bytecode.len()].copy_from_slice(bytecode);
+    let unaligned_space = &writable_after_padding[bytecode.len()..];
+    let len = bytecode.len() + unaligned_space.len().min(128);
+    string_builder.len += len;
+    StringPointer { offset: aligned_offset as u32, length: len as u32 }
+}
+
 fn from_bytes_alloc(
     raw_ptr: *mut u8,
     raw_len: usize,

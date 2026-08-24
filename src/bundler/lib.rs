@@ -267,6 +267,10 @@ pub mod options {
         Bytecode,
         #[strum(serialize = "module_info")]
         ModuleInfo,
+        /// Ahead-of-time bytecode for an internal module (node:fs etc.) a --compile executable uses; `dest_path` is the
+        /// InternalModuleRegistry id in decimal.
+        #[strum(serialize = "builtin-bytecode")]
+        BuiltinBytecode,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -280,6 +284,7 @@ pub mod options {
                 OutputKind::Sourcemap
                     | OutputKind::Bytecode
                     | OutputKind::ModuleInfo
+                    | OutputKind::BuiltinBytecode
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )

@@ -494,6 +494,8 @@ pub struct File {
     pub source_hash: u32,
     pub module_format: ModuleFormat,
     pub side: FileSide,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    shared_memfd: std::sync::OnceLock<Option<Fd>>,
 }
 
 impl File {
@@ -506,6 +508,24 @@ impl File {
         // A text module's bytes are not the file's UTF-8.
         !self.is_text_module()
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
+    }
+
+    /// A sealed memfd holding `contents`, created on first use and kept for the
+    /// rest of the process so every `fs.open()` of this file shares its pages.
+    /// `None` when memfds are unavailable or creating it failed.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn shared_memfd(&self) -> Option<Fd> {
+        *self.shared_memfd.get_or_init(|| {
+            if !Syscall::can_use_memfd() {
+                return None;
+            }
+            let fd = Syscall::memfd_create(c"bunfs", Syscall::MemfdFlags::NonExecutable).ok()?;
+            let file = Syscall::File::from_fd(fd);
+            file.pwrite_all(self.contents.as_bytes(), 0)
+                .and_then(|()| Syscall::memfd_seal(fd))
+                .ok()?;
+            Some(file.into_raw())
+        })
     }
 
     pub fn stat(&self) -> Stat {
@@ -871,6 +891,8 @@ impl StandaloneModuleGraph {
                     cached_blob: None,
                     encoding: module.encoding,
                     wtf_string: BunString::empty(),
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    shared_memfd: std::sync::OnceLock::new(),
                 },
             );
         }

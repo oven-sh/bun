@@ -321,6 +321,41 @@ fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get_ref()
 }
 
+/// A read-only descriptor over an embedded file's bytes, positioned at 0.
+/// Linux reopens the file's shared memfd, so an open() costs no copy; anywhere
+/// else each open() copies the bytes into a temp file that is unlinked before
+/// its descriptor is returned, so closing the descriptor is the only cleanup.
+fn embedded_file_fd(file: &bun_standalone_graph::File) -> Maybe<FD> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Some(fd) = file
+        .shared_memfd()
+        .and_then(|memfd| sys::reopen_read_only(memfd).ok())
+    {
+        return Ok(fd);
+    }
+
+    let mut name_buf = [0u8; 64];
+    let name = paths::fs::FileSystem::tmpname(b"bunfs", &mut name_buf, bun_core::fast_random())
+        .map_err(|_| sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::open))?;
+    let mut path_buf = paths::path_buffer_pool::get();
+    let path = paths::resolve_path::join_abs_string_buf_z::<paths::platform::Auto>(
+        bun_resolver::fs::RealFS::tmpdir_path(),
+        &mut path_buf[..],
+        &[name.as_bytes()],
+    );
+    let writer = sys::File::open(
+        path,
+        sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC,
+        0o600,
+    )?;
+    let reader = writer
+        .pwrite_all(file.contents.as_bytes(), 0)
+        .and_then(|()| sys::File::open(path, sys::O::RDONLY | sys::O::CLOEXEC, 0));
+    // A failed unlink only leaves a stray temp file behind.
+    let _ = Syscall::unlink(path);
+    Ok(reader?.into_raw())
+}
+
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
 /// `core::result::Result`, which has no `aborted()` constructor; inline the
 /// sentinel error directly.
@@ -523,6 +558,10 @@ mod _async_tasks {
         pub(crate) type Mkdtemp =
             AsyncFSTask<ret::Mkdtemp, args::MkdirTemp, { NodeFSFunctionEnum::Mkdtemp }>;
         pub(crate) type Open = UVFSRequest<ret::Open, args::Open, { NodeFSFunctionEnum::Open }>;
+        /// Embedded `/$bunfs/` paths, which libuv cannot open; see `Binding::open`.
+        #[cfg(windows)]
+        pub(crate) type OpenStandalone =
+            AsyncFSTask<ret::Open, args::Open, { NodeFSFunctionEnum::Open }>;
         pub(crate) type Read = UVFSRequest<ret::Read, args::Read, { NodeFSFunctionEnum::Read }>;
         pub(crate) type Readdir =
             AsyncFSTask<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>;
@@ -4524,10 +4563,15 @@ impl NodeFS {
             let is_dir = graph.find_dir(p);
             if is_dir || graph.contains_file(p) {
                 let mode = args.mode.as_int();
-                if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
-                    return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
-                }
-                return Ok(Null);
+                // Same answers as a real read-only filesystem holding 0644 files.
+                let denied = if (mode & sys::posix::W_OK) != 0 {
+                    E::EROFS
+                } else if (mode & sys::posix::X_OK) != 0 && !is_dir {
+                    E::EACCES
+                } else {
+                    return Ok(Null);
+                };
+                return Err(sys::Error::from_code(denied, sys::Tag::access).with_path(p));
             }
         }
         // The `bun_sys::access` Windows
@@ -5849,6 +5893,9 @@ impl NodeFS {
     }
 
     pub(crate) fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
+        if let Some(result) = Self::open_standalone(args) {
+            return result;
+        }
         let path = if cfg!(windows) && args.path.slice() == b"/dev/null" {
             // SAFETY: literal is NUL-terminated; len excludes the sentinel.
             ZStr::from_static(b"\\\\.\\NUL\0")
@@ -5859,6 +5906,28 @@ impl NodeFS {
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(fd) => Ok(fd),
         }
+    }
+
+    /// `None` unless `args.path` is embedded. Embedded files live on what
+    /// behaves as a read-only filesystem, hence EROFS for any write access.
+    fn open_standalone(args: &args::Open) -> Option<Maybe<ret::Open>> {
+        let graph = standalone_module_graph()?;
+        let path = args.path.slice();
+        let Some(file) = graph.find_ref(path) else {
+            return graph
+                .find_dir(path)
+                .then(|| Err(sys::Error::from_code(E::EISDIR, sys::Tag::open).with_path(path)));
+        };
+        if args.flags.as_int() & (sys::O::WRONLY | sys::O::RDWR | sys::O::TRUNC) != 0 {
+            return Some(Err(
+                sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path)
+            ));
+        }
+        Some(
+            embedded_file_fd(file).map_err(|err| {
+                sys::Error::from_code(err.get_errno(), sys::Tag::open).with_path(path)
+            }),
+        )
     }
 
     #[cfg(windows)]

@@ -116,7 +116,7 @@ pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) ->
                 encoding = Encoding::Multipart(Box::from(array_buffer.byte_slice()));
             }
         } else if boundary_value.is_string() {
-            boundary_slice = boundary_value.to_slice_or_null(global)?;
+            boundary_slice = boundary_value.to_slice(global)?;
             if !boundary_slice.slice().is_empty() {
                 encoding = Encoding::Multipart(Box::from(boundary_slice.slice()));
             }
@@ -135,7 +135,7 @@ pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) ->
         input_array_buffer = array_buffer;
         input = input_array_buffer.byte_slice();
     } else if input_value.is_string() {
-        input_slice = input_value.to_slice_or_null(global)?;
+        input_slice = input_value.to_slice(global)?;
         input = input_slice.slice();
     } else if let Some(blob) = input_value.as_class_ref::<Blob>() {
         input = blob.shared_view();

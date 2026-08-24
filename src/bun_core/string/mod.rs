@@ -1,13 +1,9 @@
-//! `bun_core::string` (formerly the `bun_string` crate) — `bun.String` and
-//! friends.
+//! `bun_core::string` — `bun.String` and friends.
 //!
 //! `String` is the FFI-compatible 5-variant tagged union shared with C++
 //! (`BunString` in `src/jsc/bindings/BunString.cpp`). `ZigString` is the
 //! pointer-tagged borrowed view; `ZigStringSlice` is the owned-or-borrowed
 //! UTF-8 byte slice.
-//!
-//! Merged into `bun_core` to break the `bun_core ↔ bun_string` dep edge;
-//! the `bun_string` crate is now a thin re-export shim over this module.
 
 pub use crate::w;
 
@@ -48,26 +44,32 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.String` — 5-variant tagged WTFString-or-ZigString. extern layout
-// must match the C++ `BunString` in BunString.cpp, 24 bytes on 64-bit.
+// `bun.String` — 5-variant tagged WTFString-or-ZigString, 24 bytes on 64-bit.
+//
+// Three types, one layout (all 24 bytes, identical ABI to C++ `BunString`):
+// - `String`: OWNS one ref when WTF-backed. Not `Copy`. `Drop` = `deref()`,
+//   `Clone` = `ref()`; for the `ZigString`/`Static`/`Empty`/`Dead` tags both
+//   are a tag compare and nothing else. Every +1 producer returns this —
+//   including `extern "C"` declarations: a by-value `String` in an FFI
+//   signature means ownership crosses (C++ `Bun::toStringRef` return, or a
+//   Rust return that C++ `transferToWTFString()`s), exactly like `Box<T>`.
+// - `&String` is the borrow. `StringView<'a>` is the by-value borrow (C++
+//   `Bun::toString`/`toStringView` results, property-iterator names,
+//   sub-slices of a WTF string).
+// `bun_alloc::String` is the `Copy` POD underneath; nothing outside this
+// module needs it.
 // ──────────────────────────────────────────────────────────────────────────
-// Canonical layout lives in `bun_alloc` (T0 TYPE_ONLY landing for
-// `bun.String`); re-exported so existing `bun_core::{Tag, StringImpl}` paths
-// keep working. `String` is a `#[repr(transparent)]` newtype over
-// `bun_alloc::String` so the FFI layout has ONE source of truth while this
-// crate retains its inherent impl block (toJS/toUTF8/WTF refcounting).
 pub use bun_alloc::{StringImpl, Tag};
 
 #[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct String(pub bun_alloc::String);
+pub struct String(bun_alloc::String);
 
 // C++ mirror: `struct BunString { BunStringTag tag; BunStringImpl impl; }`
 // (`headers-handwritten.h`); returned **by value** from every `BunString__*`
 // FFI below, so size/align drift is silent ABI corruption.
 crate::assert_ffi_layout!(String, 24, 8);
-// FFI surface from `src/jsc/bindings/BunString.cpp`. All return a fresh
-// WTF-backed `String` with refcount = 1; caller must `deref()` (or transfer).
+// FFI surface from `src/jsc/bindings/BunString.cpp`. Constructors return an
+// owned +1 (declared `-> String`).
 unsafe extern "C" {
     fn BunString__fromBytes(bytes: *const u8, len: usize) -> String;
     fn BunString__fromLatin1(bytes: *const u8, len: usize) -> String;
@@ -108,6 +110,11 @@ pub(crate) type ExternalStringImplFreeFunction<Ctx> =
 impl String {
     pub const EMPTY: Self = Self(bun_alloc::String::EMPTY);
     pub const DEAD: Self = Self(bun_alloc::String::DEAD);
+
+    #[inline]
+    fn into_raw(self) -> bun_alloc::String {
+        core::mem::ManuallyDrop::new(self).0
+    }
 
     #[inline]
     pub const fn empty() -> Self {
@@ -205,14 +212,17 @@ impl String {
             },
         })
     }
-    /// Alias of `static_` for callers that spell it `static_str`.
+    /// `clone_utf8(other)`, unless `other` is byte-equal to `self`, in which
+    /// case another ref to `self`.
     #[inline]
-    pub fn static_str<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
-        Self::static_(s)
+    pub fn create_if_different(&self, other: &[u8]) -> Self {
+        if self.eql_utf8(other) {
+            return self.clone();
+        }
+        Self::clone_utf8(other)
     }
 
-    /// `bun.String.cloneUTF8` — copies `s` into a fresh WTF::StringImpl
-    /// (refcount = 1). Caller must `deref()` or transfer ownership.
+    /// `bun.String.cloneUTF8` — copies `s` into a fresh WTF::StringImpl.
     pub fn clone_utf8(s: &[u8]) -> Self {
         if s.is_empty() {
             return Self::EMPTY;
@@ -355,6 +365,14 @@ impl String {
         // without copying and never frees it.
         unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
     }
+    /// UTF-16 form of [`Self::create_static_external`]: `units` must be
+    /// 2-byte aligned and live for the rest of the process.
+    pub fn create_static_external_utf16(units: &[u16]) -> Self {
+        debug_assert!(!units.is_empty());
+        // SAFETY: the C++ side takes the length in code units and stores
+        // ptr/len without copying or freeing.
+        unsafe { BunString__createStaticExternal(units.as_ptr().cast::<u8>(), units.len(), false) }
+    }
     /// `bun.String.createFormat` — formats `args` into a temporary buffer and
     /// copies the result into a fresh WTF-backed string.
     pub fn create_format(args: core::fmt::Arguments<'_>) -> Self {
@@ -450,9 +468,8 @@ impl String {
             Self::clone_utf16(os_path)
         }
     }
-    /// `bun.String.init(WTFStringImpl)` / `WTFString.adopt` — wrap a raw
-    /// `*mut WTFStringImplStruct`, **adopting** the existing +1 ref (no inc).
-    /// Inverse of [`leak_wtf_impl`]. Null → `String::EMPTY`.
+    /// `WTF::adoptRef` — wrap a raw `*mut WTFStringImplStruct`, **adopting**
+    /// an existing +1 ref (no inc). Inverse of [`leak_wtf_impl`]. Null → `EMPTY`.
     #[inline]
     pub fn adopt_wtf_impl(wtf: WTFStringImpl) -> Self {
         if wtf.is_null() {
@@ -465,13 +482,23 @@ impl String {
             },
         })
     }
+    /// `WTF::RefPtr(ptr)` — wrap a raw `*mut WTFStringImplStruct` someone else
+    /// keeps alive, taking a **new** ref for the returned `String`.
+    #[inline]
+    pub fn retain_wtf_impl(wtf: WTFStringImpl) -> Self {
+        let s = Self::adopt_wtf_impl(wtf);
+        s.ref_();
+        s
+    }
     /// Extract the raw `*mut WTFStringImplStruct`
     /// from a WTF-backed string, transferring ownership of the +1 ref to the caller. Returns
     /// null for non-WTF tags. Used by SQL data-cell paths that hand the impl pointer to C++.
     #[inline]
     pub fn leak_wtf_impl(self) -> WTFStringImpl {
-        if self.0.tag == Tag::WTFStringImpl {
-            self.wtf_ptr()
+        let raw = self.into_raw();
+        if raw.tag == Tag::WTFStringImpl {
+            // SAFETY: tag checked.
+            unsafe { raw.value.wtf_string_impl }
         } else {
             core::ptr::null_mut()
         }
@@ -500,25 +527,17 @@ impl String {
         }
     }
 
-    /// `String.ref()` — increment WTF refcount; no-op for other tags.
     #[inline]
-    pub fn ref_(&self) {
+    fn ref_(&self) {
         if self.0.tag == Tag::WTFStringImpl {
             self.as_wtf().r#ref()
         }
     }
-    /// `String.deref()` — decrement WTF refcount; no-op for other tags.
     #[inline]
-    pub fn deref(&self) {
+    fn deref(&self) {
         if self.0.tag == Tag::WTFStringImpl {
             self.as_wtf().deref()
         }
-    }
-    /// `String.dupeRef()` — copy + ref.
-    #[inline]
-    pub fn dupe_ref(&self) -> Self {
-        self.ref_();
-        *self
     }
 
     #[inline]
@@ -622,45 +641,40 @@ impl String {
         }
     }
 
-    /// `bun.String.trunc` — clamp to `len` code units. The
-    /// returned `String` borrows the same storage; for `WTFStringImpl` this
-    /// downgrades to a `ZigString` view (no ref taken), so the original must
-    /// outlive the result.
-    pub fn trunc(&self, len: usize) -> String {
+    /// `bun.String.trunc` — clamp to `len` code units. Borrows `self`'s
+    /// storage; for `WTFStringImpl` longer than `len` this is a `ZigString`
+    /// view into the impl's buffer.
+    #[inline]
+    pub fn trunc(&self, len: usize) -> StringView<'_> {
         if self.length() <= len {
-            // No refcount bump: `String` is `Copy` here (POD #[repr(C)]), so a
-            // plain copy preserves the borrow semantics.
-            return *self;
+            return StringView::new(self);
         }
-        String::init(self.to_zig_string().trunc(len))
+        StringView::from_zig(self.to_zig_string().trunc(len))
     }
 
-    /// `bun.String.substring` — borrowed slice from `start_index`
-    /// to end. The returned `String` borrows the same underlying storage; for
-    /// `WTFStringImpl` this downgrades to a `ZigString` view (no ref taken), so
-    /// the original must outlive the result.
-    pub fn substring(&self, start_index: usize) -> String {
+    /// `bun.String.substring` — borrowed slice from `start_index` to end.
+    pub fn substring(&self, start_index: usize) -> StringView<'_> {
         let len = self.length();
         self.substring_with_len(start_index.min(len), len)
     }
 
     /// `bun.String.substringWithLen`.
-    pub fn substring_with_len(&self, start_index: usize, end_index: usize) -> String {
+    pub fn substring_with_len(&self, start_index: usize, end_index: usize) -> StringView<'_> {
         match self.0.tag {
             Tag::ZigString | Tag::StaticZigString => {
-                String::init(self.as_zig().substring_with_len(start_index, end_index))
+                StringView::from_zig(self.as_zig().substring_with_len(start_index, end_index))
             }
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
                 if w.is_8bit() {
-                    String::init(ZigString::init(&w.latin1_slice()[start_index..end_index]))
+                    StringView::from_zig(ZigString::init(&w.latin1_slice()[start_index..end_index]))
                 } else {
-                    String::init(ZigString::init_utf16(
+                    StringView::from_zig(ZigString::init_utf16(
                         &w.utf16_slice()[start_index..end_index],
                     ))
                 }
             }
-            _ => *self,
+            _ => StringView::new(self),
         }
     }
 
@@ -685,6 +699,32 @@ impl String {
             _ => ZigStringSlice::EMPTY,
         }
     }
+    /// Consuming [`to_utf8`]: moves `self`'s ref into the slice instead of
+    /// taking another, and copies a borrowed `ZigString` so the result never
+    /// depends on `self`'s backing.
+    ///
+    /// [`to_utf8`]: Self::to_utf8
+    pub fn into_utf8(self) -> ZigStringSlice {
+        match self.0.tag {
+            Tag::WTFStringImpl => {
+                let wtf = self.as_wtf();
+                if !wtf.is_8bit() {
+                    return ZigStringSlice::init_owned(strings::to_utf8_alloc(wtf.utf16_slice()));
+                }
+                if let Some(utf8) = strings::to_utf8_from_latin1(wtf.latin1_slice()) {
+                    return ZigStringSlice::init_owned(utf8);
+                }
+                let bytes = RawSlice::new(wtf.latin1_slice());
+                ZigStringSlice::WTF {
+                    string_impl: self.leak_wtf_impl(),
+                    bytes,
+                }
+            }
+            Tag::ZigString => self.as_zig().to_slice().clone_if_borrowed(),
+            Tag::StaticZigString => ZigStringSlice::from_utf8_never_free(self.as_zig().slice()),
+            _ => ZigStringSlice::EMPTY,
+        }
+    }
     /// Like [`to_utf8`] but, for the 8-bit all-ASCII `WTFStringImpl` fast path,
     /// returns a non-owning [`ZigStringSlice::WtfBorrowed`] view instead of
     /// [`to_utf8`]'s ref-holding [`ZigStringSlice::WTF`] — skipping the
@@ -692,11 +732,11 @@ impl String {
     ///
     /// The returned slice borrows the impl's buffer, so it is only safe to pair
     /// with a value whose `underlying` keeps the impl alive (e.g. the
-    /// [`SliceWithUnderlyingString`] returned by [`to_slice`]). All other tags
+    /// [`SliceWithUnderlyingString`] returned by [`into_slice`]). All other tags
     /// behave exactly like [`to_utf8`] / [`to_utf8_without_ref`].
     ///
     /// [`to_utf8`]: Self::to_utf8
-    /// [`to_slice`]: Self::to_slice
+    /// [`into_slice`]: Self::into_slice
     #[inline]
     pub(crate) fn to_utf8_borrowed(&self) -> ZigStringSlice {
         match self.0.tag {
@@ -735,7 +775,7 @@ impl String {
         }
     }
     pub fn to_owned_slice(&self) -> Vec<u8> {
-        self.to_utf8().into_vec()
+        self.to_utf8_without_ref().into_vec()
     }
 
     pub fn eql_utf8(&self, other: &[u8]) -> bool {
@@ -778,29 +818,6 @@ impl String {
     #[inline]
     pub fn from_bytes(value: &[u8]) -> Self {
         Self::init(ZigString::from_bytes(value))
-    }
-
-    /// `bun.String.clone` — produce an owned, WTF-backed copy of `self`.
-    /// WTF-backed inputs just bump the refcount; ZigString inputs are copied
-    /// into a fresh WTF::StringImpl.
-    pub fn clone(&self) -> Self {
-        if self.0.tag == Tag::WTFStringImpl {
-            return self.dupe_ref();
-        }
-        if self.is_empty() {
-            return Self::EMPTY;
-        }
-        if self.is_utf16() {
-            let len = self.length();
-            let (new, chars) = Self::create_uninitialized_utf16(len);
-            if new.0.tag != Tag::Dead {
-                // SAFETY: tag ≠ WTFStringImpl is excluded above so
-                // `value.zig_string` is the active variant.
-                chars.copy_from_slice(self.as_zig().utf16_slice());
-            }
-            return new;
-        }
-        Self::clone_utf8(self.byte_slice())
     }
 
     /// `bun.String.toZigString` — borrow as a `ZigString` (no ref taken).
@@ -936,22 +953,9 @@ impl String {
         self.as_zig().slice()
     }
 
-    /// `bun.String.toUTF8Owned` — like [`to_utf8_without_ref`] but guarantees
-    /// the returned slice owns its buffer.
-    pub(crate) fn to_utf8_owned(&self) -> ZigStringSlice {
-        self.to_utf8_without_ref().clone_if_borrowed()
-    }
-
-    /// `bun.String.toUTF8Bytes` — owned `Vec<u8>` of `self` as UTF-8.
+    /// `bun.String.toSlice` — consume `self` into a [`SliceWithUnderlyingString`].
     #[inline]
-    pub fn to_utf8_bytes(&self) -> Vec<u8> {
-        self.to_utf8_owned().into_vec()
-    }
-
-    /// `bun.String.toSlice` — consume `self` into a
-    /// [`SliceWithUnderlyingString`], leaving `self` as [`EMPTY`].
-    #[inline]
-    pub fn to_slice(&mut self) -> SliceWithUnderlyingString {
+    pub fn into_slice(self) -> SliceWithUnderlyingString {
         // Move our ref into `underlying` first, then derive the UTF-8 view as a
         // *borrow* of that already-pinned impl: the ref-holding `to_utf8()` /
         // `ZigStringSlice::WTF` variant would be a redundant second handle on
@@ -959,19 +963,18 @@ impl String {
         // `deref` on `deinit`). `WtfBorrowed` keeps the impl pointer so
         // `SliceWithUnderlyingString::to_thread_safe` can still re-derive after
         // a thread-safe migration.
-        let underlying = core::mem::replace(self, Self::EMPTY);
-        let utf8 = underlying.to_utf8_borrowed();
+        let utf8 = self.to_utf8_borrowed();
         SliceWithUnderlyingString {
             utf8,
-            underlying,
+            underlying: self,
             #[cfg(debug_assertions)]
             did_report_extra_memory_debug: false,
         }
     }
 
-    /// `bun.String.toThreadSafeSlice` — like [`to_slice`] but
+    /// `bun.String.toThreadSafeSlice` — like [`into_slice`] but
     /// guarantees the resulting buffer is safe to send to another thread.
-    pub fn to_thread_safe_slice(&mut self) -> SliceWithUnderlyingString {
+    pub fn into_thread_safe_slice(self) -> SliceWithUnderlyingString {
         if self.0.tag == Tag::WTFStringImpl {
             let wtf = self.as_wtf();
             let slice = wtf.to_utf8_without_ref();
@@ -991,11 +994,10 @@ impl String {
             // ref would be redundant since `underlying` already keeps the impl
             // alive.
             if let ZigStringSlice::Static(bytes) = slice {
-                self.ref_();
                 let string_impl = self.wtf_ptr();
                 return SliceWithUnderlyingString {
                     utf8: ZigStringSlice::WtfBorrowed { string_impl, bytes },
-                    underlying: *self,
+                    underlying: self,
                     #[cfg(debug_assertions)]
                     did_report_extra_memory_debug: false,
                 };
@@ -1008,7 +1010,7 @@ impl String {
                 did_report_extra_memory_debug: false,
             };
         }
-        self.to_slice()
+        self.into_slice()
     }
 
     /// `bun.String.charAt` — code unit at `index`, widened to
@@ -1050,7 +1052,7 @@ impl String {
         }
     }
 
-    // `to_js` / `transfer_to_js` / `create_utf8_for_js` are tier-6 (jsc) — the
+    // `to_js` / `into_js` / `create_utf8_for_js` are tier-6 (jsc) — the
     // *_jsc alias pattern: deleted here per PORTING.md, defined as inherent
     // free fns / extension trait in `bun_jsc::string` (would otherwise create
     // a `bun_string ↔ bun_jsc` dependency cycle).
@@ -1103,21 +1105,6 @@ impl From<&[u16]> for String {
         Self::from(ZigString::from16_slice(s))
     }
 }
-/// `WTFStringImpl` arm of `bun.String.init` — wrap an existing
-/// `*WTFStringImplStruct` without touching its refcount.
-impl From<WTFStringImpl> for String {
-    #[inline]
-    fn from(wtf: WTFStringImpl) -> Self {
-        debug_assert!(!wtf.is_null());
-        Self(bun_alloc::String {
-            tag: Tag::WTFStringImpl,
-            value: StringImpl {
-                wtf_string_impl: wtf,
-            },
-        })
-    }
-}
-
 impl crate::OptionsEnvArg for String {
     #[inline]
     fn from_slice(s: &[u8]) -> Self {
@@ -1156,94 +1143,94 @@ unsafe impl Send for String {}
 // `is_thread_safe()`; non-WTF tags are inert and trivially `Sync`.
 unsafe impl Sync for String {}
 
-// ──────────────────────────────────────────────────────────────────────────
-// `OwnedString` — RAII `defer s.deref()`.
-//
-// `String` is intentionally `#[derive(Copy)]` so it stays bit-identical to the
-// C++ `BunString` for FFI by-value passing. That precludes
-// `impl Drop for String`. Instead, sites that
-// receive a +1 ref (any `clone*`/`create*`/`to_bun_string` constructor) wrap
-// it in `OwnedString` to get scope-exit `deref()`.
-//
-// Prefer this over ad-hoc `scopeguard::guard(s, |s| s.deref())` so the
-// pattern is greppable and `?`-early-returns can't skip the release.
-// ──────────────────────────────────────────────────────────────────────────
-#[repr(transparent)]
-pub struct OwnedString(String);
-
-impl OwnedString {
+impl Drop for String {
     #[inline]
-    pub const fn new(s: String) -> Self {
-        Self(s)
-    }
-    /// Disarm: return the inner `String` without `deref()`ing it (transfers
-    /// the +1 to the caller).
-    #[inline]
-    pub fn into_inner(self) -> String {
-        core::mem::ManuallyDrop::new(self).0
-    }
-    /// Borrow the inner `String` by value (it's `Copy`) without bumping the
-    /// refcount. Do NOT `deref()` the result.
-    #[inline]
-    pub fn get(&self) -> String {
-        self.0
-    }
-    /// View `&[OwnedString]` as `&[String]` for FFI sites that take a raw
-    /// `*const BunString` array (e.g. `BunString__createArray`). Sound because
-    /// `OwnedString` is `#[repr(transparent)]` over `String`; the borrow keeps
-    /// every element alive for the call, and `Drop` still runs on the owning
-    /// slice afterwards.
-    #[inline]
-    pub fn as_raw_slice(owned: &[OwnedString]) -> &[String] {
-        // `#[repr(transparent)]` over `String` ⇒ bytemuck's safe slice peel.
-        <Self as bytemuck::TransparentWrapper<String>>::peel_slice(owned)
+    fn drop(&mut self) {
+        self.deref();
     }
 }
-// SAFETY: `OwnedString` is `#[repr(transparent)]` with a single `String` field.
-unsafe impl bytemuck::TransparentWrapper<String> for OwnedString {}
-impl core::ops::Deref for OwnedString {
+impl Clone for String {
+    /// +1 on the same `WTF::StringImpl` (bitwise for the non-WTF tags).
+    #[inline]
+    fn clone(&self) -> Self {
+        self.ref_();
+        Self(self.0)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `StringView<'a>` — a by-value *borrow* of a `String`. Holds the same 24
+// bytes but never owns a ref; the lifetime ties it to the `String` (or byte
+// slice) it was derived from. Derefs to `&String`.
+// ──────────────────────────────────────────────────────────────────────────
+#[repr(transparent)]
+pub struct StringView<'a>(
+    core::mem::ManuallyDrop<String>,
+    core::marker::PhantomData<&'a String>,
+);
+
+impl<'a> StringView<'a> {
+    pub const EMPTY: StringView<'static> = StringView(
+        core::mem::ManuallyDrop::new(String::EMPTY),
+        core::marker::PhantomData,
+    );
+    pub const DEAD: StringView<'static> = StringView(
+        core::mem::ManuallyDrop::new(String::DEAD),
+        core::marker::PhantomData,
+    );
+
+    #[inline]
+    pub fn new(s: &'a String) -> Self {
+        Self(
+            core::mem::ManuallyDrop::new(String(s.0)),
+            core::marker::PhantomData,
+        )
+    }
+    /// Borrow `bytes` (no copy); scans and tags UTF-8 if any byte is non-ASCII.
+    #[inline]
+    pub fn from_bytes(bytes: &'a [u8]) -> Self {
+        Self::from_zig(ZigString::from_bytes(bytes))
+    }
+    /// Borrow `bytes` as UTF-8 (no copy, no scan).
+    #[inline]
+    pub fn borrow_utf8(bytes: &'a [u8]) -> Self {
+        Self::from_zig(ZigString::init_utf8(bytes))
+    }
+    /// `'static` ASCII/Latin-1 literal (no scan).
+    #[inline]
+    pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> StringView<'static> {
+        StringView(
+            core::mem::ManuallyDrop::new(String::static_(s)),
+            core::marker::PhantomData,
+        )
+    }
+    #[inline]
+    fn from_zig(z: ZigString) -> Self {
+        Self(
+            core::mem::ManuallyDrop::new(String::wrap_zig(Tag::ZigString, z)),
+            core::marker::PhantomData,
+        )
+    }
+}
+impl StringView<'_> {
+    /// UTF-8 bytes of the view. Unlike [`String::to_utf8`] this never takes a
+    /// ref (a view owns nothing); borrows for ASCII, allocates otherwise.
+    #[inline]
+    pub fn to_utf8(&self) -> ZigStringSlice {
+        self.0.to_utf8_without_ref()
+    }
+}
+impl core::ops::Deref for StringView<'_> {
     type Target = String;
     #[inline]
     fn deref(&self) -> &String {
         &self.0
     }
 }
-impl core::ops::DerefMut for OwnedString {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut String {
-        &mut self.0
-    }
-}
-impl Drop for OwnedString {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.deref();
-    }
-}
-impl From<String> for OwnedString {
-    #[inline]
-    fn from(s: String) -> Self {
-        Self(s)
-    }
-}
-impl Default for OwnedString {
-    #[inline]
-    fn default() -> Self {
-        Self(String::EMPTY)
-    }
-}
-impl Clone for OwnedString {
-    /// Bumps the WTF refcount (or copies a `ZigString` into a fresh
-    /// WTF::StringImpl) and wraps the resulting +1 in a new `OwnedString`.
-    #[inline]
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-impl core::fmt::Display for OwnedString {
+impl core::fmt::Display for StringView<'_> {
     #[inline]
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Display::fmt(&self.0, f)
+        core::fmt::Display::fmt(&**self, f)
     }
 }
 
@@ -1722,7 +1709,7 @@ pub enum ZigStringSlice {
     /// can promote it to an owning [`Self::WTF`]. Drop is a no-op. Produced by
     /// [`String::to_utf8_borrowed`] — it avoids the redundant `ref`/`deref`
     /// pair that the ref-holding `WTF` variant would cost on the
-    /// `String::to_slice` hot path.
+    /// `String::into_slice` hot path.
     ///
     /// [`clone_ref`]: ZigStringSlice::clone_ref
     WtfBorrowed {
@@ -1829,7 +1816,7 @@ impl SliceWithUnderlyingString {
     pub fn dupe_ref(&self) -> SliceWithUnderlyingString {
         SliceWithUnderlyingString {
             utf8: ZigStringSlice::EMPTY,
-            underlying: self.underlying.dupe_ref(),
+            underlying: self.underlying.clone(),
             #[cfg(debug_assertions)]
             did_report_extra_memory_debug: false,
         }
@@ -1839,14 +1826,6 @@ impl SliceWithUnderlyingString {
     #[inline]
     pub fn slice(&self) -> &[u8] {
         self.utf8.slice()
-    }
-
-    /// `deinit` — release `utf8`'s allocation (if any) and deref `underlying`.
-    /// `Drop` is intentionally not implemented because `underlying: String`
-    /// is `Copy`.
-    pub fn deinit(self) {
-        // `utf8` drops via ZigStringSlice::Drop.
-        self.underlying.deref();
     }
 
     /// `toThreadSafe` — if `underlying` is WTF-backed, migrate it to a
@@ -2354,51 +2333,3 @@ pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [
 
 // Re-export `wtf::parse_double` at crate root (callers spell it `bun_core::parse_double`).
 pub use wtf::parse_double;
-
-/// [`Cell`]-shaped interior-mutable owned `BunString` slot. Layout-identical
-/// to `Cell<String>` (`#[repr(transparent)]`) so it's a drop-in field
-/// replacement in `#[repr(C)]` FFI structs (`Blob.name`, `Request.url`).
-///
-/// Unlike `Cell<String>`, [`set`] derefs the previous value and [`replace`]
-/// returns an [`OwnedString`] — so the only way to leak a refcount is to
-/// `mem::forget` the cell or its `replace` result. The R-2 `&self` migrations
-/// introduced `Cell<String>::set(..)` calls that silently leaked the old +1.
-///
-/// [`get`] returns a bitwise `String` copy with **borrow** semantics (no ref
-/// bump). Do NOT `.deref()` the returned value.
-#[repr(transparent)]
-#[derive(Default)]
-pub struct OwnedStringCell(core::cell::Cell<String>);
-
-impl OwnedStringCell {
-    #[inline]
-    pub const fn new(s: String) -> Self {
-        Self(core::cell::Cell::new(s))
-    }
-    #[inline]
-    pub fn get(&self) -> String {
-        self.0.get()
-    }
-    #[inline]
-    pub fn set(&self, new: String) {
-        self.0.replace(new).deref();
-    }
-    #[inline]
-    pub fn replace(&self, new: String) -> OwnedString {
-        OwnedString(self.0.replace(new))
-    }
-}
-
-impl Drop for OwnedStringCell {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.get_mut().deref();
-    }
-}
-
-impl Clone for OwnedStringCell {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self::new(self.0.get().dupe_ref())
-    }
-}

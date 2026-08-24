@@ -461,7 +461,7 @@ impl JSMySQLConnection {
         // Frees `secure` / drops `tls_config` on every early return until `into_inner` below.
         let tls_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
 
-        let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
+        let path_str = arguments[8].to_bun_string(global_object)?;
 
         // `init` takes `Box<[u8]>` per field (each separately owned), so we
         // copy each string into its own allocation.

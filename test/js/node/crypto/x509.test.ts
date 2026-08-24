@@ -42,6 +42,19 @@ lGNHf1nq+j8dNaMGmheHKQ==
 -----END CERTIFICATE-----
 `;
 
+// Self-signed, brainpoolP256r1 key (a curve BoringSSL does not support, so publicKey cannot be decoded).
+const brainpoolCertPem = `-----BEGIN CERTIFICATE-----
+MIIBfTCCASSgAwIBAgIUbtq88KPedDaNbLVSO/txNjRWPicwCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJYnJhaW5wb29sMB4XDTI2MDgyMzIwMDAyMVoXDTM2MDgyMDIw
+MDAyMVowFDESMBAGA1UEAwwJYnJhaW5wb29sMFowFAYHKoZIzj0CAQYJKyQDAwII
+AQEHA0IABG8tl/XkdDFsqeIkd03yEF82Ivy1xzmsN8/NekZJzuwDSLlCCIbX2k6z
+JUoTfqdTxRL4ccrI4cXpqDxZPPaywMOjUzBRMB0GA1UdDgQWBBRpnrKAVW6DXXNk
+BABmxqGZ3WvcPDAfBgNVHSMEGDAWgBRpnrKAVW6DXXNkBABmxqGZ3WvcPDAPBgNV
+HRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIBssqQu642CLwl1dfD7WoD0D
+qGl/+1Di3abpA8YZOtoyAiAiScaiKhxu48bWQXYW5ZoQNzAfBIwL4krTuLVAKYZc
+Vg==
+-----END CERTIFICATE-----`;
+
 describe("X509Certificate.checkHost()", () => {
   const cert = new X509Certificate(wildcardSanCertPem);
   const cnOnly = new X509Certificate(cnOnlyCertPem);
@@ -102,6 +115,18 @@ describe("X509Certificate.subjectAltName", () => {
     const cert = new X509Certificate(emptySanCertPem);
     expect(cert.subjectAltName).toBe("");
     expect(cert.toLegacyObject().subjectaltname).toBe("");
+  });
+});
+
+describe("X509Certificate getters that fail", () => {
+  test("publicKey throws on every access when the key cannot be decoded (nothing stale is cached)", () => {
+    const cert = new X509Certificate(brainpoolCertPem);
+    expect(() => cert.publicKey).toThrow(expect.objectContaining({ code: "ERR_OSSL_X509_PUBLIC_KEY_DECODE_ERROR" }));
+    expect(() => cert.publicKey).toThrow(expect.objectContaining({ code: "ERR_OSSL_X509_PUBLIC_KEY_DECODE_ERROR" }));
+    // The rest of the certificate is still readable and cached.
+    expect(cert.fingerprint256).toMatch(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+    expect(cert.fingerprint256).toBe(cert.fingerprint256);
+    expect(cert.toLegacyObject().fingerprint256).toBe(cert.fingerprint256);
   });
 });
 

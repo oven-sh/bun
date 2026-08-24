@@ -27,7 +27,7 @@ use core::cell::{Cell, OnceCell};
 
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
-use bun_ptr::{BackRef, JsCell, Mut, RefPtr, ThisPtr};
+use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
@@ -46,8 +46,8 @@ use super::websocket_upgrade_client::{HttpUpgradeClient, HttpsUpgradeClient};
 /// holding a borrow of the tunnel across the re-entrant call.
 #[derive(Clone, Copy)]
 pub enum UpgradeClientRef {
-    Http(BackRef<HttpUpgradeClient, Mut>),
-    Https(BackRef<HttpsUpgradeClient, Mut>),
+    Http(BackRef<HttpUpgradeClient, Root>),
+    Https(BackRef<HttpsUpgradeClient, Root>),
 }
 
 /// Builds the [`UpgradeClientRef`] variant for a concrete `HTTPClient<SSL>`.
@@ -109,7 +109,7 @@ pub struct WebSocketProxyTunnel {
     /// Back-reference to the connected WebSocket client - used after
     /// successful upgrade. The client clears it (`clear_connected_web_socket`)
     /// before it can be freed.
-    connected_websocket: Cell<Option<BackRef<WebSocketClient, Mut>>>,
+    connected_websocket: Cell<Option<BackRef<WebSocketClient, Root>>>,
     /// SSL wrapper for TLS inside tunnel; set once in `start()`.
     wrapper: OnceCell<SslWrapperType>,
     /// Socket reference (the proxy connection)

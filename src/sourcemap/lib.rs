@@ -340,11 +340,13 @@ unsafe extern "C" {
     // bytes of it), so `&SourceProviderMap` carries no `readonly`/`noalias` —
     // the foreign side owns all state behind the handle and may mutate it. The
     // only param is that handle reference, so this is a `safe fn`.
-    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_core::String;
+    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap)
+    -> bun_core::StringView<'_>;
 }
 
 impl SourceProviderMap {
-    pub(crate) fn get_source_slice(&self) -> bun_core::String {
+    /// `Bun::toStringView` — a view into the provider's source.
+    pub(crate) fn get_source_slice(&self) -> bun_core::StringView<'_> {
         ZigSourceProvider__getSourceSlice(self)
     }
 
@@ -354,7 +356,7 @@ impl SourceProviderMap {
 }
 
 impl SourceProvider for SourceProviderMap {
-    fn get_source_slice(&self) -> bun_core::String {
+    fn get_source_slice(&self) -> bun_core::StringView<'_> {
         SourceProviderMap::get_source_slice(self)
     }
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -370,7 +372,8 @@ impl SourceProvider for SourceProviderMap {
 /// default-`None` optional capabilities so each provider only overrides what
 /// it actually has.
 pub trait SourceProvider {
-    fn get_source_slice(&self) -> bun_core::String;
+    /// `Bun::toStringView`: a ZigString view into the provider's source.
+    fn get_source_slice(&self) -> bun_core::StringView<'_>;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
 
     /// The provider's own in-memory sourcemap JSON for its source. Only

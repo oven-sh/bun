@@ -728,7 +728,7 @@ fn resolve_cron_tz(global: &JSGlobalObject, opts: JSValue) -> JsResult<CronTz> {
             global.throw_invalid_arguments(format_args!("Bun.cron: options.tz must be a string"))
         );
     }
-    let tz_str = bun_core::OwnedString::new(tz_val.to_bun_string(global)?);
+    let tz_str = tz_val.to_bun_string(global)?;
     let tz_slice = tz_str.to_utf8();
     let tz_bytes = tz_slice.slice();
     // IANA names are ASCII; rejecting here keeps the Latin-1 StringView cast in
@@ -777,9 +777,9 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
         )));
     }
 
-    let path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
-    let schedule_str = bun_core::OwnedString::new(args[1].to_bun_string(global)?);
-    let title_str = bun_core::OwnedString::new(args[2].to_bun_string(global)?);
+    let path_str = args[0].to_bun_string(global)?;
+    let schedule_str = args[1].to_bun_string(global)?;
+    let title_str = args[2].to_bun_string(global)?;
 
     let path_slice = path_str.to_utf8();
     let schedule_slice = schedule_str.to_utf8();
@@ -1286,7 +1286,7 @@ pub(crate) fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
             .throw_invalid_arguments(format_args!("Bun.cron.remove() expects a string title")));
     }
 
-    let title_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+    let title_str = args[0].to_bun_string(global)?;
     let title_slice = title_str.to_utf8();
 
     if !validate_title(title_slice.slice()) {
@@ -1374,7 +1374,7 @@ pub struct CronJob {
     ref_count: Cell<u32>,
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
     /// `ThisPtr`-taking paths that may release refs.
-    self_ref: Cell<BackRef<CronJob, bun_ptr::Mut>>,
+    self_ref: Cell<BackRef<CronJob, bun_ptr::Root>>,
     // pub: `bun_core::from_field_ptr!(CronJob, event_loop_timer)` needs `offset_of!` visibility.
     // `JsCell` is `#[repr(transparent)]`, so the byte offset of the inner
     // `EventLoopTimer` is identical and the dispatch.rs `owner!` macro works
@@ -1710,7 +1710,7 @@ impl CronJob {
             )));
         }
 
-        let schedule_str = bun_core::OwnedString::new(schedule_arg.to_bun_string(global)?);
+        let schedule_str = schedule_arg.to_bun_string(global)?;
         let schedule_slice = schedule_str.to_utf8();
 
         let parsed = match CronExpression::parse(schedule_slice.slice()) {
@@ -1864,7 +1864,7 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         )));
     }
 
-    let expr_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+    let expr_str = args[0].to_bun_string(global)?;
     let expr_slice = expr_str.to_utf8();
 
     let parsed = match CronExpression::parse(expr_slice.slice()) {

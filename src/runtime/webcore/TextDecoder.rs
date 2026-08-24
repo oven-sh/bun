@@ -1,7 +1,7 @@
 use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
-use bun_core::{OwnedString, strings};
+use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use core::cell::{Cell, RefCell};
 
@@ -633,10 +633,7 @@ impl TextDecoder {
             // WebIDL DOMString coercion: any other label value is stringified
             // and then looked up, so `1` or `{}` reports the same
             // ERR_ENCODING_NOT_SUPPORTED an unknown string label does.
-            // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl, so the +1
-            // ref `from_js` returns has to be wrapped to deref on scope exit.
-            let converted =
-                OwnedString::new(bun_core::String::from_js(encoding_value, global_this)?);
+            let converted = bun_core::String::from_js(encoding_value, global_this)?;
             let str = converted.to_utf8();
 
             // Same rule as the string branch above: "If encoding is failure or
@@ -716,7 +713,7 @@ pub extern "C" fn TextDecoder__createForStream(
         EncodingLabel::Utf8
     } else {
         let converted = match bun_core::String::from_js(label, global) {
-            Ok(s) => OwnedString::new(s),
+            Ok(s) => s,
             Err(_) => return core::ptr::null_mut(),
         };
         let str = converted.to_utf8();
@@ -737,7 +734,7 @@ pub extern "C" fn TextDecoder__createForStream(
         }
     };
     // SAFETY: as above; the label borrows a 'static byte slice (no refcount).
-    unsafe { *out_encoding_label = bun_core::String::static_(encoding.get_label()) };
+    unsafe { out_encoding_label.write(bun_core::String::static_(encoding.get_label())) };
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
         // SAFETY: as above.
         unsafe { *out_utf8_fast_path = true };

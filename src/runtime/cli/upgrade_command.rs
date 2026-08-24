@@ -1401,7 +1401,7 @@ pub(crate) mod upgrade_js_bindings {
             b"openTempDirWithoutSharingDelete",
             jsc::JSFunction::create(
                 global,
-                b"openTempDirWithoutSharingDelete",
+                "openTempDirWithoutSharingDelete",
                 // `#[bun_jsc::host_fn]` emits the C-ABI shim with a
                 // `__jsc_host_` prefix.
                 __jsc_host_js_open_temp_dir_without_sharing_delete,
@@ -1414,7 +1414,7 @@ pub(crate) mod upgrade_js_bindings {
             b"closeTempDirHandle",
             jsc::JSFunction::create(
                 global,
-                b"closeTempDirHandle",
+                "closeTempDirHandle",
                 __jsc_host_js_close_temp_dir_handle,
                 1,
                 Default::default(),

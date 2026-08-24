@@ -71,7 +71,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     UnlinkedFunctionExecutable* executable = nullptr;
     const uint8_t* cachedBytes = nullptr;
     size_t cachedSize = 0;
-    if (Bun__standaloneInternalModuleBytecode(WebCore::bunVM(globalObject), id, &cachedBytes, &cachedSize)) {
+    if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize)) {
         Ref<JSC::CachedBytecode> cached = JSC::CachedBytecode::create(std::span<uint8_t> { const_cast<uint8_t*>(cachedBytes), cachedSize }, [](const void*) {}, {});
         cached->setPayloadIsPersistent();
         executable = JSC::decodeBuiltinFunction(vm, WTF::move(cached), *source.provider(), InternalModuleRegistryConstants::sourceStamp);

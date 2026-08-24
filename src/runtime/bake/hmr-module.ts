@@ -688,7 +688,7 @@ function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
       // declares it. The walk starts with this module on the stack, so a
       // star chain that comes back here contributes nothing.
       const names = new Map<string, Id>();
-      const sawDynamic = resolveStarNames(starId, [mod.id], names);
+      const sawDynamic = resolveStarNames(starId, [mod.id], names, new Set());
       for (const [key, ownerId] of names) {
         defineForward(ownerId, key);
       }
@@ -721,18 +721,21 @@ function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
  * declares it, with the precedence of a namespace object: an own name wins
  * over a star, and a later star wins over an earlier one. `stack` holds the
  * modules whose stars are being resolved, so a circular star re-export is cut
- * where it closes. Returns whether a CommonJS module was met: its names are
- * only known after it runs. */
-function resolveStarNames(id: Id, stack: Id[], names: Map<string, Id>): boolean {
+ * where it closes. `resolved` holds the modules this walk already resolved,
+ * so a shared subtree of a diamond-shaped barrel graph is walked once.
+ * Returns whether a CommonJS module was met: its names are only known after
+ * it runs. */
+function resolveStarNames(id: Id, stack: Id[], names: Map<string, Id>, resolved: Set<Id>): boolean {
   const unloaded = unloadedModuleRegistry[id];
   if (!Array.isArray(unloaded)) return true;
   let sawDynamic = false;
   stack.push(id);
   for (const nested of unloaded[ESMProps.stars]) {
-    if (stack.includes(nested)) continue;
-    if (resolveStarNames(nested, stack, names)) sawDynamic = true;
+    if (stack.includes(nested) || resolved.has(nested)) continue;
+    if (resolveStarNames(nested, stack, names, resolved)) sawDynamic = true;
   }
   stack.pop();
+  resolved.add(id);
   for (const key of unloaded[ESMProps.exports]) {
     names.set(key, id);
   }

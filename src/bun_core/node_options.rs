@@ -630,7 +630,10 @@ mod tests {
         );
         assert_eq!(
             toks(b"-C development -r ./a.js"),
-            vec![b"--conditions=development".to_vec(), b"--require=./a.js".to_vec()],
+            vec![
+                b"--conditions=development".to_vec(),
+                b"--require=./a.js".to_vec()
+            ],
         );
         assert_eq!(
             toks(b"--max_http_header_size=65536"),

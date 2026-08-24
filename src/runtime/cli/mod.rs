@@ -1363,7 +1363,8 @@ pub mod command {
 
                 // Calculate offset: skip executable name + all exec argv
                 // options + BUN_OPTIONS / NODE_OPTIONS args
-                let num_parsed_options = num_exec_argv_options + bun_options_argc + node_options_argc;
+                let num_parsed_options =
+                    num_exec_argv_options + bun_options_argc + node_options_argc;
                 offset_for_passthrough = if full_argv.len() > 1 {
                     1 + num_parsed_options
                 } else {

@@ -380,6 +380,76 @@ describe("web worker", () => {
     });
   });
 
+  // The worker's inbox delivers only while its global scope has a 'message'
+  // listener; until then (and whenever the last one is removed) messages stay
+  // queued in order, as a MessagePort / node's parentPort does. #40141
+  describe("messages to the worker global scope wait for a listener", () => {
+    // `early` is posted right after construction (worker still starting); `onStarted` once the
+    // worker's entry has run far enough to post "started". The worker echoes what it receives.
+    async function expectEchoed(
+      src: string,
+      { early = [], onStarted, expected }: { early?: unknown[]; onStarted: unknown[]; expected: unknown[] },
+    ) {
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      for (const m of early) w.postMessage(m);
+      const got: unknown[] = [];
+      const done = Promise.withResolvers<void>();
+      w.onerror = e => done.reject(e.error ?? e.message);
+      w.onmessage = e => {
+        if (e.data === "started") {
+          for (const m of onStarted) w.postMessage(m);
+          return;
+        }
+        got.push(e.data);
+        if (got.length === expected.length) done.resolve();
+      };
+      try {
+        await done.promise;
+        expect(got).toEqual(expected);
+      } finally {
+        w.terminate();
+      }
+    }
+
+    test("handler installed after a top-level await", async () => {
+      await expectEchoed(
+        `postMessage("started");
+         await new Promise(r => setTimeout(r, 50));
+         self.onmessage = e => postMessage(e.data);`,
+        { early: ["early"], onStarted: [0, 1, 2], expected: ["early", 0, 1, 2] },
+      );
+    });
+
+    test("handler installed before a top-level await that never settles", async () => {
+      await expectEchoed(
+        `self.onmessage = e => postMessage(e.data);
+         postMessage("started");
+         await new Promise(() => {});`,
+        { onStarted: [0, 1, 2], expected: [0, 1, 2] },
+      );
+    });
+
+    // Browsers drop these (the port queue is enabled once evaluation returns);
+    // Bun keeps them until something listens.
+    test("handler installed a turn after the entry module has finished", async () => {
+      await expectEchoed(
+        `postMessage("started");
+         setTimeout(() => self.addEventListener("message", e => postMessage(e.data)), 50);`,
+        { early: ["early"], onStarted: [0, 1, 2], expected: ["early", 0, 1, 2] },
+      );
+    });
+
+    test("removing the last listener mid-batch pauses delivery, in order, until one is added again", async () => {
+      await expectEchoed(
+        `const first = e => { postMessage("first:" + e.data); self.removeEventListener("message", first); setTimeout(resume, 20); };
+         const resume = () => self.onmessage = e => postMessage("second:" + e.data);
+         self.addEventListener("message", first);
+         postMessage("started");`,
+        { onStarted: [0, 1, 2, 3], expected: ["first:0", "second:1", "second:2", "second:3"] },
+      );
+    });
+  });
+
   describe("terminate() races and lifecycle edges", () => {
     // A vm timeout inside a worker is a transient termination of that VM; it
     // must not leave the worker unable to run script (parent messages dropped).

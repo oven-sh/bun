@@ -105,13 +105,11 @@ public:
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
     void drainMessagesToWorkerGlobalScope(ScriptExecutionContext&);
-    // The entry module's evaluation promise settled (including any top-level await). Until then the
-    // inbox drain parks messages unless a 'message' listener already exists.
-    void workerEntryModuleSettled();
-    // Schedule an inbox drain on the worker thread if messages are queued and none is in flight.
-    void scheduleDrainToWorkerGlobalScope();
 
     // -- Either thread ---------------------------------------------------------------------------
+    // Post an inbox drain to the worker thread if it is Running, messages are queued and no drain is
+    // in flight. The drain delivers only while the worker global scope has a 'message' listener.
+    void scheduleDrainToWorkerGlobalScope();
     WorkerOptions& options() { return m_options; }
     ScriptExecutionContextIdentifier workerContextIdentifier() const { return m_workerContextIdentifier; }
 
@@ -159,9 +157,6 @@ private:
 
     MessageInbox m_toWorker;
     MessageInbox m_toParent;
-
-    // Worker thread only: set once the entry module's evaluation promise settles.
-    bool m_entryModuleSettled { false };
 };
 
 } // namespace WebCore

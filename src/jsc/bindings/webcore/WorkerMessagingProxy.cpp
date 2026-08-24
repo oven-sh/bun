@@ -202,13 +202,20 @@ void WorkerMessagingProxy::postMessageToWorkerGlobalScope(MessageWithMessagePort
     {
         Locker locker { m_toWorker.lock };
         // A terminated (or terminating) worker drains nothing more: drop, as a closed port does.
-        auto state = m_state.load();
-        if (state == State::Closing || state == State::Closed)
+        if (isClosingOrClosed())
             return;
         m_toWorker.queue.append(WTF::move(message));
+    }
+    scheduleDrainToWorkerGlobalScope();
+}
+
+void WorkerMessagingProxy::scheduleDrainToWorkerGlobalScope()
+{
+    {
+        Locker locker { m_toWorker.lock };
         // Before Running the inbox is only buffered; workerGlobalScopeStarted() schedules the first
-        // drain on the worker thread. One drain task in flight at a time.
-        if (m_state.load() != State::Running || m_toWorker.drainScheduled)
+        // drain. One drain task in flight at a time.
+        if (m_state.load() != State::Running || m_toWorker.queue.isEmpty() || m_toWorker.drainScheduled)
             return;
         m_toWorker.drainScheduled = true;
     }
@@ -285,13 +292,15 @@ void WorkerMessagingProxy::rejectAllCrossVMRequests()
 // wait behind it. `UntilEmpty` is for the sender having exited: the queue is finite and everything
 // in it precedes 'close'. Worker inboxes never change owner, so up to a budget's worth is moved out
 // under one lock acquisition and dispatched uncontended; the queue itself is only swapped out whole
-// when it fits the budget, so a continuation never has to hand a tail back.
+// when it fits the budget, so a continuation never has to hand a tail back — except when the
+// receiver pauses (its last 'message' listener is removed mid-drain): the undelivered rest of the
+// batch goes back in front of the queue and the drain stops until a listener re-schedules it.
 enum class DrainBudget { Bounded,
     UntilEmpty };
 static constexpr size_t drainBatchLimit = 1024;
 
-template<typename Dispatch>
-static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
+template<typename Paused, typename Dispatch>
+static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Paused&& paused, Dispatch&& dispatch)
 {
     auto& vm = globalObject.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -300,8 +309,9 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
     while (true) {
         Deque<MessageWithMessagePorts> batch;
         {
+            bool isPaused = paused();
             Locker locker { inbox.lock };
-            if (inbox.queue.isEmpty()) {
+            if (isPaused || inbox.queue.isEmpty()) {
                 inbox.drainScheduled = false;
                 return false;
             }
@@ -335,6 +345,13 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
                 dispatch(event->event);
             if (globalObject.drainMicrotasks())
                 return false; // termination pending
+            if (paused()) {
+                Locker locker { inbox.lock };
+                while (!batch.isEmpty())
+                    inbox.queue.prepend(batch.takeLast());
+                inbox.drainScheduled = false;
+                return false;
+            }
         }
     }
 }
@@ -342,19 +359,13 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
 void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionContext& context)
 {
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    // The implicit port's message queue is enabled once the entry script's evaluation (including
-    // top-level await) completes, or earlier when the script installs a message handler (HTML's
-    // onmessage setter). Dispatching sooner fires the events at nothing and loses the messages, so
-    // park them: workerEntryModuleSettled() and the first 'message' listener
-    // (GlobalEventScope::onDidChangeListenerImpl) re-schedule this drain. Any handler counts, so
-    // hasEventListeners, not hasActiveEventListeners: a passive listener still receives the event.
-    if (!m_entryModuleSettled && !globalObject.globalEventScope->hasEventListeners(eventNames().messageEvent)) {
-        Locker locker { m_toWorker.lock };
-        m_toWorker.drainScheduled = false;
-        return;
-    }
-    bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, [&](Event& event) {
-        globalObject.globalEventScope->dispatchEvent(event);
+    auto& target = globalObject.globalEventScope.get();
+    // The worker's implicit port delivers only while the global scope has a 'message' listener, as a
+    // MessagePort (and Node's parentPort) does: without one the messages stay queued, and the first
+    // listener added re-schedules this drain (GlobalEventScope::onDidChangeListenerImpl).
+    auto paused = [&] { return !target.hasEventListeners(eventNames().messageEvent); };
+    bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, paused, [&](Event& event) {
+        target.dispatchEvent(event);
     });
     if (more) {
         // Budget spent with messages left: continue after the loop has polled,
@@ -362,33 +373,6 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
         context.postTaskAfterYield([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             protectedThis->drainMessagesToWorkerGlobalScope(context);
         });
-    }
-}
-
-void WorkerMessagingProxy::workerEntryModuleSettled()
-{
-    m_entryModuleSettled = true;
-    scheduleDrainToWorkerGlobalScope();
-}
-
-void WorkerMessagingProxy::scheduleDrainToWorkerGlobalScope()
-{
-    // Before Running the first drain belongs to workerGlobalScopeStarted(): nothing from the inbox
-    // is dispatched while the entry graph is still loading.
-    if (m_state.load() != State::Running)
-        return;
-    {
-        Locker locker { m_toWorker.lock };
-        if (m_toWorker.queue.isEmpty() || m_toWorker.drainScheduled)
-            return;
-        m_toWorker.drainScheduled = true;
-    }
-    bool posted = ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-        protectedThis->drainMessagesToWorkerGlobalScope(context);
-    });
-    if (!posted) {
-        Locker locker { m_toWorker.lock };
-        m_toWorker.drainScheduled = false;
     }
 }
 
@@ -402,7 +386,8 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
     }
     Ref workerObject = *m_workerObject;
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toParent, globalObject, context, budget, [&](Event& event) {
+    auto neverPaused = [] { return false; };
+    bool more = drainInbox(m_toParent, globalObject, context, budget, neverPaused, [&](Event& event) {
         workerObject->dispatchEvent(event);
     });
     if (more) {
@@ -435,24 +420,10 @@ void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlo
         workerObject->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
     });
 
-    // Tasks and messages that arrived while Pending. If the entry module installed a 'message'
-    // listener they run now; otherwise on the next tick, so a listener added right after startup
-    // (the common `parentPort.on('message')` in an async callback) still sees them.
-    auto deliver = [protectedThis = Ref { *this }, pendingTasks = WTF::move(pendingTasks)](ScriptExecutionContext& context) mutable {
-        for (auto& task : pendingTasks)
-            task(context);
-        {
-            Locker locker { protectedThis->m_toWorker.lock };
-            if (protectedThis->m_toWorker.queue.isEmpty() || protectedThis->m_toWorker.drainScheduled)
-                return;
-            protectedThis->m_toWorker.drainScheduled = true;
-        }
-        protectedThis->drainMessagesToWorkerGlobalScope(context);
-    };
-    if (workerGlobalObject.globalEventScope->hasActiveEventListeners(eventNames().messageEvent))
-        deliver(context);
-    else
-        context.postTask(WTF::move(deliver));
+    // Tasks and messages that arrived while Pending.
+    for (auto& task : pendingTasks)
+        task(context);
+    scheduleDrainToWorkerGlobalScope();
 }
 
 void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& message)

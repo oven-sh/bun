@@ -21,9 +21,7 @@ void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomStri
         case Add:
             if (global.m_messageEventCount == 0) {
                 global.scriptExecutionContext()->refEventLoop();
-                // The first 'message' listener enables the implicit port's message queue (HTML's
-                // onmessage setter does this): release messages the inbox drain parked while the
-                // entry module was still evaluating.
+                // A worker's inbox delivers only while a 'message' listener exists; resume it.
                 if (auto* jsGlobalObject = global.scriptExecutionContext()->globalObject()) {
                     if (auto* proxy = WebWorker__getMessagingProxy(defaultGlobalObject(jsGlobalObject)->bunVM()))
                         proxy->scheduleDrainToWorkerGlobalScope();

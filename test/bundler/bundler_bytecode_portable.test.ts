@@ -49,11 +49,13 @@ async function bundle(outdir: string, args: readonly string[]) {
   return { js: readFileSync(join(outdir, "features.js")), jsc: readFileSync(join(outdir, "features.js.jsc")) };
 }
 
-// The first 4 bytes are a hash of the WebKit version (GenericCacheEntry::m_cacheVersion), which changes on every
-// upgrade whether or not the format did; everything after them is the serialized code block.
+// The payload starts with GenericCacheEntry { uint32 cacheVersion; uint32 headerSize; uint32 headerChecksum; ... }.
+// cacheVersion is a hash of the WebKit version string and headerChecksum covers it, so both change on every WebKit
+// upgrade whether or not the format did; mask them so the snapshot only moves when the serialized bytes do.
 function fingerprint(bytecode: Uint8Array) {
   const copy = new Uint8Array(bytecode);
   copy.fill(0, 0, 4);
+  copy.fill(0, 8, 12);
   return { sha256: Bun.CryptoHasher.hash("sha256", copy, "hex"), bytes: copy.byteLength };
 }
 
@@ -82,23 +84,23 @@ describe("bytecode cache portability", () => {
           "js": "0d5fba07e4f6ff812ee9534e829590b7cae04f6db1af13967818bf17d116db1c",
           "jsc": {
             "bytes": 19720,
-            "sha256": "5f9b35903c19619d85dc7a08e34d77c84b426310b09ae0f0ab539a0f822543ec",
+            "sha256": "00f3850fc97ec64ade09ae86f521ef30b67dabda4e1ecb3d9ad171b52089d496",
           },
         },
         "bun build --bytecode features.js": {
           "js": "2f4f87f33956b088710f61e07cf3c536c53c01c61c2f17608e8ccbcb5c5aa5d9",
           "jsc": {
             "bytes": 20200,
-            "sha256": "1df700a53f025345ccd92263a0bba597b0af0954c1a15ccba4026f1c13c23297",
+            "sha256": "d85291a3827269a3425bc15a0afb9ca937b9813448fd73c4967fa8f864d4c5db",
           },
         },
         "vm.Script features.js": {
           "bytes": 4632,
-          "sha256": "04690861bc6a487bd7663be6e9756215657b953cca4503e1a9b6017a5fc2f003",
+          "sha256": "16d32ffe0ac8628093c753e40528413803b24eaa25d038bce9debc80611778e6",
         },
         "vm.SourceTextModule module.js": {
           "bytes": 2232,
-          "sha256": "ba9a5e97c46e7fcfd0ab5aea2ffec74a84b87e2cd1795c9922246e31a988db2f",
+          "sha256": "59d03a5745df373c5587792dc8fbb76c944aca50d3b1afaa2670861921ee231d",
         },
       }
     `);

@@ -289,6 +289,20 @@ describe("@opentelemetry/api", () => {
     await collect();
   });
 
+  test("propagation.inject(ctx) with a Context that has no baggage does not leak the ambient baggage", async () => {
+    const tracer = trace.getTracer("compat");
+    const other = tracer.startSpan("other");
+    const bare = trace.setSpan(ROOT_CONTEXT, other); // span, no baggage
+    let injected: Record<string, string> = {};
+    context.with(propagation.setBaggage(ROOT_CONTEXT, propagation.createBaggage({ amb: { value: "1" } })), () => {
+      propagation.inject(bare, injected);
+    });
+    other.end();
+    expect(injected.traceparent).toContain(other.spanContext().spanId);
+    expect(injected.baggage).toBeUndefined();
+    await collect();
+  });
+
   test("propagation.inject() inside a request handler forwards the baggage the request carried in", async () => {
     using server = Bun.serve({
       port: 0,

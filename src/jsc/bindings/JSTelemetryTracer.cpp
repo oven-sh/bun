@@ -620,8 +620,11 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
         out->putDirectIndex(globalObject, 1, traceState);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if ((flags & 2) && !(baggage && asString(baggage)->length())) {
-        // Baggage set via the api Context (propagation.extract / setBaggage).
+    // Only when the caller is injecting for the *active* span (node:http):
+    // baggage set via the api Context (propagation.extract / setBaggage) wins
+    // over what the request carried in, like fetch and propagator.inject().
+    bool includeAmbient = callFrame->argument(1).isTrue();
+    if ((flags & 2) && includeAmbient) {
         BunString bg = Bun__Telemetry__activeExtrasBaggage(globalObject);
         if (bg.tag != BunStringTag::Empty)
             baggage = jsString(vm, bg.transferToWTFString());

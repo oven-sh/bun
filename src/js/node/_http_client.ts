@@ -210,7 +210,7 @@ function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
       return false;
     };
     if (!has("traceparent")) {
-      const [traceparent, tracestate, baggage] = otel.propagationHeaders(span);
+      const [traceparent, tracestate, baggage] = otel.propagationHeaders(span, true);
       const add: [string, string][] = [];
       if (traceparent) add.push(["traceparent", traceparent]);
       if (tracestate && !has("tracestate")) add.push(["tracestate", tracestate]);
@@ -224,7 +224,7 @@ function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
       }
     }
   } else if (!req.getHeader("traceparent")) {
-    const [traceparent, tracestate, baggage] = otel.propagationHeaders(span);
+    const [traceparent, tracestate, baggage] = otel.propagationHeaders(span, true);
     if (traceparent) req.setHeader("traceparent", traceparent);
     if (tracestate && !req.getHeader("tracestate")) req.setHeader("tracestate", tracestate);
     if (baggage && !req.getHeader("baggage")) req.setHeader("baggage", baggage);

@@ -707,6 +707,30 @@ describe("client.address", () => {
 });
 
 describe("limits", () => {
+  test("attributeValueLengthLimit applies to captured request header values (string[] attribute)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const spans = [];
+        Bun.otel.start({ exporters: [{ export: b => spans.push(...b) }], instrumentations: { http: true }, limits: { attributeValueLengthLimit: 8 } });
+        const server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+        await (await fetch(server.url, { headers: { "x-request-id": "0123456789abcdef" } })).text();
+        await Bun.otel.forceFlush();
+        console.log(JSON.stringify(spans.find(s => s.scope.name === "bun.http.server").attributes["http.request.header.x-request-id"]));
+        server.stop(true);
+        `,
+      ],
+      env: { ...bunEnv, OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST: "x-request-id" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify(["01234567"]));
+    expect(exitCode).toBe(0);
+  });
+
   test("attributeValueLengthLimit applies to leaf spans too (fetch url.full)", async () => {
     using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
     Bun.otel.start({

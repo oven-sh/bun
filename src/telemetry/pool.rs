@@ -176,20 +176,13 @@ impl Slot {
         }
         self.n_attrs += 1;
         self.attr_keys |= key_bit(key);
-        match *v {
-            Value::Str(s) if s.len() > limits.attribute_value_length as usize => {
-                otlp::write_key_value(
-                    &mut self.attrs,
-                    field::ATTRIBUTES,
-                    key,
-                    &Value::Str(otlp::truncate_utf8(
-                        s,
-                        limits.attribute_value_length as usize,
-                    )),
-                )
-            }
-            _ => otlp::write_key_value(&mut self.attrs, field::ATTRIBUTES, key, v),
-        }
+        otlp::write_key_value_limited(
+            &mut self.attrs,
+            field::ATTRIBUTES,
+            key,
+            v,
+            limits.attribute_value_length as usize,
+        );
     }
 
     /// Last-write-wins variant for keys that may repeat (user code).

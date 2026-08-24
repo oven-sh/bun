@@ -180,6 +180,37 @@ fn write_any_value_body(out: &mut Vec<u8>, v: &Value<'_>) {
 }
 
 /// Append one `KeyValue` as field number `field` of the enclosing message.
+/// [`write_key_value`] with `attributeValueLengthLimit` applied to string
+/// values, including the string elements of an array value.
+pub fn write_key_value_limited(
+    out: &mut Vec<u8>,
+    field: u32,
+    key: &[u8],
+    v: &Value<'_>,
+    max: usize,
+) {
+    match *v {
+        Value::Str(s) if s.len() > max => {
+            write_key_value(out, field, key, &Value::Str(truncate_utf8(s, max)))
+        }
+        Value::Array(items)
+            if items
+                .iter()
+                .any(|i| matches!(i, Value::Str(s) if s.len() > max)) =>
+        {
+            let limited: Vec<Value<'_>> = items
+                .iter()
+                .map(|i| match *i {
+                    Value::Str(s) => Value::Str(truncate_utf8(s, max)),
+                    other => other,
+                })
+                .collect();
+            write_key_value(out, field, key, &Value::Array(&limited))
+        }
+        _ => write_key_value(out, field, key, v),
+    }
+}
+
 pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>) {
     let av = any_value_body_len(v);
     let kv = len_field_len(f::KV_KEY, key.len()) + len_field_len(f::KV_VALUE, av);
@@ -418,26 +449,20 @@ impl<'a> SpanWriter<'a> {
     }
 
     #[inline]
-    fn limited<'v>(&self, v: Value<'v>) -> Value<'v> {
-        match v {
-            Value::Str(s) if s.len() > self.value_limit => {
-                Value::Str(truncate_utf8(s, self.value_limit))
-            }
-            v => v,
-        }
-    }
-
-    #[inline]
     pub fn attr<'v>(&mut self, key: &str, v: impl Into<Value<'v>>) -> &mut Self {
-        let v = self.limited(v.into());
-        write_key_value(self.out, f::ATTRIBUTES, key.as_bytes(), &v);
+        write_key_value_limited(
+            self.out,
+            f::ATTRIBUTES,
+            key.as_bytes(),
+            &v.into(),
+            self.value_limit,
+        );
         self
     }
 
     #[inline]
     pub fn attr_bytes_key<'v>(&mut self, key: &[u8], v: impl Into<Value<'v>>) -> &mut Self {
-        let v = self.limited(v.into());
-        write_key_value(self.out, f::ATTRIBUTES, key, &v);
+        write_key_value_limited(self.out, f::ATTRIBUTES, key, &v.into(), self.value_limit);
         self
     }
 
@@ -445,8 +470,13 @@ impl<'a> SpanWriter<'a> {
     #[inline]
     pub fn attr_opt(&mut self, key: &str, v: &[u8]) -> &mut Self {
         if !v.is_empty() {
-            let v = self.limited(Value::Str(v));
-            write_key_value(self.out, f::ATTRIBUTES, key.as_bytes(), &v);
+            write_key_value_limited(
+                self.out,
+                f::ATTRIBUTES,
+                key.as_bytes(),
+                &Value::Str(v),
+                self.value_limit,
+            );
         }
         self
     }

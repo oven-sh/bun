@@ -707,10 +707,7 @@ function fakeParentPort() {
   return fake;
 }
 
-// Node-specific additions to a worker's process object. The process-wide operations
-// (abort, chdir, umask(mask), set*id, title) are handled natively for every worker
-// kind when the process object is created (BunProcess.cpp). Gate on _isNodeWorker so
-// a raw `new globalThis.Worker` that transitively loads this module is left alone.
+// Node-only process additions; the process-wide stubs are native (BunProcess.cpp).
 if (!isMainThread && _isNodeWorker) {
   applyWorkerProcessOverrides();
 }

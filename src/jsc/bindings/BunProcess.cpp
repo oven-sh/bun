@@ -4985,9 +4985,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUnsupportedInWorker, (JSGlobalObject * 
     return throwError(globalObject, scope, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, makeString("process."_s, name, "() is not supported in workers"_s));
 }
 
-// These act on the whole process, so Node replaces them with throwing stubs on
-// every worker thread (lib/internal/process/worker_thread_only.js). Both the
-// Web Worker and the node:worker_threads constructors create a worker VM.
+// Node's list from lib/internal/process/worker_thread_only.js; each acts on the whole process.
 static void installWorkerProcessStubs(JSC::VM& vm, Process* process)
 {
     static constexpr ASCIILiteral unsupportedInWorker[] = {

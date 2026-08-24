@@ -3923,6 +3923,15 @@ it("should not trim utf-8 start bytes at end of string", () => {
   expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
 });
 
+it("Buffer.from(BigInt64Array) throws instead of returning a zero-filled buffer", () => {
+  // Copying BigInt elements into a Uint8Array is a TypeError (same as `new Uint8Array(2).set(new BigInt64Array(1))`).
+  expect(() => Buffer.from(new BigInt64Array([1n]))).toThrow(TypeError);
+  expect(() => Buffer.from(new BigUint64Array([1n]))).toThrow(TypeError);
+  expect(() => new Buffer(new BigInt64Array([1n]))).toThrow(TypeError);
+  // An empty one has nothing to copy.
+  expect(Buffer.from(new BigInt64Array(0)).length).toBe(0);
+});
+
 it("Buffer.from(arrayBuffer)", () => {
   const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
   const buf = Buffer.from(ab);

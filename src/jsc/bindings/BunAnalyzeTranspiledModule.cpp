@@ -171,19 +171,19 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
 
     auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
 
-    if (provider->m_resolvedSource.module_info == nullptr) {
+    if (provider->m_moduleInfo == nullptr) {
         dataLog("[note] module_info is null for module: ", moduleKey.utf8(), "\n");
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null")))));
     }
 
-    auto* moduleInfo = static_cast<bun_ModuleInfoDeserialized*>(provider->m_resolvedSource.module_info);
+    auto* moduleInfo = provider->m_moduleInfo;
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, moduleInfo);
     // Under --isolate the same SourceProvider is reused across globals via the
     // IsolatedModuleCache, so module_info must remain alive on the provider;
     // ~SourceProvider frees it. Otherwise, free now.
     if (!Bun::IsolatedModuleCache::canUse(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)->bunVM())) {
         zig__ModuleInfoDeserialized__deinit(moduleInfo);
-        provider->m_resolvedSource.module_info = nullptr;
+        provider->m_moduleInfo = nullptr;
     }
     if (moduleRecord == nullptr) {
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));

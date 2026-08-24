@@ -14,7 +14,7 @@ use bun_jsc as jsc;
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task};
 use bun_sys::Fd;
 use bun_sys::FdExt;
 #[cfg(windows)]
@@ -428,7 +428,7 @@ mod json {
 
     extern "C" fn json_ipc_data_string_free_cb(context: *mut bool, _: *mut c_void, _: usize) {
         // SAFETY: context points to `was_ascii_string_freed` on the caller's stack,
-        // kept alive across the deref/defer block in decode_ipc_message.
+        // kept alive across the `drop(str)` in decode_ipc_message.
         unsafe { *context = true };
     }
 
@@ -509,14 +509,11 @@ mod json {
             BunString::borrow_utf8(json_data)
         };
 
-        // `bun_core::String` is `Copy` (no `Drop`), so the +1 ref taken by
-        // `create_external` / `borrow_utf8` must be released explicitly. The
-        // ASCII-path free callback (`json_ipc_data_string_free_cb`) only fires
-        // when the WTFStringImpl refcount hits zero — i.e. *during* `deref()` —
-        // so the freed-flag check must follow it on every exit path.
-        let mut str = str;
-        let parsed = bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut str, global_this);
-        str.deref();
+        // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
+        // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
+        // drop — so the freed-flag check must follow it.
+        let parsed = bun_jsc::bun_string_jsc::to_js_by_parse_json(&str, global_this);
+        drop(str);
         if is_ascii && !was_ascii_string_freed {
             panic!(
                 "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
@@ -551,15 +548,9 @@ mod json {
         value: JSValue,
         is_internal: IsInternal,
     ) -> Result<usize, IPCSerializationError> {
-        let mut out: BunString = BunString::default();
         // Use jsonStringifyFast which passes undefined for the space parameter,
         // triggering JSC's SIMD-optimized FastStringifier code path.
-        value.json_stringify_fast(global, &mut out)?;
-        // `bun_core::String` is `Copy` (no `Drop`),
-        // so the +1 ref written by `json_stringify_fast` is wrapped in
-        // `OwnedString` immediately so every exit path (Dead, OOM in
-        // `ensure_unused_capacity`, success) releases it.
-        let out = bun_core::OwnedString::new(out);
+        let out = value.json_stringify_fast(global)?;
 
         if out.tag() == bun_core::Tag::Dead {
             return Err(IPCSerializationError::SerializationFailed);
@@ -836,7 +827,7 @@ fn close_sent_handle(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JsR
 fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
     jsc::JSFunction::create(
         global,
-        BunString::empty(),
+        "",
         __jsc_host_close_sent_handle,
         1,
         Default::default(),
@@ -1406,13 +1397,11 @@ impl SendQueue {
                 }
             }
             // too many retries; give up - emit warning if possible
-            let mut warning =
+            let warning =
                 BunString::static_(b"Handle did not reach the receiving process correctly");
-            let mut warning_name = BunString::static_(b"SentHandleNotReceivedWarning");
-            if let Ok(warning_js) = bun_jsc::bun_string_jsc::transfer_to_js(&mut warning, global) {
-                if let Ok(warning_name_js) =
-                    bun_jsc::bun_string_jsc::transfer_to_js(&mut warning_name, global)
-                {
+            let warning_name = BunString::static_(b"SentHandleNotReceivedWarning");
+            if let Ok(warning_js) = warning.into_js(global) {
+                if let Ok(warning_name_js) = warning_name.into_js(global) {
                     let _ = global.emit_warning(
                         warning_js,
                         warning_name_js,
@@ -2010,7 +1999,8 @@ fn import_windows_socket_payload(
     else {
         return Ok(None);
     };
-    let hex = jsc::JSString::opaque_ref(info_value.as_string()).to_slice(global)?;
+    let hex_view = info_value.to_js_string_view(global)?;
+    let hex = hex_view.to_utf8();
     let expected = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
     let mut info = vec![0u8; expected];
     let decoded = strings::decode_hex_to_bytes_truncate(&mut info, hex.slice());

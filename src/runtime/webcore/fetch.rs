@@ -55,7 +55,7 @@ use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -205,11 +205,11 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {
             status_code: 200,
-            status_text: BunString::create_atom(b"OK").into(),
+            status_text: BunString::create_atom(b"OK"),
             ..Default::default()
         },
         Body::new(BodyValue::Blob(blob)),
-        data_url.url.dupe_ref(),
+        data_url.url,
         false,
     )));
 
@@ -243,9 +243,7 @@ fn bun_fetch_preconnect(
         ));
     }
 
-    // `href_from_js` returns a +1 (`Bun::toStringRef`). `bun_core::String` is
-    // `Copy` with no `Drop`, so wrap in `OwnedString` for the scope-exit deref.
-    let url_str = bun_core::OwnedString::new(jsc::URL::href_from_js(arguments[0], global_object)?);
+    let url_str = jsc::URL::href_from_js(arguments[0], global_object)?;
 
     if url_str.tag() == BunStringTag::Dead {
         return Err(global_object
@@ -527,21 +525,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    // Every arm carries a +1 (`from_js`/`dupe_ref`/`StringOrURL::from_js`).
-    // `bun_core::String` is `Copy`
-    // with NO `Drop`, so wrap in `OwnedString` for the scope-exit deref —
-    // without it the +1 leaks the WTFStringImpl, and when the input JS string
-    // is a substring sharing an `ExternalStringImpl` (e.g. a slice of a
-    // `TextDecoder.decode()` result), that leaked +1 transitively pins the
-    // external buffer past `~VM`.
-    let url_str: bun_core::OwnedString = bun_core::OwnedString::new('extract_url: {
+    let url_str: BunString = 'extract_url: {
         if let Some(str) = url_str_optional {
             break 'extract_url str;
         }
 
         if let Some(req) = request_mut!() {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
-            break 'extract_url req.url.get().dupe_ref();
+            break 'extract_url req.url.get().clone();
         }
 
         if let Some(request_init) = request_init_object {
@@ -553,7 +544,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         break 'extract_url BunString::empty();
-    });
+    };
 
     if url_str.is_empty() {
         let err = ctx.to_type_error(
@@ -585,9 +576,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         };
         let mut data_url = data_url;
-        // `data_url_response` `dupe_ref()`s this, so pass a borrowed view (no
-        // extra ref); `url_str`'s scope-exit deref balances it.
-        data_url.url = url_str.get();
+        data_url.url = url_str;
         return Ok(data_url_response(data_url, global_this));
     }
 
@@ -762,7 +751,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
                     if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        break 'extract_unix_socket_path socket_path.to_slice_clone(global_this)?;
+                        break 'extract_unix_socket_path socket_path.to_slice(global_this)?;
                     }
                 }
             }
@@ -780,8 +769,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(protocol_val) = obj.get(global_this, "protocol")? {
                     if protocol_val.is_string() {
-                        let str =
-                            bun_core::OwnedString::new(protocol_val.to_bun_string(global_this)?);
+                        let str = protocol_val.to_js_string_view(global_this)?;
                         if str.eql_comptime(b"http2") || str.eql_comptime(b"h2") {
                             forced_protocol = Some(http::Protocol::Http2);
                         } else if str.eql_comptime(b"http3") || str.eql_comptime(b"h3") {
@@ -896,7 +884,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(verb) = obj.get(global_this, "verbose")? {
                     if verb.is_string() {
-                        if verb.get_zig_string(global_this)?.eql_comptime(b"curl") {
+                        if verb.to_js_string_view(global_this)?.eql_comptime(b"curl") {
                             break 'extract_verbose http::HTTPVerboseLevel::Curl;
                         }
                     } else if verb.is_boolean() {
@@ -930,13 +918,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     // Handle string format: proxy: "http://proxy.example.com:8080"
                     if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
                     {
-                        // `href_from_js` returns a +1 WTFStringImpl ref; `bun_core::String`
-                        // is `Copy` with no `Drop`, so wrap in `OwnedString` for scope-exit
-                        // deref (mirrors `defer href.deref()` in fetch.zig).
-                        let href = bun_core::OwnedString::new(jsc::URL::href_from_js(
-                            proxy_arg,
-                            global_this,
-                        )?);
+                        let href = jsc::URL::href_from_js(proxy_arg, global_this)?;
                         if href.tag() == BunStringTag::Dead {
                             let err = ctx.to_type_error(
                                 jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -971,11 +953,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             if !proxy_url_arg.is_undefined_or_null() {
                                 // Deliberately no type gate: `href_from_js` accepts a string
                                 // or a `URL` object and is the sole validator (Dead = invalid).
-                                // +1 ref; see the string-format branch above.
-                                let href = bun_core::OwnedString::new(jsc::URL::href_from_js(
-                                    proxy_url_arg,
-                                    global_this,
-                                )?);
+                                let href = jsc::URL::href_from_js(proxy_url_arg, global_this)?;
                                 if href.tag() == BunStringTag::Dead {
                                     let err = ctx.to_type_error(
                                         jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1333,10 +1311,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
 
-        // Carries a +1 WTFStringImpl ref on both assignment arms (`create_format`
-        // for blob:, `file_url_from_string` → `Bun::toStringRef` for file:).
-        // `Response::init` wraps it in `OwnedString` and adopts that +1, so it
-        // is passed by value below without an extra `.clone()`.
         let url_string: BunString;
 
         // This can be a blob: url or a file: url.
@@ -1436,7 +1410,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
+            url_string = bun_url::file_url_from_string(&BunString::borrow_utf8(temp_file_path));
 
             // `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a
@@ -2039,7 +2013,7 @@ impl<'a> S3StreamWrapper<'a> {
                     response::Init {
                         method: Method::PUT,
                         status_code: 500,
-                        status_text: BunString::create_atom_if_possible(err.code).into(),
+                        status_text: BunString::create_atom_if_possible(err.code),
                         ..Default::default()
                     },
                     Body::new(BodyValue::InternalBlob(InternalBlob {

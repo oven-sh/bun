@@ -162,9 +162,21 @@ pub enum Owner {
     ModuleInfo(*mut ModuleInfo),
     AllocatedSlice {
         /// [`MODULE_INFO_ALIGN`]-aligned heap slice from [`dupe_aligned`];
-        /// freed in `deinit` via [`free_aligned_dup`].
+        /// freed via [`free_aligned_dup`].
         slice: *mut [u8],
     },
+}
+
+impl Drop for ModuleInfoDeserialized {
+    fn drop(&mut self) {
+        // SAFETY: `owner` is the unique owner of its allocation (see `Owner`).
+        unsafe {
+            match self.owner {
+                Owner::ModuleInfo(mi) => drop(bun_core::heap::take(mi)),
+                Owner::AllocatedSlice { slice } => free_aligned_dup(slice),
+            }
+        }
+    }
 }
 
 impl ModuleInfoDeserialized {
@@ -209,29 +221,14 @@ impl ModuleInfoDeserialized {
         self.record_kinds.slice()
     }
 
-    /// Consumes the heap allocation containing `self` (and, for
-    /// `Owner::ModuleInfo`, the enclosing `ModuleInfo`). Not `Drop` because it
-    /// deallocates the object itself and is invoked across FFI on a raw `*mut`.
+    /// Consumes the heap allocation containing `self`.
     ///
     /// # Safety
     /// `this` must have been produced by [`Self::create`] (heap box) or by
     /// [`ModuleInfoExt::into_deserialized`].
     pub(crate) unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
         // SAFETY: caller contract — see fn doc above.
-        unsafe {
-            match (*this).owner {
-                Owner::ModuleInfo(mi) => {
-                    // The `*mut ModuleInfo` is stored directly because the printer
-                    // crate's `ModuleInfo` no longer embeds this struct.
-                    drop(bun_core::heap::take(mi));
-                    drop(bun_core::heap::take(this));
-                }
-                Owner::AllocatedSlice { slice } => {
-                    free_aligned_dup(slice);
-                    drop(bun_core::heap::take(this));
-                }
-            }
-        }
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[inline]

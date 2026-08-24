@@ -70,7 +70,7 @@ fn do_send_err(
     if from == FromEnum::Process {
         let target = bun_jsc::JSFunction::create(
             global_object,
-            BunString::empty(),
+            "",
             // `#[bun_jsc::host_fn]` emits the C-ABI shim under this name; the
             // safe `emit_process_error_event` is `JSHostFnZig`, not `JSHostFn`.
             __jsc_host_emit_process_error_event,
@@ -313,7 +313,7 @@ pub(crate) fn emit_handle_ipc_message(
         if message.is_object() {
             if let Some(cmd) = message.get(global_this, "cmd")? {
                 if cmd.is_string() {
-                    let cmd_str = bun_core::OwnedString::new(cmd.to_bun_string(global_this)?);
+                    let cmd_str = cmd.to_bun_string(global_this)?;
                     if cmd_str.eql_comptime(b"NODE_CLUSTER") {
                         crate::node::node_cluster_binding::handle_internal_message_child(
                             global_this,

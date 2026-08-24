@@ -873,6 +873,8 @@ console.log("survived", require("./late.js"));`,
     // and a later access at normal depth must build the cache.
     const code = `
       const Module = require("node:module");
+      // The deepest frame probes require.cache, then rethrows so the next frame
+      // up probes Module._cache. Every frame above that returns normally.
       let attempts = 0;
       function recurse() {
         try {
@@ -888,11 +890,14 @@ console.log("survived", require("./late.js"));`,
             try {
               Module._cache;
             } catch {}
+          } else {
+            return;
           }
+          throw e;
         }
       }
       recurse();
-      console.log(JSON.stringify([typeof require.cache, Module._cache === require.cache]));
+      console.log(JSON.stringify([attempts, typeof require.cache, Module._cache === require.cache]));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
@@ -900,7 +905,7 @@ console.log("survived", require("./late.js"));`,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(JSON.stringify(["object", true]));
+    expect(stdout.trim()).toBe(JSON.stringify([2, "object", true]));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

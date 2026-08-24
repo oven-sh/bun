@@ -318,15 +318,6 @@ static ZigString toZigString(const WTF::StringView& str)
               str.length() };
 }
 
-static ZigString toZigString(JSC::JSString& str, JSC::JSGlobalObject* global)
-{
-    if (str.isSubstring()) {
-        return toZigString(str.view(global));
-    }
-
-    return toZigString(str.value(global));
-}
-
 static ZigString toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
 {
     if (str->isSubstring()) {
@@ -335,31 +326,10 @@ static ZigString toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
     return toZigString(str->value(global));
 }
 
-static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)
+static void throwException(JSC::ThrowScope& scope, JSC::EncodedJSValue err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,
-        JSC::Exception::create(global->vm(), JSC::JSValue::decode(err.value)));
-}
-
-static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
-{
-    auto scope = DECLARE_THROW_SCOPE(global->vm());
-    auto* str = val.toString(global);
-
-    if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        scope.release();
-        return ZigStringEmpty;
-    }
-
-    auto view = str->view(global);
-    if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        scope.release();
-        return ZigStringEmpty;
-    }
-
-    return toZigString(view);
+        JSC::Exception::create(global->vm(), JSC::JSValue::decode(err)));
 }
 
 static const WTF::String toStringStatic(ZigString str)

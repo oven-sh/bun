@@ -334,7 +334,6 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
 
             // Return an empty string in this case, just like node.
             if wrote < chars.len() {
-                str.deref();
                 return BunString::empty();
             }
 
@@ -352,8 +351,7 @@ fn to_string_comptime<const ENCODING: u8>(
     input: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    let mut bun_string = to_bun_string_comptime::<ENCODING>(input);
-    bun_string.transfer_to_js(global)
+    to_bun_string_comptime::<ENCODING>(input).into_js(global)
 }
 
 pub(crate) fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunString {

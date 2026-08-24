@@ -38,16 +38,16 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
 /// `WorkerOptions`; the worker thread gets its own copy (thread-affine
 /// refcounts), and an empty one is spelled as `BunString::empty()`.
-pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::OwnedString {
+pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
     // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
     let imp = unsafe { &*wtf };
-    bun_core::OwnedString::new(if imp.length() == 0 {
+    if imp.length() == 0 {
         bun_core::String::empty()
     } else if imp.is_8bit() {
         bun_core::String::clone_latin1(imp.latin1_slice())
     } else {
         bun_core::String::clone_utf16(imp.utf16_slice())
-    })
+    }
 }
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
@@ -97,15 +97,13 @@ extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
-/// `--redirect-warnings=<path>` value, if set. Returns false when unset.
+/// `--redirect-warnings=<path>` value; `Dead` when unset.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::String) -> bool {
-    let Some(path) = crate::cli::Bun__Node__RedirectWarnings.get() else {
-        return false;
-    };
-    // SAFETY: out is a valid out-param provided by the C++ caller.
-    unsafe { *out = bun_core::String::clone_utf8(path) };
-    true
+pub(crate) extern "C" fn Bun__Node__getRedirectWarnings() -> bun_core::String {
+    match crate::cli::Bun__Node__RedirectWarnings.get() {
+        Some(path) => bun_core::String::clone_utf8(path),
+        None => bun_core::String::dead(),
+    }
 }
 
 /// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided buffers; returns
@@ -190,29 +188,22 @@ mod _impl {
     }
 
     #[unsafe(export_name = "Bun__Process__getTitle")]
-    extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
+    extern "C" fn get_title(_global: *const JSGlobalObject) -> BunString {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
         // Node's default process.title is argv[0] as invoked
         // (uv_setup_args/uv_get_process_title semantics), not a fixed name.
         let argv = bun_core::argv();
-        let str_ = guard
-            .as_deref()
-            .or_else(|| argv.get(0).map(|z| z.as_bytes()))
-            .unwrap_or(b"bun");
-        // SAFETY: title is a valid out-param provided by C++ caller
-        unsafe {
-            *title = BunString::clone_utf8(str_);
-        }
+        BunString::clone_utf8(
+            guard
+                .as_deref()
+                .or_else(|| argv.get(0).map(|z| z.as_bytes()))
+                .unwrap_or(b"bun"),
+        )
     }
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
-    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
-        // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
-        // returning. `String` is `Copy`, so read it out by value and let
-        // `OwnedString`'s Drop release the ref.
-        let newvalue = bun_core::OwnedString::new(unsafe { *newvalue });
-
+    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &BunString) {
         // `to_owned_slice` is infallible (Vec<u8>).
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
@@ -238,7 +229,7 @@ mod _impl {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
                 return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    super::worker_option_string(wtf).to_js(global_object)
+                    super::worker_option_string(wtf).into_js(global_object)
                 });
             }
         }
@@ -252,12 +243,7 @@ mod _impl {
             let compile_exec_argv = graph.compile_exec_argv();
             let bun_options_argc = bun_core::bun_options_argc();
             if !compile_exec_argv.is_empty() || bun_options_argc > 0 {
-                // `defer args.deinit()` + `defer for args |*a| a.deref()`
-                let mut args = scopeguard::guard(Vec::<BunString>::new(), |v| {
-                    for a in &v {
-                        a.deref();
-                    }
-                });
+                let mut args = Vec::<BunString>::new();
 
                 // Process BUN_OPTIONS first using append_options_env for proper quote handling.
                 // append_options_env inserts starting at index 1, so we need a placeholder.
@@ -281,15 +267,7 @@ mod _impl {
         }
 
         let argv = bun_core::argv();
-        // `defer args.deinit()` + `defer for args |*a| a.deref()`
-        let mut args = scopeguard::guard(
-            Vec::<BunString>::with_capacity(argv.len().saturating_sub(1)),
-            |v| {
-                for a in &v {
-                    a.deref();
-                }
-            },
-        );
+        let mut args = Vec::<BunString>::with_capacity(argv.len().saturating_sub(1));
 
         let mut seen_run = false;
         let mut prev: Option<&[u8]> = None;
@@ -411,14 +389,13 @@ mod _impl {
             }
         }
 
-        let mut worker_args: Vec<bun_core::OwnedString> = Vec::new();
         if let Some(worker) = worker {
-            worker_args = worker
-                .argv()
-                .iter()
-                .map(|&arg| super::worker_option_string(arg))
-                .collect();
-            args_list.extend(worker_args.iter().map(|s| **s));
+            args_list.extend(
+                worker
+                    .argv()
+                    .iter()
+                    .map(|&arg| super::worker_option_string(arg)),
+            );
         } else {
             for arg in &vm.argv {
                 let str_ = BunString::borrow_utf8(arg);
@@ -428,7 +405,6 @@ mod _impl {
         }
 
         let array = bun_string_jsc::to_js_array(global_object, &args_list);
-        drop(worker_args);
         bun_jsc::HostReturn::or_pending_exception(array)
     }
 
@@ -487,9 +463,9 @@ mod _impl {
                     format!("{code}: process.cwd failed with error {label}{hint}, uv_cwd");
                 let err = bun_jsc::SystemError {
                     errno: core::ffi::c_int::from(e.errno).wrapping_neg(),
-                    code: BunString::static_(code).into(),
-                    message: BunString::clone_utf8(message.as_bytes()).into(),
-                    syscall: BunString::static_("uv_cwd").into(),
+                    code: BunString::static_(code),
+                    message: BunString::clone_utf8(message.as_bytes()),
+                    syscall: BunString::static_("uv_cwd"),
                     ..Default::default()
                 };
                 Err(global_object.throw_value(err.to_error_instance(global_object)))
@@ -536,8 +512,10 @@ mod _impl {
                     bun_paths::string_paths::without_trailing_slash_windows_path;
                 #[cfg(not(windows))]
                 let without_trailing_slash = strings::without_trailing_slash;
-                let mut str_ = BunString::clone_utf8(without_trailing_slash(fs.top_level_dir));
-                str_.transfer_to_js(global_object)
+                bun_string_jsc::create_utf8_for_js(
+                    global_object,
+                    without_trailing_slash(fs.top_level_dir),
+                )
             }
             bun_sys::Result::Err(e) => {
                 let e = e.with_path_dest(&prev_cwd, slice.as_bytes());
@@ -551,7 +529,7 @@ mod _impl {
     // TODO: switch this to a WTF::String-backed type when one is added
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
-    extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
+    extern "C" fn bun_process_edit_windows_env_var(k: &BunString, v: &BunString) {
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;

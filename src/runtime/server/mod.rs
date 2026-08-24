@@ -2070,10 +2070,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 "permission denied {}:{}",
                                 bstr::BStr::new(host),
                                 port
-                            ))
-                            .into(),
-                            code: bun_core::String::static_("EACCES").into(),
-                            syscall: bun_core::String::static_("listen").into(),
+                            )),
+                            code: bun_core::String::static_("EACCES"),
+                            syscall: bun_core::String::static_("listen"),
                             ..Default::default()
                         };
                         let _ = global.throw_value(err.to_error_instance(global));
@@ -2095,10 +2094,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     message: bun_core::String::create_format(format_args!(
                         "Failed to start server. Is port {} in use?",
                         port
-                    ))
-                    .into(),
-                    code: bun_core::String::static_("EADDRINUSE").into(),
-                    syscall: bun_core::String::static_("listen").into(),
+                    )),
+                    code: bun_core::String::static_("EADDRINUSE"),
+                    syscall: bun_core::String::static_("listen"),
                     ..Default::default()
                 }
                 .to_error_instance(global)
@@ -2110,10 +2108,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         message: bun_core::String::create_format(format_args!(
                             "Failed to listen on unix socket {}",
                             bun_core::fmt::QuotedFormatter { text: unix }
-                        ))
-                        .into(),
-                        code: bun_core::String::static_("EADDRINUSE").into(),
-                        syscall: bun_core::String::static_("listen").into(),
+                        )),
+                        code: bun_core::String::static_("EADDRINUSE"),
+                        syscall: bun_core::String::static_("listen"),
                         ..Default::default()
                     }
                     .to_error_instance(global),
@@ -4125,7 +4122,6 @@ pub(crate) mod http_server_agent {
                 instance.ptr.cast(),
             );
         }
-        // `BunString` derefs in `Drop`.
     }
 
     /// Tell the C++ inspector agent (if attached) that the server stopped,

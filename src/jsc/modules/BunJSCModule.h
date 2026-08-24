@@ -901,7 +901,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, Ca
 }
 
 extern "C" JSC::EncodedJSValue ByteRangeMapping__findExecutedLines(
-    JSC::JSGlobalObject*, BunString sourceURL, BasicBlockRange* ranges,
+    JSC::JSGlobalObject*, const BunString* sourceURL, BasicBlockRange* ranges,
     size_t len, size_t functionOffset, bool ignoreSourceMap);
 
 JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
@@ -947,8 +947,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
         basicBlocks.append(range);
     }
 
+    BunString fileNameBunString = Bun::toString(fileName);
     return ByteRangeMapping__findExecutedLines(
-        globalObject, Bun::toString(fileName), basicBlocks.begin(),
+        globalObject, &fileNameBunString, basicBlocks.begin(),
         basicBlocks.size(), functionStartOffset, ignoreSourceMap);
 }
 

@@ -99,7 +99,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
             })
             .unwrap_or_default();
         if owned[1].is_empty() {
-            let extras = bun_core::OwnedString::new(Bun__Telemetry__activeExtrasBaggage(global));
+            let extras = Bun__Telemetry__activeExtrasBaggage(global);
             return f(&owned[0], extras.to_utf8().slice());
         }
         return f(&owned[0], &owned[1]);
@@ -113,7 +113,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
     let (ts, bg) = (ts.to_utf8_without_ref(), bg.to_utf8_without_ref());
     if bg.slice().is_empty() {
         // Baggage carried by the api Context (propagation.extract / setBaggage).
-        let extras = bun_core::OwnedString::new(Bun__Telemetry__activeExtrasBaggage(global));
+        let extras = Bun__Telemetry__activeExtrasBaggage(global);
         return f(ts.slice(), extras.to_utf8().slice());
     }
     f(ts.slice(), bg.slice())
@@ -189,7 +189,7 @@ pub(crate) fn for_each_attribute(
     let Some(o) = obj.get_object() else {
         return Ok(());
     };
-    let mut iter = JSPropertyIterator::init(
+    let iter = JSPropertyIterator::init(
         global,
         o,
         JSPropertyIteratorOptions {
@@ -198,8 +198,7 @@ pub(crate) fn for_each_attribute(
             ..Default::default()
         },
     )?;
-    while let Some(name) = iter.next()? {
-        let value = iter.value;
+    while let Some((name, value)) = iter.next()? {
         let key = name.to_utf8();
         if value.is_string() {
             let s = value.to_slice(global)?;
@@ -300,9 +299,8 @@ struct AttrSlice {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 union AttrValue {
-    string: JsString,
+    string: core::mem::ManuallyDrop<JsString>,
     /// Also Bool (0/1).
     integer: i64,
     number: f64,

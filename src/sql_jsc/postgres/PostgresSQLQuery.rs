@@ -41,7 +41,6 @@ pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
 pub struct PostgresSQLQuery {
     pub(crate) statement: Cell<Option<*mut PostgresSQLStatement>>,
     pub(crate) query: BunString,
-    pub(crate) cursor_name: BunString,
 
     pub(crate) this_value: JsCell<JsRef>,
 
@@ -57,9 +56,6 @@ pub struct PostgresSQLQuery {
     pub(crate) otel: QuerySpan,
 }
 
-// On drop: deref the statement (if any), then deref query/cursor_name.
-// `BunString` is `Copy` (FFI by-value, NO `Drop`), so the
-// +1 ref taken by `to_bun_string` in `call()` must be released here explicitly.
 // `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
@@ -67,8 +63,6 @@ impl Drop for PostgresSQLQuery {
         self.otel
             .discard(bun_jsc::virtual_machine::VirtualMachine::get().global());
         self.release_statement();
-        self.query.deref();
-        self.cursor_name.deref();
     }
 }
 
@@ -77,7 +71,6 @@ impl Default for PostgresSQLQuery {
         Self {
             statement: Cell::new(None),
             query: BunString::empty(),
-            cursor_name: BunString::empty(),
             this_value: JsCell::new(JsRef::empty()),
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),

@@ -3431,7 +3431,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 
     ErrorableString res;
-    res.success = false;
     BunString keyZ = Bun::toString(keyString);
     BunString referrerZ = Bun::toString(referrerString);
     BunString queryZ = BunStringEmpty;
@@ -3517,7 +3516,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
 
         ErrorableString res;
-        res.success = false;
         BunString moduleNameZ = Bun::toString(moduleName);
         BunString sourceOriginZ = Bun::toString(sourceOriginStringHolder);
         BunString queryZ = BunStringEmpty;
@@ -3602,10 +3600,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     auto source = Bun::toString(sourceString);
     auto typeAttribute = Bun::toString(typeAttributeString);
     ErrorableResolvedSource res;
-    res.success = false;
-    // zero-initialize entire result union. zeroed BunString has BunStringTag::Dead, and zeroed
-    // EncodedJSValues are empty, which our code should be handling
-    memset(&res.result, 0, sizeof res.result);
 
     // require(esm) needs the entire dependency graph to load without yielding
     // to microtasks. The async fetch path goes through the transpiler thread
@@ -3654,7 +3648,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 }
 
 extern "C" bool Bun__VM__entryEvaluationStarted(void*);
-extern "C" void Bun__VM__entryRootKey(void*, BunString*);
+extern "C" BunString Bun__VM__entryRootKey(void*);
 extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
 
 // A module body is about to run. That means "the entry's graph is linked and executing" only if it is
@@ -3667,8 +3661,7 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     void* bunVM = globalObject->bunVM();
     if (Bun__VM__entryEvaluationStarted(bunVM))
         return;
-    BunString rootKey;
-    Bun__VM__entryRootKey(bunVM, &rootKey);
+    BunString rootKey = Bun__VM__entryRootKey(bunVM);
     auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
     if (!entry)
         return;

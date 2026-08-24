@@ -159,7 +159,6 @@ static ALLOWED: &[&[u8]] = &[
     b"--experimental-webstorage",
     b"--experimental-worker",
     b"--expose-gc",
-    b"--expose-internals",
     b"--extra-info-on-fatal-exception",
     b"--force-async-hooks-checks",
     b"--force-context-aware",
@@ -699,6 +698,8 @@ mod tests {
         assert!(!is_allowed(b"--definitely-not-a-real-flag"));
         assert!(!is_allowed(b"--eval"));
         assert!(!is_allowed(b"-e"));
+        assert!(!is_allowed(b"--expose-internals"));
+        assert!(!is_allowed(b"--test"));
     }
 
     #[test]

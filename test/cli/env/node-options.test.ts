@@ -162,12 +162,17 @@ describe("NODE_OPTIONS environment variable", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "SP\nmain\n", exitCode: 0 });
   });
 
-  test.concurrent("unknown flag warns but does not exit", async () => {
-    using dir = tempDir("node-options-unknown", preloadFixtures);
-    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], "--definitely-not-a-real-flag");
-    expect(stderr).toContain("--definitely-not-a-real-flag is not allowed in NODE_OPTIONS");
-    expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
-  });
+  // `--expose-internals` and `--test` are real Node flags that Node refuses
+  // in NODE_OPTIONS (exit 9). Bun warns and continues, like for unknown flags.
+  test.each(["--definitely-not-a-real-flag", "--expose-internals", "--test"])(
+    "flag outside the allowlist (%s) warns but does not exit",
+    async flag => {
+      using dir = tempDir("node-options-unknown", preloadFixtures);
+      const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], flag);
+      expect(stderr).toContain(`${flag} is not allowed in NODE_OPTIONS`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
+    },
+  );
 
   test.concurrent("disallowed flag (--eval) warns and does not evaluate", async () => {
     using dir = tempDir("node-options-eval", preloadFixtures);

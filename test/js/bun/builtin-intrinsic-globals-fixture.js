@@ -7,13 +7,30 @@ class Fake extends EventTarget {
 for (const name of ["MessagePort", "MessageChannel", "BroadcastChannel", "Worker", "Blob", "AbortController", "TextDecoder", "Headers"]) {
   globalThis[name] = Fake;
 }
+for (const name of ["URLSearchParams", "WebSocket", "Performance", "PerformanceEntry", "PerformanceObserver", "PerformanceResourceTiming"]) {
+  globalThis[name] = Fake;
+}
 // Deleting a global reifies the whole static table; intrinsics must still resolve after that.
 delete globalThis.URL;
 delete globalThis.Event;
 globalThis.crypto = { randomUUID: () => "fake" };
 
+for (const [mod, names] of Object.entries({
+  "node:url": ["URL", "URLSearchParams"],
+  "node:http": ["WebSocket"],
+  "node:perf_hooks": ["Performance", "PerformanceEntry", "PerformanceResourceTiming"],
+  "node:worker_threads": ["MessagePort", "MessageChannel", "BroadcastChannel"],
+})) {
+  for (const name of names) {
+    const value = require(mod)[name];
+    if (typeof value !== "function" || value === Fake) throw new Error(mod + " exported a replaced " + name);
+  }
+}
+if (!(require("node:perf_hooks").performance instanceof require("node:perf_hooks").Performance)) throw new Error("perf_hooks.Performance is not the intrinsic");
+new (require("node:perf_hooks").PerformanceObserver)(() => {}).disconnect();
+if (new (require("node:url").URL)("http://a/b").pathname !== "/b") throw new Error("url.URL is not the intrinsic");
+
 const wt = require("node:worker_threads");
-if (wt.MessagePort === Fake || wt.MessageChannel === Fake || wt.BroadcastChannel === Fake) throw new Error("worker_threads exported a replaced global");
 if (typeof wt.MessagePort.prototype.on !== "function") throw new Error("MessagePort.prototype.on missing");
 const { port1, port2 } = new wt.MessageChannel();
 port1.close();

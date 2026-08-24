@@ -25,7 +25,6 @@
 
 "use strict";
 
-const { URL, URLSearchParams, URLPattern } = globalThis;
 const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
 const { validateString, validateObject } = require("internal/validators");

@@ -64,7 +64,7 @@ const FFIType = {
 
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
 
-var ffi = globalThis.Bun.FFI;
+var ffi = Bun.FFI;
 const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
 const toBuffer = ffi.toBuffer;
 const toArrayBuffer = ffi.toArrayBuffer;

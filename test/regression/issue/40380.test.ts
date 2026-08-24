@@ -5,15 +5,17 @@ import tls from "node:tls";
 
 // https://github.com/oven-sh/bun/issues/40380
 // A backpressured node:tls write must not fail with ERR_SOCKET_CLOSED when the
-// peer half-closes cleanly (close_notify + FIN). Node leaves the write pending
-// and only emits 'end'; a later failure surfaces as a real errno.
+// peer half-closes cleanly (close_notify + FIN). The write stays parked and
+// completes once the peer drains it; the socket only emits 'end'.
 test("clean peer FIN does not fail a pending backpressured TLS write", async () => {
   const backpressured = Promise.withResolvers<void>();
+  const peerFinObserved = Promise.withResolvers<void>();
 
   const server = tls.createServer(certs, sock => {
     sock.on("error", () => {});
     sock.pause(); // never read, so the client's write stays backpressured
     backpressured.promise.then(() => sock.end()); // then half-close cleanly
+    peerFinObserved.promise.then(() => sock.resume()); // then drain the write
   });
   let sock: ReturnType<typeof tls.connect> | undefined;
 
@@ -27,29 +29,22 @@ test("clean peer FIN does not fail a pending backpressured TLS write", async () 
     sock.on("error", err => clientErrors.push(err));
     await once(sock, "secureConnect");
 
-    let writeErr: Error | null | undefined;
-    let writeCbCalled = false;
-    const flushed = sock.write(Buffer.alloc(64 << 20), err => {
-      writeCbCalled = true;
-      writeErr = err;
-    });
+    const writeDone = Promise.withResolvers<Error | null | undefined>();
+    const flushed = sock.write(Buffer.alloc(64 << 20), err => writeDone.resolve(err));
     // The 64 MB body cannot fit in the kernel and native buffers while the
     // peer is paused, so the write parks on backpressure.
     expect(flushed).toBe(false);
     backpressured.resolve();
 
+    // The peer's FIN only closed its write side. The parked write must
+    // survive it and complete once the peer starts reading again. The broken
+    // path destroys the socket instead and fails the write with
+    // ERR_SOCKET_CLOSED.
     await once(sock, "end");
-    // The broken path fails the parked write synchronously inside the native
-    // close callback, before 'end' is emitted; the matching 'error' event is
-    // emitted one tick later. Let both land before asserting.
-    await new Promise(resolve => setImmediate(resolve));
-    await new Promise(resolve => setImmediate(resolve));
-
-    expect(clientErrors).toEqual([]);
-    // The write is either still pending (Node 24) or completed cleanly
-    // (Bun 1.3.14). It must not have failed.
+    peerFinObserved.resolve();
+    const writeErr = await writeDone.promise;
     expect(writeErr ?? null).toBe(null);
-    if (writeCbCalled) expect(writeErr).toBe(null);
+    expect(clientErrors).toEqual([]);
   } finally {
     sock?.destroy();
     server.close();

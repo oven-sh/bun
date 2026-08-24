@@ -2130,11 +2130,15 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
     if (!s || us_socket_is_closed(s)) {
       return s;
     }
-    if (s->flags.allow_half_open) {
+    if (s->flags.allow_half_open &&
+        (ssl_gone(s) || !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN))) {
       /* Keep the write side alive like the plain-TCP half-open branch in
        * loop.c: TCP permits writing after a received FIN, so queued
        * responses still flush and the app's own end() completes the
-       * shutdown. */
+       * shutdown. With SENT_SHUTDOWN both directions are closed; fall
+       * through so a deferred graceful close completes (mirrors the
+       * ZERO_RETURN path; loop.c raw-closes this case first on the
+       * epoll/kqueue backend, the libuv one reaches here). */
       return s;
     }
   }
@@ -2322,11 +2326,15 @@ restart:
           if (ssl_wants_eof_dispatch(s)) {
             s = ssl_deliver_eof(s);
             if (!s || ssl_gone(s)) return NULL;
-            if (s->flags.allow_half_open) {
+            if (s->flags.allow_half_open &&
+                !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN)) {
               /* close_notify only ended the peer's write side; ours may
                * still flush queued bytes, and the app's own end() completes
                * the shutdown (ssl_handle_shutdown sees RECEIVED_SHUTDOWN and
-               * finishes immediately). */
+               * finishes immediately). With SENT_SHUTDOWN both directions are
+               * closed and nothing is left to hold open: fall through so the
+               * deferred graceful close (code 0, no FIN sent) completes here
+               * instead of waiting for a FIN that may never come. */
               return s;
             }
           }

@@ -1390,8 +1390,8 @@ pub struct PipelineJs {
 /// An ArrayBuffer pinned by `JSC__JSValue__borrowBytesForOffThread` (mode 2)
 /// so user code cannot transfer/detach it while the pool reads; unpinned on drop.
 pub struct Pin(JSValue);
-// SAFETY: a pin on a heap cell; gone with the heap.
-unsafe impl bun_jsc::job::JsAffine for Pin {}
+// JS-thread state: a pin on a heap cell; gone with the heap.
+impl bun_jsc::job::JsAffine for Pin {}
 impl Pin {
     const NONE: Pin = Pin(JSValue::ZERO);
 }
@@ -1407,8 +1407,8 @@ impl Drop for Pin {
 /// One pending operation's hold on its `Image`: keeps the wrapper Strong while
 /// any are pending, and lets the completion reach the `Image` (JS thread).
 pub struct PendingTask(jsc::JsPtr<Image>);
-// SAFETY: the Image is its wrapper's m_ctx; the Strong we hold keeps that alive.
-unsafe impl bun_jsc::job::JsAffine for PendingTask {}
+// JS-thread state: the Image is its wrapper's m_ctx; the Strong we hold keeps that alive.
+impl bun_jsc::job::JsAffine for PendingTask {}
 impl PendingTask {
     fn new(image: &Image, this_value: JSValue, global: &JSGlobalObject) -> Self {
         if image.pending_tasks.get() == 0 {

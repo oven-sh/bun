@@ -344,6 +344,18 @@ impl VmHandle {
         })
     }
 
+    /// Ask the VM, from another thread, to poll its pending-module queue
+    /// ([`Task::poll_pending_modules`](bun_event_loop::Task::poll_pending_modules));
+    /// dropped if the VM is closed.
+    pub fn post_poll_pending_modules(&self, kind: LoopKind) {
+        let ct = ConcurrentTaskItem::create(bun_event_loop::Task::poll_pending_modules());
+        if let Posted::Refused(ct) = self.post(kind, ct) {
+            // SAFETY: refused ⇒ never queued; the carrier `create` boxed is
+            // ours again and this task's payload is null (owns nothing).
+            unsafe { ConcurrentTaskItem::release_refused(ct) };
+        }
+    }
+
     /// Queue a C++ `EventLoopTask` on the VM's `kind` loop from another
     /// thread (WebCore's `postTaskTo` / `postTaskConcurrently`), or delete it
     /// unrun if the VM is closed.

@@ -99,7 +99,6 @@ use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
 
 use bun_jsc::PosixSignalTask;
-use bun_jsc::RuntimeTranspilerStore;
 use bun_jsc::cpp_task::CppTask;
 use bun_jsc::hot_reloader;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
@@ -170,7 +169,6 @@ pub(crate) enum RunTaskResult {
 #[inline(never)]
 pub(crate) fn run_task(
     task: Task,
-    el: &mut EventLoop,
     vm: &mut VirtualMachine,
     global: &JSGlobalObject,
 ) -> JsResult<RunTaskResult> {
@@ -205,8 +203,18 @@ pub(crate) fn run_task(
         // ── erased-callback tasks (low-tier types — real) ────────────────
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
-            // its `Completion`; the erased entry runs `then` and frees it.
-            unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) }?;
+            // its `Completion`; the arm consumes it.
+            let job = unsafe { bun_jsc::job::erased_from_raw(task.ptr) };
+            // A completion dispatched after the VM was asked to stop (a parent's
+            // terminate() lands while the worker still ticks): its `then` would
+            // only build script-facing values under a pending termination.
+            // Release it as teardown would — Node's threadpool `after` callbacks
+            // bail the same way on `!can_call_into_js()`.
+            if !vm.script_allowed() {
+                job.release_unrun();
+            } else {
+                job.complete(&global.js_thread())?;
+            }
         }
         task_tag::SendQueueDeferred => {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
@@ -369,12 +377,9 @@ pub(crate) fn run_task(
             bun_jsc::mark_binding();
             cast!(JSCDeferredWorkTask).run(global)?;
         }
+        // `Task::poll_pending_modules()`: null payload — the tag is the message.
         task_tag::PollPendingModulesTask => {
             vm.modules.on_poll();
-        }
-        task_tag::RuntimeTranspilerStore => {
-            let store = cast!(RuntimeTranspilerStore);
-            store.run_from_js_thread(el.into(), global, vm.into());
         }
 
         // ── hot-reload (early-returns from the drain loop) ───────────────
@@ -589,7 +594,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 60,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -611,7 +616,7 @@ pub(crate) fn tick_queue_with_count(
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
-        match run_task(task, el, vm, global) {
+        match run_task(task, vm, global) {
             Ok(RunTaskResult::Continue) => {}
             Ok(RunTaskResult::EarlyReturn) => {
                 // Caller is `while tickWithCount(ctx) > 0` — must keep
@@ -1223,7 +1228,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
             // SAFETY: as `release!`.
-            unsafe { bun_jsc::job::release_unrun_erased(task.ptr) }
+            unsafe { bun_jsc::job::erased_from_raw(task.ptr) }.release_unrun()
         }
         task_tag::AsyncModule => release!(bun_jsc::async_module::AsyncModule),
         task_tag::BakeHotReloadEvent => release!(BakeHotReloadEvent),
@@ -1256,7 +1261,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::NativeBrotli => release!(NativeBrotli),
         task_tag::NativeZlib => release!(NativeZlib),
         task_tag::NativeZstd => release!(NativeZstd),
-        task_tag::PollPendingModulesTask => release!(bun_jsc::async_module::Queue),
+        // `Task::poll_pending_modules()`: null payload, owns nothing.
+        task_tag::PollPendingModulesTask => {}
         task_tag::PosixSignalTask => release!(PosixSignalTask),
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {
@@ -1266,7 +1272,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => release!(FlushPendingFileSinkTask),
-        task_tag::RuntimeTranspilerStore => release!(RuntimeTranspilerStore),
         task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
         task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),
         task_tag::SendQueueDeferred => release!(crate::ipc::SendQueue),

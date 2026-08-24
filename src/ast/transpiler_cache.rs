@@ -22,13 +22,34 @@ pub struct RuntimeTranspilerCache {
     /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
     /// when surfacing to JS.
     pub output_code: Option<Box<[u8]>>,
-    /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
-    /// the concrete type lives a tier up and is round-tripped via cast.
-    pub entry: Option<*mut ()>,
+    /// Opaque storage for the `bun_jsc` cache `Entry` a `get()` hit produced —
+    /// the concrete type lives a tier up and is round-tripped via
+    /// [`ErasedEntry`].
+    pub entry: Option<ErasedEntry>,
 
     /// Dispatch slot — `bun_jsc` sets `Some(TranspilerCacheImplKind::Jsc)` at
     /// init. `None` ⇒ caching disabled (e.g. wasm builds, `--no-transpiler-cache`).
     pub r#impl: Option<TranspilerCacheImplKind>,
+}
+
+/// A cache hit's boxed `Entry`, type-erased. Only the tier that defines
+/// `Entry` mints these (see [`ErasedEntry::new`]) and only it takes them back.
+pub struct ErasedEntry(NonNull<()>);
+
+impl ErasedEntry {
+    /// # Safety
+    /// `entry` is `heap::into_raw` of a `Box` of the one concrete `Entry` type
+    /// the `Jsc` impl uses, and ownership moves into the returned value.
+    #[inline]
+    pub unsafe fn new(entry: NonNull<()>) -> Self {
+        Self(entry)
+    }
+
+    /// The boxed `Entry`; ownership moves to the caller.
+    #[inline]
+    pub fn into_raw(self) -> NonNull<()> {
+        self.0
+    }
 }
 
 impl Default for RuntimeTranspilerCache {

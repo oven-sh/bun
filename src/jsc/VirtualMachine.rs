@@ -6537,8 +6537,8 @@ impl VirtualMachine {
         let message = &exception.message;
         let frames = exception.stack.frames();
         let top_frame = frames.first();
-        let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_core::cwd::get());
+        let dir =
+            bun_core::env_var::GITHUB_WORKSPACE::get().unwrap_or_else(|| bun_core::cwd::get());
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

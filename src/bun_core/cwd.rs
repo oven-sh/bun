@@ -80,7 +80,8 @@ pub fn set(path: &[u8]) -> &'static ZStr {
         None => {
             let bytes: &'static [u8] =
                 Box::leak(crate::ZBox::from_bytes(path).into_boxed_slice_with_nul());
-            let entry: &'static Entry = Box::leak(Box::new(Entry(ZStr::from_slice_with_nul(bytes))));
+            let entry: &'static Entry =
+                Box::leak(Box::new(Entry(ZStr::from_slice_with_nul(bytes))));
             visited.push(entry);
             entry
         }

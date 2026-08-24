@@ -353,17 +353,14 @@ pub fn do_patch_commit(
             break 'has_nested_node_modules true;
         };
 
-        let patch_tag_tmpname = match bun_paths::fs::tmpname(
-            b"patch_tmp",
-            &mut buf3[..],
-            bun_core::fast_random(),
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                Output::err(e, "failed to make tempdir", ());
-                Global::crash();
-            }
-        };
+        let patch_tag_tmpname =
+            match bun_paths::fs::tmpname(b"patch_tmp", &mut buf3[..], bun_core::fast_random()) {
+                Ok(s) => s,
+                Err(e) => {
+                    Output::err(e, "failed to make tempdir", ());
+                    Global::crash();
+                }
+            };
 
         let mut bunpatchtagbuf: BuntagHashBuf = BuntagHashBuf::default();
         // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
@@ -537,8 +534,7 @@ pub fn do_patch_commit(
 
     // write the patch contents to temp file then rename
     let mut tmpname_buf = [0u8; 1024];
-    let tempfile_name =
-        bun_paths::fs::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+    let tempfile_name = bun_paths::fs::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
     let tmpdir = get_temporary_directory(manager).handle.fd();
     if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patchfile_contents) {
         Output::err(e, "failed to write patch to temp file", ());

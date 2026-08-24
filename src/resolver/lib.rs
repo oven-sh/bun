@@ -1572,9 +1572,8 @@ pub mod fs {
                             >(profile, &mut buf[..], &parts);
                             return out.to_vec();
                         }
-                        let root = bun_paths::resolve_path::windows_filesystem_root(
-                            bun_core::cwd::get(),
-                        );
+                        let root =
+                            bun_paths::resolve_path::windows_filesystem_root(bun_core::cwd::get());
                         let mut out = bun_core::strings::without_trailing_slash(root).to_vec();
                         out.extend_from_slice(b"\\Windows\\Temp");
                         out

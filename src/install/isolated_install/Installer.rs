@@ -2743,9 +2743,7 @@ impl<'a> Installer<'a> {
                     ));
                     buf.append(b"node_modules");
                     if pkg_name.is_empty() {
-                        buf.append(paths::basename(
-                            bun_core::cwd::get(),
-                        ));
+                        buf.append(paths::basename(bun_core::cwd::get()));
                     } else {
                         buf.append(pkg_name.slice(string_buf));
                     }
@@ -2805,9 +2803,7 @@ impl<'a> Installer<'a> {
             ResolutionTag::Root => {
                 if dep_id != invalid_dependency_id {
                     if pkg_names[pkg_id as usize].is_empty() {
-                        return Some(paths::basename(
-                            bun_core::cwd::get(),
-                        ));
+                        return Some(paths::basename(bun_core::cwd::get()));
                     }
                     return Some(pkg_names[pkg_id as usize].slice(string_buf));
                 }

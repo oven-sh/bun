@@ -1623,9 +1623,7 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
                     let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
                         bun_paths::resolve_path::platform::Auto,
                     >(
-                        bun_core::cwd::get(),
-                        &mut buf[..buf_len - 1],
-                        paths,
+                        bun_core::cwd::get(), &mut buf[..buf_len - 1], paths
                     ) else {
                         return Err(
                             global_this.throw_invalid_arguments(format_args!("Path too long"))

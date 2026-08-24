@@ -158,7 +158,6 @@ impl Linker {
         unsafe { &*self.options }
     }
 
-
     /// Exclusive borrow of the owning `Transpiler.log`.
     ///
     /// SAFETY: `self.log` is the `*mut Log` copied from `Transpiler.log` in

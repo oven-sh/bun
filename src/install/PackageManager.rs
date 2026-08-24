@@ -1080,9 +1080,7 @@ fn configure_env_for_scripts_run(
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
-            value: Box::<[u8]>::from(strings::without_trailing_slash(
-                bun_core::cwd::get(),
-            )),
+            value: Box::<[u8]>::from(strings::without_trailing_slash(bun_core::cwd::get())),
         };
     }
 
@@ -1492,12 +1490,13 @@ pub fn init(
 
     // `<dir>/package.json`, starting at the working directory; the walk below
     // rewrites the directory part in place as it moves up.
-    let mut original_package_json_path_buf: Vec<u8> =
-        ZBox::from_bytes(resolve_path::join_abs_string::<resolve_path::platform::Auto>(
+    let mut original_package_json_path_buf: Vec<u8> = ZBox::from_bytes(
+        resolve_path::join_abs_string::<resolve_path::platform::Auto>(
             original_cwd,
             &[b"package.json"],
-        ))
-        .into_vec_with_nul();
+        ),
+    )
+    .into_vec_with_nul();
     let original_cwd_clone = Box::<[u8]>::from(original_cwd);
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
@@ -1785,7 +1784,9 @@ pub fn init(
     )?;
     let root_package_json_path: Box<[u8]> = Box::from(resolve_path::join_abs_string::<
         resolve_path::platform::Auto,
-    >(bun_core::cwd::get(), &[b"package.json"]));
+    >(
+        bun_core::cwd::get(), &[b"package.json"]
+    ));
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
@@ -2364,11 +2365,11 @@ fn init_with_runtime_once(
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
-    let original_package_json_path =
-        ZBox::from_bytes(resolve_path::join_abs_string::<resolve_path::platform::Auto>(
-            bun_core::cwd::get(),
-            &[b"package.json"],
-        ));
+    let original_package_json_path = ZBox::from_bytes(resolve_path::join_abs_string::<
+        resolve_path::platform::Auto,
+    >(
+        bun_core::cwd::get(), &[b"package.json"]
+    ));
 
     // SAFETY: manager_ptr points to uninitialized memory; fully initialize
     // field-by-field via `addr_of_mut!((*p).field).write(..)`. See the PERF
@@ -2443,10 +2444,7 @@ fn init_with_runtime_once(
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());
-        wr!(
-            original_package_json_path,
-            original_package_json_path
-        );
+        wr!(original_package_json_path, original_package_json_path);
         wr!(subcommand, Subcommand::Install);
 
         // remaining defaults:

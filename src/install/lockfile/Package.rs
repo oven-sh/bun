@@ -1857,8 +1857,7 @@ impl Package<u64> {
                     );
                     return Err(crate::Error::InstallFailed);
                 };
-                let relative: &[u8] =
-                    resolve_path::relative(bun_core::cwd::get(), joined);
+                let relative: &[u8] = resolve_path::relative(bun_core::cwd::get(), joined);
                 #[cfg(windows)]
                 let relative: &[u8] = {
                     let len = relative.len();

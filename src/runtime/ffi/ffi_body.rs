@@ -2343,8 +2343,8 @@ impl CompilerRT {
         #[cfg(unix)]
         {
             let mut name_buf = PathBuffer::uninit();
-            let name = bun_paths::fs::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-                .ok()?;
+            let name =
+                bun_paths::fs::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random()).ok()?;
             Some(ZBox::from_bytes(name.as_bytes()))
         }
         #[cfg(windows)]

@@ -401,9 +401,7 @@ pub mod entry {
                         write!(
                             f,
                             "{}",
-                            BStr::new(bun_paths::basename(
-                                bun_core::cwd::get()
-                            ))
+                            BStr::new(bun_paths::basename(bun_core::cwd::get()))
                         )
                     } else {
                         write!(f, "{}@root", pkg_name.fmt_store_path(string_buf))

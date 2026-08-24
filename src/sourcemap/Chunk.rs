@@ -81,7 +81,11 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     // Keep the separator that follows the directory (a root's own, otherwise
     // the one after it) as the relative name's leading `/`.
     let dir_len = top_level_dir.len()
-        - usize::from(top_level_dir.last().is_some_and(|&c| bun_paths::is_sep_native(c)));
+        - usize::from(
+            top_level_dir
+                .last()
+                .is_some_and(|&c| bun_paths::is_sep_native(c)),
+        );
     if filename.len() > dir_len
         && strings::has_prefix(filename, top_level_dir)
         && bun_paths::is_sep_native(filename[dir_len])

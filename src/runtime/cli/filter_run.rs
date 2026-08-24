@@ -804,11 +804,8 @@ pub(crate) fn run_scripts_with_filter(
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
 
-    let selected = FilterArg::select_packages(
-        &*ctx,
-        &mut this_transpiler.resolver,
-        bun_core::cwd::get(),
-    )?;
+    let selected =
+        FilterArg::select_packages(&*ctx, &mut this_transpiler.resolver, bun_core::cwd::get())?;
 
     let mut scripts: Vec<ScriptConfig> = Vec::new();
     for package in &selected.packages {

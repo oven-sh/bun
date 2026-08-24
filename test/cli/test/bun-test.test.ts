@@ -1813,15 +1813,20 @@ describe("bun test", () => {
 
   describe.concurrent("process.argv", () => {
     // Each file reports what it sees next to its own path, so the assertions
-    // hold whichever file runs first.
+    // hold whichever file runs first. The same array is reachable as process.argv,
+    // Bun.argv, and the node:process named and namespace exports.
     const argvProbe = /* ts */ `
       import { test } from "bun:test";
+      import { argv } from "node:process";
+      import * as nodeProcess from "process";
       test("argv", () => {
         console.log("ARGV " + JSON.stringify({
           file: import.meta.path,
           argv1: process.argv[1],
           bunArgv1: Bun.argv[1],
-          same: Bun.argv === process.argv,
+          namedArgv1: argv[1],
+          namespaceArgv1: nodeProcess.argv[1],
+          same: Bun.argv === process.argv && argv === process.argv && nodeProcess.argv === process.argv,
         }));
       });
     `;
@@ -1831,6 +1836,10 @@ describe("bun test", () => {
         .split("\n")
         .filter(line => line.startsWith("ARGV "))
         .map(line => JSON.parse(line.slice("ARGV ".length)));
+    }
+
+    function expectedProbe(file: string) {
+      return { file, argv1: file, bunArgv1: file, namedArgv1: file, namespaceArgv1: file, same: true };
     }
 
     test("argv[1] is the current file, not the first file that read process.argv", async () => {
@@ -1846,7 +1855,7 @@ describe("bun test", () => {
       const probes = parseProbes(stdout);
       expect(probes.map(p => basename(p.file)).sort()).toEqual(["a.test.ts", "b.test.ts"]);
       for (const probe of probes) {
-        expect(probe).toEqual({ file: probe.file, argv1: probe.file, bunArgv1: probe.file, same: true });
+        expect(probe).toEqual(expectedProbe(probe.file));
       }
       expect(stderr).toContain("2 pass");
       expect(exitCode).toBe(0);
@@ -1877,7 +1886,7 @@ describe("bun test", () => {
       expect(aStart).toBeLessThan(bStart);
       const probes = parseProbes(stdout);
       expect(probes).toHaveLength(1);
-      expect(probes[0]).toEqual({ file: probes[0].file, argv1: probes[0].file, bunArgv1: probes[0].file, same: true });
+      expect(probes[0]).toEqual(expectedProbe(probes[0].file));
       expect(basename(probes[0].file)).toBe("b.test.ts");
       expect(stderr).toContain("2 pass");
       expect(exitCode).toBe(0);

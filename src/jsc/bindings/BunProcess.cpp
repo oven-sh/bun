@@ -46,6 +46,9 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
 #include "JSEventListener.h"
@@ -356,11 +359,10 @@ static char* toFileURI(std::string_view path)
     size_t escape_count = 0;
     for (char ch : path) {
 #if OS(WINDOWS)
-        if (ch == '\\') {
-            continue;
-        }
-#endif
+        if (needs_escape(ch) && ch != '\\') {
+#else
         if (needs_escape(ch)) {
+#endif
             ++escape_count;
         }
     }
@@ -1588,17 +1590,17 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if OS(LINUX)
             // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
             // suspend and resume the JS thread which we must not override.
-            bool canHandle = signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume;
+            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
 #elif OS(DARWIN) || OS(FREEBSD)
             // these signals cannot be handled
-            bool canHandle = signalNumber != SIGKILL && signalNumber != SIGSTOP;
+            if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
 #elif OS(WINDOWS)
             // windows has no SIGSTOP
-            bool canHandle = signalNumber != SIGKILL;
+            if (signalNumber != SIGKILL) {
 #else
 #error unknown OS
 #endif
-            if (canHandle) {
+
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {
                         SignalHandleValue signal_handle = {
@@ -3140,37 +3142,64 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessArgv, (JSGlobalObject * globalObject, Encoded
     return true;
 }
 
+static void repointOwnDataProperty(VM& vm, JSObject* object, const Identifier& name, JSValue value)
+{
+    unsigned attributes = 0;
+    PropertyOffset offset = object->structure()->get(vm, name, attributes);
+    if (!isValidOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+        return;
+    }
+    object->putDirect(vm, name, value, attributes);
+}
+
+// A process property can have copies: process and Bun reify a static table
+// entry into an own data property on first read, and node:process binds the
+// export the first time it is imported. After the canonical value changes,
+// point every copy that exists at the new value. A live accessor needs nothing.
+void repointProcessProperty(Zig::GlobalObject* globalObject, const Identifier& name, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (globalObject->hasProcessObject()) {
+        repointOwnDataProperty(vm, globalObject->processObject(), name, value);
+    }
+    if (globalObject->m_bunObject.isInitialized()) {
+        repointOwnDataProperty(vm, globalObject->bunObject(), name, value);
+    }
+
+    auto* entry = globalObject->moduleLoader()->registryEntry(Identifier::fromString(vm, "node:process"_s));
+    if (!entry || !isModuleEvaluated(entry->record())) {
+        return;
+    }
+    auto* moduleNamespace = entry->record()->getModuleNamespace(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    moduleNamespace->overrideExportValue(globalObject, name, value);
+}
+
 // process.argv[1] is the VM's current entry point. The test runner moves the
-// entry point from file to file, so the cached array must be dropped for the
-// next file. Bun.argv reifies to the same array on first access, so repoint it
-// when it is already an own property.
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__Process__resetArgv(Zig::GlobalObject* globalObject)
+// entry point from file to file, so the cached array is rebuilt and every copy
+// of the old one is repointed.
+extern "C" void Bun__Process__resetArgv(Zig::GlobalObject* globalObject)
 {
     if (!globalObject->hasProcessObject()) {
         return;
     }
 
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* process = globalObject->processObject();
     process->clearArgv();
 
-    if (!globalObject->m_bunObject.isInitialized()) {
-        return;
-    }
-    auto* bunObject = globalObject->bunObject();
-    auto argvIdentifier = JSC::Identifier::fromString(vm, "argv"_s);
-    if (!bunObject->getDirect(vm, argvIdentifier)) {
-        return;
-    }
-
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue argv = process->getArgv(globalObject);
+    if (!scope.exception()) {
+        repointProcessProperty(globalObject, Identifier::fromString(vm, "argv"_s), argv);
+    }
     if (auto* exception = scope.exception()) [[unlikely]] {
         CLEAR_IF_EXCEPTION(scope);
         Bun__reportError(globalObject, JSValue::encode(exception));
-        return;
     }
-    bunObject->putDirect(vm, argvIdentifier, argv, JSC::PropertyAttribute::DontDelete | 0);
 }
 
 extern "C" EncodedJSValue Bun__Process__getExecArgv(JSGlobalObject* lexicalGlobalObject)

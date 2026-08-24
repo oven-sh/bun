@@ -2691,8 +2691,9 @@ declare module "bun" {
      * Set the DNS servers the resolver uses.
      *
      * Each server is a `[family, address, port]` triple. An empty array
-     * resets the resolver to the system servers. `node:dns`'s `setServers`
-     * wraps this function and accepts `"address:port"` strings instead.
+     * clears all configured servers, and later queries reject with
+     * `ENOSERVER`. `node:dns`'s `setServers` wraps this function and
+     * accepts `"address:port"` strings instead.
      *
      * @param servers The servers to use
      *

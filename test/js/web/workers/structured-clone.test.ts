@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
 import { deflate } from "node:zlib";
@@ -34,27 +34,32 @@ function jscSerializeRoundtrip(value: any) {
   return cloned;
 }
 
+// The child scripts below reply through Bun.write(Bun.stdout) rather than process.stdout:
+// the first touch of process.stdout loads the node:stream/node:tty machinery, which costs
+// most of a second per child in a debug build.
+
 // Cold variant: a brand-new Bun process per clone, so the deserialize happens in a
 // completely fresh JSC VM (empty object pool, first-touch platform-object structures).
 function jscSerializeRoundtripCrossProcessCold(original: any) {
-  const serialized = serialize(original);
-
   const result = Bun.spawnSync({
     cmd: [
       bunExe(),
       "-e",
       `
-    import {deserialize, serialize} from "bun:jsc";
-    const serialized = deserialize(await Bun.stdin.bytes());
-    const cloned = serialize(serialized);
-    process.stdout.write(cloned);
+    import { deserialize, serialize } from "bun:jsc";
+    await Bun.write(Bun.stdout, serialize(deserialize(await Bun.stdin.bytes())));
     `,
     ],
     env: bunEnv,
-    stdin: serialized,
+    stdin: serialize(original),
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
+  if (!result.success) {
+    throw new Error(
+      `cold cross-process child failed (code ${result.exitCode}, signal ${result.signalCode})\n${result.stderr}`,
+    );
+  }
   return deserialize(result.stdout);
 }
 
@@ -75,11 +80,11 @@ const crossProcessChildScript = `
         chunks = [buf];
         break;
       }
-      const cloned = serialize(deserialize(buf.subarray(4, 4 + len)));
+      // serialize() returns a SharedArrayBuffer; Buffer.concat needs a view of it.
+      const cloned = new Uint8Array(serialize(deserialize(buf.subarray(4, 4 + len))));
       const header = Buffer.alloc(4);
       header.writeUInt32LE(cloned.byteLength, 0);
-      process.stdout.write(header);
-      process.stdout.write(cloned);
+      await Bun.write(Bun.stdout, Buffer.concat([header, cloned]));
       chunks = [buf.subarray(4 + len)];
       total -= 4 + len;
     }
@@ -216,10 +221,8 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       const cloned = await structuredCloneFn(input);
       expect(cloned).toBeInstanceOf(Array);
       expect(cloned).not.toBe(input);
-      expect(cloned.length).toEqual(input.length);
-      for (const x in input) {
-        expect(cloned[x]).toBe(input[x]);
-      }
+      // toStrictEqual compares with Object.is (-0 vs 0, NaN) and keeps holes distinct from undefined.
+      expect(cloned).toStrictEqual(input);
     });
     test("Object with primitives", async () => {
       const input: any = {
@@ -250,37 +253,28 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       expect(cloned).toBeInstanceOf(Object);
       expect(cloned).not.toBeInstanceOf(Array);
       expect(cloned).not.toBe(input);
-      for (const x in input) {
-        expect(cloned[x]).toBe(input[x]);
-      }
+      // toStrictEqual requires the `undefined` key to exist on the clone, not only to read as undefined.
+      expect(cloned).toStrictEqual(input);
     });
 
     test("map", async () => {
-      const input = new Map();
-      input.set("a", 1);
-      input.set("b", 2);
-      input.set("c", 3);
+      const input = new Map([
+        ["a", 1],
+        ["b", 2],
+        ["c", 3],
+      ]);
       const cloned = await structuredCloneFn(input);
       expect(cloned).toBeInstanceOf(Map);
       expect(cloned).not.toBe(input);
-      expect(cloned.size).toEqual(input.size);
-      for (const [key, value] of input) {
-        expect(cloned.get(key)).toBe(value);
-      }
+      expect(cloned).toEqual(input);
     });
 
     test("set", async () => {
-      const input = new Set();
-      input.add("a");
-      input.add("b");
-      input.add("c");
+      const input = new Set(["a", "b", "c"]);
       const cloned = await structuredCloneFn(input);
       expect(cloned).toBeInstanceOf(Set);
       expect(cloned).not.toBe(input);
-      expect(cloned.size).toEqual(input.size);
-      for (const value of input) {
-        expect(cloned.has(value)).toBe(true);
-      }
+      expect(cloned).toEqual(input);
     });
 
     // The cross-process transport only adds a process hop over the in-process byte round
@@ -382,26 +376,42 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         expect(cloned.name).toBe(blob.name);
         expect(cloned.size).toBe(blob.size);
       });
-      describe("dom file", async () => {
+      describe("dom file", () => {
+        async function describeFile(file: File) {
+          return {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            lastModified: file.lastModified,
+            text: await file.text(),
+          };
+        }
         test("without lastModified", async () => {
           const file = new File(["hi"], "example.txt", { type: "text/plain" });
           expect(file.lastModified).toBeGreaterThan(0);
-          expect(file.name).toBe("example.txt");
-          expect(file.size).toBe(2);
           const cloned = await structuredCloneFn(file);
-          expect(cloned.lastModified).toBe(file.lastModified);
-          expect(cloned.name).toBe(file.name);
-          expect(cloned.size).toBe(file.size);
+          expect(cloned).toBeInstanceOf(File);
+          expect(cloned).not.toBe(file);
+          expect(await describeFile(cloned)).toEqual({
+            name: "example.txt",
+            type: file.type,
+            size: 2,
+            lastModified: file.lastModified,
+            text: "hi",
+          });
         });
         test("with lastModified", async () => {
           const file = new File(["hi"], "example.txt", { type: "text/plain", lastModified: 123 });
-          expect(file.lastModified).toBe(123);
-          expect(file.name).toBe("example.txt");
-          expect(file.size).toBe(2);
           const cloned = await structuredCloneFn(file);
-          expect(cloned.lastModified).toBe(123);
-          expect(cloned.name).toBe(file.name);
-          expect(cloned.size).toBe(file.size);
+          expect(cloned).toBeInstanceOf(File);
+          expect(cloned).not.toBe(file);
+          expect(await describeFile(cloned)).toEqual({
+            name: "example.txt",
+            type: file.type,
+            size: 2,
+            lastModified: 123,
+            text: "hi",
+          });
         });
       });
       test("unpaired high surrogate (invalid utf-8)", async () => {
@@ -424,12 +434,14 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
     if (structuredCloneFn === structuredClone) {
       describe("net.BlockList works", () => {
         test("simple", () => {
-          const net = require("node:net");
-          const blocklist = new net.BlockList();
+          const blocklist = new BlockList();
           blocklist.addAddress("123.123.123.123");
           const newlist = structuredCloneFn(blocklist);
+          expect(newlist).toBeInstanceOf(BlockList);
+          expect(newlist).not.toBe(blocklist);
           expect(newlist.check("123.123.123.123")).toBeTrue();
-          expect(!newlist.check("123.123.123.124")).toBeTrue();
+          expect(newlist.check("123.123.123.124")).toBeFalse();
+          // Like node, the clone wraps the same native list as the original.
           newlist.addAddress("123.123.123.124");
           expect(blocklist.check("123.123.123.124")).toBeTrue();
           expect(newlist.check("123.123.123.124")).toBeTrue();
@@ -440,8 +452,13 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         test("ArrayBuffer", () => {
           const buffer = Uint8Array.from([1]).buffer;
           const cloned = structuredCloneFn(buffer, { transfer: [buffer] });
-          expect(buffer.byteLength).toBe(0);
-          expect(cloned.byteLength).toBe(1);
+          expect(cloned).toBeInstanceOf(ArrayBuffer);
+          expect(cloned).not.toBe(buffer);
+          expect({
+            detached: buffer.detached,
+            byteLength: buffer.byteLength,
+            clonedBytes: new Uint8Array(cloned),
+          }).toEqual({ detached: true, byteLength: 0, clonedBytes: new Uint8Array([1]) });
         });
         test("A detached ArrayBuffer cannot be transferred", () => {
           const buffer = new ArrayBuffer(2);
@@ -505,9 +522,14 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         });
         test("Transferring a non-transferable platform object fails", () => {
           const blob = new Blob();
-          expect(() => {
+          let error: unknown;
+          try {
             structuredCloneFn(blob, { transfer: [blob] });
-          }).toThrow(DOMException);
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(DOMException);
+          expect((error as DOMException).name).toBe("DataCloneError");
         });
         // https://html.spec.whatwg.org/multipage/structured-data.html#dom-structuredclone
         // `transfer` is a WebIDL sequence<object>: it is converted (and may throw)
@@ -543,18 +565,14 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
 }
 
 async function compareBlobs(original: Blob, cloned: Blob) {
-  expect(cloned).toBeInstanceOf(Blob);
+  // A plain Blob must come back as a plain Blob, not as a File.
+  expect(Object.getPrototypeOf(cloned)).toBe(Blob.prototype);
   expect(cloned).not.toBe(original);
-  expect(cloned.size).toBe(original.size);
-  expect(cloned.type).toBe(original.type);
-  const ab1 = await new Response(cloned).arrayBuffer();
-  const ab2 = await new Response(original).arrayBuffer();
-  expect(ab1.byteLength).toBe(ab2.byteLength);
-  const ta1 = new Uint8Array(ab1);
-  const ta2 = new Uint8Array(ab2);
-  for (let i = 0; i < ta1.length; i++) {
-    expect(ta1[i]).toBe(ta2[i]);
-  }
+  expect({ size: cloned.size, type: cloned.type, bytes: await cloned.bytes() }).toEqual({
+    size: original.size,
+    type: original.type,
+    bytes: await original.bytes(),
+  });
 }
 
 function encode_cesu8(codeunits: number[]): number[] {
@@ -583,92 +601,151 @@ function createBlob(arr: number[]): Blob {
   return new Blob([view]);
 }
 
-describe("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {
+// A child process runs each case inside its own function and collects between cases, so a
+// child that runs several cases peaks at one source, one serialization buffer, and one clone.
+// The two tests are independent, so they overlap.
+describe.concurrent("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {
+  async function runInChild(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lines: stdout.split("\n").filter(Boolean), stderr, signalCode: proc.signalCode, exitCode };
+  }
+
   // The serialization buffer is a WTF::Vector<uint8_t> capped at 2GiB. Cloning an
   // ArrayBuffer at or above that size must throw DataCloneError instead of aborting.
   // SharedArrayBuffer shares its backing store (no serialization copy), so it
-  // succeeds regardless of size. Run in a subprocess so the ~2GiB allocation
-  // does not bloat the test runner.
-  for (const [label, expr, expected] of [
-    ["ArrayBuffer", "new ArrayBuffer(2 ** 31)", "DataCloneError"],
-    ["resizable ArrayBuffer", "new ArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })", "DataCloneError"],
-    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)", "SHARED"],
-    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })", "SHARED"],
-    ["Uint8Array", "new Uint8Array(2 ** 31)", "DataCloneError"],
-  ] as const) {
-    test(label, async () => {
-      const script = `
-        let buf;
+  // succeeds regardless of size. Nothing here copies 2GiB, so one child runs all cases.
+  test("at or above 2GiB: copies throw DataCloneError, SharedArrayBuffers are shared", async () => {
+    const cases = [
+      ["ArrayBuffer", "new ArrayBuffer(2 ** 31)", "DOMException DataCloneError"],
+      [
+        "resizable ArrayBuffer",
+        "new ArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })",
+        "DOMException DataCloneError",
+      ],
+      ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)", "SHARED"],
+      ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })", "SHARED"],
+      ["Uint8Array", "new Uint8Array(2 ** 31)", "DOMException DataCloneError"],
+    ] as const;
+    const caseList = cases.map(([label, expr]) => `["${label}", () => ${expr}]`).join(", ");
+    const result = await runInChild(`
+      function run(make) {
+        const buf = make();
+        let cloned;
         try {
-          buf = ${expr};
-        } catch {
-          console.log("SKIP");
-          process.exit(0);
-        }
-        try {
-          const cloned = structuredClone(buf);
-          console.log(cloned instanceof SharedArrayBuffer && cloned.byteLength === buf.byteLength ? "SHARED" : "UNEXPECTED_SUCCESS");
+          cloned = structuredClone(buf);
         } catch (e) {
-          console.log(e.name);
+          return e.constructor.name + " " + e.name;
         }
-      `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect([expected, "SKIP"]).toContain(stdout.trim());
-      expect(exitCode).toBe(0);
+        if (!(cloned instanceof SharedArrayBuffer)) return "UNEXPECTED_SUCCESS " + cloned.constructor.name;
+        // A shared clone sees a write made through the original after cloning.
+        new Uint8Array(buf)[0] = 42;
+        return cloned.byteLength === buf.byteLength && new Uint8Array(cloned)[0] === 42 ? "SHARED" : "NOT_SHARED";
+      }
+      for (const [label, make] of [${caseList}]) {
+        console.log(label + ": " + run(make));
+        Bun.gc(true);
+      }
+    `);
+    expect(result).toEqual({
+      lines: cases.map(([label, , expected]) => `${label}: ${expected}`),
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
     });
-  }
+  });
 
   // A large-but-under-2GiB ArrayBuffer nested inside an object/array fills the serialization
   // buffer to its reserved capacity; the subsequent terminator write then triggers vector
   // growth. The default 1.5x growth exceeds the 2GiB cap and would crash. These cases must
   // succeed and round-trip correctly since the total serialized size still fits under 2GiB.
-  for (const [label, expr, check] of [
-    ["ArrayBuffer in object", "{ h: new ArrayBuffer(size) }", "r.h.byteLength === size"],
-    ["ArrayBuffer in array", "[new ArrayBuffer(size)]", "r[0].byteLength === size"],
-    ["Uint8Array in object", "{ h: new Uint8Array(size) }", "r.h.byteLength === size"],
-    ["nested ArrayBuffer", "{ a: { b: new ArrayBuffer(size) } }", "r.a.b.byteLength === size"],
-    [
-      "resizable ArrayBuffer in object",
-      "{ h: new ArrayBuffer(size, { maxByteLength: size }) }",
-      "r.h.byteLength === size",
-    ],
-  ] as const) {
-    test(`${label} under 2GiB clones without crashing`, async () => {
-      // The smallest size (plus margin) whose 1.5x serialization-buffer growth
-      // exceeds the 2GiB cap (2**31 / 1.5 = ~1.43e9); peak child memory is ~3x.
-      const script = `
-        const size = 1_500_000_000;
-        let v;
-        try {
-          v = ${expr};
-        } catch {
-          console.log("SKIP");
-          process.exit(0);
+  //
+  // Five clones of 1.5 GB take about 10 s even in a release build: the time goes to the kernel
+  // faulting in the serialization buffer and the clone, hence the explicit timeout. Each case
+  // gets its own child so the peak stays near 3 GB: mimalloc keeps freed pages for a moment,
+  // and two cases in one process overlap to about 4.5 GB, which the 8 GB CI runners cannot
+  // spare. Under ASAN the allocator unmaps freed pages at once, so the peak does not grow, and
+  // one child for all cases saves a process start plus the shadow-memory page faults per case.
+  test("nested ArrayBuffers under 2GiB clone without crashing and round-trip", async () => {
+    // The smallest size (plus margin) whose 1.5x serialization-buffer growth
+    // exceeds the 2GiB cap (2**31 / 1.5 = ~1.43e9); peak child memory is ~3x.
+    const size = 1_500_000_000;
+    // `pick` is the path of the ArrayBuffer or view inside the value `v`.
+    const cases: {
+      label: string;
+      value: string;
+      pick: string;
+      type: "ArrayBuffer" | "Uint8Array";
+      resizable?: true;
+    }[] = [
+      { label: "ArrayBuffer in object", value: "{ h: new ArrayBuffer(size) }", pick: "v.h", type: "ArrayBuffer" },
+      { label: "ArrayBuffer in array", value: "[new ArrayBuffer(size)]", pick: "v[0]", type: "ArrayBuffer" },
+      { label: "Uint8Array in object", value: "{ h: new Uint8Array(size) }", pick: "v.h", type: "Uint8Array" },
+      { label: "nested ArrayBuffer", value: "{ a: { b: new ArrayBuffer(size) } }", pick: "v.a.b", type: "ArrayBuffer" },
+      {
+        label: "resizable ArrayBuffer in object",
+        value: "{ h: new ArrayBuffer(size, { maxByteLength: size }) }",
+        pick: "v.h",
+        type: "ArrayBuffer",
+        resizable: true,
+      },
+    ];
+    const casesPerChild = isASAN ? cases.length : 1;
+    for (let i = 0; i < cases.length; i += casesPerChild) {
+      const batch = cases.slice(i, i + casesPerChild);
+      const caseList = batch.map(c => `["${c.label}", () => (${c.value}), v => ${c.pick}]`).join(", ");
+      const result = await runInChild(`
+        const size = ${size};
+        function run(label, make, pick) {
+          const v = make();
+          // Mark both ends of the source so the check proves the bytes were copied, not only the
+          // length. Two pages are touched; the rest of the source stays unmapped.
+          const source = pick(v);
+          const sourceBytes = source instanceof ArrayBuffer ? new Uint8Array(source) : source;
+          sourceBytes[0] = 1;
+          sourceBytes[size - 1] = 2;
+          const out = pick(structuredClone(v));
+          const bytes = out instanceof ArrayBuffer ? new Uint8Array(out) : out;
+          return {
+            label,
+            type: out.constructor.name,
+            byteLength: bytes.byteLength,
+            first: bytes[0],
+            last: bytes[size - 1],
+            resizable: out.resizable ?? null,
+            maxByteLength: out.maxByteLength ?? null,
+          };
         }
-        const r = structuredClone(v);
-        console.log((${check}) ? "OK" : "BAD_ROUNDTRIP");
-      `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        for (const [label, make, pick] of [${caseList}]) {
+          console.log(JSON.stringify(run(label, make, pick)));
+          Bun.gc(true);
+        }
+      `);
       // The host's OOM killer reclaiming the child on a small CI runner is not a
       // structuredClone failure; any other signal (SIGSEGV/SIGABRT/...) still is.
-      if (proc.signalCode === "SIGKILL" && stdout === "") return;
-      expect(["OK", "SKIP"]).toContain(stdout.trim());
-      expect(proc.signalCode).toBe(null);
-      expect(exitCode).toBe(0);
-    });
-  }
+      if (result.signalCode === "SIGKILL") continue;
+      expect({ ...result, lines: result.lines.map(line => JSON.parse(line)) }).toEqual({
+        lines: batch.map(({ label, type, resizable = false }) => ({
+          label,
+          type,
+          byteLength: size,
+          first: 1,
+          last: 2,
+          // A view reports neither; a fixed-length ArrayBuffer reports maxByteLength === byteLength.
+          resizable: type === "ArrayBuffer" ? resizable : null,
+          maxByteLength: type === "ArrayBuffer" ? size : null,
+        })),
+        stderr: "",
+        signalCode: null,
+        exitCode: 0,
+      });
+    }
+  }, 60_000);
 });
 
 // A repeated object is serialized as an ObjectReferenceTag holding an index into the
@@ -734,8 +811,7 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       for (let i = 0; i < 300; i++) input.push((1n << 64n) + BigInt(i));
       input.push(o);
       const c = await structuredCloneFn(input);
-      expect(c[300]).toBe((1n << 64n) + 299n);
-      expect(c[301]).toEqual({ marker: "hello" });
+      expect(c).toEqual(input);
       expect(c[301]).toBe(c[0]);
     });
   });

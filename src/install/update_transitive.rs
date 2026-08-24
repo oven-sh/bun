@@ -1246,8 +1246,9 @@ fn later_than(
         return Box::default();
     }
     let manifest_buf: &[u8] = &manifest.string_buf;
+    // Matches resolution: a deprecated `latest` is not "available".
     let latest = manifest
-        .find_by_dist_tag_with_filter(b"latest", min_age, excludes)
+        .find_by_latest_tag_with_filter(min_age, excludes)
         .unwrap()
         .map(|found| found.version)
         .filter(|latest| latest.order(v, manifest_buf, manifest_buf) == Ordering::Greater);

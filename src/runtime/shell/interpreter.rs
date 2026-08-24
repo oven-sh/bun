@@ -673,6 +673,8 @@ impl Interpreter {
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
         }
+        // We are the script's shell (`bun run <script>`, `bun exec`, `bun x.sh`).
+        bun_spawn::ctrl_c::install();
 
         let mut shargs = ShellArgs::init();
 
@@ -786,6 +788,7 @@ macro_rules! shell_state_dispatch {
         /// Signal to `parent` that `child` finished with `exit_code`. This is the
         /// single hoisted `match` dispatching on the parent's state tag.
         pub fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
+            self.propagate_interrupt(parent, child);
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
             }
@@ -887,6 +890,81 @@ impl Interpreter {
             n[id.idx()] = Node::Free;
         });
         self.free_list.with_mut(|f| f.push(id.0));
+    }
+
+    /// A child that a Ctrl+C we left to it killed marks its node `interrupted`
+    /// (see `bun_spawn::ctrl_c`). bash runs each member of a pipeline in its own
+    /// process, so inside one the interrupt only cuts that member short — the mark
+    /// flows up through the sequencing states (which finish early on it, see
+    /// `interrupted`) to the member, and the pipeline takes it from its rightmost
+    /// member only. Anywhere else it ends us the way it ended the child, so
+    /// `a; b` and `a || b` stop at `a`.
+    fn propagate_interrupt(&self, parent: NodeId, child: NodeId) {
+        if !self.node(child).base().is_some_and(|b| b.interrupted) {
+            if bun_spawn::ctrl_c::Child::alive() == 0 {
+                // A Ctrl+C the job handled is used up with the job (bash resets it per wait).
+                bun_spawn::ctrl_c::take_received();
+            }
+            return;
+        }
+        if parent == NodeId::INTERPRETER {
+            bun_spawn::ctrl_c::exit_like_child();
+        }
+        if let Node::Pipeline(p) = self.node(parent) {
+            let rightmost = p.cmds.as_deref().is_none_or(|c| {
+                c.len() < 2
+                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd(id)) if *id == child)
+            });
+            if rightmost {
+                self.as_pipeline_mut(parent).base.interrupted = true;
+            }
+            return;
+        }
+        if !self.in_pipeline(parent) {
+            bun_spawn::ctrl_c::exit_like_child();
+        }
+        if let Some(base) = self.node_mut(parent).base_mut() {
+            base.interrupted = true;
+        }
+    }
+
+    /// For sequencing states' `child_done`: an interrupted pipeline member stops
+    /// where it is instead of running its next command.
+    pub(crate) fn interrupted(&self, id: NodeId) -> bool {
+        self.node(id).base().is_some_and(|b| b.interrupted)
+    }
+
+    /// Some ancestor is a member of a multi-command pipeline.
+    fn in_pipeline(&self, mut id: NodeId) -> bool {
+        while id != NodeId::INTERPRETER {
+            let Some(base) = self.node(id).base() else {
+                return false;
+            };
+            if base.parent != NodeId::INTERPRETER {
+                if let Node::Pipeline(p) = self.node(base.parent) {
+                    if p.cmds.as_deref().is_some_and(|c| c.len() >= 2) {
+                        return true;
+                    }
+                }
+            }
+            id = base.parent;
+        }
+        false
+    }
+
+    /// Inside an `&` command: not a foreground job.
+    pub(crate) fn in_background(&self, mut id: NodeId) -> bool {
+        while id != NodeId::INTERPRETER {
+            let node = self.node(id);
+            if node.kind() == StateKind::Async {
+                return true;
+            }
+            id = match node.base() {
+                Some(b) => b.parent,
+                None => return false,
+            };
+        }
+        false
     }
 
     #[inline]

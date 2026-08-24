@@ -275,12 +275,14 @@ describe("MessagePort pipe", () => {
   //
   // Sanitizer-gated: the race being exercised is a memory-safety bug that
   // only surfaces deterministically under ASAN/UBSan.
-  test.skipIf(!isDebug && !isASAN)("concurrent MessageChannel creation across workers is race-free", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.skipIf(!isDebug && !isASAN)(
+    "concurrent MessageChannel creation across workers is race-free",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           const { Worker } = require("worker_threads");
           const workerSrc = \`
             const { parentPort, MessageChannel } = require("worker_threads");
@@ -310,18 +312,20 @@ describe("MessagePort pipe", () => {
           await Promise.all(workers);
           console.log("OK");
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
-    // 10000 MessageChannels across 5 threads take 10s+ under a loaded debug
-    // ASAN build; the 5s default flakes.
-  }, 60_000);
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("OK");
+      expect(exitCode).toBe(0);
+      // 10000 MessageChannels across 5 threads take 10s+ under a loaded debug
+      // ASAN build; the 5s default flakes.
+    },
+    60_000,
+  );
 
   test.skipIf(!isDebug && !isASAN)("burst of postMessage across threads delivers every message in order", async () => {
     await using proc = Bun.spawn({

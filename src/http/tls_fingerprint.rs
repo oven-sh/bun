@@ -56,7 +56,9 @@ pub enum Ja3Error {
     Tls13Ciphers,
     Extension(u16),
     MissingExtension(u16),
+    UnsentExtension(u16),
     Group(u16),
+    NoGroups,
     PointFormats,
 }
 
@@ -90,7 +92,14 @@ impl fmt::Display for Ja3Error {
                     "extension {id} is always sent by BoringSSL and must be listed"
                 )
             }
+            Self::UnsentExtension(id) => {
+                write!(
+                    f,
+                    "extension {id} is not sent by BoringSSL for the TLS versions the cipher list offers"
+                )
+            }
             Self::Group(id) => write!(f, "supported group {id} is not supported by BoringSSL"),
+            Self::NoGroups => f.write_str("the supported groups list is empty"),
             Self::PointFormats => f.write_str("only point format 0 (uncompressed) is supported"),
         }
     }
@@ -270,6 +279,29 @@ impl Ja3 {
         if let Some(&missing) = required.iter().find(|ext| !ids.contains(ext)) {
             return Err(Ja3Error::MissingExtension(missing));
         }
+        // And what it sends only for a TLS version the cipher list does not offer must be absent.
+        let unsent: &[u16] = if tls13.is_empty() {
+            &[
+                EXT_SUPPORTED_VERSIONS,
+                EXT_PSK_KEY_EXCHANGE_MODES,
+                EXT_KEY_SHARE,
+                EXT_ENCRYPTED_CLIENT_HELLO,
+                ssl::TLSEXT_TYPE_application_settings_old,
+                ssl::TLSEXT_TYPE_application_settings,
+            ]
+        } else if !has_tls12 {
+            &[
+                EXT_EC_POINT_FORMATS,
+                EXT_EXTENDED_MASTER_SECRET,
+                EXT_RENEGOTIATION_INFO,
+                EXT_SESSION_TICKET,
+            ]
+        } else {
+            &[]
+        };
+        if let Some(&listed) = unsent.iter().find(|ext| ids.contains(ext)) {
+            return Err(Ja3Error::UnsentExtension(listed));
+        }
 
         // Supported groups.
         ids.clear();
@@ -289,6 +321,10 @@ impl Ja3 {
                 &mut this.groups,
                 unsafe { bun_core::ffi::cstr(name) }.to_bytes(),
             );
+        }
+        // An empty list would fall back to BoringSSL's default groups.
+        if this.groups.is_empty() {
+            return Err(Ja3Error::NoGroups);
         }
 
         // Point formats. BoringSSL only ever sends uncompressed (0).

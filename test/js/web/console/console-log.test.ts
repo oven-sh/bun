@@ -150,3 +150,16 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+// A bare console.error()/console.warn() newline goes where console.error("x") goes: stderr.
+it("console.error() and console.warn() with no arguments write their newline to stderr", async () => {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", `console.log(); console.error(); console.warn(); console.log("out"); console.error("err");`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "\nout\n", stderr: "\n\nerr\n" });
+  expect(exitCode).toBe(0);
+});

@@ -330,6 +330,32 @@ describe("bunfig.toml test options", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("--coverage-reporter wins over [test] coverageReporter", async () => {
+      using dir = tempDir("bunfig-coverage-reporter-cli", {
+        ...files,
+        "bunfig.toml": `[test]\ncoverage = true\ncoverageReporter = "lcov"`,
+      });
+
+      const { stdout, stderr, exitCode } = await runTest(String(dir), "--coverage-reporter", "text");
+      expect(stderr).toContain("2 pass");
+      expect(stdout + stderr).toContain("% Funcs");
+      expect(existsSync(join(String(dir), "coverage", "lcov.info"))).toBe(false);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("--coverage-dir wins over [test] coverageDir", async () => {
+      using dir = tempDir("bunfig-coverage-dir-cli", {
+        ...files,
+        "bunfig.toml": `[test]\ncoverage = true\ncoverageReporter = "lcov"\ncoverageDir = "from-bunfig"`,
+      });
+
+      const { stderr, exitCode } = await runTest(String(dir), "--coverage-dir", "from-cli");
+      expect(stderr).toContain("2 pass");
+      expect(existsSync(join(String(dir), "from-bunfig"))).toBe(false);
+      expect(readFileSync(join(String(dir), "from-cli", "lcov.info"), "utf8")).toContain("SF:");
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("--only-failures wins over [test] onlyFailures = false", async () => {
       using dir = tempDir("bunfig-only-failures-cli", {
         ...files,

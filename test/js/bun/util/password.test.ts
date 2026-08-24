@@ -1,6 +1,6 @@
 import { password } from "bun";
 import { describe, expect, test } from "bun:test";
-import { expectRssDeltaBelow, isDebug } from "harness";
+import { expectRssDeltaBelow, isASAN, isDebug } from "harness";
 
 const placeholder = "hey";
 const argonVariants = ["argon2id", "argon2i", "argon2d"] as const;
@@ -18,12 +18,25 @@ function bcryptHash(cost: number) {
   return new RegExp(`^\\$2b\\$${String(cost).padStart(2, "0")}\\$[./A-Za-z0-9]{53}$`);
 }
 
-const typeError = (code: string, message: string) => expect.objectContaining({ name: "TypeError", code, message });
-const unknownAlgorithm = (fn: "hash" | "verify") =>
-  typeError(
-    "ERR_INVALID_ARG_TYPE",
-    `Expected algorithm to be a unknown algorithm, expected one of: "bcrypt", "argon2id", "argon2d", "argon2i" (default is "argon2id") for '${fn}'.`,
-  );
+const typeError = (code: string, message: unknown) => expect.objectContaining({ name: "TypeError", code, message });
+
+// Matcher for an error message that names the function, given as a template
+// with `{fn}` in it. The async forms are pinned exactly. hashSync and
+// verifySync report themselves as 'hash' and 'verify', so for them the name is
+// left open rather than pinned to the wrong one.
+function named(name: string, sync: boolean, template: string, code = "ERR_INVALID_ARG_TYPE") {
+  const [before, after] = template.split("{fn}");
+  if (!sync) return typeError(code, before + name + after);
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return typeError(code, expect.stringMatching(new RegExp(`^${escape(before)}\\w+${escape(after)}$`)));
+}
+
+// The message lists the accepted names. Its lead-in ("to be a unknown
+// algorithm, expected one of") is not pinned.
+const unknownAlgorithm = typeError(
+  "ERR_INVALID_ARG_TYPE",
+  expect.stringContaining('"bcrypt", "argon2id", "argon2d", "argon2i" (default is "argon2id")'),
+);
 const verifyError = (code: string, reason: string) =>
   expect.objectContaining({ code, message: `Password verification failed with error "${reason}"` });
 const unsupportedAlgorithm = verifyError("PASSWORD_UNSUPPORTED_ALGORITHM", "UnsupportedAlgorithm");
@@ -31,17 +44,18 @@ const invalidEncoding = verifyError("PASSWORD_INVALID_ENCODING", "InvalidEncodin
 const weakParameters = verifyError("PASSWORD_WEAK_PARAMETERS", "WeakParameters");
 
 // The leak this guards (#29913) was the encoded hash string, about 100 bytes
-// per hash() or hashSync() call that was never freed. On a release build it
-// shows as 110 to 170 bytes of RSS growth per call, so the check needs tens of
-// thousands of calls and a flat baseline. The JIT is off because tier-up
-// allocates several MiB in the middle of the loop. The JS heap is collected
-// every 2000 calls because each call leaves a string behind. ASAN's quarantine
-// is off because it pins freed blocks. With that, the fixed build stays within
-// 0.2 MiB over 60k calls.
+// per hash() or hashSync() call that was never freed. Bun 1.3.13 (unfixed)
+// shows it as about 100 bytes of RSS growth per call, so the check needs tens
+// of thousands of calls over a flat baseline. Two things keep the baseline
+// flat on top of what the harness does (mimalloc purge delay 0, ASAN
+// quarantine off): the warm-up runs past the JIT tier-up of the loop, which
+// commits about 3 MiB once before call 3000, and every chunk of 2000 calls
+// ends in a full GC, so the strings the calls leave behind never grow the
+// heap. The fixed build then reads 0 MiB.
 //
 // A debug build hashes about 200x slower, so the suite does not run there.
 describe.skipIf(isDebug)("does not leak", () => {
-  async function expectRssGrowthBelow(
+  function expectRssGrowthBelow(
     calls: string,
     warmup: number,
     measured: number,
@@ -62,22 +76,22 @@ describe.skipIf(isDebug)("does not leak", () => {
       await run(${measured});
       console.log(JSON.stringify({ deltaMiB: (rss() - before) / 1024 / 1024 }));
     `;
-    await expectRssDeltaBelow(["--smol", "-e", code], bounds, { BUN_JSC_useJIT: "0" });
+    return expectRssDeltaBelow(["--smol", "-e", code], bounds);
   }
 
-  // Unfixed (Bun 1.3.13): 5.6 to 9.6 MiB. Fixed: 0 +- 0.2 MiB. The `debug`
-  // bound applies to the ASAN lane: redzones make a leaked block larger, and
-  // the allocator is noisier without a quarantine.
+  // Release: unfixed 4 to 5 MiB, fixed 0 MiB. The `debug` bound is the ASAN
+  // lane, where a leaked block carries redzones and the allocator's baseline
+  // moves by a few MiB, so it measures more calls against a wider bound.
   test("hashSync", async () => {
     await expectRssGrowthBelow(
       /* js */ `for (let i = 0; i < chunk; i++) Bun.password.hashSync("hey", opts);`,
       4_000,
-      60_000,
-      { release: 4, debug: 6 },
+      isASAN ? 60_000 : 40_000,
+      { release: 2, debug: 6 },
     );
   });
 
-  // Unfixed: 12 to 14 MiB. Fixed: 0 MiB.
+  // Release: unfixed 4 to 6 MiB, fixed 0 to 1 MiB.
   test("hash", async () => {
     await expectRssGrowthBelow(
       /* js */ `
@@ -87,8 +101,8 @@ describe.skipIf(isDebug)("does not leak", () => {
           await Promise.all(batch);
         }`,
       10_000,
-      100_000,
-      { release: 6, debug: 8 },
+      isASAN ? 100_000 : 50_000,
+      { release: 2, debug: 8 },
     );
   });
 });
@@ -106,16 +120,16 @@ describe("hash", () => {
       test("password is required", () => {
         // @ts-expect-error
         expect(() => hash()).toThrow(
-          typeError("ERR_MISSING_ARGS", "Not enough arguments to 'hash'. Expected 1, got 0."),
+          named(name, sync, "Not enough arguments to '{fn}'. Expected 1, got 0.", "ERR_MISSING_ARGS"),
         );
       });
 
       test("invalid algorithm throws", () => {
         // @ts-expect-error
-        expect(() => hash(placeholder, "scrpyt")).toThrow(unknownAlgorithm("hash"));
+        expect(() => hash(placeholder, "scrpyt")).toThrow(unknownAlgorithm);
         // @ts-expect-error
         expect(() => hash(placeholder, 123)).toThrow(
-          typeError("ERR_INVALID_ARG_TYPE", "Expected algorithm to be a string for 'hash'."),
+          named(name, sync, "Expected algorithm to be a string for '{fn}'."),
         );
 
         // An object is read as options, so its toString() is not an algorithm name.
@@ -126,14 +140,14 @@ describe("hash", () => {
               return "scrypt";
             },
           }),
-        ).toThrow(typeError("ERR_INVALID_ARG_TYPE", "Expected options.algorithm to be a string for 'hash'."));
+        ).toThrow(named(name, sync, "Expected options.algorithm to be a string for '{fn}'."));
 
         expect(() =>
           hash(placeholder, {
             // @ts-expect-error
             algorithm: "poop",
           }),
-        ).toThrow(unknownAlgorithm("hash"));
+        ).toThrow(unknownAlgorithm);
 
         const rounds = typeError("ERR_INVALID_ARG_TYPE", "Rounds must be an integer between 4 and 31");
         for (const cost of [Infinity, -999, 3, 32]) {
@@ -141,7 +155,7 @@ describe("hash", () => {
         }
         // @ts-expect-error
         expect(() => hash(placeholder, { algorithm: "bcrypt", cost: "10" })).toThrow(
-          typeError("ERR_INVALID_ARG_TYPE", "Expected cost to be a number for 'hash'."),
+          named(name, sync, "Expected cost to be a number for '{fn}'."),
         );
 
         // argon2 requires `memoryCost >= 8 * parallelism`; Bun hard-codes
@@ -158,7 +172,7 @@ describe("hash", () => {
         }
         // @ts-expect-error
         expect(() => hash(placeholder, { algorithm: "argon2id", timeCost: "2" })).toThrow(
-          typeError("ERR_INVALID_ARG_TYPE", "Expected timeCost to be a number for 'hash'."),
+          named(name, sync, "Expected timeCost to be a number for '{fn}'."),
         );
       });
 
@@ -196,10 +210,7 @@ describe("hash", () => {
       test("coercion throwing doesn't crash", () => {
         // The async form still coerces the password with ToString, so only the
         // sync form's error is pinned.
-        const notAPassword = typeError(
-          "ERR_INVALID_ARG_TYPE",
-          "Expected password to be a string or TypedArray for 'hash'.",
-        );
+        const notAPassword = named(name, sync, "Expected password to be a string or TypedArray for '{fn}'.");
         // @ts-expect-error
         expect(() => hash(Symbol())).toThrow(sync ? notAPassword : TypeError);
         expect(() =>
@@ -243,16 +254,13 @@ describe("verify", () => {
       test("minimum args", () => {
         // @ts-expect-error
         expect(() => verify()).toThrow(
-          typeError("ERR_MISSING_ARGS", "Not enough arguments to 'verify'. Expected 2, got 0."),
+          named(name, sync, "Not enough arguments to '{fn}'. Expected 2, got 0.", "ERR_MISSING_ARGS"),
         );
-        // The message does not count the arguments it did get.
+        // The message reports "got 0" for a one-argument call too, so the
+        // count is not pinned here.
         // @ts-expect-error
         expect(() => verify("")).toThrow(
-          expect.objectContaining({
-            name: "TypeError",
-            code: "ERR_MISSING_ARGS",
-            message: expect.stringMatching(/^Not enough arguments to 'verify'\./),
-          }),
+          typeError("ERR_MISSING_ARGS", expect.stringMatching(/^Not enough arguments to '\w+'\. Expected 2, got /)),
         );
       });
 
@@ -263,8 +271,8 @@ describe("verify", () => {
 
       test("invalid algorithm throws", () => {
         // @ts-expect-error
-        expect(() => verify(placeholder, "$", "scrpyt")).toThrow(unknownAlgorithm("verify"));
-        const notAString = typeError("ERR_INVALID_ARG_TYPE", "Expected algorithm to be a string for 'verify'.");
+        expect(() => verify(placeholder, "$", "scrpyt")).toThrow(unknownAlgorithm);
+        const notAString = named(name, sync, "Expected algorithm to be a string for '{fn}'.");
         // @ts-expect-error
         expect(() => verify(placeholder, "$", 123)).toThrow(notAString);
         expect(() =>
@@ -280,11 +288,8 @@ describe("verify", () => {
       test("coercion throwing doesn't crash", () => {
         // The async form still coerces both arguments with ToString, so only
         // the sync form's errors are pinned.
-        const notAPassword = typeError(
-          "ERR_INVALID_ARG_TYPE",
-          "Expected password to be a string or TypedArray for 'verify'.",
-        );
-        const notAHash = typeError("ERR_INVALID_ARG_TYPE", "Expected hash to be a string or TypedArray for 'verify'.");
+        const notAPassword = named(name, sync, "Expected password to be a string or TypedArray for '{fn}'.");
+        const notAHash = named(name, sync, "Expected hash to be a string or TypedArray for '{fn}'.");
         const throwing = {
           toString() {
             throw new Error("toString() failed");

@@ -71,6 +71,75 @@ describe("Bun.build", () => {
     expect(await bunRun(build.outputs[0].path)).toSpawn("world");
   });
 
+  test("a corrupted or truncated .jsc sidecar is ignored instead of decoded", async () => {
+    using dir = tempDir("bun-build-api-bytecode-corrupt", {
+      "app.ts": `
+        const K: number = 83;
+        function f(x: number) { let s = 0; for (let j = 0; j < x; j++) s += (j * K) % 7; return s; }
+        class C { v = K; m() { return this.v * 3 + "-72"; } }
+        console.log("PROG", K, f(20), new C().m(), [1, 2, 3].map(n => n + K).join(","));
+      `,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(dir, "app.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      bytecode: true,
+    });
+    expect(build.success).toBe(true);
+    const js = join(dir, "out", "app.js");
+    const jsc = js + ".jsc";
+    const pristine = readFileSync(jsc);
+    expect(pristine.length).toBeGreaterThan(256);
+
+    const run = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), js],
+        env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const expected = "PROG 83 62 249-72 84,85,86\n";
+
+    // sanity: the untouched sidecar is actually used
+    let result = await run();
+    expect(result.stdout).toBe(expected);
+    expect(result.stderr).toContain("[Disk Cache] Cache hit");
+    expect(result.exitCode).toBe(0);
+
+    const variants: Array<[string, Buffer]> = [
+      ["truncated to 32 bytes", pristine.subarray(0, 32)],
+      ["truncated by one byte", pristine.subarray(0, pristine.length - 1)],
+      [
+        "one flipped byte",
+        (() => {
+          const b = Buffer.from(pristine);
+          b[pristine.length >> 1] ^= 0xff;
+          return b;
+        })(),
+      ],
+      [
+        "header smashed",
+        (() => {
+          const b = Buffer.from(pristine);
+          b.fill(0xff, 48, 160);
+          return b;
+        })(),
+      ],
+      ["trailing garbage", Buffer.concat([pristine, Buffer.from("garbage")])],
+    ];
+    for (const [name, bytes] of variants) {
+      writeFileSync(jsc, bytes);
+      result = await run();
+      expect({ name, stdout: result.stdout }).toEqual({ name, stdout: expected });
+      expect(result.stderr).not.toContain("[Disk Cache] Cache hit");
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
   test("passing undefined doesnt segfault", () => {
     try {
       // @ts-ignore

@@ -297,6 +297,7 @@ export function loadModuleSync(
       if (importer) {
         mod.importers.add(importer);
       }
+      bindImportOfImporterOnStack(importer, importIndex, mod);
       return mod;
     }
   }
@@ -329,6 +330,7 @@ export function loadModuleSync(
       throw e;
     }
     mod.state = State.Loaded;
+    bindImportOfImporterOnStack(importer, importIndex, mod);
   } else {
     // ESM
     if (IS_BUN_DEVELOPMENT) {
@@ -425,6 +427,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       if (importer) {
         mod.importers.add(importer);
       }
+      bindImportOfImporterOnStack(importer, importIndex, mod);
       return mod;
     }
   }
@@ -460,6 +463,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       throw e;
     }
     mod.state = State.Loaded;
+    bindImportOfImporterOnStack(importer, importIndex, mod);
     return mod;
   } else {
     // ESM
@@ -586,31 +590,24 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], stars: Id[]
   try {
     mod.imports = modules.map(getEsmExports);
     const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
-    const p = load(mod) as Promise<void> | undefined;
+    // An async function always returns a promise.
+    const p = load(mod) as Promise<void>;
     mod.imports = modules;
-    if (p) {
-      return p.then(
-        () => {
-          mod.state = State.Loaded;
-          const lateStars = mergeStarExports(mod, stars);
-          if (lateStars) mergeLateStarExports(mod, lateStars);
-          mod.cjs = null;
-          if (shouldPatchImporters) patchImporters(mod);
-          return mod;
-        },
-        e => {
-          mod.state = State.Error;
-          mod.failure = e;
-          throw e;
-        },
-      );
-    }
-    const lateStars = mergeStarExports(mod, stars);
-    if (lateStars) mergeLateStarExports(mod, lateStars);
-    mod.cjs = null;
-    if (shouldPatchImporters) patchImporters(mod);
-    mod.state = State.Loaded;
-    return mod;
+    return p.then(
+      () => {
+        mod.state = State.Loaded;
+        const lateStars = mergeStarExports(mod, stars);
+        if (lateStars) mergeLateStarExports(mod, lateStars);
+        mod.cjs = null;
+        if (shouldPatchImporters) patchImporters(mod);
+        return mod;
+      },
+      e => {
+        mod.state = State.Error;
+        mod.failure = e;
+        throw e;
+      },
+    );
   } catch (e) {
     mod.state = State.Error;
     mod.failure = e;
@@ -618,9 +615,9 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], stars: Id[]
   }
 }
 
-/** The importer is on the stack while its dependency instantiates: the body
- * of the importer has not bound its imports yet. A function of the importer
- * that the body of the dependency calls, as happens in an import cycle, must
+/** The importer is on the stack while its dependency loads: the body of the
+ * importer has not bound its imports yet. A function of the importer that
+ * the body of a later dependency calls, as happens in an import cycle, must
  * already see the namespace object. So the binding is made here, the way the
  * ESM link binds every import before any module evaluates. An importer with
  * top-level await, or a CommonJS importer, has no `updateImport` yet and
@@ -631,7 +628,12 @@ function bindImportOfImporterOnStack(
   dependency: HMRModule,
 ) {
   if (importer === null || importIndex === undefined) return;
-  importer.updateImport?.[importIndex](dependency.exports);
+  // A CommonJS module that is still evaluating in a require cycle is
+  // skipped: converting its namespace now would cache a partial snapshot.
+  // The importer binds it when the importer evaluates, like Node.
+  if (!dependency.esm && dependency.state !== State.Loaded) return;
+  const exports = getEsmExports(dependency);
+  if (exports) importer.updateImport?.[importIndex](exports);
 }
 
 /** Evaluation half of a two-phase load. The generator was already resumed

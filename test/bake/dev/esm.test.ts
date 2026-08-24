@@ -563,6 +563,62 @@ devTest("cyclic import with a top-level read (#40248)", {
     await c.expectMessage("b sees entry");
   },
 });
+devTest("cyclic call reads an import that was already loaded (diamond)", {
+  // B's body runs while A is still on the stack. A's function reads A's own
+  // import of C, which was already loaded when A requested it, so the early
+  // binding must also fire on the registry-hit path.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import './C';
+      import './A';
+    `,
+    "C.ts": `
+      export const c = 42;
+    `,
+    "A.ts": `
+      import { c } from './C';
+      import './B';
+      export function readC() { return c; }
+    `,
+    "B.ts": `
+      import { readC } from './A';
+      console.log("B sees " + readC());
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("B sees 42");
+  },
+});
+devTest("cyclic call reads a CommonJS import of the module on the stack", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import './A';
+    `,
+    "C.cts": `
+      module.exports = { c: 42 };
+    `,
+    "A.ts": `
+      import { c } from './C.cts';
+      import './B';
+      export function readC() { return c; }
+    `,
+    "B.ts": `
+      import { readC } from './A';
+      console.log("B sees " + readC());
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("B sees 42");
+  },
+});
 devTest("cyclic import reads a star re-export at the top level", {
   files: {
     "index.html": emptyHtmlFile({

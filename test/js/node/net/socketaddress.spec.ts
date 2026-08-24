@@ -1,7 +1,7 @@
 /**
  * @see https://nodejs.org/api/net.html#class-netsocketaddress
  */
-import { bunEnv, bunExe, rss } from "harness";
+import { expectRssDeltaBelow, rss } from "harness";
 import { SocketAddress, SocketAddressInitOptions } from "node:net";
 
 let v4: SocketAddress;
@@ -134,62 +134,40 @@ describe("SocketAddress constructor", () => {
   });
 
   it("does not leak the address string on validation-error paths", async () => {
-    // Each case populates the address BunString (+1 WTFStringImpl ref) then
-    // throws from a later validator. With a 128KB address and 500 iterations,
-    // a leaked ref pins ~64MB per case; the threshold is well below that and
-    // well above ASAN/GC noise.
+    // Each case reads options.address into a native string and then throws
+    // from a later validator. The string is 512 KiB, so a leaked ref pins
+    // about 50 MiB per case over 100 iterations.
     const code = /* js */ `
       const net = require("node:net");
-      const big = Buffer.alloc(128 * 1024, "a").toString();
+      const big = Buffer.alloc(512 * 1024, "a").toString();
       const cases = {
-        // Options::from_js: later option validators throw after address_str is set
-        bad_family:      i => new net.SocketAddress({ address: big + (i & 0xff), family: "bad!" }),
-        bad_port:        i => new net.SocketAddress({ address: big + (i & 0xff), port: NaN }),
-        bad_flow_type:   i => new net.SocketAddress({ address: big + (i & 0xff), family: "ipv6", flowlabel: "x" }),
-        bad_flow_range:  i => new net.SocketAddress({ address: big + (i & 0xff), family: "ipv6", flowlabel: -1 }),
-        // init_js: pton rejects an invalid IP after options were accepted
-        pton_reject:     i => new net.SocketAddress({ address: big + (i & 0xff), family: "ipv4" }),
+        // Options::from_js: a later option validator throws after the address was read
+        bad_family:      i => new net.SocketAddress({ address: big + i, family: "bad!" }),
+        bad_port:        i => new net.SocketAddress({ address: big + i, port: NaN }),
+        bad_flow_type:   i => new net.SocketAddress({ address: big + i, family: "ipv6", flowlabel: "x" }),
+        bad_flow_range:  i => new net.SocketAddress({ address: big + i, family: "ipv6", flowlabel: -1 }),
+        // init_js: pton rejects an invalid IP after the options were accepted
+        pton_reject:     i => new net.SocketAddress({ address: big + i, family: "ipv4" }),
         // init_from_addr_family: AF::from_js throws after the address was read
-        blocklist_bad_family: i => new net.BlockList().addAddress(big + (i & 0xff), "bad!"),
+        blocklist_bad_family: i => new net.BlockList().addAddress(big + i, "bad!"),
       };
       for (const fn of Object.values(cases))
-        for (let i = 0; i < 150; i++) try { fn(i); } catch {}
-      Bun.gc(true); Bun.gc(true);
+        for (let i = 0; i < 20; i++) try { fn(i); } catch {}
+      Bun.gc(true);
       const out = {};
       for (const [name, fn] of Object.entries(cases)) {
-        Bun.gc(true);
         const before = process.memoryUsage.rss();
-        for (let i = 0; i < 500; i++) try { fn(i); } catch {}
-        Bun.gc(true); Bun.gc(true); Bun.gc(true);
+        for (let i = 0; i < 100; i++) try { fn(i); } catch {}
+        Bun.gc(true);
         out[name] = (process.memoryUsage.rss() - before) / 1024 / 1024;
       }
-      process.stdout.write(JSON.stringify(out));
+      console.log(JSON.stringify(out));
+      console.log(JSON.stringify({ deltaMiB: Math.max(...Object.values(out)) }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", "-e", code],
-      env: {
-        ...bunEnv,
-        // Disable ASAN's free-quarantine so RSS reflects live allocations;
-        // harmless on non-ASAN builds.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    let growth: Record<string, number>;
-    try {
-      growth = JSON.parse(stdout);
-    } catch {
-      throw new Error(`subprocess did not report growth\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
-    }
-    expect(stderr).toBe("");
-    for (const [name, mb] of Object.entries(growth)) {
-      expect(mb, `RSS growth for '${name}' error path: ${mb.toFixed(2)} MB`).toBeLessThan(20);
-    }
-    expect(Object.keys(growth).length).toBe(6);
-    expect(exitCode).toBe(0);
-  }, 30_000);
+
+    // Unfixed: about 50 MiB on every path. Fixed: allocator slack only.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 20, debug: 30 });
+  });
 }); // </SocketAddress constructor>
 
 describe("SocketAddress.isSocketAddress", () => {

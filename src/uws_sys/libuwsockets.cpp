@@ -1701,7 +1701,6 @@ __attribute__((callback (corker, ctx)))
     // This function is manual inlining + modification of
     //      us_socket_remote_address
     //      AsyncSocket::getRemoteAddress
-    //      AsyncSocket::addressAsText
     // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     static thread_local char b[64];
     auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);

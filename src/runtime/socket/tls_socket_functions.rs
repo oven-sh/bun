@@ -328,7 +328,7 @@ pub(super) fn set_servername(
     }
 
     let slice: Box<[u8]> = server_name
-        .get_zig_string(global)?
+        .to_bun_string(global)?
         .to_owned_slice()
         .into_boxed_slice();
     // Drop replaces the old value.
@@ -939,7 +939,7 @@ pub(crate) fn export_keying_material(
         return Err(global.throw(format_args!("Expected label to be a string")));
     }
 
-    let label = label_arg.to_slice_or_null(global)?;
+    let label = label_arg.to_slice(global)?;
     let label_slice = label.slice();
 
     // Converting `context` can run user JS (toString / Symbol.toPrimitive)

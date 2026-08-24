@@ -89,9 +89,10 @@ extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataD
 // Copies and queues one chunk; a failure arrives later as Bun__Chrome__onPipeClosed.
 extern "C" void Bun__Chrome__writePipe(const char* data, size_t len);
 #endif
+// Unpublishes and kills the spawned Chrome without reporting its exit back here.
+extern "C" void Bun__Chrome__retire();
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
-extern "C" void Bun__VmHandle__refKeepAlive(const ::BunVmHandleRef*, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
@@ -534,6 +535,7 @@ void Transport::onWritable()
 
 void Transport::onData(const char* data, int length)
 {
+    if (m_dead) return; // late bytes from a connection rejectAllAndMarkDead gave up on
     m_rx.append(std::span<const uint8_t>(
         reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(length)));
 
@@ -1304,8 +1306,10 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     auto* g = m_global;
     JSValue err = createError(g, reason);
     for (auto& weak : views.values()) {
-        if (JSWebView* v = weak.get())
-            rejectViewSlots(g, v, err);
+        JSWebView* v = weak.get();
+        if (!v) continue;
+        rejectViewSlots(g, v, err);
+        v->m_closed = true;
     }
     updateKeepAlive();
 }
@@ -1319,7 +1323,7 @@ void Transport::updateKeepAlive()
     if (want == m_sockRefd || !m_global) return;
     m_sockRefd = want;
     Bun__VmHandle__refKeepAlive(
-        WebCore::clientData(m_global->vm())->vmHandle, want ? 1 : -1);
+        WebCore::clientData(m_global->vm())->vmHandle, BunLoopKind::Regular, want ? 1 : -1);
 
     // WebSocket mode: close the connection when the last view is gone.
     // We're connected to the USER'S Chrome — keeping the WS open after
@@ -1349,6 +1353,14 @@ uint32_t Transport::registerView(JSWebView* v)
     return id;
 }
 
+void Transport::retireGlobal(Zig::GlobalObject* global)
+{
+    if (m_global != global) return;
+    rejectAllAndMarkDead("WebView closed: its test file finished"_s);
+    Bun__Chrome__retire();
+    m_global = nullptr;
+}
+
 // --- CDP::Ops --------------------------------------------------------------
 // One CDP::Command per op. Input.* and Page.captureScreenshot are
 // synchronous-reply — the response means the operation completed, so these
@@ -1369,9 +1381,9 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     auto& vm = g->vm();
     auto& t = transport();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
-    // m_mode == None means neither ensureSpawned nor ensureConnected ran
-    // (constructor already called one, so this is unreachable unless
-    // rejectAllAndMarkDead reset it). WebSocket mode doesn't need
+    // Unreachable: the constructor spawned or connected, and the paths that
+    // kill or release the transport afterwards (rejectAllAndMarkDead,
+    // updateKeepAlive) leave no open view behind. WebSocket mode doesn't need
     // m_wsOpen here — send() queues until onOpen fires.
     if (t.m_dead || t.m_mode == TransportMode::None) {
         promise->reject(vm, createError(g, "Chrome connection is not available"_s));

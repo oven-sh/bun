@@ -124,16 +124,6 @@ pub struct HTTPResponseMetadata {
     pub response: bun_picohttp::Response<'static>,
 }
 
-impl Default for HTTPResponseMetadata {
-    fn default() -> Self {
-        Self {
-            url: bun_ptr::RawSlice::EMPTY,
-            owned_buf: Box::default(),
-            response: bun_picohttp::Response::default(),
-        }
-    }
-}
-
 impl HTTPResponseMetadata {
     /// Accessors tied to `&self`: `response` is typed `'static` but its slices
     /// borrow the sibling `owned_buf` / header slice that `Drop` frees, so
@@ -157,10 +147,7 @@ impl HTTPResponseMetadata {
 }
 
 impl Drop for HTTPResponseMetadata {
-    // `owned_buf` is freed by
-    // `Box`'s own Drop; `response.headers.list` was `Box::leak`'d in
-    // `clone_metadata` and must be reclaimed here. `Default` / zero-header
-    // responses have an empty static slice, guarded by the len check.
+    // `response.headers.list` is `Box::leak`'d by `clone_metadata`; reclaim it here.
     fn drop(&mut self) {
         let list = self.response.headers.list;
         if !list.is_empty() {
@@ -296,11 +283,9 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// body-phase reads; response-header reads do not re-arm it, so it is an
 /// absolute deadline for the header block to complete (undici `headersTimeout`
 /// semantics). 0 disables the timer (matching `disable_timeout = true`).
-/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes — the
-/// previous hard-coded value — so unchanged environments see identical
-/// behaviour except that the handshake phase is now also covered. Values
-/// above 240s are served by uSockets' minute-granularity long timer (see
-/// [`SocketTimeout::set_timeout`]), so they round up to the next whole minute.
+/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes.
+/// `HTTPThread::on_start` stores it padded for the timer-wheel sweep (see
+/// [`normalize_idle_timeout_seconds`]).
 pub(crate) static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
@@ -309,17 +294,29 @@ pub(crate) fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
 }
 
-/// Normalise an idle timeout (seconds) for uSockets' timers: the long-timeout
-/// counter wraps `% 240` minutes, so clamp to 239 min, and values above 240s
-/// are served by the minute-granularity long timer, so round them up to a
-/// whole minute so the floor-to-minute path never fires *earlier* than asked.
+/// Normalise an idle timeout (seconds) for uSockets' timer wheels. The sweep
+/// phase is unrelated to when a socket arms its timer, so a timer armed for N
+/// ticks can fire up to one period (4s short wheel, 60s long wheel) before
+/// the requested duration (#39952). Pad by one period so it never fires
+/// early, and clamp so the padded value stays at the long wheel's 239 min
+/// maximum. 0 = disabled.
 #[inline]
 pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
-    let raw = raw.min(239 * 60);
-    (if raw > 240 {
-        raw.div_ceil(60) * 60
+    if raw == 0 {
+        return 0;
+    }
+    /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h).
+    const SHORT_WHEEL_PERIOD_SECONDS: u64 = 4;
+    const LONG_WHEEL_PERIOD_SECONDS: u64 = 60;
+    /// `SocketTimeout::set_timeout` routes values above this to the long wheel.
+    const SHORT_WHEEL_MAX_SECONDS: u64 = 240;
+    /// The long counter wraps `% 240` minutes; one minute of pad stays below.
+    const MAX_RAW_SECONDS: u64 = 238 * LONG_WHEEL_PERIOD_SECONDS;
+    let raw = raw.min(MAX_RAW_SECONDS);
+    (if raw + SHORT_WHEEL_PERIOD_SECONDS > SHORT_WHEEL_MAX_SECONDS {
+        (raw.div_ceil(LONG_WHEEL_PERIOD_SECONDS) + 1) * LONG_WHEEL_PERIOD_SECONDS
     } else {
-        raw
+        raw + SHORT_WHEEL_PERIOD_SECONDS
     }) as c_uint
 }
 
@@ -1000,7 +997,7 @@ use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output};
-use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
@@ -1781,6 +1778,8 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Runs once per request: for a new connection via [`Self::on_connect`],
+    /// and for a socket reused from the pool via `HTTPContext::connect`.
     pub(crate) fn on_open<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -1803,28 +1802,6 @@ impl<'a> HTTPClient<'a> {
         // was inside `on_writable`, which only runs *after* the handshake
         // completes. See https://github.com/oven-sh/bun/issues/30325.
         self.set_timeout(&socket);
-
-        // Enable TCP keepalive so a half-open connection (peer closed but the
-        // FIN/RST never reached us — NAT timeout, wifi/cellular handoff,
-        // middlebox state eviction, VPN disconnect) is detected in ~70s instead
-        // of hanging until an application-level timeout. Without this, a
-        // streaming `reader.read()` on a half-open socket blocks indefinitely.
-        // Matches Node/undici, which calls `socket.setKeepAlive(true, 60e3)` in
-        // buildConnector:
-        // https://github.com/nodejs/undici/blob/f33a6cb615e1/lib/core/connect.js#L121-L124
-        // TCP_KEEPIDLE=60, KEEPINTVL=1, KEEPCNT=10 — the latter two are hardcoded
-        // in bsd_socket_keepalive. The kernel default TCP_KEEPIDLE is 7200s, so
-        // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
-        // TCP_KEEPIDLE=60s.
-        //
-        // `disable_keepalive` is set when fetch is called with `keepalive: false`,
-        // which is what `node:http`/`node:https` pass through from
-        // `agent.keepAlive` (see _http_client.ts) — so requests through
-        // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
-        // through a non-keepalive Agent or `agent: false` skip it, matching Node.
-        if !self.flags.disable_keepalive {
-            let _ = socket.set_keep_alive(true, 60);
-        }
 
         if self.signals.get(signals::Field::Aborted) {
             self.close_and_abort::<IS_SSL>(socket);
@@ -1902,6 +1879,40 @@ impl<'a> HTTPClient<'a> {
             self.first_call::<IS_SSL>(socket);
         }
         Ok(())
+    }
+
+    /// Runs once per connection, from the uSockets open callback. A socket
+    /// reused from the pool skips this and goes straight to [`Self::on_open`],
+    /// so socket options belong here, not there.
+    pub(crate) fn on_connect<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+    ) -> crate::Result<()> {
+        // Enable TCP keepalive so a half-open connection (peer closed but the
+        // FIN/RST never reached us — NAT timeout, wifi/cellular handoff,
+        // middlebox state eviction, VPN disconnect) is detected in ~70s instead
+        // of hanging until an application-level timeout. Without this, a
+        // streaming `reader.read()` on a half-open socket blocks indefinitely.
+        // Matches Node/undici, which calls `socket.setKeepAlive(true, 60e3)` in
+        // buildConnector:
+        // https://github.com/nodejs/undici/blob/f33a6cb615e1/lib/core/connect.js#L121-L124
+        // TCP_KEEPIDLE=60, KEEPINTVL=1, KEEPCNT=10 — the latter two are hardcoded
+        // in bsd_socket_keepalive. The kernel default TCP_KEEPIDLE is 7200s, so
+        // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
+        // TCP_KEEPIDLE=60s.
+        //
+        // `disable_keepalive` is set when fetch is called with `keepalive: false`,
+        // which is what `node:http`/`node:https` pass through from
+        // `agent.keepAlive` (see _http_client.ts) — so requests through
+        // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
+        // through a non-keepalive Agent or `agent: false` skip it, matching Node.
+        //
+        // TCP options do not apply to a unix socket.
+        if !self.flags.disable_keepalive && self.unix_socket_path.slice().is_empty() {
+            let _ = socket.set_keep_alive(true, 60);
+        }
+
+        self.on_open::<IS_SSL>(socket)
     }
 
     /// Whether to advertise "h2" in the TLS ALPN list. Restricted to request
@@ -5074,7 +5085,7 @@ impl<'a> HTTPClient<'a> {
                         debug_assert!(string_builder.cap == string_builder.len);
 
                         let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                        let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                        let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
                             return Err(crate::Error::RedirectURLInvalid);
@@ -5130,7 +5141,7 @@ impl<'a> HTTPClient<'a> {
                         debug_assert!(string_builder.cap == string_builder.len);
 
                         let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                        let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                        let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             return Err(crate::Error::RedirectURLInvalid);
                         }
@@ -5154,7 +5165,7 @@ impl<'a> HTTPClient<'a> {
 
                         let base = BunString::borrow_utf8(original_url.href);
                         let rel = BunString::borrow_utf8(location);
-                        let new_url_ = OwnedString::new(bun_url::join(&base, &rel));
+                        let new_url_ = bun_url::join(&base, &rel);
 
                         if new_url_.is_empty() {
                             return Err(crate::Error::InvalidRedirectURL);

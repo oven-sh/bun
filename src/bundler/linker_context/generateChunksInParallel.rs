@@ -625,7 +625,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };
-    // defer static_route_visitor.deinit() — handled by Drop
 
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
     // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
@@ -1054,16 +1053,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 BYTECODE_EXTENSION
                             ))
                         };
-                        source_provider_url.ref_();
-                        // RAII: `defer source_provider_url.deref()` — `OwnedString::Drop`
-                        // releases the ref bumped above on every exit path (incl. `break 'brk`).
-                        let mut source_provider_url =
-                            bun_core::OwnedString::new(source_provider_url);
 
                         if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                             c.options.output_format,
                             &code_result.buffer,
-                            &mut source_provider_url,
+                            &source_provider_url,
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(

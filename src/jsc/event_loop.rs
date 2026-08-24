@@ -271,6 +271,25 @@ impl Drop for EventLoopEnterGuard {
     }
 }
 
+/// RAII pairing for [`EventLoop::enter`] / [`EventLoop::exit_without_checkpoint`].
+///
+/// Holds the raw pointer for the same reason as [`EventLoopEnterGuard`].
+/// Construct via [`EventLoop::enter_scope_without_checkpoint`].
+#[must_use = "dropping immediately exits the event loop scope"]
+pub struct EventLoopEnterNoCheckpointGuard {
+    loop_: *mut EventLoop,
+}
+
+impl Drop for EventLoopEnterNoCheckpointGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: as `EventLoopEnterGuard`: `loop_` was live at
+        // `enter_scope_without_checkpoint` and the VM owns it for the process
+        // lifetime; short-lived `&mut` only.
+        unsafe { (*self.loop_).exit_without_checkpoint() };
+    }
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -313,6 +332,48 @@ impl EventLoop {
         // SAFETY: caller contract — `loop_` is live; short-lived `&mut` only.
         unsafe { (*loop_).enter() };
         EventLoopEnterGuard { loop_ }
+    }
+
+    /// Balance an [`enter`](Self::enter) without the checkpoint [`exit`](Self::exit)
+    /// runs at the outermost level. See [`Self::enter_scope_without_checkpoint`].
+    #[inline]
+    pub fn exit_without_checkpoint(&mut self) {
+        bun_core::scoped_log!(
+            EventLoop,
+            "exit_without_checkpoint() = {}",
+            self.entered_event_loop_count - 1
+        );
+        self.entered_event_loop_count -= 1;
+    }
+
+    /// `enter()` now, [`exit_without_checkpoint`](Self::exit_without_checkpoint)
+    /// on drop.
+    ///
+    /// For a dispatcher that runs the checkpoint itself once the callback has
+    /// returned, at points of its own choosing: the HTTP request paths drain
+    /// explicitly so that they can look at a returned promise that the drain
+    /// settled (`RequestContext::on_response`, the node:http dispatch), and a
+    /// checkpoint on exit would add an empty one per request.
+    ///
+    /// What the scope is for is the count. Only while it is above zero is the
+    /// callback's frame safe from a checkpoint in the middle of it: a native
+    /// call made from inside the callback that dispatches another callback
+    /// through `enter()`/`exit()` (`server.upgrade()` running `open()`,
+    /// `ws.close()` running `close()`) is then a nested pair, not the outermost
+    /// one, so its exit does not run the nextTicks and promise reactions the
+    /// callback queued before its next statement. The dispatcher's explicit
+    /// drains are unconditional, so the held count does not skip them, and the
+    /// continuations they run are covered by it as well.
+    ///
+    /// # Safety
+    /// As [`Self::enter_scope`].
+    #[inline]
+    pub unsafe fn enter_scope_without_checkpoint(
+        loop_: *mut EventLoop,
+    ) -> EventLoopEnterNoCheckpointGuard {
+        // SAFETY: caller contract — `loop_` is live; short-lived `&mut` only.
+        unsafe { (*loop_).enter() };
+        EventLoopEnterNoCheckpointGuard { loop_ }
     }
 
     pub fn exit_maybe_drain_microtasks(
@@ -494,6 +555,17 @@ impl EventLoop {
     /// `VmHandle`) has been queued but not yet applied to the loop's `active` count.
     pub fn has_pending_refs(&self) -> bool {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
+            || self
+                .macro_loop_if_not_running()
+                .is_some_and(|m| m.concurrent_ref.load(Ordering::SeqCst) > 0)
+    }
+
+    /// Other threads have posted work that this loop's next drain will pick up.
+    pub(crate) fn has_concurrent_tasks(&self) -> bool {
+        !self.concurrent_tasks.is_empty()
+            || self
+                .macro_loop_if_not_running()
+                .is_some_and(|m| !m.concurrent_tasks.is_empty())
     }
 
     pub fn run_imminent_gc_timer(&mut self) {
@@ -525,14 +597,20 @@ impl EventLoop {
 
         self.run_imminent_gc_timer();
 
+        let start_count = self.tasks.readable_length();
+        if let Some(macro_loop) = self.macro_loop_if_not_running() {
+            macro_loop.apply_concurrent_ref_delta();
+            let batch = macro_loop.concurrent_tasks.pop_batch();
+            self.take_concurrent_tasks(batch);
+        }
+
         let concurrent = self.concurrent_tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {
-            return 0;
+            return self.tasks.readable_length() - start_count;
         }
 
         let mut iter = concurrent.iterator();
-        let start_count = self.tasks.readable_length();
         let _ = self.tasks.ensure_unused_capacity(count);
 
         // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
@@ -566,6 +644,25 @@ impl EventLoop {
         }
 
         self.tasks.readable_length() - start_count
+    }
+
+    /// The macro loop, when this is the regular loop and no macro is running.
+    /// Work a macro started (a ticket or weak post of `LoopKind::Macro`) posts
+    /// its completion and keep-alive release there, but that loop only ticks
+    /// while a macro is being waited on; whatever finishes after the macro
+    /// returned is this loop's to run, and the platform loop both share stays
+    /// alive for it until then.
+    fn macro_loop_if_not_running(&self) -> Option<&EventLoop> {
+        let vm = self.vm();
+        // SAFETY: `vm` is the live owning VM (set in `init()`). `addr_of!`
+        // projects to sibling fields without materializing a
+        // `&VirtualMachine` that would alias the `&mut self` callers hold.
+        unsafe {
+            (core::ptr::addr_of!((*vm).has_enabled_macro_mode).read()
+                && !core::ptr::addr_of!((*vm).macro_mode).read()
+                && core::ptr::eq(self, core::ptr::addr_of!((*vm).regular_event_loop)))
+            .then(|| &*core::ptr::addr_of!((*vm).macro_event_loop))
+        }
     }
 
     /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`
@@ -655,7 +752,7 @@ impl EventLoop {
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
     pub fn has_pending_tasks(&self) -> bool {
-        self.tasks.readable_length() > 0 || !self.concurrent_tasks.is_empty()
+        self.tasks.readable_length() > 0 || self.has_concurrent_tasks()
     }
 
     pub fn tick(&mut self) {
@@ -777,14 +874,17 @@ impl EventLoop {
         }
     }
 
-    /// Move whatever other threads posted (`concurrent_tasks`) into
+    /// Move a batch other threads posted (`concurrent_tasks`) into
     /// `self.tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
     /// over `self.tasks` releases everything. Called by `release_queued_tasks`
     /// in teardown, after `join_child_workers()` (every child has posted its
     /// close task by then) and before the JSC VM is destroyed (so captured
     /// `Ref<>`s in queued C++ lambdas drop against a live heap).
-    fn take_concurrent_tasks(&mut self) {
-        let mut iter = self.concurrent_tasks.pop_batch().iterator();
+    fn take_concurrent_tasks(
+        &mut self,
+        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
+    ) {
+        let mut iter = batch.iterator();
         loop {
             let node = iter.next();
             if node.is_null() {
@@ -806,7 +906,8 @@ impl EventLoop {
     /// once more after `Closed`.
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
-        self.take_concurrent_tasks();
+        let batch = self.concurrent_tasks.pop_batch();
+        self.take_concurrent_tasks(batch);
         let _ = self.promote_yield_tasks();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
@@ -1270,11 +1371,38 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 3);
+    let result = JSValue::create_empty_object(global_object, 9);
     result.put(
         global_object,
         b"activeTasks",
         JSValue::js_number(vm_ref.active_tasks as f64),
+    );
+    result.put(
+        global_object,
+        b"tasks",
+        JSValue::js_number(event_loop.tasks.readable_length() as f64),
+    );
+    result.put(
+        global_object,
+        b"immediateTasks",
+        JSValue::js_number(
+            (event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len()) as f64,
+        ),
+    );
+    result.put(
+        global_object,
+        b"concurrentTasksEmpty",
+        JSValue::from(event_loop.concurrent_tasks.is_empty()),
+    );
+    result.put(
+        global_object,
+        b"loopActive",
+        JSValue::from(vm_ref.platform_loop_opt().is_some_and(|h| h.is_active())),
+    );
+    result.put(
+        global_object,
+        b"eventLoopAlive",
+        JSValue::from(vm_ref.is_event_loop_alive()),
     );
     result.put(
         global_object,
@@ -1293,6 +1421,12 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         global_object,
         b"numPolls",
         JSValue::js_number(num_polls as f64),
+    );
+    result.put(
+        global_object,
+        b"iteration",
+        // SAFETY: usockets_loop() returns the live process-global loop.
+        JSValue::js_number(unsafe { (*event_loop.usockets_loop()).iteration_number() } as f64),
     );
     Ok(result)
 }

@@ -10,7 +10,7 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     fn generateCachedModuleByteCodeFromSourceCode(
-        source_provider_url: *mut BunString,
+        source_provider_url: &BunString,
         input_code: *const u8,
         input_source_code_size: usize,
         output_byte_code: *mut Option<NonNull<u8>>,
@@ -19,7 +19,7 @@ unsafe extern "C" {
     ) -> bool;
 
     fn generateCachedCommonJSProgramByteCodeFromSourceCode(
-        source_provider_url: *mut BunString,
+        source_provider_url: &BunString,
         input_code: *const u8,
         input_source_code_size: usize,
         output_byte_code: *mut Option<NonNull<u8>>,
@@ -38,7 +38,7 @@ impl CachedBytecode {
     // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
     // the handle and must call `deref()` (or drop via `allocator()`) to free.
     pub(crate) fn generate_for_esm(
-        source_provider_url: &mut BunString,
+        source_provider_url: &BunString,
         input: &[u8],
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
         let mut this: Option<NonNull<CachedBytecode>> = None;
@@ -68,7 +68,7 @@ impl CachedBytecode {
     }
 
     pub(crate) fn generate_for_cjs(
-        source_provider_url: &mut BunString,
+        source_provider_url: &BunString,
         input: &[u8],
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
         let mut this: Option<NonNull<CachedBytecode>> = None;
@@ -99,7 +99,7 @@ impl CachedBytecode {
     pub(crate) fn generate(
         format: Format,
         input: &[u8],
-        source_provider_url: &mut BunString,
+        source_provider_url: &BunString,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
         match format {
             Format::Esm => Self::generate_for_esm(source_provider_url, input),
@@ -132,10 +132,10 @@ impl bun_alloc::Allocator for CachedBytecode {}
 pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
-    source_provider_url: &mut BunString,
+    source_provider_url: &BunString,
 ) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
-    crate::initialize(false);
+    crate::initialize(crate::InitializeOptions::default());
     let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;

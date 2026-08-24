@@ -337,16 +337,6 @@ pub struct FrameHeader {
     flags: u8,
     stream_identifier: u32,
 }
-impl Default for FrameHeader {
-    fn default() -> Self {
-        Self {
-            length: 0,
-            type_: FrameType::HTTP_FRAME_SETTINGS as u8,
-            flags: 0,
-            stream_identifier: 0,
-        }
-    }
-}
 impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
     #[inline]
@@ -592,150 +582,6 @@ fn single_value_headers_index_of(name: &[u8]) -> Option<usize> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Standalone host functions
-// ──────────────────────────────────────────────────────────────────────────
-
-#[bun_jsc::host_fn]
-pub fn js_assert_settings(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [options] = callframe.arguments_as_array::<1>();
-    if callframe.arguments_count() < 1 {
-        return Err(global_object.throw(format_args!("Expected settings to be a object")));
-    }
-
-    if callframe.arguments_count() > 0 && !options.is_empty_or_undefined_or_null() {
-        if !options.is_object() {
-            return Err(global_object.throw(format_args!("Expected settings to be a object")));
-        }
-
-        if let Some(header_table_size) = options.get(global_object, "headerTableSize")? {
-            if header_table_size.is_number() {
-                let value = header_table_size.as_number();
-                if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                    return global_object
-                        .err_http2_invalid_setting_value_range_error(
-                            "Expected headerTableSize to be a number between 0 and 2^32-1",
-                        )
-                        .throw();
-                }
-            } else if !header_table_size.is_empty_or_undefined_or_null() {
-                return global_object
-                    .err_http2_invalid_setting_value_range_error(
-                        "Expected headerTableSize to be a number",
-                    )
-                    .throw();
-            }
-        }
-
-        if let Some(enable_push) = options.get(global_object, "enablePush")? {
-            if !enable_push.is_boolean() && !enable_push.is_undefined() {
-                return global_object
-                    .err_http2_invalid_setting_value("Expected enablePush to be a boolean")
-                    .throw();
-            }
-        }
-
-        if let Some(initial_window_size) = options.get(global_object, "initialWindowSize")? {
-            if initial_window_size.is_number() {
-                let value = initial_window_size.as_number();
-                if value < 0.0 || value > MAX_WINDOW_SIZE_F64 {
-                    return global_object
-                        .err_http2_invalid_setting_value_range_error(
-                            "Expected initialWindowSize to be a number between 0 and 2^32-1",
-                        )
-                        .throw();
-                }
-            } else if !initial_window_size.is_empty_or_undefined_or_null() {
-                return global_object
-                    .err_http2_invalid_setting_value_range_error(
-                        "Expected initialWindowSize to be a number",
-                    )
-                    .throw();
-            }
-        }
-
-        if let Some(max_frame_size) = options.get(global_object, "maxFrameSize")? {
-            if max_frame_size.is_number() {
-                let value = max_frame_size.as_number();
-                if value < 16384.0 || value > MAX_FRAME_SIZE_F64 {
-                    return global_object
-                        .err_http2_invalid_setting_value_range_error(
-                            "Expected maxFrameSize to be a number between 16,384 and 2^24-1",
-                        )
-                        .throw();
-                }
-            } else if !max_frame_size.is_empty_or_undefined_or_null() {
-                return global_object
-                    .err_http2_invalid_setting_value_range_error(
-                        "Expected maxFrameSize to be a number",
-                    )
-                    .throw();
-            }
-        }
-
-        if let Some(max_concurrent_streams) = options.get(global_object, "maxConcurrentStreams")? {
-            if max_concurrent_streams.is_number() {
-                let value = max_concurrent_streams.as_number();
-                if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                    return global_object
-                        .err_http2_invalid_setting_value_range_error(
-                            "Expected maxConcurrentStreams to be a number between 0 and 2^32-1",
-                        )
-                        .throw();
-                }
-            } else if !max_concurrent_streams.is_empty_or_undefined_or_null() {
-                return global_object
-                    .err_http2_invalid_setting_value_range_error(
-                        "Expected maxConcurrentStreams to be a number",
-                    )
-                    .throw();
-            }
-        }
-
-        if let Some(max_header_list_size) = options.get(global_object, "maxHeaderListSize")? {
-            if max_header_list_size.is_number() {
-                let value = max_header_list_size.as_number();
-                if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                    return global_object
-                        .err_http2_invalid_setting_value_range_error(
-                            "Expected maxHeaderListSize to be a number between 0 and 2^32-1",
-                        )
-                        .throw();
-                }
-            } else if !max_header_list_size.is_empty_or_undefined_or_null() {
-                return global_object
-                    .err_http2_invalid_setting_value_range_error(
-                        "Expected maxHeaderListSize to be a number",
-                    )
-                    .throw();
-            }
-        }
-
-        if let Some(max_header_size) = options.get(global_object, "maxHeaderSize")? {
-            if max_header_size.is_number() {
-                let value = max_header_size.as_number();
-                if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                    return global_object
-                        .err_http2_invalid_setting_value_range_error(
-                            "Expected maxHeaderSize to be a number between 0 and 2^32-1",
-                        )
-                        .throw();
-                }
-            } else if !max_header_size.is_empty_or_undefined_or_null() {
-                return global_object
-                    .err_http2_invalid_setting_value_range_error(
-                        "Expected maxHeaderSize to be a number",
-                    )
-                    .throw();
-            }
-        }
-    }
-    Ok(JSValue::UNDEFINED)
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Handlers
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -909,7 +755,6 @@ impl Handlers {
     }
 }
 
-pub use JSH2FrameParser::get_constructor as H2FrameParserConstructor;
 /// snake_case alias for the codegen'd `$rust(h2_frame_parser.rs, H2FrameParserConstructor)`
 /// thunk in `generated_js2native.rs` (the generator snake-cases the export name).
 pub use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
@@ -1713,7 +1558,6 @@ impl Stream {
             }
         };
 
-        // defer block from Zig (only when the full frame was flushed)
         if let Some(_frame) = owned_frame {
             // only call the callback + free the frame if we write to the socket the full frame
             client
@@ -3845,11 +3689,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         if !self.custom_settings.get().is_empty() {
             let custom = JSValue::create_empty_object(&g, self.custom_settings.get().len());
             for (id, value) in self.custom_settings.get().iter() {
-                // Custom-setting ids are numeric property keys: route through the index-aware put.
-                let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
                 // Left pending: the engine stops before the next frame
                 // (`Sink::should_stop`) and `read()`/`on_native_read` return it.
-                let put = custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64));
+                let put = custom.put_index(&g, u32::from(*id), JSValue::js_number(*value as f64));
                 let Some(()) = self.or_stop(put) else {
                     return;
                 };
@@ -3903,11 +3745,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         if !self.remote_custom_settings.get().is_empty() {
             let custom = JSValue::create_empty_object(&g, self.remote_custom_settings.get().len());
             for (id, value) in self.remote_custom_settings.get().iter() {
-                // Custom-setting ids are numeric property keys: route through the index-aware put.
-                let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
                 // Left pending: the engine stops before the next frame
                 // (`Sink::should_stop`) and `read()`/`on_native_read` return it.
-                let put = custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64));
+                let put = custom.put_index(&g, u32::from(*id), JSValue::js_number(*value as f64));
                 let Some(()) = self.or_stop(put) else {
                     return;
                 };
@@ -4467,7 +4307,7 @@ impl H2FrameParser {
                 };
 
                 let mut count: usize = 0;
-                let mut iter = bun_jsc::JSPropertyIterator::init(
+                let iter = bun_jsc::JSPropertyIterator::init(
                     global_object,
                     custom_settings_obj,
                     bun_jsc::JSPropertyIteratorOptions {
@@ -4477,7 +4317,7 @@ impl H2FrameParser {
                     },
                 )?;
 
-                while let Some(prop_name) = iter.next()? {
+                while let Some((prop_name, setting_value)) = iter.next()? {
                     count += 1;
                     if count > MAX_CUSTOM_SETTINGS {
                         return global_object
@@ -4509,7 +4349,6 @@ impl H2FrameParser {
                     }
 
                     // Validate setting value is in range [0, 2^32-1]
-                    let setting_value = iter.value;
                     if setting_value.is_number() {
                         let value = setting_value.as_number();
                         if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
@@ -5778,7 +5617,7 @@ impl H2FrameParser {
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
 
-        let mut iter = bun_jsc::JSPropertyIterator::init(
+        let iter = bun_jsc::JSPropertyIterator::init(
             global_object,
             headers_obj,
             bun_jsc::JSPropertyIteratorOptions {
@@ -5791,7 +5630,7 @@ impl H2FrameParser {
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // Encode trailer headers using HPACK
-        while let Some(header_name) = iter.next()? {
+        while let Some((header_name, js_value)) = iter.next()? {
             if header_name.length() == 0 {
                 continue;
             }
@@ -5810,7 +5649,6 @@ impl H2FrameParser {
                 return Err(global_object.throw_value(exception));
             }
 
-            let js_value = iter.value;
             if js_value.is_undefined_or_null() {
                 let exception = global_object.to_type_error(
                     bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
@@ -5915,7 +5753,7 @@ impl H2FrameParser {
                         return Err(global_object.throw_value(exception));
                     }
 
-                    let value_str = item.to_js_string(global_object)?;
+                    let value_view = item.to_js_string_view(global_object)?;
 
                     // All-digit names can't be passed to get_truthy (integer-index-like names
                     // trip a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
@@ -5928,7 +5766,7 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_view.to_utf8();
                     let value = value_slice.slice();
 
                     if let Some(ret) = handle_encode(this, value, never_index)? {
@@ -5949,7 +5787,7 @@ impl H2FrameParser {
                     }
                     single_value_headers[idx] = true;
                 }
-                let value_str = js_value.to_js_string(global_object)?;
+                let value_view = js_value.to_js_string_view(global_object)?;
 
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
                 // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
@@ -5962,7 +5800,7 @@ impl H2FrameParser {
                     }
                 };
 
-                let value_slice = value_str.to_slice(global_object);
+                let value_slice = value_view.to_utf8();
                 let value = value_slice.slice();
                 bun_output::scoped_log!(
                     H2FrameParser,
@@ -6266,7 +6104,7 @@ impl H2FrameParser {
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
         // Pseudo-headers must be encoded first, so iterate twice.
         for ignore_pseudo_headers in 0..2usize {
-            let mut iter = bun_jsc::JSPropertyIterator::init(
+            let iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
                 headers_obj,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -6275,7 +6113,7 @@ impl H2FrameParser {
                     ..Default::default()
                 },
             )?;
-            while let Some(header_name) = iter.next()? {
+            while let Some((header_name, js_value)) = iter.next()? {
                 if header_name.length() == 0 {
                     continue;
                 }
@@ -6299,23 +6137,19 @@ impl H2FrameParser {
                         continue;
                     }
                     if !is_valid_request_pseudo_header(validated_name) {
-                        if !global_object.has_exception() {
-                            return Err(global_object
-                                .err(
-                                    JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
-                                    format_args!(
-                                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
-                                        BStr::new(name)
-                                    ),
-                                )
-                                .throw());
-                        }
-                        return Ok(JSValue::ZERO);
+                        return Err(global_object
+                            .err(
+                                JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                                format_args!(
+                                    "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                                    BStr::new(name)
+                                ),
+                            )
+                            .throw());
                     }
                 } else if ignore_pseudo_headers == 0 {
                     continue;
                 }
-                let js_value = iter.value;
                 if js_value.is_empty_or_undefined_or_null() {
                     continue;
                 }
@@ -6330,8 +6164,8 @@ impl H2FrameParser {
                     }
                 };
                 let mut encode_value = |item: JSValue| -> JsResult<Option<JSValue>> {
-                    let value_str = item.to_js_string(global_object)?;
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_view = item.to_js_string_view(global_object)?;
+                    let value_slice = value_view.to_utf8();
                     let value = value_slice.slice();
                     if !is_valid_header_value(value) {
                         return Err(global_object
@@ -6735,8 +6569,8 @@ impl H2FrameParser {
                         continue;
                     }
 
-                    let name_str = name_js.to_js_string(global_object)?;
-                    let name_slice = name_str.to_slice(global_object);
+                    let name_view = name_js.to_js_string_view(global_object)?;
+                    let name_slice = name_view.to_utf8();
                     let name = name_slice.slice();
                     if name.is_empty() {
                         continue;
@@ -6764,16 +6598,18 @@ impl H2FrameParser {
 
                         if this.is_server.get() {
                             if !is_valid_response_pseudo_header(validated_name) {
-                                if !global_object.has_exception() {
-                                    return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
-                                }
-                                return Ok(JSValue::ZERO);
-                            }
-                        } else if !is_valid_request_pseudo_header(validated_name) {
-                            if !global_object.has_exception() {
                                 return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
                             }
-                            return Ok(JSValue::ZERO);
+                        } else if !is_valid_request_pseudo_header(validated_name) {
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                                    format_args!(
+                                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                                        BStr::new(name)
+                                    ),
+                                )
+                                .throw());
                         }
                     } else if ignore_pseudo_headers == 0 {
                         continue;
@@ -6793,7 +6629,7 @@ impl H2FrameParser {
                         single_value_headers[idx] = true;
                     }
 
-                    let value_str = value_js.to_js_string(global_object)?;
+                    let value_view = value_js.to_js_string_view(global_object)?;
 
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false
@@ -6804,7 +6640,7 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_view.to_utf8();
                     let value = value_slice.slice();
                     if !is_valid_header_value(value) {
                         return Err(global_object
@@ -6858,7 +6694,7 @@ impl H2FrameParser {
         }) {
             // Note: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
             // re-initialize per pass instead — the observable property walk is the same.
-            let mut iter = bun_jsc::JSPropertyIterator::init(
+            let iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
                 headers_obj,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -6868,7 +6704,7 @@ impl H2FrameParser {
                 },
             )?;
 
-            while let Some(header_name) = iter.next()? {
+            while let Some((header_name, js_value)) = iter.next()? {
                 if header_name.length() == 0 {
                     continue;
                 }
@@ -6897,24 +6733,33 @@ impl H2FrameParser {
 
                     if this.is_server.get() {
                         if !is_valid_response_pseudo_header(validated_name) {
-                            if !global_object.has_exception() {
-                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
-                            }
-                            return Ok(JSValue::ZERO);
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                                    format_args!(
+                                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                                        BStr::new(name)
+                                    ),
+                                )
+                                .throw());
                         }
                     } else {
                         if !is_valid_request_pseudo_header(validated_name) {
-                            if !global_object.has_exception() {
-                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
-                            }
-                            return Ok(JSValue::ZERO);
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                                    format_args!(
+                                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                                        BStr::new(name)
+                                    ),
+                                )
+                                .throw());
                         }
                     }
                 } else if ignore_pseudo_headers == 0 {
                     continue;
                 }
 
-                let js_value = iter.value;
                 if js_value.is_undefined_or_null() {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
@@ -6929,38 +6774,32 @@ impl H2FrameParser {
 
                     if let Some(idx) = this.single_value_index_checked(validated_name) {
                         if value_iter.len > 1 || single_value_headers[idx] {
-                            if !global_object.has_exception() {
-                                let exception = global_object.to_type_error(
-                                    bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
-                                    format_args!(
-                                        "Header field \"{}\" must only have a single value",
-                                        BStr::new(validated_name)
-                                    ),
-                                );
-                                return Err(global_object.throw_value(exception));
-                            }
-                            return Ok(JSValue::ZERO);
+                            let exception = global_object.to_type_error(
+                                bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                format_args!(
+                                    "Header field \"{}\" must only have a single value",
+                                    BStr::new(validated_name)
+                                ),
+                            );
+                            return Err(global_object.throw_value(exception));
                         }
                         single_value_headers[idx] = true;
                     }
 
                     while let Some(item) = value_iter.next()? {
                         if item.is_empty_or_undefined_or_null() {
-                            if !global_object.has_exception() {
-                                return Err(global_object
-                                    .err(
-                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                        format_args!(
-                                            "Invalid value for header \"{}\"",
-                                            BStr::new(validated_name)
-                                        ),
-                                    )
-                                    .throw());
-                            }
-                            return Ok(JSValue::ZERO);
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                    format_args!(
+                                        "Invalid value for header \"{}\"",
+                                        BStr::new(validated_name)
+                                    ),
+                                )
+                                .throw());
                         }
 
-                        let value_str = item.to_js_string(global_object)?;
+                        let value_view = item.to_js_string_view(global_object)?;
 
                         let never_index = if Self::is_index_like_name(validated_name) {
                             false
@@ -6971,7 +6810,7 @@ impl H2FrameParser {
                             }
                         };
 
-                        let value_slice = value_str.to_slice(global_object);
+                        let value_slice = value_view.to_utf8();
                         let value = value_slice.slice();
                         if !is_valid_header_value(value) {
                             return Err(global_object
@@ -7030,7 +6869,7 @@ impl H2FrameParser {
                         }
                         single_value_headers[idx] = true;
                     }
-                    let value_str = js_value.to_js_string(global_object)?;
+                    let value_view = js_value.to_js_string_view(global_object)?;
 
                     let never_index = if Self::is_index_like_name(validated_name) {
                         false
@@ -7041,7 +6880,7 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_view.to_utf8();
                     let value = value_slice.slice();
                     if !is_valid_header_value(value) {
                         return Err(global_object

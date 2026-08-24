@@ -22,12 +22,14 @@
 // `cow_slice::CowSlice<u8>`.
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
+mod js_cell;
+pub use js_cell::JsCell;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the
 // `bun_string → bun_core` merge); re-exported here unchanged.
 pub use bun_core::external_shared;
-pub use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
+pub use bun_core::{ExternalShared, ExternalSharedDescriptor, WTFString};
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
 pub use bun_core::{RawSlice, cast_fn_ptr};
 
@@ -87,6 +89,10 @@ pub use bun_core::callback_ctx;
 
 pub struct Shared;
 pub struct Mut;
+/// Provenance marker: the back-reference was minted from a [`ThisPtr`] (or a
+/// leaked `Box`), i.e. it is the root pointer of a live heap allocation, so it
+/// may hand a [`ThisPtr`] back out. `BackRef<T, Mut>` (any `&mut T`) may not.
+pub struct Root;
 
 /// Non-owning, non-null back-reference to an object that outlives `self`.
 /// For struct fields where the pointee is the owner/parent and is
@@ -191,6 +197,44 @@ impl<T: ?Sized, P> BackRef<T, P> {
         // SAFETY: BackRef invariant — pointee outlives holder; non-null,
         // aligned, dereferenceable.
         unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> BackRef<T, Root> {
+    /// View the pointee as a [`ThisPtr`] again for the dispatch entry points
+    /// that take one. Safe under the `BackRef` invariant (the pointee is live
+    /// for as long as this back-reference is held — [`ThisPtr::new`]'s
+    /// precondition) plus what `Root` records: this pointer *is* a heap
+    /// allocation's root, so the callee may release refs through it.
+    #[inline]
+    pub fn this_ptr(&self) -> ThisPtr<T> {
+        // SAFETY: see above.
+        unsafe { ThisPtr::new(self.0.as_ptr()) }
+    }
+
+    /// Wrap the root pointer of a live heap allocation.
+    ///
+    /// # Safety
+    /// [`BackRef::from_raw`]'s contract, and `p` is what `Box::into_raw` /
+    /// `heap::into_raw` returned for an allocation that stays live while the
+    /// result is held.
+    #[inline]
+    pub const unsafe fn from_root(p: *mut T) -> Self {
+        // SAFETY: caller contract — `p` is non-null.
+        BackRef(
+            unsafe { core::ptr::NonNull::new_unchecked(p) },
+            core::marker::PhantomData,
+        )
+    }
+}
+
+impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
+    /// Record a dispatch-time [`ThisPtr`] as a back-reference. The holder takes
+    /// on the `BackRef` invariant: it must drop/clear this before the pointee
+    /// can be freed.
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        BackRef(p.0, core::marker::PhantomData)
     }
 }
 

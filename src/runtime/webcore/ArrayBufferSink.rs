@@ -190,7 +190,4 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
-    fn done(&self) -> bool {
-        self.done
-    }
 }

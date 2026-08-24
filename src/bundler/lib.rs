@@ -237,7 +237,6 @@ pub(crate) use bun_ast::{Index, IndexInt};
 pub mod options {
     pub use super::OutputFile;
     pub use super::options_impl::*;
-    pub use super::output_file::BakeExtra;
     pub use super::output_file::IndexOptional;
     /// `OutputFile.init` argument struct.
     pub(crate) use super::output_file::Options as OutputFileInit;

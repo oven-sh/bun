@@ -72,6 +72,9 @@ pub struct WebWorker {
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
+    /// Created by `node:worker_threads`' `Worker` (as opposed to the Web `Worker`
+    /// constructor): loads `node:worker_threads` before preloads and the entry point.
+    is_node_worker: bool,
     store_fd: bool,
     /// Borrowed from the proxy's `WorkerOptions` (alive as long as the proxy).
     argv_ptr: *const WTFStringImpl,
@@ -160,10 +163,13 @@ unsafe extern "C" {
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
+    /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
+    /// registers parentPort). May leave an exception pending.
+    safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,
-        message: &mut BunString,
+        message: BunString,
         err: JSValue,
     );
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
@@ -276,14 +282,15 @@ impl WebWorker {
     pub(crate) unsafe extern "C" fn create(
         proxy: *mut c_void,
         parent: *mut VirtualMachine,
-        name_str: BunString,
-        specifier_str: BunString,
+        name_str: &BunString,
+        specifier_str: &BunString,
         error_message: &mut BunString,
         _parent_context_id: u32,
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
         eval_mode: bool,
+        is_node_worker: bool,
         argv_ptr: *const WTFStringImpl,
         argv_len: usize,
         inherit_exec_argv: bool,
@@ -320,8 +327,7 @@ impl WebWorker {
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
             // node: builtin specifiers skip the file resolver — the worker-side
-            // module loader resolves them. Lets node:worker_threads run its
-            // bootstrap (stdio rebinding) as a preload.
+            // module loader resolves them.
             if utf8_slice.slice().starts_with(b"node:") {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
@@ -396,6 +402,7 @@ impl WebWorker {
             execution_context_id: this_context_id,
             mini,
             eval_mode,
+            is_node_worker,
             store_fd,
             argv_ptr,
             argv_len,
@@ -829,17 +836,33 @@ impl WebWorker {
                     // to `err`, which is dropped immediately after).
                     vm_log.add_error(None, bun_ast::Loc::EMPTY, err.slice().to_vec());
                 }
-                resolve_error.deref();
                 self.flush_logs(vm);
                 return self.shutdown();
             }
         };
-        resolve_error.deref();
 
         // Terminated while resolving — exit code 0, no error.
         if self.has_requested_terminate() {
             self.flush_logs(vm);
             return self.shutdown();
+        }
+
+        // Node runs its worker bootstrap (parentPort, stdio, process overrides)
+        // ahead of user code; ours is node:worker_threads' module body.
+        if self.is_node_worker {
+            let global = vm.global();
+            if let Err(err) = jsc::host_fn::from_js_host_call_generic(global, || {
+                Bun__Worker__loadNodeWorkerThreadsModule(global)
+            }) {
+                let exception = global.take_exception(err);
+                let _ = vm.as_mut().uncaught_exception(global, exception, false);
+                if !self.exit_called.load(Ordering::Relaxed) {
+                    vm.as_mut().exit_handler.exit_code = 1;
+                }
+                self.flush_logs(vm);
+                WebWorker__entrySettled(global);
+                return self.shutdown();
+            }
         }
 
         // `path` borrows the resolver's process-lifetime string store, the
@@ -1138,9 +1161,8 @@ impl WebWorker {
                 return;
             }
         };
-        let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
-            WebWorker__dispatchError(global, self.messaging_proxy, &mut str, err)
+            WebWorker__dispatchError(global, self.messaging_proxy, str, err)
         });
         if let Err(e) = dispatch {
             let _ = crate::task::report_error_or_terminate(global, e);
@@ -1217,12 +1239,12 @@ fn on_unhandled_rejection(
     // (declares + checks a TopExceptionScope around the FFI call, same as
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
-    let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
+    let error_message = BunString::clone_utf8(&array);
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         WebWorker__dispatchError(
             global_object,
             worker.messaging_proxy,
-            &mut error_message,
+            error_message,
             error_instance,
         );
     })
@@ -1393,11 +1415,10 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
     // copy the slice out and let `resolved_entry_point` drop on the stack.
-    match resolved_entry_point.path_const() {
-        Some(entry_path) => Some(entry_path.text),
-        None => {
-            *error_message = BunString::static_(b"Worker entry point is missing");
-            None
-        }
-    }
+    Some(
+        resolved_entry_point
+            .path_const()
+            .expect("resolve_entry_point rejects disabled results")
+            .text,
+    )
 }

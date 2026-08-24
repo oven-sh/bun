@@ -115,7 +115,7 @@ macro_rules! impl_js_sink_abi {
 /// Invoke inside the `impl JsSinkType for T` block; `Self::name` resolves to
 /// the inherent method ahead of the trait item being defined, so the forward
 /// does not recurse. Items whose bodies differ per sink (`finalize`,
-/// `construct`, `end_from_js`, `source`, `done`, the `HAS_*` consts) stay
+/// `construct`, `end_from_js`, `source`, the `HAS_*` consts) stay
 /// hand-written.
 #[macro_export]
 macro_rules! impl_js_sink_forwarders {
@@ -333,9 +333,6 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     /// `&mut Self` and the C++ dispatcher keeps using `m_sinkPtr` in the
     /// same frame; defer a last-owner free to the event loop.
     fn controller_detached(&mut self) {}
-    fn done(&self) -> bool {
-        false
-    }
     fn flush_from_js(&mut self, _global: &JSGlobalObject, _wait: bool) -> sys::Result<JSValue> {
         // Guarded by `HAS_FLUSH_FROM_JS`; default impl delegates to `flush()`
         // (returning undefined on success) so buffered bytes are
@@ -469,18 +466,14 @@ impl<T: JsSinkType> JSSink<T> {
             )));
         }
 
-        let str_ = arg.to_js_string(global)?;
-        let view = str_.view(global);
+        let view = arg.to_js_string_view(global)?;
         if view.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }
 
-        // Keep the JSString GC-live while we borrow its character buffer.
-        let _keep_str = bun_jsc::EnsureStillAlive(str_.to_js());
-        if view.is_16bit() {
-            let utf16 = view.utf16_slice_aligned();
+        if view.is_utf16() {
+            let utf16 = view.utf16();
             let bytes: &[u8] = bytemuck::cast_slice(utf16);
-            // Borrowed view over GC-kept JSString.
             let data = bun_ptr::RawSlice::new(bytes);
             return Ok(this
                 .sink
@@ -488,8 +481,7 @@ impl<T: JsSinkType> JSSink<T> {
                 .to_js(global));
         }
 
-        // Borrowed view over GC-kept JSString (Latin-1 path).
-        let data = bun_ptr::RawSlice::new(view.slice());
+        let data = bun_ptr::RawSlice::new(view.latin1());
         Ok(this
             .sink
             .write_latin1(&streams::Result::Temporary(data))

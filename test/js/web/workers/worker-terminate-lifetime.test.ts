@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -725,6 +725,48 @@ test(
   timeout,
 );
 
+// Spawns workers that each start `connectExpr` in one immediate and call
+// process.exit(0) in the next, so whatever that connect attempt left behind is
+// still pending when the worker's VM tears down.
+async function exitRightAfterConnecting(connectExpr: string) {
+  const workers = slow ? 8 : 24;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      const src =
+        "const { parentPort } = require('node:worker_threads');" +
+        "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
+        ${JSON.stringify(`setImmediate(() => ${connectExpr}.catch(() => {}));`)} +
+        "parentPort.postMessage('up');" +
+        "setImmediate(() => process.exit(0));";
+      let started = 0, exited = 0;
+      function again() {
+        if (started >= ${workers}) {
+          if (exited === ${workers}) console.log("PASS");
+          return;
+        }
+        started++;
+        const w = new Worker(src, { eval: true });
+        w.on("error", (e) => { console.error(e); process.exit(1); });
+        w.on("exit", () => { exited++; again(); });
+      }
+      again(); again();
+    `,
+    ],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("PASS\n");
+  expect(exitCode).toBe(0);
+}
+
 // For a debug build: host code that runs after the worker's own process.exit()
 // unwound script — here a redis connect started in the same immediate tick as
 // the exit, whose ECONNREFUSED then lands in that loop tick — builds JS error
@@ -735,43 +777,62 @@ test(
 // for as long as it keeps the exception.
 test.skipIf(!isDebug)(
   "process.exit() with native error completions landing in the same tick does not trip DeferTermination",
+  () =>
+    exitRightAfterConnecting(
+      "new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect()",
+    ),
+  timeout,
+);
+
+// A TLS context that cannot be built fails the dial before there is a socket;
+// the redis client then settles that from a task it queues on the event loop,
+// holding a ref to itself and the loop. The exit in the next immediate tears
+// the VM down with that task still queued, so it has to be released without
+// running (a debug build asserts on the refcount if either ref is mishandled;
+// the ASAN build reports the leak).
+test.skipIf(!isDebug && !isASAN)(
+  "process.exit() with a redis client's deferred close still queued releases it cleanly",
+  () =>
+    exitRightAfterConnecting(
+      "new Bun.RedisClient('rediss://127.0.0.1:9', { tls: { key: 'x', cert: 'x' }, autoReconnect: false }).connect()",
+    ),
+  timeout,
+);
+
+// The same task, queued by a first command whose dial failed outright (a unix
+// socket path nobody listens on), with the command itself still queued behind it.
+test.skipIf((!isDebug && !isASAN) || isWindows)(
+  "process.exit() with a redis client's deferred close and a queued command releases both cleanly",
+  () => exitRightAfterConnecting("new Bun.RedisClient('redis+unix:///nonexistent/redis.sock').ping()"),
+  timeout,
+);
+
+// The same deferred close on the main thread, left to run: it settles the
+// connect and drops its refs, so nothing keeps the event loop alive and the
+// process exits on its own.
+test(
+  "a redis client whose TLS context cannot be built does not keep the process alive",
   async () => {
-    const workers = slow ? 8 : 24;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        const { Worker } = require("node:worker_threads");
-        const src =
-          "const { parentPort } = require('node:worker_threads');" +
-          "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
-          "setImmediate(() => new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect().catch(() => {}));" +
-          "parentPort.postMessage('up');" +
-          "setImmediate(() => process.exit(0));";
-        let started = 0, exited = 0;
-        function again() {
-          if (started >= ${workers}) {
-            if (exited === ${workers}) console.log("PASS");
-            return;
-          }
-          started++;
-          const w = new Worker(src, { eval: true });
-          w.on("error", (e) => { console.error(e); process.exit(1); });
-          w.on("exit", () => { exited++; again(); });
-        }
-        again(); again();
-      `,
+        new Bun.RedisClient("rediss://127.0.0.1:1", { tls: { key: "x", cert: "x" }, autoReconnect: false })
+          .connect()
+          .catch(err => console.log("connect rejected", err.code));
+        `,
       ],
-      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("PASS\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "connect rejected ERR_REDIS_CONNECTION_CLOSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
   },
   timeout,
 );

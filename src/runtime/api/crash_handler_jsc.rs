@@ -129,7 +129,7 @@ pub(crate) mod js_bindings {
     #[bun_jsc::host_fn]
     fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
-        crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
+        crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
     }
 
     #[bun_jsc::host_fn]
@@ -199,7 +199,7 @@ pub(crate) mod js_bindings {
 
     #[bun_jsc::host_fn]
     fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        crash_handler::handle_root_error("Unexpected", None);
+        crash_handler::handle_root_error("Unexpected");
     }
 
     #[bun_jsc::host_fn]
@@ -225,8 +225,7 @@ pub(crate) mod js_bindings {
         crash_handler::write_u64_as_two_vlqs(buf.writer(), bits.bits() as usize)
             // there is definitely enough space in the bounded array
             .expect("unreachable");
-        let mut str = BunString::clone_latin1(buf.slice());
-        str.transfer_to_js(global)
+        BunString::clone_latin1(buf.slice()).into_js(global)
     }
 
     #[bun_jsc::host_fn]

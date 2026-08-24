@@ -86,6 +86,9 @@ impl readable_stream::SourceContext for ByteStream {
     fn deinit_fn(&mut self) {
         Self::finalize(self)
     }
+    fn wrapper_finalized(&mut self) {
+        self.parent_const().producer.get().consumer_collected();
+    }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
         Self::drain(self)
     }
@@ -121,11 +124,7 @@ impl ByteStream {
         drop(core::mem::take(self));
     }
 
-    /// Seeds the stream with what the producer's `on_start_streaming` handed
-    /// over: the bytes it had already buffered, or its estimate of the total.
-    /// Init-time like [`Self::setup`] (no JS wrapper yet, so `&mut self` is
-    /// sound). Callers drop the body to `Null` on `Empty` / `Aborted` instead
-    /// of realising a stream, so those arms have nothing to seed.
+    /// Seeds the stream from the drain result; init-time like [`Self::setup`].
     pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
@@ -136,7 +135,7 @@ impl ByteStream {
                 self.buffer.set(list);
                 self.size_hint.set(size_hint as blob::SizeType);
             }
-            DrainResult::Empty | DrainResult::Aborted => {}
+            DrainResult::Aborted => {}
         }
     }
 
@@ -176,6 +175,22 @@ impl ByteStream {
     pub(crate) fn unpipe_without_deref(&self) {
         self.sink.set(SinkHandle::None);
         self.sink_paused.set(false);
+    }
+
+    /// The sink is gone before the stream ended (its peer went away). The stream stays
+    /// locked to it, so nobody else can read the rest: close the producer too.
+    pub(crate) fn detach_finished_sink(&self) {
+        if self.has_received_last_chunk.get() {
+            self.unpipe_without_deref();
+        } else {
+            self.cancel_from_sink(None);
+        }
+    }
+
+    /// Bytes delivered that no consumer has taken yet.
+    #[inline]
+    pub fn buffered_len(&self) -> usize {
+        self.buffer.get().len() - self.offset.get()
     }
 
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
@@ -219,6 +234,15 @@ impl ByteStream {
 
         self.signal_drained();
 
+        // A synchronous producer (RewriterPipe) may have pushed its remaining
+        // output through `on_data` just now. If one of those writes hit
+        // backpressure, the chunks after it (and the end) were buffered; the
+        // sink's next drain ack comes back here and delivers them. Ending now
+        // would drop them.
+        if self.sink_paused.get() {
+            return;
+        }
+
         if self.has_received_last_chunk.get() && self.sink.get().is_some() {
             self.sink.set(SinkHandle::None);
             sink.end(None);
@@ -256,8 +280,8 @@ impl ByteStream {
         Vec::<u8>::move_from_list(list)
     }
 
-    /// Called by native fast-paths after wiring `self.sink`. Restores
-    /// producer-side backpressure if it was already dropped (BufferAll).
+    /// Called by native fast-paths after wiring `self.sink`: a consumer now
+    /// waits for bytes, so a parked producer resumes.
     pub fn signal_consumer_attached(&self) {
         self.parent_const().producer.get().start();
     }

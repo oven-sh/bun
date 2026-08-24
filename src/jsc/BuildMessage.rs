@@ -16,15 +16,6 @@ pub struct BuildMessage {
     pub(crate) logged: Cell<bool>,
 }
 
-impl Default for BuildMessage {
-    fn default() -> Self {
-        Self {
-            msg: bun_ast::Msg::default(),
-            logged: Cell::new(false),
-        }
-    }
-}
-
 impl BuildMessage {
     // `#[JsClass]` emits `BuildMessageClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut BuildMessage> {
@@ -112,7 +103,7 @@ impl BuildMessage {
                 return Ok(JSValue::NULL);
             }
 
-            let str = args[0].get_zig_string(global)?;
+            let str = args[0].to_bun_string(global)?;
             if str.eql_comptime(b"default") || str.eql_comptime(b"string") {
                 return Ok(self.to_string_fn(global));
             }
@@ -127,7 +118,7 @@ impl BuildMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_str(b"BuildMessage").to_js(global)?,
+            bun_core::String::static_(b"BuildMessage").to_js(global)?,
         );
         object.put(global, b"position", self.get_position(global)?);
         object.put(global, b"message", self.get_message(global)?);

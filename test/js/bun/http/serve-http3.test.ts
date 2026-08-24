@@ -1,3 +1,4 @@
+import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes } from "crypto";
 import { readFileSync } from "fs";
@@ -1525,5 +1526,70 @@ describe("Bun.serve HTTP/3 request validation", () => {
     const chained = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent1"));
 
     expect({ selfSigned, chained }).toEqual({ selfSigned: "closed", chained: "200 1" });
+  });
+});
+
+// The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
+// runs close() before it returns, and a request handler that calls it must still
+// run to completion before the nextTick and promise callbacks it queued. The
+// socket being closed lives on a plain HTTP/1 server, since HTTP/3 carries no
+// WebSockets; any handler can close it.
+describe("Bun.serve HTTP/3 request handlers run to completion before the callbacks they queued", () => {
+  async function openHeldSocket() {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    const closed = Promise.withResolvers<void>();
+    const wsServer = Bun.serve({
+      port: 0,
+      fetch: (req, srv) => (srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 })),
+      websocket: {
+        open: ws => opened.resolve(ws),
+        message() {},
+        close() {
+          order.push("close()");
+        },
+      },
+    });
+    const client = new WebSocket(wsServer.url.href.replace(/^http/, "ws"));
+    client.onerror = () => closed.resolve();
+    client.onclose = () => closed.resolve();
+    const held = await opened.promise;
+    return {
+      order,
+      closed: closed.promise,
+      handler() {
+        process.nextTick(() => order.push("nextTick"));
+        Promise.resolve().then(() => order.push("microtask"));
+        held.close();
+        order.push("rest of handler");
+        return new Response("ok");
+      },
+      [Symbol.dispose]: () => wsServer.stop(true),
+    };
+  }
+
+  test("fetch() and a route handler closing an open ServerWebSocket", async () => {
+    using viaFetch = await openHeldSocket();
+    using viaRoute = await openHeldSocket();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      routes: { "/route": viaRoute.handler },
+      fetch: viaFetch.handler,
+    });
+
+    const responses = {
+      fetch: await h3Exchange(server.port, requestHeaders("/")),
+      route: await h3Exchange(server.port, requestHeaders("/route")),
+    };
+    await Promise.all([viaFetch.closed, viaRoute.closed]);
+
+    const expectedOrder = ["close()", "rest of handler", "nextTick", "microtask"];
+    expect({ responses, fetch: viaFetch.order, route: viaRoute.order }).toEqual({
+      responses: { fetch: "200 ok", route: "200 ok" },
+      fetch: expectedOrder,
+      route: expectedOrder,
+    });
   });
 });

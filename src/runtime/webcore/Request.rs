@@ -18,7 +18,7 @@ use crate::webcore::jsc::{
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{OwnedStringCell, String as BunString, ZigString, strings};
+use bun_core::{String as BunString, ZigString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
@@ -81,7 +81,7 @@ const _: () = {
 /// `finalize`, so stay plain.
 #[repr(C)]
 pub struct Request {
-    pub(crate) url: bun_core::OwnedStringCell,
+    pub(crate) url: JsCell<BunString>,
 
     headers: JsCell<Option<HeadersRef>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
@@ -130,10 +130,6 @@ impl Default for Flags {
         }
     }
 }
-
-// NOTE: toJS is overridden
-pub use js_gen::from_js;
-pub use js_gen::from_js_direct;
 
 // Heap-allocates via Box::new (global mimalloc).
 impl Request {
@@ -425,7 +421,7 @@ impl Request {
         method: Method,
     ) -> Request {
         Request {
-            url: OwnedStringCell::new(url),
+            url: JsCell::new(url),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -899,7 +895,6 @@ impl Request {
             BunString::clone_utf8(&bytes)
         };
         let href = bun_url::href_from_string(&joined);
-        joined.deref();
         if href.is_empty() {
             return BunString::clone_utf8(&path);
         }
@@ -968,7 +963,7 @@ impl Request {
         // (the +1) is moved into `req.body` next.
         let body_seed_ptr = body.as_ptr();
         let mut req = Request {
-            url: OwnedStringCell::new(BunString::empty()),
+            url: JsCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -1113,10 +1108,6 @@ impl Request {
                             Ok(None) => {}
                             Err(e) => bail!(Err(e)),
                         }
-
-                        if global_this.has_exception() {
-                            bail!(Err(JsError::Thrown));
-                        }
                     }
 
                     if !fields.contains(Fields::Body) {
@@ -1160,13 +1151,9 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Url) {
-                        // `Response::url()` returns a bitwise `Copy` of the underlying
-                        // `bun.String` (no ref bump),
-                        // so take a +1 ref before storing — `req.url` is later released by
-                        // `finalize_without_deinit` / the bail!-path `deref()`.
                         let url = response.url();
                         if !url.is_empty() {
-                            req.url.set(url.dupe_ref());
+                            req.url.set(url.clone());
                             fields.insert(Fields::Url);
                         }
                     }
@@ -1184,10 +1171,6 @@ impl Request {
                                 fields.insert(Fields::Body);
                             }
                         }
-                    }
-
-                    if global_this.has_exception() {
-                        bail!(Err(JsError::Thrown));
                     }
                 }
             }
@@ -1220,6 +1203,7 @@ impl Request {
                     Err(e) => bail!(Err(e)),
                 }
 
+                // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
                 if global_this.has_exception() {
                     bail!(Err(JsError::Thrown));
                 }
@@ -1264,10 +1248,6 @@ impl Request {
                     }
                     Err(e) => bail!(Err(e)),
                 }
-
-                if global_this.has_exception() {
-                    bail!(Err(JsError::Thrown));
-                }
             }
 
             if !fields.contains(Fields::Signal) {
@@ -1285,27 +1265,17 @@ impl Request {
                             // `ref_from_js` already ref'd.
                             req.signal.set(Some(signal));
                         } else {
-                            if !global_this.has_exception() {
-                                bail!(Err(global_this.throw_type_error(format_args!(
-                                    "Failed to construct 'Request': signal is not of type AbortSignal."
-                                ))));
-                            }
-                            bail!(Err(JsError::Thrown));
+                            bail!(Err(global_this.throw_type_error(format_args!(
+                                "Failed to construct 'Request': signal is not of type AbortSignal."
+                            ))));
                         }
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
-
-                if global_this.has_exception() {
-                    bail!(Err(JsError::Thrown));
-                }
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                if global_this.has_exception() {
-                    bail!(Err(JsError::Thrown));
-                }
                 match crate::webcore::response::Init::init(global_this, value) {
                     Ok(Some(response_init)) => {
                         let header_check = !explicit_check
@@ -1326,10 +1296,6 @@ impl Request {
                             }
                         }
 
-                        if global_this.has_exception() {
-                            bail!(Err(JsError::Thrown));
-                        }
-
                         let method_check = !explicit_check
                             || (explicit_check
                                 && match value.fast_get(global_this, bun_jsc::BuiltinName::Method) {
@@ -1342,16 +1308,9 @@ impl Request {
                                 fields.insert(Fields::Method);
                             }
                         }
-                        if global_this.has_exception() {
-                            bail!(Err(JsError::Thrown));
-                        }
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
-                }
-
-                if global_this.has_exception() {
-                    bail!(Err(JsError::Thrown));
                 }
             }
 
@@ -1392,28 +1351,21 @@ impl Request {
             }
         }
 
-        if global_this.has_exception() {
-            bail!(Err(JsError::Thrown));
-        }
-
         if req.url.get().is_empty() {
             bail!(Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': url is required."
             ))));
         }
 
-        let href = bun_url::href_from_string(&req.url.get());
+        let href = bun_url::href_from_string(req.url.get());
         if href.is_empty() {
-            if !global_this.has_exception() {
-                // globalThis.throw can cause GC, which could cause the above string to be freed.
-                // so we must increment the reference count before calling it.
-                let err = global_this.err_invalid_url(format_args!(
-                    "Failed to construct 'Request': Invalid URL \"{}\"",
-                    req.url.get()
-                ));
-                bail!(Err(global_this.throw_value(err)));
-            }
-            bail!(Err(JsError::Thrown));
+            // globalThis.throw can cause GC, which could cause the above string to be freed.
+            // so we must increment the reference count before calling it.
+            let err = global_this.err_invalid_url(format_args!(
+                "Failed to construct 'Request': Invalid URL \"{}\"",
+                req.url.get()
+            ));
+            bail!(Err(global_this.throw_value(err)));
         }
 
         // hrefFromString increments the reference count if they end up being
@@ -1495,21 +1447,13 @@ impl Request {
         let body_ = self.clone_body_value_via_cached_stream(global_this)?;
         // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);
-        // Last fallible call. The url computation is sunk below it
-        // so no guard is needed at all — `BunString` is
-        // `Copy` with no `Drop`, so an early return here leaves `req.url`
-        // untouched and still owned by the caller's `finalize_without_deinit`.
-        // `body` (a `BodyHiveHandle`) drops on the `?` error path below,
-        // releasing its +1.
+        // Last fallible call; an early return here leaves `req.url` untouched.
+        // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
         let headers = self.clone_headers(global_this)?;
-        // `headers` is released automatically on the error path via its drop glue
         let url = if preserve_url {
-            // Bitwise copy — the `ptr::write` below overwrites the old slot;
-            // `BunString` has no `Drop`, so the stale `req.url` bits are discarded
-            // and this copy becomes the sole live handle.
-            req.url.get()
+            req.url.take()
         } else {
-            self.url.get().dupe_ref()
+            self.url.get().clone()
         };
 
         // `ptr::write` is a raw bit-overwrite — no destructors run on the old
@@ -1518,7 +1462,7 @@ impl Request {
         // The old `req.body` hive ref is intentionally NOT unref'd here:
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
-        // `url` was bitwise-copied above (preserve_url) or is the empty
+        // `url` was taken above (preserve_url) or is the empty
         // sentinel; remaining incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
@@ -1526,7 +1470,7 @@ impl Request {
             core::ptr::write(
                 req,
                 Request {
-                    url: OwnedStringCell::new(url),
+                    url: JsCell::new(url),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
@@ -1552,7 +1496,7 @@ impl Request {
         // `clone_into` `ptr::write`s the new fields over the seed
         // without reading or dropping it.
         let mut req = Box::new(Request {
-            url: OwnedStringCell::new(BunString::empty()),
+            url: JsCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
@@ -1584,7 +1528,7 @@ impl Request {
         body: BodyHiveHandle,
     ) -> Request {
         Request {
-            url: OwnedStringCell::new(BunString::empty()),
+            url: JsCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),

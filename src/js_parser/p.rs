@@ -21,8 +21,8 @@ use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
-    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind,
-    IdentifierOpts, ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
+    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
+    ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
@@ -222,7 +222,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
-    pub(crate) fn_only_data_visit: FnOnlyDataVisit<'a>,
+    pub(crate) fn_only_data_visit: FnOnlyDataVisit,
     pub(crate) allocated_names: List<'a, &'a [u8]>,
     // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
     // allocated_names_pool: ?*AllocatedNamesPool.Node = null,
@@ -1356,7 +1356,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Bump-allocate a binding payload and wrap it in `Binding`.
     ///
-    /// If a caller needs to wrap an already-stored payload, call `Binding::init` directly.
+    /// If a caller needs to wrap an already-stored payload, construct
+    /// `Binding { loc, data }` directly.
     #[inline]
     pub(crate) fn b<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
     where
@@ -2656,23 +2657,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
             let text = factory.text.slice();
-            self.options.jsx.factory =
-                options::JSX::Pragma::member_list_to_components_if_different(
-                    core::mem::take(&mut self.options.jsx.factory),
-                    text,
-                )
-                .expect("unreachable");
+            match options::JSX::Pragma::member_list_to_components_if_different(
+                &self.options.jsx.factory,
+                text,
+            ) {
+                Some(members) => self.options.jsx.factory = members,
+                None => self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    factory.range,
+                    format_args!("Invalid JSX factory: \"{}\"", bstr::BStr::new(text)),
+                ),
+            }
         }
 
         if let Some(fragment) = self.lexer.jsx_pragma.jsx_frag() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = fragment.text.slice();
-            self.options.jsx.fragment =
-                options::JSX::Pragma::member_list_to_components_if_different(
-                    core::mem::take(&mut self.options.jsx.fragment),
-                    text,
-                )
-                .expect("unreachable");
+            match options::JSX::Pragma::member_list_to_components_if_different(
+                &self.options.jsx.fragment,
+                text,
+            ) {
+                Some(members) => self.options.jsx.fragment = members,
+                None => self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    fragment.range,
+                    format_args!("Invalid JSX fragment: \"{}\"", bstr::BStr::new(text)),
+                ),
+            }
         }
 
         if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
@@ -4210,11 +4221,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r: bun_ast::Range,
         detail: &[u8],
     ) -> Result<(), crate::Error> {
-        let can_be_transformed = feature == StrictModeFeature::ForInVarInit;
         let text: &'a [u8] = match feature {
-            StrictModeFeature::WithStatement => b"With statements",
-            StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
-            StrictModeFeature::ForInVarInit => b"Variable initializers within for-in loops",
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.arena,
                 "Declarations with the name \"{}\"",
@@ -4229,9 +4236,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
             .into_bump_str()
             .as_bytes(),
-            StrictModeFeature::LegacyOctalLiteral => b"Legacy octal literals",
-            StrictModeFeature::LegacyOctalEscape => b"Legacy octal escape sequences",
-            StrictModeFeature::IfElseFunctionStmt => b"Function declarations inside if statements",
         };
 
         let scope = self.current_scope();
@@ -4272,7 +4276,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 notes,
                 format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
             );
-        } else if !can_be_transformed && self.is_strict_mode_output_format() {
+        } else if self.is_strict_mode_output_format() {
             self.log().add_range_error_fmt(
                 Some(self.source),
                 r,
@@ -4519,7 +4523,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    pub(crate) fn validate_function_name(&mut self, func: &G::Fn, kind: FunctionKind) {
+    pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
             let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
@@ -4532,9 +4536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_lexer::range_of_identifier(self.source, name.loc),
                     b"An async function cannot be named \"await\"",
                 );
-            } else if kind == FunctionKind::Expr
-                && func.flags.contains(Flags::Function::IsGenerator)
-                && original_name == b"yield"
+            } else if func.flags.contains(Flags::Function::IsGenerator) && original_name == b"yield"
             {
                 self.log().add_range_error(
                     Some(self.source),
@@ -5136,27 +5138,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
-        // Substitute "this" if we're inside a static class property initializer
-        if self
-            .fn_only_data_visit
-            .should_replace_this_with_class_name_ref
-        {
-            // class_name_ref is `Option<&'a Cell<Ref>>` (arena slot owned by the enclosing
-            // `visit_class` frame); copy the Ref out so the field borrow is released before
-            // record_usage/new_expr.
-            if let Some(r) = self.fn_only_data_visit.class_name_ref.map(|c| c.get()) {
-                self.record_usage(r);
-                return Some(self.new_expr(
-                    E::Identifier {
-                        ref_: r,
-                        ..Default::default()
-                    },
-                    loc,
-                ));
-            }
-        }
-
-        // oroigianlly was !=- modepassthrough
         if !self.fn_only_data_visit.is_this_nested {
             // In the REPL, top-level `this` must evaluate to the global object
             // (matching Node's `> this` and `deno repl > this`). The REPL wraps
@@ -5307,14 +5288,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            // ToPropertyKey on a computed key can run user code unless it's a primitive literal.
-            if property.flags.contains(Flags::Property::IsComputed)
-                && !property
-                    .key
-                    .map(|key| key.unwrap_inlined().is_primitive_literal())
-                    .unwrap_or(false)
-            {
-                return false;
+            // ToPropertyKey on a computed key can run user code (a custom
+            // "toString"), so a non-primitive literal key keeps the class.
+            // A side-effect-free reference (`[TypeId]`, `[Ns.TypeId]`) is
+            // accepted anyway: such keys are almost always string or symbol
+            // constants, and rejecting them blocks tree-shaking of entire
+            // libraries that brand classes with type-id fields (#40114).
+            if property.flags.contains(Flags::Property::IsComputed) {
+                let Some(key) = property.key else {
+                    return false;
+                };
+                let key = key.unwrap_inlined();
+                let is_reference = matches!(
+                    key.data,
+                    js_ast::ExprData::EIdentifier(_)
+                        | js_ast::ExprData::EImportIdentifier(_)
+                        | js_ast::ExprData::ECommonjsExportIdentifier(_)
+                        | js_ast::ExprData::EDot(_)
+                );
+                if !key.is_primitive_literal()
+                    && !(is_reference && self.expr_can_be_removed_if_unused_without_dce_check(&key))
+                {
+                    return false;
+                }
             }
 
             // Non-static values/initializers only run on construction or access, never for an unused class.

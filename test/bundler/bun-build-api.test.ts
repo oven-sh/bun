@@ -1956,6 +1956,42 @@ describe.concurrent("cssTarget", () => {
     expect(output).not.toContain("oklch(");
   });
 
+  test("the lowest version wins when a browser repeats", async () => {
+    const output = await buildCss({ cssTarget: ["chrome130", "chrome80"] });
+    expect(output).toContain("lab(");
+    expect(output).not.toContain("oklch(");
+  });
+
+  test("accepts an ES version year", async () => {
+    const output = await buildCss({ cssTarget: "es2015" });
+    expect(output).toContain("lab(");
+    expect(output).not.toContain("oklch(");
+  });
+
+  test("rejects an unsupported ES version year", async () => {
+    await expect(buildCss({ cssTarget: "es2024" })).rejects.toThrow('Invalid cssTarget "es2024"');
+  });
+
+  test("honors the minor version", async () => {
+    // oklch() needs Safari 15.4.
+    expect(await buildCss({ cssTarget: "safari15.4" })).toContain("oklch(");
+    expect(await buildCss({ cssTarget: "safari15" })).not.toContain("oklch(");
+  });
+
+  test("accepts a three-component version", async () => {
+    const output = await buildCss({ cssTarget: "safari15.4.1" });
+    expect(output).toContain("oklch(");
+  });
+
+  test("rejects a malformed version", async () => {
+    await expect(buildCss({ cssTarget: "safari16.4.x" })).rejects.toThrow('Invalid cssTarget "safari16.4.x"');
+  });
+
+  test("applies to target bun, which does not downlevel by default", async () => {
+    expect(await buildCss({ target: "bun" })).toContain("oklch(");
+    expect(await buildCss({ target: "bun", cssTarget: ["chrome80"] })).toContain("lab(");
+  });
+
   test("rejects an unknown target string", async () => {
     await expect(buildCss({ cssTarget: "internet-explorer" })).rejects.toThrow('Invalid cssTarget "internet-explorer"');
   });

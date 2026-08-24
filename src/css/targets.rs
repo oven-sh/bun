@@ -72,7 +72,9 @@ impl Targets {
         Some(lhs << rhs)
     }
 
-    pub fn for_bundler_target(target: bun_ast::Target) -> Targets {
+    /// Private so the bundler cannot bypass a user `cssTarget`: `for_bundler`
+    /// is the only entry point.
+    fn for_bundler_target(target: bun_ast::Target) -> Targets {
         #[cfg(debug_assertions)]
         {
             let mut browsers = Browsers::default();
@@ -397,23 +399,25 @@ impl Browsers {
                 continue; // No mapping available
             }
 
-            let (major, minor) = 'major_minor: {
+            // `major[.minor[.patch]]`, one byte per component in the packed
+            // encoding (see the `Browsers` doc comment). esbuild accepts up
+            // to three components.
+            let version: u32 = {
                 let version_str = &entry[idx..];
-                let dot_index =
-                    strings::index_of_char_usize(version_str, b'.').unwrap_or(version_str.len());
-                let Some(major) = strings::parse_int::<u16>(&version_str[0..dot_index], 10).ok()
-                else {
-                    return Err(crate::CrateError::UnsupportedCSSTarget);
-                };
-                let minor = if dot_index < version_str.len() {
-                    strings::parse_int::<u16>(&version_str[dot_index + 1..], 10).unwrap_or(0)
-                } else {
-                    0
-                };
-                break 'major_minor (major, minor);
+                let mut components: [u32; 3] = [0; 3];
+                let mut count: usize = 0;
+                for part in strings::split(version_str, b".") {
+                    let Ok(component) = strings::parse_int::<u16>(part, 10) else {
+                        return Err(crate::CrateError::UnsupportedCSSTarget);
+                    };
+                    if count == 3 {
+                        return Err(crate::CrateError::UnsupportedCSSTarget);
+                    }
+                    components[count] = component as u32;
+                    count += 1;
+                }
+                (components[0] << 16) | (components[1] << 8) | components[2]
             };
-
-            let version: u32 = ((major as u32) << 16) | ((minor as u32) << 8);
             let slot: &mut Option<u32> = match browser {
                 Browser::Chrome => &mut self.chrome,
                 Browser::Edge => &mut self.edge,

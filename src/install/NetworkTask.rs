@@ -490,13 +490,10 @@ impl NetworkTask {
                 name
             };
 
-            // `OwnedString` derefs the WTF-backed result on scope exit —
-            // covers both the
-            // success path and the InvalidURL early returns below.
-            let tmp = bun_core::OwnedString::new(bun_url::join(
+            let tmp = bun_url::join(
                 &bun_core::String::borrow_utf8(scope.url.href()),
                 &bun_core::String::borrow_utf8(encoded_name),
-            ));
+            );
 
             if tmp.tag() == bun_core::Tag::Dead {
                 if !is_optional {
@@ -530,7 +527,7 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            *tmp
+                            tmp
                         ),
                     );
                 } else {
@@ -539,14 +536,14 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            *tmp
+                            tmp
                         ),
                     );
                 }
                 return Err(ForManifestError::InvalidURL);
             }
 
-            // This actually duplicates the string! So we defer deref the WTF managed one above.
+            // This actually duplicates the string! The WTF managed one above drops at scope exit.
             let url_bytes = tmp.to_owned_slice().into_boxed_slice();
 
             {

@@ -1758,10 +1758,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
 #endif
     Bun__initializeSQLite();
 
-    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(topExceptionScope, JSValue::encode(jsUndefined()));
-    (void)topExceptionScope.tryClearException();
+    RETURN_IF_EXCEPTION(scope, {});
     int openFlags = DEFAULT_SQLITE_FLAGS;
     if (callFrame->argumentCount() > 1) {
         JSValue flags = callFrame->argument(1);
@@ -2143,7 +2141,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
 
         JSValue prototype = classObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!prototype && !scope.exception()) [[unlikely]] {
+        if (!prototype) [[unlikely]] {
             throwTypeError(lexicalGlobalObject, scope, "Expected constructor to have a prototype"_s);
             return {};
         }
@@ -2810,13 +2808,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
             // declared type (e.g. CREATE TABLE t (a "X")) is valid.
             String typeStr = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(declType), strlen(declType) });
             typeValue = JSC::jsString(vm, typeStr);
-            RETURN_IF_EXCEPTION(scope, {});
         } else {
             // If no declared type (e.g., for expressions or results of functions)
             typeValue = JSC::jsNull();
         }
 
         array->putDirectIndex(lexicalGlobalObject, i, typeValue);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(array));

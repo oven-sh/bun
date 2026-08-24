@@ -4664,8 +4664,8 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()).into(),
-                    message: bun_core::String::static_(err.label()).into(),
+                    code: bun_core::String::static_(err.code()),
+                    message: bun_core::String::static_(err.label()),
                     ..Default::default()
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
@@ -4941,12 +4941,11 @@ impl Resolver {
                 {
                     break 'brk RecordType::DEFAULT;
                 }
-                // SAFETY: `to_js_string` returns a live *mut JSString rooted by `record_type_value`.
-                let record_type_str = record_type_value.to_js_string(global_this)?;
-                if record_type_str.length() == 0 {
+                let record_type_view = record_type_value.to_js_string_view(global_this)?;
+                if record_type_view.is_empty() {
                     break 'brk RecordType::DEFAULT;
                 }
-                match RECORD_TYPE_MAP.get(record_type_str.to_slice(global_this).slice()) {
+                match RECORD_TYPE_MAP.get(record_type_view.to_utf8().slice()) {
                     Some(r) => *r,
                     None => {
                         return Err(global_this.throw_invalid_argument_property_value(
@@ -4963,16 +4962,15 @@ impl Resolver {
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
         }
-        // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
-        let name_str = name_value.to_js_string(global_this)?;
-        if name_str.length() == 0 {
+        let name_view = name_value.to_js_string_view(global_this)?;
+        let name = name_view.to_utf8();
+        if name.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "resolve",
                 "name",
                 "non-empty string",
             ));
         }
-        let name = name_str.to_slice_clone(global_this)?;
 
         match record_type {
             RecordType::A => self.do_resolve_cares::<AHostentWithTtls>(name.slice(), global_this),
@@ -5027,9 +5025,9 @@ impl Resolver {
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
-        // SAFETY: `to_js_string` returns a live *mut JSString rooted by `ip_value`.
-        let ip_str = ip_value.to_js_string(global_this)?;
-        if ip_str.length() == 0 {
+        let ip_view = ip_value.to_js_string_view(global_this)?;
+        let ip_slice = ip_view.to_utf8();
+        if ip_slice.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "reverse",
                 "ip",
@@ -5037,7 +5035,6 @@ impl Resolver {
             ));
         }
 
-        let ip_slice = ip_str.to_slice_clone(global_this)?;
         let ip = ip_slice.slice();
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
@@ -5097,9 +5094,9 @@ impl Resolver {
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
         }
-        // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
-        let name_str = name_value.to_js_string(global_this)?;
-        if name_str.length() == 0 {
+        let name_view = name_value.to_js_string_view(global_this)?;
+        let name = name_view.to_utf8();
+        if name.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookup",
                 "hostname",
@@ -5139,7 +5136,6 @@ impl Resolver {
             };
         }
 
-        let name = name_str.to_slice(global_this);
         let resolver = global_resolver(global_this);
 
         resolver.do_lookup(name.slice(), port, options, global_this)
@@ -5236,16 +5232,15 @@ macro_rules! resolve_record_fn {
             if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
             }
-            // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
-            let name_str = name_value.to_js_string(global_this)?;
-            if !$allow_empty && name_str.length() == 0 {
+            let name_view = name_value.to_js_string_view(global_this)?;
+            let name = name_view.to_utf8();
+            if !$allow_empty && name.slice().is_empty() {
                 return Err(global_this.throw_invalid_argument_type(
                     $jsname,
                     "hostname",
                     "non-empty string",
                 ));
             }
-            let name = name_str.to_slice_clone(global_this)?;
             self.do_resolve_cares::<$ty>(name.slice(), global_this)
         }
     };
@@ -5417,9 +5412,9 @@ impl Resolver {
                 let syscall = bun_core::String::create_atom(&query.name);
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()).into(),
-                    message: bun_core::String::static_(err.label()).into(),
-                    syscall: syscall.into(),
+                    code: bun_core::String::static_(err.code()),
+                    message: bun_core::String::static_(err.label()),
+                    syscall,
                     ..Default::default()
                 };
                 return Err(global_this.throw_value(system_error.to_error_instance(global_this)));
@@ -5758,11 +5753,9 @@ impl Resolver {
                 );
             }
 
-            let address_string = bun_core::OwnedString::new(
-                triple
-                    .get_index(global_this, 1)?
-                    .to_bun_string(global_this)?,
-            );
+            let address_string = triple
+                .get_index(global_this, 1)?
+                .to_bun_string(global_this)?;
             let address_slice = address_string.to_owned_slice();
 
             let mut address_buffer = vec![0u8; address_slice.len() + 1];
@@ -5910,15 +5903,15 @@ impl Resolver {
                 "string",
             ));
         }
-        let addr_str = addr_value.to_js_string(global_this)?;
-        if addr_str.length() == 0 {
+        let addr_view = addr_value.to_js_string_view(global_this)?;
+        if addr_view.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",
                 "address",
                 "non-empty string",
             ));
         }
-        let addr_slice = addr_str.to_slice(global_this);
+        let addr_slice = addr_view.to_utf8();
         let addr_s = addr_slice.slice();
 
         let port_value = arguments[1];

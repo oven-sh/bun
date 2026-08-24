@@ -26,16 +26,19 @@ extern "C" bool Bun__standaloneInternalModuleBytecode(void* bunVM, uint32_t id, 
 
 namespace Bun {
 
-extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
-extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, int sourceID);
+extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
+extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID);
 
 static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 {
 #if ASSERT_ENABLED
     bool isCodeCoverageEnabled = !!vm.controlFlowProfiler();
-    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && BunTest__shouldGenerateCodeCoverage(Bun::toString(code.provider()->sourceURL()));
+    BunString sourceURL = Bun::toString(code.provider()->sourceURL());
+    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && BunTest__shouldGenerateCodeCoverage(&sourceURL);
     if (shouldGenerateCodeCoverage) {
-        ByteRangeMapping__generate(Bun::toString(code.provider()->sourceURL()), Bun::toString(code.provider()->source().toStringWithoutCopying()), code.provider()->asID());
+        WTF::String sourceString = code.provider()->source().toStringWithoutCopying();
+        BunString source = Bun::toString(sourceString);
+        ByteRangeMapping__generate(&sourceURL, &source, code.provider()->asID());
     }
 #endif
 }

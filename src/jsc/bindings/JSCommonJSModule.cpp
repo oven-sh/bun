@@ -326,8 +326,6 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
         }
     }
 
-    RETURN_IF_EXCEPTION(scope, {});
-
     // This function is not bound with the module object. This is because nearly
     // no one uses this and it is not worth creating an extra bound function for
     // every single module. Instead, we can unwrap the bound function that we
@@ -548,7 +546,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
         auto filenameWtfStr = filename.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         BunString filenameStr = Bun::toString(filenameWtfStr);
-        JSValue paths = JSValue::decode(Resolver__nodeModulePathsJSValue(filenameStr, globalObject, true));
+        JSValue paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filenameStr, globalObject, true));
         RETURN_IF_EXCEPTION(scope, {});
         thisObject->m_paths.set(globalObject->vm(), thisObject, paths);
         return JSValue::encode(paths);
@@ -1375,14 +1373,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     ErrorableResolvedSource res;
-    res.success = false;
-    memset(&res.result, 0, sizeof res.result);
     BunString specifierStr = Bun::toString(specifier);
     auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (result) {
-        if (res.success)
-            return JSC::JSValue::encode(result);
+    if (result.kind == BuiltinModule::Kind::Exports) {
+        return JSC::JSValue::encode(result.exports);
     }
     throwScope.assertNoExceptionExceptTermination();
     return throwVMError(globalObject, throwScope, "Failed to fetch builtin module"_s);
@@ -1406,21 +1401,15 @@ void JSCommonJSModule::evaluate(
     auto& vm = JSC::getVM(globalObject);
 
     if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
-        auto string = source.source_code.toWTFString(BunString::ZeroCopy);
+        auto string = source.source_code.transferToWTFString();
         auto trimStart = string.find('\n');
         if (trimStart != WTF::notFound) {
-            if (source.needsDeref && !isBuiltIn) {
-                source.needsDeref = false;
-                source.source_code.deref();
-            }
-            auto wrapperStart = globalObject->m_moduleWrapperStart;
-            auto wrapperEnd = globalObject->m_moduleWrapperEnd;
-            source.source_code = Bun::toStringRef(makeString(
-                wrapperStart,
+            string = makeString(
+                globalObject->m_moduleWrapperStart,
                 string.substring(trimStart, string.length() - trimStart - 4),
-                wrapperEnd));
-            source.needsDeref = true;
+                globalObject->m_moduleWrapperEnd);
         }
+        source.source_code = Bun::toStringRef(string);
     }
 
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
@@ -1467,12 +1456,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;
         }
-        WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
-        RETURN_IF_EXCEPTION(scope, );
-        if (source.needsDeref) {
-            source.needsDeref = false;
-            source.source_code.deref();
-        }
+        WTF::String sourceString = source.source_code.transferToWTFString();
         // Remove the wrapper from the source string, since the transpiler has added it.
         auto trimStart = sourceString.find('\n');
         WTF::String sourceStringWithoutWrapper;
@@ -1536,9 +1520,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
             auto concat = makeString(
                 globalObject->m_moduleWrapperStart,
-                source.source_code.toWTFString(BunString::ZeroCopy),
+                source.source_code.transferToWTFString(),
                 globalObject->m_moduleWrapperEnd);
-            source.source_code.deref();
             source.source_code = Bun::toStringRef(concat);
         }
 

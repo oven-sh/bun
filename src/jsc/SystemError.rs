@@ -1,7 +1,7 @@
 use core::ffi::c_int;
 use core::fmt;
 
-use bun_core::{OwnedString, String};
+use bun_core::String;
 
 use crate::{JSGlobalObject, JSPromise, JSValue};
 
@@ -10,28 +10,28 @@ use crate::{JSGlobalObject, JSPromise, JSValue};
 pub struct SystemError {
     pub errno: c_int,
     /// label for errno
-    pub code: OwnedString,
+    pub code: bun_core::String,
     /// it is illegal to have an empty message
-    pub message: OwnedString,
-    pub path: OwnedString,
-    pub syscall: OwnedString,
-    pub hostname: OwnedString,
+    pub message: bun_core::String,
+    pub path: bun_core::String,
+    pub syscall: bun_core::String,
+    pub hostname: bun_core::String,
     /// MinInt = no file descriptor
     pub fd: c_int,
-    pub dest: OwnedString,
+    pub dest: bun_core::String,
 }
 
 impl Default for SystemError {
     fn default() -> Self {
         Self {
             errno: 0,
-            code: OwnedString::default(),
-            message: OwnedString::default(),
-            path: OwnedString::default(),
-            syscall: OwnedString::default(),
-            hostname: OwnedString::default(),
+            code: bun_core::String::default(),
+            message: bun_core::String::default(),
+            path: bun_core::String::default(),
+            syscall: bun_core::String::default(),
+            hostname: bun_core::String::default(),
             fd: c_int::MIN,
-            dest: OwnedString::default(),
+            dest: bun_core::String::default(),
         }
     }
 }
@@ -145,8 +145,8 @@ pub fn verify_error_to_js(
     let reason: &[u8] = err.reason_bytes();
 
     let fallback = SystemError {
-        code: String::clone_utf8(code).into(),
-        message: String::clone_utf8(reason).into(),
+        code: String::clone_utf8(code),
+        message: String::clone_utf8(reason),
         ..Default::default()
     };
 

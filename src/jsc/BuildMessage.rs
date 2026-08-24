@@ -103,7 +103,7 @@ impl BuildMessage {
                 return Ok(JSValue::NULL);
             }
 
-            let str = args[0].get_zig_string(global)?;
+            let str = args[0].to_bun_string(global)?;
             if str.eql_comptime(b"default") || str.eql_comptime(b"string") {
                 return Ok(self.to_string_fn(global));
             }
@@ -118,7 +118,7 @@ impl BuildMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_str(b"BuildMessage").to_js(global)?,
+            bun_core::String::static_(b"BuildMessage").to_js(global)?,
         );
         object.put(global, b"position", self.get_position(global)?);
         object.put(global, b"message", self.get_message(global)?);

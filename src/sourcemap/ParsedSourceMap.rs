@@ -7,7 +7,6 @@ use crate::mapping;
 use crate::vlq::VLQ;
 use crate::{
     InternalSourceMap, Mapping, ParseUrl, ParseUrlResultHint, SourceMapLoadHint, SourceProvider,
-    SourceProviderMap,
 };
 
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
@@ -36,8 +35,6 @@ pub struct ParsedSourceMap {
     /// are emitted (specifically with Bun.inspect / unhandled; the ones that
     /// rely on source contents)
     pub underlying_provider: SourceContentPtr,
-
-    pub is_standalone_module_graph: bool,
 }
 
 impl Drop for ParsedSourceMap {
@@ -53,7 +50,7 @@ impl Drop for ParsedSourceMap {
         //
         // `mappings`/`external_source_names` free via their own `Drop`.
         if let Some(ism) = self.internal.take() {
-            if !self.is_standalone_module_graph {
+            if !self.is_standalone_module_graph() {
                 ism.free_owned();
             }
         }
@@ -68,7 +65,6 @@ impl Default for ParsedSourceMap {
             internal: None,
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
-            is_standalone_module_graph: false,
         }
     }
 }
@@ -85,25 +81,25 @@ type ErasedGetSourceMap = unsafe fn(
 ) -> Option<ParseUrl>;
 
 /// # Safety
-/// `provider` must be the pointer packed by
-/// [`SourceContentPtr::from_source_provider`] for the same `P`, still live.
+/// `provider` must be the pointer packed by [`AnySourceProvider::new`] for
+/// the same `P`, still live.
 unsafe fn erased_get_source_map<P: SourceProvider>(
     provider: *mut c_void,
     source_filename: &[u8],
     load_hint: SourceMapLoadHint,
     result: ParseUrlResultHint,
 ) -> Option<ParseUrl> {
-    // SAFETY: caller contract — `provider` originates from
-    // `SourceContentPtr::from_source_provider::<P>`, so it is a live
-    // `*const P` for the duration of this call.
+    // SAFETY: caller contract: `provider` originates from
+    // `AnySourceProvider::new::<P>`, so it is a live `*const P` for the
+    // duration of this call.
     let provider = unsafe { &*provider.cast::<P>() };
     crate::get_source_map_impl(provider, source_filename, load_hint, result)
 }
 
 /// An erased source provider: the raw FFI handle plus the `get_source_map`
-/// dispatch monomorphized for its concrete type. Recovered from a
-/// [`SourceContentPtr`], or stored whole (boxed) where the pair must travel
-/// together (`bun_jsc::SavedSourceMap`'s provider entries).
+/// dispatch monomorphized for its concrete type. Stored in a
+/// [`SourceContentPtr`], or boxed on its own (`bun_jsc::SavedSourceMap`'s
+/// provider entries).
 #[derive(Clone, Copy)]
 pub struct AnySourceProvider {
     ptr: *mut c_void,
@@ -111,9 +107,8 @@ pub struct AnySourceProvider {
 }
 
 impl AnySourceProvider {
-    /// Erases a provider handle. Like [`SourceContentPtr::from_source_provider`],
-    /// `p` must stay live for as long as the returned value (or any copy of
-    /// it) is dispatched through.
+    /// Erases a provider handle. `p` must stay live for as long as the
+    /// returned value (or any copy of it) is dispatched through.
     pub fn new<P: SourceProvider>(p: *const P) -> AnySourceProvider {
         AnySourceProvider {
             ptr: p.cast_mut().cast::<c_void>(),
@@ -132,28 +127,39 @@ impl AnySourceProvider {
         result: ParseUrlResultHint,
     ) -> Option<ParseUrl> {
         // SAFETY: `ptr` and `get_source_map` were packed together by
-        // `SourceContentPtr::from_source_provider`; the provider FFI handle
-        // outlives any `ParsedSourceMap` that stores it, so it is valid for
-        // the duration of this call.
+        // `Self::new`; the provider FFI handle outlives any `ParsedSourceMap`
+        // that stores it, so it is valid for the duration of this call.
         unsafe { (self.get_source_map)(self.ptr, source_filename, load_hint, result) }
     }
 }
 
-/// A provider handle (stored as a raw address in `data`), the erased
-/// `get_source_map` dispatch for its concrete type, and a load hint.
+/// Where a [`ParsedSourceMap`] fetches source contents from after the fact.
+#[derive(Copy, Clone)]
+pub(crate) enum SourceContent {
+    None,
+    Provider(AnySourceProvider),
+    /// Embedded `bun build --compile` section. The map's `InternalSourceMap`
+    /// blob is borrowed from that same section, so `Drop` must not free it.
+    Standalone(&'static crate::SerializedSourceMap::Loaded),
+}
+
+/// A `SourceContent` plus the load hint to reuse when re-loading through it.
 #[derive(Copy, Clone)]
 pub struct SourceContentPtr {
-    data: u64,
+    content: SourceContent,
     load_hint: SourceMapLoadHint,
-    get_source_map: Option<ErasedGetSourceMap>,
 }
 
 impl SourceContentPtr {
     pub(crate) const NONE: SourceContentPtr = SourceContentPtr {
-        data: 0,
+        content: SourceContent::None,
         load_hint: SourceMapLoadHint::None,
-        get_source_map: None,
     };
+
+    #[inline]
+    pub(crate) fn content(self) -> SourceContent {
+        self.content
+    }
 
     #[inline]
     pub(crate) fn load_hint(self) -> SourceMapLoadHint {
@@ -165,34 +171,18 @@ impl SourceContentPtr {
         self.load_hint = hint;
     }
 
-    #[inline]
-    pub(crate) fn data(self) -> u64 {
-        self.data
-    }
-
-    /// Pack a provider handle. [`Self::provider`] recovers it together with
-    /// the `get_source_map` dispatch for `P`.
     pub fn from_source_provider<P: SourceProvider>(p: *const P) -> SourceContentPtr {
         SourceContentPtr {
-            data: u64::try_from(p as usize).expect("int cast"),
+            content: SourceContent::Provider(AnySourceProvider::new(p)),
             load_hint: SourceMapLoadHint::None,
-            get_source_map: Some(erased_get_source_map::<P>),
         }
     }
 
-    /// `SourceProviderMap` packing helper. Also used by the standalone module
-    /// graph, which stores a `*mut SerializedSourceMap::Loaded` here (guarded
-    /// by [`ParsedSourceMap::is_standalone_module_graph`], so the provider
-    /// dispatch is never invoked for it).
-    pub fn from_provider(p: *const SourceProviderMap) -> SourceContentPtr {
-        Self::from_source_provider(p)
-    }
-
     pub fn provider(self) -> Option<AnySourceProvider> {
-        Some(AnySourceProvider {
-            ptr: self.data as usize as *mut c_void,
-            get_source_map: self.get_source_map?,
-        })
+        match self.content {
+            SourceContent::Provider(provider) => Some(provider),
+            SourceContent::None | SourceContent::Standalone(_) => None,
+        }
     }
 }
 
@@ -220,11 +210,8 @@ impl ParsedSourceMap {
     }
 
     /// Construct a `ParsedSourceMap` whose mappings are backed by an
-    /// `InternalSourceMap` blob (e.g. one embedded in a `bun build --compile`
-    /// executable's standalone module graph) instead of a materialized
-    /// `mapping::List`. Ownership of the blob transfers to the returned value
-    /// (freed in `Drop`) unless the caller subsequently sets
-    /// [`Self::is_standalone_module_graph`].
+    /// `InternalSourceMap` blob instead of a materialized `mapping::List`.
+    /// Ownership of the blob transfers to the returned value (freed in `Drop`).
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
             input_line_count: internal.input_line_count(),
@@ -232,8 +219,33 @@ impl ParsedSourceMap {
             internal: Some(internal),
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
-            is_standalone_module_graph: false,
         }
+    }
+
+    /// Unlike [`Self::from_internal`], `internal` is borrowed from the
+    /// executable and `Drop` does not free it.
+    pub fn from_standalone(
+        internal: InternalSourceMap,
+        loaded: &'static crate::SerializedSourceMap::Loaded,
+        external_source_names: Vec<Box<[u8]>>,
+    ) -> Self {
+        Self {
+            input_line_count: internal.input_line_count(),
+            mappings: mapping::List::default(),
+            internal: Some(internal),
+            external_source_names,
+            underlying_provider: SourceContentPtr {
+                content: SourceContent::Standalone(loaded),
+                load_hint: SourceMapLoadHint::None,
+            },
+        }
+    }
+
+    pub(crate) fn is_standalone_module_graph(&self) -> bool {
+        matches!(
+            self.underlying_provider.content,
+            SourceContent::Standalone(_)
+        )
     }
 
     pub fn is_external(&self) -> bool {
@@ -249,11 +261,6 @@ impl ParsedSourceMap {
 
     pub fn internal_cursor(&self) -> Option<crate::internal_source_map::Cursor> {
         self.internal.as_ref().map(|ism| ism.cursor())
-    }
-
-    pub(crate) fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {
-        debug_assert!(self.is_standalone_module_graph);
-        self.underlying_provider.data() as usize as *mut crate::SerializedSourceMap::Loaded
     }
 
     pub fn memory_cost(&self) -> usize {

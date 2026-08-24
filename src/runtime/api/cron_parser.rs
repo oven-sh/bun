@@ -49,6 +49,19 @@ impl CronTz {
             }
         }
     }
+
+    /// True when the wall-clock minute `dt` does not exist (spring-forward
+    /// gap) and `ms`, what `gregorian_to_ms` returned for it, is the instant
+    /// shifted past the gap: converting `ms` back yields a different minute.
+    /// `ms` is NaN past the Date range; that is not a gap.
+    fn in_gap(self, g: &JSGlobalObject, dt: GregorianDateTime, ms: f64) -> bool {
+        if ms.is_nan() {
+            return false;
+        }
+        let back = self.ms_to_gregorian(g, ms);
+        (back.year, back.month, back.day, back.hour, back.minute)
+            != (dt.year, dt.month, dt.day, dt.hour, dt.minute)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -169,7 +182,8 @@ impl CronExpression {
     /// Convert a matching wall-clock `dt` to a real instant strictly after
     /// `from_ms`, handling DST. Returns None if no such instant exists for
     /// this wall-clock minute (fall-back FORMER already passed and the
-    /// schedule is fixed-time, so it fires once — cronie semantics).
+    /// schedule is fixed-time, so it fires once — cronie semantics; or the
+    /// minute is in a spring-forward gap and the schedule is wildcard).
     fn resolve_local_match(
         &self,
         global_object: &JSGlobalObject,
@@ -180,6 +194,11 @@ impl CronExpression {
     ) -> JsResult<Option<f64>> {
         let result =
             tz.gregorian_to_ms(global_object, dt.year, dt.month, dt.day, dt.hour, dt.minute)?;
+        // During spring-forward, `dt` does not exist and `result` is the
+        // instant shifted past the gap. With a sub-hour gap (Lord Howe,
+        // Chatham) wall-clock order and real-time order differ there: the
+        // shifted 02:10 is the real 02:40, after the existing 02:35.
+        let in_gap = tz.in_gap(global_object, dt, result);
         // During fall-back, `result` is the FORMER occurrence and the wall-clock
         // walk steps over the second one. For schedules with `*` minute or `*`
         // hour, scan real-time minutes (capped at the largest DST shift) to
@@ -191,6 +210,11 @@ impl CronExpression {
         //   (b) result <= from_ms — `dt` is ambiguous and mapped to its
         //       earlier instant, already past; the later instant may match.
         if self.minutes == ALL_MINUTES || self.hours == ALL_HOURS {
+            // A wildcard schedule runs on real time: skip the shifted instant
+            // and let the walk reach the first existing minute after the gap.
+            if in_gap {
+                return Ok(None);
+            }
             let wall_from = global_object.gregorian_date_time_to_ms_utc(
                 from_dt.year,
                 from_dt.month,
@@ -215,6 +239,19 @@ impl CronExpression {
                     }
                     probe += MINUTE_MS;
                 }
+            }
+        } else if in_gap {
+            // A fixed-time schedule fires once at the shifted instant, unless
+            // an existing minute before it matches. Real instants before the
+            // transition map to wall-clock minutes the walk already rejected,
+            // so only the last MAX_DST_SHIFT_MIN minutes before `result` can.
+            let lo = ((result - MAX_DST_SHIFT_MIN * MINUTE_MS) / MINUTE_MS).ceil() * MINUTE_MS;
+            let mut probe = (((from_ms / MINUTE_MS).floor() + 1.0) * MINUTE_MS).max(lo);
+            while probe < result {
+                if self.matches_instant(global_object, tz, probe) {
+                    return Ok(Some(probe));
+                }
+                probe += MINUTE_MS;
             }
         }
         Ok(if result > from_ms { Some(result) } else { None })

@@ -226,7 +226,7 @@ impl ModuleInfoDeserialized {
     /// # Safety
     /// `this` must have been produced by [`Self::create`] (heap box) or by
     /// [`ModuleInfoExt::into_deserialized`].
-    pub unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
+    pub(crate) unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
         // SAFETY: caller contract — see fn doc above.
         drop(unsafe { bun_core::heap::take(this) });
     }

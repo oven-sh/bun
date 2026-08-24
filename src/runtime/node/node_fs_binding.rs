@@ -102,21 +102,17 @@ fn parse_async_args<A: FsArgument>(
         }
     };
 
-    let early_return = 'early: {
+    let rejection = 'rejection: {
         if A::HAVE_ABORT_SIGNAL {
             if let Some(abort_error) = args
                 .signal()
                 .and_then(|signal| signal.node_abort_error_if_aborted(global))
             {
-                break 'early JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global,
-                    abort_error,
-                );
+                break 'rejection abort_error;
             }
         }
         if let Some(err) = slice.deferred_error.take() {
-            break 'early JSPromise::rejected_promise(global, (*err).to_error_instance(global))
-                .to_js();
+            break 'rejection (*err).to_error_instance(global);
         }
         return Ok(args);
     };
@@ -125,7 +121,7 @@ fn parse_async_args<A: FsArgument>(
     drop(args);
     // SAFETY: not yet dropped; only drop site for this path.
     unsafe { ManuallyDrop::drop(&mut slice) };
-    Err(Ok(early_return))
+    Err(Ok(JSPromise::rejected_promise(global, rejection).to_js()))
 }
 
 #[inline(always)]

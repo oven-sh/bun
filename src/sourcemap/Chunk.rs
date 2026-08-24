@@ -77,8 +77,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 ) -> Result<(), crate::Error> {
     let mut filename_buf = PathBuffer::uninit();
     let mut filename: &[u8] = source.path.text;
-    let top_level_dir: &[u8] =
-        strings::without_trailing_slash(bun_core::cwd::get().as_bytes());
+    let top_level_dir: &[u8] = strings::without_trailing_slash(bun_core::cwd::get().as_bytes());
     if filename.len() > top_level_dir.len()
         && strings::has_prefix(filename, top_level_dir)
         && bun_paths::is_sep_native(filename[top_level_dir.len()])

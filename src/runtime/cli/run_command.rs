@@ -323,9 +323,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !use_system_shell {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
-            let mini = bun_event_loop::MiniEventLoop::init_global(
-                Some(unsafe { &mut *std::ptr::from_mut::<DotEnv::Loader>(env) }),
-            );
+            let mini = bun_event_loop::MiniEventLoop::init_global(Some(unsafe {
+                &mut *std::ptr::from_mut::<DotEnv::Loader>(env)
+            }));
             // SAFETY: `init_global` returns the thread-local singleton as a raw
             // pointer; reborrow `&'static mut` for the
             // duration of `init_and_run_from_source` — single-threaded mini loop,
@@ -1873,13 +1873,11 @@ impl RunCommand {
         let bun_node_dir_win =
             bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
         let found_node = env_loader
-            .load_node_js_config(
-                if force_using_bun {
-                    bun_node_exe.as_bytes()
-                } else {
-                    b""
-                },
-            )
+            .load_node_js_config(if force_using_bun {
+                bun_node_exe.as_bytes()
+            } else {
+                b""
+            })
             .unwrap_or(false);
 
         let mut needs_to_force_bun = force_using_bun || !found_node;

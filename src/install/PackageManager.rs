@@ -1109,9 +1109,7 @@ fn configure_env_for_scripts_run(
     {
         let mut node_path = PathBuffer::uninit();
         if let Some(node_path_z) = this.env_mut().get_node_path(&mut node_path) {
-            let _ = this
-                .env_mut()
-                .load_node_js_config(node_path_z.as_ref())?;
+            let _ = this.env_mut().load_node_js_config(node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1802,10 +1800,12 @@ pub fn init(
     )?;
     {
         let root_package_json_path: &'static [u8] = Box::leak(
-            ZBox::from_bytes(resolve_path::join_abs_string::<resolve_path::platform::Auto>(
-                fs.top_level_dir(),
-                &[b"package.json"],
-            ))
+            ZBox::from_bytes(
+                resolve_path::join_abs_string::<resolve_path::platform::Auto>(
+                    fs.top_level_dir(),
+                    &[b"package.json"],
+                ),
+            )
             .into_boxed_slice_with_nul(),
         );
         // SAFETY: main-thread global, written once here before any reader.

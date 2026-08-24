@@ -31,6 +31,7 @@ use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, PathBuffer, SEP};
 use bun_ptr::BackRef;
 use bun_ptr::RefCount;
+use bun_ptr::RefPtr;
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, target_base_public_path,
     to_executable,
@@ -76,7 +77,10 @@ pub struct JSBundleCompletionTask {
     /// is still queued itself instead of waiting behind other VMs' builds.
     pub(crate) stage: core::sync::atomic::AtomicU8,
 
-    pub(crate) html_build_task: Option<*mut html_bundle::Route>,
+    /// The route this build is for, kept alive until `on_complete` hands it
+    /// the result (leaked with the rest of the route if the build is cancelled
+    /// at VM teardown).
+    pub(crate) html_build_task: Option<RefPtr<html_bundle::Route>>,
 
     pub(crate) result: BundleV2Result,
 
@@ -135,60 +139,56 @@ impl JSBundleCompletionTask {
 // never touch the count itself.
 unsafe impl Send for JSBundleCompletionTask {}
 
-/// `BundleV2.createAndScheduleCompletionTask` — construct, take a process-keepalive
-/// ref, and hand the task to the bundle-thread singleton.
-pub(crate) fn create_and_schedule_completion_task(
-    config: JSBundlerConfig,
-    plugins: Option<NonNull<Plugin>>,
-    global_this: &JSGlobalObject,
-) -> crate::Result<*mut JSBundleCompletionTask> {
-    let vm = global_this.bun_vm_ptr();
-    let env = global_this.bun_vm().transpiler.env;
-    let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
-        ref_count: RefCount::init(),
-        config,
-        bundle_ticket: Some(global_this.bun_vm().ticket()),
-        global_this: BackRef::new(global_this),
-        promise: jsc::JSPromiseStrong::default(),
-        poll_ref: KeepAlive::init(),
-        env,
-        log: bun_ast::Log::init(),
-        cancelled: core::sync::atomic::AtomicBool::new(false),
-        bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),
-        stage: core::sync::atomic::AtomicU8::new(Stage::Queued as u8),
-        html_build_task: None,
-        result: BundleV2Result::Pending,
-        next: bun_threading::Link::new(),
-        transpiler: ptr::null_mut(),
-        plugins,
-        started_at_ns: 0,
-    }));
-    // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
-    unsafe {
-        if let Some(plugin) = (*completion).plugins {
-            (*plugin.as_ptr()).set_config(completion.cast());
+impl JSBundleCompletionTask {
+    /// An unscheduled build of `config`; see [`schedule`](Self::schedule).
+    pub(crate) fn new(
+        config: JSBundlerConfig,
+        plugins: Option<NonNull<Plugin>>,
+        global_this: &JSGlobalObject,
+    ) -> JSBundleCompletionTask {
+        JSBundleCompletionTask {
+            ref_count: RefCount::init(),
+            config,
+            bundle_ticket: Some(global_this.bun_vm().ticket()),
+            global_this: BackRef::new(global_this),
+            promise: jsc::JSPromiseStrong::default(),
+            poll_ref: KeepAlive::init(),
+            env: global_this.bun_vm().transpiler.env,
+            log: bun_ast::Log::init(),
+            cancelled: core::sync::atomic::AtomicBool::new(false),
+            bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),
+            stage: core::sync::atomic::AtomicU8::new(Stage::Queued as u8),
+            html_build_task: None,
+            result: BundleV2Result::Pending,
+            next: bun_threading::Link::new(),
+            transpiler: ptr::null_mut(),
+            plugins,
+            started_at_ns: 0,
         }
     }
 
-    // Ensure this exists before we spawn the thread to prevent any race
-    // conditions from creating two
-    let _ = WorkPool::get();
+    /// `BundleV2.createAndScheduleCompletionTask` — take a process-keepalive
+    /// ref and hand the task to the bundle-thread singleton. The one ref `new`
+    /// created travels with the task and is released by `on_complete_anytask`.
+    pub(crate) fn schedule(mut self) {
+        self.poll_ref.ref_(self.global_this.bun_vm().loop_ctx());
+        let plugins = self.plugins;
+        let completion = RefPtr::new(self).into_raw();
+        if let Some(plugin) = plugins {
+            Plugin::opaque_mut(plugin.as_ptr()).set_config(completion.cast());
+        }
 
-    // Out on the bundle thread from here until it posts the completion: it
-    // reads this VM's env loader and the plugin cell, so the VM cancels it at
-    // teardown (registry) and waits for it (`bundle_ticket`).
-    crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(completion).expect("completion"))
-        .register();
-    bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
+        // Ensure this exists before we spawn the thread to prevent any race
+        // conditions from creating two
+        let _ = WorkPool::get();
 
-    // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
-    unsafe {
-        (*completion)
-            .poll_ref
-            .ref_(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm))
-    };
-
-    Ok(completion)
+        // Out on the bundle thread from here until it posts the completion: it
+        // reads this VM's env loader and the plugin cell, so the VM cancels it at
+        // teardown (registry) and waits for it (`bundle_ticket`).
+        crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(completion).expect("completion"))
+            .register();
+        bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
+    }
 }
 
 /// `if (s.slice().len > 0) s.slice() else null` for the windows-options block.
@@ -634,12 +634,10 @@ impl JSBundleCompletionTask {
             return Ok(());
         }
 
-        if let Some(html_build_task) = this.html_build_task {
+        if let Some(html_build_task) = this.html_build_task.take() {
             this.plugins = None;
-            // SAFETY: `html_build_task` is a backref set by `HTMLBundle::Route` which
-            // bumped its own refcount before scheduling and stays alive until this returns.
-            // R-2: deref as shared — `on_complete` takes `&self`.
-            unsafe { html_bundle::Route::on_complete(&*html_build_task, this) };
+            html_build_task.on_complete(this);
+            html_build_task.deref();
             return Ok(());
         }
 
@@ -938,23 +936,19 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
         // Convert API JSX config back to options.JSX.Pragma
         let jsx_import = &config.jsx.import_source;
+        let default_factory = options::jsx::MemberList::Static(options::jsx::defaults::FACTORY);
+        let default_fragment = options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT);
         transpiler.options.jsx = options::jsx::Pragma {
-            factory: if !config.jsx.factory.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FACTORY),
-                    &config.jsx.factory,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FACTORY)
-            },
-            fragment: if !config.jsx.fragment.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT),
-                    &config.jsx.fragment,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT)
-            },
+            factory: options::jsx::Pragma::member_list_to_components_if_different(
+                &default_factory,
+                &config.jsx.factory,
+            )
+            .unwrap_or(default_factory),
+            fragment: options::jsx::Pragma::member_list_to_components_if_different(
+                &default_fragment,
+                &config.jsx.fragment,
+            )
+            .unwrap_or(default_fragment),
             runtime: options::jsx::Runtime::from(config.jsx.runtime),
             development: config.jsx.development,
             package_name: if !jsx_import.is_empty() {

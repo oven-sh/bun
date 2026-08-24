@@ -297,7 +297,7 @@ impl<V: CalcValue> Calc<V> {
         // name slice is owned by the cloned `Token` (whose payload already
         // carries the parser's arena lifetime) instead of being laundered to
         // `'static` here.
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         let unit = match tok {
             css::Token::Function(f) => match CalcUnit::get_any_case(f) {
                 Some(u) => u,
@@ -542,7 +542,7 @@ impl<V: CalcValue> Calc<V> {
                 if input.is_exhausted() {
                     break; // allow trailing whitespace
                 }
-                let next_tok = input.next()?.clone();
+                let next_tok = *input.next()?;
                 if matches!(next_tok, css::Token::Delim(c) if c == b'+' as u32) {
                     let next = Self::parse_product(input, parse_ident)?;
                     cur = cur.add(next, input)?;
@@ -661,7 +661,7 @@ impl<V: CalcValue> Calc<V> {
         // try-parse so the ident slice is owned by the cloned `Token` rather
         // than laundered to `'static` from the `&mut Parser` borrow.
         if let Ok(ident) = input.try_parse(|p| {
-            let tok = p.next()?.clone();
+            let tok = *p.next()?;
             match tok {
                 css::Token::Ident(s) => Ok(s),
                 other => Err(p.new_unexpected_token_error(other)),

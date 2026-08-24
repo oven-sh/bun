@@ -28,9 +28,6 @@
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
 #include "Exception.h"
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
@@ -1054,19 +1051,19 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 
     static JSBunObject* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
         auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
-        auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, structure);
+        auto* object = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBunObject))) JSBunObject(vm, structure);
         object->finishCreation(vm);
         return object;
     }
@@ -1160,7 +1157,7 @@ JSC::JSObject* generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobal
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    return exportObjectProperties(vm, object, propertyNames, exportNames, exportValues);
+    RELEASE_AND_RETURN(scope, exportObjectProperties(globalObject, object, propertyNames, exportNames, exportValues));
 }
 
 } // namespace Zig

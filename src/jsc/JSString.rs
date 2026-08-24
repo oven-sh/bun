@@ -18,11 +18,6 @@ bun_opaque::opaque_ffi! {
 // covers zero bytes and C++ mutating the underlying GC cell does not violate
 // Rust's aliasing rules.
 unsafe extern "C" {
-    safe fn JSC__JSString__toZigString(
-        this: &JSString,
-        global: &JSGlobalObject,
-        zig_str: &mut ZigString,
-    );
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
     safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
@@ -33,8 +28,13 @@ impl JSString {
         JSValue::from_cell(self)
     }
 
-    pub(crate) fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
-        JSC__JSString__toZigString(self, global, zig_str)
+    pub(crate) fn to_zig_string(
+        &self,
+        global: &JSGlobalObject,
+        zig_str: &mut ZigString,
+    ) -> JsResult<()> {
+        // SAFETY: `zig_str` is a live out-parameter for the duration of the call.
+        unsafe { crate::cpp::JSC__JSString__toZigString(self, global, zig_str) }
     }
 
     pub fn ensure_still_alive(&self) {
@@ -42,22 +42,22 @@ impl JSString {
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
-    pub fn get_zig_string(&self, global: &JSGlobalObject) -> ZigString {
+    pub fn get_zig_string(&self, global: &JSGlobalObject) -> JsResult<ZigString> {
         let mut out = ZigString::init(b"");
-        self.to_zig_string(global, &mut out);
-        out
+        self.to_zig_string(global, &mut out)?;
+        Ok(out)
     }
 
     #[inline]
-    pub fn view(&self, global: &JSGlobalObject) -> ZigString {
+    pub fn view(&self, global: &JSGlobalObject) -> JsResult<ZigString> {
         self.get_zig_string(global)
     }
 
     /// doesn't always allocate
-    pub fn to_slice(&self, global: &JSGlobalObject) -> ZigStringSlice {
+    pub fn to_slice(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
         let mut str = ZigString::init(b"");
-        self.to_zig_string(global, &mut str);
-        str.to_slice()
+        self.to_zig_string(global, &mut str)?;
+        Ok(str.to_slice())
     }
 
     // `to_slice_clone` always allocates
@@ -67,7 +67,7 @@ impl JSString {
 
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
         let mut str = ZigString::init(b"");
-        self.to_zig_string(global, &mut str);
+        self.to_zig_string(global, &mut str)?;
         Ok(str.to_slice_clone())
     }
 

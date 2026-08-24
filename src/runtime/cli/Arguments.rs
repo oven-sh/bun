@@ -74,21 +74,6 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// `bun_crash_handler::VERBOSE_ERROR_TRACE` gates extra crash diagnostics.
-// Expose the flag in crash-trace builds (debug/test/asan).
-const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
-    "--verbose-error-trace             Dump error return traces"
-)];
-macro_rules! maybe_verbose_error_trace {
-    () => {
-        if bun_core::env::SHOW_CRASH_TRACE {
-            VERBOSE_ERROR_TRACE_PARAMS
-        } else {
-            &[] as &[ParamType]
-        }
-    };
-}
-
 const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
     &[
@@ -104,7 +89,6 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
-    maybe_verbose_error_trace!(),
     &[parse_param!("<POS>...")],
 );
 
@@ -770,7 +754,7 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
@@ -824,11 +808,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--revision") {
             cli::print_revision_and_exit();
         }
-    }
-
-    // See `maybe_verbose_error_trace!` above.
-    if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
-        bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────

@@ -97,12 +97,6 @@ template<typename T, typename ExceptionThrower> inline typename Converter<T>::Re
     return Converter<T>::convert(lexicalGlobalObject, value, globalObject, std::forward<ExceptionThrower>(exceptionThrower));
 }
 
-// New code can opt into ConversionResult<> explicitly until call sites are migrated.
-template<typename T> inline ConversionResult<T> convertResult(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-{
-    return Converter<T>::convert(lexicalGlobalObject, value);
-}
-
 // Conversion from Implementation -> JSValue
 template<typename T> struct JSConverter;
 

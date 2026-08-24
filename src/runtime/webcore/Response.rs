@@ -164,11 +164,6 @@ impl Drop for BodyAbortListener {
 
 // `jsc.Codegen.JSResponse` — the real bindings, emitted by
 // `js_class_module!` in `bun_jsc::generated`.
-//
-// IMPORTANT: do NOT re-introduce `crate::webcore::jsc::codegen::JSResponse`
-// here — that module is a placeholder stub whose `to_js_unchecked` returns
-// `JSValue::default()` and whose `from_js*` return `None`. Importing it
-// silently shadows the real C++ shims.
 pub mod js {
     pub use bun_jsc::generated::JSResponse::*;
 }
@@ -956,10 +951,6 @@ impl Response {
             // than jsonStringify which passes 0 for space and uses the slower Stringifier.
             json_value.json_stringify_fast(global_this, &mut str)?;
 
-            if global_this.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
-
             if !str.is_empty() {
                 // `bun_core::String.value` is private; use
                 // `leak_wtf_impl()` to take ownership of the +1 ref as a raw
@@ -998,11 +989,8 @@ impl Response {
                         u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
                 });
             } else {
-                match Init::init(global_this, arg_init) {
-                    Ok(Some(init)) => response.init.set(init),
-                    Ok(None) => {}
-                    Err(bun_jsc::JsError::Thrown) => return Ok(JSValue::ZERO),
-                    Err(_) => {}
+                if let Some(init) = Init::init(global_this, arg_init)? {
+                    response.init.set(init);
                 }
             }
         }
@@ -1097,9 +1085,6 @@ impl Response {
                 }
             }
 
-            if global_this.has_exception() {
-                return Err(bun_jsc::JsError::Thrown);
-            }
             break 'brk response;
         };
 
@@ -1216,19 +1201,12 @@ impl Response {
             if arguments[1].is_object() {
                 break 'brk Init::init(global_this, arguments[1])?.expect("unreachable");
             }
-            if !global_this.has_exception() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
-                )));
-            }
-            return Err(bun_jsc::JsError::Thrown);
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
+            )));
         };
         // Init's field drop glue (HeadersRef + OwnedString)
         // handles cleanup on `?` below
-
-        if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
-        }
 
         let body: Body = 'brk: {
             if arguments[0].is_undefined_or_null() {
@@ -1241,6 +1219,7 @@ impl Response {
         // error returns below release the extracted body payload.
         let body = scopeguard::guard(body, |b| b.reset());
 
+        // extract() throws without returning Err; see Blob::from_dom_form_data
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
@@ -1371,10 +1350,6 @@ impl Init {
             }
         }
 
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
             // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
             // FetchHeaders is a hand-bound opaque, so use its dedicated
@@ -1395,28 +1370,17 @@ impl Init {
             }
         }
 
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
-
         if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
             let number = status_value.coerce_to_int64(global_this)?;
             if (200 <= number && number < 600) || number == 101 {
                 result.status_code = (u32::try_from(number).expect("int cast")) as u16;
             } else {
-                if !global_this.has_exception() {
-                    let err = global_this.create_range_error_instance(format_args!(
-                        "The status provided ({}) must be 101 or in the range of [200, 599]",
-                        number
-                    ));
-                    return Err(global_this.throw_value(err));
-                }
-                return Err(JsError::Thrown);
+                let err = global_this.create_range_error_instance(format_args!(
+                    "The status provided ({}) must be 101 or in the range of [200, 599]",
+                    number
+                ));
+                return Err(global_this.throw_value(err));
             }
-        }
-
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         if let Some(status_text) =

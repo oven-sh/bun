@@ -86,6 +86,14 @@ public:
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
+        void clear()
+        {
+            Base::clear();
+            delete virtualModules;
+            virtualModules = nullptr;
+            mustDoExpensiveRelativeLookup = false;
+        }
+
         ~OnLoad()
         {
             if (virtualModules) {

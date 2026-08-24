@@ -289,7 +289,7 @@ pub(crate) fn spawn(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<false>(global_this, args, secondary_args_value, &mut None)
+    spawn_maybe_sync(false, global_this, args, secondary_args_value, &mut None)
 }
 
 /// Bun.spawnSync() calls this.
@@ -299,7 +299,8 @@ pub(crate) fn spawn_sync(
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let mut bun_test_deadline: Option<Timespec> = None;
-    let result = spawn_maybe_sync::<true>(
+    let result = spawn_maybe_sync(
+        true,
         global_this,
         args,
         secondary_args_value,
@@ -326,13 +327,14 @@ pub(crate) fn spawn_sync(
     result
 }
 
-fn spawn_maybe_sync<const IS_SYNC: bool>(
+fn spawn_maybe_sync(
+    is_sync: bool,
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
     bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
-    if IS_SYNC {
+    if is_sync {
         // We skip this on Windows due to test failures.
         #[cfg(not(windows))]
         {
@@ -360,7 +362,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
 
-    if IS_SYNC {
+    if is_sync {
         stdio[1] = Stdio::Pipe;
         stdio[2] = Stdio::Pipe;
     }
@@ -493,7 +495,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
         if !args.is_empty() && args.is_object() {
             // Reject terminal option on spawnSync
-            if IS_SYNC {
+            if is_sync {
                 if args.get_truthy(global_this, "terminal")?.is_some() {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "terminal option is only supported for Bun.spawn, not Bun.spawnSync",
@@ -502,7 +504,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
 
             // This must run before the stdio parsing happens
-            if !IS_SYNC {
+            if !is_sync {
                 if let Some(val) = args.get_truthy(global_this, "ipc")? {
                     if val.is_cell() && val.is_callable() {
                         maybe_ipc_mode = Some('ipc_mode: {
@@ -518,14 +520,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                                         }
                                     };
                                 } else {
-                                    if !global_this.has_exception() {
-                                        return Err(global_this.throw_invalid_argument_type(
-                                            "spawn",
-                                            "serialization",
-                                            "string",
-                                        ));
-                                    }
-                                    return Ok(JSValue::ZERO);
+                                    return Err(global_this.throw_invalid_argument_type(
+                                        "spawn",
+                                        "serialization",
+                                        "string",
+                                    ));
                                 }
                             }
                             break 'ipc_mode IPC::Mode::Advanced;
@@ -562,7 +561,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     )));
                 }
 
-                on_disconnect_callback = if IS_SYNC {
+                on_disconnect_callback = if is_sync {
                     on_disconnect_
                 } else {
                     on_disconnect_.with_async_context_if_needed(global_this)
@@ -576,7 +575,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     )));
                 }
 
-                on_exit_callback = if IS_SYNC {
+                on_exit_callback = if is_sync {
                     on_exit_
                 } else {
                     on_exit_.with_async_context_if_needed(global_this)
@@ -622,7 +621,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let mut stdio_iter = stdio_val.array_iterator(global_this)?;
                         let mut i: i32 = 0;
                         while let Some(value) = stdio_iter.next()? {
-                            Stdio::extract(&mut stdio[i as usize], global_this, i, value, IS_SYNC)?;
+                            Stdio::extract(&mut stdio[i as usize], global_this, i, value, is_sync)?;
                             if i == 2 {
                                 break;
                             }
@@ -634,7 +633,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                             // extract() leaves `out_stdio` untouched when `value` is undefined, so this
                             // must be initialized to a sane default instead of `undefined`.
                             let mut new_item: Stdio = Stdio::Ignore;
-                            Stdio::extract(&mut new_item, global_this, i, value, IS_SYNC)?;
+                            Stdio::extract(&mut new_item, global_this, i, value, is_sync)?;
 
                             let opt = match new_item.as_spawn_option(i) {
                                 stdio::ResultT::Result(opt) => opt,
@@ -659,19 +658,19 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             } else {
                 if let Some(value) = args.get(global_this, "stdin")? {
-                    Stdio::extract(&mut stdio[0], global_this, 0, value, IS_SYNC)?;
+                    Stdio::extract(&mut stdio[0], global_this, 0, value, is_sync)?;
                 }
 
                 if let Some(value) = args.get(global_this, "stderr")? {
-                    Stdio::extract(&mut stdio[2], global_this, 2, value, IS_SYNC)?;
+                    Stdio::extract(&mut stdio[2], global_this, 2, value, is_sync)?;
                 }
 
                 if let Some(value) = args.get(global_this, "stdout")? {
-                    Stdio::extract(&mut stdio[1], global_this, 1, value, IS_SYNC)?;
+                    Stdio::extract(&mut stdio[1], global_this, 1, value, is_sync)?;
                 }
             }
 
-            if !IS_SYNC {
+            if !is_sync {
                 if let Some(lazy_val) = args.get(global_this, "lazy")? {
                     if lazy_val.is_boolean() {
                         lazy = lazy_val.to_boolean();
@@ -807,7 +806,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
 
-            if !IS_SYNC {
+            if !is_sync {
                 if let Some(terminal_val) = args.get_truthy(global_this, "terminal")? {
                     // Check if it's an existing Terminal object
                     if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
@@ -986,7 +985,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
     let mut ipc_env_buf: [u8; 32] = [0; 32];
-    if !IS_SYNC {
+    if !is_sync {
         if let Some(ipc_mode) = maybe_ipc_mode {
             // IPC is currently implemented in a very limited way.
             //
@@ -999,8 +998,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             //
             // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
             if let Err(_err) = env_array.try_reserve(3) {
-                let _ = global_this.throw_out_of_memory();
-                return Ok(JSValue::ZERO);
+                return Err(global_this.throw_out_of_memory());
             }
             let ipc_fd: i32 = 'brk: {
                 if ipc_channel == -1 {
@@ -1045,7 +1043,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     env_array.push(core::ptr::null());
     argv.push(core::ptr::null());
 
-    if IS_SYNC {
+    if is_sync {
         for (i, io) in stdio.iter_mut().enumerate() {
             io.to_sync(i as u32);
         }
@@ -1063,7 +1061,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // - No auto killer (for tests)
     // - No IPC
     // - No inspector (since they might want to press pause or step)
-    let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (cfg!(unix) && IS_SYNC)
+    let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (cfg!(unix) && is_sync)
         && abort_signal.is_none()
         && timeout.is_none()
         && max_buffer.is_none()
@@ -1085,10 +1083,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
-    // For IS_SYNC, use the isolated loop's `event_loop` (created by
+    // For is_sync, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
     // instead of the main loop.
-    let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC {
+    let event_loop: *mut jsc::event_loop::EventLoop = if is_sync {
         // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
@@ -1114,7 +1112,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // local so the closure's captured place is disjoint.
     let jsc_vm_ptr_cleanup = jsc_vm_ptr;
     scopeguard::defer! {
-        if IS_SYNC {
+        if is_sync {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
                 let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
@@ -1242,8 +1240,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         Err(err) => {
             // See EMFILE arm above.
             spawn_options.deinit();
-            let _ = global_this.throw_error(crate::Error::from(err), ": failed to spawn process");
-            return Ok(JSValue::ZERO);
+            return Err(
+                global_this.throw_error(crate::Error::from(err), ": failed to spawn process")
+            );
         }
         Ok(maybe) => match maybe {
             sys::Result::Err(err) => {
@@ -1305,7 +1304,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let process: *mut Process = spawned.to_process(loop_handle);
 
     #[cfg(unix)]
-    let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
+    let posix_ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
         spawned_extra_pipes[usize::try_from(ipc_channel).expect("int cast")].fd()
     } else {
         Fd::INVALID
@@ -1340,7 +1339,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: Cell::new(None),
-        flags: Cell::new(if IS_SYNC {
+        flags: Cell::new(if is_sync {
             Subprocess::Flags::IS_SYNC
         } else {
             Subprocess::Flags::empty()
@@ -1389,7 +1388,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     #[cfg(windows)]
-    if !IS_SYNC {
+    if !is_sync {
         if let Some(ipc_mode) = maybe_ipc_mode {
             subprocess
                 .ipc_data
@@ -1447,7 +1446,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                             Box::leak(pipe).close(Subprocess::on_pipe_close)
                         }
                         spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),
-                        spawn::WindowsStdioResult::Unavailable => {}
+                        spawn::WindowsStdioResult::UnownedFd(_)
+                        | spawn::WindowsStdioResult::Unavailable => {}
                     }
                 }
             }
@@ -1491,7 +1491,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         subprocess_nn,
         spawned_stdout,
         subprocess.stdout_maxbuf.get(),
-        IS_SYNC,
+        is_sync,
     ));
     subprocess.stderr.set(Readable::init(
         core::mem::replace(&mut stdio[2], Stdio::Ignore),
@@ -1499,7 +1499,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         subprocess_nn,
         spawned_stderr,
         subprocess.stderr_maxbuf.get(),
-        IS_SYNC,
+        is_sync,
     ));
 
     // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
@@ -1561,7 +1561,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     #[cfg(unix)]
     let mut posix_ipc_info: Option<IPC::Socket> = None;
     #[cfg(unix)]
-    if !IS_SYNC {
+    if !is_sync {
         if let Some(mode) = maybe_ipc_mode {
             // SAFETY: `jsc_vm_ptr` is the live per-thread VM; JS thread.
             let vm = unsafe { &mut *jsc_vm_ptr };
@@ -1658,7 +1658,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    let out = if !IS_SYNC {
+    let out = if !is_sync {
         // `subprocess_ptr` came from `heap::alloc` above and has not yet been
         // wrapped; ownership transfers to the C++ JS cell (released via
         // `SubprocessClass__finalize`). Use the raw-ptr entrypoint instead of
@@ -1675,7 +1675,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let mut send_exit_notification = false;
 
-    if !IS_SYNC {
+    if !is_sync {
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
@@ -1755,7 +1755,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 // process has already exited, but we haven't called wait4() yet
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                proc.wait(IS_SYNC);
+                proc.wait(is_sync);
             }
         }
     }
@@ -1767,8 +1767,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
-        if (IS_SYNC || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
+        if (is_sync || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
@@ -1777,9 +1777,9 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
 
-        if (IS_SYNC || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
+        if (is_sync || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
@@ -1789,8 +1789,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     if let Writable::Buffer(buffer) = subprocess.stdin.get() {
         if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this));
-            return Err(JsError::Thrown);
+            return Err(global_this.throw_value(err.to_js(global_this)));
         }
     }
 
@@ -1834,7 +1833,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    if !IS_SYNC {
+    if !is_sync {
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
             // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
@@ -1846,9 +1845,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         return Ok(out);
     }
 
-    // Note: anonymous const items cannot capture const-generic params, so use
-    // a runtime debug_assert (the !IS_SYNC path returned above).
-    debug_assert!(IS_SYNC);
+    debug_assert!(is_sync);
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
         // SAFETY: jsc_vm_ptr is the live thread VM.

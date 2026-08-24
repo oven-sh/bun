@@ -4122,7 +4122,7 @@ function lookupAndListen(
         onListen,
       );
     } catch (listenErr) {
-      emitErrorNextTick(server, formatListenError(listenErr, validAddress?.address, port));
+      process.nextTick(emitErrorNextTick, server, formatListenError(listenErr, validAddress?.address, port));
     }
   });
 }

@@ -77,6 +77,7 @@ unsafe extern "C" {
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
+        external_strings: Option<NonNull<EncoderStringTable>>,
     ) -> bool;
     /// InternalModuleRegistry.cpp: the internal JS modules `id` statically requires.
     fn Bun__internalModuleDependencies(id: u32, out: *mut *const u16) -> usize;
@@ -182,6 +183,7 @@ pub(crate) fn __bun_jsc_encoder_string_table_new() -> NonNull<EncoderStringTable
 pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
     specifiers: &[&[u8]],
     depth: u32,
+    external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Vec<(u32, Box<[u8]>)> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
@@ -235,6 +237,7 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
                 &raw mut bytes,
                 &raw mut size,
                 &raw mut handle,
+                external_strings,
             )
         } {
             continue;

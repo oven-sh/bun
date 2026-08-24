@@ -1420,6 +1420,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_internal_module_bytecode(
                 specifiers: &[&[u8]],
                 depth: u32,
+                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Vec<(u32, Box<[u8]>)>;
 
             safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
@@ -1503,8 +1504,9 @@ pub mod bv2_impl {
         pub(crate) fn generate_internal_module_bytecode(
             specifiers: &[&[u8]],
             depth: u32,
+            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Vec<(u32, Box<[u8]>)> {
-            __bun_jsc_generate_internal_module_bytecode(specifiers, depth)
+            __bun_jsc_generate_internal_module_bytecode(specifiers, depth, external_strings)
         }
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the

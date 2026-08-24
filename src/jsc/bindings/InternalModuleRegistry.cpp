@@ -247,7 +247,7 @@ JSC::VM& vmForBytecodeCache();
 // bun build --compile: bytecode for internal JS module `id` (an index below BUN_NATIVE_MODULE_START_INDEX), generated the
 // way generateModule() will consume it. The caller owns *handle and releases it with CachedBytecode__deref.
 // `depth`: how many levels of nested functions get code blocks too (UINT32_MAX = all; 0 = only the module wrapper's own).
-extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle)
+extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
 {
     using namespace Bun;
     if (id >= std::size(internalJSModules))
@@ -266,7 +266,7 @@ extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth,
     JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
     if (error.isValid())
         return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), InternalModuleRegistryConstants::sourceStamp);
+    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), InternalModuleRegistryConstants::sourceStamp, externalStrings);
     if (!result)
         return false;
     result->ref();

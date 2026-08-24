@@ -1345,7 +1345,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     let mut result = output_files.take();
     if c.options.generate_internal_module_bytecode && c.options.compile_mode.is_executable() {
-        append_internal_module_bytecode(c, &mut result);
+        append_internal_module_bytecode(
+            c,
+            &mut result,
+            external_string_table.as_ref().and_then(|t| t.get()),
+        );
     }
     if let Some(table) = external_string_table {
         let bytes = table.take();
@@ -1372,7 +1376,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
 /// bundle imports, so their first `require` decodes instead of parsing. One `OutputKind::BuiltinBytecode` per module;
 /// StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry picks them up by id.
-fn append_internal_module_bytecode(c: &LinkerContext, output_files: &mut Vec<options::OutputFile>) {
+fn append_internal_module_bytecode(
+    c: &LinkerContext,
+    output_files: &mut Vec<options::OutputFile>,
+    external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
+) {
     let import_records = c.graph.ast.items_import_records();
     let mut specifiers: Vec<&[u8]> = Vec::new();
     for source_index in &c.graph.reachable_files {
@@ -1400,9 +1408,11 @@ fn append_internal_module_bytecode(c: &LinkerContext, output_files: &mut Vec<opt
     if specifiers.is_empty() {
         return;
     }
-    for (id, bytecode) in
-        crate::bundle_v2::dispatch::generate_internal_module_bytecode(&specifiers, u32::MAX)
-    {
+    for (id, bytecode) in crate::bundle_v2::dispatch::generate_internal_module_bytecode(
+        &specifiers,
+        u32::MAX,
+        external_strings,
+    ) {
         debug!("Internal module bytecode {}: {} bytes", id, bytecode.len());
         output_files.push(options::OutputFile::init(options::OutputFileInit {
             output_path: id.to_string().into_bytes().into_boxed_slice(),

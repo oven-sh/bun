@@ -14,7 +14,7 @@ use crate::{
 };
 
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{OwnedString, String as BunString, strings};
+use bun_core::{String as BunString, strings};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -294,7 +294,7 @@ impl JSGlobalObject {
             debug_assert!(self.has_exception());
             return JsError::Thrown;
         }
-        let name_value = match BunString::static_str("TODOError").to_js(self) {
+        let name_value = match BunString::static_("TODOError").to_js(self) {
             Ok(v) => v,
             Err(_) => return JsError::Thrown,
         };
@@ -397,7 +397,6 @@ impl JSGlobalObject {
 
     /// "The {argname} argument is invalid. Received {value}"
     pub fn throw_invalid_argument_value(&self, argname: &[u8], value: JSValue) -> JsError {
-        // `defer actual_string_value.deref()` → OwnedString's Drop releases the +1 ref.
         let actual_string_value = match Self::determine_specific_type(self, value) {
             Ok(s) => s,
             Err(e) => return e,
@@ -473,29 +472,23 @@ impl JSGlobalObject {
         }
     }
 
-    /// Returns a +1-ref'd `BunString` describing `value`'s type for error messages.
-    /// The result is wrapped in [`OwnedString`] so the ref is released on drop —
-    /// `bun_core::String` is `Copy` and has no `Drop`, so a bare `BunString`
-    /// here would leak.
-    pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<OwnedString> {
+    /// Describes `value`'s type for error messages.
+    pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<bun_core::String> {
         // The C++ side opens a `DECLARE_THROW_SCOPE`; under
         // `BUN_JSC_validateExceptionChecks=1` its dtor sets `m_needExceptionCheck`, so we
         // must have a Rust-side scope live across the FFI call (and query it) rather than
         // post-hoc `has_exception()` (whose own scope ctor would assert first).
         crate::top_scope!(scope, global);
-        // `errdefer str.deref()` → wrapping immediately in OwnedString releases the
-        // +1 ref on the early-return path below.
-        let str = OwnedString::new(Bun__ErrorCode__determineSpecificType(global, value));
+        let str = Bun__ErrorCode__determineSpecificType(global, value);
         scope.return_if_exception()?;
         Ok(str)
     }
 
     /// Renders `value` the way Node's `ERR_INVALID_ARG_VALUE` does (`util.inspect`
-    /// quoting, via the same C++ formatter the C++ overloads use). Returns a
-    /// +1-ref'd string wrapped in [`OwnedString`] so the ref is released on drop.
-    pub fn inspect_for_error_message(global: &Self, value: JSValue) -> JsResult<OwnedString> {
+    /// quoting, via the same C++ formatter the C++ overloads use).
+    pub fn inspect_for_error_message(global: &Self, value: JSValue) -> JsResult<bun_core::String> {
         crate::top_scope!(scope, global);
-        let str = OwnedString::new(Bun__ErrorCode__inspectForErrorMessage(global, value));
+        let str = Bun__ErrorCode__inspectForErrorMessage(global, value);
         scope.return_if_exception()?;
         Ok(str)
     }
@@ -598,11 +591,7 @@ impl JSGlobalObject {
         expected_type: &str,
         value: JSValue,
     ) -> JsError {
-        let actual_type = if value.js_type().is_array() {
-            bun_core::ZigString::static_(b"array")
-        } else {
-            value.js_type_string(self).get_zig_string(self)
-        };
+        let actual_type = value.type_name(self);
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
@@ -644,16 +633,14 @@ impl JSGlobalObject {
         typename: &[u8],
         value: JSValue,
     ) -> JsError {
-        // `ZigStringSlice` is RAII: `Owned` frees
-        // its `Vec<u8>`, `WTF` derefs the backing `WTFStringImpl` in `Drop`.
-        let ty_str = value.js_type_string(self).to_slice(self);
+        let ty_str = value.js_type_string(self);
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
                 "The \"{}\" property must be of type {}. Received {}",
                 bstr::BStr::new(field),
                 bstr::BStr::new(typename),
-                bstr::BStr::new(ty_str.slice())
+                ty_str
             ),
         )
         .throw()
@@ -698,14 +685,14 @@ impl JSGlobalObject {
 
     pub(crate) fn run_on_load_plugins(
         &self,
-        namespace_: BunString,
-        path: BunString,
+        namespace_: &BunString,
+        path: &BunString,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        let ns = (namespace_.length() > 0).then_some(namespace_);
         let result =
-            crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, &path, target))?;
+            crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, path, target))?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
@@ -714,15 +701,15 @@ impl JSGlobalObject {
 
     pub(crate) fn run_on_resolve_plugins(
         &self,
-        namespace_: BunString,
-        path: BunString,
-        source: BunString,
+        namespace_: &BunString,
+        path: &BunString,
+        source: &BunString,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        let ns = (namespace_.length() > 0).then_some(namespace_);
         let result = crate::from_js_host_call(self, || {
-            Bun__runOnResolvePlugins(self, ns, &path, &source, target)
+            Bun__runOnResolvePlugins(self, ns, path, source, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -735,7 +722,7 @@ impl JSGlobalObject {
         // there are no interpolated args — fast path for constant messages.
         if let Some(fmt) = args.as_str() {
             if strings::is_all_ascii(fmt.as_bytes()) {
-                return BunString::static_str(fmt).to_error_instance(self);
+                return BunString::static_(fmt).to_error_instance(self);
             } else {
                 return ZigString::init_utf8(fmt.as_bytes()).to_error_instance(self);
             }
@@ -856,6 +843,26 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val.cast::<c_void>(), function);
     }
 
+    /// Queue `task` to run as a microtask; the queue owns the box until then
+    /// and the returned back-reference is valid until [`MicrotaskCallback::run`]
+    /// is entered. If the VM is torn down before the microtask queue drains,
+    /// the box is leaked along with the rest of the queue.
+    pub fn queue_microtask_boxed<T: MicrotaskCallback>(
+        &self,
+        task: Box<T>,
+    ) -> bun_ptr::BackRef<T, bun_ptr::Root> {
+        unsafe extern "C" fn run<T: MicrotaskCallback>(ctx: *mut c_void) {
+            // SAFETY: `ctx` is the `Box<T>` leaked below; the microtask queue
+            // invokes each callback exactly once.
+            T::run(unsafe { bun_core::heap::take(ctx.cast::<T>()) });
+        }
+        let task = bun_core::heap::into_raw(task);
+        self.queue_microtask_callback(task, run::<T>);
+        // SAFETY: `task` is the live leaked box; see the doc comment for the
+        // holder's obligation.
+        unsafe { bun_ptr::BackRef::from_root(task) }
+    }
+
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
@@ -945,7 +952,7 @@ impl JSGlobalObject {
 
     pub fn create_aggregate_error_with_array(
         &self,
-        message: BunString,
+        message: &BunString,
         error_array: JSValue,
     ) -> JsResult<JSValue> {
         debug_assert!(error_array.is_array());
@@ -1422,32 +1429,24 @@ use bun_core::fmt::VecWriter as WriteVec;
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__resolve(
-    res: *mut ErrorableString,
-    global: *const JSGlobalObject,
-    specifier: *mut BunString,
-    source: *mut BunString,
-    query: *mut BunString,
+extern "C" fn Zig__GlobalObject__resolve(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
+    query: &mut BunString,
 ) {
     crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers. `BunString` is `Copy`, so
-    // `*specifier` / `*source` is a bitwise load — no refcount bump (the
-    // caller still owns the ref).
-    let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
-    // SAFETY: C++ passes valid non-null pointers.
-    let (res, query) = unsafe { (&mut *res, &mut *query) };
-    match VirtualMachine::resolve(
-        res,
+    match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         global,
         specifier,
         source,
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
     ) {
-        Ok(()) => {}
-        Err(_) => {
-            debug_assert!(!res.success);
-        }
+        Ok(Ok(path)) => *res = ErrorableString::ok(path),
+        Ok(Err(value)) => *res = ErrorableString::err(value),
+        Err(_) => debug_assert!(global.has_exception()),
     }
 }
 
@@ -1550,7 +1549,7 @@ unsafe extern "C" {
     safe fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         global: &JSGlobalObject,
         error_array: JSValue,
-        message: BunString,
+        message: &BunString,
         options: JSValue,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;
@@ -1620,4 +1619,9 @@ impl ScriptExecutionContextIdentifier {
 unsafe extern "C" {
     // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
+}
+
+/// A native microtask queued with [`JSGlobalObject::queue_microtask_boxed`].
+pub trait MicrotaskCallback: Sized + 'static {
+    fn run(self: Box<Self>);
 }

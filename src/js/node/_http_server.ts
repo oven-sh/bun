@@ -224,11 +224,14 @@ function onNodeHTTPServerSocketTimeout() {
 }
 
 function emitListeningNextTick(self, hostname, port) {
-  if ((self.listening = !!self[serverSymbol])) {
-    // TODO: remove the arguments
-    // Note does not pass any arguments.
-    self.emit("listening", null, hostname, port);
-  }
+  // Nothing to announce if close() ran in the same tick as listen().
+  if (!self[serverSymbol]) return;
+  // Node passes no arguments. The extra ones are a Bun extension.
+  self.emit("listening", null, hostname, port);
+}
+
+function emitListenErrorNextTick(self, err) {
+  self.emit("error", err);
 }
 
 // Node.js only requests a client certificate when `requestCert: true`.
@@ -483,6 +486,7 @@ Server.prototype.close = function (optionalCallback?) {
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
   server.closeIdleConnections();
+  // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   server.stop();
   return this;
 };
@@ -530,7 +534,7 @@ Server.prototype.address = function () {
 
 Server.prototype.listen = function () {
   const server = this;
-  let port, host, onListen;
+  let port, host;
   let socketPath;
   let tls = this[tlsSymbol];
 
@@ -576,14 +580,15 @@ Server.prototype.listen = function () {
 
   const lastArg = arguments[argc - 1];
   if ($isCallable(lastArg)) {
-    onListen = lastArg;
+    // Before the bind, as in node, so a listen() retried from the 'error' handler still calls it.
+    this.once("listening", lastArg);
   }
 
   try {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false, onListen);
+      server[kRealListen](tls, port, host, socketPath, false);
       return this;
     }
 
@@ -607,15 +612,15 @@ Server.prototype.listen = function () {
       process.send(message, undefined, kInternalSendOptions);
     });
 
-    server[kRealListen](tls, port, host, socketPath, true, onListen);
+    server[kRealListen](tls, port, host, socketPath, true);
   } catch (err) {
-    setTimeout(() => server.emit("error", err), 1);
+    process.nextTick(emitListenErrorNextTick, server, err);
   }
 
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -1053,6 +1058,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       },
     });
 
+    // Bun.serve() has bound and listened by now, so the flag is true at once, as node's getter is.
+    this.listening = true;
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     applyServerCustomOptions(this);
 
@@ -1060,11 +1067,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this[serverSymbol]?.unref?.();
     }
 
-    if ($isCallable(onListen)) {
-      this.once("listening", onListen);
-    }
-
-    setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
+    // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
+    process.nextTick(emitListeningNextTick, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };
 

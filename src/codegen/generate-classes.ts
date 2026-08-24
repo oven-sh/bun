@@ -2113,7 +2113,12 @@ function generateRust(
     thunk(
       symbolName(typeName, "onStructuredCloneDeserialize"),
       `(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
-      `    host_fn::host_fn_result(global, || ${T}::on_structured_clone_deserialize(global, ptr, end))`,
+      `    // Empty with nothing pending: the record was malformed (CloneDeserializer::readTerminal → fail()).
+    match ${T}::on_structured_clone_deserialize(global, ptr, end) {
+        Ok(Some(value)) => value,
+        Ok(None) => JSValue::ZERO,
+        Err(err) => host_fn::host_call_error_value(global, err),
+    }`,
     );
   }
 
@@ -2325,10 +2330,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include <JavaScriptCore/FunctionPrototype.h>
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 #include "JSDOMConvertBufferSource.h"

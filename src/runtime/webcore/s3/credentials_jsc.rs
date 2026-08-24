@@ -18,7 +18,7 @@ use bun_url::URL;
 ///
 ///   get_truthy → is_string → BunString::from_js → tag ∉ {Empty,Dead} → to_utf8
 ///
-/// The intermediate `BunString` is `deref()`ed before return; the returned
+/// The intermediate `BunString` is dropped before return; the returned
 /// `ZigStringSlice` owns (or independently refs) its bytes.
 ///
 /// * `strict = true`  — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
@@ -43,12 +43,9 @@ pub(crate) fn get_truthy_string_utf8(
     }
     let str = BunString::from_js(js_value, global)?;
     if str.tag() == BunStringTag::Empty || str.tag() == BunStringTag::Dead {
-        str.deref();
         return Ok(None);
     }
-    let utf8 = str.to_utf8();
-    str.deref();
-    Ok(Some(utf8))
+    Ok(Some(str.to_utf8()))
 }
 
 // `S3Credentials` fields are owned `Box<[u8]>`, so credential strings are
@@ -126,7 +123,6 @@ pub(crate) fn get_credentials_with_options(
                                 new_credentials.changed_credentials = true;
                             } else if !endpoint.is_empty() {
                                 // endpoint is not a valid URL
-                                str.deref();
                                 return Err(global_object.throw_invalid_argument_type_value(
                                     b"endpoint",
                                     b"string",
@@ -135,7 +131,6 @@ pub(crate) fn get_credentials_with_options(
                             }
                             new_credentials._endpoint_slice = Some(utf8);
                         }
-                        str.deref();
                     } else {
                         return Err(global_object.throw_invalid_argument_type_value(
                             b"endpoint",

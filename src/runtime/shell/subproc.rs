@@ -247,6 +247,8 @@ pub struct ShellSubprocess {
     pub(crate) stderr: Readable,
 
     pub closed: EnumSet<StdioKind>,
+
+    ctrl_c_child: Option<bun_spawn::ctrl_c::Child>,
 }
 
 pub(crate) type SignalCode = bun_core::SignalCode;
@@ -462,7 +464,9 @@ impl ShellSubprocess {
     fn abort_after_failed_start(this: *mut Self) {
         #[cfg(windows)]
         {
-            let _ = this;
+            // SAFETY: `this` is the live allocation; it is deliberately leaked below,
+            // so release the Ctrl+C accounting by hand.
+            unsafe { (*this).ctrl_c_child = None };
             return;
         }
         #[cfg(not(windows))]
@@ -730,6 +734,9 @@ impl ShellSubprocess {
 
         spawn_args.env_array.push(core::ptr::null());
 
+        // SAFETY: `interp` is the live owning interpreter (see `SpawnArgs::interp`).
+        let foreground = !unsafe { &*interp }.in_background(cmd_parent.id);
+        let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
         // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
         // C-string arrays with argv[0] non-null; valid for this call.
         let spawn_result = match unsafe {
@@ -843,6 +850,7 @@ impl ShellSubprocess {
                 stderr,
                 cmd_parent,
                 closed: EnumSet::empty(),
+                ctrl_c_child,
             });
         }
         // Ownership of the now-initialised Box is released as a raw pointer
@@ -960,8 +968,14 @@ impl ShellSubprocess {
 
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
+        let interrupted =
+            self.ctrl_c_child.take().is_some() && bun_spawn::ctrl_c::child_died_of_it(status);
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
+                #[cfg(windows)]
+                if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                    break 'brk SignalCode::SIGINT.to_exit_code();
+                }
                 break 'brk Some(exited.code);
             }
 
@@ -984,6 +998,7 @@ impl ShellSubprocess {
             // through the node arena so it survives `Vec<Node>` reallocation.
             // `&mut self` is dead by NLL before `on_exit` re-enters interp.
             let cmd = unsafe { handle.cmd_mut() };
+            cmd.base.interrupted |= interrupted;
             if cmd.exit_code.is_none() {
                 cmd.on_exit(code.into());
             }

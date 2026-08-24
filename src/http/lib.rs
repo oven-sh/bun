@@ -644,7 +644,7 @@ pub(crate) fn hash_header_name(name: &[u8]) -> u64 {
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_url::URL;
 use core::ptr::NonNull;
 
@@ -866,7 +866,7 @@ pub struct HTTPClient<'a> {
     pub(crate) signals: Signals,
     pub(crate) async_http_id: u32,
     pub(crate) hostname: Option<&'a [u8]>,
-    pub(crate) unix_socket_path: ZigStringSlice,
+    pub(crate) unix_socket_path: Utf8Bytes<'static>,
     /// `fetch({ compress })` — when set, the body is compressed lazily at
     /// write time (h1: `send_initial_request_payload`; h2/h3: at attach) so
     /// the output can borrow `LibdeflateState::shared_buffer`. Persists across
@@ -933,7 +933,7 @@ impl Drop for HTTPClient<'_> {
             // Release the strong ref taken in set_custom_ssl_ctx.
             ctx.deref();
         }
-        self.unix_socket_path = ZigStringSlice::EMPTY;
+        self.unix_socket_path = Utf8Bytes::EMPTY;
     }
 }
 

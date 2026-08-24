@@ -86,7 +86,7 @@ impl us_bun_verify_error_t {
     }
 
     /// `code` as a byte slice (no NUL), or `b""` if null. Convenience for the
-    /// dominant `BunString::clone_utf8(..)` / `ZigString::from_utf8(..)` shape.
+    /// dominant `BunString::clone_utf8(..)` / `EncodedSlice::init_utf8(..)` shape.
     #[inline]
     pub fn code_bytes(&self) -> &[u8] {
         self.code().map_or(b"", core::ffi::CStr::to_bytes)

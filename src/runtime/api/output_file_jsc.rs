@@ -11,7 +11,7 @@ use bun_jsc::{JSGlobalObject, JSValue};
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_http_types::MimeType::MimeType;
 
 use crate::api::js_bundler::BuildArtifact;
@@ -24,9 +24,7 @@ use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 /// outlives the borrowed source.
 #[inline]
 fn dupe_path_like(path: &[u8]) -> PathLike {
-    PathLike::EncodedSlice(
-        ZigStringSlice::init_dupe(path).unwrap_or_else(|_| bun_core::out_of_memory()),
-    )
+    PathLike::EncodedSlice(Utf8Bytes::init_dupe(path).unwrap_or_else(|_| bun_core::out_of_memory()))
 }
 
 #[inline]

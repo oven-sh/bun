@@ -7,7 +7,7 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::scoped_log;
-use bun_core::{ZigString, ZigStringSlice};
+use bun_core::{EncodedSlice, Utf8Bytes};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
@@ -531,8 +531,8 @@ impl NodeHTTPResponse {
     pub(crate) fn upgrade(
         &self,
         data_value: JSValue,
-        sec_websocket_protocol: ZigString,
-        sec_websocket_extensions: ZigString,
+        sec_websocket_protocol: EncodedSlice,
+        sec_websocket_extensions: EncodedSlice,
     ) -> bool {
         let upgrade_ctx = self.upgrade_context.get().context;
         if upgrade_ctx.is_null() {
@@ -559,8 +559,8 @@ impl NodeHTTPResponse {
 
         let ws = ServerWebSocket::init(ws_handler, data_value, None);
 
-        let mut sec_websocket_protocol_str: Option<ZigStringSlice> = None;
-        let mut sec_websocket_extensions_str: Option<ZigStringSlice> = None;
+        let mut sec_websocket_protocol_str: Option<Utf8Bytes> = None;
+        let mut sec_websocket_extensions_str: Option<Utf8Bytes> = None;
 
         // R-2: `JsCell::get()` projects `&UpgradeCTX`; the borrow lives until
         // the explicit `drop`s below (no `with_mut` on this cell overlaps).
@@ -576,7 +576,7 @@ impl NodeHTTPResponse {
                     break 'brk &upgrade_context.sec_websocket_protocol;
                 }
             }
-            sec_websocket_protocol_str = Some(sec_websocket_protocol.to_slice());
+            sec_websocket_protocol_str = Some(sec_websocket_protocol.to_utf8());
             break 'brk sec_websocket_protocol_str.as_ref().unwrap().slice();
         };
 
@@ -590,7 +590,7 @@ impl NodeHTTPResponse {
                     break 'brk &upgrade_context.sec_websocket_extensions;
                 }
             }
-            sec_websocket_extensions_str = Some(sec_websocket_extensions.to_slice());
+            sec_websocket_extensions_str = Some(sec_websocket_extensions.to_utf8());
             break 'brk sec_websocket_extensions_str.as_ref().unwrap().slice();
         };
 

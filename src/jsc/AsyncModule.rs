@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
 use bun_io::KeepAlive;
@@ -10,8 +10,8 @@ use bun_resolver::fs as Fs;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError,
-    JsResult, ResolvedSource, StrongOptional, ZigStringJsc as _,
+    self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
+    JSValue, JsError, JsResult, ResolvedSource, StrongOptional,
 };
 
 bun_core::declare_scope!(AsyncModule, hidden);
@@ -764,14 +764,14 @@ impl AsyncModule {
             _ => b"PackageResolveError",
         };
 
-        let error_instance = ZigString::from_bytes(&msg)
+        let error_instance = EncodedSlice::from_bytes(&msg)
             .with_encoding()
             .to_error_instance(global_this);
         if !result.url.is_empty() {
             error_instance.put(
                 global_this,
                 b"url",
-                ZigString::from_bytes(result.url)
+                EncodedSlice::from_bytes(result.url)
                     .with_encoding()
                     .to_js(global_this),
             );
@@ -779,21 +779,21 @@ impl AsyncModule {
         error_instance.put(
             global_this,
             b"name",
-            ZigString::from_bytes(name)
+            EncodedSlice::from_bytes(name)
                 .with_encoding()
                 .to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"pkg",
-            ZigString::from_bytes(result.name)
+            EncodedSlice::from_bytes(result.name)
                 .with_encoding()
                 .to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"specifier",
-            ZigString::from_bytes(self.specifier())
+            EncodedSlice::from_bytes(self.specifier())
                 .with_encoding()
                 .to_js(global_this),
         );
@@ -807,7 +807,7 @@ impl AsyncModule {
         error_instance.put(
             global_this,
             b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text)
+            EncodedSlice::from_bytes(self.parse_result.source.path.text)
                 .with_encoding()
                 .to_js(global_this),
         );
@@ -820,7 +820,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"lineText",
-                ZigString::from_bytes(line_text)
+                EncodedSlice::from_bytes(line_text)
                     .with_encoding()
                     .to_js(global_this),
             );
@@ -835,7 +835,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"referrer",
-                ZigString::from_bytes(referrer)
+                EncodedSlice::from_bytes(referrer)
                     .with_encoding()
                     .to_js(global_this),
             );
@@ -967,14 +967,14 @@ impl AsyncModule {
             _ => b"TarballDownloadError",
         };
 
-        let error_instance = ZigString::from_bytes(&msg)
+        let error_instance = EncodedSlice::from_bytes(&msg)
             .with_encoding()
             .to_error_instance(global_this);
         if !result.url.is_empty() {
             error_instance.put(
                 global_this,
                 b"url",
-                ZigString::from_bytes(result.url)
+                EncodedSlice::from_bytes(result.url)
                     .with_encoding()
                     .to_js(global_this),
             );
@@ -982,14 +982,14 @@ impl AsyncModule {
         error_instance.put(
             global_this,
             b"name",
-            ZigString::from_bytes(name)
+            EncodedSlice::from_bytes(name)
                 .with_encoding()
                 .to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"pkg",
-            ZigString::from_bytes(result.name)
+            EncodedSlice::from_bytes(result.name)
                 .with_encoding()
                 .to_js(global_this),
         );
@@ -998,7 +998,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"referrer",
-                ZigString::from_bytes(specifier)
+                EncodedSlice::from_bytes(specifier)
                     .with_encoding()
                     .to_js(global_this),
             );
@@ -1014,7 +1014,7 @@ impl AsyncModule {
         error_instance.put(
             global_this,
             b"specifier",
-            ZigString::from_bytes(
+            EncodedSlice::from_bytes(
                 self.parse_result.ast.import_records[import_record_id as usize]
                     .path
                     .text,
@@ -1025,7 +1025,7 @@ impl AsyncModule {
         error_instance.put(
             global_this,
             b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text)
+            EncodedSlice::from_bytes(self.parse_result.source.path.text)
                 .with_encoding()
                 .to_js(global_this),
         );
@@ -1038,7 +1038,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"lineText",
-                ZigString::from_bytes(line_text)
+                EncodedSlice::from_bytes(line_text)
                     .with_encoding()
                     .to_js(global_this),
             );

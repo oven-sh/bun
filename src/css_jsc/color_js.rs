@@ -211,7 +211,7 @@ fn zero_if_none(component: f32) -> f32 {
 
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::symbol::Map as SymbolMap;
-    use bun_core::ZigStringSlice;
+    use bun_core::Utf8Bytes;
     use bun_css as css;
     use bun_css::CssColor;
     use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
@@ -239,7 +239,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
         break 'brk OutputColorFormat::Css;
     };
-    let input: ZigStringSlice;
+    let input: Utf8Bytes;
 
     let parsed_color: css::CssColorParseResult = 'brk: {
         if args[0].is_number() {

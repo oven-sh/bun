@@ -6874,7 +6874,7 @@ impl NodeFS {
                             ..Default::default()
                         }
                     };
-                    if str.underlying.is_dead() && str.utf8.slice().is_empty() {
+                    if str.underlying.is_dead() {
                         return Err(with_path_like(
                             sys::Error::from_code(E::ENOMEM, sys::Tag::read),
                             &args.path,

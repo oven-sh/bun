@@ -28,12 +28,12 @@ use crate::webcore::streams::{
 };
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
 use bun_core::String as BunString;
-use bun_core::ZigStringSlice;
-// `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
-// (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
-use bun_jsc::ZigStringJsc as _;
+use bun_core::Utf8Bytes;
+// `EncodedSlice` re-exports `bun_core::EncodedSlice`; JSC-side methods
+// (`to_js`, `with_encoding`, …) come from the `EncodedSliceJsc` extension trait.
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::zig_string::ZigString;
+use bun_jsc::encoded_slice::EncodedSlice;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
 // can be parked in a JsClass `DetachablePtr` for the duration of the
@@ -74,7 +74,10 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
 /// slice that owns (or holds a ref on) its bytes. A borrowed view of the
 /// temporary `JSString` would not survive the user JS (a later argument's
 /// `toString`/getter) that runs before lol-html copies the bytes.
-fn eat_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
+fn eat_string(
+    iter: &mut ArgumentsSlice<'_>,
+    global: &JSGlobalObject,
+) -> JsResult<Utf8Bytes<'static>> {
     let Some(value) = iter.next_eat() else {
         return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
     };
@@ -114,7 +117,7 @@ fn eat_content_options(
 fn eat_content_args(
     global: &JSGlobalObject,
     call_frame: &CallFrame,
-) -> JsResult<(ZigStringSlice, Option<ContentOptions>)> {
+) -> JsResult<(Utf8Bytes<'static>, Option<ContentOptions>)> {
     let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
     let content = eat_string(&mut iter, global)?;
     let opts = eat_content_options(&mut iter, global)?;
@@ -155,7 +158,7 @@ macro_rules! lol_content_ops {
             callback: fn(&mut $Raw, &str, lol_html::html_content::ContentType),
             this_object: JSValue,
             global_object: &JSGlobalObject,
-            content: &ZigStringSlice,
+            content: &Utf8Bytes,
             content_options: Option<ContentOptions>,
         ) -> JsResult<JSValue> {
             let Some(raw) = self.$field.get_mut() else {
@@ -173,7 +176,7 @@ macro_rules! lol_content_ops {
                 &self,
                 call_frame: &CallFrame,
                 global_object: &JSGlobalObject,
-                content: &ZigStringSlice,
+                content: &Utf8Bytes,
                 content_options: Option<ContentOptions>,
             ) -> JsResult<JSValue> {
                 self.content_handler(
@@ -365,7 +368,7 @@ impl HTMLRewriter {
     pub(crate) fn on_(
         &self,
         global: &JSGlobalObject,
-        selector_name: &ZigStringSlice,
+        selector_name: &Utf8Bytes,
         call_frame: &CallFrame,
         listener: JSValue,
     ) -> JsResult<JSValue> {
@@ -2452,7 +2455,7 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     value.put(
         global,
         b"name",
-        ZigString::init(b"HTMLRewriterError").to_js(global),
+        EncodedSlice::init(b"HTMLRewriterError").to_js(global),
     );
     value
 }
@@ -2880,8 +2883,8 @@ impl AttributeIterator {
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let done_label = bun_core::ZigString::init(b"done");
-        let value_label = bun_core::ZigString::init(b"value");
+        let done_label = bun_core::EncodedSlice::init(b"done");
+        let value_label = bun_core::EncodedSlice::init(b"value");
 
         // Detached (the handler returned, or an attribute was mutated), the
         // element itself is gone, or we ran off the end of the buffer.
@@ -3048,7 +3051,7 @@ impl Element {
     pub(crate) fn get_attribute_(
         &self,
         global_object: &JSGlobalObject,
-        name: &ZigStringSlice,
+        name: &Utf8Bytes,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::NULL);
@@ -3065,7 +3068,7 @@ impl Element {
     pub(crate) fn has_attribute_(
         &self,
         global: &JSGlobalObject,
-        name: &ZigStringSlice,
+        name: &Utf8Bytes,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::FALSE);
@@ -3079,8 +3082,8 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: &ZigStringSlice,
-        value: &ZigStringSlice,
+        name: &Utf8Bytes,
+        value: &Utf8Bytes,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
@@ -3104,7 +3107,7 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: &ZigStringSlice,
+        name: &Utf8Bytes,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);

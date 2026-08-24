@@ -11,7 +11,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
-    JsError, JsRef, JsResult, ZigStringSlice,
+    JsError, JsRef, JsResult, Utf8Bytes,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 use crate::webcore::{Blob, BlobExt};
@@ -1343,9 +1343,9 @@ impl ServerWebSocket {
             break 'brk args[0].coerce_to_i32(global_this)?;
         };
 
-        let message_value: ZigStringSlice = 'brk: {
+        let message_value: Utf8Bytes = 'brk: {
             if args[1].is_undefined() {
-                break 'brk ZigStringSlice::empty();
+                break 'brk Utf8Bytes::empty();
             }
             break 'brk args[1].to_slice(global_this)?;
         };

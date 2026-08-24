@@ -11,7 +11,7 @@ use crate::webcore::jsc::{
     JsResult, StringJsc as _,
 };
 use bun_core::Output;
-use bun_core::{String as BunString, ZigStringSlice};
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
@@ -341,7 +341,7 @@ impl Response {
     }
 
     #[inline]
-    pub(crate) fn get_utf8_url(&self) -> bun_core::ZigStringSlice {
+    pub(crate) fn get_utf8_url(&self) -> bun_core::Utf8Bytes<'_> {
         self.url.get().to_utf8()
     }
 
@@ -607,19 +607,19 @@ impl Response {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
+    pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
         // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
         if let Some(headers) = self.init_mut().headers.as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_slice()));
+                return Ok(Some(value.to_utf8()));
             }
         }
 
         if let BodyValue::Blob(blob) = self.body.get().value.get() {
             let content_type = blob.content_type_slice();
             if !content_type.is_empty() {
-                return Ok(Some(ZigStringSlice::from_utf8_never_free(content_type)));
+                return Ok(Some(Utf8Bytes::Borrowed(content_type)));
             }
         }
 

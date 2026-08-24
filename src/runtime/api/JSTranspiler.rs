@@ -18,9 +18,8 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
     JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
@@ -30,7 +29,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 use bun_options_types::schema::api;
 
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
@@ -1325,8 +1324,8 @@ impl JSTranspiler {
             return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
         }
 
-        let exports_label = ZigString::static_(b"exports");
-        let imports_label = ZigString::static_(b"imports");
+        let exports_label = EncodedSlice::static_(b"exports");
+        let imports_label = EncodedSlice::static_(b"imports");
         let named_imports_value = named_imports_to_js(
             global,
             parse_result.ast.import_records.as_slice(),
@@ -1381,7 +1380,7 @@ impl JSTranspiler {
             let bytes = code.slice().to_vec();
             global.vm().report_extra_memory(bytes.len());
             bun_jsc::Unprotect::unprotect(&mut code);
-            code = StringOrBuffer::EncodedSlice(bun_core::ZigStringSlice::init_owned(bytes));
+            code = StringOrBuffer::EncodedSlice(bun_core::Utf8Bytes::Owned(bytes));
         }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
         // (`Flavor::Async`) already protected; adopt into a `ThreadSafe` so any
@@ -1543,7 +1542,7 @@ impl JSTranspiler {
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let mut out = JscZigString::init(buffer_writer.written());
+        let mut out = EncodedSlice::init(buffer_writer.written());
         out.set_output_encoding();
 
         let result = out.to_js(global);
@@ -1578,8 +1577,8 @@ fn named_imports_to_js(
     import_records: &[ImportRecord],
     trim_unused_imports: bool,
 ) -> JsResult<JSValue> {
-    let path_label = ZigString::static_(b"path");
-    let kind_label = ZigString::static_(b"kind");
+    let path_label = EncodedSlice::static_(b"path");
+    let kind_label = EncodedSlice::static_(b"kind");
 
     let mut count: u32 = 0;
     for record in import_records {
@@ -1605,8 +1604,8 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = JscZigString::init(record.path.text).to_js(global);
-        let kind = JscZigString::init(record.kind.label()).to_js(global);
+        let path = EncodedSlice::init(record.path.text).to_js(global);
+        let kind = EncodedSlice::init(record.kind.label()).to_js(global);
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
         i += 1;

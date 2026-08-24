@@ -17,15 +17,15 @@ namespace WTF {
 class String;
 }
 
-typedef struct ZigString {
+typedef struct EncodedSlice {
     const unsigned char* ptr;
     size_t len;
-} ZigString;
+} EncodedSlice;
 
 #ifndef __cplusplus
 typedef uint8_t BunStringTag;
 typedef union BunStringImpl {
-    ZigString zig;
+    EncodedSlice encoded;
     void* wtf;
 } BunStringImpl;
 
@@ -36,15 +36,15 @@ class String;
 }
 
 typedef union BunStringImpl {
-    ZigString zig;
+    EncodedSlice encoded;
     WTF::StringImpl* wtf;
 } BunStringImpl;
 
 enum class BunStringTag : uint8_t {
     Dead = 0,
     WTFStringImpl = 1,
-    ZigString = 2,
-    StaticZigString = 3,
+    EncodedSlice = 2,
+    StaticEncodedSlice = 3,
     Empty = 4,
 };
 
@@ -72,8 +72,8 @@ typedef struct BunString {
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
     // We don't clone it if it was marked as static
-    // if it was a ZigString, it still allocates a WTF::StringImpl.
-    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
+    // if it was an EncodedSlice, it still allocates a WTF::StringImpl.
+    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use EncodedSlice)
     WTF::String toWTFString(ZeroCopyTag) const;
 
     // If the string is empty, this will ensure m_impl is non-null by
@@ -358,13 +358,13 @@ typedef struct {
 
 extern "C" const char* Bun__userAgent;
 
-extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
+extern "C" void EncodedSlice__free(const unsigned char* ptr, size_t len, void* allocator);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
-    const ZigString* sourceCode,
+    const EncodedSlice* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
 
@@ -399,7 +399,7 @@ extern "C" const char* Bun__version_with_sha;
 
 extern "C" const char* Bun__version_sha;
 
-extern "C" void ZigString__freeGlobal(const unsigned char* ptr, size_t len);
+extern "C" void EncodedSlice__freeGlobal(const unsigned char* ptr, size_t len);
 
 extern "C" size_t Bun__encoding__writeLatin1(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);

@@ -1,4 +1,4 @@
-use bun_core::{String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 
 use crate::{JSGlobalObject, JSHostFn, JSValue};
 
@@ -43,9 +43,9 @@ pub struct CreateJSFunctionOptions {
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; the remaining
 // params are by-value scalars / `#[repr(C)]` PODs / fn-ptrs, so all three
-// shims are declared `safe fn`. `getSourceCode` writes a `ZigString` view into
+// shims are declared `safe fn`. `getSourceCode` writes a `EncodedSlice` view into
 // the `&mut` out-param on success and leaves it untouched on failure — `&mut
-// ZigString` is ABI-identical to a non-null `*mut ZigString`.
+// EncodedSlice` is ABI-identical to a non-null `*mut EncodedSlice`.
 unsafe extern "C" {
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
@@ -57,7 +57,7 @@ unsafe extern "C" {
         constructor: Option<JSHostFn>,
     ) -> JSValue;
 
-    safe fn JSC__JSFunction__getSourceCode(value: JSValue, out: &mut ZigString) -> bool;
+    safe fn JSC__JSFunction__getSourceCode(value: JSValue, out: &mut EncodedSlice) -> bool;
 }
 
 impl JSFunction {
@@ -80,7 +80,7 @@ impl JSFunction {
     }
 
     pub fn get_source_code(value: JSValue) -> Option<BunString> {
-        let mut str = ZigString::EMPTY;
+        let mut str = EncodedSlice::EMPTY;
         // C++ overwrites `str` on success and leaves it untouched on failure.
         if JSC__JSFunction__getSourceCode(value, &mut str) {
             Some(BunString::init(str))

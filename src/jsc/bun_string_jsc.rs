@@ -2,10 +2,10 @@
 //! `src/string/` free of `JSValue`/`JSGlobalObject`/`CallFrame` types — the
 //! original methods are aliased to the free fns here.
 
-use bun_core::{SliceWithUnderlyingString, String, Tag, ZigStringSlice, strings};
+use bun_core::{SliceWithUnderlyingString, String, Tag, strings};
 
-use crate::zig_string::{self, ZigString};
-use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
+use crate::encoded_slice::{self, EncodedSlice};
+use crate::{CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
 
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
@@ -31,7 +31,7 @@ unsafe extern "C" {
 
 // ── bun.String methods ──────────────────────────────────────────────────────
 /// Consume `this`: the +1 moves into the resulting `JSString` (no ref/deref
-/// pair). Borrowed (`ZigString`) contents are copied.
+/// pair). Borrowed (`EncodedSlice`) contents are copied.
 #[track_caller]
 pub(crate) fn into_js(mut this: String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: C++ moves the ref out of `this` (leaving it Dead) and the cppbind
@@ -150,23 +150,12 @@ fn slice_with_underlying_string_to_js_with_options(
     global_object: &JSGlobalObject,
     transfer: bool,
 ) -> JsResult<JSValue> {
-    if (this.underlying.tag() == Tag::Dead || this.underlying.tag() == Tag::Empty)
-        && this.utf8.length() > 0
-    {
-        #[cfg(debug_assertions)]
-        if this.utf8.is_allocated() {
-            // We should never enter this state.
-            debug_assert!(!this.utf8.is_wtf_allocated());
-        }
-
-        // `ZigStringSlice` encodes ownership in the variant:
-        // `Owned`/`WTF` ⇒ allocated, `Static` ⇒ borrowed.
-        if this.utf8.is_allocated() {
-            if let Some(utf16) = strings::to_utf16_alloc(this.utf8.slice(), false, false)
+    if this.underlying.tag() == Tag::Dead || this.underlying.tag() == Tag::Empty {
+        if let Some(utf8) = this.utf8.take_if(|v| !v.is_empty()) {
+            if let Some(utf16) = strings::to_utf16_alloc(&utf8, false, false)
                 .map_err(|_| global_object.throw_out_of_memory())?
             {
-                // Drop the now-unused utf8 allocation.
-                this.utf8 = ZigStringSlice::default();
+                drop(utf8);
                 // Ownership of `utf16` is transferred to JSC as an
                 // external string; do not drop it here.
                 let mut utf16 = core::mem::ManuallyDrop::new(utf16);
@@ -174,33 +163,21 @@ fn slice_with_underlying_string_to_js_with_options(
                 // SAFETY: `utf16` was allocated by the global allocator and is
                 // wrapped in `ManuallyDrop`; ownership transfers to JSC here.
                 return Ok(unsafe {
-                    zig_string::to_external_u16(utf16.as_ptr(), utf16.len(), global_object)
+                    encoded_slice::to_external_u16(utf16.as_ptr(), utf16.len(), global_object)
                 });
-            } else if let Some((ptr, len)) = this.utf8.take_owned_raw() {
-                // Ownership of the utf8 bytes is transferred to JSC via
-                // `to_external_value`; `take_owned_raw` already cleared `utf8`
-                // and leaked the buffer (mimalloc-freed by JSC).
-                let zig = ZigString::from_bytes(
-                    // SAFETY: `take_owned_raw` returned a leaked, contiguous
-                    // mimalloc-owned buffer of `len` bytes.
-                    unsafe { bun_core::ffi::slice(ptr, len) },
-                );
-                return Ok(zig.to_external_value(global_object));
-            } else {
-                // WTF-backed (asserted impossible above) or already cleared:
-                // fall through to the copying path.
             }
+            // Ownership of the utf8 bytes is transferred to JSC via
+            // `to_external_value` (mimalloc-freed by JSC).
+            let mut utf8 = core::mem::ManuallyDrop::new(utf8);
+            utf8.shrink_to_fit();
+            // SAFETY: `utf8` is a leaked, contiguous mimalloc-owned buffer.
+            let bytes: &'static [u8] = unsafe { bun_core::ffi::slice(utf8.as_ptr(), utf8.len()) };
+            return Ok(EncodedSlice::from_bytes(bytes).to_external_value(global_object));
         }
-
-        let result = create_utf8_for_js(global_object, this.utf8.slice());
-        if transfer {
-            this.utf8 = ZigStringSlice::default();
-        }
-        return result;
     }
 
     if transfer {
-        this.utf8 = ZigStringSlice::default();
+        this.utf8 = None;
         into_js(core::mem::take(&mut this.underlying), global_object)
     } else {
         to_js(&this.underlying, global_object)

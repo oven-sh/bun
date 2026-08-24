@@ -19,7 +19,7 @@ use bun_url::URL;
 ///   get_truthy → is_string → BunString::from_js → tag ∉ {Empty,Dead} → to_utf8
 ///
 /// The intermediate `BunString` is dropped before return; the returned
-/// `ZigStringSlice` owns (or independently refs) its bytes.
+/// `Utf8Bytes` owns (or independently refs) its bytes.
 ///
 /// * `strict = true`  — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
 /// * `strict = false` — non-string is silently ignored.
@@ -28,7 +28,7 @@ pub(crate) fn get_truthy_string_utf8(
     global: &JSGlobalObject,
     key: &[u8],
     strict: bool,
-) -> JsResult<Option<bun_core::ZigStringSlice>> {
+) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
     let Some(js_value) = opts.get_truthy(global, key)? else {
         return Ok(None);
     };
@@ -45,7 +45,7 @@ pub(crate) fn get_truthy_string_utf8(
     if str.tag() == BunStringTag::Empty || str.tag() == BunStringTag::Dead {
         return Ok(None);
     }
-    Ok(Some(str.to_utf8()))
+    Ok(Some(str.into_utf8()))
 }
 
 // `S3Credentials` fields are owned `Box<[u8]>`, so credential strings are
@@ -111,7 +111,7 @@ pub(crate) fn get_credentials_with_options(
                     if js_value.is_string() {
                         let str = BunString::from_js(js_value, global_object)?;
                         if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            let utf8 = str.to_utf8();
+                            let utf8 = str.into_utf8();
                             let endpoint = utf8.slice();
                             if let Some(parsed) = URL::parse_s3_endpoint(endpoint) {
                                 new_credentials.credentials.endpoint = parsed.host_with_path;

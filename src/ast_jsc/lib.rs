@@ -5,7 +5,7 @@
 use std::borrow::Cow;
 
 use bun_ast::{Data, Location, Log, Metadata, Msg};
-use bun_core::ZigString;
+use bun_core::EncodedSlice;
 
 use bun_jsc::{self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage};
 
@@ -69,7 +69,7 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
                     }
                 };
             }
-            let out = ZigString::init(message);
+            let out = EncodedSlice::init(message);
             let agg = global.create_aggregate_error(&errors_stack[..usize::from(count)], &out)?;
             Ok(agg)
         }

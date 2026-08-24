@@ -11,7 +11,7 @@ use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_core::{ZStr, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, Utf8Bytes};
 use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
 
@@ -37,7 +37,7 @@ fn get_optional_slice(
     target: JSValue,
     global: &JSGlobalObject,
     property: &[u8],
-) -> JsResult<Option<ZigStringSlice>> {
+) -> JsResult<Option<Utf8Bytes<'static>>> {
     match target.get(global, property)? {
         Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
         _ => Ok(None),
@@ -263,7 +263,7 @@ impl UserOptions {
 /// Each string stores its allocator since some may hold reference counts to JSC
 #[derive(Default)]
 pub struct StringRefList {
-    pub(crate) strings: Vec<ZigStringSlice>,
+    pub(crate) strings: Vec<Utf8Bytes<'static>>,
 }
 
 impl StringRefList {
@@ -272,17 +272,17 @@ impl StringRefList {
     };
 
     // Note: returned slice borrows JSC-owned storage kept alive by the
-    // `ZigStringSlice` now stored in `self.strings`; it is valid only for as
+    // `Utf8Bytes` now stored in `self.strings`; it is valid only for as
     // long as `self` is. Callers that store the result in `Framework` /
     // `FileSystemRouterType` / `ServerComponents` fields must thread a `'bump`
     // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
     // file-level TODO(lifetime) above. Do NOT paper over this with a `'static`
     // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
-    pub(crate) fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
+    pub(crate) fn track(&mut self, str: Utf8Bytes<'static>) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
         // SAFETY: (`Interned::assume` — Population B, holder-backed) the
-        // `ZigStringSlice` is now owned by `self.strings` and lives exactly as
+        // `Utf8Bytes` is now owned by `self.strings` and lives exactly as
         // long as the `StringRefList`, which is owned by `UserOptions` and
         // dropped only when bake teardown runs (`UserOptions::deinit`). The
         // returned slice is stored only in `Framework` / `FileSystemRouterType`
@@ -816,7 +816,7 @@ impl Framework {
             let str = prop.to_bun_string(global)?;
 
             Some(ReactFastRefresh {
-                import_source: refs.track(str.to_utf8()),
+                import_source: refs.track(str.into_utf8()),
             })
         };
         let server_components: Option<ServerComponents> = 'sc: {
@@ -1385,7 +1385,7 @@ fn get_optional_string(
         return Ok(None);
     }
     let str = value.to_bun_string(global)?;
-    Ok(Some(allocations.track(str.to_utf8())))
+    Ok(Some(allocations.track(str.into_utf8())))
 }
 
 // Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`

@@ -176,7 +176,7 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // Every `source_url` here is `Tag::ZigString` (built via
+            // Every `source_url` here is `Tag::EncodedSlice` (built via
             // `String::init(&[u8])`), so `byte_slice()` is the right view.
             let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string

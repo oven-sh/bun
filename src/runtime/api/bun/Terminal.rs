@@ -15,9 +15,9 @@ use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
-use crate::webcore::blob::ZigStringBlobExt;
+use crate::webcore::blob::EncodedSliceBlobExt;
+use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-use bun_core::ZigString;
 use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
@@ -25,7 +25,7 @@ use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
+    MarkedArrayBuffer, SysErrorJsc, Utf8Bytes,
 };
 use bun_sys::{self as sys, Fd, FdExt};
 
@@ -135,7 +135,7 @@ pub struct Terminal {
 
     /// Terminal name (e.g., "xterm-256color"). Read-only after construction.
     /// Held for Drop (owns the slice allocation); no getter currently exposes it.
-    _term_name: ZigStringSlice,
+    _term_name: Utf8Bytes<'static>,
 
     /// Event loop handle for callbacks. Read-only after construction.
     event_loop_handle: EventLoopHandle,
@@ -205,7 +205,7 @@ pub type IOReader = BufferedReader;
 pub struct Options {
     pub(crate) cols: u16,
     pub(crate) rows: u16,
-    pub(crate) term_name: ZigStringSlice,
+    pub(crate) term_name: Utf8Bytes<'static>,
     pub(crate) data_callback: Option<JSValue>,
     pub(crate) exit_callback: Option<JSValue>,
     pub(crate) drain_callback: Option<JSValue>,
@@ -216,7 +216,7 @@ impl Default for Options {
         Self {
             cols: 80,
             rows: 24,
-            term_name: ZigStringSlice::default(),
+            term_name: Utf8Bytes::default(),
             data_callback: None,
             exit_callback: None,
             drain_callback: None,
@@ -303,13 +303,6 @@ impl Options {
         }
 
         Ok(options)
-    }
-}
-
-impl Drop for Options {
-    fn drop(&mut self) {
-        // term_name: ZigString::Slice has its own Drop; nothing further to
-        // clean up here.
     }
 }
 
@@ -431,11 +424,11 @@ impl Terminal {
         let term_name = if !options.term_name.slice().is_empty() {
             core::mem::take(&mut options.term_name)
         } else {
-            ZigStringSlice::from_utf8_never_free(b"xterm-256color")
+            Utf8Bytes::Borrowed(b"xterm-256color")
         };
         // Ownership moves to the struct below; clear so caller's options drop
         // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
-        options.term_name = ZigStringSlice::default();
+        options.term_name = Utf8Bytes::default();
 
         // Heap-allocate the Terminal; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
@@ -1893,7 +1886,7 @@ impl Terminal {
         let signal_value: JSValue = if let Some(s) = signal {
             // SignalCode derives Debug → "SIGTERM" etc.
             let name = format!("{:?}", s);
-            ZigString::init(name.as_bytes()).to_js(global_this)
+            EncodedSlice::init(name.as_bytes()).to_js(global_this)
         } else {
             JSValue::NULL
         };

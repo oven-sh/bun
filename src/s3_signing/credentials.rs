@@ -1247,7 +1247,7 @@ pub struct S3CredentialsWithOptions {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     // Self-referential views: these fields are non-owning;
-    // they borrow into the sibling `_*_slice: ZigStringSlice` fields
+    // they borrow into the sibling `_*_slice: Utf8Bytes` fields
     // below. `RawSlice` encodes that non-owning contract (and gives callers
     // `.as_deref()` instead of an open-coded `unsafe { &*p }`).
     pub content_disposition: Option<RawSlice<u8>>,
@@ -1259,18 +1259,18 @@ pub struct S3CredentialsWithOptions {
     pub changed_credentials: bool,
     /// indicates if the virtual hosted style is used
     pub virtual_hosted_style: bool,
-    pub _access_key_id_slice: Option<bun_core::ZigStringSlice>,
-    pub _secret_access_key_slice: Option<bun_core::ZigStringSlice>,
-    pub _region_slice: Option<bun_core::ZigStringSlice>,
-    pub _endpoint_slice: Option<bun_core::ZigStringSlice>,
-    pub _bucket_slice: Option<bun_core::ZigStringSlice>,
-    pub _session_token_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_disposition_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_type_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_encoding_slice: Option<bun_core::ZigStringSlice>,
+    pub _access_key_id_slice: Option<bun_core::Utf8Bytes<'static>>,
+    pub _secret_access_key_slice: Option<bun_core::Utf8Bytes<'static>>,
+    pub _region_slice: Option<bun_core::Utf8Bytes<'static>>,
+    pub _endpoint_slice: Option<bun_core::Utf8Bytes<'static>>,
+    pub _bucket_slice: Option<bun_core::Utf8Bytes<'static>>,
+    pub _session_token_slice: Option<bun_core::Utf8Bytes<'static>>,
+    pub _content_disposition_slice: Option<bun_core::Utf8Bytes<'static>>,
+    pub _content_type_slice: Option<bun_core::Utf8Bytes<'static>>,
+    pub _content_encoding_slice: Option<bun_core::Utf8Bytes<'static>>,
 }
 
-// ZigStringSlice impls Drop, so no explicit Drop needed.
+// Utf8Bytes impls Drop, so no explicit Drop needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // SignedHeaders

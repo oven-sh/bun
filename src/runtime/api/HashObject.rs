@@ -1,5 +1,5 @@
 use crate::webcore::Blob;
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -250,7 +250,7 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     let mut args = jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
 
     let mut input: &[u8] = b"";
-    let input_slice: ZigStringSlice;
+    let input_slice: Utf8Bytes;
     // Hoisted so `array_buffer` outlives the borrow stored in `input`.
     let array_buffer;
     if let Some(arg) = args.next_eat() {

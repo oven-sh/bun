@@ -466,7 +466,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     // Materialize host/path as WTF::String so the BunString wrappers hold a
     // stable WTFStringImpl backing (preserving 8-bit vs UTF-16 encoding).
-    // ZigString wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
+    // EncodedSlice wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
     // tag and corrupt the HTTP upgrade request build on the native side.
     String hostString = m_url.host().toString();
     auto resource = resourceName(m_url);
@@ -772,14 +772,14 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
 {
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        auto zigStr = Zig::toZigString(message);
+        auto zigStr = Zig::toEncodedSlice(message);
         Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &zigStr, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        auto zigStr = Zig::toZigString(message);
+        auto zigStr = Zig::toEncodedSlice(message);
         Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr, static_cast<uint8_t>(op));
         break;
     }
@@ -853,13 +853,13 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     m_state = CLOSING;
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        ZigString reasonZigStr = Zig::toZigString(reason);
+        EncodedSlice reasonZigStr = Zig::toEncodedSlice(reason);
         Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonZigStr);
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        ZigString reasonZigStr = Zig::toZigString(reason);
+        EncodedSlice reasonZigStr = Zig::toEncodedSlice(reason);
         Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonZigStr);
         // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
@@ -1736,7 +1736,7 @@ extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t erro
     webSocket->didClose(0, errorCode, WTF::move(wtf_reason));
 }
 
-extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const ZigString* str)
+extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const EncodedSlice* str)
 {
     WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
     webSocket->didReceiveMessage(WTF::move(wtf_str));

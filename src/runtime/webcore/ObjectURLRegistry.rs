@@ -151,8 +151,8 @@ fn bun_revoke_object_url(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let slice = str.to_utf8_without_ref();
-    // released by ZigStringSlice Drop
+    let slice = str.to_utf8();
+    // released by Utf8Bytes Drop
 
     let sliced = slice.slice();
     if sliced.len() < b"blob:".len() + UUID::STRING_LENGTH {
@@ -181,7 +181,7 @@ fn js_function_resolve_object_url(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let slice = str.to_utf8_without_ref();
+    let slice = str.to_utf8();
     let sliced = slice.slice();
 
     let registry = ObjectURLRegistry::singleton();

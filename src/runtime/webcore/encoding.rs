@@ -812,7 +812,7 @@ fn construct_from_hex<Char: strings::HexChar>(input: &[Char]) -> Vec<u8> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `String` / `ZigString` encoding extension traits.
+// `String` / `EncodedSlice` encoding extension traits.
 //
 // Hosted here (not on `bun_core::String`) because the encoder bodies above
 // (`encodeIntoFrom{8,16}` / `constructFrom{U8,U16}`) belong to `bun_runtime`;
@@ -841,16 +841,16 @@ pub trait BunStringEncode {
 impl BunStringEncode for bun_core::String {
     /// Encode `self` with the given encoding.
     fn encode(&self, enc: Encoding) -> Vec<u8> {
-        self.to_zig_string().encode_with_allocator(enc)
+        self.to_encoded_slice().encode_with_allocator(enc)
     }
 }
 
-/// `ZigString` encoding. Extension trait — encoder bodies live in this crate.
-pub trait ZigStringEncode {
+/// `EncodedSlice` encoding. Extension trait — encoder bodies live in this crate.
+pub trait EncodedSliceEncode {
     fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8>;
 }
 
-impl ZigStringEncode for bun_core::ZigString {
+impl EncodedSliceEncode for bun_core::EncodedSlice<'_> {
     fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8> {
         if self.is_16bit() {
             construct_from_u16_dyn(self.utf16_slice(), enc)

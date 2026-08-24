@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use bun_ast::Loc;
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
-use bun_core::{self, ZigStringSlice};
+use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
     LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap, internal_source_map,
@@ -29,7 +29,7 @@ type Bitset = DynamicBitSet;
 /// We use two bitsets since the typical size will be decently small,
 /// bitsets are simple and bitsets are relatively fast to construct and query
 pub struct Report {
-    pub(crate) source_url: ZigStringSlice,
+    pub(crate) source_url: Utf8Bytes<'static>,
     pub(crate) executable_lines: Bitset,
     pub(crate) lines_which_have_executed: Bitset,
     pub(crate) line_hits: LinesHits,
@@ -395,11 +395,7 @@ impl<'a> Generator<'a> {
             return;
         }
 
-        // No ownership transfer here:
-        // `from_utf8_never_free` already detaches the lifetime by design, and
-        // `generate_report_from_blocks` only borrows `&self`, so no &/&mut overlap.
-        let source_url =
-            ZigStringSlice::from_utf8_never_free(this.byte_range_mapping.source_url.slice());
+        let source_url = this.byte_range_mapping.source_url.clone();
         *this.result = this
             .byte_range_mapping
             .generate_report_from_blocks(source_url, blocks, function_blocks, ignore_sourcemap)
@@ -419,7 +415,7 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     pub(crate) line_offset_table: line_offset_table::List,
     pub(crate) source_id: i32,
-    pub source_url: ZigStringSlice,
+    pub source_url: Utf8Bytes<'static>,
 }
 
 // Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
@@ -478,7 +474,7 @@ impl ByteRangeMapping {
 
     pub(crate) fn generate_report_from_blocks(
         &self,
-        source_url: ZigStringSlice,
+        source_url: Utf8Bytes<'static>,
         blocks: &[BasicBlockRange],
         function_blocks: &[BasicBlockRange],
         ignore_sourcemap: bool,
@@ -806,7 +802,7 @@ impl ByteRangeMapping {
     pub(crate) fn compute(
         source_contents: &[u8],
         source_id: i32,
-        source_url: ZigStringSlice,
+        source_url: Utf8Bytes<'static>,
     ) -> ByteRangeMapping {
         ByteRangeMapping {
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
@@ -831,14 +827,12 @@ extern "C" fn ByteRangeMapping__generate(
     // this thread for the duration of this call.
     let map = unsafe { &mut *thread_map() };
 
-    let slice = str_.to_utf8();
-    let hash = bun_wyhash::hash(slice.slice());
+    let source_url = str_.clone().into_utf8();
+    let hash = bun_wyhash::hash(source_url.slice());
     let source_contents = source_contents_str.to_utf8();
 
-    let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, slice);
+    let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, source_url);
     map.insert(hash, new_value);
-    // `source_contents` drops here (matches `defer source_contents.deinit()`).
-    // Note: `slice` ownership transferred into the new ByteRangeMapping.source_url.
 }
 
 #[unsafe(no_mangle)]
@@ -880,9 +874,8 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
     if function_blocks.len() > 1 {
         function_blocks = &function_blocks[1..];
     }
-    let url_slice = source_url.to_utf8();
     let report = match this.generate_report_from_blocks(
-        url_slice,
+        this.source_url.clone(),
         blocks,
         function_blocks,
         ignore_sourcemap,

@@ -3028,7 +3028,7 @@ pub fn process_fetch_log(
                     .into_bytes()
                     .into_boxed_slice(),
             );
-            let mut message = crate::ZigString::init(message_text);
+            let mut message = crate::EncodedSlice::init(message_text);
             message.mark_global();
             take(global_this.create_aggregate_error(&errors_stack[..len], &message))
         }
@@ -4829,7 +4829,7 @@ impl VirtualMachine {
         if self.main().is_empty() {
             return Ok(());
         }
-        let str = crate::zig_string::ZigString::init(MAIN_FILE_NAME);
+        let str = crate::encoded_slice::EncodedSlice::init(MAIN_FILE_NAME);
         self.global().delete_module_registry_entry(&str)
     }
 
@@ -5491,7 +5491,9 @@ impl VirtualMachine {
                 frame.position.column,
                 bun_sourcemap::SourceContentHandling::NoSourceContents,
             ) {
-                if let Some(source_url) = lookup.display_source_url_if_needed(path) {
+                let display_url = lookup.display_source_url_if_needed(path);
+                drop(source_url);
+                if let Some(source_url) = display_url {
                     frame.source_url = source_url;
                 }
                 // Direct copy; both sides are
@@ -5517,7 +5519,7 @@ impl VirtualMachine {
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
         must_reset_parser_arena_later: &mut bool,
-        source_code_slice: &mut Option<bun_core::ZigStringSlice>,
+        source_code_slice: &mut Option<bun_core::Utf8Bytes<'static>>,
         allow_source_code_preview: bool,
     ) {
         // `global()` returns `&'static`, so the borrow detaches from `&self`
@@ -5542,7 +5544,7 @@ impl VirtualMachine {
             exception: *mut ZigException,
             exception_list: Option<&'a mut ExceptionList>,
             enable_source_code_preview: &'a Cell<bool>,
-            source_code_slice: *const Option<bun_core::ZigStringSlice>,
+            source_code_slice: *const Option<bun_core::Utf8Bytes<'static>>,
         }
         impl Drop for Tail<'_> {
             fn drop(&mut self) {
@@ -5592,7 +5594,7 @@ impl VirtualMachine {
         let exception: &mut ZigException = unsafe { &mut *_tail.exception };
         // SAFETY: as above — re-borrow through the guard's raw ptr; `_tail`
         // does not touch `source_code_slice` until Drop.
-        let source_code_slice: &mut Option<bun_core::ZigStringSlice> =
+        let source_code_slice: &mut Option<bun_core::Utf8Bytes<'static>> =
             unsafe { &mut *_tail.source_code_slice.cast_mut() };
 
         fn is_noisy_builtin(name: &bun_core::String) -> bool {
@@ -5734,21 +5736,22 @@ impl VirtualMachine {
                 drop(lookup);
                 None
             };
+            drop(top_source_url);
 
             if let Some(src) = display_url {
                 frames[top].source_url = src;
             }
 
-            let code: bun_core::ZigStringSlice = 'code: {
+            let code: bun_core::Utf8Bytes<'static> = 'code: {
                 if !enable_source_code_preview.get() {
-                    break 'code bun_core::ZigStringSlice::EMPTY;
+                    break 'code bun_core::Utf8Bytes::EMPTY;
                 }
                 if let Some(src) = external_code {
                     break 'code src;
                 }
                 if top_frame_is_builtin {
                     // Avoid printing "export default 'native'"
-                    break 'code bun_core::ZigStringSlice::EMPTY;
+                    break 'code bun_core::Utf8Bytes::EMPTY;
                 }
                 let mut log = bun_ast::Log::default();
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
@@ -5760,11 +5763,10 @@ impl VirtualMachine {
                     FetchFlags::PrintSource,
                 ) else {
                     // Source is gone; the frames still get remapped below.
-                    break 'code bun_core::ZigStringSlice::EMPTY;
+                    break 'code bun_core::Utf8Bytes::EMPTY;
                 };
                 *must_reset_parser_arena_later = true;
-                // `to_utf8()` takes its own ref; `original_source` drops here.
-                original_source.source_code.to_utf8()
+                original_source.source_code.into_utf8()
             };
 
             if enable_source_code_preview.get() && code.slice().is_empty() {
@@ -5811,11 +5813,12 @@ impl VirtualMachine {
             if !code.slice().is_empty() {
                 *source_code_slice = Some(code);
             }
-        } else if enable_source_code_preview.get() {
-            exception.collect_source_lines(error_instance, global);
+        } else {
+            drop(top_source_url);
+            if enable_source_code_preview.get() {
+                exception.collect_source_lines(error_instance, global);
+            }
         }
-
-        drop(top_source_url);
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
@@ -5830,7 +5833,9 @@ impl VirtualMachine {
                     frames[i].position.column,
                     bun_sourcemap::SourceContentHandling::NoSourceContents,
                 ) {
-                    if let Some(src) = lookup.display_source_url_if_needed(source_url.slice()) {
+                    let display_url = lookup.display_source_url_if_needed(source_url.slice());
+                    drop(source_url);
+                    if let Some(src) = display_url {
                         frames[i].source_url = src;
                     }
                     let mapping = lookup.mapping;
@@ -5920,7 +5925,7 @@ impl VirtualMachine {
         // `need_to_clear_parser_arena_on_deinit` disjointly. Route through a
         // raw pointer (the holder is heap-pinned for the call).
         let exception: *mut ZigException = exception_holder.zig_exception();
-        let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
+        let mut source_code_slice: Option<bun_core::Utf8Bytes<'static>> = None;
 
         self.remap_zig_exception(
             // SAFETY: `exception` points into stack-local `exception_holder`.
@@ -6633,7 +6638,7 @@ impl VirtualMachine {
                 cursor += i + 1;
             }
             if cursor > 0 {
-                let body = jsc::ZigString::init_utf8(&msg[cursor as usize..]);
+                let body = jsc::EncodedSlice::init_utf8(&msg[cursor as usize..]);
                 let _ = write!(writer, "{}", body.github_action());
             }
         } else {
@@ -6671,14 +6676,14 @@ impl VirtualMachine {
                     let _ = write!(
                         writer,
                         "%0A      at {} ({})",
-                        jsc::ZigString::init_utf8(name_str.as_bytes()).github_action(),
-                        jsc::ZigString::init_utf8(loc_str.as_bytes()).github_action(),
+                        jsc::EncodedSlice::init_utf8(name_str.as_bytes()).github_action(),
+                        jsc::EncodedSlice::init_utf8(loc_str.as_bytes()).github_action(),
                     );
                 } else {
                     let _ = write!(
                         writer,
                         "%0A      at {}",
-                        jsc::ZigString::init_utf8(loc_str.as_bytes()).github_action(),
+                        jsc::EncodedSlice::init_utf8(loc_str.as_bytes()).github_action(),
                     );
                 }
             }

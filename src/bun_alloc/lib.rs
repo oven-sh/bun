@@ -787,46 +787,38 @@ pub fn page_size() -> usize {
 pub enum Tag {
     Dead = 0,
     WTFStringImpl = 1,
-    ZigString = 2,
-    StaticZigString = 3,
+    EncodedSlice = 2,
+    StaticEncodedSlice = 3,
     Empty = 4,
 }
 
-// `ZigString` pointer-tag scheme — single source of truth.
+// `EncodedSliceRaw` pointer-tag scheme — single source of truth.
 // Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
 pub(crate) const ZS_UTF8_BIT: usize = 1usize << 61;
 pub(crate) const ZS_GLOBAL_BIT: usize = 1usize << 62;
 pub(crate) const ZS_16BIT_BIT: usize = 1usize << 63;
 pub(crate) const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
 
-/// FFI string slice — `{ ptr: *const u8, len: usize }`.
-///
-/// **Canonical storage layout.** `bun_core::string::ZigString` is a
-/// `#[repr(transparent)]` newtype over this struct (so the FFI layout has ONE
-/// source of truth) and adds the encoding-aware/allocating methods via
-/// `Deref`/`DerefMut`. The pointer-tag accessors (`is_*` / `mark_*` /
-/// `untagged` / `slice` / `utf16_slice_aligned`) live HERE so the T0
-/// `bun_alloc::String` union and `WTFStringImplStruct::to_zig_string` can use
-/// them without an upward dep on `bun_core`. Higher-tier callers should name
-/// `bun_core::ZigString`; reaching the inherent methods through `Deref` is the
-/// intended path.
+/// `{ tagged ptr, len }` with encoding bits in the pointer's high byte; the
+/// lifetime-free layout under `bun_core::EncodedSlice<'a>` and the
+/// [`String`] union arm. Higher-tier callers should name `bun_core::EncodedSlice`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ZigString {
+pub struct EncodedSliceRaw {
     /// Tagged pointer — never dereference directly; use `untagged()`.
     pub(crate) _unsafe_ptr_do_not_use: *const u8,
     pub len: usize,
 }
 
-impl ZigString {
-    pub const EMPTY: ZigString = ZigString {
+impl EncodedSliceRaw {
+    pub const EMPTY: EncodedSliceRaw = EncodedSliceRaw {
         _unsafe_ptr_do_not_use: b"".as_ptr(),
         len: 0,
     };
 
     #[inline]
-    pub const fn init(slice: &[u8]) -> ZigString {
-        ZigString {
+    pub const fn init(slice: &[u8]) -> EncodedSliceRaw {
+        EncodedSliceRaw {
             _unsafe_ptr_do_not_use: slice.as_ptr(),
             len: slice.len(),
         }
@@ -835,8 +827,8 @@ impl ZigString {
     /// Construct from an already-tagged pointer + length. `ptr` is stored
     /// verbatim — tag bits are not touched.
     #[inline]
-    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> ZigString {
-        ZigString {
+    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> EncodedSliceRaw {
+        EncodedSliceRaw {
             _unsafe_ptr_do_not_use: ptr,
             len,
         }
@@ -850,8 +842,8 @@ impl ZigString {
     }
 
     #[inline]
-    pub fn init_utf16(items: &[u16]) -> ZigString {
-        let mut out = ZigString {
+    pub fn init_utf16(items: &[u16]) -> EncodedSliceRaw {
+        let mut out = EncodedSliceRaw {
             _unsafe_ptr_do_not_use: items.as_ptr().cast(),
             len: items.len(),
         };
@@ -910,7 +902,7 @@ impl ZigString {
         }
         debug_assert!(
             !self.is_16bit(),
-            "ZigString::slice() on UTF-16 string; use to_slice()"
+            "EncodedSliceRaw::slice() on UTF-16 string; use to_utf8()"
         );
         // SAFETY: constructor stored a valid ptr/len; flag bits stripped.
         // Length is capped at `u32::MAX`.
@@ -924,7 +916,7 @@ impl ZigString {
 
     /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
     #[inline]
-    pub fn utf16_slice_aligned(&self) -> &[u16] {
+    pub fn utf16_slice(&self) -> &[u16] {
         if self.len == 0 {
             return &[];
         }
@@ -1102,11 +1094,11 @@ impl WTFStringImplStruct {
         Bun__WTFStringImpl__ensureHash(self);
     }
     #[inline]
-    pub fn to_zig_string(&self) -> ZigString {
+    pub fn to_encoded_slice(&self) -> EncodedSliceRaw {
         if self.is_8bit() {
-            ZigString::init(self.latin1_slice())
+            EncodedSliceRaw::init(self.latin1_slice())
         } else {
-            ZigString::init_utf16(self.utf16_slice())
+            EncodedSliceRaw::init_utf16(self.utf16_slice())
         }
     }
 }
@@ -1132,14 +1124,14 @@ unsafe extern "C" {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union StringImpl {
-    pub zig_string: ZigString,
+    pub encoded: EncodedSliceRaw,
     pub wtf_string_impl: WTFStringImpl,
-    // .StaticZigString aliases .zig_string; .Dead/.Empty are zero-width.
+    // .StaticEncodedSlice aliases .encoded; .Dead/.Empty are zero-width.
 }
 
 /// Known as `BunString` in C++.
 ///
-/// 5-variant tagged union over WTF-backed and `ZigString`-backed strings. NOT a
+/// 5-variant tagged union over WTF-backed and `EncodedSliceRaw`-backed strings. NOT a
 /// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1152,19 +1144,19 @@ impl String {
     pub const EMPTY: String = String {
         tag: Tag::Empty,
         value: StringImpl {
-            zig_string: ZigString::EMPTY,
+            encoded: EncodedSliceRaw::EMPTY,
         },
     };
     pub const DEAD: String = String {
         tag: Tag::Dead,
         value: StringImpl {
-            zig_string: ZigString::EMPTY,
+            encoded: EncodedSliceRaw::EMPTY,
         },
     };
 
     /// Borrow the live `WTF::StringImpl` backing this string.
     ///
-    /// Centralises the union-field read + raw-ptr deref that `to_zig_string` /
+    /// Centralises the union-field read + raw-ptr deref that `to_encoded_slice` /
     /// `length` / `is_8bit` each open-coded. Callers branch on
     /// `self.tag == WTFStringImpl` first (debug-asserted).
     #[inline(always)]
@@ -1177,15 +1169,15 @@ impl String {
     }
 
     #[inline]
-    pub(crate) fn to_zig_string(&self) -> ZigString {
+    pub(crate) fn to_encoded_slice(&self) -> EncodedSliceRaw {
         match self.tag {
-            Tag::StaticZigString | Tag::ZigString => {
-                // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
+            Tag::StaticEncodedSlice | Tag::EncodedSlice => {
+                // SAFETY: `tag` is `EncodedSlice`/`StaticEncodedSlice` ⇒ `encoded`
                 // is the active union field.
-                unsafe { self.value.zig_string }
+                unsafe { self.value.encoded }
             }
-            Tag::WTFStringImpl => self.wtf_impl().to_zig_string(),
-            _ => ZigString::EMPTY,
+            Tag::WTFStringImpl => self.wtf_impl().to_encoded_slice(),
+            _ => EncodedSliceRaw::EMPTY,
         }
     }
 }
@@ -1194,12 +1186,12 @@ impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // utf8 → write bytes; utf16 → transcode;
         // latin1 → widen each byte to a Unicode scalar.
-        let zs = self.to_zig_string();
+        let zs = self.to_encoded_slice();
         if zs.len == 0 {
             return Ok(());
         }
         if zs.is_16bit() {
-            for c in core::char::decode_utf16(zs.utf16_slice_aligned().iter().copied()) {
+            for c in core::char::decode_utf16(zs.utf16_slice().iter().copied()) {
                 f.write_char(c.unwrap_or(core::char::REPLACEMENT_CHARACTER))?;
             }
             Ok(())

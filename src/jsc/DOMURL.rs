@@ -8,7 +8,7 @@ bun_opaque::opaque_ffi! {
     pub struct DOMURL;
 }
 
-// `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; `ZigString`/`c_int`
+// `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; `EncodedSlice`/`c_int`
 // out-params are plain `#[repr(C)]` PODs whose `&mut` is exclusive for the
 // call → `safe fn`.
 unsafe extern "C" {

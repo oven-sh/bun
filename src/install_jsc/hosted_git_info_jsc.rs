@@ -74,7 +74,7 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // TODO(markovejnovic): This feels like there's too much going on all
     // to give us a slice. Maybe there's a better way to code this up.
     let npa_str = arg0.to_bun_string(go)?;
-    // `ZigStringSlice` is read-only, so take an owned copy via `into_vec()`
+    // `Utf8Bytes` is read-only, so take an owned copy via `into_vec()`
     // (`parse_url` itself only needs `&[u8]`).
     let mut as_utf8 = npa_str.to_utf8().into_vec();
     let parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
@@ -113,7 +113,7 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
     // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
     // Maybe there's a better way to code this up.
     let npa_str = arg0.to_bun_string(go)?;
-    // `ZigStringSlice` is read-only, so take an owned copy
+    // `Utf8Bytes` is read-only, so take an owned copy
     // (`from_url` itself only needs `&[u8]`).
     let mut as_utf8 = npa_str.to_utf8().into_vec();
     let parsed = match HostedGitInfo::from_url(as_utf8.as_mut_slice()) {

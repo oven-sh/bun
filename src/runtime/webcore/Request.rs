@@ -10,15 +10,15 @@ use enumset::EnumSet;
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::ZigStringBlobExt as _;
+use crate::webcore::blob::EncodedSliceBlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
     CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
 };
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
+use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{String as BunString, ZigString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
@@ -341,25 +341,25 @@ impl Request {
         Ok(None)
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::ZigStringSlice>> {
+    pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             if let Some(value) = req.header(b"content-type") {
-                return Ok(Some(bun_core::ZigStringSlice::from_utf8_never_free(value)));
+                return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
             }
         }
 
         if let Some(headers) = self.headers_mut().as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_slice()));
+                return Ok(Some(value.to_utf8()));
             }
         }
 
         if let BodyValue::Blob(blob) = self.body_value() {
             let ct = blob.content_type_slice();
             if !ct.is_empty() {
-                return Ok(Some(bun_core::ZigStringSlice::from_utf8_never_free(ct)));
+                return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
             }
         }
 
@@ -669,11 +669,11 @@ impl Request {
     }
 
     pub(crate) fn get_destination(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(b"").to_js(global_this)
+        EncodedSlice::init(b"").to_js(global_this)
     }
 
     pub(crate) fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::EMPTY.to_js(global_this)
+        EncodedSlice::EMPTY.to_js(global_this)
     }
 
     /// The `AbortSignal` this request was constructed with or lazily created
@@ -753,11 +753,11 @@ impl Request {
             }
         }
 
-        ZigString::init(b"").to_js(global_object)
+        EncodedSlice::init(b"").to_js(global_object)
     }
 
     pub(crate) fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(b"").to_js(global_this)
+        EncodedSlice::init(b"").to_js(global_this)
     }
 
     pub(crate) fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {

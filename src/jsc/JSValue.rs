@@ -516,8 +516,8 @@ impl JSValue {
     /// `JSValue.createObject2` — `{ [key1]: value1, [key2]: value2 }`.
     pub fn create_object2(
         global: &JSGlobalObject,
-        key1: &bun_core::ZigString,
-        key2: &bun_core::ZigString,
+        key1: &bun_core::EncodedSlice,
+        key2: &bun_core::EncodedSlice,
         value1: JSValue,
         value2: JSValue,
     ) -> JsResult<JSValue> {
@@ -688,12 +688,12 @@ impl JSValue {
         JSC__JSValue__bigIntSum(global, a, b)
     }
     /// `JSValue.fromEntries` — build a plain object from
-    /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
+    /// parallel `keys`/`values` `EncodedSlice` arrays. When `clone` is true the
     /// C++ side copies the string bytes (caller may free `keys`/`values`).
     pub fn from_entries(
         global: &JSGlobalObject,
-        keys: &mut [bun_core::ZigString],
-        values: &mut [bun_core::ZigString],
+        keys: &mut [bun_core::EncodedSlice],
+        values: &mut [bun_core::EncodedSlice],
         clone: bool,
     ) -> JSValue {
         debug_assert_eq!(keys.len(), values.len());
@@ -864,7 +864,7 @@ impl JSValue {
     }
     /// `toString()` then UTF-8. The slice holds its own ref/allocation, so it
     /// is independent of the `JSString` cell.
-    pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
+    pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_core::Utf8Bytes<'static>> {
         Ok(self.to_bun_string(global)?.into_utf8())
     }
     pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
@@ -1209,7 +1209,7 @@ impl JSValue {
         self,
         global: &JSGlobalObject,
         property: impl AsRef<[u8]>,
-    ) -> JsResult<Option<bun_core::ZigStringSlice>> {
+    ) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
         let property = property.as_ref();
         match self.get(global, property)? {
             Some(v) if !v.is_undefined_or_null() => {
@@ -1417,7 +1417,7 @@ impl JSValue {
         Ok(len.clamp(0.0, I52_MAX as f64) as u64)
     }
     /// Set a property. Key dispatch goes through the [`PutKey`] trait so
-    /// callers may pass `&[u8]`, `ZigString`, `&ZigString`, `bun.String`, or
+    /// callers may pass `&[u8]`, `EncodedSlice`, `&EncodedSlice`, `bun.String`, or
     /// `&bun.String`.
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
@@ -1429,7 +1429,7 @@ impl JSValue {
         key: impl AsRef<[u8]>,
         value: JSValue,
     ) {
-        let zs = bun_core::ZigString::init(key.as_ref());
+        let zs = bun_core::EncodedSlice::init(key.as_ref());
         JSC__JSValue__putNonEnumerable(self, global, &zs, value)
     }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
@@ -1470,7 +1470,7 @@ impl JSValue {
     }
     /// `JSValue.deleteProperty` — delete an own property by name.
     pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> bool {
-        let zs = bun_core::ZigString::init(key.as_ref());
+        let zs = bun_core::EncodedSlice::init(key.as_ref());
         JSC__JSValue__deleteProperty(self, global, &zs)
     }
     /// `JSValue.putMayBeIndex` — same as [`put`] but accepts
@@ -1836,17 +1836,17 @@ impl<T: FromAny> FromAny for Option<T> {
 }
 
 /// Dispatch trait for [`JSValue::put`]'s key parameter: routes
-/// `ZigString`/`bun.String`/byte-slice keys to the matching FFI.
+/// `EncodedSlice`/`bun.String`/byte-slice keys to the matching FFI.
 pub trait PutKey {
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
 }
-impl PutKey for &bun_core::ZigString {
+impl PutKey for &bun_core::EncodedSlice<'_> {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
         JSC__JSValue__put(target, global, self, value)
     }
 }
-impl PutKey for bun_core::ZigString {
+impl PutKey for bun_core::EncodedSlice<'_> {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
         (&self).put(target, global, value)
@@ -1867,7 +1867,7 @@ impl PutKey for bun_core::String {
 impl PutKey for &[u8] {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        let zs = bun_core::ZigString::init(self);
+        let zs = bun_core::EncodedSlice::init(self);
         (&zs).put(target, global, value)
     }
 }
@@ -1953,8 +1953,8 @@ unsafe extern "C" {
     safe fn JSC__JSValue__createEmptyObjectWithNullPrototype(global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__createObject2(
         global: &JSGlobalObject,
-        key1: &bun_core::ZigString,
-        key2: &bun_core::ZigString,
+        key1: &bun_core::EncodedSlice,
+        key2: &bun_core::EncodedSlice,
         value1: JSValue,
         value2: JSValue,
     ) -> JSValue;
@@ -1983,8 +1983,8 @@ unsafe extern "C" {
     safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
     fn JSC__JSValue__fromEntries(
         global: *const JSGlobalObject,
-        keys: *mut bun_core::ZigString,
-        values: *mut bun_core::ZigString,
+        keys: *mut bun_core::EncodedSlice,
+        values: *mut bun_core::EncodedSlice,
         strings_count: usize,
         clone: bool,
     ) -> JSValue;
@@ -2045,19 +2045,19 @@ unsafe extern "C" {
     safe fn JSC__JSValue__put(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::ZigString,
+        key: &bun_core::EncodedSlice,
         value: JSValue,
     );
     safe fn JSC__JSValue__putNonEnumerable(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::ZigString,
+        key: &bun_core::EncodedSlice,
         value: JSValue,
     );
     safe fn JSC__JSValue__deleteProperty(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::ZigString,
+        key: &bun_core::EncodedSlice,
     ) -> bool;
     safe fn JSC__JSValue__putBunString(
         this: JSValue,
@@ -2207,7 +2207,7 @@ pub type ForEachCallback =
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
-    key: *mut bun_core::ZigString,
+    key: *mut bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
     is_private_symbol: bool,

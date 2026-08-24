@@ -10,8 +10,6 @@ use super::protocol_jsc as protocol;
 use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
 
-type Slice = bun_jsc::ZigStringSlice;
-
 /// Reinterpret an ASCII byte-string literal as `&str` for the
 /// `throw_invalid_argument_type` family (which take `&'static str`).
 /// SAFETY: every command/method name passed to the `cmd_*!` macros is a
@@ -466,7 +464,7 @@ impl JSValkeyClient {
             args.push(v);
         }
 
-        let cmd_str = command.to_utf8_without_ref();
+        let cmd_str = command.to_utf8();
         let mut cmd = Command {
             command: cmd_str.slice(),
             args: CommandArgs::Args(&args),
@@ -1023,9 +1021,9 @@ impl JSValkeyClient {
         let field = frame.argument(1).to_bun_string(global)?;
         let value = frame.argument(2).to_bun_string(global)?;
 
-        let key_slice = key.to_utf8_without_ref();
-        let field_slice = field.to_utf8_without_ref();
-        let value_slice = value.to_utf8_without_ref();
+        let key_slice = key.to_utf8();
+        let field_slice = field.to_utf8();
+        let value_slice = value.to_utf8();
 
         send_cmd(
             this,
@@ -1051,9 +1049,9 @@ impl JSValkeyClient {
         let field = frame.argument(1).to_bun_string(global)?;
         let value = frame.argument(2).to_bun_string(global)?;
 
-        let key_slice = key.to_utf8_without_ref();
-        let field_slice = field.to_utf8_without_ref();
-        let value_slice = value.to_utf8_without_ref();
+        let key_slice = key.to_utf8();
+        let field_slice = field.to_utf8();
+        let value_slice = value.to_utf8();
 
         send_cmd(
             this,
@@ -1078,7 +1076,7 @@ impl JSValkeyClient {
 
         let second_arg = frame.argument(1);
 
-        let mut args: Vec<Slice> = Vec::new();
+        let mut args: Vec<bun_jsc::Utf8Bytes<'_>> = Vec::new();
 
         args.push(key.to_utf8());
 
@@ -1100,11 +1098,10 @@ impl JSValkeyClient {
             args.ensure_total_capacity(1 + object_iter.len * 2);
 
             while let Some((field_name, value)) = object_iter.next()? {
-                let field_slice = field_name.to_utf8();
-                args.push(field_slice);
+                args.push(field_name.to_utf8().into_owned());
 
                 let value_str = value.to_bun_string(global)?;
-                args.push(value_str.to_utf8());
+                args.push(value_str.into_utf8());
             }
         } else if second_arg.is_array() {
             // Pattern 3: Array - hmset(key, [field, value, ...])
@@ -1119,7 +1116,7 @@ impl JSValkeyClient {
 
             while let Some(field_js) = iter.next()? {
                 let field_str = field_js.to_bun_string(global)?;
-                args.push(field_str.to_utf8());
+                args.push(field_str.into_utf8());
 
                 let Some(value_js) = iter.next()? else {
                     return Err(global.throw(format_args!(
@@ -1127,7 +1124,7 @@ impl JSValkeyClient {
                     )));
                 };
                 let value_str = value_js.to_bun_string(global)?;
-                args.push(value_str.to_utf8());
+                args.push(value_str.into_utf8());
             }
         } else {
             // Pattern 2: Variadic - hset(key, field, value, ...)
@@ -1150,7 +1147,7 @@ impl JSValkeyClient {
             let mut i: u32 = 1;
             while i < args_count {
                 let arg_str = frame.argument(i as usize).to_bun_string(global)?;
-                args.push(arg_str.to_utf8());
+                args.push(arg_str.into_utf8());
                 i += 1;
             }
         }

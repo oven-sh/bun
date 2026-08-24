@@ -2568,7 +2568,7 @@ fn transpile_source_code_inner(
                 // are field-identical (they could be collapsed into one type).
                 // The resolver entry path interns into
                 // `'static` BSSStringList stores, but the `Bun__transpileFile`
-                // entry path borrows a heap `Utf8Slice` that drops at frame
+                // entry path borrows a heap `Utf8Bytes` that drops at frame
                 // exit — so re-intern into the same `FilenameStore` here
                 // instead of transmuting the lifetime (PORTING.md §Forbidden).
                 //
@@ -3707,7 +3707,7 @@ fn __bun_fetch_builtin_module(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
 ) -> Option<ResolvedSource> {
-    let spec_utf8 = specifier.to_utf8_without_ref();
+    let spec_utf8 = specifier.to_utf8();
     let spec = spec_utf8.slice();
 
     // ── HardcodedModule fast path ───────────────────────────────────────
@@ -4188,8 +4188,8 @@ pub unsafe extern "C" fn Bun__transpileFile(
         l.msgs.clear();
     });
 
-    let _specifier = specifier.to_utf8_without_ref();
-    let referrer_slice = referrer.to_utf8_without_ref();
+    let _specifier = specifier.to_utf8();
+    let referrer_slice = referrer.to_utf8();
     let type_attribute_str: Option<&[u8]> = type_attribute.and_then(|s| s.as_utf8());
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
@@ -4506,7 +4506,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
     global: &JSGlobalObject,
     specifier_str: &bun_core::String,
     referrer_str: &bun_core::String,
-    source_code: &bun_core::ZigString,
+    source_code: &bun_core::EncodedSlice,
     loader_: bun_options_types::schema::api::Loader,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
@@ -4521,10 +4521,10 @@ pub extern "C" fn Bun__transpileVirtualModule(
     // Note: spec asserted `jsc_vm.plugin_runner != null` then dropped the
     // assert ("not required for build.module()") — keep parity (no assert).
 
-    let specifier_slice = specifier_str.to_utf8_without_ref();
+    let specifier_slice = specifier_str.to_utf8();
     let specifier = specifier_slice.slice();
-    let source_code_slice = source_code.to_slice();
-    let referrer_slice = referrer_str.to_utf8_without_ref();
+    let source_code_slice = source_code.to_utf8();
+    let referrer_slice = referrer_str.to_utf8();
 
     let virtual_source = bun_ast::Source::init_path_string(specifier, source_code_slice.slice());
     let mut log = bun_ast::Log::init();
@@ -4742,7 +4742,7 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
     bun_jsc::mark_binding();
-    let spec_utf8 = specifier.to_utf8_without_ref();
+    let spec_utf8 = specifier.to_utf8();
     if let Some((_, tag)) = bun_jsc::module_loader::exposed_internal_tag(spec_utf8.slice()) {
         // The `InternalModuleRegistryFlag` consumer reads only `tag`.
         *ret = ErrorableResolvedSource::ok(ResolvedSource {

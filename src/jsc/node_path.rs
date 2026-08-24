@@ -2,12 +2,12 @@
 //!
 //! LAYERING: defined at the
 //! `bun_jsc` tier because every variant payload (`CowSlice<u8>`, `Buffer` =
-//! `MarkedArrayBuffer`, `SliceWithUnderlyingString`, `ZigStringSlice`, `Fd`)
+//! `MarkedArrayBuffer`, `SliceWithUnderlyingString`, `Utf8Bytes`, `Fd`)
 //! is already reachable from this crate. `bun_runtime::node::types`
 //! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
 //! `from_js_with_allocator`) on top via inherent impls in that crate.
 
-use bun_core::{SliceWithUnderlyingString, ZigStringSlice};
+use bun_core::{SliceWithUnderlyingString, Utf8Bytes};
 use bun_ptr::cow_slice::CowSlice;
 use bun_sys::Fd;
 
@@ -103,7 +103,7 @@ pub enum PathLike {
     Buffer(MarkedArrayBuffer),
     SliceWithUnderlyingString(SliceWithUnderlyingString),
     ThreadsafeString(SliceWithUnderlyingString),
-    EncodedSlice(ZigStringSlice),
+    EncodedSlice(Utf8Bytes<'static>),
 }
 
 impl Default for PathLike {
@@ -133,25 +133,9 @@ impl Clone for PathLike {
                 owns_buffer: false,
                 pinned: false,
             }),
-            Self::SliceWithUnderlyingString(s) => {
-                // `dupe_ref()` alone leaves `utf8` empty (lib.rs:1603) — a
-                // cloned PathLike would then return b"" from `slice()`. Clone
-                // the utf8 view explicitly (bumps a WTF ref / copies an owned
-                // buffer) alongside the bumped `underlying` ref.
-                Self::SliceWithUnderlyingString(SliceWithUnderlyingString {
-                    utf8: s.utf8.clone_ref(),
-                    underlying: s.underlying.clone(),
-                    #[cfg(debug_assertions)]
-                    did_report_extra_memory_debug: s.did_report_extra_memory_debug,
-                })
-            }
-            Self::ThreadsafeString(s) => Self::ThreadsafeString(SliceWithUnderlyingString {
-                utf8: s.utf8.clone_ref(),
-                underlying: s.underlying.clone(),
-                #[cfg(debug_assertions)]
-                did_report_extra_memory_debug: s.did_report_extra_memory_debug,
-            }),
-            Self::EncodedSlice(s) => Self::EncodedSlice(s.clone_ref()),
+            Self::SliceWithUnderlyingString(s) => Self::SliceWithUnderlyingString(s.clone()),
+            Self::ThreadsafeString(s) => Self::ThreadsafeString(s.clone()),
+            Self::EncodedSlice(s) => Self::EncodedSlice(s.clone()),
         }
     }
 }
@@ -170,8 +154,7 @@ impl Drop for PathLike {
             }
             // `SliceWithUnderlyingString` derefs `underlying` in its own `Drop`.
             Self::SliceWithUnderlyingString(_) | Self::ThreadsafeString(_) => {}
-            // `ZigStringSlice` releases its WTF ref / owned buffer in its own
-            // `Drop`.
+            // `Utf8Bytes` releases its WTF ref / owned buffer in its own `Drop`.
             Self::EncodedSlice(_) => {}
         }
     }

@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{
     SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
@@ -442,7 +442,7 @@ impl Scope {
 use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 pub struct SocketConfig {
-    pub(crate) hostname_or_unix: ZigStringSlice,
+    pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
     pub(crate) ssl: Option<SSLConfig>,
@@ -500,7 +500,7 @@ impl SocketConfig {
                 GeneratedTls::Object(ssl) => SSLConfig::from_generated(vm, global, ssl)?,
             };
             break 'blk SocketConfig {
-                hostname_or_unix: ZigStringSlice::empty(),
+                hostname_or_unix: Utf8Bytes::empty(),
                 port: None,
                 fd: generated.fd.map(|v| {
                     #[cfg(windows)]
@@ -542,21 +542,21 @@ impl SocketConfig {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
             }
-            result.hostname_or_unix = unix.to_utf8();
+            result.hostname_or_unix = unix.clone().into_utf8();
             let slice = result.hostname_or_unix.slice();
             if slice.starts_with(b"file://")
                 || slice.starts_with(b"unix://")
                 || slice.starts_with(b"sock://")
             {
                 let without_prefix = slice[7..].to_vec();
-                result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
+                result.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
             }
         } else if let Some(hostname) = generated.hostname.as_ref() {
             if hostname.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
             }
-            result.hostname_or_unix = hostname.to_utf8();
+            result.hostname_or_unix = hostname.clone().into_utf8();
             let slice = result.hostname_or_unix.slice();
             if bun_core::strings::contains_char(slice, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(

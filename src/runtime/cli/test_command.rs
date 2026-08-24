@@ -12,11 +12,10 @@ use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 // `set_time_zone` / `delete_module_registry_entry` take the JSC-side
-// `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
+// `EncodedSlice` (repr(C)-identical to `bun_core::EncodedSlice`, but with the
 // JSGlobalObject FFI methods); import that one so the call sites type-check.
-use bun_core::ZigStringSlice;
 use bun_core::strings;
-use bun_jsc::zig_string::ZigString;
+use bun_jsc::encoded_slice::EncodedSlice;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
@@ -1815,8 +1814,11 @@ impl CommandLineReporter {
                     // Ensure the directory exists
                     let mut fs = crate::node::fs::NodeFS::default();
                     let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-                        path: crate::node::PathLike::EncodedSlice(
-                            ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
+                        path: crate::node::PathLike::String(
+                            bun_ptr::cow_slice::CowSlice::init_unchecked(
+                                &opts.reports_directory,
+                                false,
+                            ),
                         ),
                         always_return_none: true,
                         recursive: true,
@@ -2337,7 +2339,7 @@ impl TestCommand {
         }
 
         if !tz_name.is_empty() {
-            _ = vm.global().set_time_zone(&ZigString::init(tz_name));
+            _ = vm.global().set_time_zone(&EncodedSlice::init(tz_name));
         }
 
         if ctx.test_options.test_worker {
@@ -3218,7 +3220,7 @@ impl TestCommand {
             // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
                 vm.clear_entry_point()?;
-                let entry = ZigString::init(file_path);
+                let entry = EncodedSlice::init(file_path);
                 vm.global().delete_module_registry_entry(&entry)?;
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.

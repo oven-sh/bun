@@ -51,7 +51,7 @@ use std::io::Write as _;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
+use bun_core::{String as BunString, Tag as BunStringTag, Utf8Bytes};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
@@ -451,7 +451,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Custom Hostname
     let mut hostname: Option<Box<[u8]>> = None;
     let mut range: Option<bun_core::ZBox> = None;
-    let mut unix_socket_path: ZigStringSlice = ZigStringSlice::empty();
+    let mut unix_socket_path: Utf8Bytes<'static> = Utf8Bytes::empty();
 
     // `url_proxy_buffer` gets reassigned while `url`/`proxy`
     // still point into it (or into the buffer about to replace it). Detach the
@@ -560,7 +560,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if url_str.has_prefix_comptime(b"data:") {
-        let url_slice = url_str.to_utf8_without_ref();
+        let url_slice = url_str.to_utf8();
         // `defer url_slice.deinit()` → Drop.
 
         let data_url = match DataURL::parse_without_check(url_slice.slice()) {
@@ -576,7 +576,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         };
         let mut data_url = data_url;
-        data_url.url = url_str;
+        data_url.url = url_str.clone();
         return Ok(data_url_response(data_url, global_this));
     }
 
@@ -1257,7 +1257,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
-                if http::upgrade_header_is_not_h2(upgrade_.to_slice().slice()) {
+                if http::upgrade_header_is_not_h2(upgrade_.to_utf8().slice()) {
                     upgraded_connection = true;
                 }
             }
@@ -1416,7 +1416,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `crate::webcore::node_types` stub (until it's swapped to a
             // re-export of `crate::node::types`); construct that variant here.
             let mut pathlike = crate::webcore::node_types::PathOrFileDescriptor::Path(
-                crate::webcore::node_types::PathLike::EncodedSlice(ZigStringSlice::init_owned(
+                crate::webcore::node_types::PathLike::EncodedSlice(Utf8Bytes::Owned(
                     temp_file_path.to_vec(),
                 )),
             );
@@ -1950,7 +1950,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         } else {
             jsc::strong::Optional::create(check_server_identity, global_this)
         },
-        unix_socket_path: core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
+        unix_socket_path: core::mem::replace(&mut unix_socket_path, Utf8Bytes::empty()),
     };
 
     let _ = FetchTasklet::queue(

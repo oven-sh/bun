@@ -2255,13 +2255,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let mut to_build = core::mem::take(&mut self.config.user_routes_to_build);
             let len = to_build.len();
             let _old = core::mem::replace(&mut self.user_routes, Vec::with_capacity(len));
-            // Scratch arrays for the C++ factory. `ZigString` borrows the
-            // route-path heap bytes; those bytes move (by pointer) into
-            // `self.user_routes` below and stay live across the FFI call.
-            let mut paths: Vec<bun_core::ZigString> = Vec::with_capacity(len);
             let mut callbacks: Vec<JSValue> = Vec::with_capacity(len);
             for (i, builder) in to_build.iter_mut().enumerate() {
-                paths.push(bun_core::ZigString::init(builder.route.path.as_bytes()));
                 callbacks.push(builder.callback.get());
                 self.user_routes.push(UserRoute {
                     id: i as u32,
@@ -2269,6 +2264,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     route: core::mem::take(&mut builder.route),
                 });
             }
+            // Scratch array for the C++ factory; borrows the route paths now
+            // owned by `self.user_routes`.
+            let mut paths: Vec<bun_core::EncodedSlice<'_>> = self
+                .user_routes
+                .iter()
+                .map(|r| bun_core::EncodedSlice::init(r.route.path.as_bytes()))
+                .collect();
             // `global_this` is the live VM global; scratch slices are valid for
             // `len` elements; C++ copies paths/callbacks into the returned JS
             // object so the borrows end at return.

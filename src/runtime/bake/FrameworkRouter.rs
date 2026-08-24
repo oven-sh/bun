@@ -1785,7 +1785,7 @@ impl JSFrameworkRouter {
             )));
         }
 
-        let root: bun_core::zig_string::Slice = match opts.get(global, "root")? {
+        let root: bun_core::Utf8Bytes = match opts.get(global, "root")? {
             Some(v) if !v.is_undefined_or_null() => v.to_slice(global)?,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };

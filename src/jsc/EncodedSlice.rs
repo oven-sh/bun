@@ -1,25 +1,16 @@
-//! Prefer using bun.String instead of ZigString in new code.
-//!
-//! DEDUP NOTE: this module formerly defined a second `#[repr(C)] struct ZigString`
-//! mirror with ~70 inherent methods that duplicated `bun_core::ZigString`. The
-//! struct definition and all pure (non-JSC) methods now live canonically in
-//! `bun_core`; this file re-exports the type and surfaces the JSC-only
-//! conversions (`to_js`, `to_*_error_instance`, `to_external_value`, …) via the
-//! [`crate::ZigStringJsc`] extension trait. Both crates share the identical
-//! `#[repr(C)] { *const u8, usize }` layout, so the `extern "C"` `ZigString__*`
-//! shims remain ABI-valid.
+//! JSC-side helpers for `bun_core::EncodedSlice` (`to_external_u16`, the
+//! `EncodedSlice__free*` callbacks); the conversions live on
+//! [`crate::EncodedSliceJsc`]. Prefer `bun_core::String` in new code.
 
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
 
-/// Canonical `ZigString` lives in `bun_core`; re-exported here so existing
-/// `bun_jsc::zig_string::ZigString` import paths keep resolving.
-pub use bun_core::ZigString;
+pub use bun_core::EncodedSlice;
 
 unsafe extern "C" {
-    fn ZigString__toExternalU16(
+    fn EncodedSlice__toExternalU16(
         ptr: *const u16,
         len: usize,
         global: *const JSGlobalObject,
@@ -50,24 +41,24 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
     }
     // SAFETY: ptr/len describe a globally-allocated UTF-16 buffer; ownership
     // transfers to JSC (freed via the external-string finalizer).
-    unsafe { ZigString__toExternalU16(ptr, len, global) }
+    unsafe { EncodedSlice__toExternalU16(ptr, len, global) }
 }
 
 /// # Safety
 /// `raw` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
+unsafe extern "C" fn EncodedSlice__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
     let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
         return;
     };
     // The buffer is always owned by the global allocator. Verified:
     // no C++ call site passes a non-default allocator — the only reference to
     // this symbol outside this file is the declaration in
-    // headers-handwritten.h (helpers.h frees via `ZigString__freeGlobal`).
+    // headers-handwritten.h (helpers.h frees via `EncodedSlice__freeGlobal`).
     let _ = allocator_;
     // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
     let s = unsafe { bun_core::ffi::slice(raw, len) };
-    let ptr = ZigString::init(s).slice().as_ptr();
+    let ptr = EncodedSlice::init(s).slice().as_ptr();
     if bun_alloc::USE_MIMALLOC {
         // SAFETY: read-only heap-region probe.
         debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
@@ -80,10 +71,10 @@ unsafe extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mu
 /// # Safety
 /// `ptr` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
+unsafe extern "C" fn EncodedSlice__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
     let s = unsafe { bun_core::ffi::slice(ptr, len) };
-    let untagged = ZigString::init(s)
+    let untagged = EncodedSlice::init(s)
         .slice()
         .as_ptr()
         .cast_mut()

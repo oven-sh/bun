@@ -43,7 +43,7 @@ impl ScanOpts {
         }
 
         let cwd_str: Box<[u8]> = 'cwd_str: {
-            let cwd_utf8 = cwd_string.to_utf8_without_ref();
+            let cwd_utf8 = cwd_string.to_utf8();
 
             if cwd_utf8.slice().len() > MAX_PATH_BYTES {
                 return Err(global_this.throw(format_args!(

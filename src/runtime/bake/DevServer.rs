@@ -2623,6 +2623,7 @@ impl DevServer {
         } else {
             JSValue::NULL
         };
+        drop(url);
 
         let server_request_callback = self
             .server_fetch_function_callback

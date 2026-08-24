@@ -3,8 +3,8 @@
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::Output;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::encoded_slice::EncodedSlice;
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
@@ -385,7 +385,7 @@ pub mod prompt {
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        let mut result = ZigString::init(&input);
+        let mut result = EncodedSlice::init(&input);
         result.mark_utf8();
 
         // 9. Invoke WebDriver BiDi user prompt closed with this, false if

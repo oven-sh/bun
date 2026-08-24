@@ -3,14 +3,14 @@ use core::cell::Cell;
 use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
-use bun_core::{String as BunString, ZigStringSlice};
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    SysErrorJsc, SystemError,
+    CallFrame, JSGlobalObject, JSStringView, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
+    StringJsc, SysErrorJsc, SystemError,
 };
 use bun_ptr::BackRef;
 
@@ -1404,9 +1404,24 @@ impl UDPSocket {
         // pointers stay valid. An ArrayBuffer detached during phase 1 now
         // reports a zero-length slice rather than a dangling pointer.
         let empty: &'static [u8] = b"";
-        // Collect the slices into a Vec so the borrowed bytes live until
-        // `socket.send()`.
-        let mut string_slices: Vec<ZigStringSlice> = Vec::with_capacity(len);
+        // The views and their UTF-8 bytes live in these Vecs until
+        // `socket.send()`. Phase 1 stored the primitive JSString; `as_string()`
+        // is a plain cast (no `toPrimitive`, no user JS).
+        let mut string_views: Vec<Option<JSStringView<'_>>> = Vec::with_capacity(len);
+        for val in payload_vals.iter() {
+            string_views.push(if val.is_string() {
+                Some(val.as_string().view(global_this)?)
+            } else {
+                None
+            });
+        }
+        let string_slices: Vec<Utf8Bytes<'_>> = string_views
+            .iter()
+            .map(|view| {
+                view.as_ref()
+                    .map_or(Utf8Bytes::EMPTY, JSStringView::to_utf8)
+            })
+            .collect();
         for (slice_idx, val) in payload_vals.iter().enumerate() {
             // Hoisted so the returned `slice()` borrow lives past the `'brk` block
             // (the underlying buffer is GC-rooted via `payload_vals`; the
@@ -1423,10 +1438,7 @@ impl UDPSocket {
                     }
                     break 'brk array_buffer.slice();
                 }
-                // Phase 1 stored the primitive JSString; `as_string()` is a
-                // plain cast (no `toPrimitive`, no user JS).
-                string_slices.push(val.as_string().view(global_this)?.to_utf8());
-                break 'brk string_slices.last().unwrap().slice();
+                break 'brk string_slices[slice_idx].slice();
             };
             payloads[slice_idx] = slice.as_ptr();
             lens[slice_idx] = slice.len();
@@ -1505,8 +1517,8 @@ impl UDPSocket {
         };
 
         let payload_arg = arguments[0];
-        let mut payload_str = ZigStringSlice::empty();
         let payload_view;
+        let mut payload_str = Utf8Bytes::empty();
         // Hoisted so the `slice()` borrow outlives the `'brk` block; the
         // backing store is kept alive by `payload_arg` on the JS stack.
         let array_buffer = payload_arg.as_array_buffer(global_this);

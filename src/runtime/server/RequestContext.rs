@@ -2514,7 +2514,7 @@ where
                         // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
                         // FetchHeaders, freeing that StringImpl before we write it. Clone so
                         // the bytes outlive renderMetadata().
-                        let transfer_encoding_str = transfer_encoding.to_slice_clone();
+                        let transfer_encoding_str = transfer_encoding.to_utf8().into_owned();
                         this.render_metadata();
                         resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
                         this.end_without_body(this.should_close_connection());
@@ -2524,7 +2524,7 @@ where
                 if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
                     // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                     // and deref the FetchHeaders, freeing the borrowed StringImpl.
-                    let content_length_str = content_length.to_slice();
+                    let content_length_str = content_length.to_utf8();
                     let len: usize = HTTP::parse_content_length(content_length_str.slice());
                     drop(content_length_str);
 
@@ -3449,7 +3449,7 @@ where
                     let s = response
                         .get_init_headers_mut()?
                         .fast_get(jsc::HTTPHeaderName::ContentLength)?
-                        .to_slice();
+                        .to_utf8();
                     bun_core::parse_int::<u64>(s.slice(), 10).ok()
                 })
                 .flatten();
@@ -4769,9 +4769,9 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
             if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
-                let content_slice = content.to_slice();
+                let content_slice = content.to_utf8();
                 // Dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = matches!(content_slice, bun_core::ZigStringSlice::Owned(_));
+                let dupe = matches!(content_slice, bun_core::Utf8Bytes::Owned(_));
                 let mt = MimeType::init(
                     content_slice.slice(),
                     dupe,

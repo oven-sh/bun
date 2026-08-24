@@ -173,7 +173,7 @@ pub(crate) fn delete(
 
 pub(crate) fn list_objects(
     this: &S3Credentials,
-    // The struct owns `Utf8Slice`s and is not
+    // The struct owns `Utf8Bytes`s and is not
     // `Clone`, but this fn only reads fields synchronously to build the
     // search-params string — borrow so the caller (Store::S3::
     // list_objects) can retain ownership in its async Wrapper for `Drop`.

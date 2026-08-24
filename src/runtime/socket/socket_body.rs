@@ -5,9 +5,9 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
 use bun_io::KeepAlive;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+use bun_jsc::encoded_slice::EncodedSlice;
 use bun_ptr::IntrusiveRc;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
@@ -190,7 +190,7 @@ extern "C" fn select_alpn_callback(
             } else {
                 // SAFETY: BoringSSL hands back a NUL-terminated name.
                 let name = unsafe { core::ffi::CStr::from_ptr(servername_ptr) };
-                ZigString::init(name.to_bytes()).to_js(&global)
+                EncodedSlice::init(name.to_bytes()).to_js(&global)
             };
             let result =
                 match callback.call(&global, this_value, &[this_value, servername_js, buffer]) {

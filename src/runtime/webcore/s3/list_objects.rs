@@ -3,21 +3,19 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
 use super::s3::xml_response;
-use bun_core::ZigStringSlice as Utf8Slice;
+use bun_core::Utf8Bytes;
 
 pub struct S3ListObjectsOptions {
-    // Each `Utf8Slice` owns (or ref-holds) its backing storage; readers go
-    // through `.slice()`.
-    pub(crate) continuation_token: Option<Utf8Slice>,
-    pub(crate) delimiter: Option<Utf8Slice>,
-    pub(crate) encoding_type: Option<Utf8Slice>,
+    pub(crate) continuation_token: Option<Utf8Bytes<'static>>,
+    pub(crate) delimiter: Option<Utf8Bytes<'static>>,
+    pub(crate) encoding_type: Option<Utf8Bytes<'static>>,
     pub(crate) fetch_owner: Option<bool>,
     pub(crate) max_keys: Option<i64>,
-    pub(crate) prefix: Option<Utf8Slice>,
-    pub(crate) start_after: Option<Utf8Slice>,
+    pub(crate) prefix: Option<Utf8Bytes<'static>>,
+    pub(crate) start_after: Option<Utf8Bytes<'static>>,
 }
 
-// Each Utf8Slice field cleans up via Drop, so no explicit `impl Drop` is
+// Each Utf8Bytes field cleans up via Drop, so no explicit `impl Drop` is
 // needed here.
 
 struct ObjectOwner {

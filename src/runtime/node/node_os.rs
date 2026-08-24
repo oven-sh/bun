@@ -28,16 +28,16 @@ pub(crate) fn freemem() -> u64 {
 }
 
 // ─── gated: JSC bindings + platform syscall bodies ────────────────────────
-// Every fn body builds JS objects (`JSValue::create_*`, `ZigString::*::to_js`,
+// Every fn body builds JS objects (`JSValue::create_*`, `EncodedSlice::*::to_js`,
 // `global.throw_value`) or reaches `bun_sys::posix::sysctl_read*` /
 // `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
 // CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
 
 mod _impl {
     use super::*;
+    use bun_core::EncodedSlice;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
-    use bun_core::ZigString;
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
@@ -77,16 +77,16 @@ mod _impl {
         }
     }
 
-    /// `bun_core::ZigString` (the `bun_string` crate type) is `repr(C)`-identical
-    /// to the JSC-side `ZigString` but lacks `with_encoding`/`to_js`. Provide
+    /// `bun_core::EncodedSlice` (the `bun_string` crate type) is `repr(C)`-identical
+    /// to the JSC-side `EncodedSlice` but lacks `with_encoding`/`to_js`. Provide
     /// them locally.
-    trait ZigStringJs {
-        fn with_encoding(self) -> ZigString;
+    trait EncodedSliceJs: Sized {
+        fn with_encoding(self) -> Self;
         fn to_js(&self, global: &JSGlobalObject) -> JSValue;
     }
-    impl ZigStringJs for ZigString {
+    impl EncodedSliceJs for EncodedSlice<'_> {
         #[inline]
-        fn with_encoding(mut self) -> ZigString {
+        fn with_encoding(mut self) -> Self {
             // If not already 16-bit, mark UTF-8.
             if !self.is_16bit() {
                 self.mark_utf8();
@@ -98,9 +98,12 @@ mod _impl {
             // Signature matches `bun_jsc`'s decl exactly (avoids
             // `clashing_extern_declarations`); both params are non-null refs.
             unsafe extern "C" {
-                safe fn ZigString__toValueGC(arg0: &ZigString, arg1: &JSGlobalObject) -> JSValue;
+                safe fn EncodedSlice__toValueGC(
+                    arg0: &EncodedSlice,
+                    arg1: &JSGlobalObject,
+                ) -> JSValue;
             }
-            ZigString__toValueGC(self, global)
+            EncodedSlice__toValueGC(self, global)
         }
     }
 
@@ -116,7 +119,7 @@ mod _impl {
     // public surface: `js*` extern pointers + `create*Callback` wrappers
     // + the `UserInfoOptions` dictionary.
     pub mod gen_ {
-        use super::{BunString, CallFrame, JSGlobalObject, JSValue, ZigString};
+        use super::{BunString, CallFrame, EncodedSlice, JSGlobalObject, JSValue};
         use bun_jsc::host_fn;
 
         // C++-side host fns (GeneratedBindings.cpp). `bindgen.ts` emits these as
@@ -147,7 +150,7 @@ mod _impl {
             pub fn $fn_name(global: &JSGlobalObject) -> JSValue {
                 host_fn::new_runtime_function(
                     global,
-                    Some(&ZigString::static_($js_name)),
+                    Some(&EncodedSlice::static_($js_name)),
                     $argc,
                     $sym,
                     false,
@@ -305,7 +308,7 @@ mod _impl {
                             cpu.put(
                                 global_this,
                                 b"model",
-                                ZigString::static_("unknown")
+                                EncodedSlice::static_("unknown")
                                     .with_encoding()
                                     .to_js(global_this),
                             );
@@ -383,7 +386,7 @@ mod _impl {
                         cpu.put(
                             global_this,
                             b"model",
-                            ZigString::static_("unknown")
+                            EncodedSlice::static_("unknown")
                                 .with_encoding()
                                 .to_js(global_this),
                         );
@@ -402,7 +405,7 @@ mod _impl {
                     cpu.put(
                         global_this,
                         b"model",
-                        ZigString::init(model_name)
+                        EncodedSlice::init(model_name)
                             .with_encoding()
                             .to_js(global_this),
                     );
@@ -414,7 +417,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    ZigString::static_("unknown")
+                    EncodedSlice::static_("unknown")
                         .with_encoding()
                         .to_js(global_this),
                 );
@@ -428,7 +431,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    ZigString::static_("unknown")
+                    EncodedSlice::static_("unknown")
                         .with_encoding()
                         .to_js(global_this),
                 );
@@ -484,11 +487,11 @@ mod _impl {
 
         let mut model_buf = [0u8; 512];
         let model = if bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_buf[..]).is_ok() {
-            ZigString::init(bun_core::slice_to_nul(&model_buf))
+            EncodedSlice::init(bun_core::slice_to_nul(&model_buf))
                 .with_encoding()
                 .to_js(global_this)
         } else {
-            ZigString::static_("unknown")
+            EncodedSlice::static_("unknown")
                 .with_encoding()
                 .to_js(global_this)
         };
@@ -579,7 +582,7 @@ mod _impl {
         // NOTE: sysctlbyname doesn't update len if it was large enough, so we
         // still have to find the null terminator.  All cpus can share the same
         // model name.
-        let model_name = ZigString::init(bun_core::slice_to_nul(&model_name_buf))
+        let model_name = EncodedSlice::init(bun_core::slice_to_nul(&model_name_buf))
             .with_encoding()
             .to_js(global_this);
 
@@ -663,7 +666,7 @@ mod _impl {
             cpu.put(
                 global_this,
                 b"model",
-                ZigString::init(model).with_encoding().to_js(global_this),
+                EncodedSlice::init(model).with_encoding().to_js(global_this),
             );
             cpu.put(
                 global_this,
@@ -815,7 +818,7 @@ mod _impl {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
             }
 
-            return Ok(ZigString::init(b"unknown").with_encoding().to_js(global));
+            return Ok(EncodedSlice::init(b"unknown").with_encoding().to_js(global));
         }
         #[cfg(not(windows))]
         {
@@ -825,7 +828,7 @@ mod _impl {
             } else {
                 b"unknown"
             };
-            return Ok(ZigString::init(s).with_encoding().to_js(global));
+            return Ok(EncodedSlice::init(s).with_encoding().to_js(global));
         }
     }
 
@@ -1049,13 +1052,15 @@ mod _impl {
                     };
                     // The full cidr value is the address + the suffix
                     let cidr_str = &buf[start..start + addr_len + suffix_len];
-                    cidr = ZigString::init(cidr_str).with_encoding().to_js(global_this);
+                    cidr = EncodedSlice::init(cidr_str)
+                        .with_encoding()
+                        .to_js(global_this);
                 }
 
                 interface.put(
                     global_this,
                     b"address",
-                    ZigString::init(&buf[start..start + addr_len])
+                    EncodedSlice::init(&buf[start..start + addr_len])
                         .with_encoding()
                         .to_js(global_this),
                 );
@@ -1069,7 +1074,7 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"netmask",
-                    ZigString::init(str).with_encoding().to_js(global_this),
+                    EncodedSlice::init(str).with_encoding().to_js(global_this),
                 );
             }
 
@@ -1080,7 +1085,7 @@ mod _impl {
                 match addr.family() as c_int {
                     libc::AF_INET => global_this.common_strings().ipv4(),
                     libc::AF_INET6 => global_this.common_strings().ipv6(),
-                    _ => ZigString::static_("unknown").to_js(global_this),
+                    _ => EncodedSlice::static_("unknown").to_js(global_this),
                 },
             );
 
@@ -1138,7 +1143,7 @@ mod _impl {
                         interface.put(
                             global_this,
                             b"mac",
-                            ZigString::init(mac).with_encoding().to_js(global_this),
+                            EncodedSlice::init(mac).with_encoding().to_js(global_this),
                         );
                     } else {
                         let mac_buf = bun_fmt::mac_address_lower(
@@ -1147,7 +1152,9 @@ mod _impl {
                         interface.put(
                             global_this,
                             b"mac",
-                            ZigString::init(&mac_buf).with_encoding().to_js(global_this),
+                            EncodedSlice::init(&mac_buf)
+                                .with_encoding()
+                                .to_js(global_this),
                         );
                     }
                 } else {
@@ -1155,7 +1162,7 @@ mod _impl {
                     interface.put(
                         global_this,
                         b"mac",
-                        ZigString::init(mac).with_encoding().to_js(global_this),
+                        EncodedSlice::init(mac).with_encoding().to_js(global_this),
                     );
                 }
             }
@@ -1271,13 +1278,15 @@ mod _impl {
                     };
                     // The full cidr value is the address + the suffix
                     let cidr_str = &ip_buf[start..start + addr_len + suffix_len];
-                    cidr = ZigString::init(cidr_str).with_encoding().to_js(global_this);
+                    cidr = EncodedSlice::init(cidr_str)
+                        .with_encoding()
+                        .to_js(global_this);
                 }
 
                 interface.put(
                     global_this,
                     b"address",
-                    ZigString::init(&ip_buf[start..start + addr_len])
+                    EncodedSlice::init(&ip_buf[start..start + addr_len])
                         .with_encoding()
                         .to_js(global_this),
                 );
@@ -1300,7 +1309,7 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"netmask",
-                    ZigString::init(str).with_encoding().to_js(global_this),
+                    EncodedSlice::init(str).with_encoding().to_js(global_this),
                 );
             }
             // family
@@ -1312,7 +1321,7 @@ mod _impl {
                 match family {
                     bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
                     bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
-                    _ => ZigString::static_("unknown").to_js(global_this),
+                    _ => EncodedSlice::static_("unknown").to_js(global_this),
                 },
             );
 
@@ -1322,7 +1331,9 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"mac",
-                    ZigString::init(&mac_buf).with_encoding().to_js(global_this),
+                    EncodedSlice::init(&mac_buf)
+                        .with_encoding()
+                        .to_js(global_this),
                 );
             }
 
@@ -1563,7 +1574,7 @@ mod _impl {
             result.put(
                 global_this,
                 b"username",
-                ZigString::init(env_var::USER.get().unwrap_or(b"unknown"))
+                EncodedSlice::init(env_var::USER.get().unwrap_or(b"unknown"))
                     .with_encoding()
                     .to_js(global_this),
             );
@@ -1578,12 +1589,14 @@ mod _impl {
             result.put(
                 global_this,
                 b"username",
-                ZigString::init(username).with_encoding().to_js(global_this),
+                EncodedSlice::init(username)
+                    .with_encoding()
+                    .to_js(global_this),
             );
             result.put(
                 global_this,
                 b"shell",
-                ZigString::init(env_var::SHELL.get().unwrap_or(b"unknown"))
+                EncodedSlice::init(env_var::SHELL.get().unwrap_or(b"unknown"))
                     .with_encoding()
                     .to_js(global_this),
             );

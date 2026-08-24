@@ -4,8 +4,8 @@ use core::ffi::c_char;
 
 use bun_core::env_var;
 use bun_core::{self, Environment, Global};
-use bun_jsc::zig_string::ZigString;
-use bun_jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
+use bun_jsc::encoded_slice::EncodedSlice;
+use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue};
 
 unsafe extern "C" {
     safe fn Bun__Process__getArgv(global: &JSGlobalObject) -> JSValue;
@@ -23,7 +23,7 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
         .get(0)
         .map(|z| z.as_bytes())
         .unwrap_or(b"bun");
-    ZigString::from_utf8(argv0).to_js(global_object)
+    EncodedSlice::init_utf8(argv0).to_js(global_object)
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
@@ -32,7 +32,7 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
     };
-    ZigString::from_utf8(out.as_bytes()).to_js(global_object)
+    EncodedSlice::init_utf8(out.as_bytes()).to_js(global_object)
 }
 
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
@@ -162,9 +162,9 @@ mod _impl {
     use bun_core::env_var;
     use bun_core::{String as BunString, strings};
     use bun_jsc::bun_string_jsc;
-    use bun_jsc::zig_string::ZigString;
+    use bun_jsc::encoded_slice::EncodedSlice;
     use bun_jsc::{
-        JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,
+        EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
     };
     use bun_paths::PathBuffer;
 
@@ -421,10 +421,12 @@ mod _impl {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
-            return ZigString::init(script).with_encoding().to_js(global_object);
+            return EncodedSlice::init(script)
+                .with_encoding()
+                .to_js(global_object);
         }
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return ZigString::init(source.contents())
+            return EncodedSlice::init(source.contents())
                 .with_encoding()
                 .to_js(global_object);
         }
@@ -446,7 +448,7 @@ mod _impl {
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
         let mut buf = PathBuffer::uninit();
         match bun_sys::getcwd(&mut buf[..]) {
-            bun_sys::Result::Ok(len) => Ok(ZigString::init(&buf[..len])
+            bun_sys::Result::Ok(len) => Ok(EncodedSlice::init(&buf[..len])
                 .with_encoding()
                 .to_js(global_object)),
             bun_sys::Result::Err(e) => {
@@ -474,14 +476,17 @@ mod _impl {
     }
 
     // C++ (headers.h) declares
-    // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, ZigString*)`. Hand-roll
-    // the shim; the second arg is the raw `*mut ZigString`, not a CallFrame.
+    // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, EncodedSlice*)`. Hand-roll
+    // the shim; the second arg is the raw `*mut EncodedSlice`, not a CallFrame.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__Process__setCwd(global_object: &JSGlobalObject, to: &ZigString) -> JSValue {
+    extern "C" fn Bun__Process__setCwd(
+        global_object: &JSGlobalObject,
+        to: &EncodedSlice,
+    ) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, set_cwd(global_object, to))
     }
 
-    fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> {
+    fn set_cwd(global_object: &JSGlobalObject, to: &EncodedSlice) -> JsResult<JSValue> {
         if to.length() == 0 {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));

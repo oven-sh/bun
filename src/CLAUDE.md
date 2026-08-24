@@ -96,14 +96,22 @@ let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
 let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
 let s = String::static_(b"literal");       // 'static slice, never freed
 
-let utf8: ZigStringSlice = s.to_utf8();    // ref-holding view; falls back to allocating a copy
-let owned: Vec<u8>       = s.to_owned_slice();
+let utf8: Utf8Bytes<'_>      = s.to_utf8();    // borrows `s` (ASCII/UTF-8) or transcodes; for locals
+let utf8: Utf8Bytes<'static> = s.into_utf8();  // moves `s`'s ref in / copies; for storing in fields
+let owned: Vec<u8>           = s.to_owned_slice();
 ```
 
+`Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared{..}` (a
+ref-holding view of a WTF 8-bit buffer); it derefs to `[u8]`. `EncodedSlice<'a>`
+is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16) borrowed view
+(`String::to_encoded_slice()`, `StringView::from_encoded(..)`,
+`EncodedSlice::to_utf8() -> Utf8Bytes<'a>`).
+
 JSValue → string: `value.to_bun_string(global)?` (owned `String`),
-`value.to_slice(global)?` (owned UTF-8 `ZigStringSlice`), or
+`value.to_slice(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or
 `value.to_js_string_view(global)?` (borrowed `JSStringView` guard; derefs to
-`&String` and keeps the `JSString` cell alive while it is in scope).
+`&String` and keeps the `JSString` cell alive while it is in scope; its
+`to_utf8()` is tied to the guard).
 
 To/from JS values, use the `bun_jsc::StringJsc` extension trait:
 

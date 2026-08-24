@@ -4,8 +4,8 @@ use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use bun_core::EncodedSlice;
 use bun_core::Output;
-use bun_core::ZigString;
 use bun_core::strings;
 #[cfg(not(windows))]
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
@@ -15,8 +15,8 @@ use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
-    VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
+    CommonAbortReasonExt as _, EncodedSliceJsc as _, GlobalRef, JSGlobalObject, JSValue, JsRef,
+    JsResult, SysErrorJsc, VirtualMachineRef as VirtualMachine,
 };
 use bun_jsc::{JsCell, JsCellRefExt as _};
 use bun_paths::resolve_path::{self as Path, platform};
@@ -920,7 +920,7 @@ impl FSWatcher {
             if self.encoding == Encoding::Buffer {
                 filename = jsc::ArrayBuffer::create_buffer(&global_object, file_name)?;
             } else if self.encoding == Encoding::Utf8 {
-                filename = ZigString::from_utf8(file_name).to_js(&global_object);
+                filename = EncodedSlice::init_utf8(file_name).to_js(&global_object);
             } else {
                 // convert to desired encoding
                 filename = Encoder::to_string(file_name, &global_object, self.encoding)?;

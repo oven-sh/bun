@@ -5,9 +5,9 @@ use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use core::cell::{Cell, RefCell};
 
+use jsc::EncodedSliceJsc as _;
 use jsc::StringJsc as _;
-use jsc::ZigStringJsc as _;
-use jsc::zig_string::ZigString;
+use jsc::encoded_slice::EncodedSlice;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -96,7 +96,7 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
+        EncodedSlice::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
     }
 
     #[inline(always)]
@@ -342,7 +342,7 @@ impl TextDecoder {
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
-                    return Ok(ZigString::init(buffer_slice).to_js(global_this));
+                    return Ok(EncodedSlice::init(buffer_slice).to_js(global_this));
                 }
 
                 // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -362,7 +362,7 @@ impl TextDecoder {
                 // SAFETY: `bytes` was allocated by the global allocator; `into_raw`
                 // transfers ownership of the buffer to JSC's external-string finalizer.
                 Ok(unsafe {
-                    jsc::zig_string::to_external_u16(
+                    jsc::encoded_slice::to_external_u16(
                         bun_core::heap::into_raw(bytes).cast::<u16>(),
                         out.written as usize,
                         global_this,
@@ -459,19 +459,21 @@ impl TextDecoder {
                     // empty string instead.
                     if len == 0 {
                         drop(decoded);
-                        return Ok(ZigString::EMPTY.to_js(global_this));
+                        return Ok(EncodedSlice::EMPTY.to_js(global_this));
                     }
                     // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
                     let ptr = decoded.leak().as_mut_ptr();
                     // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
                     // ownership transfers to JSC's external-string finalizer.
-                    return Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) });
+                    return Ok(unsafe {
+                        jsc::encoded_slice::to_external_u16(ptr, len, global_this)
+                    });
                 }
 
-                // All-ASCII input needed no conversion. `ZigString::init(..).to_js`
+                // All-ASCII input needed no conversion. `EncodedSlice::init(..).to_js`
                 // copies, so `input` may borrow the caller's buffer or `joined_owned`.
                 // Experiment: using mimalloc directly is slightly slower
-                Ok(ZigString::init(input).to_js(global_this))
+                Ok(EncodedSlice::init(input).to_js(global_this))
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
@@ -528,7 +530,7 @@ impl TextDecoder {
 
                 if decoded.is_empty() {
                     drop(decoded);
-                    return Ok(ZigString::EMPTY.to_js(global_this));
+                    return Ok(EncodedSlice::EMPTY.to_js(global_this));
                 }
 
                 // Transfer ownership of the backing allocation to JSC; freed via
@@ -538,7 +540,7 @@ impl TextDecoder {
                 let ptr = decoded.leak().as_mut_ptr();
                 // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
                 // ownership transfers to JSC's external-string finalizer.
-                Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) })
+                Ok(unsafe { jsc::encoded_slice::to_external_u16(ptr, len, global_this) })
             }
 
             // Every other encoding goes through encoding_rs.
@@ -583,14 +585,14 @@ impl TextDecoder {
                 };
 
                 if decoded.is_empty() {
-                    return Ok(ZigString::EMPTY.to_js(global_this));
+                    return Ok(EncodedSlice::EMPTY.to_js(global_this));
                 }
 
                 let len = decoded.len();
                 let ptr = decoded.leak().as_mut_ptr();
                 // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
                 // ownership transfers to JSC's external-string finalizer.
-                Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) })
+                Ok(unsafe { jsc::encoded_slice::to_external_u16(ptr, len, global_this) })
             }
         }
     }

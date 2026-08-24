@@ -24,7 +24,7 @@ use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
-use bun_core::{ZigString, ZigStringSlice};
+use bun_core::{EncodedSlice, Utf8Bytes};
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -53,12 +53,12 @@ pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemR
 const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
 // ── local shims ───────────────────────────────────────────────────────────
-// `to_js` lives on the `bun_jsc::ZigStringJsc` extension trait; `from_bytes`
+// `to_js` lives on the `bun_jsc::EncodedSliceJsc` extension trait; `from_bytes`
 // auto-detects UTF-8.
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::EncodedSliceJsc as _;
 #[inline]
 fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
-    jsc::zig_string::ZigString::from_bytes(bytes).to_js(global)
+    jsc::encoded_slice::EncodedSlice::from_bytes(bytes).to_js(global)
 }
 
 // ── ResolverLike bridge ───────────────────────────────────────────────────
@@ -130,12 +130,10 @@ impl FileSystemRouter {
         }
         let vm = global_this.bun_vm().as_mut();
 
-        let mut root_dir_path: ZigStringSlice =
-            ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
-        let mut origin_str: ZigStringSlice = ZigStringSlice::default();
-        let mut asset_prefix_slice: ZigStringSlice = ZigStringSlice::default();
-
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
+        let mut root_dir_path: Utf8Bytes<'_> = Utf8Bytes::Borrowed(vm.top_level_dir());
+        let mut origin_str: Utf8Bytes = Utf8Bytes::default();
+        let mut asset_prefix_slice: Utf8Bytes = Utf8Bytes::default();
         if let Some(style_val) = argument.get(global_this, "style")? {
             if !style_val
                 .to_js_string_view(global_this)?
@@ -164,13 +162,13 @@ impl FileSystemRouter {
                     root_dir_path = root_dir_path_;
                 } else {
                     let parts: [&[u8]; 1] = [path_];
-                    root_dir_path = ZigStringSlice::from_utf8_never_free(
-                        path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                            Fs::FileSystem::instance().top_level_dir,
-                            &mut out_buf,
-                            &parts,
-                        ),
-                    );
+                    root_dir_path = Utf8Bytes::Borrowed(path::resolve_path::join_abs_string_buf::<
+                        path::platform::Auto,
+                    >(
+                        Fs::FileSystem::instance().top_level_dir,
+                        &mut out_buf,
+                        &parts,
+                    ));
                 }
             }
         } else {
@@ -216,14 +214,14 @@ impl FileSystemRouter {
                     .throw_invalid_arguments(format_args!("Expected assetPrefix to be a string")));
             }
 
-            // Copy into the arena so the slice always owns stable bytes (ZigStringSlice
+            // Copy into the arena so the slice always owns stable bytes (Utf8Bytes
             // has no clone-if-borrowed helper; the copy only happens at construction).
             let s = asset_prefix.to_slice(global_this)?;
             // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`; allocation
             // outlives this slice. Detach borrow via raw ptr so `arena` can be moved below.
             let leaked: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(s.slice())) };
-            asset_prefix_slice = ZigStringSlice::from_utf8_never_free(leaked);
+            asset_prefix_slice = Utf8Bytes::Borrowed(leaked);
         }
         let mut log = Log::Log::new();
         // `defer vm.transpiler.resolver.log = orig_log` — RAII guard restores on
@@ -549,11 +547,11 @@ impl FileSystemRouter {
                 .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
         }
 
-        let mut path: ZigStringSlice = 'brk: {
+        let mut path: Utf8Bytes = 'brk: {
             if argument.is_string() {
-                // Force ownership via into_vec: ZigStringSlice has no clone-if-borrowed
+                // Force ownership via into_vec: Utf8Bytes has no clone-if-borrowed
                 // helper, and `path` must outlive the JS string rope it came from.
-                break 'brk ZigStringSlice::init_owned(argument.to_slice(global_this)?.into_vec());
+                break 'brk Utf8Bytes::Owned(argument.to_slice(global_this)?.into_vec());
             }
 
             if argument.is_cell() {
@@ -575,7 +573,7 @@ impl FileSystemRouter {
         };
 
         if path.slice().is_empty() || (path.slice().len() == 1 && path.slice()[0] == b'/') {
-            path = ZigStringSlice::from_utf8_never_free(b"/");
+            path = Utf8Bytes::Borrowed(b"/");
         }
 
         if strings::has_prefix(path.slice(), b"http://")
@@ -583,7 +581,7 @@ impl FileSystemRouter {
             || strings::has_prefix(path.slice(), b"file://")
         {
             let prev_path = path;
-            path = match ZigStringSlice::init_dupe(URL::parse(prev_path.slice()).pathname) {
+            path = match Utf8Bytes::init_dupe(URL::parse(prev_path.slice()).pathname) {
                 Ok(p) => p,
                 Err(_) => return Err(global_this.throw_out_of_memory()),
             };
@@ -632,11 +630,11 @@ impl FileSystemRouter {
         // the param values borrow the decode buffer — not `path` — and that buffer would
         // be freed when `url_path` drops at the end of this call. Take ownership of it and
         // make it the backing allocation instead. (`Box<[u8]>` -> `Vec<u8>` ->
-        // `ZigStringSlice::Owned` reuses the same heap allocation, so the borrowed slices
+        // `Utf8Bytes::Owned` reuses the same heap allocation, so the borrowed slices
         // stay valid; nothing in `route` points into the original encoded `path` once a
         // decode happened.)
         if let Some(decoded) = url_path.take_decoded_storage() {
-            path = ZigStringSlice::init_owned(decoded.into_vec());
+            path = Utf8Bytes::Owned(decoded.into_vec());
         }
 
         // MOVE `path`
@@ -675,12 +673,12 @@ impl FileSystemRouter {
         let router = this.router.get();
         let paths = router.get_entry_points();
         let names = router.get_names();
-        let mut name_strings: Vec<ZigString> = vec![ZigString::default(); names.len() * 2];
+        let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::default(); names.len() * 2];
         // `defer free(name_strings)` → Drop
         let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
         for (i, name) in names.iter().enumerate() {
-            name_strings_slice[i] = ZigString::from_bytes(name);
-            paths_strings[i] = ZigString::from_bytes(paths[i]);
+            name_strings_slice[i] = EncodedSlice::from_bytes(name);
+            paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
         }
         Ok(JSValue::from_entries(
             global_this,
@@ -734,7 +732,7 @@ pub struct MatchedRoute {
     pub(crate) params_list_holder: UnsafeCell<route_param::List<'static>>,
     /// Owns the bytes that `route_holder.pathname`/`query_string` and the param values in
     /// `params_list_holder` borrow. Freed by Drop on finalize.
-    pub(crate) pathname_backing: ZigStringSlice,
+    pub(crate) pathname_backing: Utf8Bytes<'static>,
     // BACKREF — interned `RefString`s; we hold +1 (bumped in `init`, released in
     // `deinit`). The interned allocation outlives every `MatchedRoute`.
     pub(crate) origin: Option<BackRef<RefString>>,
@@ -769,7 +767,7 @@ impl MatchedRoute {
 
     pub(crate) fn init(
         match_: RouterMatch<'_>,
-        pathname_backing: ZigStringSlice,
+        pathname_backing: Utf8Bytes<'static>,
         origin: Option<BackRef<RefString>>,
         asset_prefix: Option<BackRef<RefString>>,
         base_dir: BackRef<RefString>,
@@ -846,7 +844,7 @@ impl MatchedRoute {
             // We own the `path` allocation from `match` as
             // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
             // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
-            this.pathname_backing = ZigStringSlice::EMPTY;
+            this.pathname_backing = Utf8Bytes::EMPTY;
             *this.params_list_holder.get_mut() = route_param::List::default();
         }
 
@@ -901,22 +899,22 @@ impl MatchedRoute {
                 // inference tie the element lifetime to `iter` and dies with this
                 // frame.
                 let mut values_buf: [&[u8]; 256] = [b""; 256];
-                let mut refs_buf: [ZigString; 256] = [ZigString::EMPTY; 256];
+                let mut refs_buf: [EncodedSlice; 256] = [EncodedSlice::EMPTY; 256];
 
                 let mut iter = self.query.iter();
                 while let Some(entry) = iter.next(&mut values_buf) {
                     let entry_name = entry.name;
-                    let mut str = ZigString::from_bytes(entry_name);
+                    let mut str = EncodedSlice::from_bytes(entry_name);
 
                     debug_assert!(!entry.values.is_empty());
                     if entry.values.len() > 1 {
                         let values = &mut refs_buf[0..entry.values.len()];
                         for (i, value) in entry.values.iter().enumerate() {
-                            values[i] = ZigString::from_bytes(value);
+                            values[i] = EncodedSlice::from_bytes(value);
                         }
                         obj.put_record(global, &mut str, values)?;
                     } else {
-                        refs_buf[0] = ZigString::from_bytes(entry.values[0]);
+                        refs_buf[0] = EncodedSlice::from_bytes(entry.values[0]);
                         obj.put_record(global, &mut str, &mut refs_buf[0..1])?;
                     }
                 }

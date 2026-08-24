@@ -3,10 +3,10 @@ use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-// JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
-// lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
+// JSC-side EncodedSlice carries `to_js` (the `bun_core::EncodedSlice` repr-twin
+// lives in `bun_jsc::encoded_slice`); used for ASCII→JS conversions only.
+use bun_jsc::EncodedSlice;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{JSPromise, JSPromiseStrong};
 
 use crate::node::StringOrBuffer;
@@ -492,7 +492,7 @@ impl PasswordOp for HashOp {
         PasswordObject::hash(password, self.algorithm)
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
-        JscZigString::init(&value).to_js(g)
+        EncodedSlice::init(&value).to_js(g)
         // `value` drops here.
     }
 }
@@ -535,7 +535,7 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
         "Password {verb} failed with error \"{}\"",
         err.name()
     ));
-    instance.put(g, b"code", JscZigString::init(&error_code).to_js(g));
+    instance.put(g, b"code", EncodedSlice::init(&error_code).to_js(g));
     instance
 }
 

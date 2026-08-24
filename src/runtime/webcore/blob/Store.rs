@@ -18,7 +18,7 @@ use crate::webcore::s3::client::{
     S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
     S3ListObjectsResult,
 };
-use bun_core::{ZigString, strings};
+use bun_core::{EncodedSlice, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
@@ -227,9 +227,11 @@ impl FileExt for File {
             PathOrFileDescriptor::Path(path_like) => {
                 let encoded_slice = match path_like {
                     PathLike::EncodedSlice(slice) => {
-                        bun_core::ZigStringSlice::Owned(slice.slice().to_vec())
+                        bun_core::Utf8Bytes::Owned(slice.slice().to_vec())
                     }
-                    _ => ZigString::from_utf8(path_like.slice()).to_slice_clone(),
+                    _ => EncodedSlice::init_utf8(path_like.slice())
+                        .to_utf8()
+                        .into_owned(),
                 };
                 // The `*Binding` arg is unused in `AsyncFSTask::create`.
                 let binding = node_fs::Binding::default();
@@ -435,7 +437,7 @@ impl S3Ext for S3 {
 
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
-        // `S3ListObjectsOptions` is not `Clone` (it owns `Utf8Slice`s);
+        // `S3ListObjectsOptions` is not `Clone` (it owns `Utf8Bytes`s);
         // box the wrapper first so the options live on the heap, then hand a
         // borrow to `list_objects` (which only reads them synchronously to
         // build the search-params string). The wrapper retains ownership for

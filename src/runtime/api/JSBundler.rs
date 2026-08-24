@@ -24,7 +24,7 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 
 pub mod js_bundler {
     use super::*;
-    use bun_core::ZigStringSlice;
+    use bun_core::Utf8Bytes;
 
     use bun_sys::FdExt;
 
@@ -858,7 +858,7 @@ pub mod js_bundler {
             }
 
             {
-                let path: ZigStringSlice = 'brk: {
+                let path: Utf8Bytes = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
                         break 'brk slice;
                     }
@@ -875,7 +875,7 @@ pub mod js_bundler {
                             }
                         }
                         if all_in_filemap {
-                            break 'brk ZigStringSlice::from_utf8_never_free(b".");
+                            break 'brk Utf8Bytes::Borrowed(b".");
                         }
                     }
 
@@ -883,18 +883,14 @@ pub mod js_bundler {
                         let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             &entry_points[0],
                         );
-                        break 'brk ZigStringSlice::from_utf8_never_free(if d.is_empty() {
-                            b"."
-                        } else {
-                            d
-                        });
+                        break 'brk Utf8Bytes::Borrowed(if d.is_empty() { b"." } else { d });
                     }
 
                     // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
                     // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
                     // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
-                    break 'brk ZigStringSlice::from_utf8_never_free(
+                    break 'brk Utf8Bytes::Borrowed(
                         bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
                             .unwrap_or(b"."),
                     );

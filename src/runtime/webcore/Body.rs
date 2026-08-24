@@ -17,9 +17,9 @@ use bun_http_types::MimeType::MimeType;
 use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{JsCell, StringJsc as _};
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
@@ -696,7 +696,7 @@ impl Value {
                 // transfer it (no copy). The deref is handled by `Value::drop` on the
                 // overwritten `WTFStringImpl` variant — do NOT deref explicitly here.
                 *self = Value::InternalBlob(InternalBlob {
-                    bytes: bytes.into_vec(),
+                    bytes,
                     was_string: true,
                 });
             }
@@ -1110,7 +1110,7 @@ impl Value {
                             // `blob.detach()` below covers the reject error path too.
                             let r = promise.reject(
                                 global,
-                                ZigString::init(
+                                EncodedSlice::init(
                                     b"Internal error: task for FormData must not be null",
                                 )
                                 .to_error_instance(global),
@@ -1138,7 +1138,7 @@ impl Value {
                             if let Some(content_type) =
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
-                                let content_slice = content_type.to_slice();
+                                let content_slice = content_type.to_utf8();
                                 let mime_type = MimeType::init(content_slice.slice(), true, None);
                                 set_blob_content_type(blob, mime_type);
                                 // content_slice dropped (replaces defer content_slice.deinit())
@@ -1193,7 +1193,7 @@ impl Value {
                 let global = VirtualMachine::get().global();
                 let new_blob = if let Some(allocated_slice) = wtf_ref.to_utf8_if_needed() {
                     // Transfer ownership of the heap-allocated UTF-8 buffer (no copy).
-                    Blob::init(allocated_slice.into_vec(), global)
+                    Blob::init(allocated_slice, global)
                 } else {
                     Blob::init(wtf_ref.latin1_slice().to_vec(), global)
                 };
@@ -1250,7 +1250,7 @@ impl Value {
                     // assignment below (the variant is still `WTFStringImpl(str)`).
                     break 'brk AnyBlob::InternalBlob(InternalBlob {
                         // Transfer ownership of the heap-allocated UTF-8 buffer (no copy).
-                        bytes: utf8.into_vec(),
+                        bytes: utf8,
                         was_string: true,
                     });
                 } else {
@@ -2140,7 +2140,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_slice();
+                    let content_slice = content_type.to_utf8();
                     let mime_type = MimeType::init(content_slice.slice(), true, None);
                     set_blob_content_type(blob, mime_type);
                     // content_slice dropped (replaces defer content_slice.deinit())

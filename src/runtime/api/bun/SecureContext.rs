@@ -175,15 +175,19 @@ impl SecureContext {
         }
         let result = JSValue::create_empty_object(global, 0);
         // SAFETY: the helper returned NUL-terminated PEM strings of the given
-        // lengths; ZigString::to_js copies into the JS heap before `free`.
+        // lengths; EncodedSlice::to_js copies into the JS heap before `free`.
         unsafe {
             let key_slice = core::slice::from_raw_parts(out_key.cast::<u8>(), key_len);
-            result.put(global, b"key", ZigString::init(key_slice).to_js(global));
+            result.put(global, b"key", EncodedSlice::init(key_slice).to_js(global));
             let cert_slice = core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len);
-            result.put(global, b"cert", ZigString::init(cert_slice).to_js(global));
+            result.put(
+                global,
+                b"cert",
+                EncodedSlice::init(cert_slice).to_js(global),
+            );
             if !out_ca.is_null() && ca_len > 0 {
                 let ca_slice = core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len);
-                result.put(global, b"ca", ZigString::init(ca_slice).to_js(global));
+                result.put(global, b"ca", EncodedSlice::init(ca_slice).to_js(global));
             }
             free(out_key.cast());
             free(out_cert.cast());
@@ -421,8 +425,8 @@ impl SecureContext {
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
 
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::encoded_slice::EncodedSlice;
 use bun_uws_sys::socket_context::c;
 
 mod cpp {

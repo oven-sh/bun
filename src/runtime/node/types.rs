@@ -2,10 +2,10 @@ use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{WStr, ZStr};
-use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
+use bun_jsc::{EncodedSliceJsc as _, SliceWithUnderlyingStringJsc as _, StringJsc as _};
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
@@ -154,7 +154,7 @@ impl BlobOrStringOrBuffer {
                     let blob_data = blob.shared_view();
                     let owned_data: Vec<u8> = blob_data.to_vec();
                     return Ok(Some(Self::StringOrBuffer(StringOrBuffer::EncodedSlice(
-                        ZigStringSlice::init_owned(owned_data),
+                        Utf8Bytes::Owned(owned_data),
                     ))));
                 }
 
@@ -274,7 +274,7 @@ impl BlobOrStringOrBuffer {
 pub enum StringOrBuffer {
     String(SliceWithUnderlyingString),
     ThreadsafeString(SliceWithUnderlyingString),
-    EncodedSlice(ZigStringSlice),
+    EncodedSlice(Utf8Bytes<'static>),
     Buffer(Buffer),
 }
 
@@ -285,7 +285,7 @@ impl Default for StringOrBuffer {
 }
 
 impl StringOrBuffer {
-    pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(ZigStringSlice::EMPTY);
+    pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(Utf8Bytes::EMPTY);
 
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
@@ -366,7 +366,7 @@ impl StringOrBuffer {
             Self::ThreadsafeString(str) | Self::String(str) => core::mem::take(str).into_js(ctx),
             Self::EncodedSlice(encoded_slice) => {
                 let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, encoded_slice.slice());
-                *encoded_slice = ZigStringSlice::default();
+                *encoded_slice = Utf8Bytes::default();
                 result
             }
             Self::Buffer(buffer) => {
@@ -417,7 +417,7 @@ impl StringOrBuffer {
                     sliced.report_extra_memory(global.vm());
 
                     if sliced.underlying.is_empty() {
-                        *out = Self::EncodedSlice(core::mem::take(&mut sliced.utf8));
+                        *out = Self::EncodedSlice(sliced.into_utf8());
                         return Ok(true);
                     }
 
@@ -553,7 +553,7 @@ impl StringOrBuffer {
             let encoded = str.encode(encoding);
             global.vm().report_extra_memory(encoded.len());
 
-            *out = Self::EncodedSlice(ZigStringSlice::init_owned(encoded));
+            *out = Self::EncodedSlice(Utf8Bytes::Owned(encoded));
             return Ok(true);
         }
 
@@ -792,7 +792,7 @@ impl Encoding {
             }
             Self::Base64url => {
                 let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
+                Ok(jsc::encoded_slice::EncodedSlice::init(&buf).to_js(global_object))
             }
             Self::Hex => {
                 // The byte-by-byte `write!` formatting machinery is pathologically
@@ -1257,7 +1257,7 @@ impl PathLikeExt for PathLike {
             sliced.report_extra_memory(global.vm());
 
             if sliced.underlying.is_empty() {
-                return Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)));
+                return Ok(Self::EncodedSlice(sliced.into_utf8()));
             }
             Ok(Self::ThreadsafeString(sliced))
         } else {
@@ -1269,16 +1269,15 @@ impl PathLikeExt for PathLike {
             Valid::path_null_bytes(sliced.slice(), global)?;
 
             // Costs nothing to keep both around.
-            if sliced.is_wtf_allocated() {
+            if sliced.is_shared() {
                 return Ok(Self::SliceWithUnderlyingString(sliced));
             }
 
             sliced.report_extra_memory(global.vm());
 
-            // It is expensive to keep both around. `utf8` here is an Owned
-            // transcoded copy (UTF-16 or non-ASCII Latin-1 input), so the
-            // returned EncodedSlice is independent of `underlying`.
-            Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)))
+            // It is expensive to keep both around: `utf8` here is a transcoded
+            // copy (UTF-16 or non-ASCII Latin-1 input) independent of `underlying`.
+            Ok(Self::EncodedSlice(sliced.into_utf8()))
         }
     }
 }

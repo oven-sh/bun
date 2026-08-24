@@ -4,9 +4,9 @@ use std::io::Write as _;
 use bun_ast::ImportKind;
 use bun_core::strings;
 
-use crate::zig_string::ZigString;
+use crate::encoded_slice::EncodedSlice;
 use crate::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
+    CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _,
 };
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
@@ -244,7 +244,7 @@ impl ResolveMessage {
         if write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(message)).is_err() {
             return global.throw_out_of_memory_value();
         }
-        let mut str = ZigString::init(&text);
+        let mut str = EncodedSlice::init(&text);
         str.set_output_encoding();
         if str.is_utf8() {
             let out = str.to_js(global);
@@ -256,7 +256,7 @@ impl ResolveMessage {
         // leaked here (single transfer via `heap::release`) and freed exactly
         // once by JSC's external-string finalizer with the global allocator.
         let leaked = text.into_boxed_slice();
-        let mut str = ZigString::init(bun_core::heap::release(leaked));
+        let mut str = EncodedSlice::init(bun_core::heap::release(leaked));
         str.set_output_encoding();
         str.to_external_value(global)
     }
@@ -409,9 +409,9 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_message(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(text) = this.node_message() {
-            return Ok(ZigString::init_utf8(&text).to_js(global));
+            return Ok(EncodedSlice::init_utf8(&text).to_js(global));
         }
-        Ok(ZigString::init_utf8(&this.msg.data.text).to_js(global))
+        Ok(EncodedSlice::init_utf8(&this.msg.data.text).to_js(global))
     }
 
     // Node: MODULE_NOT_FOUND errors carry `requireStack` (the chain of
@@ -429,7 +429,7 @@ impl ResolveMessage {
             entries.push(r);
         }
         JSValue::create_array_from_iter(global, entries.iter().copied(), |r| {
-            Ok(ZigString::init_utf8(r).to_js(global))
+            Ok(EncodedSlice::init_utf8(r).to_js(global))
         })
     }
 
@@ -443,23 +443,23 @@ impl ResolveMessage {
             Some(text) => out.extend_from_slice(&text),
             None => out.extend_from_slice(&this.msg.data.text),
         }
-        Ok(ZigString::init_utf8(&out).to_js(global))
+        Ok(EncodedSlice::init_utf8(&out).to_js(global))
     }
 
     #[crate::host_fn(getter)]
     pub fn get_level(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(this.msg.kind.string()).to_js(global))
+        Ok(EncodedSlice::init(this.msg.kind.string()).to_js(global))
     }
 
     #[crate::host_fn(getter)]
     pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                ZigString::init_utf8(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
+                EncodedSlice::init_utf8(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
             }
             // Unreachable in practice (ResolveMessage is only constructed for
             // `.resolve` metadata).
-            _ => ZigString::init(b"").to_js(global),
+            _ => EncodedSlice::init(b"").to_js(global),
         })
     }
 
@@ -467,16 +467,16 @@ impl ResolveMessage {
     pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                ZigString::init(import_kind_label(resolve.import_kind)).to_js(global)
+                EncodedSlice::init(import_kind_label(resolve.import_kind)).to_js(global)
             }
-            _ => ZigString::init(b"").to_js(global),
+            _ => EncodedSlice::init(b"").to_js(global),
         })
     }
 
     #[crate::host_fn(getter)]
     pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(if let Some(referrer) = &this.referrer {
-            ZigString::init_utf8(referrer).to_js(global)
+            EncodedSlice::init_utf8(referrer).to_js(global)
         } else {
             JSValue::NULL
         })

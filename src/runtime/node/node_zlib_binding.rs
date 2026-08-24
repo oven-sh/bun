@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 
 use bun_ptr::ParentRef;
 
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
@@ -102,7 +102,8 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     let arguments = callframe.arguments_as_array::<2>();
 
     let data_view;
-    let data: ZigStringSlice = 'blk: {
+    let data_buffer;
+    let data: Utf8Bytes = 'blk: {
         let data: JSValue = arguments[0];
 
         if callframe.arguments_count() < 1 {
@@ -128,7 +129,8 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
                 )
                 .throw());
         };
-        break 'blk ZigStringSlice::from_utf8_never_free(buffer.byte_slice());
+        data_buffer = buffer;
+        break 'blk Utf8Bytes::Borrowed(data_buffer.byte_slice());
     };
 
     let value: u32 = 'blk: {

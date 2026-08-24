@@ -7,7 +7,7 @@ use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
-use bun_core::{strings, ZigString, ZigStringSlice};
+use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
 use super::expect;
 use crate::webcore::BlobExt as _;
@@ -587,8 +587,8 @@ impl<'a> Formatter<'a> {
         slice_: S,
         global_this: &'a JSGlobalObject,
     ) where
-        // The sole caller here passes a
-        // UTF-8 byte slice (`to_slice`), so only the byte path is needed.
+        // The sole caller here passes a UTF-8 byte slice, so only the byte
+        // path is needed.
         S: AsRef<[u8]>,
     {
         let mut writer = WrappedWriter::new(writer_);
@@ -897,7 +897,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     extern "C" fn for_each(
         global_this: &JSGlobalObject,
         ctx_ptr: *mut c_void,
-        key_: *mut ZigString,
+        key_: *mut EncodedSlice,
         value: JSValue,
         is_symbol: bool,
         is_private_symbol: bool,
@@ -954,9 +954,9 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         if !is_symbol {
             // TODO: make this one pass?
-            if (!key.is_16_bit() && bun_ast::lexer_tables::is_latin1_identifier(key.slice()))
-                || (key.is_16_bit()
-                    && bun_ast::lexer_tables::is_latin1_identifier_u16(key.utf16_slice_aligned()))
+            if (!key.is_16bit() && bun_ast::lexer_tables::is_latin1_identifier(key.slice()))
+                || (key.is_16bit()
+                    && bun_ast::lexer_tables::is_latin1_identifier_u16(key.utf16_slice()))
             {
                 this.add_for_new_line(key.len + 2);
 
@@ -967,8 +967,8 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                 ));
-            } else if key.is_16_bit() {
-                let utf16_slice = key.utf16_slice_aligned();
+            } else if key.is_16bit() {
+                let utf16_slice = key.utf16_slice();
 
                 this.add_for_new_line(utf16_slice.len() + 2);
 
@@ -1099,7 +1099,7 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::String => {
                     let view = value.to_js_string_view(self.global_this)?;
-                    let str = view.to_zig_string();
+                    let str = view.to_encoded_slice();
                     self.add_for_new_line(str.len);
 
                     if value.js_type() == JSType::StringObject
@@ -1148,7 +1148,7 @@ impl<'a> Formatter<'a> {
 
                         writer.write_all(b"\"");
                         let mut remaining = str;
-                        // `ZigString::char_at` returns u16; use explicit u16
+                        // `EncodedSlice::char_at` returns u16; use explicit u16
                         // consts so the match arms type-check.
                         const BACKSLASH: u16 = b'\\' as u16;
                         const CR: u16 = b'\r' as u16;
@@ -1204,7 +1204,7 @@ impl<'a> Formatter<'a> {
                         ));
                     }
 
-                    if str.is_16_bit() {
+                    if str.is_16bit() {
                         // streaming print
                         writer.print(format_args!("{}", str));
                     } else if strings::is_all_ascii(str.slice()) {
@@ -1964,14 +1964,14 @@ impl<'a> Formatter<'a> {
                     let mut needs_space;
 
                     let tag_name_view;
-                    let tag_name_slice: ZigStringSlice;
+                    let tag_name_slice: Utf8Bytes;
                     let mut is_tag_kind_primitive = false;
 
                     if let Some(type_value) = value.get(self.global_this, "type")? {
                         let _tag = Tag::get(type_value, self.global_this)?;
 
                         if _tag.cell == JSType::Symbol {
-                            tag_name_slice = ZigStringSlice::EMPTY;
+                            tag_name_slice = Utf8Bytes::EMPTY;
                         } else if _tag.cell.is_string_like() {
                             tag_name_view = type_value.to_js_string_view(self.global_this)?;
                             tag_name_slice = tag_name_view.to_utf8();
@@ -1979,9 +1979,9 @@ impl<'a> Formatter<'a> {
                         } else if _tag.cell.is_object() || type_value.is_callable() {
                             let name = type_value.get_name_property(self.global_this)?;
                             tag_name_slice = if name.is_empty() {
-                                ZigStringSlice::from_utf8_never_free(b"NoName")
+                                Utf8Bytes::Borrowed(b"NoName")
                             } else {
-                                name.to_utf8()
+                                name.into_utf8()
                             };
                         } else {
                             tag_name_view = type_value.to_js_string_view(self.global_this)?;
@@ -1990,7 +1990,7 @@ impl<'a> Formatter<'a> {
 
                         needs_space = true;
                     } else {
-                        tag_name_slice = ZigStringSlice::from_utf8_never_free(b"unknown");
+                        tag_name_slice = Utf8Bytes::Borrowed(b"unknown");
 
                         needs_space = true;
                     }

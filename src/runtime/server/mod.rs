@@ -114,9 +114,7 @@ pub use any_request_context::AnyRequestContext;
 
 #[path = "server_body.rs"]
 mod server_body;
-pub use server_body::{
-    BunInfo, GetOrStartLoadResult, PreparedRequestFor, ServePluginsCallback, ServerInitContext,
-};
+pub use server_body::{GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
 pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
@@ -141,19 +139,14 @@ pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<S
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
-// §Pointers: all
-// three concrete route types carry an intrusive `ref_count: Cell<u32>` and are
-// heap-allocated via `heap::alloc`; their pointers round-trip through uws
-// callback userdata (`ctx: *mut c_void`), so `Rc<T>` is unsuitable (would add
-// a second header and break the round-trip). Hold them as raw intrusive
-// pointers.
+/// The route table's ref on each route; `StaticRouteEntry`'s `Drop` releases it.
 pub enum AnyRoute {
     /// Serve a static file — `"/robots.txt": new Response(...)`
-    Static(core::ptr::NonNull<StaticRoute>),
+    Static(bun_ptr::RefPtr<StaticRoute>),
     /// Serve a file from disk
-    File(core::ptr::NonNull<FileRoute>),
+    File(bun_ptr::RefPtr<FileRoute>),
     /// Serve a directory tree — `"/static/*": { dir: "./public" }`
-    Directory(core::ptr::NonNull<DirectoryRoute>),
+    Directory(bun_ptr::RefPtr<DirectoryRoute>),
     /// Bundle an HTML import — `import html from "./index.html"; "/": html`
     Html(bun_ptr::RefPtr<html_bundle::Route>),
     /// Use file-system routing — `"/*": { dir: …, style: "nextjs-pages" }`
@@ -161,18 +154,12 @@ pub enum AnyRoute {
 }
 
 impl AnyRoute {
-    // `Static`/`File` payloads are intrusive-refcounted heap allocations whose
-    // +1 ref is held by the route table for the entire lifetime of this
-    // `AnyRoute` value, so the `BackRef` invariant (pointee outlives holder)
-    // is satisfied for any borrow scoped to `&self`. Wrapping the `NonNull`
-    // in a transient `BackRef` centralises the deref under that invariant
-    // instead of repeating a raw `NonNull::as_ref` per arm.
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
-            AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).memory_cost(),
-            AnyRoute::File(p) => bun_ptr::BackRef::from(*p).memory_cost(),
-            AnyRoute::Directory(p) => bun_ptr::BackRef::from(*p).memory_cost(),
-            AnyRoute::Html(r) => r.data().memory_cost(),
+            AnyRoute::Static(r) => r.memory_cost(),
+            AnyRoute::File(r) => r.memory_cost(),
+            AnyRoute::Directory(r) => r.memory_cost(),
+            AnyRoute::Html(r) => r.memory_cost(),
             AnyRoute::FrameworkRouter(_) => {
                 core::mem::size_of::<crate::bake::FileSystemRouterType>()
             }
@@ -181,12 +168,9 @@ impl AnyRoute {
 
     pub(crate) fn deref_(&self) {
         match self {
-            // SAFETY: intrusive refcount; ptr was heap-allocated with rc=1.
-            AnyRoute::Static(p) => unsafe { StaticRoute::deref_(p.as_ptr()) },
-            // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { FileRoute::deref(p.as_ptr()) },
-            // SAFETY: see above.
-            AnyRoute::Directory(p) => unsafe { DirectoryRoute::deref(p.as_ptr()) },
+            AnyRoute::Static(r) => r.deref(),
+            AnyRoute::File(r) => r.deref(),
+            AnyRoute::Directory(r) => r.deref(),
             AnyRoute::Html(r) => r.deref(),
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
@@ -200,7 +184,7 @@ impl AnyRoute {
 // Full state machine + intrusive refcount lives in `server_body.rs` (the
 // `*mut ServePlugins` is smuggled through `JSValue::then` as a promise context,
 // so `Rc` is unsuitable). Re-exported here for `AnyServer` callers.
-pub use server_body::{ServePlugins, ServePluginsState};
+pub use server_body::ServePlugins;
 
 // ─── ServerFlags ─────────────────────────────────────────────────────────────
 bitflags::bitflags! {
@@ -1727,7 +1711,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !SSL {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
             // from `self.listener`; deref'd once to read the socket fd. `vm` is a
-            // STATIC ref (see `ServerLike::vm_mut`) — non-null for the server's
+            // STATIC ref (see `NewServer::vm_mut`) — non-null for the server's
             // lifetime, so the raw→`&mut` deref is sound.
             unsafe {
                 let fd = (*listener).socket().fd();
@@ -1983,7 +1967,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !SSL {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
-            // SAFETY: `vm` is a STATIC ref (see `ServerLike::vm_mut`) — non-null
+            // SAFETY: `vm` is a STATIC ref (see `NewServer::vm_mut`) — non-null
             // for the server's lifetime, so the raw→`&mut` deref is sound.
             unsafe { (*self.vm_mut()).add_listening_socket_for_watch_mode(fd) };
         }
@@ -2018,10 +2002,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 "permission denied {}:{}",
                                 bstr::BStr::new(host),
                                 port
-                            ))
-                            .into(),
-                            code: bun_core::String::static_("EACCES").into(),
-                            syscall: bun_core::String::static_("listen").into(),
+                            )),
+                            code: bun_core::String::static_("EACCES"),
+                            syscall: bun_core::String::static_("listen"),
                             ..Default::default()
                         };
                         let _ = global.throw_value(err.to_error_instance(global));
@@ -2043,10 +2026,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     message: bun_core::String::create_format(format_args!(
                         "Failed to start server. Is port {} in use?",
                         port
-                    ))
-                    .into(),
-                    code: bun_core::String::static_("EADDRINUSE").into(),
-                    syscall: bun_core::String::static_("listen").into(),
+                    )),
+                    code: bun_core::String::static_("EADDRINUSE"),
+                    syscall: bun_core::String::static_("listen"),
                     ..Default::default()
                 }
                 .to_error_instance(global)
@@ -2058,10 +2040,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         message: bun_core::String::create_format(format_args!(
                             "Failed to listen on unix socket {}",
                             bun_core::fmt::QuotedFormatter { text: unix }
-                        ))
-                        .into(),
-                        code: bun_core::String::static_("EADDRINUSE").into(),
-                        syscall: bun_core::String::static_("listen").into(),
+                        )),
+                        code: bun_core::String::static_("EADDRINUSE"),
+                        syscall: bun_core::String::static_("listen"),
                         ..Default::default()
                     }
                     .to_error_instance(global),
@@ -2472,14 +2453,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         server_config::RouteMethod::Any => false,
                     });
 
-            // Each `p`/`r` is the live `RefPtr<_>` stored in `entry.route`;
             // `app`/`h3_app` are the live uWS app handles owned by `self`.
             match &entry.route {
-                AnyRoute::Static(p) => {
+                AnyRoute::Static(r) => {
                     server_config::apply_static_route::<SSL, StaticRoute>(
                         any_server,
                         app,
-                        p.as_ptr(),
+                        r.this_ptr(),
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2490,7 +2470,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),
-                                p.as_ptr(),
+                                r.this_ptr(),
                                 &entry.path,
                                 entry.method,
                                 path_has_user_head_route,
@@ -2498,11 +2478,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         }
                     }
                 }
-                AnyRoute::File(p) => {
+                AnyRoute::File(r) => {
                     server_config::apply_static_route::<SSL, FileRoute>(
                         any_server,
                         app,
-                        p.as_ptr(),
+                        r.this_ptr(),
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2513,7 +2493,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),
-                                p.as_ptr(),
+                                r.this_ptr(),
                                 &entry.path,
                                 entry.method,
                                 path_has_user_head_route,
@@ -2521,11 +2501,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         }
                     }
                 }
-                AnyRoute::Directory(p) => {
+                AnyRoute::Directory(r) => {
                     server_config::apply_static_route::<SSL, DirectoryRoute>(
                         any_server,
                         app,
-                        p.as_ptr(),
+                        r.this_ptr(),
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2536,7 +2516,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),
-                                p.as_ptr(),
+                                r.this_ptr(),
                                 &entry.path,
                                 entry.method,
                                 path_has_user_head_route,
@@ -2548,7 +2528,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     server_config::apply_static_route::<SSL, html_bundle::Route>(
                         any_server,
                         app,
-                        r.as_ptr(),
+                        r.this_ptr(),
                         &entry.path,
                         entry.method,
                         path_has_user_head_route,
@@ -2559,7 +2539,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),
-                                r.as_ptr(),
+                                r.this_ptr(),
                                 &entry.path,
                                 entry.method,
                                 path_has_user_head_route,
@@ -2573,7 +2553,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         bun_core::handle_oom(
                             unsafe { &mut *dev }
                                 .html_router
-                                .put(&entry.path, r.as_ptr()),
+                                .put(&entry.path, r.this_ptr().into()),
                         );
                     }
                     needs_plugins = true;
@@ -3533,15 +3513,8 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
 // field/method surface the per-request state machine needs without naming
 // `NewServer` (avoids a generic-parameter cycle).
 pub trait ServerLike {
-    const SSL_ENABLED: bool;
-    const DEBUG_MODE: bool;
     fn global_this(&self) -> &jsc::JSGlobalObject;
     fn vm(&self) -> &jsc::VirtualMachine;
-    /// Raw mutable pointer to the VM. Exists so callers that genuinely need
-    /// `&mut VirtualMachine` (e.g. `drain_microtasks`, unhandled-rejection
-    /// hooks) can go raw→raw instead of `&T as *const T as *mut T`, which
-    /// trips `invalid_reference_casting`.
-    fn vm_mut(&self) -> *mut jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
@@ -3556,8 +3529,6 @@ pub trait ServerLike {
 }
 
 impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
-    const SSL_ENABLED: bool = SSL;
-    const DEBUG_MODE: bool = DEBUG;
     // These trait-method forwards are on the per-request hot path (called via
     // `RequestContext::server.vm()` etc.). Without `#[inline]` a generic trait
     // impl is not eligible for cross-crate inlining at all, so each accessor
@@ -3570,10 +3541,6 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     #[inline(always)]
     fn vm(&self) -> &jsc::VirtualMachine {
         Self::vm(self)
-    }
-    #[inline(always)]
-    fn vm_mut(&self) -> *mut jsc::VirtualMachine {
-        Self::vm_mut(self)
     }
     #[inline(always)]
     fn config(&self) -> &ServerConfig {
@@ -4087,7 +4054,6 @@ pub(crate) mod http_server_agent {
                 instance.ptr.cast(),
             );
         }
-        // `BunString` derefs in `Drop`.
     }
 
     /// Tell the C++ inspector agent (if attached) that the server stopped,

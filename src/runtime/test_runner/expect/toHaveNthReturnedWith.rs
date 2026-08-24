@@ -47,7 +47,7 @@ pub(crate) fn to_have_nth_returned_with(
         if nth_result.is_object() {
             let result_type = nth_result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
+                let type_str = result_type.to_bun_string(global)?;
                 if type_str.eql_comptime("return") {
                     nth_return_value = nth_result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
                     if nth_return_value.jest_deep_equals(expected, global)? {
@@ -68,7 +68,6 @@ pub(crate) fn to_have_nth_returned_with(
     // Handle failure
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
-    // defer formatter.deinit() — handled by Drop
 
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 

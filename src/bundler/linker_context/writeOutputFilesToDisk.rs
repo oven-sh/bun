@@ -52,23 +52,14 @@ pub(crate) fn append_linked_sourcemap_url(
     *buffer = buf.into_boxed_slice();
 }
 
-/// Generate the JSC bytecode cache for a chunk's code. Takes ownership of the
-/// freshly created `source_provider_url` and returns it (still alive) next to
-/// the bytecode so callers can read its UTF-8 form for the output path.
+/// Generate the JSC bytecode cache for a chunk's code, logging the result.
 pub(crate) fn generate_chunk_bytecode(
     format: options::Format,
     code: &[u8],
-    source_provider_url: BunString,
-) -> Option<(Box<[u8]>, bun_core::OwnedString)> {
-    // `source_provider_url` arrives with the +1 from `create_format`, and
-    // bytecode generation only borrows it, so `OwnedString` adopts that ref
-    // and releases it on every exit path.
-    let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
-    let bytecode = crate::bundle_v2::dispatch::generate_cached_bytecode(
-        format,
-        code,
-        &mut source_provider_url,
-    )?;
+    source_provider_url: &BunString,
+) -> Option<Box<[u8]>> {
+    let bytecode =
+        crate::bundle_v2::dispatch::generate_cached_bytecode(format, code, source_provider_url)?;
     debug!(
         "Bytecode cache generated {}: {}",
         bstr::BStr::new(source_provider_url.to_utf8().slice()),
@@ -79,7 +70,7 @@ pub(crate) fn generate_chunk_bytecode(
             }
         ),
     );
-    Some((bytecode, source_provider_url))
+    Some(bytecode)
 }
 
 /// Placeholder output file inserted for non-HTML chunks in standalone mode to
@@ -445,10 +436,10 @@ pub(crate) fn write_output_files_to_disk(
                         BYTECODE_EXTENSION,
                     ));
 
-                    if let Some((bytecode, source_provider_url)) = generate_chunk_bytecode(
+                    if let Some(bytecode) = generate_chunk_bytecode(
                         c.options.output_format,
                         &code_result.buffer,
-                        source_provider_url,
+                        &source_provider_url,
                     ) {
                         let source_provider_url_str = source_provider_url.to_utf8();
                         let frp: &[u8] = &chunk.final_rel_path;

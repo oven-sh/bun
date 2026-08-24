@@ -214,10 +214,9 @@ fn parse_array(
                 | types::Tag::timestamp_array
                 | types::Tag::date_array => {
                     let date_str = &slice[1..current_idx];
-                    let mut str = BunString::init(date_str);
-                    // defer str.deref() → Drop on BunString
+                    let str = BunString::init(date_str);
                     array.push(SQLDataCell::date(
-                        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                        crate::jsc::bun_string_jsc::parse_date(&str, global_object)
                             .map_err(crate::jsc::js_error_to_postgres)?,
                     ));
 
@@ -323,8 +322,8 @@ fn parse_array(
                         let ms = match crate::postgres::types::date::parse_infinity(element) {
                             Some(inf) => inf,
                             None => {
-                                let mut str = BunString::init(element);
-                                crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                                let str = BunString::init(element);
+                                crate::jsc::bun_string_jsc::parse_date(&str, global_object)
                                     .map_err(crate::jsc::js_error_to_postgres)?
                             }
                         };
@@ -856,8 +855,8 @@ fn from_bytes(
                 let date = match date {
                     Some(d) => d,
                     None => {
-                        let mut str = BunString::init(bytes);
-                        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                        let str = BunString::init(bytes);
+                        crate::jsc::bun_string_jsc::parse_date(&str, global_object)
                             .map_err(crate::jsc::js_error_to_postgres)?
                     }
                 };

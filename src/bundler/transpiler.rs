@@ -869,6 +869,12 @@ impl AlreadyBundled {
             AlreadyBundled::SourceCodeCjs | AlreadyBundled::BytecodeCjs(_)
         )
     }
+    pub fn into_bytecode(self) -> Box<[u8]> {
+        match self {
+            AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => bytes,
+            _ => Box::default(),
+        }
+    }
 }
 
 /// Output of the transpiler's parse step: the parsed AST plus its source and

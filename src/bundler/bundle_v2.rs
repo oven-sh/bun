@@ -456,7 +456,7 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY subset of the `Framework` fields
         /// the bundler/parser actually consult; `file_system_router_types`
-        /// stays in T6 because only `bake::FrameworkRouter` reads it.
+        /// stays in T6 because only `bake::framework_router` reads it.
         #[non_exhaustive]
         pub struct Framework {
             pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
@@ -1408,7 +1408,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
-                source_provider_url: &mut bun_core::String,
+                source_provider_url: &bun_core::String,
             ) -> Option<Box<[u8]>>;
         }
 
@@ -1446,7 +1446,7 @@ pub mod bv2_impl {
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_provider_url: &mut bun_core::String,
+            source_provider_url: &bun_core::String,
         ) -> Option<Box<[u8]>> {
             __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
         }
@@ -4158,28 +4158,36 @@ pub mod bv2_impl {
                     let index = reachable_source.get() as usize;
                     let key: &[u8] = &unique_key_for_additional_files[index];
                     if !key.is_empty() {
-                        let mut template: options::PathTemplate =
-                            if self.graph.html_imports.server_source_indices.len() != 0
-                                && self.transpiler.options.asset_naming.is_empty()
-                            {
-                                options::PathTemplate::ASSET_WITH_TARGET.into()
-                            } else {
-                                options::PathTemplate::ASSET.into()
-                            };
-
+                        let loader = loaders[index];
                         let target = targets[index];
-                        // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                        // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                        // never touches `graph.input_files`.
-                        let asset_naming = unsafe {
-                            &(*self_ptr)
-                                .transpiler_for_target(target)
-                                .options
-                                .asset_naming
+                        let mut template: options::PathTemplate = if loader == Loader::Text {
+                            // Text modules ignore `--asset-naming`: without `[hash]`
+                            // two same-named files would share one path.
+                            options::PathTemplate::ASSET.into()
+                        } else {
+                            let mut template: options::PathTemplate =
+                                if self.graph.html_imports.server_source_indices.len() != 0
+                                    && self.transpiler.options.asset_naming.is_empty()
+                                {
+                                    options::PathTemplate::ASSET_WITH_TARGET.into()
+                                } else {
+                                    options::PathTemplate::ASSET.into()
+                                };
+
+                            // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
+                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
+                            // never touches `graph.input_files`.
+                            let asset_naming = unsafe {
+                                &(*self_ptr)
+                                    .transpiler_for_target(target)
+                                    .options
+                                    .asset_naming
+                            };
+                            if !asset_naming.is_empty() {
+                                template.data.clone_from(asset_naming);
+                            }
+                            template
                         };
-                        if !asset_naming.is_empty() {
-                            template.data.clone_from(asset_naming);
-                        }
 
                         let source = &mut sources[index];
 
@@ -4219,8 +4227,6 @@ pub mod bv2_impl {
                                 .expect("oom");
                             v.into_boxed_slice()
                         };
-
-                        let loader = loaders[index];
 
                         // Hand the existing `source.contents` buffer to the
                         // OutputFile — no copy: move the contents
@@ -5830,6 +5836,7 @@ pub mod bv2_impl {
                 source: &result.source,
                 loader: result.loader,
                 target,
+                only_records: None,
             });
 
             if let Some(err) = resolve_result.last_error {
@@ -5888,6 +5895,8 @@ pub mod bv2_impl {
         pub(crate) source: &'a bun_ast::Source,
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
+        /// See `only_selected_record`.
+        pub(crate) only_records: Option<&'a [u32]>,
     }
 
     pub(crate) struct ResolveImportRecordResult {
@@ -5895,9 +5904,17 @@ pub mod bv2_impl {
         pub(crate) last_error: Option<Error>,
     }
 
+    /// `only_records`: barrel un-deferral passes the ascending indices of the records
+    /// it just un-deferred. A missing `source_index` does not mean a record is still
+    /// unresolved (external, failed, or waiting for an onResolve plugin).
+    #[inline]
+    fn only_selected_record(only_records: Option<&[u32]>, record_index: usize) -> bool {
+        only_records.is_none_or(|only| only.binary_search(&(record_index as u32)).is_ok())
+    }
+
     impl<'a> BundleV2<'a> {
-        /// Resolve all unresolved import records for a module. Skips records that
-        /// are already resolved (valid source_index), unused, or internal.
+        /// Resolve all unresolved import records for a module, or only `ctx.only_records`.
+        /// Skips records that are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
         /// Used by both initial parse resolution and barrel un-deferral.
         pub(crate) fn resolve_import_records(
@@ -5907,6 +5924,8 @@ pub mod bv2_impl {
             let source = ctx.source;
             let loader = ctx.loader;
             let source_dir = source.path.source_dir();
+            let only_records = ctx.only_records;
+            debug_assert!(only_records.is_none_or(<[u32]>::is_sorted));
             let mut estimated_resolve_queue_count: usize = 0;
             for import_record in ctx.import_records.iter_mut() {
                 if import_record
@@ -5939,12 +5958,19 @@ pub mod bv2_impl {
                     || import_record.source_index.is_valid()))
                     as usize;
             }
+            if let Some(only) = only_records {
+                estimated_resolve_queue_count = estimated_resolve_queue_count.min(only.len());
+            }
             let mut resolve_queue = ResolveQueue::default();
             resolve_queue.reserve(estimated_resolve_queue_count);
 
             let mut last_error: Option<Error> = None;
 
             'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
+                if !only_selected_record(only_records, i) {
+                    continue;
+                }
+
                 // Preserve original import specifier before resolution modifies path
                 if import_record.original_path.is_empty() {
                     import_record.original_path = import_record.path.text;
@@ -6709,9 +6735,9 @@ pub mod bv2_impl {
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
         pub(crate) redirect_import_record_index: u32,
-        /// When true, always save source indices regardless of dev_server/loader.
-        /// Used for barrel un-deferral where records must always be connected.
-        pub(crate) force_save: bool,
+        /// See `only_selected_record`. `Some` also saves the source indices regardless
+        /// of dev_server/loader: the barrel BFS follows them.
+        pub(crate) only_records: Option<&'a [u32]>,
     }
 
     impl Default for PatchImportRecordsCtx<'_> {
@@ -6722,7 +6748,7 @@ pub mod bv2_impl {
                 loader: Loader::File,
                 target: Target::Browser,
                 redirect_import_record_index: u32::MAX,
-                force_save: false,
+                only_records: None,
             }
         }
     }
@@ -6740,7 +6766,8 @@ pub mod bv2_impl {
             // across the `&mut self.graph.build_graphs[...]` borrow
             // below, so address the disjoint `self.graph.*` fields directly instead.
             let input_file_loaders = self.graph.input_files.items_loader();
-            let save_import_record_source_index = ctx.force_save
+            debug_assert!(ctx.only_records.is_none_or(<[u32]>::is_sorted));
+            let save_import_record_source_index = ctx.only_records.is_some()
                 || self.dev_server.is_none()
                 || ctx.loader == Loader::Html
                 || ctx.loader.is_css();
@@ -6767,6 +6794,9 @@ pub mod bv2_impl {
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
+                if !only_selected_record(ctx.only_records, i) {
+                    continue;
+                }
                 if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
@@ -6908,8 +6938,6 @@ pub mod bv2_impl {
                     .push(core::mem::take(&mut parse_result.external));
             }
 
-            // defer bun.default_allocator.destroy(parse_result) — caller owns Box and drops at end
-
             let mut diff: i32 = -1;
             // The pending-items adjustment is
             // hoisted to tail position (see end of fn) so a deferred closure doesn't
@@ -7027,6 +7055,13 @@ pub mod bv2_impl {
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
                     if !result.unique_key_for_additional_file.is_empty()
+                        && result.loader == Loader::Text
+                    {
+                        // `process_resolve_queue` only counts `should_copy_for_bundling()`
+                        // loaders, and a zero count skips `process_files_to_copy`.
+                        this.graph.estimated_file_loader_count += 1;
+                    }
+                    if !result.unique_key_for_additional_file.is_empty()
                         && result.loader.should_copy_for_bundling()
                     {
                         if let Some(dev) = this.dev_server {
@@ -7078,7 +7113,7 @@ pub mod bv2_impl {
                             loader: result.loader,
                             target: result.ast.target,
                             redirect_import_record_index: result.ast.redirect_import_record_index,
-                            force_save: false,
+                            only_records: None,
                         },
                     );
 
@@ -7324,7 +7359,6 @@ pub mod bv2_impl {
         }
     }
 
-    pub use crate::AdditionalFile;
     pub use bun_core::cheap_prefix_normalizer;
 
     #[derive(Clone, Copy, Default)]
@@ -7707,7 +7741,6 @@ pub mod bv2_impl {
     pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, singleton};
 
     // re-exports
-    pub use crate::IndexStringMap::IndexStringMap;
     pub use bun_ast::Loc;
 
     // C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)

@@ -1,9 +1,9 @@
 use core::ffi::c_void;
 
-use bun_core::ZigString;
 use bun_jsc::host_fn::DomCall;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSValue, JsResult,
+    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSString, JSValue,
+    JsResult,
 };
 
 /// Reinterpret a user-supplied raw address (from `bun:ffi` JS land) as a
@@ -746,7 +746,7 @@ pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 // ── `fields` host-fn thunks ──────────────────────────────────────────────────
 // The eight wrappers are unrolled manually here; each decodes its `CallFrame`
 // arguments into the target's parameter types (only the `*JSGlobalObject` /
-// `JSValue` / `Option<JSValue>` / `ZigString` arms are exercised by this table).
+// `JSValue` / `Option<JSValue>` / string arms are exercised by this table).
 
 /// Minimal `ArgumentsSlice::nextEat` — pops the next non-consumed argument.
 /// `wrapStaticMethod`'s arena/protect machinery is unused for the FFI fields
@@ -766,18 +766,18 @@ fn eat_required(
     next_eat(iter).ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))
 }
 
-/// Decode arm for `ZigString` arguments.
+/// Decode arm for string arguments.
 #[inline]
-fn eat_zig_string(
-    global: &JSGlobalObject,
+fn eat_string<'a>(
+    global: &'a JSGlobalObject,
     iter: &mut core::slice::Iter<'_, JSValue>,
-) -> JsResult<ZigString> {
+) -> JsResult<&'a JSString> {
     let string_value = next_eat(iter)
         .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
     if string_value.is_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected string")));
     }
-    string_value.get_zig_string(global)
+    string_value.to_js_string(global)
 }
 
 /// Wrap a `JsHostFnZig` body into the raw `JSHostFn` ABI. Mints a fresh
@@ -818,12 +818,11 @@ mod fields {
         FfiImpl::print(global, object, is_callback)
     }
 
-    // dlopen → FFI::open(global, ZigString, JSValue) -> JSValue
     pub(super) fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let mut iter = callframe.arguments().iter();
-        let name = eat_zig_string(global, &mut iter)?;
+        let name = eat_string(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
-        FfiImpl::open(global, name, object)
+        FfiImpl::open(global, &*name.view(global)?, object)
     }
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>

@@ -625,7 +625,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };
-    // defer static_route_visitor.deinit() — handled by Drop
 
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
     // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
@@ -1022,10 +1021,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 BYTECODE_EXTENSION
                             ))
                         };
-                        if let Some((bytecode, source_provider_url)) = generate_chunk_bytecode(
+
+                        if let Some(bytecode) = generate_chunk_bytecode(
                             c.options.output_format,
                             &code_result.buffer,
-                            source_provider_url,
+                            &source_provider_url,
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
                             let mut input_path_buf: Vec<u8> = Vec::new();

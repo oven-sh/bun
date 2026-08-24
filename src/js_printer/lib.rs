@@ -1880,8 +1880,6 @@ pub(crate) mod __gated_printer {
                             properties: js_ast::StoreSlice::new_mut(temp_bindings.as_mut_slice()),
                             is_single_line: true,
                         };
-                        // `Binding::init(*B.Object, loc)` is gated upstream;
-                        // inline its body — it just tags the union and copies `loc`.
                         // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
                         // pointee is a stack local but `print_binding` only reads it and
                         // returns before `b_object` is dropped (same as the prior `&raw mut`).
@@ -3198,8 +3196,8 @@ pub(crate) mod __gated_printer {
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
-                        if let Some(mut str) = e.index.data.as_e_string() {
-                            str.resolve_rope_if_needed(self.bump);
+                        if let Some(str) = e.index.data.as_e_string() {
+                            let str = str.flattened(self.bump);
                             if str.is_utf8() {
                                 if let Some(value) =
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
@@ -3511,8 +3509,7 @@ pub(crate) mod __gated_printer {
                         return;
                     }
 
-                    let mut e = *e;
-                    e.resolve_rope_if_needed(self.bump);
+                    let e = e.flattened(self.bump);
                     self.add_source_mapping(expr.loc);
 
                     // If this was originally a template literal, print it as one as long as we're not minifying
@@ -3675,12 +3672,12 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b"`");
-                    match &mut e.head {
+                    match &e.head {
                         E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
                         E::TemplateContents::Cooked(cooked) => {
                             if cooked.is_present() {
-                                cooked.resolve_rope_if_needed(self.bump);
-                                self.print_string_characters_e_string(cooked, b'`');
+                                let cooked = cooked.flattened(self.bump);
+                                self.print_string_characters_e_string(&cooked, b'`');
                             }
                         }
                     }
@@ -3693,12 +3690,7 @@ pub(crate) mod __gated_printer {
                             E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
                             E::TemplateContents::Cooked(cooked) => {
                                 if cooked.is_present() {
-                                    // `parts` is `*mut [TemplatePart]` but accessed `&[T]`
-                                    // here. We resolve a local copy of the
-                                    // EString header (the rope chain is StoreRef-linked and Copy) and
-                                    // prints from that — the arena node stays roped.
-                                    let mut local = E::EString { ..*cooked };
-                                    local.resolve_rope_if_needed(self.bump);
+                                    let local = cooked.flattened(self.bump);
                                     self.print_string_characters_e_string(&local, b'`');
                                 }
                             }
@@ -4401,10 +4393,9 @@ pub(crate) mod __gated_printer {
                     self.print_symbol(priv_.ref_);
                 }
                 ExprData::EString(key_str) => {
-                    let mut key_str = *key_str;
+                    let key_str = key_str.flattened(self.bump);
                     self.add_source_mapping(key.loc);
                     if key_str.is_utf8() {
-                        key_str.resolve_rope_if_needed(self.bump);
                         self.print_space_before_identifier();
                         let mut allow_shorthand = true;
                         if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
@@ -4657,8 +4648,7 @@ pub(crate) mod __gated_printer {
 
                                 match &property.key.data {
                                     ExprData::EString(str) => {
-                                        let mut str = *str;
-                                        str.resolve_rope_if_needed(self.bump);
+                                        let str = str.flattened(self.bump);
                                         self.add_source_mapping(property.key.loc);
 
                                         if str.is_utf8() {
@@ -4709,7 +4699,9 @@ pub(crate) mod __gated_printer {
                                                 ) {
                                                     if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                                                         // reshaped for borrowck — bump access first.
-                                                        let str8 = str.slice(self.bump);
+                                                        let str8 = bun_core::handle_oom(
+                                                            str.string(self.bump),
+                                                        );
                                                         if let Some(mi) = self.module_info() {
                                                             let name_id = mi.str(str8);
                                                             mi.add_export_info_local(
@@ -7217,8 +7209,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         no_op_renamer.to_renamer()
     };
 
-    // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
-
     // `is_bun_platform = ascii_only` for printAst.
     type PrinterType<'a, W, const A: bool, const G: bool> =
         Printer<'a, W, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
@@ -7309,7 +7299,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     } else {
         None
     };
-    // defer: if let Some(chunk) = &mut source_maps_chunk { chunk.deinit() } — Drop handles.
 
     if let Some(cache) = printer.options.runtime_transpiler_cache {
         let mut srlz_res: Vec<u8> = Vec::new();
@@ -7497,7 +7486,6 @@ pub(crate) fn print_with_writer_and_platform<
         printer.module_info = printer.options.module_info.take();
     }
     printer.binary_expression_stack = Vec::new();
-    // defer: temporary_bindings.deinit / writer.* = printer.writer.* — handled by move-out below.
 
     // `Index::is_runtime` ⇔ `index.value == 0`.
     if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {

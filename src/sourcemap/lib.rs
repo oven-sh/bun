@@ -340,11 +340,13 @@ unsafe extern "C" {
     // bytes of it), so `&SourceProviderMap` carries no `readonly`/`noalias` —
     // the foreign side owns all state behind the handle and may mutate it. The
     // only param is that handle reference, so this is a `safe fn`.
-    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_core::String;
+    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap)
+    -> bun_core::StringView<'_>;
 }
 
 impl SourceProviderMap {
-    pub(crate) fn get_source_slice(&self) -> bun_core::String {
+    /// `Bun::toStringView` — a view into the provider's source.
+    pub(crate) fn get_source_slice(&self) -> bun_core::StringView<'_> {
         ZigSourceProvider__getSourceSlice(self)
     }
 
@@ -354,7 +356,7 @@ impl SourceProviderMap {
 }
 
 impl SourceProvider for SourceProviderMap {
-    fn get_source_slice(&self) -> bun_core::String {
+    fn get_source_slice(&self) -> bun_core::StringView<'_> {
         SourceProviderMap::get_source_slice(self)
     }
     fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -370,7 +372,8 @@ impl SourceProvider for SourceProviderMap {
 /// default-`None` optional capabilities so each provider only overrides what
 /// it actually has.
 pub trait SourceProvider {
-    fn get_source_slice(&self) -> bun_core::String;
+    /// `Bun::toStringView`: a ZigString view into the provider's source.
+    fn get_source_slice(&self) -> bun_core::StringView<'_>;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
 
     /// The provider's own in-memory sourcemap JSON for its source. Only
@@ -428,7 +431,6 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
         if load_hint != SourceMapLoadHint::IsExternalMap {
             'try_inline: {
                 let source = provider.get_source_slice();
-                // defer source.deref() → Drop on bun_core::String
                 debug_assert!(source.tag() == bun_core::Tag::ZigString);
 
                 let maybe_found_url = if source.is_8bit() {
@@ -440,7 +442,6 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let Some(found_url) = maybe_found_url else {
                     break 'try_inline;
                 };
-                // defer found_url.deinit() → Drop
 
                 match parse_url(&arena, found_url.slice(), result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),

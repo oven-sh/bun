@@ -2603,7 +2603,6 @@ fn append_bytecode_aligned(
     }
 }
 
-
 /// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
 /// populates it from bytes, sets it globally, and returns the pointer.
 fn from_bytes_alloc(

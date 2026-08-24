@@ -1169,6 +1169,22 @@ describe("Bun.Image", () => {
       expect(buf[0]).toBe(0xff);
       expect(buf[1]).toBe(0xd8);
     });
+
+    test("sync body-init errors carry the same error.code as async terminals", async () => {
+      const garbage = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+      await expect(new Bun.Image(garbage).png().bytes()).rejects.toMatchObject({
+        code: "ERR_IMAGE_UNKNOWN_FORMAT",
+      });
+      expect(() => new Response(new Bun.Image(garbage))).toThrowWithCode(Error, "ERR_IMAGE_UNKNOWN_FORMAT");
+    });
+
+    test("detached ArrayBuffer in sync body-init throws with ERR_INVALID_STATE", () => {
+      // Fresh copy — detaching gradientPng's own buffer would break other tests.
+      const ab = new Uint8Array(gradientPng).buffer;
+      const img = new Bun.Image(ab);
+      ab.transfer();
+      expect(() => new Response(img)).toThrowWithCode(Error, "ERR_INVALID_STATE");
+    });
   });
 });
 

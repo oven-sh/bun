@@ -186,7 +186,7 @@ describe("Bun.build", () => {
     ).toThrow("loader must be a string");
   });
 
-  test("error for an unknown loader name lists the current loaders", () => {
+  test("error for an unknown loader name lists the names the loader map accepts", async () => {
     let error: Error | undefined;
     try {
       Bun.build({
@@ -197,11 +197,22 @@ describe("Bun.build", () => {
       error = e as Error;
     }
     expect(error?.message).toStartWith("loader must be one of ");
+    const listed = [...error!.message.matchAll(/"([^"]+)"/g)].map(m => m[1]);
     // Same names `--loader` accepts. The old hard-coded message listed none of
     // these except "napi", which it listed but then rejected.
-    for (const name of ["jsonc", "json5", "yaml", "xml", "md", "sqlite", "sqlite_embedded", "napi"]) {
-      expect(error?.message).toContain(`"${name}"`);
-    }
+    expect(listed).toEqual(
+      expect.arrayContaining(["jsonc", "json5", "yaml", "xml", "md", "sqlite", "sqlite_embedded", "napi", "sh"]),
+    );
+    // "sh" is the accepted spelling of the shell loader; its enum variant is "bunsh".
+    expect(listed).not.toContain("bunsh");
+
+    // Every listed name is accepted: map each one to its own extension in a single build.
+    const dir = tempDirWithFiles("bun-build-loader-names", { "entry.js": "export default 1;" });
+    const build = await Bun.build({
+      entrypoints: [join(dir, "entry.js")],
+      loader: Object.fromEntries(listed.map((name, i) => [`.l${i}`, name])) as any,
+    });
+    expect(build.success).toBe(true);
   });
 
   test("returns errors properly", async () => {

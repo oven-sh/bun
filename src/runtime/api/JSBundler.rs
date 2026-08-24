@@ -53,11 +53,25 @@ pub mod js_bundler {
         }
         let name = value.to_slice(global_this)?;
         bun_ast::Loader::from_string(name.slice()).ok_or_else(|| {
-            global_this.throw_invalid_arguments(format_args!(
-                "loader must be one of {}",
-                bun_core::fmt::enum_tag_list::<bun_ast::Loader, true>()
-            ))
+            global_this
+                .throw_invalid_arguments(format_args!("loader must be one of {}", LoaderNamesList))
         })
+    }
+
+    /// The keys of the table `Loader::from_string` reads, as `"js", "mjs", ..., or "markdown"`.
+    struct LoaderNamesList;
+
+    impl core::fmt::Display for LoaderNamesList {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            let count = bun_ast::loader::LOADER_NAMES.len();
+            for (i, name) in bun_ast::loader::LOADER_NAMES.keys().enumerate() {
+                if i > 0 {
+                    f.write_str(if i + 1 == count { ", or " } else { ", " })?;
+                }
+                write!(f, "\"{}\"", bstr::BStr::new(name))?;
+            }
+            Ok(())
+        }
     }
 
     /// A map of file paths to their in-memory contents.

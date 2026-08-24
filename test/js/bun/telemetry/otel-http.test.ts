@@ -436,7 +436,8 @@ describe("node:http", () => {
         const spans = [];
         Bun.otel.start({ exporters: [{ export: b => spans.push(...b) }], instrumentations: { http: true } });
         process.on("uncaughtException", () => {});
-        const server = http.createServer(() => { throw new TypeError("boom"); });
+        let n = 0;
+        const server = http.createServer(() => { throw n++ ? Object.assign(new Error("coded"), { code: "EBOOM" }) : new TypeError("boom"); });
         await new Promise(r => server.listen(0, r));
         const res = await fetch("http://localhost:" + server.address().port + "/boom");
         await res.text();
@@ -446,6 +447,13 @@ describe("node:http", () => {
         console.log(res.status, srv.attributes["http.response.status_code"], srv.status.code, Bun.otel.activeSpan());
         // the synchronous throw is described like an async rejection: exception event + error.type + message
         console.log(srv.attributes["error.type"], srv.status.message, srv.events[0]?.name, srv.events[0]?.attributes["exception.type"]);
+        // an error with a .code reports the code as its type
+        spans.length = 0;
+        await (await fetch("http://localhost:" + server.address().port + "/boom2")).text();
+        await Bun.sleep(0);
+        await Bun.otel.forceFlush();
+        const coded = spans.find(s => s.scope.name === "bun.http.server");
+        console.log(coded.attributes["error.type"], coded.events[0]?.attributes["exception.type"]);
         server.close();
         `,
       ],
@@ -457,9 +465,10 @@ describe("node:http", () => {
     // node:http currently answers 200 (empty body) when a handler throws with an
     // uncaughtException listener installed — pre-existing behaviour on main. What
     // this test pins is that the span is ERROR (2) and matches what was sent.
-    const [line1, line2] = stdout.trim().split("\n");
+    const [line1, line2, line3] = stdout.trim().split("\n");
     expect(line1, stderr).toMatch(/^(200 200|500 500) 2 undefined$/);
     expect(line2).toBe("TypeError boom exception TypeError");
+    expect(line3).toBe("EBOOM EBOOM");
     expect(exitCode, stderr).toBe(0);
   });
 

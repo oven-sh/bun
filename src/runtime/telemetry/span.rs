@@ -1083,7 +1083,12 @@ pub fn record_exception(
         }
     };
     if err.is_object() {
-        ty_s = read(err.get(global, "name"))?;
+        // `code` (ETIMEDOUT, ERR_*) is the low-cardinality identifier semconv
+        // asks for; `name` otherwise (same as recordException / fail()).
+        ty_s = read(err.get(global, "code"))?;
+        if ty_s.is_none() {
+            ty_s = read(err.get(global, "name"))?;
+        }
         msg_s = read(err.get(global, "message"))?;
         stack_s = read(err.get(global, "stack"))?;
     } else if err.is_string() {

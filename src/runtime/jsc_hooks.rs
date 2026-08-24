@@ -3690,7 +3690,7 @@ fn get_hardcoded_module(
                     return None;
                 }
             }
-            Some(js_synthetic_module(b"internal:worker/io", specifier))
+            Some(js_synthetic_module(b"internal:worker/io"))
         }
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop

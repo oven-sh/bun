@@ -129,116 +129,126 @@ function buildTarball(files: Record<string, string>): { tgz: Buffer; shasum: str
 // dirs ("name@version@@@N"), so every candidate used to miss (#40269).
 // Packages with a .node file must resolve to a node_modules-shaped view
 // whose siblings link to their dependencies' cache dirs.
-test.skipIf(isWindows)("auto-install native addon packages resolve $ORIGIN-shaped RPATH siblings", async () => {
-  const tarballs: Record<string, { tgz: Buffer; shasum: string; integrity: string }> = {
-    "lib-pkg": buildTarball({
-      "package.json": JSON.stringify({ name: "lib-pkg", version: "1.2.3" }),
-      "lib/libfake.so": "not really a shared library\n",
-    }),
-    "addon-pkg": buildTarball({
-      "package.json": JSON.stringify({
-        name: "addon-pkg",
-        version: "1.0.0",
-        main: "index.js",
-        dependencies: { "lib-pkg": "^1.2.0" },
+//
+// The scoped case mirrors sharp's real shape: @img/sharp-linux-x64 reaches
+// @img/sharp-libvips-linux-x64 through optionalDependencies, and its RPATH
+// walk lands in the scope dir (node_modules/@img).
+for (const { label, addonName, libName, depField } of [
+  { label: "unscoped dependency", addonName: "addon-pkg", libName: "lib-pkg", depField: "dependencies" },
+  { label: "scoped optionalDependency", addonName: "@img/addon-pkg", libName: "@img/lib-pkg", depField: "optionalDependencies" },
+]) {
+  test.skipIf(isWindows)(`auto-install native addon packages resolve $ORIGIN-shaped RPATH siblings (${label})`, async () => {
+    // The RPATH sibling lookup uses the last path component: from the addon's
+    // lib dir, "$ORIGIN/../.." is node_modules (or node_modules/@scope), and
+    // the sibling sits there under its unscoped basename.
+    const libBase = libName.split("/").pop()!;
+    const tarballs: Record<string, { tgz: Buffer; shasum: string; integrity: string }> = {
+      [libName]: buildTarball({
+        "package.json": JSON.stringify({ name: libName, version: "1.2.3" }),
+        "lib/libfake.so": "not really a shared library\n",
       }),
-      "index.js": "module.exports = require.resolve('./lib/fake.node');\n",
-      "lib/fake.node": "not really a native addon\n",
-    }),
-  };
-  const versions: Record<string, string> = { "lib-pkg": "1.2.3", "addon-pkg": "1.0.0" };
-
-  using registry = Bun.serve({
-    port: 0,
-    fetch(req) {
-      const pathname = new URL(req.url).pathname;
-      const tgz = pathname.match(/^\/tarballs\/(.+)\.tgz$/);
-      if (tgz) {
-        const name = tgz[1];
-        if (!tarballs[name]) return new Response("not found", { status: 404 });
-        return new Response(tarballs[name].tgz, {
-          headers: { "content-type": "application/octet-stream" },
-        });
-      }
-      const name = pathname.slice(1);
-      if (!tarballs[name]) return new Response("not found", { status: 404 });
-      const version = versions[name];
-      const pkg = JSON.parse(
-        JSON.stringify({
-          name,
-          version,
-          dependencies: name === "addon-pkg" ? { "lib-pkg": "^1.2.0" } : undefined,
+      [addonName]: buildTarball({
+        "package.json": JSON.stringify({
+          name: addonName,
+          version: "1.0.0",
+          main: "index.js",
+          [depField]: { [libName]: "^1.2.0" },
         }),
-      );
-      pkg.dist = {
-        shasum: tarballs[name].shasum,
-        integrity: tarballs[name].integrity,
-        tarball: `http://127.0.0.1:${registry.port}/tarballs/${name}.tgz`,
-      };
-      return Response.json({
-        name,
-        "dist-tags": { latest: version },
-        versions: { [version]: pkg },
-      });
-    },
-  });
+        "index.js": "module.exports = require.resolve('./lib/fake.node');\n",
+        "lib/fake.node": "not really a native addon\n",
+      }),
+    };
+    const versions: Record<string, string> = { [libName]: "1.2.3", [addonName]: "1.0.0" };
 
-  using dir = tempDir("autoinstall-addon-links", {
-    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
-    "check.js": `
-      const fs = require("fs");
-      const path = require("path");
-      const addonPath = require("addon-pkg");
-      const origin = path.dirname(fs.realpathSync(addonPath));
-      // The same walk the dynamic linker does for the RPATH entry
-      // "$ORIGIN/../../lib-pkg/lib": plain string concatenation, so the
-      // kernel resolves ".." through the real parent dirs, exactly like
-      // dlopen. No path.join, which would collapse ".." textually.
-      const found = fs.existsSync(origin + "/../../lib-pkg/lib/libfake.so");
-      const shaped = origin.includes(path.sep + "node_modules" + path.sep + "addon-pkg" + path.sep);
-      console.log(JSON.stringify({ found, shaped }));
-    `,
-  });
-  const env = {
-    ...bunEnv,
-    BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
-  };
-
-  async function runCheck(script: string): Promise<{ found: boolean; shaped: boolean }> {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), script],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
+    using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const pathname = decodeURIComponent(new URL(req.url).pathname);
+        const tgz = pathname.match(/^\/tarballs\/(.+)\.tgz$/);
+        if (tgz) {
+          const name = tgz[1];
+          if (!tarballs[name]) return new Response("not found", { status: 404 });
+          return new Response(tarballs[name].tgz, {
+            headers: { "content-type": "application/octet-stream" },
+          });
+        }
+        const name = pathname.slice(1);
+        if (!tarballs[name]) return new Response("not found", { status: 404 });
+        const version = versions[name];
+        const pkg: Record<string, unknown> = { name, version };
+        if (name === addonName) pkg[depField] = { [libName]: "^1.2.0" };
+        pkg.dist = {
+          shasum: tarballs[name].shasum,
+          integrity: tarballs[name].integrity,
+          tarball: `http://127.0.0.1:${registry.port}/tarballs/${name}.tgz`,
+        };
+        return Response.json({
+          name,
+          "dist-tags": { latest: version },
+          versions: { [version]: pkg },
+        });
+      },
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
-  }
 
-  // First run populates the cache through the local registry. The addon view
-  // is built during addon-pkg's own resolve, so `shaped` is deterministic.
-  // `found` is not asserted here: lib-pkg's extraction is asynchronous and
-  // nothing in check.js awaits it.
-  expect((await runCheck("check.js")).shaped).toBe(true);
+    using dir = tempDir("autoinstall-addon-links", {
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+      "check.js": `
+        const fs = require("fs");
+        const path = require("path");
+        const addonPath = require(${JSON.stringify(addonName)});
+        const origin = path.dirname(fs.realpathSync(addonPath));
+        // The same walk the dynamic linker does for the RPATH entry
+        // "$ORIGIN/../../${libBase}/lib": plain string concatenation, so the
+        // kernel resolves ".." through the real parent dirs, exactly like
+        // dlopen. No path.join, which would collapse ".." textually.
+        const found = fs.existsSync(origin + "/../../${libBase}/lib/libfake.so");
+        const shaped = origin.includes("/node_modules/" + ${JSON.stringify(addonName)} + "/");
+        console.log(JSON.stringify({ found, shaped }));
+      `,
+    });
+    const env = {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+    };
 
-  // Second run resolves from the warm cache with no lockfile edge for
-  // lib-pkg (the layout every pre-existing cache has), which exercises the
-  // disk-cache fallback for the sibling symlink.
-  expect(await runCheck("check.js")).toEqual({ found: true, shaped: true });
+    async function runCheck(script: string): Promise<{ found: boolean; shaped: boolean }> {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), script],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
 
-  // Third run: drop the view. A warm cache must rebuild it and recreate the
-  // sibling symlink from scratch, with no leftover state from the first run.
-  rmSync(join(String(dir), ".bun-cache", ".addon-links"), { recursive: true, force: true });
-  expect(await runCheck("check.js")).toEqual({ found: true, shaped: true });
+    // First run populates the cache through the local registry. The addon view
+    // is built during the addon's own resolve, so `shaped` is deterministic.
+    // `found` is not asserted here: the library's extraction is asynchronous
+    // and nothing in check.js awaits it.
+    expect((await runCheck("check.js")).shaped).toBe(true);
 
-  // A skip marker on addon-pkg would disable the view permanently, so the
-  // detection must never write one for a package with a .node file.
-  const storeEntries = readdirSync(join(String(dir), ".bun-cache", ".addon-links"));
-  expect(storeEntries.some(f => f.startsWith("addon-pkg@") && f.endsWith(".skip"))).toBe(false);
-});
+    // Second run resolves from the warm cache with no lockfile edge for the
+    // library (the layout every pre-existing cache has), which exercises the
+    // disk-cache fallback for the sibling symlink.
+    expect(await runCheck("check.js")).toEqual({ found: true, shaped: true });
+
+    // Third run: drop the view. A warm cache must rebuild it and recreate the
+    // sibling symlink from scratch, with no leftover state from the first run.
+    rmSync(join(String(dir), ".bun-cache", ".addon-links"), { recursive: true, force: true });
+    expect(await runCheck("check.js")).toEqual({ found: true, shaped: true });
+
+    // A skip marker on the addon would disable the view permanently, so the
+    // detection must never write one for a package with a .node file.
+    const markerDir = join(String(dir), ".bun-cache", ".addon-links", ...addonName.split("/").slice(0, -1));
+    const addonBase = addonName.split("/").pop()!;
+    const storeEntries = readdirSync(markerDir);
+    expect(storeEntries.some(f => f.startsWith(`${addonBase}@`) && f.endsWith(".skip"))).toBe(false);
+  });
+}
 
 test("--install=fallback to install missing packages", async () => {
   const dir = tmpdirSync();

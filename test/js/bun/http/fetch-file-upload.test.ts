@@ -239,3 +239,91 @@ test("missing file throws the expected error", async () => {
   });
   Bun.gc(true);
 });
+
+// A request body that cannot be read is a network error, so fetch() rejects the
+// way it rejects its other network errors: a TypeError that still carries the
+// system error fields.
+describe("FormData body with a Bun.file() that cannot be read", () => {
+  // The FormData is serialized before anything is connected, so the promise
+  // comes back already rejected; checking that pins the rejection to the body
+  // rather than to the connection this URL would refuse.
+  async function bodyRejection(promise: Promise<Response>): Promise<any> {
+    expect(Bun.peek.status(promise)).toBe("rejected");
+    return await promise.then(
+      () => {
+        throw new Error("fetch() resolved");
+      },
+      error => error,
+    );
+  }
+
+  test.concurrent("fetch(url, { body }) rejects with a TypeError carrying the ENOENT", async () => {
+    using dir = tempDir("fetch-formdata-missing-file", { "present.txt": "present" });
+    const missingPath = join(String(dir), "missing.txt");
+
+    const body = new FormData();
+    body.append("field", "value");
+    body.append("present", Bun.file(join(String(dir), "present.txt")));
+    body.append("missing", Bun.file(missingPath));
+
+    const error = await bodyRejection(fetch("http://127.0.0.1:1/", { method: "POST", body }));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error).toMatchObject({
+      name: "TypeError",
+      code: "ENOENT",
+      syscall: "open",
+      path: missingPath,
+      errno: expect.any(Number),
+    });
+    expect(error.message).toContain("no such file or directory");
+  });
+
+  test.concurrent("fetch({ url, body }) rejects with the same TypeError", async () => {
+    using dir = tempDir("fetch-formdata-missing-file-init", {});
+    const missingPath = join(String(dir), "missing.txt");
+
+    const body = new FormData();
+    body.append("missing", Bun.file(missingPath));
+
+    const error = await bodyRejection(fetch({ url: "http://127.0.0.1:1/", method: "POST", body } as any));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error).toMatchObject({ code: "ENOENT", syscall: "open", path: missingPath });
+  });
+
+  // Opening a directory succeeds and reading it fails, so this covers the error
+  // coming out of the read itself. Not pinned on Windows, where a directory
+  // stats as 0 bytes and the size-bounded read need not fail the same way.
+  test.concurrent.skipIf(isWindows)("a read failure (EISDIR) rejects with a TypeError too", async () => {
+    using dir = tempDir("fetch-formdata-directory", { "subdir/.keep": "" });
+
+    const body = new FormData();
+    body.append("dir", Bun.file(join(String(dir), "subdir")));
+
+    const error = await bodyRejection(fetch("http://127.0.0.1:1/", { method: "POST", body }));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error).toMatchObject({ code: "EISDIR", syscall: "read" });
+  });
+
+  test.concurrent("new Request() and new Response() still throw the system error itself", () => {
+    using dir = tempDir("fetch-formdata-missing-file-ctor", {});
+    const missingPath = join(String(dir), "missing.txt");
+
+    for (const construct of [
+      (body: FormData) => new Response(body),
+      (body: FormData) => new Request("http://localhost/", { method: "POST", body }),
+    ]) {
+      const body = new FormData();
+      body.append("missing", Bun.file(missingPath));
+
+      let error: unknown;
+      try {
+        construct(body);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(TypeError);
+      expect(error).toMatchObject({ name: "Error", code: "ENOENT", syscall: "open", path: missingPath });
+    }
+  });
+});

@@ -912,3 +912,71 @@ describe.concurrent("modules that fail to print", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/40387
+describe.concurrent("--outfile extension implies the output format", () => {
+  const tlaEntry = `const value = await Promise.resolve(42);\nconsole.log(value);\n`;
+
+  test(".cjs outfile rejects top-level await like --format=cjs", async () => {
+    using dir = tempDir("outfile-cjs-tla", { "entry.ts": tlaEntry });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--target=node", "--outfile", "out.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('"await" can only be used inside an "async" function');
+    expect(exitCode).toBe(1);
+  });
+
+  test(".cjs outfile emits CommonJS output", async () => {
+    using dir = tempDir("outfile-cjs-format", { "entry.ts": `export const foo = 42;\n` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--outfile", "out.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    const output = await Bun.file(path.join(String(dir), "out.cjs")).text();
+    expect(output).not.toContain("export {");
+    expect(output).toContain("module.exports");
+  });
+
+  test("explicit --format=esm wins over the .cjs extension", async () => {
+    using dir = tempDir("outfile-cjs-explicit-esm", { "entry.ts": tlaEntry });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--target=node", "--format=esm", "--outfile", "out.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    const output = await Bun.file(path.join(String(dir), "out.cjs")).text();
+    expect(output).toContain("await Promise.resolve(42)");
+  });
+
+  test(".mjs outfile keeps ESM output with top-level await", async () => {
+    using dir = tempDir("outfile-mjs-tla", { "entry.ts": tlaEntry });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--target=node", "--outfile", "out.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    const output = await Bun.file(path.join(String(dir), "out.mjs")).text();
+    expect(output).toContain("await Promise.resolve(42)");
+  });
+});

@@ -2515,6 +2515,19 @@ fn parse_build_command_options(
                 Global::exit(1);
             }
         }
+    } else if !ctx.bundler_options.bytecode && !ctx.bundler_options.compile {
+        // No explicit --format: infer it from the --outfile extension, like esbuild.
+        // Node decides the module format of .cjs/.mjs files from the extension alone,
+        // so an ESM bundle written to a .cjs file can never load.
+        let outfile: &[u8] = &ctx.bundler_options.outfile;
+        if strings::has_suffix_comptime(outfile, b".cjs") {
+            ctx.bundler_options.output_format = options::Format::Cjs;
+            if ctx.args.target.is_none() {
+                ctx.args.target = Some(api::Target::Node);
+            }
+        } else if strings::has_suffix_comptime(outfile, b".mjs") {
+            ctx.bundler_options.output_format = options::Format::Esm;
+        }
     }
 
     if args.flag(b"--splitting") {

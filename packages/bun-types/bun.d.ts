@@ -7715,6 +7715,11 @@ declare module "bun" {
        * await proc2.exited;
        * terminal.close();
        * ```
+       *
+       * Exception: with `detached: true` the child is a session leader, and
+       * the PTY is torn down when it exits. The terminal's `exit` callback
+       * fires at that point, and the terminal cannot be passed to another
+       * spawn afterwards.
        */
       terminal?: TerminalOptions | Terminal;
     }
@@ -8483,6 +8488,11 @@ declare module "bun" {
      * Callback invoked when the PTY stream closes (EOF or read error).
      * `exitCode` is a PTY lifecycle status (0 = clean EOF, 1 = error), NOT the subprocess exit code.
      * Use {@link Subprocess.exited} or the `onExit` callback for the process exit information.
+     *
+     * For a terminal created inline by `Bun.spawn`, and for an existing
+     * terminal whose child was spawned with `detached: true`, the PTY is torn
+     * down when that child exits and this callback fires then, after any
+     * remaining output was delivered to `data`.
      * @param terminal The terminal instance
      * @param exitCode PTY lifecycle status (0 for EOF, 1 for error)
      * @param signal Always `null`; reserved for future signal reporting

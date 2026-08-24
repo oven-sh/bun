@@ -903,9 +903,7 @@ pub trait PathLikeExt {
     ) -> JsResult<Option<PathLike>>
     where
         Self: Sized;
-    /// Throws every failure, ENAMETOOLONG included. Argument parsing goes
-    /// through [`Self::from_js`], which reports that one the way the binding
-    /// reports syscall errors (see [`Valid::path_length`]).
+    /// Throws ENAMETOOLONG too; [`Self::from_js`] defers it for async bindings instead.
     fn from_bun_string(
         global: &JSGlobalObject,
         str: bun_core::String,
@@ -1250,10 +1248,7 @@ impl PathLikeExt for PathLike {
     }
 }
 
-/// The UTF-8 bytes of `str` as a `PathLike`, checked for NUL bytes only. The
-/// length check is the caller's: [`Valid::path_length`] while parsing
-/// arguments, so async bindings can report it through their promise, or
-/// [`PathLikeExt::from_bun_string`] to throw it.
+/// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).
 fn path_like_from_string(
     global: &JSGlobalObject,
     str: bun_core::String,
@@ -1294,9 +1289,7 @@ fn path_like_from_string(
 pub struct Valid;
 
 impl Valid {
-    /// `PathBuffer` is `[u8; MAX_PATH_BYTES]` and `slice_z_with_force_copy`
-    /// needs room for the NUL, so a path this long never reaches a syscall;
-    /// this is the ENAMETOOLONG the syscall would have returned.
+    /// The ENAMETOOLONG the syscall would return: no `PathBuffer` fits this path plus its NUL.
     pub(crate) fn path_too_long(path: &[u8]) -> Option<bun_sys::SystemError> {
         if path.len() < MAX_PATH_BYTES {
             return None;
@@ -1309,11 +1302,7 @@ impl Valid {
         Some(system_error)
     }
 
-    /// Length check for a parsed path argument. A sync binding throws the
-    /// error. A binding that returns a promise (`arguments.will_be_async`)
-    /// gets it recorded as `arguments.deferred_error` to reject with, plus an
-    /// empty placeholder so the remaining arguments still get validated; the
-    /// binding never runs the operation on the placeholder.
+    /// Sync bindings throw; async ones get it as `arguments.deferred_error` and a placeholder path.
     pub(crate) fn path_length(
         path: PathLike,
         ctx: &JSGlobalObject,

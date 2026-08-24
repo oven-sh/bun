@@ -55,16 +55,28 @@ where
     }
 }
 
-/// Argument parsing shared by every promise-returning binding (`run_async`,
-/// `cp`, `readdir`). `Err` is what the binding returns instead of running the
-/// operation: a thrown validation error (node throws those synchronously
-/// too), or a promise already rejected, either with an already-aborted
-/// signal's error or with an errno-class argument failure
-/// (`ArgumentsSlice::deferred_error`), which node reports through the
-/// promise because it comes out of the syscall there.
+/// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
+/// `.readdir` (those have bespoke entry points below).
 ///
-/// Callers take `bun_vm().as_mut()` for the task only once this has returned:
-/// parsing holds a shared borrow of the VM and can re-enter JS.
+/// `create_task` is `async_::<FunctionName>::create` — passed in because the
+/// Windows path picks `UVFSRequest` for a handful of fds-only ops while
+/// everything else uses `AsyncFSTask`, and that choice is encoded in the
+/// `async_::*` type aliases rather than derivable from `F` alone.
+fn run_async<A: FsArgument>(
+    this: &Binding,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
+) -> JsResult<JSValue> {
+    let args = match parse_async_args::<A>(global, frame) {
+        Ok(args) => args,
+        Err(result) => return result,
+    };
+    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+    Ok(create_task(global, this, args, vm))
+}
+
+/// Parses a promise-returning binding's arguments; `Err` is what the binding returns instead.
 fn parse_async_args<A: FsArgument>(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -75,10 +87,11 @@ fn parse_async_args<A: FsArgument>(
     slice.will_be_async = true;
 
     // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
-    // to the Task: dropped only on the early-return branches; on the success
-    // path the Task owns `args` (whose protected JSValues are released by
-    // `Drop for ThreadSafe<A>` when the Task completes), and `slice` is
-    // intentionally not dropped — its `Drop`-unprotect would race that.
+    // to the Task: dropped only on the early-return
+    // error/abort branches; on the success path the Task owns `args` (whose
+    // protected JSValues are released by `Drop for ThreadSafe<A>` when the
+    // Task completes), and `slice` is intentionally not dropped — its
+    // `Drop`-unprotect would race that.
 
     let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
         Ok(a) => a,
@@ -113,27 +126,6 @@ fn parse_async_args<A: FsArgument>(
     // SAFETY: not yet dropped; only drop site for this path.
     unsafe { ManuallyDrop::drop(&mut slice) };
     Err(Ok(early_return))
-}
-
-/// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
-/// `.readdir` (those have bespoke entry points below).
-///
-/// `create_task` is `async_::<FunctionName>::create` — passed in because the
-/// Windows path picks `UVFSRequest` for a handful of fds-only ops while
-/// everything else uses `AsyncFSTask`, and that choice is encoded in the
-/// `async_::*` type aliases rather than derivable from `F` alone.
-fn run_async<A: FsArgument>(
-    this: &Binding,
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
-) -> JsResult<JSValue> {
-    let args = match parse_async_args::<A>(global, frame) {
-        Ok(args) => args,
-        Err(result) => return result,
-    };
-    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(global, this, args, vm))
 }
 
 #[inline(always)]

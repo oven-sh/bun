@@ -3998,16 +3998,11 @@ impl BunXFastPath {
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }
 
-    /// The POSIX equivalent of this fast path execs the bin through the temp
-    /// `node` shim, so the child process carries no bun/bunx CLI flags in
-    /// argv and `process.execPath` resolves (through the shim symlink) to
-    /// `bun`. The in-process launch keeps the original argv
-    /// (`bunx --bun --no-install <pkg>`): the `process.execArgv` re-parse
-    /// would report the bunx CLI flags as runtime flags, and when invoked as
-    /// `bunx.exe` a `child_process.fork` child would re-enter bunx CLI mode
-    /// (#40298). Rewrite the global argv to the `bun <script> <args>` shape
-    /// and point `process.execPath` at the sibling `bun.exe` before the VM
-    /// boots.
+    /// Give the in-process launch the identity a POSIX bunx child gets by
+    /// exec'ing through the temp `node` shim: argv in the
+    /// `bun <script> <args>` shape (the `process.execArgv` re-parse must not
+    /// see bunx CLI flags) and `process.execPath` at the sibling `bun.exe`
+    /// (a fork of `bunx.exe` re-enters bunx CLI mode, #40298).
     fn assume_runtime_identity(script_path: &[u8], passthrough: &[Box<[u8]>]) {
         fn leak_zstr(bytes: &[u8]) -> &'static ZStr {
             let mut v = Vec::with_capacity(bytes.len() + 1);

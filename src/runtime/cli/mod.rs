@@ -429,10 +429,8 @@ pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>
 
 #[allow(non_upper_case_globals)]
 /// Overrides `process.execPath` / `process.argv[0]`. Set once when the
-/// Windows bunx fast path boots a bin script inside the `bunx.exe` process:
-/// a child spawned from `process.execPath` (e.g. `child_process.fork`)
-/// would re-enter bunx CLI mode, so the override points at the sibling
-/// `bun.exe` instead.
+/// Windows bunx fast path boots a bin script inside `bunx.exe`, whose
+/// path children cannot be spawned from (it dispatches to bunx CLI mode).
 pub(crate) static Bun__Node__ExecPathOverride: std::sync::OnceLock<Box<[u8]>> =
     std::sync::OnceLock::new();
 

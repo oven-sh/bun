@@ -26,9 +26,8 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
     EncodedSlice::from_bytes(argv0).to_js(global_object)
 }
 
-/// `process.execPath` bytes: the CLI-set override (the Windows bunx fast
-/// path boots the bin script inside `bunx.exe`, whose own path cannot be
-/// re-spawned as a runtime) or the resolved executable path.
+/// `process.execPath` bytes: the CLI-set override (Windows bunx in-process
+/// launch) or the resolved executable path.
 pub(crate) fn exec_path_bytes() -> Option<&'static [u8]> {
     if let Some(path) = crate::cli::Bun__Node__ExecPathOverride.get() {
         return Some(path);

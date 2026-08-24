@@ -92,6 +92,12 @@ test("pipelined response replay does not re-enter monkey-patched write/end (#403
           process.exit(0);
         }
       });
+      // A stall or truncation would otherwise idle until the test timeout
+      // with no diagnostic.
+      sock.on("close", () => {
+        console.error("closed with " + buf.length + " bytes: " + buf.toString("latin1"));
+        process.exit(1);
+      });
     });
   `;
   await using proc = Bun.spawn({

@@ -684,43 +684,14 @@ impl ThreadPool {
     }
 }
 
-pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
-    // 4mb
-    const DEFAULT: u32 = 4 * 1024 * 1024;
-    #[cfg(windows)]
-    {
-        // `std::thread::Builder::stack_size` passes
-        // `STACK_SIZE_PARAM_IS_A_RESERVATION` to `CreateThread`, so the value
-        // here is the *reserve* size, not the commit size. A 4 MB reserve is
-        // not enough: the deeply-nested-AST stress tests
-        // (`lots-of-for-loop.js`, 15k nested `for`) overflow on a 4 MB
-        // worker stack before the parser's `StackCheck` can fire (each
-        // `parse_stmt`→`t_for` cycle is small enough that 15k levels fit, but
-        // the visit/print passes that follow do not). Reserve the same 18 MB
-        // the PE header gives the main thread (`/STACK:0x1200000` — see
-        // scripts/build/flags.ts).
-        let _ = DEFAULT;
-        0x1200000
-    }
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    {
-        DEFAULT
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // 16384 is the page size on arm64
-        // macOS and a safe multiple of the 4096-byte x64 page size.
-        const PAGE_SIZE_MAX: u32 = 16384;
-        let size = DEFAULT - (DEFAULT % PAGE_SIZE_MAX);
-        // stack size must be a multiple of page_size
-        // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-        assert!(
-            size.is_multiple_of(PAGE_SIZE_MAX),
-            "Thread stack size is not a multiple of page size"
-        );
-        size
-    }
-};
+/// Reserved, not committed, so the cost is address space. One value everywhere: a 4 MB worker overflowed on the
+/// deeply-nested-AST stress tests on Windows before the parser's `StackCheck` could fire, and JSC caps its own
+/// recursion budget at `maxPerThreadStackUsage` (5 MB) -- below that cap the depth at which its parser and bytecode
+/// generator give up (and, for `--bytecode`, what they emit) would depend on the platform's worker stack size. This is
+/// the 18 MB the PE header gives the main thread (`/STACK:0x1200000`, scripts/build/flags.ts); a multiple of the 16 KB
+/// macOS arm64 page size, as pthread requires.
+pub const DEFAULT_THREAD_STACK_SIZE: u32 = 0x1200000;
+const _: () = assert!(DEFAULT_THREAD_STACK_SIZE.is_multiple_of(16384));
 
 // NOTE: a `prewarm_mimalloc_numa()` helper was tried here to call
 // `_mi_os_numa_node_count()` once on the spawning thread so workers don't race

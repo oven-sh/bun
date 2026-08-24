@@ -301,6 +301,24 @@ function constants(ch) {
   const templ = ((s, ...v) => [s.length, s.raw[0], v.length])`x${1}é${wide[0]}y`;
   return [short.join("|"), wide.join("|").length, long.length, wideLong.length, ünïcödeIdentifier, holes.length, 1 in holes, nested.flat().length, bigs.map(String).join(","), res.map(r => r.flags).join(","), which, templ, Symbol.iterator in fnForms, `${long}${wideLong}`.length];
 }
+// Shapes whose register / scope-slot assignment once followed process state rather than the source: sloppy-mode
+// block-level functions (Annex B.3.3 hoisting), a class scope with more than nine computed-key fields, `**` folded at
+// parse time, an expression-bodied arrow whose last token spans lines.
+function orderSensitive(flag) {
+  if (flag) { function first() { return 1; } function second() { return 2; } }
+  else { function third() { return 3; } }
+  { function fourth() { return typeof first + "/" + typeof third; } function fifth() {} function sixth() {} }
+  class ManyComputed {
+    ["a" + 1] = 1; ["b" + 2] = 2; ["c"] = 3; ["d"] = 4; ["e"] = 5; ["f"] = 6; ["g"] = 7; ["h"] = 8; ["i"] = 9; ["j"] = 10; ["k"] = 11;
+    static ["s1"] = 1; static ["s2"] = 2;
+    #p = 1; #q = 2;
+    total() { return this.a1 + this.k + this.#p + this.#q + ManyComputed.s2; }
+  }
+  const spansLines = x => `a${x}
+b`;
+  function after() { return spansLines.toString().split("\n").length; }
+  return [typeof second, fourth(), new ManyComputed().total(), 2 ** 10, 2 ** -2, 9 ** 0.5, (-8) ** (1 / 3), 0.1 ** 3, spansLines(1).length, after()];
+}
 //# sourceURL=features-corpus.js
 //# sourceMappingURL=data:application/json;base64,e30=
 
@@ -315,6 +333,7 @@ record(...calls());
 record(...sloppyOnly("a0", "b0"));
 record(...functionForms());
 record(...constants("c"));
+record(...orderSensitive(true));
 asyncStuff(2, "r1", "r2").then(seen => {
   record(seen);
   console.log(log.join("\n"));

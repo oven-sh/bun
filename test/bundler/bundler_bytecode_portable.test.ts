@@ -45,6 +45,7 @@ const featuresOutput = [
   `1 "aliased" "b2" 2 "function" "object" "p2" 2 "p2" 2 3 "function"`,
   `6 "sent" "gen" "asyncFn" "asyncArrow" 2 2 9 true 3 4 5 6 -1`,
   `"a|ab|abc||abcd" 20 72 50 1 3 false 11 "0,1,-1,18446744073709551616,18446744073709551615" ",dgimsuy,v,v" 3 [3,"x",2] true 122`,
+  `"function" "function/undefined" 17 1024 0.25 3 null 0.0010000000000000002 4 2`,
   `["p1","p2",0,2,8,"p","q","r","s2","00","10","11","20","21","22",7,1,3,2,"undefined"]`,
 ].join("\n");
 
@@ -87,13 +88,13 @@ const bundlerBuilds = [
 const bigPath = join(corpusDir, "big.js");
 writeFileSync(bigPath, bigSource());
 
-async function bundle(outdir: string, entry: string, args: readonly string[]) {
+async function bundle(outdir: string, entry: string, args: readonly string[], env: Record<string, string | undefined> = bunEnv) {
   const name = basename(entry);
   await using proc = Bun.spawn({
     // Relative entry + fixed cwd: the unminified output names each module by its path relative to cwd.
     cmd: [bunExe(), "build", "--bytecode", "--target=bun", ...args, "--outdir", outdir, entry],
     cwd: corpusDir,
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -159,10 +160,10 @@ describe("bytecode cache portability", () => {
     ).toMatchInlineSnapshot(`
       {
         "bun build --bytecode --minify features.js": {
-          "js": "b7e2b5e35d1332896a04d0e7283c8c3863ae06fb9777e46bc5ce487992d70525",
+          "js": "845ea6c8d04fa2d382915b58c652f01c2a1bf124b588f837f3554fa5b24a1d77",
           "jsc": {
-            "bytes": 46552,
-            "sha256": "a5a4f785fa90b71d545381e40925747d64a74b92d94ccbf9ab1d765ddcf844c4",
+            "bytes": 52800,
+            "sha256": "7752dca4a9526b9aaa62cb2e3de8109febec28c177618d51007bc080f7541263",
           },
         },
         "bun build --bytecode big.js": {
@@ -173,27 +174,77 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode features.js": {
-          "js": "64e70d24ce6b976b54cafc901e1e50b81ec1581b250d128ee30225d61c48bb1a",
+          "js": "f379d51aef463e0c8060b6f31a3cf784dd783a036de345b8909ed084078f1f69",
           "jsc": {
-            "bytes": 47904,
-            "sha256": "d64e7248d9f79b92d9763960994939f4592cdff2f8672ac46da0d72f62475673",
+            "bytes": 54552,
+            "sha256": "613a0a30bf5754fa249084b00cc87b6881aa48b60b8141776ceede8684383775",
           },
         },
         "vm.Script big.js": {
-          "bytes": 71016,
-          "sha256": "c022b56489acaf1b2c444603e6ec23cf8081ab4307f9c0ed7a0b44b0037e81e8",
+          "bytes": 166792,
+          "sha256": "fe5d1f42164a1e0e90f4e3e5a5e372004398fcd6167e12ec14b4a7f0de0bc735",
         },
         "vm.Script features.js": {
-          "bytes": 8752,
-          "sha256": "3989d1afe60d9298ddfc540828df37769b68f3bb8b3ca2d7c889d007e2be3026",
+          "bytes": 53904,
+          "sha256": "6c060dd330a6b6b048532848dace5d5e0ec31a9bf78b51020e2172ad70954e8a",
         },
         "vm.SourceTextModule module.js": {
-          "bytes": 2232,
-          "sha256": "59d03a5745df373c5587792dc8fbb76c944aca50d3b1afaa2670861921ee231d",
+          "bytes": 3144,
+          "sha256": "adceee619784e4af53bfa6af5fd94ab6ddea4b4f1689d24909b9a9305863f350",
         },
       }
     `);
   }
+
+  // ...and identical regardless of what the encoding process did before or during encoding: GC timing (which used to
+  // decide whether the parser's SourceProviderCache survived), that cache being off, heap size, having run other JS
+  // first (atom table / symbol counter state), or going through the JS API instead of the CLI. Compared against a
+  // fresh CLI run rather than the snapshot, so this test needs no updating when the format changes.
+  test("encoder output does not depend on the encoding process", async () => {
+    using dir = tempDir("bytecode-portable-process", {
+      "api.js": `
+        for (let i = 0; i < 1000; i++) Symbol("s" + i); // symbol hash counter
+        const wide = s => (s + "\u1234").slice(0, -1).split("\u1234").join("");
+        globalThis.o = { [wide("classify")]: 1, [wide("literals")]: 2, [wide("ab")]: 3 }; // 16-bit atoms for corpus names
+        const vm = require("node:vm");
+        const [entry, outdir, source] = process.argv.slice(2);
+        const script = new vm.Script(require("fs").readFileSync(source, "utf8"), { filename: "features.js" });
+        script.runInNewContext({ console: { log() {} } }); // the corpus itself, parsed and run in this VM first
+        require("fs").mkdirSync(outdir, { recursive: true });
+        require("fs").writeFileSync(outdir + "/vm.cached", script.createCachedData()); // produced after running it
+        const result = await Bun.build({ entrypoints: [entry], outdir, target: "bun", format: "cjs", bytecode: true });
+        if (!result.success) throw new AggregateError(result.logs);
+      `,
+    });
+    const { entry, args } = bundlerBuilds[0];
+    const hash = (bytes: Uint8Array) => fingerprint("", bytes).sha256;
+    const expected = hash((await bundle(join(String(dir), "default"), entry, args)).jsc);
+    const conditions: Record<string, Record<string, string>> = {
+      "collectContinuously": { BUN_JSC_collectContinuously: "1" },
+      "useSourceProviderCache=0": { BUN_JSC_useSourceProviderCache: "0" },
+      "gcMaxHeapSize=64KB": { BUN_JSC_gcMaxHeapSize: "65536" },
+    };
+    const results: Record<string, string> = {};
+    for (const [condition, env] of Object.entries(conditions))
+      results[condition] = hash((await bundle(join(String(dir), condition), entry, args, { ...bunEnv, ...env })).jsc);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "api.js"), entry, join(String(dir), "api"), join(corpusDir, "features.js")],
+      cwd: corpusDir, // as bundle() does, so module path comments in the output agree
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    results["Bun.build() after running other JS"] = hash(readFileSync(join(String(dir), "api", "features.js.jsc")));
+    expect(results).toEqual(Object.fromEntries(Object.keys(results).map(k => [k, expected])));
+
+    const vmExpected = hash(new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!);
+    expect({ "vm.Script#createCachedData() after running it, in a busy VM": hash(readFileSync(join(String(dir), "api", "vm.cached"))) })
+      .toEqual({ "vm.Script#createCachedData() after running it, in a busy VM": vmExpected });
+  });
 
   // Identical bytes only help if this platform also decodes what it encodes.
   for (const { name, entry, args } of bundlerBuilds) {

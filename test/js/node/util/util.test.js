@@ -709,7 +709,7 @@ describe("util.debuglog", () => {
       env: { ...bunEnv, NODE_DEBUG: "bb-focus" },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    expect(proc.exitCode).toBe(0);
     expect(JSON.parse(proc.stdout.toString())).toEqual({ enabled: true, enumerable: true });
+    expect(proc.exitCode).toBe(0);
   });
 });

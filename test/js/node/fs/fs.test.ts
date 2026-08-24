@@ -1523,6 +1523,88 @@ it("statSync throwIfNoEntry: true", () => {
   expect(() => lstatSync(path)).toThrow("no such file or directory");
 });
 
+// Node never validates the stat family's options: its binding reads `bigint`
+// with IsTrue() and `throwIfNoEntry` with IsFalse(), so anything other than
+// exactly `true` / exactly `false` is the default.
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L1140-L1143
+describe("stat family accepts the bigint/throwIfNoEntry values node accepts", () => {
+  const statCallback = promisify(fs.stat) as (path: string, options: any) => Promise<any>;
+  const lstatCallback = promisify(fs.lstat) as (path: string, options: any) => Promise<any>;
+  const fstatCallback = promisify(fs.fstat) as (fd: number, options: any) => Promise<any>;
+  const statfsCallback = promisify(fs.statfs) as (path: string, options: any) => Promise<any>;
+
+  // `typeof` of a stats field from every entry point that shares the native
+  // option parsers: "number" for plain Stats/StatFs, "bigint" for the BigInt forms.
+  async function fieldTypes(options: any) {
+    using dir = tempDir("stat-option-values", { "file.txt": "x" });
+    const file = join(String(dir), "file.txt");
+    await using handle = await promises.open(file, "r");
+    return {
+      statSync: typeof statSync(file, options)!.size,
+      lstatSync: typeof lstatSync(file, options)!.size,
+      fstatSync: typeof fstatSync(handle.fd, options).size,
+      statfsSync: typeof statfsSync(file, options).bsize,
+      stat: typeof (await statCallback(file, options)).size,
+      lstat: typeof (await lstatCallback(file, options)).size,
+      fstat: typeof (await fstatCallback(handle.fd, options)).size,
+      statfs: typeof (await statfsCallback(file, options)).bsize,
+      "promises.stat": typeof (await promises.stat(file, options)).size,
+      "promises.lstat": typeof (await promises.lstat(file, options)).size,
+      "promises.statfs": typeof (await promises.statfs(file, options)).bsize,
+      "FileHandle.stat": typeof (await handle.stat(options)).size,
+    };
+  }
+
+  function allEntryPoints(type: "number" | "bigint") {
+    return {
+      statSync: type,
+      lstatSync: type,
+      fstatSync: type,
+      statfsSync: type,
+      stat: type,
+      lstat: type,
+      fstat: type,
+      statfs: type,
+      "promises.stat": type,
+      "promises.lstat": type,
+      "promises.statfs": type,
+      "FileHandle.stat": type,
+    };
+  }
+
+  it.each([null, 0, 1, "", "x", {}, 0n, 1n])("{ bigint: %p } returns number stats", async bigint => {
+    expect(await fieldTypes({ bigint })).toEqual(allEntryPoints("number"));
+  });
+
+  it("{ bigint: true } returns BigInt stats", async () => {
+    expect(await fieldTypes({ bigint: true })).toEqual(allEntryPoints("bigint"));
+  });
+
+  it.each([null, 0, 1, "x", {}])(
+    "an existing path with { throwIfNoEntry: %p } returns its stats",
+    async throwIfNoEntry => {
+      expect(await fieldTypes({ throwIfNoEntry })).toEqual(allEntryPoints("number"));
+    },
+  );
+
+  // `throwIfNoEntry: false` itself is covered by "statSync throwIfNoEntry" above.
+  it.each([null, 0, 1, "", "x", {}])(
+    "a missing path with { throwIfNoEntry: %p } still fails with ENOENT",
+    async throwIfNoEntry => {
+      using dir = tempDir("stat-option-values", {});
+      const missing = join(String(dir), "missing");
+      const options: any = { throwIfNoEntry };
+      const enoent = expect.objectContaining({ code: "ENOENT" });
+      expect(() => statSync(missing, options)).toThrow(enoent);
+      expect(() => lstatSync(missing, options)).toThrow(enoent);
+      await expect(statCallback(missing, options)).rejects.toThrow(enoent);
+      await expect(lstatCallback(missing, options)).rejects.toThrow(enoent);
+      await expect(promises.stat(missing, options)).rejects.toThrow(enoent);
+      await expect(promises.lstat(missing, options)).rejects.toThrow(enoent);
+    },
+  );
+});
+
 it("stat == statSync", async () => {
   const sync = statSync(import.meta.path);
   const async = await promises.stat(import.meta.path);

@@ -260,7 +260,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom, (JSG
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     double depth = callFrame->argument(0).toNumber(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     auto* entry = dynamicDowncast<JSObject>(thisValue);

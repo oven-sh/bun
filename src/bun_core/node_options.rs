@@ -420,9 +420,14 @@ enum Supported {
     OptionalValue,
 }
 
-/// The subset of Node's allowlist that Bun's CLI implements. Each entry maps
-/// the accepted spellings (Node's short forms `-r` / `-C` included) to the
-/// long spelling Bun declares in its param tables.
+/// The subset of Node's allowlist that Bun's CLI applies while it parses argv
+/// in Rust. Each entry maps the accepted spellings (Node's short forms `-r` /
+/// `-C` included) to the long spelling Bun declares in its param tables.
+///
+/// Flags Bun applies by reading `process.execArgv` in JS (`--tls-min-*`,
+/// `--tls-max-*`, `--stack-trace-limit`, `--trace-*`) are not listed: the
+/// injected tokens are hidden from `execArgv`, so a splice would not reach
+/// their consumers.
 struct SplicedFlag {
     names: &'static [&'static [u8]],
     canonical: &'static [u8],
@@ -450,6 +455,8 @@ static SPLICED: &[SplicedFlag] = &[
     SplicedFlag { names: &[b"--throw-deprecation"], canonical: b"--throw-deprecation", kind: Supported::Flag },
     SplicedFlag { names: &[b"--trace-deprecation"], canonical: b"--trace-deprecation", kind: Supported::Flag },
     SplicedFlag { names: &[b"--trace-warnings"], canonical: b"--trace-warnings", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--use-bundled-ca"], canonical: b"--use-bundled-ca", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--use-openssl-ca"], canonical: b"--use-openssl-ca", kind: Supported::Flag },
     SplicedFlag { names: &[b"--use-system-ca"], canonical: b"--use-system-ca", kind: Supported::Flag },
     SplicedFlag { names: &[b"--zero-fill-buffers"], canonical: b"--zero-fill-buffers", kind: Supported::Flag },
     SplicedFlag { names: &[b"--inspect"], canonical: b"--inspect", kind: Supported::OptionalValue },

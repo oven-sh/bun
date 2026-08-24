@@ -126,10 +126,27 @@ describe("NODE_OPTIONS environment variable", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "ipv4first\n", exitCode: 0 });
   });
 
-  test.concurrent("a space-separated value may start with a dash only when escaped as \\-", async () => {
-    using dir = tempDir("node-options-escaped-dash", {});
-    const { stdout, exitCode } = await run(String(dir), ["-e", "console.log(process.title)"], "--title \\-from-env");
-    expect({ stdout, exitCode }).toEqual({ stdout: "-from-env\n", exitCode: 0 });
+  // Node strips one backslash from a space-separated value that starts with
+  // `\-`, and only there: an inline `=` value keeps it, `\\-x` keeps both, and
+  // inside double quotes `\-` is the tokenizer's escape, so the value is `-x`.
+  describe.each([
+    ["--title \\-x", "-x"],
+    ['--title "\\\\-x"', "-x"],
+    ["--title=\\-x", "\\-x"],
+    ["--title \\\\-x", "\\\\-x"],
+  ])("a value may start with a dash only when escaped: %s", (opts, title) => {
+    test.concurrent("sets the title", async () => {
+      using dir = tempDir("node-options-escaped-dash", {});
+      const { stdout, exitCode } = await run(String(dir), ["-e", "console.log(process.title)"], opts);
+      expect({ stdout, exitCode }).toEqual({ stdout: `${title}\n`, exitCode: 0 });
+    });
+  });
+
+  test.concurrent("applies --use-openssl-ca (conflicts with a command-line CA flag, as on the CLI)", async () => {
+    using dir = tempDir("node-options-ca", {});
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--use-bundled-ca", "-e", "1"], "--use-openssl-ca");
+    expect(stderr).toContain("choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
 
   test.concurrent("command-line flags win over NODE_OPTIONS", async () => {
@@ -211,18 +228,22 @@ describe("NODE_OPTIONS environment variable", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
   });
 
-  // Node names the flag as typed. A space-separated value that starts with a
-  // dash is the next flag, not a value: `--require --import` must not try to
-  // load a module named "--import".
+  // Node names the flag as typed (underscores kept, trailing `=` kept). A
+  // space-separated value that starts with a dash is the next flag, not a
+  // value: `--require --import` must not try to load a module named
+  // "--import", and a quoted `"\-x"` unescapes to `-x` before that check.
   test.each([
     ["--import", "--import"],
     ["--import=", "--import="],
     ["--require=", "--require="],
     ["-r", "-r"],
     ["--conditions", "--conditions"],
+    ["--max_http_header_size", "--max_http_header_size"],
+    ["--max_http_header_size=", "--max_http_header_size="],
     ["--require --import ./pre.mjs", "--require"],
     ["--conditions -C development", "--conditions"],
     ["--title --", "--title"],
+    ['--title "\\-x"', "--title"],
   ])("required value missing for %s is rejected with exit code 9", async (opts, flag) => {
     using dir = tempDir("node-options-noval", preloadFixtures);
     const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], opts);
@@ -308,6 +329,8 @@ describe("NODE_OPTIONS environment variable", () => {
       "--throw-deprecation",
       "--trace-deprecation",
       "--trace-warnings",
+      "--use-bundled-ca",
+      "--use-openssl-ca",
       "--use-system-ca",
       "--zero-fill-buffers",
       "--inspect",

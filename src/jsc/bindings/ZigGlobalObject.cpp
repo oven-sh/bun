@@ -52,6 +52,8 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/ProxyConstructorInlines.h"
+#include "JavaScriptCore/Symbol.h"
 #include "JavaScriptCore/JSBasePrivate.h"
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/ScriptFetchParameters.h"
@@ -2782,7 +2784,13 @@ JSC::JSObject* GlobalObject::lazyRequireCacheObject()
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* function = JSFunction::create(vm, this, commonJSCreateRequireCacheCodeGenerator(vm), this);
-    JSValue result = JSC::profiledCall(this, ProfilingReason::API, function, JSC::getCallData(function), this, ArgList());
+
+    // Passed in so the builtin never reads globalThis.Proxy or globalThis.Symbol, which user code can replace.
+    MarkedArgumentBuffer args;
+    args.append(JSC::ProxyConstructor::create(vm, JSC::ProxyConstructor::createStructure(vm, this, functionPrototype())));
+    args.append(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
+
+    JSValue result = JSC::profiledCall(this, ProfilingReason::API, function, JSC::getCallData(function), this, args);
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSObject* cache = asObject(result);
     m_lazyRequireCacheObject.set(vm, this, cache);

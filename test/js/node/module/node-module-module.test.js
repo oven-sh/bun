@@ -836,29 +836,25 @@ console.log("survived", require("./late.js"));`,
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });
 
-  test("require.cache throws instead of crashing when its builtin throws", async () => {
-    // require.cache is built lazily by a JS builtin that uses the global Proxy.
-    // The first access used to assume that builtin cannot throw.
+  test("require.cache does not depend on user-writable globals", async () => {
+    // require.cache is built lazily by a JS builtin. Native code hands it the
+    // Proxy constructor and the inspect symbol, so it never reads the globals.
     const code = `
-      const RealProxy = Proxy;
-      globalThis.Proxy = undefined;
-      const results = [];
-      try {
-        require.cache;
-        results.push("no throw");
-      } catch (e) {
-        results.push(e.constructor.name);
-      }
-      const Module = require("module");
-      try {
-        Module._cache;
-        results.push("no throw");
-      } catch (e) {
-        results.push(e.constructor.name);
-      }
-      globalThis.Proxy = RealProxy;
-      results.push(typeof require.cache, Module._cache === require.cache);
-      console.log(JSON.stringify(results));
+      const Module = require("node:module");
+      const { Proxy, Map, Symbol } = globalThis;
+      delete globalThis.Proxy;
+      globalThis.Map = globalThis.Symbol = undefined;
+      const cache = require.cache;
+      const moduleCache = Module._cache;
+      Object.assign(globalThis, { Proxy, Map, Symbol });
+      console.log(
+        JSON.stringify([
+          Object.getPrototypeOf(cache),
+          moduleCache === cache,
+          Object.keys(cache).map(key => key.endsWith("[eval]")),
+          Bun.inspect(cache).includes("[eval]"),
+        ]),
+      );
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
@@ -866,28 +862,37 @@ console.log("survived", require("./late.js"));`,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(JSON.stringify(["TypeError", "TypeError", "object", true]));
+    expect(stdout.trim()).toBe(JSON.stringify([null, true, [true], true]));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
   test("require.cache first accessed near the stack limit does not crash", async () => {
+    // Building the cache can fail for reasons that have nothing to do with user
+    // code, such as a stack overflow inside the builtin. The failure must throw,
+    // and a later access at normal depth must build the cache.
     const code = `
-      let attempted = false;
+      const Module = require("node:module");
+      let attempts = 0;
       function recurse() {
         try {
           recurse();
         } catch (e) {
-          if (!attempted) {
-            attempted = true;
+          if (attempts === 0) {
+            attempts++;
             try {
               require.cache;
+            } catch {}
+          } else if (attempts === 1) {
+            attempts++;
+            try {
+              Module._cache;
             } catch {}
           }
         }
       }
       recurse();
-      console.log(typeof require.cache);
+      console.log(JSON.stringify([typeof require.cache, Module._cache === require.cache]));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
@@ -895,7 +900,7 @@ console.log("survived", require("./late.js"));`,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("object");
+    expect(stdout.trim()).toBe(JSON.stringify(["object", true]));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

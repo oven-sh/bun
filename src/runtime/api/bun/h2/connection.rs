@@ -759,12 +759,16 @@ impl Connection {
                 }
             }
         }
-        let snapshot = self.remote_settings;
-        sink.on_remote_settings(&snapshot);
+        // §6.5.3: the ACK must precede the embedder callback. on_remote_settings flushes
+        // DATA that an enlarged INITIAL_WINDOW_SIZE just unblocked, and the peer enforces
+        // its old receive window until it processes this ACK, so DATA ahead of the ACK is
+        // a flow-control overrun (nghttp2 and grpc-go reset the stream).
         self.send_settings_ack(sink);
         if self.note_outbound_ack(sink) {
             return true;
         }
+        let snapshot = self.remote_settings;
+        sink.on_remote_settings(&snapshot);
         false
     }
 

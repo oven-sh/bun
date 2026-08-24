@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { tls as certs } from "harness";
 import { once } from "node:events";
 import tls from "node:tls";
-import { tls as certs } from "harness";
 
 // https://github.com/oven-sh/bun/issues/40380
 // A backpressured node:tls write must not fail with ERR_SOCKET_CLOSED when the

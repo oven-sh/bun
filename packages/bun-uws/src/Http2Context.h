@@ -23,6 +23,7 @@
 #include "Loop.h"
 #include "HttpRouter.h"
 #include "HttpContextData.h"
+#include "HttpParser.h"
 #include "HttpResponse.h"
 #include "SocketKinds.h"
 #include "Http2ResponseData.h"
@@ -35,6 +36,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -85,6 +87,10 @@ static constexpr uint32_t LOCAL_CONNECTION_WINDOW_SIZE = 1u << 24;
 static constexpr uint32_t LOCAL_MAX_CONCURRENT_STREAMS = 256;
 /* Same cap as the HTTP/1 parser (UWS_HTTP_MAX_HEADERS_COUNT). */
 static constexpr size_t MAX_HEADER_FIELDS = 200;
+static constexpr unsigned MAX_SETTINGS_PER_FRAME = 32;
+/* A header block may span this many CONTINUATION frames (the byte cap alone
+ * doesn't bound a flood of empty ones). */
+static constexpr unsigned MAX_CONTINUATION_FRAMES = 32;
 /* A header block (HEADERS + CONTINUATIONs, and its decoded form) may be at
  * most this multiple of SETTINGS_MAX_HEADER_LIST_SIZE before the connection
  * is closed rather than the stream answered 431. */
@@ -96,7 +102,10 @@ static constexpr size_t SOCKET_BACKPRESSURE_HIGH_WATER = 256 * 1024;
 /* A peer that keeps sending frames we must answer (PING, SETTINGS, frames on
  * closed streams) while never reading lets `out` grow past what DATA
  * throttling allows; beyond this it is flooding (CVE-2019-9512/9515 class). */
-static constexpr size_t MAX_QUEUED_OUTPUT = 4 * SOCKET_BACKPRESSURE_HIGH_WATER + (1u << 20);
+/* Control frames the peer made us queue (PING/SETTINGS ACKs, RST_STREAM and
+ * WINDOW_UPDATE for its frames) that it hasn't read; our own responses don't
+ * count — those are bounded by SOCKET_BACKPRESSURE_HIGH_WATER per drain. */
+static constexpr size_t MAX_QUEUED_CONTROL = 1u << 20;
 /* RST_STREAM token bucket (CVE-2023-44487 class): burst, refill per second. */
 static constexpr double RESET_BURST = 1000;
 static constexpr double RESET_REFILL_PER_SEC = 33;
@@ -150,6 +159,58 @@ static inline bool validFieldName(const char *p, unsigned n) {
     return true;
 }
 
+/* The request fields validation cares about. lshpack reports the HPACK
+ * static-table index when the peer used one for the name (nearly always);
+ * literal names fall back to a compare. */
+enum class Field : uint8_t { Other, Method, Scheme, Path, Authority, Host, ContentLength, Te, Expect, ConnectionSpecific };
+static inline Field classify(int hpackIndex, std::string_view name) {
+    switch (hpackIndex) {
+    case LSHPACK_HDR_AUTHORITY: return Field::Authority;
+    case LSHPACK_HDR_METHOD_GET: case LSHPACK_HDR_METHOD_POST: return Field::Method;
+    case LSHPACK_HDR_PATH: case LSHPACK_HDR_PATH_INDEX_HTML: return Field::Path;
+    case LSHPACK_HDR_SCHEME_HTTP: case LSHPACK_HDR_SCHEME_HTTPS: return Field::Scheme;
+    case LSHPACK_HDR_HOST: return Field::Host;
+    case LSHPACK_HDR_CONTENT_LENGTH: return Field::ContentLength;
+    case LSHPACK_HDR_EXPECT: return Field::Expect;
+    case LSHPACK_HDR_TRANSFER_ENCODING: return Field::ConnectionSpecific;
+    case LSHPACK_HDR_UNKNOWN: break;
+    default: return Field::Other;
+    }
+    switch (name.size()) {
+    case 2: if (name == "te") return Field::Te; break;
+    case 4: if (name == "host") return Field::Host; break;
+    case 5: if (name == ":path") return Field::Path; break;
+    case 6: if (name == "expect") return Field::Expect; break;
+    case 7: if (name == ":method") return Field::Method; if (name == ":scheme") return Field::Scheme; if (name == "upgrade") return Field::ConnectionSpecific; break;
+    case 10: if (name == ":authority") return Field::Authority; if (name == "connection") return Field::ConnectionSpecific; if (name == "keep-alive") return Field::ConnectionSpecific; break;
+    case 14: if (name == "content-length") return Field::ContentLength; break;
+    case 16: if (name == "proxy-connection") return Field::ConnectionSpecific; break;
+    case 17: if (name == "transfer-encoding") return Field::ConnectionSpecific; break;
+    }
+    return Field::Other;
+}
+
+static inline bool ieq(std::string_view a, const char *lower) {
+    for (size_t i = 0; i < a.size(); i++) if ((a[i] | 0x20) != lower[i]) return false;
+    return true;
+}
+static inline bool isConnectionSpecificResponseField(std::string_view name, std::string_view value) {
+    switch (name.size()) {
+    case 2: return ieq(name, "te") && !(value.size() == 8 && ieq(value, "trailers"));
+    case 7: return ieq(name, "upgrade");
+    case 10: return ieq(name, "connection") || ieq(name, "keep-alive");
+    case 16: return ieq(name, "proxy-connection");
+    case 17: return ieq(name, "transfer-encoding");
+    }
+    return false;
+}
+
+static inline bool iequals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++) if ((a[i] | 0x20) != (b[i] | 0x20)) return false;
+    return true;
+}
+
 static inline bool validFieldValue(const char *p, unsigned n) {
     if (n && (p[0] == ' ' || p[0] == '\t' || p[n - 1] == ' ' || p[n - 1] == '\t')) return false;
     for (unsigned i = 0; i < n; i++) {
@@ -189,6 +250,7 @@ struct Http2Response {
      * out, 255 = use the context default. The connection applies the most
      * permissive value among its open streams. */
     uint8_t timeoutS = 255;
+    uint8_t pausedTimeoutS = 255;
     /* Retired: out of conn->streams, waiting in pendingFree for deletion. */
     bool dead = false;
 
@@ -210,12 +272,14 @@ struct Http2Response {
 
     Http2Response *writeHeader(std::string_view key, std::string_view value) {
         writeStatus("200");
+        /* §8.2.2: connection-specific fields must not appear in an HTTP/2 message. */
+        if (http2::isConnectionSpecificResponseField(key, value)) return this;
         data.appendHeader(key.data(), (unsigned) key.size(), value.data(), (unsigned) value.size());
         return this;
     }
 
     Http2Response *writeHeader(std::string_view key, uint64_t value) {
-        char buf[24];
+        char buf[std::numeric_limits<uint64_t>::digits10 + 1];
         auto r = std::to_chars(buf, buf + sizeof(buf), value);
         return writeHeader(key, std::string_view{buf, (size_t)(r.ptr - buf)});
     }
@@ -298,9 +362,15 @@ struct Http2Connection {
     uint32_t headerBlockStream = 0;
     uint8_t headerBlockFlags = 0;
     bool expectingContinuation = false;
+    unsigned continuationFrames = 0;
     uint8_t prefaceOffset = 0;
     bool settingsReceived = false;
 
+    size_t queuedControl = 0;
+    /* Set by frames that make progress on a stream during onData. */
+    bool progressed = false;
+    /* Per-stream byte budget for the current drainWritable() pass; 0 = none. */
+    size_t drainSlice = 0;
     /* Outbound bytes not yet accepted by the socket. */
     BackPressure out;
 
@@ -310,6 +380,7 @@ struct Http2Connection {
     uint32_t connUnackedReceive = 0;
     uint32_t encoderTableSize = http2::DEFAULT_HEADER_TABLE_SIZE;
     bool pendingTableSizeUpdate = false;
+    uint32_t minTableSizeSinceBlock = 0;
 
     /* Highest client stream id seen (protocol checks) vs. highest one handed
      * to a handler (what GOAWAY reports as possibly acted upon, §6.8). */
@@ -333,6 +404,17 @@ struct Http2Connection {
     bool inSweepList = false;
 
     std::vector<Http2Response *> streams;
+    /* Streams we sent RST_STREAM on; frames for them may still be in flight
+     * and are ignored (§5.1 closed). Anything else on a closed id is an error. */
+    uint32_t resetByUs[32] = {};
+    unsigned resetByUsNext = 0;
+    bool headerBlockSelfDependent = false;
+    uint32_t resetByPeer[32] = {};
+    unsigned resetByPeerNext = 0;
+    void noteResetByUs(uint32_t id) { resetByUs[resetByUsNext++ % 32] = id; }
+    bool wasResetByUs(uint32_t id) const { for (uint32_t r : resetByUs) if (r == id) return true; return false; }
+    void noteResetByPeer(uint32_t id) { resetByPeer[resetByPeerNext++ % 32] = id; }
+    bool wasResetByPeer(uint32_t id) const { for (uint32_t r : resetByPeer) if (r == id) return true; return false; }
     std::vector<Http2Response *> writable;
     std::vector<Http2Response *> draining;
     std::vector<Http2Response *> pendingFree;
@@ -369,15 +451,24 @@ struct Http2Connection {
         out.append(payload, length);
     }
 
+    /* A control frame the peer's input obliged us to send; see MAX_QUEUED_CONTROL. */
+    void writeControlFrame(uint8_t type, uint8_t flags, uint32_t streamId, const char *payload, uint32_t length) {
+        queuedControl += http2::FRAME_HEADER_SIZE + length;
+        writeFrame(type, flags, streamId, payload, length);
+    }
+
     inline void writeSettings();
 
     void writeWindowUpdate(uint32_t streamId, uint32_t increment) {
         char payload[4];
         http2::writeU32BE(payload, increment & 0x7fffffff);
+        queuedControl += http2::FRAME_HEADER_SIZE + 4;
         writeFrame(http2::WINDOW_UPDATE, 0, streamId, payload, 4);
     }
 
     void writeRstStream(uint32_t streamId, http2::ErrorCode code) {
+        queuedControl += http2::FRAME_HEADER_SIZE + 4;
+        noteResetByUs(streamId);
         char payload[4];
         http2::writeU32BE(payload, code);
         writeFrame(http2::RST_STREAM, 0, streamId, payload, 4);
@@ -403,7 +494,10 @@ struct Http2Connection {
         if (out.length() >= http2::SOCKET_BACKPRESSURE_HIGH_WATER) return 0;
         int64_t w = std::min<int64_t>(stream->sendWindow, connSendWindow);
         if (w <= 0) return 0;
-        return std::min<size_t>((size_t) w, http2::SOCKET_BACKPRESSURE_HIGH_WATER - out.length());
+        size_t n = std::min<size_t>((size_t) w, http2::SOCKET_BACKPRESSURE_HIGH_WATER - out.length());
+        /* Inside a drain pass each stream is limited to its slice. */
+        if (drainSlice) n = std::min(n, drainSlice);
+        return n;
     }
 
     /* Frame up to the current allowance of `body` as DATA. END_STREAM rides on
@@ -441,8 +535,11 @@ struct Http2Connection {
             int chunk = (int) std::min<size_t>(out.length(), 1u << 30);
             int written = us_socket_write(s, out.data(), chunk);
             if (written <= 0) break;
-            /* Keep up to one high-water mark of capacity between events. */
-            if (out.totalLength() > http2::SOCKET_BACKPRESSURE_HIGH_WATER * 2) out.erase((size_t) written);
+            queuedControl -= std::min<size_t>(queuedControl, (size_t) written);
+            /* Keep the allocation while streams are active (it refills every
+             * event); give it back once the connection goes quiet or it grew
+             * past what a drain pass needs. */
+            if (streams.empty() || out.totalLength() > http2::SOCKET_BACKPRESSURE_HIGH_WATER + 64 * 1024) out.erase((size_t) written);
             else out.consume((size_t) written);
             wrote = true;
         }
@@ -508,9 +605,7 @@ struct Http2Connection {
     inline bool dispatchRequest(Http2Response *stream, const us_quic_header_t *headers, unsigned count);
 };
 
-/* Is a LoopData::TickHook: linked into the loop's pre/post tick while
- * sweepList is non-empty. */
-struct Http2Context : public LoopData::TickHook {
+struct Http2Context {
     template <bool> friend struct TemplatedApp;
 
     /* group.ext == this; sockets recover us via us_socket_group_ext(). */
@@ -550,23 +645,21 @@ struct Http2Context : public LoopData::TickHook {
     }
 
     uint32_t maxHeaderListSize() {
-        uint64_t v = parentMaxHeaderSize && *parentMaxHeaderSize ? *parentMaxHeaderSize : http2::DEFAULT_MAX_HEADER_LIST_SIZE;
+        uint64_t v = parentMaxHeaderSize && *parentMaxHeaderSize ? *parentMaxHeaderSize : (BUN_DEFAULT_MAX_HTTP_HEADER_SIZE ? BUN_DEFAULT_MAX_HTTP_HEADER_SIZE : http2::DEFAULT_MAX_HEADER_LIST_SIZE);
         return v > 0xffffff ? 0xffffff : (uint32_t) v;
     }
 
     static Http2Context *create(Loop *loop, unsigned idleTimeoutS) {
         Http2Context *ctx = new Http2Context;
         ctx->loop = loop;
-        ctx->idleTimeoutS = idleTimeoutS > 240 ? 240 : idleTimeoutS;
+        ctx->idleTimeoutS = idleTimeoutS;
         us_socket_group_init(&ctx->group, (us_loop_t *) loop, &vtable, ctx);
-        ctx->onTick = [](LoopData::TickHook *h) { static_cast<Http2Context *>(h)->sweep(); };
         return ctx;
     }
 
     void free() {
         closeAll();
         if (parent && detachFromParent) detachFromParent(parent, this);
-        loop->removeTickHook(this);
         us_socket_group_deinit(&group);
         delete this;
     }
@@ -638,13 +731,20 @@ struct Http2Context : public LoopData::TickHook {
         std::vector<std::string_view> methods =
             method == "*" ? std::vector<std::string_view>{"*"} : std::vector<std::string_view>{method};
         router.add(methods, pattern, [handler = std::move(handler)](auto *r) mutable {
-            auto &ud = r->getUserData();
-            ud.httpRequest->setYield(false);
-            ud.httpRequest->setParameters(r->getParameters());
-            handler(ud.httpResponse, ud.httpRequest);
-            return !ud.httpRequest->getYield();
+            /* Copy out: the handler may reload routes, replacing `router`
+             * (and its user data) while we're inside it. */
+            Http2Request *req = r->getUserData().httpRequest;
+            Http2Response *res = r->getUserData().httpResponse;
+            req->setYield(false);
+            req->setParameters(r->getParameters());
+            handler(res, req);
+            return !req->getYield();
         }, method == "*" ? router.LOW_PRIORITY : router.MEDIUM_PRIORITY);
     }
+
+    /* server.reload(): drop all routes. Safe from inside a handler: the
+     * route lambda copied what it needs and returns straight after. */
+    void clearRoutes() { router = decltype(router){}; }
 
     bool isLive(Http2Connection *conn) {
         return std::find(connections.begin(), connections.end(), conn) != connections.end();
@@ -682,19 +782,27 @@ struct Http2Context : public LoopData::TickHook {
         return closedNow;
     }
 
+    /* Installed by the embedder: arrange for sweep() to run soon, outside the
+     * current call stack (Bun posts it to the event loop's deferred task
+     * queue, which runs after the current JS task and its microtasks). */
+    void (*scheduleDrain)(void *user, Http2Context *ctx) = nullptr;
+    void *scheduleDrainUser = nullptr;
+
     void scheduleSweep(Http2Connection *conn) {
         if (conn->inSweepList || conn->closed) return;
         conn->inSweepList = true;
+        bool first = sweepList.empty();
         sweepList.push_back(conn);
-        loop->addTickHook(this);
+        if (first && scheduleDrain) scheduleDrain(scheduleDrainUser, this);
     }
 
-    /* Loop pre/post hook: pump connections whose streams are parked on the
-     * high-water mark and free retired streams. */
+    /* Pump connections whose streams are parked on the high-water mark and
+     * free retired streams. Runs from the embedder's deferred queue (see
+     * scheduleDrain) and after every socket event on that connection. */
     void sweep() {
         std::vector<Http2Connection *> batch;
         batch.swap(sweepList);
-        if (batch.empty()) { loop->removeTickHook(this); return; }
+        if (batch.empty()) return;
         for (Http2Connection *conn : batch) conn->inSweepList = false;
         for (size_t i = 0; i < batch.size(); i++) {
             Http2Connection *conn = batch[i];
@@ -900,6 +1008,7 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
     unsigned char *p = buf.data();
     unsigned char *end = buf.data() + buf.size();
     if (pendingTableSizeUpdate) {
+        if (minTableSizeSinceBlock != encoderTableSize) p = http2::hpackEncodeInteger(p, 0x20, 5, minTableSizeSinceBlock);
         p = http2::hpackEncodeInteger(p, 0x20, 5, encoderTableSize);
         pendingTableSizeUpdate = false;
     }
@@ -960,6 +1069,7 @@ inline void Http2Connection::writeInformational(Http2Response *stream, std::stri
     x.indexed_type = 1;
     unsigned char *p = tmp;
     if (pendingTableSizeUpdate) {
+        if (minTableSizeSinceBlock != encoderTableSize) p = http2::hpackEncodeInteger(p, 0x20, 5, minTableSizeSinceBlock);
         p = http2::hpackEncodeInteger(p, 0x20, 5, encoderTableSize);
         pendingTableSizeUpdate = false;
     }
@@ -978,15 +1088,20 @@ inline void Http2Connection::replenishStreamWindow(Http2Response *stream, uint32
 }
 
 inline void Http2Connection::drainWritable() {
-    /* Streams may re-arm or retire while we call out; iterate a snapshot. */
+    /* Streams may re-arm or retire while we call out; iterate a snapshot.
+     * Each stream gets at most one slice per pass and the ones that didn't
+     * finish re-queue at the back, so a large download can't starve small
+     * responses queued behind it. */
     std::vector<Http2Response *> nested;
     std::vector<Http2Response *> &snapshot = drainDepth++ ? nested : draining;
     snapshot.clear();
     snapshot.swap(writable);
     for (Http2Response *stream : snapshot) stream->wantsWrite = false;
     size_t i = 0;
+    size_t prevSlice = drainSlice;
+    drainSlice = std::max<size_t>(peerMaxFrameSize, (http2::SOCKET_BACKPRESSURE_HIGH_WATER - std::min<size_t>(out.length(), http2::SOCKET_BACKPRESSURE_HIGH_WATER)) / std::max<size_t>(snapshot.size(), 1));
     for (; i < snapshot.size(); i++) {
-        if (closed) { drainDepth--; return; }
+        if (closed) { drainSlice = prevSlice; drainDepth--; return; }
         if (out.length() >= http2::SOCKET_BACKPRESSURE_HIGH_WATER || connSendWindow <= 0) break;
         Http2Response *stream = snapshot[i];
         if (stream->dead || stream->wantsWrite) continue;
@@ -996,6 +1111,7 @@ inline void Http2Connection::drainWritable() {
     }
     for (; i < snapshot.size(); i++) markWantsWrite(snapshot[i]);
     snapshot.clear();
+    drainSlice = prevSlice;
     drainDepth--;
 }
 
@@ -1048,6 +1164,7 @@ inline bool Http2Connection::connectionError(http2::ErrorCode code) {
 
 inline bool Http2Connection::streamError(uint32_t streamId, Http2Response *stream, http2::ErrorCode code) {
     writeRstStream(streamId, code);
+    scheduleFlush();
     if (stream) {
         stream->reset = true;
         retireStream(stream, true);
@@ -1106,11 +1223,14 @@ inline void Http2Connection::onData(const char *data, size_t length) {
     }
 
     if (buffered) {
-        in.consume(consumed);
+        in.erase(consumed);
     } else if (consumed < avail) {
         in.append((const char *) p + consumed, avail - consumed);
     }
-    touch();
+    /* Only frames that move a stream count as activity: a peer holding
+     * streams open at a zero window can't keep the connection alive on PINGs. */
+    if (progressed || streams.empty()) touch();
+    progressed = false;
     busy--;
     Http2Context::epilogue(this, s);
 }
@@ -1120,15 +1240,21 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
         return length == 0 ? true : connectionError(http2::ERR_FRAME_SIZE_ERROR);
     }
     if (length % 6 != 0) return connectionError(http2::ERR_FRAME_SIZE_ERROR);
+    /* nghttp2's cap: each INITIAL_WINDOW_SIZE entry walks every open stream. */
+    if (length / 6 > http2::MAX_SETTINGS_PER_FRAME) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
     for (uint32_t off = 0; off < length; off += 6) {
         uint16_t id = (uint16_t)((payload[off] << 8) | payload[off + 1]);
         uint32_t value = http2::readU32BE(payload + off + 2);
         switch (id) {
         case http2::SETTINGS_HEADER_TABLE_SIZE: {
             uint32_t newSize = std::min(value, http2::DEFAULT_HEADER_TABLE_SIZE);
-            if (newSize != encoderTableSize) {
+            if (newSize != encoderTableSize || pendingTableSizeUpdate) {
+                /* RFC 7541 §4.2: if the limit dipped below the final value
+                 * between blocks, the decoder must see that minimum first. */
+                minTableSizeSinceBlock = pendingTableSizeUpdate ? std::min(minTableSizeSinceBlock, newSize) : std::min(encoderTableSize, newSize);
                 encoderTableSize = newSize;
-                lshpack_enc_set_max_capacity(&enc, newSize);
+                lshpack_enc_set_max_capacity(&enc, minTableSizeSinceBlock);
+                if (newSize != minTableSizeSinceBlock) lshpack_enc_set_max_capacity(&enc, newSize);
                 pendingTableSizeUpdate = true;
             }
             break;
@@ -1160,14 +1286,13 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
         }
     }
     settingsReceived = true;
-    writeFrame(http2::SETTINGS, http2::ACK, 0, nullptr, 0);
-    if (!writable.empty()) drainWritable();
+    writeControlFrame(http2::SETTINGS, http2::ACK, 0, nullptr, 0);
     return true;
 }
 
 inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t streamId, const unsigned char *payload, uint32_t length) {
     if (!settingsReceived && type != http2::SETTINGS) return connectionError(http2::ERR_PROTOCOL_ERROR);
-    if (out.length() > http2::MAX_QUEUED_OUTPUT) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
+    if (queuedControl > http2::MAX_QUEUED_CONTROL) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
     if (expectingContinuation && (type != http2::CONTINUATION || streamId != headerBlockStream)) {
         return connectionError(http2::ERR_PROTOCOL_ERROR);
     }
@@ -1182,15 +1307,19 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
             writeWindowUpdate(0, connUnackedReceive);
             connUnackedReceive = 0;
         }
+        if ((flags & http2::PADDED) && (length < 1 || 1u + payload[0] > length)) return connectionError(http2::ERR_PROTOCOL_ERROR);
         Http2Response *stream = findStream(streamId);
         if (!stream || stream->remoteClosed) {
             if (streamId > lastStreamId || (streamId & 1) == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
             if (stream) return streamError(streamId, stream, http2::ERR_STREAM_CLOSED);
-            /* Retired stream: usually one we reset (response finished before
-             * the request body) and this DATA was already in flight; §5.1
-             * says ignore. Already counted against the connection window. */
-            return true;
+            /* §5.1 closed: after the peer's RST_STREAM, more frames are a
+             * stream error; frames racing an RST_STREAM we sent are ignored;
+             * anything else is DATA on a stream the peer ended itself. */
+            if (wasResetByPeer(streamId)) return streamError(streamId, nullptr, http2::ERR_STREAM_CLOSED);
+            if (wasResetByUs(streamId)) return true;
+            return connectionError(http2::ERR_STREAM_CLOSED);
         }
+        progressed = true;
         return handleData(stream, flags, payload, length);
     }
 
@@ -1204,6 +1333,7 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
         }
         if (flags & http2::PRIORITY_FLAG) skip += 5;
         if (skip + pad > length) return connectionError(http2::ERR_PROTOCOL_ERROR);
+        headerBlockSelfDependent = (flags & http2::PRIORITY_FLAG) && (http2::readU32BE(payload + ((flags & http2::PADDED) ? 1 : 0)) & 0x7fffffff) == streamId;
         const unsigned char *fragment = payload + skip;
         uint32_t fragmentLength = length - skip - pad;
         if (flags & http2::END_HEADERS) {
@@ -1213,12 +1343,14 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
         headerBlock.append((const char *) fragment, fragmentLength);
         headerBlockStream = streamId;
         headerBlockFlags = flags;
+        continuationFrames = 0;
         expectingContinuation = true;
         return true;
     }
 
     case http2::CONTINUATION: {
         if (!expectingContinuation) return connectionError(http2::ERR_PROTOCOL_ERROR);
+        if (++continuationFrames > http2::MAX_CONTINUATION_FRAMES) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
         if (headerBlock.length() + length > std::max<size_t>((size_t) maxHeaderListSize() * http2::HEADER_BLOCK_HARD_CAP_FACTOR, http2::LOCAL_MAX_FRAME_SIZE)) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
         headerBlock.append((const char *) payload, length);
         if (!(flags & http2::END_HEADERS)) return true;
@@ -1231,11 +1363,14 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
     case http2::PRIORITY:
         if (streamId == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
         if (length != 5) return connectionError(http2::ERR_FRAME_SIZE_ERROR);
+        /* Ignored, except that depending on itself is malformed (§5.3.1). */
+        if ((http2::readU32BE(payload) & 0x7fffffff) == streamId) return streamError(streamId, findStream(streamId), http2::ERR_PROTOCOL_ERROR);
         return true;
 
     case http2::RST_STREAM: {
         if (streamId == 0 || streamId > lastStreamId || (streamId & 1) == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
         if (length != 4) return connectionError(http2::ERR_FRAME_SIZE_ERROR);
+        noteResetByPeer(streamId);
         Http2Response *stream = findStream(streamId);
         if (stream) {
             stream->reset = true;
@@ -1256,7 +1391,7 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
     case http2::PING:
         if (streamId != 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
         if (length != 8) return connectionError(http2::ERR_FRAME_SIZE_ERROR);
-        if (!(flags & http2::ACK)) writeFrame(http2::PING, http2::ACK, 0, (const char *) payload, 8);
+        if (!(flags & http2::ACK)) writeControlFrame(http2::PING, http2::ACK, 0, (const char *) payload, 8);
         return true;
 
     case http2::GOAWAY:
@@ -1271,25 +1406,28 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
         if (streamId == 0) {
             if (increment == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
             if (connSendWindow + increment > http2::MAX_WINDOW_SIZE) return connectionError(http2::ERR_FLOW_CONTROL_ERROR);
+            if (connSendWindow <= 0) progressed = true;
             connSendWindow += increment;
-            if (!writable.empty()) drainWritable();
             return true;
         }
         Http2Response *stream = findStream(streamId);
         if (!stream) {
             if (streamId > lastStreamId || (streamId & 1) == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
+            /* Closed stream: still answer the two things that are errors in
+             * any state (§6.9, §6.9.1); an RST on a closed stream is harmless. */
+            if (increment == 0) return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
+            if ((int64_t) peerInitialWindowSize + increment > http2::MAX_WINDOW_SIZE) return streamError(streamId, nullptr, http2::ERR_FLOW_CONTROL_ERROR);
             return true;
         }
         if (increment == 0) return streamError(streamId, stream, http2::ERR_PROTOCOL_ERROR);
         if ((int64_t) stream->sendWindow + increment > http2::MAX_WINDOW_SIZE) {
             return streamError(streamId, stream, http2::ERR_FLOW_CONTROL_ERROR);
         }
+        if (stream->sendWindow <= 0 && stream->sendWindow + (int32_t) increment > 0) progressed = true;
         stream->sendWindow += (int32_t) increment;
-        if (stream->wantsWrite || stream->data.backpressure.length() || stream->data.onWritable) {
-            markWantsWrite(stream);
-            /* Don't call out for dribbled windows; wait until a useful amount opens. */
-            if (stream->sendWindow >= (int32_t) std::min<uint32_t>(peerInitialWindowSize, 8192)) drainWritable();
-        }
+        /* Drained once per socket read by the epilogue's pump(), so a peer
+         * dribbling 1-byte updates can't drive a drain pass per frame. */
+        if (stream->wantsWrite || stream->data.backpressure.length() || stream->data.onWritable) markWantsWrite(stream);
         return true;
     }
 
@@ -1373,7 +1511,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         if (list.size() > http2::MAX_HEADER_FIELDS) continue;
         /* Offsets for now; buf may still grow. */
         list.push_back({(const char *) (uintptr_t) (x.buf + x.name_offset - buf.data()), x.name_len,
-                        (const char *) (uintptr_t) (x.buf + x.val_offset - buf.data()), x.val_len, -1});
+                        (const char *) (uintptr_t) (x.buf + x.val_offset - buf.data()), x.val_len, x.hpack_index});
         used += lsxpack_header_get_dec_size(&x);
     }
     for (us_quic_header_t &h : list) {
@@ -1381,6 +1519,8 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         h.value = buf.data() + (uintptr_t) h.value;
     }
     bool tooLarge = used > limit || list.size() > http2::MAX_HEADER_FIELDS;
+    bool selfDependent = headerBlockSelfDependent;
+    headerBlockSelfDependent = false;
 
     if (existing) {
         /* A later HEADERS on an open stream is the trailer section: it must
@@ -1408,21 +1548,25 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     }
 
     if (streamId <= lastStreamId) {
-        /* DATA/HEADERS racing our RST on a stream we already retired is
-         * expected; anything else reuses a closed stream (§5.1.1). */
-        writeRstStream(streamId, http2::ERR_STREAM_CLOSED);
-        return true;
+        /* HEADERS racing our RST_STREAM is ignored; otherwise the peer is
+         * reusing a closed stream or going backwards (§5.1.1). */
+        if (wasResetByPeer(streamId)) return streamError(streamId, nullptr, http2::ERR_STREAM_CLOSED);
+        if (wasResetByUs(streamId)) return true;
+        return connectionError(existing || streamId == lastStreamId ? http2::ERR_STREAM_CLOSED : http2::ERR_PROTOCOL_ERROR);
     }
     lastStreamId = streamId;
 
     if (goawaySent) {
-        /* We told the peer where we stopped; later streams are ignored. */
+        /* We told the peer where we stopped; later streams and their DATA
+         * are ignored as if we had refused them. */
+        noteResetByUs(streamId);
         return true;
     }
     if (streams.size() >= http2::LOCAL_MAX_CONCURRENT_STREAMS) {
         return streamError(streamId, nullptr, http2::ERR_REFUSED_STREAM);
     }
     lastProcessedStreamId = streamId;
+    progressed = true;
     if (tooLarge) {
         Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
         stream->remoteClosed = endStream;
@@ -1436,41 +1580,54 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     bool sawRegular = false, malformed = false, isConnect = false;
     unsigned seen = 0; /* 1 :method, 2 :scheme, 4 :path, 8 :authority */
     int64_t contentLength = -1;
-    std::string_view authority, host;
+    std::string_view authority, host, path, method;
     for (const us_quic_header_t &h : list) {
         std::string_view name{h.name, h.name_len}, value{h.value, h.value_len};
-        if (!http2::validFieldName(h.name, h.name_len) || !http2::validFieldValue(h.value, h.value_len)) { malformed = true; break; }
+        http2::Field f = http2::classify(h.qpack_index, name);
+        if (f == http2::Field::Other && !http2::validFieldName(h.name, h.name_len)) { malformed = true; break; }
+        if (!http2::validFieldValue(h.value, h.value_len)) { malformed = true; break; }
         if (name[0] == ':') {
             if (sawRegular) { malformed = true; break; }
             unsigned bit;
-            if (name == ":method") { bit = 1; isConnect = value == "CONNECT"; }
-            else if (name == ":scheme") bit = 2;
-            else if (name == ":path") bit = 4;
-            else if (name == ":authority") { bit = 8; authority = value; }
-            else { malformed = true; break; }
-            if ((seen & bit) || value.empty()) { malformed = true; break; }
+            switch (f) {
+            case http2::Field::Method: bit = 1; method = value; isConnect = value == "CONNECT"; break;
+            case http2::Field::Scheme: bit = 2; break;
+            case http2::Field::Path: bit = 4; path = value; break;
+            case http2::Field::Authority: bit = 8; authority = value; break;
+            default: bit = 0; break;
+            }
+            if (!bit || (seen & bit) || value.empty()) { malformed = true; break; }
             seen |= bit;
         } else {
             sawRegular = true;
-            if (name == "connection" || name == "upgrade" || name == "keep-alive" || name == "proxy-connection" ||
-                name == "transfer-encoding" || (name == "te" && value != "trailers")) { malformed = true; break; }
-            if (name == "host") { if (!host.empty()) { malformed = true; break; } host = value; }
-            if (name == "content-length") {
+            switch (f) {
+            case http2::Field::ConnectionSpecific: malformed = true; break;
+            case http2::Field::Te: malformed = value != "trailers"; break;
+            case http2::Field::Host: malformed = !host.empty(); host = value; break;
+            case http2::Field::ContentLength: {
                 uint64_t v = 0;
                 auto r = std::from_chars(value.data(), value.data() + value.size(), v);
-                if (r.ec != std::errc() || r.ptr != value.data() + value.size() || contentLength >= 0 || v > (uint64_t) INT64_MAX) { malformed = true; break; }
+                malformed = r.ec != std::errc() || r.ptr != value.data() + value.size() || contentLength >= 0 || v > (uint64_t) INT64_MAX;
                 contentLength = (int64_t) v;
+                break;
             }
+            default: break;
+            }
+            if (malformed) break;
         }
     }
     if (!malformed) {
         malformed = isConnect ? seen != (1 | 8) : (seen & 7) != 7;
     }
     if (!malformed && endStream && contentLength > 0) malformed = true;
+    if (selfDependent) malformed = true;
+    /* §8.3.1: :path is origin-form, or "*" for OPTIONS only. */
+    if (!malformed && !isConnect && !(path.size() && path[0] == '/') && !(path == "*" && method == "OPTIONS")) malformed = true;
     /* §8.3.1: a request needs an authority, and Host may not contradict :authority. */
     if (!malformed) {
         if (authority.empty() && host.empty()) malformed = true;
         else if (!authority.empty() && !host.empty() && authority != host) malformed = true;
+        else if (authority.find('@') != std::string_view::npos) malformed = true;
     }
     if (malformed) {
         return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
@@ -1485,7 +1642,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
 
 inline bool Http2Connection::dispatchRequest(Http2Response *stream, const us_quic_header_t *headers, unsigned count) {
     Http2Request req(headers, count);
-    if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && req.getHeader("expect") == "100-continue") {
+    if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && http2::iequals(req.getHeader("expect"), "100-continue")) {
         stream->writeContinue();
     }
     ctx->dispatchDepth++;
@@ -1544,18 +1701,18 @@ inline bool Http2Response::write(std::string_view chunk, size_t *writtenPtr) {
     if (data.backpressure.length() != 0) {
         data.backpressure.append(chunk.data(), chunk.length());
         conn->markWantsWrite(this);
+        conn->scheduleFlush();
         return false;
     }
     size_t w = conn->writeData(this, chunk.data(), chunk.length(), false);
     data.offset += w;
     if (writtenPtr) *writtenPtr = w;
-    conn->scheduleFlush();
     if (w < chunk.length()) {
         data.backpressure.append(chunk.data() + w, chunk.length() - w);
         conn->markWantsWrite(this);
-        return false;
     }
-    return true;
+    conn->scheduleFlush();
+    return w == chunk.length();
 }
 
 inline void Http2Response::endWithoutBody(std::optional<size_t> reportedContentLength, bool) {
@@ -1689,13 +1846,20 @@ inline bool Http2Response::drain() {
 }
 
 inline Http2Response *Http2Response::pause() {
+    if (paused) return this;
     paused = true;
+    /* Like HTTP/1: a request the app has paused doesn't idle out. */
+    pausedTimeoutS = timeoutS;
+    timeoutS = 0;
+    conn->recomputeIdleTimeout();
     return this;
 }
 
 inline Http2Response *Http2Response::resume() {
     if (!paused) return this;
     paused = false;
+    timeoutS = pausedTimeoutS;
+    conn->recomputeIdleTimeout();
     if (!dead && !remoteClosed && unackedReceive) {
         conn->writeWindowUpdate(id, unackedReceive);
         unackedReceive = 0;

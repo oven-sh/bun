@@ -2136,6 +2136,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
         if let Some(h2a) = server.h2_app.take() {
+            // A drain may still be queued for it.
+            server.vm().event_loop_ref().deferred_tasks.unregister_task(core::ptr::NonNull::new(h2a.cast::<c_void>()));
             // SAFETY: live h2::App handle owned by this server; detaches from `app`.
             unsafe { uws_sys::h2::App::destroy(h2a) };
         }
@@ -2774,6 +2776,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Self::deinit(this);
             return false;
         };
+        // Streams parked on socket backpressure by a JS-driven write get their
+        // next drain pass from the event loop's deferred task queue (after the
+        // current task and its microtasks), like the HTTP/1 sink's auto-flush.
+        extern "C" fn schedule_h2_drain(app: *mut c_void, _ctx: *mut c_void) {
+            extern "C" fn drain(app: *mut c_void) -> bool {
+                // S012: `h2::App` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain();
+                false // one-shot; re-posted when more streams park
+            }
+            jsc::VirtualMachine::get()
+                .event_loop_ref()
+                .deferred_tasks
+                .post_task(core::ptr::NonNull::new(app), drain);
+        }
+        bun_opaque::opaque_deref_mut(h2).on_schedule_drain(schedule_h2_drain, h2.cast::<c_void>());
         // SAFETY: `this` is the live boxed server; uniquely owned here.
         unsafe {
             (*this).h2_app = Some(h2);

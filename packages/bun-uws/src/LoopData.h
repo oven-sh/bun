@@ -34,6 +34,7 @@
 namespace uWS {
 
 struct Loop;
+template <bool SSL> struct TemplatedApp;
 
 struct alignas(16) LoopData {
     friend struct Loop;
@@ -43,44 +44,20 @@ private:
     std::vector<MoveOnlyFunction<void()>> deferQueues[2];
 
 public:
-    /* Things that want a callback before and after every loop iteration
-     * (pub/sub drain, HTTP/2 sweep) link a node here: no allocation, O(1)
-     * add/remove, and safe to unlink (self or others) from inside a callback. */
-    struct TickHook {
-        void (*onTick)(TickHook *) = nullptr;
-        TickHook *prev = nullptr, *next = nullptr;
-        bool linked = false;
-    };
-    void addTickHook(TickHook *h) {
-        if (h->linked) return;
-        h->linked = true;
-        h->prev = tickTail;
-        h->next = nullptr;
-        if (tickTail) tickTail->next = h; else tickHead = h;
-        tickTail = h;
+    /* Apps on this loop; each gets tick() before and after every loop
+     * iteration (pub/sub drain, HTTP/2 sweep). See Loop::tickApps in App.h. */
+    std::vector<TemplatedApp<false> *> apps;
+    std::vector<TemplatedApp<true> *> sslApps;
+    bool ticking = false;
+    template <bool SSL> std::vector<TemplatedApp<SSL> *> &appsFor() {
+        if constexpr (SSL) return sslApps; else return apps;
     }
-    void removeTickHook(TickHook *h) {
-        if (!h->linked) return;
-        h->linked = false;
-        if (tickCursor == h) tickCursor = h->next;
-        if (h->prev) h->prev->next = h->next; else tickHead = h->next;
-        if (h->next) h->next->prev = h->prev; else tickTail = h->prev;
-        h->prev = h->next = nullptr;
-    }
-    void runTickHooks() {
-        /* A hook may run a nested loop iteration; hooks are not re-entered
-         * from it — the outer walk resumes and they run again next tick. */
-        if (tickRunning) return;
-        tickRunning = true;
-        for (TickHook *h = tickHead; h; h = tickCursor) {
-            tickCursor = h->next;
-            h->onTick(h);
-        }
-        tickRunning = false;
+    template <bool SSL> void addApp(TemplatedApp<SSL> *app) { appsFor<SSL>().push_back(app); }
+    template <bool SSL> void removeApp(TemplatedApp<SSL> *app) {
+        auto &v = appsFor<SSL>();
+        for (size_t i = 0; i < v.size(); i++) if (v[i] == app) { v[i] = v.back(); v.pop_back(); break; }
     }
 private:
-    TickHook *tickHead = nullptr, *tickTail = nullptr, *tickCursor = nullptr;
-    bool tickRunning = false;
 
     /* Cork data: two independent slots so a nested cork (e.g. a resumed async
      * request writing while the outer request is still corked) doesn't force

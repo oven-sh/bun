@@ -43,9 +43,13 @@ struct H2App {
     H2_METHOD(any, "*")
 #undef H2_METHOD
 
-    void clearRoutes() {
-        http2Context->router = decltype(http2Context->router){};
+    void onScheduleDrain(void (*cb)(void *, Http2Context *), void *user) {
+        http2Context->scheduleDrain = cb;
+        http2Context->scheduleDrainUser = user;
     }
+    void drain() { http2Context->sweep(); }
+
+    void clearRoutes() { http2Context->clearRoutes(); }
     /* GOAWAY + close every connection. */
     void close() { http2Context->closeAll(); }
     size_t closeIdle(bool closeWhenIdle = false) { return http2Context->closeIdle(closeWhenIdle); }

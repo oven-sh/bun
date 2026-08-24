@@ -276,6 +276,7 @@ public:
     }
 
     ~TemplatedApp() {
+        Loop::get()->data()->removeApp(this);
         /* Let's just put everything here */
         if (httpContext) {
             if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
@@ -304,7 +305,6 @@ public:
 
         /* Delete TopicTree */
         if (topicTree) {
-            Loop::get()->removeTickHook(topicTree);
             delete topicTree;
         }
     }
@@ -339,8 +339,14 @@ private:
             if (!sslCtx) { httpContext = nullptr; return; }
         }
         httpContext = HttpContext<SSL>::create(Loop::get(), options.request_cert, options.reject_unauthorized);
+        if (httpContext) Loop::get()->data()->addApp(this);
     }
 public:
+
+    /* Per-iteration housekeeping, run by the loop's pre/post callbacks. */
+    void tick() {
+        if (topicTree) topicTree->drain();
+    }
 
     static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
         auto *app = new TemplatedApp<SSL>(options);
@@ -504,8 +510,7 @@ public:
                 return false;
             });
 
-            /* Commit pub/sub batches before and after every loop iteration */
-            Loop::get()->addTickHook(topicTree);
+            /* drained from tick() before and after every loop iteration */
         }
 
         /* Every route has its own websocket context with its own behavior and user data type */
@@ -794,5 +799,15 @@ public:
 
 typedef TemplatedApp<false> App;
 typedef TemplatedApp<true> SSLApp;
+
+inline void Loop::tickApps(LoopData *loopData) {
+    /* A tick may run a nested loop iteration; don't re-enter, and iterate by
+     * index since an app may be created or destroyed from inside tick(). */
+    if (loopData->ticking) return;
+    loopData->ticking = true;
+    for (size_t i = 0; i < loopData->apps.size(); i++) loopData->apps[i]->tick();
+    for (size_t i = 0; i < loopData->sslApps.size(); i++) loopData->sslApps[i]->tick();
+    loopData->ticking = false;
+}
 
 }

@@ -49,7 +49,7 @@ private:
     static void preCb(us_loop_t *loop) {
         LoopData *loopData = (LoopData *) us_loop_ext(loop);
 
-        loopData->runTickHooks();
+        tickApps(loopData);
 
         /* Drain any leftover corks. Two slots max. */
         for (int i = 0; i < 2; i++) {
@@ -67,8 +67,12 @@ private:
     static void postCb(us_loop_t *loop) {
         LoopData *loopData = (LoopData *) us_loop_ext(loop);
 
-        loopData->runTickHooks();
+        tickApps(loopData);
     }
+
+    /* Calls TemplatedApp<SSL>::tick() on every registered app; defined in
+     * App.h where the type is complete. */
+    static inline void tickApps(LoopData *loopData);
 
     Loop() = delete;
     ~Loop() = default;
@@ -147,14 +151,7 @@ public:
         return (LoopData *) us_loop_ext(loop);
     }
 
-    /* Run `hook->cb` before and after every loop iteration until removed. */
-    void addTickHook(LoopData::TickHook *hook) {
-        ((LoopData *) us_loop_ext((us_loop_t *) this))->addTickHook(hook);
-    }
-
-    void removeTickHook(LoopData::TickHook *hook) {
-        ((LoopData *) us_loop_ext((us_loop_t *) this))->removeTickHook(hook);
-    }
+    LoopData *data() { return (LoopData *) us_loop_ext((us_loop_t *) this); }
 
     /* Defer this callback on Loop's thread of execution */
     void defer(MoveOnlyFunction<void()> &&cb) {

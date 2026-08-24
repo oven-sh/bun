@@ -367,6 +367,19 @@ impl App {
     pub fn close(&mut self) {
         c::uws_h2_app_close(self)
     }
+    /// Streams parked on backpressure need another drain pass outside the
+    /// current call; `cb(user, ctx)` should arrange for [`drain`] to run soon.
+    pub fn on_schedule_drain(
+        &mut self,
+        cb: unsafe extern "C" fn(user: *mut c_void, ctx: *mut c_void),
+        user: *mut c_void,
+    ) {
+        // SAFETY: live handle; cb/user are stored and invoked on this thread.
+        unsafe { c::uws_h2_app_on_schedule_drain(self, cb, user) }
+    }
+    pub fn drain(&mut self) {
+        c::uws_h2_app_drain(self)
+    }
     pub fn clear_routes(&mut self) {
         c::uws_h2_app_clear_routes(self)
     }
@@ -501,6 +514,12 @@ mod c {
             idle_timeout_s: u32,
         ) -> *mut App;
         pub(super) fn uws_h2_app_destroy(app: *mut App);
+        pub(super) fn uws_h2_app_on_schedule_drain(
+            app: *mut App,
+            cb: unsafe extern "C" fn(user: *mut c_void, ctx: *mut c_void),
+            user: *mut c_void,
+        );
+        pub(super) safe fn uws_h2_app_drain(app: &mut App);
         pub(super) safe fn uws_h2_app_close(app: &mut App);
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
         pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);

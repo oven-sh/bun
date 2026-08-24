@@ -389,6 +389,39 @@ describe("context propagation", () => {
     expect(await p).toBe(span);
   });
 
+  test("a `using` span in an async function's synchronous prefix is not left active in the caller, even with for-await in that prefix", async () => {
+    async function* agen() {
+      yield 1;
+    }
+    const seen: (string | undefined)[] = [];
+    async function plain() {
+      using span = tracer.startActiveSpan("plain");
+      await 1;
+      return Bun.otel.activeSpan() === span;
+    }
+    async function forAwaitAsyncGen() {
+      using span = tracer.startActiveSpan("fa");
+      for await (const _ of agen()) {
+      }
+      return Bun.otel.activeSpan() === span;
+    }
+    async function forAwaitSync() {
+      using span = tracer.startActiveSpan("fs");
+      for await (const _ of [1, 2]) {
+      }
+      return Bun.otel.activeSpan() === span;
+    }
+    const p1 = plain();
+    seen.push(Bun.otel.activeSpan()?.name);
+    const p2 = forAwaitAsyncGen();
+    seen.push(Bun.otel.activeSpan()?.name);
+    const p3 = forAwaitSync();
+    seen.push(Bun.otel.activeSpan()?.name);
+    expect(seen).toEqual([undefined, undefined, undefined]);
+    expect(await Promise.all([p1, p2, p3])).toEqual([true, true, true]);
+    expect(Bun.otel.activeSpan()).toBeUndefined();
+  });
+
   test("concurrent async functions keep separate contexts", async () => {
     async function work(name: string, delay: number) {
       using span = tracer.startActiveSpan(name);

@@ -2865,11 +2865,6 @@ fn transpile_source_code_inner(
                     let already_bundled = core::mem::take(&mut parse_result.already_bundled);
                     let is_commonjs_module = already_bundled.is_common_js();
                     let bytecode_cache = Bytecode::owned(already_bundled.into_bytecode());
-                    // Mirrors the `is_main` handling on the print path below.
-                    if is_main {
-                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                        unsafe { (*jsc_vm).has_loaded = true };
-                    }
                     return Ok(ResolvedSource {
                         source_code: bun_core::String::clone_latin1(&source.contents),
                         source_url: input_specifier.create_if_different(path.text),
@@ -2999,11 +2994,6 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
-                    // Mirrors the `is_main` handling on the print path below.
-                    if is_main {
-                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                        unsafe { (*jsc_vm).has_loaded = true };
-                    }
                     return Ok(ResolvedSource {
                         source_code,
                         source_url: input_specifier.create_if_different(path.text),

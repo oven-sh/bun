@@ -150,12 +150,10 @@ describe.if(isPosix)("cwd deleted before startup", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "",
-        stderr: expect.stringContaining("The current working directory was deleted"),
-        exitCode: 1,
-      });
+      expect(stdout).toBe("");
+      expect(stderr).toContain("The current working directory was deleted");
       expect(stderr).not.toContain("Bun could not find a file");
+      expect(exitCode).toBe(1);
     },
   );
 

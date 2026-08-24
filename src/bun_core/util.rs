@@ -4134,8 +4134,8 @@ pub fn getcwd_len(buf: &mut [u8]) -> crate::CrateResult<usize> {
         if n == 0 {
             return Err(crate::CrateError::Unexpected);
         }
+        const ERROR_FILENAME_EXCED_RANGE: u32 = 206;
         if n >= wbuf.0.len() {
-            const ERROR_FILENAME_EXCED_RANGE: u32 = 206;
             bun_windows_sys::kernel32::SetLastError(ERROR_FILENAME_EXCED_RANGE);
             return Err(crate::CrateError::NameTooLong);
         }
@@ -4144,7 +4144,12 @@ pub fn getcwd_len(buf: &mut [u8]) -> crate::CrateResult<usize> {
         const LONG_PATH_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
         let src = crate::strings::trim_prefix_comptime::<u16>(&wbuf.0[..n], &LONG_PATH_PREFIX);
         let last = buf.len() - 1;
-        let written = crate::strings::copy_utf16_into_utf8(&mut buf[..last], src).written as usize;
+        let result = crate::strings::copy_utf16_into_utf8(&mut buf[..last], src);
+        if (result.read as usize) < src.len() {
+            bun_windows_sys::kernel32::SetLastError(ERROR_FILENAME_EXCED_RANGE);
+            return Err(crate::CrateError::NameTooLong);
+        }
+        let written = result.written as usize;
         buf[written] = 0;
         Ok(written)
     }

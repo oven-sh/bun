@@ -301,7 +301,8 @@ describe("bun", () => {
     });
 
     test("reports that PowerShell completions do not exist when $SHELL is pwsh", async () => {
-      // An empty home keeps the bunx symlink step from writing outside the test.
+      // An empty home keeps the bunx symlink fallbacks ($HOME/.bun/bin, $HOME/.local/bin) out of the
+      // real home directory. The first candidate, the executable's own directory, is unaffected.
       using home = tempDir("completions-pwsh-home", {});
 
       async function run(env: Record<string, string>) {

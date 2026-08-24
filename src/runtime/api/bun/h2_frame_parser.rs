@@ -17,12 +17,10 @@ use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
-use bun_core::String as BunString;
 use bun_core::strings;
 use bun_http::lshpack;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
-use bun_jsc::StringJsc as _;
 use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bun_string_jsc;
@@ -3271,7 +3269,7 @@ impl H2FrameParser {
     fn string_or_empty_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
         let global = self.handlers.get().global();
         if payload.is_empty() {
-            return BunString::empty().to_js(&global);
+            return Ok(JSValue::js_empty_string(&global));
         }
         bun_string_jsc::create_utf8_for_js(&global, payload)
     }

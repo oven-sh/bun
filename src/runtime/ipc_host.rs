@@ -7,6 +7,8 @@ use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
 use bun_core::String as BunString;
+#[cfg(windows)]
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
 use crate::api::bun::subprocess::Subprocess;
@@ -42,7 +44,7 @@ pub(crate) fn attach_windows_socket_payload(
         log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
         return Ok(None);
     };
-    let str_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex)?;
+    let str_js = bun_string_jsc::create_utf8_for_js(global, &hex)?;
     message.put(global, IPC::WIN_SOCKET_INFO_KEY, str_js);
     Ok(Some(hex))
 }

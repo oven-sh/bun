@@ -1370,7 +1370,7 @@ where
                 sink: Cell::new(None),
                 byte_stream: Cell::new(None),
                 response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
-                pathname: JsCell::new(BunString::empty()),
+                pathname: JsCell::new(BunString::EMPTY),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
@@ -1568,7 +1568,7 @@ where
         self.response_body_readable_stream_ref
             .with_mut(|s| s.deinit());
 
-        self.pathname.set(BunString::empty());
+        self.pathname.set(BunString::EMPTY);
     }
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
@@ -2301,7 +2301,7 @@ where
         }
 
         if request_object.ensure_url().is_err() {
-            request_object.url.set(BunString::empty());
+            request_object.url.set(BunString::EMPTY);
         }
 
         // we have to clone the request headers here since they will soon belong to a different request

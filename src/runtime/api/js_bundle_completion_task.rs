@@ -511,18 +511,12 @@ impl JSBundleCompletionTask {
                     let write_args = fs_args::WriteFile {
                         flag: FileSystemFlags::W,
                         mode: node_fs::DEFAULT_PERMISSION,
-                        file: PathOrFileDescriptor::Path(PathLike::Utf8(
-                            bun_core::Utf8Bytes::Borrowed(
-                                // SAFETY: `write_file_with_path_buffer` is synchronous;
-                                // `write_path` outlives the call.
-                                unsafe { bun_ptr::detach_lifetime(write_path) },
-                            ),
-                        )),
+                        // SAFETY: `write_file_with_path_buffer` is synchronous;
+                        // `write_path` outlives the call.
+                        file: PathOrFileDescriptor::Path(unsafe { PathLike::borrowed(write_path) }),
                         flush: false,
-                        data: StringOrBuffer::Utf8(bun_core::Utf8Bytes::Borrowed(
-                            // SAFETY: as above; `output_files[i]` outlives the call.
-                            unsafe { bun_ptr::detach_lifetime(bytes) },
-                        )),
+                        // SAFETY: as above; `output_files[i]` outlives the call.
+                        data: unsafe { StringOrBuffer::borrowed(bytes) },
                         dirfd: root_dir.fd,
                         signal: None,
                     };

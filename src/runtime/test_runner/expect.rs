@@ -609,7 +609,7 @@ impl Expect {
         // (note that matcher_name/matcher_args are not used because silent=true)
         // SAFETY: value is a valid in/out-ptr provided by C++ caller
         let v = unsafe { *value };
-        match Self::process_promise(&bun_core::String::empty(), flags, global_this, v, "", "", true) {
+        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, "", "", true) {
             Ok(new) => {
                 // SAFETY: value is a valid in/out-ptr provided by C++ caller
                 unsafe { *value = new };
@@ -695,7 +695,7 @@ impl Expect {
         let arguments = callframe.arguments();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
 
-        let mut custom_label = bun_core::String::empty();
+        let mut custom_label = bun_core::String::EMPTY;
         if arguments.len() > 1 {
             if arguments[1].is_string() || arguments[1].implements_to_string(global_this)? {
                 custom_label = arguments[1].to_bun_string(global_this)?;
@@ -1543,7 +1543,7 @@ impl Expect {
         };
         Err(Self::throw_pretty_matcher_error(
             global_this,
-            &bun_core::String::empty(),
+            &bun_core::String::EMPTY,
             matcher_name,
             matcher_params,
             Flags::default(),
@@ -2722,7 +2722,7 @@ impl ExpectMatcherContext {
         match this.flags.promise() {
             Promise::Rejects => bun_core::String::static_("rejects").to_js(global_this),
             Promise::Resolves => bun_core::String::static_("resolves").to_js(global_this),
-            _ => bun_core::String::empty().to_js(global_this),
+            _ => Ok(JSValue::js_empty_string(global_this)),
         }
     }
 

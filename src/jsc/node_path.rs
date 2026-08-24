@@ -146,6 +146,19 @@ impl Drop for PathLike {
 }
 
 impl PathLike {
+    /// Lend `bytes` to a synchronous syscall without copying.
+    ///
+    /// # Safety
+    /// `bytes` must stay alive and unmoved until the returned `PathLike` is
+    /// dropped.
+    #[inline]
+    pub unsafe fn borrowed(bytes: &[u8]) -> PathLike {
+        // SAFETY: caller contract above.
+        PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
+            bun_ptr::detach_lifetime(bytes)
+        }))
+    }
+
     #[inline]
     pub fn slice(&self) -> &[u8] {
         match self {

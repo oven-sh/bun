@@ -95,10 +95,10 @@ impl IniTestingAPIs {
             let Some(default_registry) = install.default_registry.as_ref() else {
                 break 'brk (
                     BunString::static_(Registry::DEFAULT_URL),
-                    BunString::empty(),
-                    BunString::empty(),
-                    BunString::empty(),
-                    BunString::empty(),
+                    BunString::EMPTY,
+                    BunString::EMPTY,
+                    BunString::EMPTY,
+                    BunString::EMPTY,
                 );
             };
 

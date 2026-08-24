@@ -754,7 +754,7 @@ mod _impl {
                 // SAFETY: pw_dir is a NUL-terminated C string from getpwuid_r
                 BunString::clone_utf8(unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
             } else {
-                BunString::empty()
+                BunString::EMPTY
             });
         }
     }

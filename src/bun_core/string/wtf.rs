@@ -1,9 +1,7 @@
 use crate::string::Utf8Bytes;
 use crate::strings;
 
-// Canonical layout lives in `bun_alloc` (lowest-tier crate); re-exported here
-// for back-compat with existing `bun_core::wtf::*` /
-// `bun_core::WTFStringImpl*` import paths.
+// The struct layout lives in `bun_alloc` (lowest-tier crate).
 pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`. The
@@ -21,7 +19,6 @@ pub use crate::external_shared::WTFString;
 pub trait WTFStringImplExt {
     fn to_utf8(&self) -> Utf8Bytes<'_>;
     fn to_owned_slice_z(&self) -> crate::ZBox;
-    fn to_utf8_if_needed(&self) -> Option<Vec<u8>>;
     fn can_use_as_utf8(&self) -> bool;
     fn utf8_byte_length(&self) -> usize;
     fn utf8_slice(&self) -> &[u8];
@@ -56,16 +53,8 @@ impl WTFStringImplExt for WTFStringImplStruct {
         strings::to_utf8_alloc_z(self.utf16_slice())
     }
 
-    fn to_utf8_if_needed(&self) -> Option<Vec<u8>> {
-        if self.is_8bit() {
-            return strings::to_utf8_from_latin1(self.latin1_slice());
-        }
-
-        Some(strings::to_utf8_alloc(self.utf16_slice()))
-    }
-
-    /// Avoid using this in code paths that are about to get the string as a UTF-8
-    /// In that case, use to_utf8_if_needed instead.
+    /// Avoid using this in code paths that are about to get the string as
+    /// UTF-8; use `to_utf8` there instead.
     fn can_use_as_utf8(&self) -> bool {
         self.is_8bit() && strings::is_all_ascii(self.latin1_slice())
     }
@@ -97,7 +86,6 @@ impl WTFStringImplExt for WTFStringImplStruct {
     }
 }
 
-// `WTF.parseDouble` canonical now lives in bun_core::fmt (tier-0) so
-// `bun_interchange` (yaml/toml) and `bun_js_parser::lexer` can call it without
-// any string/jsc dep. Re-exported here for back-compat.
+// `WTF::parseDouble` lives in `bun_core::fmt` (tier-0) so `bun_interchange`
+// (yaml/toml) and `bun_js_parser::lexer` can call it without a string dep.
 pub use crate::fmt::{InvalidCharacter, parse_double};

@@ -8,6 +8,7 @@ use core::cell::{Cell, RefCell};
 use bun_core::EncodedSlice;
 use jsc::EncodedSliceJsc as _;
 use jsc::StringJsc as _;
+use jsc::bun_string_jsc;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -357,7 +358,7 @@ impl TextDecoder {
                 let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
                 // SAFETY: the copy above initialized `out.written` (≤ `out_length`) units.
                 unsafe { units.set_len(out.written as usize) };
-                jsc::encoded_slice::to_external_u16(units, global_this)
+                bun_string_jsc::owned_utf16_into_js(global_this, units)
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the
@@ -439,7 +440,7 @@ impl TextDecoder {
                             });
                         }
                     }
-                    return jsc::encoded_slice::to_external_u16(decoded, global_this);
+                    return bun_string_jsc::owned_utf16_into_js(global_this, decoded);
                 }
 
                 // All-ASCII input needed no conversion. `EncodedSlice::latin1(..).to_js`
@@ -500,12 +501,7 @@ impl TextDecoder {
                     }
                 }
 
-                if decoded.is_empty() {
-                    drop(decoded);
-                    return Ok(JSValue::js_empty_string(global_this));
-                }
-
-                jsc::encoded_slice::to_external_u16(decoded, global_this)
+                bun_string_jsc::owned_utf16_into_js(global_this, decoded)
             }
 
             // Every other encoding goes through encoding_rs.
@@ -549,11 +545,7 @@ impl TextDecoder {
                     }
                 };
 
-                if decoded.is_empty() {
-                    return Ok(JSValue::js_empty_string(global_this));
-                }
-
-                jsc::encoded_slice::to_external_u16(decoded, global_this)
+                bun_string_jsc::owned_utf16_into_js(global_this, decoded)
             }
         }
     }

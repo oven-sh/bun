@@ -734,11 +734,7 @@ extern "C" fn napi_create_string_latin1(
     );
 
     if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-        };
-        result.set(env, js);
+        result.set(env, JSValue::js_empty_string(env.to_js()));
         return env.ok();
     }
 
@@ -835,11 +831,7 @@ extern "C" fn napi_create_string_utf16(
     }
 
     if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-        };
-        result.set(env, js);
+        result.set(env, JSValue::js_empty_string(env.to_js()));
         return env.ok();
     }
 

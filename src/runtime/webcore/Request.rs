@@ -709,7 +709,7 @@ impl Request {
         // headers.deref() → HeadersRef::Drop when set to None
         self.headers.set(None);
 
-        self.url.set(BunString::empty());
+        self.url.set(BunString::EMPTY);
 
         // AbortSignalRef::Drop unrefs the C++ handle.
         self.signal.set(None);
@@ -985,7 +985,7 @@ impl Request {
         // (the +1) is moved into `req.body` next.
         let body_seed_ptr = body.as_ptr();
         let mut req = Request {
-            url: JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -1518,7 +1518,7 @@ impl Request {
         // `clone_into` `ptr::write`s the new fields over the seed
         // without reading or dropping it.
         let mut req = Box::new(Request {
-            url: JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
@@ -1550,7 +1550,7 @@ impl Request {
         body: BodyHiveHandle,
     ) -> Request {
         Request {
-            url: JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),

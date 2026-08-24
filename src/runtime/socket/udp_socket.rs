@@ -333,7 +333,7 @@ pub struct UDPSocketConfig {
 impl Default for UDPSocketConfig {
     fn default() -> Self {
         Self {
-            hostname: BunString::empty(),
+            hostname: BunString::EMPTY,
             connect: None,
             port: 0,
             flags: 0,

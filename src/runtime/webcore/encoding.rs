@@ -257,7 +257,7 @@ pub(crate) fn to_string(
 
 pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> BunString {
     if input.is_empty() {
-        return BunString::empty();
+        return BunString::EMPTY;
     }
 
     match encoding {
@@ -288,7 +288,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
 
             if usable_len == 0 {
                 // input dropped
-                return BunString::empty();
+                return BunString::EMPTY;
             }
 
             // Allocate a fresh u16-aligned Vec and copy the bytes. Rebuilding a
@@ -320,7 +320,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
 
             // Return an empty string in this case, just like node.
             if wrote < chars.len() {
-                return BunString::empty();
+                return BunString::EMPTY;
             }
 
             str
@@ -346,7 +346,7 @@ pub(crate) fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunS
 
 fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     if input.is_empty() {
-        return BunString::empty();
+        return BunString::EMPTY;
     }
 
     match encoding_from_u8(ENCODING) {
@@ -369,7 +369,7 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
         Encoding::Buffer | Encoding::Utf8 => {
             let converted = match strings::to_utf16_alloc(input, false, false) {
                 Ok(v) => v,
-                Err(_) => return BunString::dead(),
+                Err(_) => return BunString::DEAD,
             };
             if let Some(utf16) = converted {
                 return create_external_globally_allocated_utf16(utf16);
@@ -382,7 +382,7 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters
             if input.len() / 2 == 0 {
-                return BunString::empty();
+                return BunString::EMPTY;
             }
 
             let chars_len = input.len() / 2;
@@ -449,7 +449,7 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
 
     let mut to: Vec<u8> = Vec::new();
     if to.try_reserve_exact(to_len).is_err() {
-        return BunString::dead();
+        return BunString::DEAD;
     }
     // SAFETY: the spare bytes are write-only; the encoder reports how many it
     // initialized and only those are committed.

@@ -683,7 +683,7 @@ impl ErrorDeferred {
             code: bstr::String::static_(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
-            hostname: self.hostname.take().unwrap_or(bstr::String::empty()),
+            hostname: self.hostname.take().unwrap_or(bstr::String::EMPTY),
             ..Default::default()
         };
 

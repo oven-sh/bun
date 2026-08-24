@@ -824,11 +824,7 @@ impl<'a> ParseRenderer<'a> {
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(entry.data);
                 if let Some(align_str) = md::types::alignment_name(alignment) {
-                    props.put(
-                        g,
-                        b"align",
-                        bun_string_jsc::create_utf8_for_js(g, align_str)?,
-                    );
+                    props.put(g, b"align", bun_core::String::static_(align_str).to_js(g)?);
                 }
             }
             _ => {}
@@ -1557,7 +1553,7 @@ impl<'a> JsCallbackRenderer<'a> {
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(data);
                 let align_js = if let Some(align_str) = md::types::alignment_name(alignment) {
-                    bun_string_jsc::create_utf8_for_js(g, align_str)?
+                    bun_core::String::static_(align_str).to_js(g)?
                 } else {
                     JSValue::UNDEFINED
                 };

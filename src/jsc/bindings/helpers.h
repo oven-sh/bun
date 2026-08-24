@@ -308,7 +308,7 @@ static JSC::JSValue getErrorInstance(const EncodedSlice* str, JSC::JSGlobalObjec
 {
     WTF::String message = toStringCopy(*str);
     if (message.isNull() && str->len > 0) [[unlikely]] {
-        // pending exception while creating an error.
+        // Allocation failed or the message exceeds the maximum string length.
         return {};
     }
 

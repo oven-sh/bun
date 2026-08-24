@@ -468,6 +468,7 @@ pub mod bun_cpu_profiler;
 pub mod bun_heap_profiler;
 #[path = "bun_string_jsc.rs"]
 pub mod bun_string_jsc;
+pub use bun_string_jsc::{StringJsc, Utf8WithStringJsc};
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
 #[path = "EventLoopHandle.rs"]
@@ -1081,7 +1082,7 @@ impl FromJsEnum for bun_sys::SignalCode {
                 global.throw_invalid_arguments(format_args!("{property_name} must be a string"))
             );
         }
-        let s = bun_string_jsc::from_js(v, global)?;
+        let s = bun_core::String::from_js(v, global)?;
         let hit = bun_sys::signal_code::from_name(s.to_utf8().slice());
         match hit {
             Some(code) => Ok(code),
@@ -1331,52 +1332,6 @@ pub mod codegen {
 }
 pub use self::codegen as Codegen;
 
-/// Extension trait providing JSC-aware methods on `bun_core::String`.
-pub trait StringJsc {
-    fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_core::String>;
-    /// Borrow: JSC takes its own ref (or copies borrowed bytes).
-    fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// Consume: the +1 moves into the `JSString`.
-    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// `new Error(self)` — the message is copied (16-bit stays 16-bit).
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-}
-impl StringJsc for bun_core::String {
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        self.to_encoded_slice().to_error_instance(global)
-    }
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        self.to_encoded_slice().to_type_error_instance(global)
-    }
-    fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_core::String> {
-        bun_string_jsc::from_js(value, global)
-    }
-    fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::to_js(self, global)
-    }
-    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::into_js(self, global)
-    }
-    fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::to_js_by_parse_json(self, global)
-    }
-}
-
-/// Extension trait providing JSC-aware methods on
-/// `bun_core::Utf8WithString` (lower-tier, no JSC dep) — `into_js`; the
-/// free-function body lives in [`bun_string_jsc`].
-pub trait Utf8WithStringJsc {
-    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-}
-impl Utf8WithStringJsc for bun_core::Utf8WithString {
-    #[inline]
-    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::utf8_with_string_into_js(self, global)
-    }
-}
-
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).
 pub trait SysErrorJsc {
     fn to_system_error(&self) -> SystemError;
@@ -1451,7 +1406,7 @@ impl LogJsc for bun_ast::Log {
         global: &JSGlobalObject,
         message: core::fmt::Arguments<'_>,
     ) -> JsResult<JSValue> {
-        global.create_aggregate_error_with_array(message, self.to_js_array(global)?)
+        global.create_aggregate_error_with_array(self.to_js_array(global)?, message)
     }
 }
 

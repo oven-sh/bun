@@ -64,7 +64,7 @@ impl Default for PostgresSQLQuery {
     fn default() -> Self {
         Self {
             statement: Cell::new(None),
-            query: BunString::empty(),
+            query: BunString::EMPTY,
             this_value: JsCell::new(JsRef::empty()),
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),

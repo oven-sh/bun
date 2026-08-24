@@ -12,8 +12,8 @@ use core::marker::PhantomData;
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult, ZigException,
-    bun_string_jsc, ffi, host_fn,
+    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
+    StringJsc as _, ZigException, bun_string_jsc, ffi, host_fn,
 };
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
@@ -860,7 +860,7 @@ impl JSValue {
         })
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
-        bun_string_jsc::from_js(self, global)
+        bun_core::String::from_js(self, global)
     }
     /// `toString()` then UTF-8. The slice holds its own ref/allocation, so it
     /// is independent of the `JSString` cell.
@@ -1417,7 +1417,7 @@ impl JSValue {
         Ok(len.clamp(0.0, I52_MAX as f64) as u64)
     }
     /// Set a property. Key dispatch goes through the [`PutKey`] trait so
-    /// callers may pass `&[u8]`, `EncodedSlice`, `bun.String`, or `&bun.String`.
+    /// callers may pass `&[u8]`, `EncodedSlice`, `String`, or `&String`.
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
@@ -1573,7 +1573,7 @@ impl JSValue {
         global: &JSGlobalObject,
         indent: u32,
     ) -> JsResult<bun_core::String> {
-        let mut out = bun_core::String::empty();
+        let mut out = bun_core::String::EMPTY;
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jsonStringify(self, global, indent, &mut out)
         })?;
@@ -1583,7 +1583,7 @@ impl JSValue {
     /// `JSValue.jsonStringifyFast` — `JSON.stringify(this)`
     /// with no indent / no replacer (fast path used by SQL value binders).
     pub fn json_stringify_fast(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
-        let mut out = bun_core::String::empty();
+        let mut out = bun_core::String::EMPTY;
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jsonStringifyFast(self, global, &mut out)
         })?;
@@ -1835,7 +1835,7 @@ impl<T: FromAny> FromAny for Option<T> {
 }
 
 /// Dispatch trait for [`JSValue::put`]'s key parameter: routes
-/// `EncodedSlice`/`bun.String`/byte-slice keys to the matching FFI.
+/// `EncodedSlice`/`String`/byte-slice keys to the matching FFI.
 pub trait PutKey {
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
 }
@@ -2558,7 +2558,7 @@ impl JSValue {
     /// name). Empty for empty/`undefined`/`null`.
     pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         if self.is_empty_or_undefined_or_null() {
-            return Ok(bun_core::String::empty());
+            return Ok(bun_core::String::EMPTY);
         }
         unsafe extern "C" {
             safe fn JSC__JSValue__getNameProperty(

@@ -1122,7 +1122,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the 4-byte masking key lives at frame[2..6]
         frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
 
-        let mut reason = bun_core::String::empty();
+        let mut reason = bun_core::String::EMPTY;
         if body_len > 0 {
             let body = &body[..body_len];
             // close is always utf8

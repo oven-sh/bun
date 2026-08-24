@@ -132,7 +132,7 @@ impl JSS3Error {
             path: if let Some(p) = path {
                 BunString::from_bytes(p)
             } else {
-                BunString::empty()
+                BunString::EMPTY
             },
         }
     }

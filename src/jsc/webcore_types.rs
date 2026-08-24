@@ -165,7 +165,7 @@ impl Default for Blob {
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
-            name: bun_ptr::JsCell::new(bun_core::String::dead()),
+            name: bun_ptr::JsCell::new(bun_core::String::DEAD),
         }
     }
 }
@@ -450,7 +450,7 @@ impl Blob {
     /// heap-allocated, also frees the heap box.
     pub fn deinit(&mut self) {
         self.detach();
-        self.name.set(bun_core::String::dead());
+        self.name.set(bun_core::String::DEAD);
 
         self.content_type.set(BlobContentType::default());
 

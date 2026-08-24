@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
-use bun_core::{String as BunString, Utf8Bytes, Utf8WithString, ZStr};
+use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
@@ -587,9 +587,8 @@ mod _async_tasks {
                 let mut node_fs = NodeFS::default();
                 // SAFETY: the scheduling caller keeps `path` alive until `completion`
                 // runs (it points into caller-owned state, not this box).
-                let path = unsafe { &*self.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::Utf8(Utf8Bytes::Borrowed(path)),
+                    path: unsafe { PathLike::borrowed(&*self.path) },
                     recursive: true,
                     ..Default::default()
                 });
@@ -6775,7 +6774,7 @@ impl NodeFS {
         let root_path = if T::IS_DIRENT {
             BunString::clone_utf8(args.path.slice())
         } else {
-            BunString::empty()
+            BunString::EMPTY
         };
         let mut joined: Vec<u8> = Vec::new();
         #[allow(unused_mut)]
@@ -8992,9 +8991,7 @@ impl NodeFS {
                     }
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
                         // SAFETY: `mkdir_recursive` is synchronous; `bytes` outlives the call.
-                        path: PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
-                            bun_ptr::detach_lifetime(&bytes[..len])
-                        })),
+                        path: unsafe { PathLike::borrowed(&bytes[..len]) },
                         recursive: true,
                         ..Default::default()
                     });
@@ -9450,9 +9447,7 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
     node_fs
         .mkdir_recursive(&args::Mkdir {
             // SAFETY: `mkdir_recursive` is synchronous; `path_bytes` outlives the call.
-            path: PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
-                bun_ptr::detach_lifetime(path_bytes)
-            })),
+            path: unsafe { PathLike::borrowed(path_bytes) },
             recursive: true,
             ..Default::default()
         })

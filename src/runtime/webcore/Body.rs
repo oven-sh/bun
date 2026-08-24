@@ -18,7 +18,7 @@ use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
-use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
+use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
 use bun_jsc::StringJsc as _;
 use bun_jsc::bun_string_jsc;
@@ -692,7 +692,7 @@ impl Value {
 impl Value {
     pub(crate) fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
-            if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {
+            if let Utf8Bytes::Owned(bytes) = wtf_impl(&str).to_utf8() {
                 // The UTF-8 buffer is already heap-owned by the slice wrapper;
                 // transfer it (no copy). The deref is handled by `Value::drop` on the
                 // overwritten `WTFStringImpl` variant — do NOT deref explicitly here.
@@ -1184,18 +1184,13 @@ impl Value {
             Value::WTFStringImpl(wtf) => {
                 let wtf = *wtf;
                 // Transfer the body's +1 to local `wtf`; suppress `Value::drop` (which
-                // would deref) so the StringImpl stays alive across
-                // `to_utf8_if_needed`/`latin1_slice` and is released exactly once below.
+                // would deref) so the StringImpl stays alive across `to_utf8` and is
+                // released exactly once below.
                 let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
                 let wtf_ref = wtf_impl(&wtf);
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
-                let new_blob = if let Some(allocated_slice) = wtf_ref.to_utf8_if_needed() {
-                    // Transfer ownership of the heap-allocated UTF-8 buffer (no copy).
-                    Blob::init(allocated_slice, global)
-                } else {
-                    Blob::init(wtf_ref.latin1_slice().to_vec(), global)
-                };
+                let new_blob = Blob::init(wtf_ref.to_utf8().into_vec(), global);
                 // Release the +1 the body held.
                 wtf_ref.deref();
                 new_blob
@@ -1244,7 +1239,7 @@ impl Value {
             Value::WTFStringImpl(str) => 'brk: {
                 let str = *str;
                 let wtf_ref = wtf_impl(&str);
-                if let Some(utf8) = wtf_ref.to_utf8_if_needed() {
+                if let Utf8Bytes::Owned(utf8) = wtf_ref.to_utf8() {
                     // The deref is handled by `Value::drop` on the
                     // assignment below (the variant is still `WTFStringImpl(str)`).
                     break 'brk AnyBlob::InternalBlob(InternalBlob {

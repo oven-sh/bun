@@ -61,11 +61,11 @@ CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* e
 
 #pragma mark - WebCore::DOMFormData
 
-CPP_DECL void WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, EncodedSlice* arg1, EncodedSlice* arg2);
-CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, EncodedSlice* arg2, void* arg3, EncodedSlice* arg4);
+CPP_DECL void WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, const EncodedSlice* arg1, const EncodedSlice* arg2);
+CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, void* arg3, const EncodedSlice* arg4);
 CPP_DECL size_t WebCore__DOMFormData__count(WebCore::DOMFormData* arg0);
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__create(JSC::JSGlobalObject* arg0);
-CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, EncodedSlice* arg1);
+CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1);
 CPP_DECL WebCore::DOMFormData* _fromJS(JSC::EncodedJSValue JSValue0);
 
 #pragma mark - WebCore::FetchHeaders
@@ -168,7 +168,7 @@ CPP_DECL JSC::EncodedJSValue Bun__REPL__formatValue(JSC::JSGlobalObject* globalO
 
 CPP_DECL VirtualMachine* JSC__JSGlobalObject__bunVM(JSC::JSGlobalObject* arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObject* arg0, const JSC::JSValue* arg1, size_t arg2, const BunString* arg3);
-CPP_DECL void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* arg0, EncodedSlice* arg1);
+CPP_DECL void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObject* arg0);
 CPP_DECL void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0);
 CPP_DECL void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject);
@@ -652,7 +652,7 @@ ZIG_DECL JSC::EncodedJSValue Bun__Process__getExecPath(JSC::JSGlobalObject* arg0
 ZIG_DECL bool Bun__Process__hasTitle();
 ZIG_DECL BunString Bun__Process__getTitle(JSC::JSGlobalObject* arg0);
 ZIG_DECL void Bun__Process__setTitle(JSC::JSGlobalObject* arg0, const BunString* arg1);
-ZIG_DECL JSC::EncodedJSValue Bun__Process__setCwd(JSC::JSGlobalObject* arg0, EncodedSlice* arg1);
+ZIG_DECL JSC::EncodedJSValue Bun__Process__setCwd(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getEval(JSC::JSGlobalObject* arg0);
 
 #endif

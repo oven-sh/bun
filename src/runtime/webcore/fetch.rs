@@ -538,7 +538,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        break 'extract_url BunString::empty();
+        break 'extract_url BunString::EMPTY;
     };
 
     if url_str.is_empty() {

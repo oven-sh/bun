@@ -59,7 +59,7 @@ impl PluginResolver for PluginRunner {
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
             BunString::from_bytes(namespace_slice)
         } else {
-            BunString::empty()
+            BunString::EMPTY
         };
         let Some(on_resolve_plugin) = global
             .run_on_resolve_plugins(

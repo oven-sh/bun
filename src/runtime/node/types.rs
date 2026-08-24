@@ -285,6 +285,18 @@ impl Default for StringOrBuffer {
 impl StringOrBuffer {
     pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::Utf8(Utf8Bytes::EMPTY);
 
+    /// Lend `bytes` to a synchronous syscall without copying.
+    ///
+    /// # Safety
+    /// `bytes` must stay alive and unmoved until the returned value is dropped.
+    #[inline]
+    pub(crate) unsafe fn borrowed(bytes: &[u8]) -> StringOrBuffer {
+        // SAFETY: caller contract above.
+        StringOrBuffer::Utf8(Utf8Bytes::Borrowed(unsafe {
+            bun_ptr::detach_lifetime(bytes)
+        }))
+    }
+
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::String(str) => str.slice(),
@@ -332,8 +344,7 @@ impl StringOrBuffer {
                 let str = core::mem::take(s);
                 *self = Self::ThreadsafeString(str);
             }
-            Self::ThreadsafeString(_) => {}
-            Self::Utf8(_) => {}
+            Self::ThreadsafeString(_) | Self::Utf8(_) => {}
             Self::Buffer(buffer) => {
                 buffer.buffer.value.protect();
             }
@@ -406,20 +417,16 @@ impl StringOrBuffer {
                     return Ok(false);
                 }
                 let str = bun_core::String::from_js(value, global)?;
-                if flavor == Flavor::Async {
-                    let utf8 = str.into_utf8_with_string_thread_safe();
-                    if utf8.is_shared() {
-                        *out = Self::ThreadsafeString(utf8);
-                        return Ok(true);
-                    }
-                    let utf8 = utf8.into_utf8();
-                    if let Utf8Bytes::Owned(owned) = &utf8 {
-                        global.vm().report_extra_memory(owned.len());
-                    }
-                    *out = Self::Utf8(utf8);
+                *out = if flavor == Flavor::Async {
+                    shared_or_utf8(
+                        global,
+                        str.into_utf8_with_string_thread_safe(),
+                        Self::ThreadsafeString,
+                        Self::Utf8,
+                    )
                 } else {
-                    *out = Self::String(str.into_utf8_with_string());
-                }
+                    Self::String(str.into_utf8_with_string())
+                };
                 Ok(true)
             }
 
@@ -786,8 +793,14 @@ impl Encoding {
                 encoded.into_js(global_object)
             }
             Self::Base64url => {
-                let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                bun_string_jsc::create_utf8_for_js(global_object, &buf)
+                let encoded_len = bun_base64::url_safe_encode_len(input);
+                let (encoded, bytes) = bun_core::String::create_uninitialized_latin1(encoded_len);
+                if encoded.is_dead() {
+                    return encoded.into_js(global_object);
+                }
+                let n = bun_base64::encode_url_safe(bytes, input);
+                debug_assert_eq!(n, encoded_len);
+                encoded.into_js(global_object)
             }
             Self::Hex => {
                 // The byte-by-byte `write!` formatting machinery is pathologically
@@ -1257,22 +1270,31 @@ fn path_like_from_string(
 
     Valid::path_null_bytes(utf8.slice(), global)?;
 
-    // Costs nothing to keep both around.
-    if utf8.is_shared() {
-        return Ok(if will_be_async {
-            PathLike::ThreadsafeString(utf8)
-        } else {
-            PathLike::String(utf8)
-        });
-    }
+    let shared = if will_be_async {
+        PathLike::ThreadsafeString
+    } else {
+        PathLike::String
+    };
+    Ok(shared_or_utf8(global, utf8, shared, PathLike::Utf8))
+}
 
-    // It is expensive to keep both around: `utf8` here is a transcoded
-    // copy (UTF-16 or non-ASCII Latin-1 input) independent of `string`.
-    let utf8 = utf8.into_utf8();
-    if let Utf8Bytes::Owned(owned) = &utf8 {
-        global.vm().report_extra_memory(owned.len());
+/// `shared(utf8)` when the UTF-8 bytes are read out of `utf8`'s WTF string
+/// (costs nothing to keep both); otherwise only the transcoded copy, reported
+/// to the GC, as `owned(..)`.
+fn shared_or_utf8<T>(
+    global: &JSGlobalObject,
+    utf8: Utf8WithString,
+    shared: impl FnOnce(Utf8WithString) -> T,
+    owned: impl FnOnce(Utf8Bytes<'static>) -> T,
+) -> T {
+    if utf8.is_shared() {
+        return shared(utf8);
     }
-    Ok(PathLike::Utf8(utf8))
+    let utf8 = utf8.into_utf8();
+    if let Utf8Bytes::Owned(transcoded) = &utf8 {
+        global.vm().report_extra_memory(transcoded.len());
+    }
+    owned(utf8)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

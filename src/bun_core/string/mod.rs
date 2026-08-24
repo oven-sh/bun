@@ -143,14 +143,6 @@ impl String {
     };
 
     #[inline]
-    pub const fn empty() -> Self {
-        Self::EMPTY
-    }
-    #[inline]
-    pub const fn dead() -> Self {
-        Self::DEAD
-    }
-    #[inline]
     pub fn tag(&self) -> Tag {
         self.tag
     }
@@ -211,6 +203,7 @@ impl String {
     /// pass either `"lit"` or `b"lit"`.
     #[inline]
     pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
+        debug_assert!(s.as_ref().is_ascii());
         Self::wrap(Tag::StaticEncodedSlice, EncodedSlice::latin1(s.as_ref()))
     }
     /// `clone_utf8(other)`, unless `other` is byte-equal to `self`, in which
@@ -371,12 +364,16 @@ impl String {
         // ptr/len without copying or freeing.
         unsafe { BunString__createStaticExternal(units.as_ptr().cast::<u8>(), units.len(), false) }
     }
-    /// Formats `args` into a temporary buffer and copies the result into a
-    /// fresh WTF-backed string.
+    /// Formats `args` into a WTF-backed string; an argument-free ASCII
+    /// literal is returned as `static_` without copying.
     pub fn create_format(args: core::fmt::Arguments<'_>) -> Self {
         use core::fmt::Write;
         if let Some(s) = args.as_str() {
-            return Self::static_(s);
+            return if s.is_ascii() {
+                Self::static_(s)
+            } else {
+                Self::clone_utf8(s.as_bytes())
+            };
         }
         let mut buf = std::string::String::with_capacity(128);
         let _ = buf.write_fmt(args);
@@ -764,23 +761,16 @@ impl String {
     }
     /// Equality against ASCII bytes. Dispatches on encoding so only
     /// `ascii.len()` units are touched; never scans or transcodes `self`.
+    #[inline]
     pub fn eq_ascii(&self, ascii: &[u8]) -> bool {
-        debug_assert!(ascii.is_ascii(), "eq_ascii expects ASCII");
-        if self.is_utf16() {
-            return strings::eql_comptime_utf16(self.utf16(), ascii);
-        }
-        let bytes = self.latin1();
-        bytes.len() == ascii.len() && strings::eql_comptime_ignore_len(bytes, ascii)
+        self.to_encoded_slice().eq_ascii(ascii)
     }
 
     /// ASCII prefix check. Dispatches on encoding so only `ascii.len()`
     /// units are touched; never scans or transcodes `self`.
-    pub fn starts_with_ascii(&self, ascii: &'static [u8]) -> bool {
-        debug_assert!(ascii.is_ascii(), "starts_with_ascii expects ASCII");
-        if self.is_utf16() {
-            return strings::has_prefix_comptime_utf16(self.utf16(), ascii);
-        }
-        strings::has_prefix_comptime(self.latin1(), ascii)
+    #[inline]
+    pub fn starts_with_ascii(&self, ascii: &[u8]) -> bool {
+        self.to_encoded_slice().starts_with_ascii(ascii)
     }
 
     #[inline]
@@ -895,26 +885,6 @@ impl String {
         Some(len)
     }
 
-    /// True iff `self`'s 8-bit bytes are valid UTF-8 (UTF-8-tagged or
-    /// all-ASCII).
-    pub(crate) fn can_be_utf8(&self) -> bool {
-        match self.tag {
-            Tag::WTFStringImpl => {
-                let w = self.as_wtf();
-                w.is_8bit() && strings::is_all_ascii(w.latin1_slice())
-            }
-            Tag::EncodedSlice | Tag::StaticEncodedSlice => {
-                let encoded = self.encoded();
-                if encoded.is_utf8() {
-                    return true;
-                }
-                !encoded.is_16bit() && strings::is_all_ascii(encoded.slice())
-            }
-            Tag::Empty => true,
-            Tag::Dead => false,
-        }
-    }
-
     /// Raw UTF-8 byte slice. Debug-asserts `self` is a UTF-8-safe
     /// `EncodedSlice`/`StaticEncodedSlice` (use [`as_utf8`] for the checked
     /// variant).
@@ -924,7 +894,7 @@ impl String {
             self.tag,
             Tag::EncodedSlice | Tag::StaticEncodedSlice
         ));
-        debug_assert!(self.can_be_utf8());
+        debug_assert!(self.as_utf8().is_some());
         self.encoded().slice()
     }
 
@@ -962,19 +932,7 @@ impl String {
     /// must ensure `index < self.length()`.
     #[inline]
     pub fn char_at(&self, index: usize) -> u16 {
-        debug_assert!(index < self.length());
-        match self.tag {
-            Tag::WTFStringImpl => {
-                let w = self.as_wtf();
-                if w.is_8bit() {
-                    w.latin1_slice()[index] as u16
-                } else {
-                    w.utf16_slice()[index]
-                }
-            }
-            Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().char_at(index),
-            _ => 0,
-        }
+        self.to_encoded_slice().char_at(index)
     }
 
     pub fn index_of_ascii_char(&self, chr: u8) -> Option<usize> {
@@ -995,9 +953,6 @@ impl String {
             Tag::WTFStringImpl => self.as_wtf().byte_length(),
         }
     }
-
-    // `to_js` / `into_js` live on the `bun_jsc::StringJsc` extension trait;
-    // bytes → JS string is `bun_jsc::bun_string_jsc::create_utf8_for_js`.
 }
 impl crate::OptionsEnvArg for String {
     #[inline]
@@ -1145,7 +1100,6 @@ impl core::fmt::Display for String {
 }
 
 impl core::fmt::Display for EncodedSlice<'_> {
-    // Encoding-aware `Display` formatter.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.is_utf8() {
             return write!(f, "{}", crate::fmt::s(self.slice()));
@@ -1196,7 +1150,7 @@ impl<'a> EncodedSlice<'a> {
 
     /// Raw tagged pointer (top-bit flags intact). Do **not** dereference.
     #[inline]
-    pub const fn tagged_ptr(self) -> *const u8 {
+    const fn tagged_ptr(self) -> *const u8 {
         self._unsafe_ptr_do_not_use
     }
     #[inline]
@@ -1280,8 +1234,8 @@ impl<'a> EncodedSlice<'a> {
             "EncodedSlice::slice() on UTF-16; use to_utf8()"
         );
         // SAFETY: the constructor stored a valid ptr/len for `'a`; flag bits
-        // stripped. Length is capped at `u32::MAX`.
-        unsafe { core::slice::from_raw_parts(self.untagged_ptr(), self.len.min(u32::MAX as usize)) }
+        // stripped.
+        unsafe { core::slice::from_raw_parts(self.untagged_ptr(), self.len) }
     }
     /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
     #[inline]
@@ -1392,6 +1346,15 @@ impl<'a> EncodedSlice<'a> {
         strings::eql_comptime_ignore_len(self.slice(), ascii)
     }
 
+    /// Encoding-aware ASCII prefix check.
+    pub fn starts_with_ascii(self, ascii: &[u8]) -> bool {
+        debug_assert!(ascii.is_ascii(), "starts_with_ascii expects ASCII");
+        if self.is_16bit() {
+            return strings::has_prefix_comptime_utf16(self.utf16_slice(), ascii);
+        }
+        strings::has_prefix_comptime(self.slice(), ascii)
+    }
+
     /// Encoding-aware equality.
     pub(crate) fn eql(self, other: EncodedSlice<'_>) -> bool {
         if self.len == 0 || other.len == 0 {
@@ -1410,7 +1373,7 @@ impl<'a> EncodedSlice<'a> {
     }
 
     /// `Display`-format into `buf`, NUL-terminate, and return the borrowed
-    /// `[:0]u8`. Errors if the formatted output (plus NUL) would not fit.
+    /// `&ZStr`. Errors if the formatted output (plus NUL) would not fit.
     pub fn slice_z_buf(self, buf: &mut crate::PathBuffer) -> crate::CrateResult<&ZStr> {
         use std::io::Write as _;
         let buf_slice: &mut [u8] = &mut buf[..];
@@ -1574,7 +1537,7 @@ impl Utf8WithString {
         if let Some(utf8) = &self.utf8 {
             return utf8;
         }
-        debug_assert!(self.string.can_be_utf8());
+        debug_assert!(self.string.as_utf8().is_some());
         match self.string.tag {
             Tag::WTFStringImpl => self.string.as_wtf().latin1_slice(),
             Tag::EncodedSlice | Tag::StaticEncodedSlice => self.string.encoded().slice(),

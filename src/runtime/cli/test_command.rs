@@ -1811,9 +1811,7 @@ impl CommandLineReporter {
                     let mut fs = crate::node::fs::NodeFS::default();
                     let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
                         // SAFETY: `mkdir_recursive` is synchronous; `opts` outlives the call.
-                        path: crate::node::PathLike::Utf8(bun_core::Utf8Bytes::Borrowed(unsafe {
-                            bun_ptr::detach_lifetime(&opts.reports_directory)
-                        })),
+                        path: unsafe { crate::node::PathLike::borrowed(&opts.reports_directory) },
                         always_return_none: true,
                         recursive: true,
                         ..Default::default()

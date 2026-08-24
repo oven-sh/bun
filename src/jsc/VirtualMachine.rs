@@ -2544,7 +2544,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).log).write(NonNull::new(log));
             addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
             addr_of_mut!((*vm).main_hash).write(0);
-            addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::empty());
+            addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
             // Left at the
@@ -2764,7 +2764,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
-        self.main_resolved_path = bun_core::String::empty();
+        self.main_resolved_path = bun_core::String::EMPTY;
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
@@ -4840,7 +4840,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
-        self.main_resolved_path = bun_core::String::empty();
+        self.main_resolved_path = bun_core::String::EMPTY;
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
@@ -5099,7 +5099,7 @@ impl VirtualMachine {
         self.has_patched_run_main = false;
         self.set_main(b"");
         self.main_hash = 0;
-        self.main_resolved_path = bun_core::String::empty();
+        self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
         // The finished file's plugins are dropped with its global; the next
         // `Bun.plugin()` call reinstalls the runner against the new global.
@@ -5750,7 +5750,7 @@ impl VirtualMachine {
                     self,
                     global,
                     &frames[top].source_url,
-                    &bun_core::String::empty(),
+                    &bun_core::String::EMPTY,
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {
@@ -5785,7 +5785,7 @@ impl VirtualMachine {
                 let source_line_numbers =
                     unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N) };
                 for s in source_lines.iter_mut() {
-                    *s = bun_core::String::empty();
+                    *s = bun_core::String::EMPTY;
                 }
                 source_line_numbers.fill(0);
 
@@ -6545,7 +6545,7 @@ impl VirtualMachine {
             pretty_write!(
                 "{}<b>{}<r>\n",
                 error_display_level.formatter(
-                    &bun_core::String::empty(),
+                    &bun_core::String::EMPTY,
                     allow_ansi_color,
                     Colon::IncludeColon
                 ),
@@ -6555,7 +6555,7 @@ impl VirtualMachine {
             pretty_write!(
                 "{}\n",
                 error_display_level.formatter(
-                    &bun_core::String::empty(),
+                    &bun_core::String::EMPTY,
                     allow_ansi_color,
                     Colon::ExcludeColon
                 ),

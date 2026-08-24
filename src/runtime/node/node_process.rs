@@ -23,7 +23,7 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
         .get(0)
         .map(|z| z.as_bytes())
         .unwrap_or(b"bun");
-    EncodedSlice::utf8(argv0).to_js(global_object)
+    EncodedSlice::from_bytes(argv0).to_js(global_object)
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
@@ -32,17 +32,17 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
     };
-    EncodedSlice::utf8(out.as_bytes()).to_js(global_object)
+    EncodedSlice::from_bytes(out.as_bytes()).to_js(global_object)
 }
 
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
 /// `WorkerOptions`; the worker thread gets its own copy (thread-affine
-/// refcounts), and an empty one is spelled as `BunString::empty()`.
+/// refcounts), and an empty one is spelled as `BunString::EMPTY`.
 pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
     // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
     let imp = unsafe { &*wtf };
     if imp.length() == 0 {
-        bun_core::String::empty()
+        bun_core::String::EMPTY
     } else if imp.is_8bit() {
         bun_core::String::clone_latin1(imp.latin1_slice())
     } else {
@@ -102,7 +102,7 @@ extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
 pub(crate) extern "C" fn Bun__Node__getRedirectWarnings() -> bun_core::String {
     match crate::cli::Bun__Node__RedirectWarnings.get() {
         Some(path) => bun_core::String::clone_utf8(path),
-        None => bun_core::String::dead(),
+        None => bun_core::String::DEAD,
     }
 }
 
@@ -248,7 +248,7 @@ mod _impl {
                 // append_options_env inserts starting at index 1, so we need a placeholder.
                 if bun_options_argc > 0 {
                     if let Some(opts) = env_var::BUN_OPTIONS.get() {
-                        args.push(BunString::empty()); // placeholder for insert-at-1
+                        args.push(BunString::EMPTY); // placeholder for insert-at-1
                         bun_core::append_options_env::<BunString>(opts, &mut args);
                         let _ = args.remove(0); // remove placeholder
                     }
@@ -471,8 +471,8 @@ mod _impl {
     }
 
     // C++ (headers.h) declares
-    // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, EncodedSlice*)`. Hand-roll
-    // the shim; the second arg is the raw `*mut EncodedSlice`, not a CallFrame.
+    // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, const EncodedSlice*)`. Hand-roll
+    // the shim; the second arg is a `const EncodedSlice*`, not a CallFrame.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__Process__setCwd(
         global_object: &JSGlobalObject,

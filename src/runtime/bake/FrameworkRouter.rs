@@ -1857,8 +1857,8 @@ impl JSFrameworkRouter {
                     )))
                 })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
-                format_args!("Errors scanning routes"),
                 arr,
+                format_args!("Errors scanning routes"),
             )?));
         }
 

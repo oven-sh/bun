@@ -81,24 +81,28 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     // A plain Error carrying Node's library/function/reason/code decomposition
     // of the OpenSSL error, the way ThrowCryptoError builds it: the code is
     // ERR_OSSL_<LIB>_<REASON> (or ERR_SSL_<REASON> for the SSL library).
-    let err = global.create_error_instance(format_args!("{}", bstr::BStr::new(error_message)));
+    let err = EncodedSlice::utf8(error_message).to_error_instance(global);
 
     if let Some(library) = static_cstr(boring::ERR_lib_error_string(err_code)) {
         err.put(
             global,
             b"library",
-            EncodedSlice::utf8(library).to_js(global),
+            EncodedSlice::latin1(library).to_js(global),
         );
     }
     if let Some(function) = static_cstr(boring::ERR_func_error_string(err_code)) {
         err.put(
             global,
             b"function",
-            EncodedSlice::utf8(function).to_js(global),
+            EncodedSlice::latin1(function).to_js(global),
         );
     }
     if let Some(reason) = static_cstr(boring::ERR_reason_error_string(err_code)) {
-        err.put(global, b"reason", EncodedSlice::utf8(reason).to_js(global));
+        err.put(
+            global,
+            b"reason",
+            EncodedSlice::latin1(reason).to_js(global),
+        );
 
         let lib = lib_short_name((err_code >> 24) & 0xff);
         // Don't generate codes like "ERR_OSSL_SSL_".

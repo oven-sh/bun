@@ -819,7 +819,7 @@ pub mod bv2_impl {
                     is_on_load: bool,
                 ) -> bool {
                     let mut namespace_string = if path.is_file() {
-                        BunString::empty()
+                        BunString::EMPTY
                     } else {
                         BunString::clone_utf8(path.namespace)
                     };

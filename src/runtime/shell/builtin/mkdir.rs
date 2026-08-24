@@ -324,10 +324,9 @@ impl ShellMkdirTask {
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            // SAFETY: `mkdir_recursive` is synchronous; `filepath` outlives the call.
-            path: PathLike::Utf8(bun_core::Utf8Bytes::Borrowed(unsafe {
-                bun_ptr::detach_lifetime(filepath.as_bytes())
-            })),
+            // SAFETY: `mkdir_recursive_impl`/`mkdir_non_recursive` below are
+            // synchronous; `filepath` outlives both.
+            path: unsafe { PathLike::borrowed(filepath.as_bytes()) },
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,

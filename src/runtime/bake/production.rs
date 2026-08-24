@@ -657,7 +657,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // Client files go to disk.
     // Server files get loaded in memory.
     // Populate indexes in `entry_points` to be looked up during prerendering
-    let mut module_keys: Vec<BunString> = vec![BunString::dead(); entry_points.files.count()];
+    let mut module_keys: Vec<BunString> = vec![BunString::DEAD; entry_points.files.count()];
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
@@ -1339,7 +1339,7 @@ extern "C" fn BakeProdResolve(
             bun_core::fmt::quote(specifier.slice()),
             bun_core::fmt::quote(referrer.slice()),
         ));
-        return BunString::dead();
+        return BunString::DEAD;
     }
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
@@ -1604,7 +1604,7 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
             .value
             .to_bun_string_ref();
     }
-    BunString::dead()
+    BunString::DEAD
 }
 
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)

@@ -181,9 +181,8 @@ fn testing_impl(
             match stylesheet.minify(alloc, &minify_options, &extra) {
                 Ok(_) => {}
                 Err(err) => {
-                    return Err(
-                        global.throw_value(crate::error_jsc::to_error_instance(&err, global))
-                    );
+                    return Err(global
+                        .throw_value(global.create_error_instance(format_args!("{}", err.kind))));
                 }
             }
 
@@ -211,9 +210,8 @@ fn testing_impl(
             ) {
                 Ok(result) => result,
                 Err(err) => {
-                    return Err(
-                        global.throw_value(crate::error_jsc::to_error_instance(&err, global))
-                    );
+                    return Err(global
+                        .throw_value(global.create_error_instance(format_args!("{}", err.kind))));
                 }
             };
 

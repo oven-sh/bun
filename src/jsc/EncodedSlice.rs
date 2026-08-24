@@ -1,46 +1,16 @@
 //! JSC bridges for `bun_core::EncodedSlice`: the `EncodedSliceJsc` extension
-//! trait, `to_external_u16`, and the `EncodedSlice__freeGlobal` callback.
+//! trait and the `EncodedSlice__freeGlobal` callback.
 
 use core::ffi::c_void;
 
 use crate::{DOMExceptionCode, JSGlobalObject, JSValue, JsResult, cpp};
-use bun_core::{EncodedSlice, String as BunString};
-
-unsafe extern "C" {
-    fn EncodedSlice__toExternalU16(
-        ptr: *const u16,
-        len: usize,
-        global: *const JSGlobalObject,
-    ) -> JSValue;
-}
-
-/// Hand `utf16`'s allocation to JSC as an external string (freed by the
-/// external-string finalizer). Throws `STRING_TOO_LONG` when over the limit.
-pub fn to_external_u16(utf16: Vec<u16>, global: &JSGlobalObject) -> JsResult<JSValue> {
-    if utf16.is_empty() {
-        return Ok(JSValue::js_empty_string(global));
-    }
-    if utf16.len() > BunString::max_length() {
-        return Err(global
-            .err(
-                crate::ErrorCode::STRING_TOO_LONG,
-                format_args!("Cannot create a string longer than 2147483647 characters"),
-            )
-            .throw());
-    }
-    // mimalloc frees by base pointer, so spare capacity needs no shrink.
-    let mut utf16 = core::mem::ManuallyDrop::new(utf16);
-    // SAFETY: ptr/len describe a live global-allocator buffer; ownership
-    // transfers to JSC here.
-    Ok(unsafe { EncodedSlice__toExternalU16(utf16.as_mut_ptr(), utf16.len(), global) })
-}
+use bun_core::EncodedSlice;
 
 /// # Safety
 /// `ptr` must be a (possibly tagged) pointer to `len` bytes allocated by the
 /// default allocator.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn EncodedSlice__freeGlobal(ptr: *const u8, len: usize) {
-    let _ = len;
+unsafe extern "C" fn EncodedSlice__freeGlobal(ptr: *const u8, _len: usize) {
     let untagged = bun_core::EncodedSlice::untagged(ptr)
         .cast_mut()
         .cast::<c_void>();
@@ -125,15 +95,12 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         EncodedSlice__toTypeErrorInstance(self, global)
     }
-    #[inline]
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         EncodedSlice__toSyntaxErrorInstance(self, global)
     }
-    #[inline]
     fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         EncodedSlice__toRangeErrorInstance(self, global)
     }
-    #[inline]
     fn to_dom_exception_instance(
         &self,
         global: &JSGlobalObject,
@@ -141,14 +108,12 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     ) -> JSValue {
         EncodedSlice__toDOMExceptionInstance(self, global, code as u8)
     }
-    #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         if self.is_globally_allocated() {
             return self.to_external_value(global);
         }
         EncodedSlice__toValueGC(self, global)
     }
-    #[inline]
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
         if self.len > bun_core::String::max_length() {
             // SAFETY: contract — bytes were allocated by the default (global)
@@ -162,24 +127,17 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
                         .cast::<core::ffi::c_void>(),
                 )
             };
-            let _ = global
-                .err(
-                    crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2147483647 characters"),
-                )
-                .throw();
+            let _ = global.throw_string_too_long();
             return JSValue::ZERO;
         }
         // SAFETY: `self` is a valid `&EncodedSlice`; `JSGlobalObject` is an opaque
         // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
         unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) }
     }
-    #[inline]
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
         unsafe { cpp::EncodedSlice__toJSONObject(self, global) }
     }
-    #[inline]
     unsafe fn external(
         &self,
         global: &JSGlobalObject,
@@ -198,12 +156,7 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
                     self.len,
                 )
             };
-            let _ = global
-                .err(
-                    crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2147483647 characters"),
-                )
-                .throw();
+            let _ = global.throw_string_too_long();
             return JSValue::ZERO;
         }
         // Ownership of the buffer + `ctx` transfers to JSC's finalizer.

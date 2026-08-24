@@ -576,7 +576,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let mut args_buf = callframe.arguments_undef::<5>();
     let all_arguments = args_buf.mut_();
     if all_arguments[0].is_undefined_or_null() || !all_arguments[0].is_object() {
-        return BunString::empty().to_js(global_this);
+        return Ok(JSValue::js_empty_string(global_this));
     }
 
     // NOTE: protect/unprotect over a copied [JSValue; 5]; the borrow of
@@ -644,7 +644,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
     if arguments.is_empty() {
-        return BunString::empty().to_js(global_this);
+        return Ok(JSValue::js_empty_string(global_this));
     }
 
     for arg in arguments {
@@ -697,12 +697,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     }
     // writer.flush(): Vec<u8> is unbuffered.
 
-    // we are going to always clone to keep things simple for now
-    // the common case here will be stack-allocated, so it should be fine
-    let out = EncodedSlice::from_bytes(&array);
-    let ret = out.to_js(global_this);
-
-    Ok(ret)
+    bun_string_jsc::create_utf8_for_js(global_this, &array)
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
@@ -726,10 +721,10 @@ pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> B
     )
     .is_err()
     {
-        return BunString::empty();
+        return BunString::EMPTY;
     }
     if global_this.has_exception() {
-        return BunString::empty();
+        return BunString::EMPTY;
     }
     BunString::clone_utf8(&array)
 }
@@ -1141,7 +1136,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     from: &BunString,
     mode: ResolveMode,
 ) -> JsResult<Resolved> {
-    let mut query_string = BunString::empty();
+    let mut query_string = BunString::EMPTY;
 
     let decoded_specifier;
     let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
@@ -2140,7 +2135,7 @@ pub(crate) mod environment_variables {
         let vm = global_object.bun_vm();
         let utf8 = name.to_utf8();
         let value = vm.env_loader().get(utf8.slice())?;
-        Some(EncodedSlice::utf8(value))
+        Some(EncodedSlice::from_bytes(value))
     }
 }
 

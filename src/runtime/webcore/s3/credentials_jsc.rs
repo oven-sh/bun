@@ -16,10 +16,10 @@ use bun_url::URL;
 /// JS string, and non-empty. Shared ladder for the S3 option parsers
 /// (`get_credentials_with_options`, `get_list_objects_options_from_js`):
 ///
-///   get_truthy → is_string → BunString::from_js → tag ∉ {Empty,Dead} → to_utf8
+///   get_truthy → is_string → BunString::from_js → tag ∉ {Empty,Dead} → into_utf8
 ///
-/// The intermediate `BunString` is dropped before return; the returned
-/// `Utf8Bytes` owns (or independently refs) its bytes.
+/// `into_utf8()` moves the string's ref into the returned `Utf8Bytes` (or
+/// transcodes into an owned buffer).
 ///
 /// * `strict = true`  — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
 /// * `strict = false` — non-string is silently ignored.

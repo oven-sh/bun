@@ -5420,7 +5420,7 @@ impl DevServer {
                     crate::webcore::Body::new(crate::webcore::body::Value::Blob(
                         any_blob.to_blob(global),
                     )),
-                    BunString::empty(),
+                    BunString::EMPTY,
                     false,
                 );
                 let vm = self.vm();

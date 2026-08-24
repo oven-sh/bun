@@ -20,11 +20,11 @@ use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
-use bun_core::{ZStr, strings};
+use bun_core::{EncodedSlice, ZStr, strings};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
-    JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    self as jsc, ArrayBuffer, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue,
+    JsCell, JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
 };
 use bun_sys as sys;
 
@@ -669,10 +669,11 @@ fn reject_error(global: &JSGlobalObject, e: codecs::Error) -> JSValue {
     error_with_code(global, error_code(e), error_message(e))
 }
 
-fn error_with_code(global: &JSGlobalObject, code: &ZStr, msg: &ZStr) -> JSValue {
-    let err = global.create_error_instance(format_args!("{}", bstr::BStr::new(msg.as_bytes())));
-    let code_js =
-        bun_string_jsc::create_utf8_for_js(global, code.as_bytes()).unwrap_or(JSValue::UNDEFINED);
+fn error_with_code(global: &JSGlobalObject, code: &'static ZStr, msg: &'static ZStr) -> JSValue {
+    let err = EncodedSlice::utf8(msg.as_bytes()).to_error_instance(global);
+    let code_js = bun_core::String::static_(code.as_bytes())
+        .to_js(global)
+        .unwrap_or(JSValue::UNDEFINED);
     err.put(global, b"code", code_js);
     err
 }
@@ -956,10 +957,7 @@ impl Image {
                     obj.put(
                         global,
                         b"format",
-                        bun_string_jsc::create_utf8_for_js(
-                            global,
-                            format_name(p.format).as_bytes(),
-                        )?,
+                        bun_core::String::static_(format_name(p.format)).to_js(global)?,
                     );
                     return Ok(JSPromise::resolved_promise_value(global, obj));
                 }
@@ -1922,9 +1920,9 @@ impl PipelineTask {
                 let obj = JSValue::create_empty_object(global, 3);
                 obj.put(global, b"width", JSValue::js_number(f64::from(w)));
                 obj.put(global, b"height", JSValue::js_number(f64::from(h)));
-                let fmt_js =
-                    bun_string_jsc::create_utf8_for_js(global, format_name(format).as_bytes())
-                        .unwrap_or(JSValue::UNDEFINED);
+                let fmt_js = bun_core::String::static_(format_name(format))
+                    .to_js(global)
+                    .unwrap_or(JSValue::UNDEFINED);
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }

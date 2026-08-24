@@ -14,7 +14,7 @@ use bun_core::Output;
 use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -1966,10 +1966,7 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(
-            global_this,
-            <&'static str>::from(this.loader).as_bytes(),
-        )
+        BunString::static_(<&'static str>::from(this.loader)).to_js(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1999,10 +1996,7 @@ impl BuildArtifact {
         this: &Self,
         global_object: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(
-            global_object,
-            <&'static str>::from(this.output_kind).as_bytes(),
-        )
+        BunString::static_(<&'static str>::from(this.output_kind)).to_js(global_object)
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -710,14 +710,16 @@ impl ShellCpTask {
         self.tgt_absolute = Some(tgt.as_bytes().to_vec());
 
         let args = crate::node::fs::args::Cp {
-            // SAFETY: `self` owns `src_absolute`/`tgt_absolute` and outlives `args`.
-            src: bun_jsc::node::PathLike::Utf8(bun_core::Utf8Bytes::Borrowed(unsafe {
-                bun_ptr::detach_lifetime(self.src_absolute.as_deref().unwrap())
-            })),
+            // SAFETY: this `ShellCpTask` owns `src_absolute`/`tgt_absolute` and is
+            // freed only in `on_shell_cp_task_done`, after the `ShellAsyncCpTask`
+            // that reads `args` has completed.
+            src: unsafe {
+                bun_jsc::node::PathLike::borrowed(self.src_absolute.as_deref().unwrap())
+            },
             // SAFETY: as above.
-            dest: bun_jsc::node::PathLike::Utf8(bun_core::Utf8Bytes::Borrowed(unsafe {
-                bun_ptr::detach_lifetime(self.tgt_absolute.as_deref().unwrap())
-            })),
+            dest: unsafe {
+                bun_jsc::node::PathLike::borrowed(self.tgt_absolute.as_deref().unwrap())
+            },
             flags: crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
                 force: true,

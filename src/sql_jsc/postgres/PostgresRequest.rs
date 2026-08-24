@@ -296,7 +296,7 @@ pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     )?;
     write_bind(
         &signature.prepared_statement_name,
-        &BunString::empty(),
+        &BunString::EMPTY,
         global,
         array_value,
         JSValue::ZERO,
@@ -326,7 +326,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
 ) -> Result<(), AnyPostgresError> {
     write_bind(
         &statement.signature.prepared_statement_name,
-        &BunString::empty(),
+        &BunString::EMPTY,
         global,
         array_value,
         columns_value,
@@ -395,7 +395,7 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
 
     write_bind(
         name,
-        &BunString::empty(),
+        &BunString::EMPTY,
         global,
         array_value,
         columns_value,

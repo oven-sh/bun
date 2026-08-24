@@ -4725,13 +4725,13 @@ fn extract_owner_uid() -> u32 {
 pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
     bun_jsc::mark_binding();
     if VirtualMachine::get().standalone_module_graph.is_none() {
-        return bun_core::String::dead();
+        return bun_core::String::DEAD;
     }
     let input_path = path.to_utf8();
     let mut path_buf = bun_paths::path_buffer_pool::get();
     match resolve_embedded_file_to_buf(input_path.slice(), b"node", &mut path_buf[..]) {
         Some(len) => bun_core::String::clone_utf8(&path_buf[..len]),
-        None => bun_core::String::dead(),
+        None => bun_core::String::DEAD,
     }
 }
 
@@ -4814,7 +4814,7 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
     // The only callers — FileRoute / static
     // routes — treat a throw the same as "header absent / unparsable", so
     // swallow `JsError` here and surface `None`.
-    let Ok(date_f64) = bun_jsc::bun_string_jsc::parse_date(&string, global) else {
+    let Ok(date_f64) = bun_string_jsc::parse_date(&string, global) else {
         return None;
     };
     if !date_f64.is_nan() && date_f64.is_finite() && date_f64 >= 0.0 {

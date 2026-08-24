@@ -52,7 +52,7 @@ impl Default for OptionDefinition<'_> {
     fn default() -> Self {
         Self {
             long_name: StringView::EMPTY,
-            short_name: String::empty(),
+            short_name: String::EMPTY,
             r#type: OptionValueType::Boolean,
             multiple: false,
             default_value: None,

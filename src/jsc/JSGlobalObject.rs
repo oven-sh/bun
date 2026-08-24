@@ -121,6 +121,18 @@ impl JSGlobalObject {
     }
 
     #[cold]
+    pub fn throw_string_too_long(&self) -> JsError {
+        self.err(
+            crate::ErrorCode::STRING_TOO_LONG,
+            format_args!(
+                "Cannot create a string longer than {} characters",
+                BunString::max_length()
+            ),
+        )
+        .throw()
+    }
+
+    #[cold]
     #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
         JSGlobalObject__throwOutOfMemoryError(self);
@@ -289,7 +301,7 @@ impl JSGlobalObject {
     }
 
     pub fn throw_todo(&self, msg: &[u8]) -> JsError {
-        let err = self.create_error_instance(format_args!("{}", bstr::BStr::new(msg)));
+        let err = EncodedSlice::utf8(msg).to_error_instance(self);
         if err.is_empty() {
             debug_assert!(self.has_exception());
             return JsError::Thrown;
@@ -752,14 +764,8 @@ impl JSGlobalObject {
         &self,
         code: DOMExceptionCode,
         args: Arguments<'_>,
-    ) -> JsResult<JSValue> {
-        if let Some(fmt) = args.as_str() {
-            return Ok(EncodedSlice::utf8(fmt.as_bytes()).to_dom_exception_instance(self, code));
-        }
-        let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use core::fmt::Write;
-        write!(WriteVec(&mut buf), "{}", args).map_err(|_| JsError::Thrown)?;
-        Ok(EncodedSlice::utf8(&buf).to_dom_exception_instance(self, code))
+    ) -> JSValue {
+        EncodedSlice::utf8(&self.error_message(args)).to_dom_exception_instance(self, code)
     }
 
     pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {
@@ -866,10 +872,7 @@ impl JSGlobalObject {
     }
 
     pub fn throw_dom_exception(&self, code: DOMExceptionCode, args: Arguments<'_>) -> JsError {
-        let instance = match self.create_dom_exception_instance(code, args) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
+        let instance = self.create_dom_exception_instance(code, args);
         self.throw_value(instance)
     }
 
@@ -902,8 +905,8 @@ impl JSGlobalObject {
 
     pub fn create_aggregate_error_with_array(
         &self,
-        message: Arguments<'_>,
         error_array: JSValue,
+        message: Arguments<'_>,
     ) -> JsResult<JSValue> {
         debug_assert!(error_array.is_array());
         let message = BunString::create_format(message);

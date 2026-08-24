@@ -3904,7 +3904,7 @@ pub mod formatter {
             let printable_proto = if proto_is_class {
                 proto.get_name(self.global_this)?
             } else {
-                BunString::empty()
+                BunString::EMPTY
             };
             writer.add_for_new_line(printable_proto.length());
 

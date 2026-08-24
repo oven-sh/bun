@@ -3836,7 +3836,8 @@ trait OrderJscExt {
 
 impl OrderJscExt for Order {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global_this, <&'static str>::from(self).as_bytes())
+        use jsc::StringJsc as _;
+        bun::String::static_(<&'static str>::from(self)).to_js(global_this)
     }
 }
 

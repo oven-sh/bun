@@ -247,7 +247,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin6 },
-                _presentation: JsCell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::DEAD),
             }
         } else {
             let mut sin = inet::sockaddr_in {
@@ -261,7 +261,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin },
-                _presentation: JsCell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::DEAD),
             }
         };
 
@@ -305,7 +305,7 @@ impl SocketAddress {
         if options_obj.is_undefined() {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::LOOPBACK_V4,
-                _presentation: JsCell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::loopback_v4(),
             }));
         }
@@ -321,7 +321,7 @@ impl SocketAddress {
         {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::ANY_V6,
-                _presentation: JsCell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::any_v6(),
             }));
         }
@@ -367,7 +367,7 @@ impl SocketAddress {
     }
 
     pub(crate) fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        let mut presentation: BunString = BunString::empty();
+        let mut presentation: BunString = BunString::EMPTY;
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
@@ -462,7 +462,7 @@ impl SocketAddress {
         // TODO: make sure casting doesn't swap byte order on us.
         SocketAddress {
             _addr: sockaddr::v4(port_.to_be(), u32::from_ne_bytes(addr)),
-            _presentation: JsCell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::DEAD),
         }
     }
 
@@ -479,7 +479,7 @@ impl SocketAddress {
     ) -> SocketAddress {
         SocketAddress {
             _addr: sockaddr::v6(port_.to_be(), addr, flowinfo, scope_id),
-            _presentation: JsCell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::DEAD),
         }
     }
 }

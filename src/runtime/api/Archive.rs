@@ -5,13 +5,12 @@ use std::ffi::CString;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
-use bun_core::Utf8Bytes;
-use bun_core::{self, Output, ZBox, strings};
+use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
 };
-use bun_jsc::{StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
@@ -1153,8 +1152,7 @@ impl TaskContext for FilesContext {
                 Ok(PromiseResult::Resolve(map))
             }
             FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                global
-                    .create_error_instance(format_args!("{}", bstr::BStr::new(err_msg.to_bytes()))),
+                EncodedSlice::utf8(err_msg.to_bytes()).to_error_instance(global),
             )),
             FilesResult::Err(e) => Ok(PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(&*e))),

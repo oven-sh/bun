@@ -470,7 +470,7 @@ impl HTMLRewriter {
                         ..Default::default()
                     },
                     body_value,
-                    BunString::empty(),
+                    BunString::EMPTY,
                     false,
                 )),
                 Response::finalize,
@@ -1084,7 +1084,7 @@ impl RewriterPipe {
                 pv.producer = SourceHandle::HTMLRewriter(this);
                 webcore::body::Value::Locked(pv)
             }),
-            BunString::empty(),
+            BunString::EMPTY,
             false,
         ));
         let result_ref = BackRef::from(result);

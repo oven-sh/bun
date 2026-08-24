@@ -1433,7 +1433,7 @@ where
     //
     // NOTE: the `#[bun_jsc::host_fn(method)]` proc-macro that will eventually
     // replace these hand-expansions hasn't landed, so the per-type decode arms
-    // used by the server (`EncodedSlice`, `JSValue`, `?JSValue`, `*WebCore.Request`)
+    // used by the server (`EncodedSlice`, `JSValue`, `Option<JSValue>`, `&Request`)
     // are open-coded here.
 
     /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
@@ -1511,7 +1511,6 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
-        // *jsc.WebCore.Request
         let arg = iter.next_eat().ok_or_else(|| {
             global.throw_invalid_arguments(format_args!("Missing Request object"))
         })?;
@@ -2029,7 +2028,7 @@ where
         // the live JsClass payload for `object`.
         let request = unsafe { &*request_ptr };
         if request.ensure_url().is_err() {
-            request.url.set(BunString::empty());
+            request.url.set(BunString::EMPTY);
         }
         if !request.has_fetch_headers() {
             if let Some(req_ptr) = upgrader.req.get() {

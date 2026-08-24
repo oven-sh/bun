@@ -692,7 +692,7 @@ impl TransformTask {
 
         let task = TransformTask {
             input_code,
-            output_code: BunString::empty(),
+            output_code: BunString::EMPTY,
             transpiler: transpiler_copy,
             macro_map: clone_macro_map(&config.macro_map),
             tsconfig: config
@@ -802,7 +802,7 @@ impl TransformTask {
         };
 
         if parse_result.empty {
-            self.output_code = BunString::empty();
+            self.output_code = BunString::EMPTY;
             return;
         }
 
@@ -834,7 +834,7 @@ impl TransformTask {
             // bytes, then the local writer is dropped.
             self.output_code = BunString::clone_utf8(buffer_writer.written());
         } else {
-            self.output_code = BunString::empty();
+            self.output_code = BunString::EMPTY;
         }
     }
 
@@ -1546,9 +1546,9 @@ impl JSTranspiler {
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let result = bun_string_jsc::create_utf8_for_js(global, buffer_writer.written())?;
+        let result = bun_string_jsc::create_utf8_for_js(global, buffer_writer.written());
         self.buffer_writer.set(Some(buffer_writer));
-        Ok(result)
+        result
     }
 }
 
@@ -1570,7 +1570,7 @@ fn named_exports_to_js(
     index_sort::sort_slice_unstable_by(&mut keys, |a, b| a.cmp(b));
 
     let names: Vec<BunString> = keys.into_iter().map(BunString::from_bytes).collect();
-    bun_jsc::bun_string_jsc::to_js_array(global, &names)
+    bun_string_jsc::to_js_array(global, &names)
 }
 
 fn named_imports_to_js(

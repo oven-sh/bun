@@ -486,7 +486,7 @@ impl MySQLQuery {
             // SAFETY: `s` is a live boxed `MySQLStatement` we held one intrusive ref on.
             unsafe { MySQLStatement::deref(s) };
         }
-        self.query = BunString::empty();
+        self.query = BunString::EMPTY;
     }
 
     #[inline]

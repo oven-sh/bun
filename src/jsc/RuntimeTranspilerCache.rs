@@ -397,7 +397,7 @@ impl Entry {
         );
 
         self.output_code = if self.metadata.output_byte_length == 0 {
-            BunString::empty()
+            BunString::EMPTY
         } else {
             match self.metadata.output_encoding {
                 Encoding::UTF8 => {

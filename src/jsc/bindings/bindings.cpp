@@ -3141,7 +3141,7 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
     }
 }
 
-void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, EncodedSlice* arg1)
+void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, const EncodedSlice* arg1)
 {
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
     auto* moduleLoader = global->moduleLoader();
@@ -3722,6 +3722,7 @@ JSC::EncodedJSValue EncodedSlice__toExternalU16(const uint16_t* arg0, size_t len
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue EncodedSlice__toExternalValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1)
 {
     EncodedSlice str = *arg0;
+    ASSERT(!Zig::isTaggedUTF8Ptr(str.ptr));
     if (str.len == 0) {
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
     }
@@ -6375,12 +6376,12 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
 
 #pragma mark - WebCore::DOMFormData
 
-CPP_DECL void WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, EncodedSlice* arg1, EncodedSlice* arg2)
+CPP_DECL void WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, const EncodedSlice* arg1, const EncodedSlice* arg2)
 {
     arg0->append(toStringCopy(*arg1), toStringCopy(*arg2));
 }
 
-CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, EncodedSlice* arg2, void* blobValueInner, EncodedSlice* fileName)
+CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, void* blobValueInner, const EncodedSlice* fileName)
 {
     RefPtr<Blob> blob = WebCore::Blob::create(blobValueInner);
     arg0->append(toStringCopy(*arg2), blob, toStringCopy(*fileName));
@@ -6400,7 +6401,7 @@ extern "C" void DOMFormData__toQueryString(
     callback(ctx, &encoded);
 }
 
-CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, EncodedSlice* arg1)
+CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     // don't need to copy the string because it internally does.

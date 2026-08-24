@@ -221,7 +221,7 @@ impl Default for Response {
         Self {
             body: JsCell::new(Body::default()),
             init: JsCell::new(Init::default()),
-            url: JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
@@ -819,7 +819,7 @@ impl Response {
             // - `JsRef` — assignment drops the `Strong` arm (block slot released).
             (*this).init.set(Init::default());
             (*this).body.get_mut().reset();
-            (*this).url.set(BunString::empty());
+            (*this).url.set(BunString::EMPTY);
             (*this).js_ref.set(JsRef::empty());
             (*this).abort_listener.set(None);
 
@@ -1010,7 +1010,7 @@ impl Response {
 
             let url_string_value = args.next_eat().unwrap_or_default();
             url_string = if url_string_value.is_empty() {
-                BunString::empty()
+                BunString::EMPTY
             } else {
                 url_string_value.to_bun_string(global_this)?
             };
@@ -1225,7 +1225,7 @@ impl Default for Init {
         Self {
             headers: None,
             status_code: 0,
-            status_text: BunString::empty(),
+            status_text: BunString::EMPTY,
             method: Method::GET,
         }
     }

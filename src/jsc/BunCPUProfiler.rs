@@ -58,8 +58,8 @@ pub(crate) fn stop_and_write_profile(
     vm: &mut VM,
     config: &CPUProfilerConfig,
 ) -> Result<(), ProfilerError> {
-    let mut json_string = BunString::empty();
-    let mut text_string = BunString::empty();
+    let mut json_string = BunString::EMPTY;
+    let mut text_string = BunString::EMPTY;
 
     // Call the unified C++ function with optional out-params for requested formats.
     Bun__stopCPUProfiler(

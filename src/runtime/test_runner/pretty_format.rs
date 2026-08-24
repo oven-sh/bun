@@ -1335,7 +1335,7 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::Error => {
                     let classname = value.get_class_name(self.global_this)?;
-                    let mut message_string = bun_core::String::empty();
+                    let mut message_string = bun_core::String::EMPTY;
 
                     if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
                         message_string = message_prop.to_bun_string(self.global_this)?;

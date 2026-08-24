@@ -15,7 +15,7 @@ use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsCell, JsClass, JsError, JsResult, StringJsc as _, SystemError,
+    JsCell, JsClass, JsError, JsResult, SystemError,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
@@ -33,11 +33,6 @@ fn dir_exists(path: &'static [u8]) -> bool {
     // SAFETY: `path` is a NUL-free static literal; copy into a stack ZBox.
     let z = ZBox::from_bytes(path);
     bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &z).unwrap_or(false)
-}
-
-/// `bun.String.toJSArray` — local shim over `JSValue::create_array_from_iter`.
-fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> JsResult<JSValue> {
-    JSValue::create_array_from_iter(global, strs.iter(), |s| s.to_js(global))
 }
 
 // Runtime availability is governed by `bun_core::Environment::ENABLE_TINYCC`
@@ -1385,7 +1380,7 @@ impl FFI {
             strs.push(bun_core::String::clone_utf8(&arraylist));
         }
 
-        strings_to_js_array(global, &strs)
+        bun_string_jsc::to_js_array(global, &strs)
     }
 }
 

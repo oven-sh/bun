@@ -44,11 +44,11 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
-use bun_core::{String as BunString, WTFStringImpl};
+use bun_core::{EncodedSlice, String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
-use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
+use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, LogJsc};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
 
@@ -815,7 +815,7 @@ impl WebWorker {
         // the raw specifier). The returned slice is BORROWED — every exit from
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
-        let mut resolve_error = BunString::empty();
+        let mut resolve_error = BunString::EMPTY;
         let vm_log = vm.log_mut().unwrap();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
@@ -1196,9 +1196,8 @@ fn on_unhandled_rejection(
     if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
         // SAFETY: as_ returned a live BuildMessage cell, read-only on the
         // worker (JS) thread that owns it.
-        let text = unsafe { (*bm).msg.data.text.clone() };
-        error_instance =
-            global_object.create_syntax_error_instance(format_args!("{}", bstr::BStr::new(&text)));
+        let text: &[u8] = unsafe { &(*bm).msg.data.text };
+        error_instance = EncodedSlice::utf8(text).to_syntax_error_instance(global_object);
     }
 
     let mut array: Vec<u8> = Vec::new();

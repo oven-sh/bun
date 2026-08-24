@@ -1,6 +1,6 @@
 use core::mem::size_of;
 
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, bun_string_jsc};
 use bun_core::String as BunString;
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
@@ -40,8 +40,7 @@ fn parse_date_time_text(
     }
     // `date` (date-only ISO form), BC dates and 5+ digit years fall back to `Date.parse`.
     let str = BunString::from_bytes(bytes);
-    crate::jsc::bun_string_jsc::parse_date(&str, global_object)
-        .map_err(crate::jsc::js_error_to_postgres)
+    bun_string_jsc::parse_date(&str, global_object).map_err(crate::jsc::js_error_to_postgres)
 }
 
 fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
@@ -349,7 +348,7 @@ fn parse_array(
                             Some(inf) => inf,
                             None => {
                                 let str = BunString::from_bytes(element);
-                                crate::jsc::bun_string_jsc::parse_date(&str, global_object)
+                                bun_string_jsc::parse_date(&str, global_object)
                                     .map_err(crate::jsc::js_error_to_postgres)?
                             }
                         };

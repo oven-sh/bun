@@ -2059,7 +2059,7 @@ impl BlobExt for Blob {
     ) -> JsResult<()> {
         // by default we don't have a name so lets allow it to be set undefined
         if value.is_empty_or_undefined_or_null() {
-            self.name.set(BunString::dead());
+            self.name.set(BunString::DEAD);
             bun_jsc::generated::JSBlob::name_set_cached(js_this, global_this, value);
             return Ok(());
         }
@@ -2602,7 +2602,7 @@ impl BlobExt for Blob {
                     // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                 }
-                return jsc::encoded_slice::to_external_u16(external, global);
+                return bun_string_jsc::owned_utf16_into_js(global, external);
             }
 
             if LIFETIME != Lifetime::Temporary {
@@ -4217,9 +4217,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
                 // SAFETY: `mkdir_recursive` is synchronous; `path_string` outlives the call.
-                path: PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
-                    bun_ptr::detach_lifetime(dirname)
-                })),
+                path: unsafe { PathLike::borrowed(dirname) },
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -4355,9 +4353,7 @@ fn write_file_with_empty_source_to_destination(
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
                                         // SAFETY: `mkdir_recursive` is synchronous;
                                         // `dirpath` outlives the call.
-                                        path: PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
-                                            bun_ptr::detach_lifetime(dirpath)
-                                        })),
+                                        path: unsafe { PathLike::borrowed(dirpath) },
                                         recursive: true,
                                         always_return_none: true,
                                         ..Default::default()

@@ -1071,12 +1071,12 @@ pub fn eql_comptime_ignore_len(self_: &[u8], alt: &[u8]) -> bool {
 // MultiArrayList field-name reflection). Runtime callers should prefer `eql`.
 pub use crate::strings_impl::{const_bytes_eq, const_str_eq};
 
-pub fn has_prefix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
+pub fn has_prefix_comptime(self_: &[u8], alt: &[u8]) -> bool {
     self_.len() >= alt.len()
         && eql_comptime_check_len_with_type::<u8, false>(&self_[0..alt.len()], alt)
 }
 
-pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
+pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
     debug_assert!(alt.iter().all(|&b| b < 0x80));
     self_.len() >= alt.len()
         && self_[..alt.len()]

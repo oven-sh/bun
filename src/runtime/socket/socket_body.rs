@@ -1204,9 +1204,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);
             SystemError {
                 errno: -errno_,
-                message: BunString::static_("Failed to connect").into(),
-                syscall: BunString::static_("connect").into(),
-                code: code_.into(),
+                message: BunString::static_("Failed to connect"),
+                syscall: BunString::static_("connect"),
+                code: code_,
                 ..Default::default()
             }
         };
@@ -2304,8 +2304,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     fn stored_verify_error_to_js(&self, global: &JSGlobalObject) -> Option<JSValue> {
         self.verify_error.get().as_ref().map(|stored| {
             let err = SystemError {
-                code: BunString::clone_utf8(&stored.code).into(),
-                message: BunString::clone_utf8(&stored.reason).into(),
+                code: BunString::clone_utf8(&stored.code),
+                message: BunString::clone_utf8(&stored.reason),
                 ..Default::default()
             };
             err.to_error_instance(global)
@@ -2340,8 +2340,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let reason: &[u8] = ssl_error.reason_bytes();
 
         let fallback = SystemError {
-            code: BunString::clone_utf8(code).into(),
-            message: BunString::clone_utf8(reason).into(),
+            code: BunString::clone_utf8(code),
+            message: BunString::clone_utf8(reason),
             ..Default::default()
         };
 
@@ -5077,17 +5077,16 @@ pub mod testing_apis {
                 return Err(global.throw_invalid_argument_type_value("rule", "object", opts));
             }
 
-            let syscall_str =
-                bun_core::OwnedString::new(match opts.get_truthy(global, "syscall")? {
-                    Some(v) => v.to_bun_string(global)?,
-                    None => {
-                        return Err(global.throw_invalid_argument_type_value(
-                            "rule.syscall",
-                            "string",
-                            JSValue::UNDEFINED,
-                        ));
-                    }
-                });
+            let syscall_str = match opts.get_truthy(global, "syscall")? {
+                Some(v) => v.to_bun_string(global)?,
+                None => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "rule.syscall",
+                        "string",
+                        JSValue::UNDEFINED,
+                    ));
+                }
+            };
             let syscall: c_int = if syscall_str.eql_comptime(b"recv") {
                 fi::RECV
             } else if syscall_str.eql_comptime(b"send") {
@@ -5116,17 +5115,16 @@ pub mod testing_apis {
                 )));
             };
 
-            let action_str =
-                bun_core::OwnedString::new(match opts.get_truthy(global, "action")? {
-                    Some(v) => v.to_bun_string(global)?,
-                    None => {
-                        return Err(global.throw_invalid_argument_type_value(
-                            "rule.action",
-                            "string",
-                            JSValue::UNDEFINED,
-                        ));
-                    }
-                });
+            let action_str = match opts.get_truthy(global, "action")? {
+                Some(v) => v.to_bun_string(global)?,
+                None => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "rule.action",
+                        "string",
+                        JSValue::UNDEFINED,
+                    ));
+                }
+            };
             let action: c_int = if action_str.eql_comptime(b"errno") {
                 fi::ACTION_ERRNO
             } else if action_str.eql_comptime(b"short") {
@@ -5172,7 +5170,7 @@ pub mod testing_apis {
                 None => 0,
                 Some(v) if v.is_number() => v.coerce_to_i32(global)?,
                 Some(v) => {
-                    let name = bun_core::OwnedString::new(v.to_bun_string(global)?);
+                    let name = v.to_bun_string(global)?;
                     parse_errno_name(&name).ok_or_else(|| {
                         global.throw(format_args!(
                             "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH, EPROTOTYPE)"
@@ -5229,7 +5227,7 @@ pub mod testing_apis {
     }
 
     #[cfg(socket_fault_injection)]
-    fn parse_errno_name(name: &bun_core::OwnedString) -> Option<c_int> {
+    fn parse_errno_name(name: &bun_core::String) -> Option<c_int> {
         macro_rules! map {
             ($($s:literal => $v:expr,)*) => {
                 $(if name.eql_comptime($s) { return Some($v as c_int); })*

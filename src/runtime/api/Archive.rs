@@ -324,7 +324,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
 
     // Iterate over object properties and write directly to archive
-    let mut iter = jsc::JSPropertyIterator::init(
+    let iter = jsc::JSPropertyIterator::init(
         global,
         js_obj,
         jsc::PropertyIteratorOptions {
@@ -333,8 +333,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         },
     )?;
 
-    while let Some(key) = iter.next()? {
-        let value = iter.value;
+    while let Some((key, value)) = iter.next()? {
         if value == JSValue::ZERO {
             continue;
         }

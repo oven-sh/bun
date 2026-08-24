@@ -6253,17 +6253,15 @@ pub mod bv2_impl {
                         };
 
                         if err == _resolver::Error::ModuleNotFound {
-                            if self.bun_watcher.is_some() {
-                                if let Some(dev) = self.dev_server {
-                                    // Tell DevServer about the resolution failure.
-                                    dev.track_resolution_failure(
-                                        source.path.text,
-                                        import_record.path.text,
-                                        ctx.target.bake_graph(), // use the source file target not the altered one
-                                        loader,
-                                    )
-                                    .expect("oom");
-                                }
+                            if let Some(dev) = self.dev_server {
+                                // Tell DevServer about the resolution failure.
+                                dev.track_resolution_failure(
+                                    source.path.text,
+                                    import_record.path.text,
+                                    ctx.target.bake_graph(), // use the source file target not the altered one
+                                    loader,
+                                )
+                                .expect("oom");
                             }
                         }
 

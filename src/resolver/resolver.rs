@@ -5833,7 +5833,8 @@ impl<'a> Resolver<'a> {
         // Try using the main field(s) from "package.json"
         if dir_info.package_json().is_none() {
             // Absent, or unparseable; `DirEntry::get` saw that lookup when the
-            // directory was read, not now.
+            // directory was read, not now. An unparseable file passes the
+            // `access()` re-check, so a miss through it re-reads the directory.
             record_missing_entry(dir_info.abs_path, b"package.json");
         }
         if let Some(pkg_json) = dir_info.package_json() {

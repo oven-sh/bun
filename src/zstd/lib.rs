@@ -278,7 +278,7 @@ pub fn is_error(code: usize) -> bool {
     c::ZSTD_isError(code) != 0
 }
 
-/// `ZSTD_decompress` into `out`'s spare capacity, which is the output bound; commits the bytes written.
+/// `ZSTD_decompress` into the spare capacity of `out`, which the caller reserves first and which bounds the output (a larger frame fails); commits the bytes written.
 pub fn decompress_append(out: &mut Vec<u8>, src: &[u8]) -> core::result::Result<(), ZstdError> {
     let spare = out.spare_capacity_mut();
     // SAFETY: spare/src are valid for their lengths; ZSTD_decompress reads src

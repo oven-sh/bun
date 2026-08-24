@@ -753,8 +753,6 @@ pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
 pub const SSL_OP_NO_TICKET: u32 = 0x0000_4000;
 
 /// `openssl/tls1.h`. `TLS1_3_VERSION` is declared with the QUIC block below.
-pub const TLS1_VERSION: u16 = 0x0301;
-pub const TLS1_1_VERSION: u16 = 0x0302;
 pub const TLS1_2_VERSION: u16 = 0x0303;
 
 /// RFC 8879 certificate compression algorithm ids.

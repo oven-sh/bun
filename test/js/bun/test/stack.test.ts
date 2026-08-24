@@ -246,3 +246,81 @@ test("error.stack is formatted lazily with live frames when a GC runs between cr
   });
   expect(exitCode).toBe(0);
 });
+
+test("frames stored into an old error are kept alive across an eden collection", async () => {
+  // Two full collections promote the errors before any frame is stored into them. The frames
+  // stored afterwards are young and belong to function objects that die at once, so only the
+  // write barrier fired by the store keeps them marked through the next eden collection. A
+  // missed barrier trips a debug assertion in ErrorInstance::reconcileWeakReferencesAtGCEnd.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { fullGC, edenGC } = require("bun:jsc");
+       const captured = new Error("captured message");
+       const dest = new Error("dest message");
+       fullGC();
+       fullGC();
+
+       (function capturer() { Error.captureStackTrace(captured); })();
+       let src;
+       (function srcFn() { src = new Error("src message"); })();
+       (function appender() { Error.appendStackTrace(src, dest); })();
+
+       await 0;
+       edenGC();
+       edenGC();
+
+       const head = s => s.split("\\n")[0];
+       const frames = s => s.split("\\n").slice(1).map(l => l.trim().split(" (")[0]).map(f => f.includes(":") ? "at <top>" : f);
+       console.log(JSON.stringify({
+         captured: head(captured.stack),
+         capturedFrames: frames(captured.stack),
+         dest: head(dest.stack),
+         destFrames: frames(dest.stack),
+       }));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    captured: "Error: captured message",
+    capturedFrames: ["at capturer", "at <top>"],
+    dest: "Error: dest message",
+    destFrames: ["at <top>", "at srcFn", "at <top>"],
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("Error.appendStackTrace onto an error whose .stack was already read is a no-op", async () => {
+  // After the first read the destination has no frames left to append to, so the call must not
+  // take the source's frames either.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const dest = new Error("dest message");
+       const before = dest.stack;
+       let src;
+       (function srcFn() { src = new Error("src message"); })();
+       Error.appendStackTrace(src, dest);
+       await 0;
+       Bun.gc(true);
+       console.log(JSON.stringify({
+         destUnchanged: dest.stack === before,
+         src: src.stack.split("\\n").slice(0, 2).map(l => l.trim().split(" (")[0]),
+       }));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    destUnchanged: true,
+    src: ["Error: src message", "at srcFn"],
+  });
+  expect(exitCode).toBe(0);
+});

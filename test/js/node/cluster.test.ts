@@ -1085,6 +1085,45 @@ if (cluster.isPrimary) {
   const worker = cluster.fork();
   worker.on("message", m => { console.log(JSON.stringify(m)); worker.kill(); process.exit(0); });
   cluster.on("listening", (_w, addr) => {
+    const c = net.connect(addr.port, "127.0.0.1", () => c.write("early"));
+    c.on("error", () => {});
+  });
+} else {
+  const server = net.createServer({ pauseOnConnect: true }, sock => {
+    let earlyData = false;
+    sock.once("data", () => { earlyData = true; });
+    setImmediate(() => {
+      process.send({ paused: sock.isPaused(), earlyData, _server: sock._server === server });
+    });
+  });
+  server.listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: { paused: true, earlyData: false, _server: true },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+test("round-robin worker adopts a pauseOnConnect connection without reading from it", async () => {
+  using dir = tempDir("cluster-pauseonconnect-bytes", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => { console.log(JSON.stringify(m)); worker.kill(); process.exit(0); });
+  cluster.on("listening", (_w, addr) => {
     // "early" is in the worker's receive buffer before the write callback runs.
     const c = net.connect(addr.port, "127.0.0.1", () => c.write("early", () => worker.send("written")));
     c.on("error", () => {});

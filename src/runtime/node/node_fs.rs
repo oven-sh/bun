@@ -7856,44 +7856,20 @@ impl NodeFS {
         // rather than `try_from().unwrap()`-panicking
         // on a hostile `> i64::MAX` value.
         let len_i64 = (len & ((1u64 << 63) - 1)) as i64;
-        #[cfg(windows)]
-        {
-            let file = sys::open(
-                path.slice_z(&mut self.sync_error_buf),
-                sys::O::WRONLY | flags,
-                0o644,
-            );
-            let Ok(fd) = file else {
-                let Err(e) = file else { unreachable!() };
-                return Err(sys::Error {
-                    errno: e.errno,
-                    path: path.slice().into(),
-                    syscall: sys::Tag::truncate,
-                    ..Default::default()
-                });
-            };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
-            return match Syscall::ftruncate(fd, len_i64) {
-                Ok(r) => Ok(r),
-                Err(err) => Err(err.with_path_and_syscall(path.slice(), sys::Tag::truncate)),
-            };
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = flags;
-            // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
-            Maybe::<ret::Truncate>::errno_sys_p(
-                unsafe {
-                    libc::truncate(
-                        path.slice_z(&mut self.sync_error_buf).as_ptr().cast(),
-                        len_i64,
-                    )
-                },
-                sys::Tag::truncate,
-                path.slice(),
-            )
-            .unwrap_or(Ok(()))
-        }
+        // Node implements fs.truncate(path) as open(path, 'r+') + ftruncate
+        // (lib/fs.js), so each error reports the syscall that failed: a
+        // missing path is an "open" error, not "truncate".
+        let file = sys::open(
+            path.slice_z(&mut self.sync_error_buf),
+            sys::O::RDWR | flags,
+            0o644,
+        );
+        let fd = match file {
+            Ok(fd) => fd,
+            Err(e) => return Err(e.with_path(path.slice())),
+        };
+        let _close = scopeguard::guard(fd, |fd| fd.close());
+        Syscall::ftruncate(fd, len_i64)
     }
 
     pub(crate) fn truncate(&mut self, args: &args::Truncate, _: Flavor) -> Maybe<ret::Truncate> {

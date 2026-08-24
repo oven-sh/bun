@@ -733,7 +733,10 @@ describe.concurrent("bun add --catalog", () => {
       const cwd = from === "member" ? dir.pkg1Dir : dir.packageDir;
       const { stdout, stderr, exitCode } = await dir.add(cwd, "no-deps", "--catalog", "--dry-run");
 
-      expect(summary(stdout)).toBe("pkg1@workspace:packages/pkg1\ninstalled no-deps@2.0.0\n\ndone");
+      // The listing prints the workspace path with the native separator.
+      expect(summary(stdout).replaceAll("\\", "/")).toBe(
+        "pkg1@workspace:packages/pkg1\ninstalled no-deps@2.0.0\n\ndone",
+      );
       expect(stderr).toBe("");
       expect(await dir.rootText()).toBe(rootBefore);
       expect(await dir.pkg1Text()).toBe(pkg1Before);

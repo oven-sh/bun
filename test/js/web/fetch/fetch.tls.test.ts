@@ -1086,11 +1086,12 @@ async function captureClientHello(tls: Record<string, unknown>, init: Record<str
     },
   });
 
-  // The server never answers, so the fetch always fails. Swallow that.
+  // The server never answers, so the fetch always fails once the ClientHello is
+  // out. A failure before that (`reject` after `resolve` is a no-op) is a real one.
   const request = fetch(`https://127.0.0.1:${listener.port}/`, {
     ...init,
     tls: { rejectUnauthorized: false, ...tls },
-  }).catch(() => {});
+  }).catch(reject);
   const hello = parseClientHello(await promise);
   await request;
   return hello;

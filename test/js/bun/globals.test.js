@@ -217,7 +217,11 @@ it("builtin modules do not read replaceable globals", () => {
     stderr: "pipe",
   });
 
-  expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("self is a getter", () => {

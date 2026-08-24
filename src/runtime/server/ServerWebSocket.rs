@@ -400,15 +400,12 @@ impl ServerWebSocket {
         this
     }
 
-    /// uWS refused the upgrade after `init` (the connection closed while the
-    /// 101 was being written), so neither `on_open` nor `on_close` will ever
-    /// run for this socket. Release what `init` took: the signal ref, and the
-    /// strong self-reference that keeps the JS wrapper (and with it this
-    /// allocation) alive until `finalize`.
+    /// Undo `init` for a socket uWS refused to upgrade: `on_open`/`on_close`
+    /// never run for it, so release the signal ref and the strong
+    /// self-reference here and let the JS wrapper be collected.
     pub(crate) fn discard_unopened(&self) {
         self.update_flags(|f| f.set_closed(true));
         if let Some(signal) = self.signal.take() {
-            // Same pairing as `on_close`: the upgrade caller stored a +1 ref.
             let sig = bun_ptr::BackRef::from(signal);
             sig.pending_activity_unref();
             sig.unref();

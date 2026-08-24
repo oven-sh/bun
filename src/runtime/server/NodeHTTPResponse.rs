@@ -607,8 +607,6 @@ impl NodeHTTPResponse {
                 )
                 .is_null();
             if !upgraded {
-                // The connection closed while uWS wrote the 101 (see
-                // HttpResponse::upgrade); the socket was never handed over.
                 self.update_flags(|f| f.remove(Flags::UPGRADED));
             }
         }

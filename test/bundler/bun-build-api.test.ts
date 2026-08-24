@@ -223,12 +223,12 @@ describe("Bun.build", () => {
 
     const result = await bunRun(join(dir, "main.js"));
     expect(result).toSpawn();
-    const { value, loaded, released } = JSON.parse(result.stdout);
-    expect({ value, loaded }).toEqual({ value: "index", loaded: { js: 1, jsc: 1 } });
-    // Each leaked load would leave one more mapping of each file, so a leak
-    // reads as RELOADS. A conservative stack scan may still see the last load.
-    expect(released.js).toBeLessThanOrEqual(1);
-    expect(released.jsc).toBeLessThanOrEqual(1);
+    // A leaked load leaves one more mapping of each file, so a leak reads as RELOADS.
+    expect(JSON.parse(result.stdout)).toEqual({
+      value: "index",
+      loaded: { js: 1, jsc: 1 },
+      released: { js: 0, jsc: 0 },
+    });
   });
 
   test("passing undefined doesnt segfault", () => {

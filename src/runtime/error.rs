@@ -459,8 +459,6 @@ pub enum Error {
     Sourcemap(#[from] bun_sourcemap::Error),
     #[error(transparent)]
     StandaloneGraph(#[from] bun_standalone_graph::Error),
-    #[error(transparent)]
-    TerminalInit(crate::api::bun_terminal_body::InitError),
     #[error("JSError")]
     Js(bun_jsc::JsError),
 }
@@ -801,7 +799,6 @@ impl Error {
             Self::JsPrinter(e) => e.name(),
             Self::Sourcemap(e) => e.name(),
             Self::StandaloneGraph(e) => e.name(),
-            Self::TerminalInit(e) => <&'static str>::from(e),
             Self::Js(bun_jsc::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",
         }

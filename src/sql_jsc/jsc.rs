@@ -1,7 +1,7 @@
 //! `bun_jsc` re-export façade for the SQL bindings.
 //!
 //! All core handle types (`JSValue`, `JSGlobalObject`, `CallFrame`, `JsError`,
-//! `JsResult`, `JSObject`, `JSCell`, `JSType`, [`VirtualMachine`],
+//! `JsResult`, `JSObject`, `JSType`, [`VirtualMachine`],
 //! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
 //! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
 //! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
@@ -27,9 +27,9 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::{
-    ArrayBuffer, CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef,
-    JSArrayIterator, JSCell, JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef,
-    JsResult, MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc, host_fn,
+    CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
+    JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
+    MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the

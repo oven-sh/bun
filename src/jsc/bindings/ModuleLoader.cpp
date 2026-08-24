@@ -123,8 +123,9 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
             PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
             bool hasOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, entry, slot);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
-            if (hasOwn && !slot.isValue()) {
-                // Accessors are how builtins defer loading (fs.ReadStream pulls in node:stream); JSC reads them off `object` on first binding.
+            // Accessors are how builtins defer loading (fs.ReadStream pulls in node:stream); JSC reads them off `object` on
+            // first binding. An accessor user code defined on the exports object is read now instead (see isBunDefinedGetter).
+            if (hasOwn && (slot.isCustom() || (slot.isAccessor() && Zig::isBunDefinedGetter(slot.getterSetter()->getter())))) {
                 exportValues.append(JSValue());
                 hasLazyExports = true;
                 continue;
@@ -186,7 +187,7 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(VM& vm, Structure
 }
 Structure* PendingVirtualModuleResult::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 PendingVirtualModuleResult::PendingVirtualModuleResult(VM& vm, Structure* structure)
@@ -385,7 +386,7 @@ static JSValue handleVirtualModuleResult(
     const auto rejectOrResolve = [&](JSValue code) -> JSValue {
         if (auto* exception = scope.exception()) {
             if constexpr (allowPromise) {
-                (void)scope.tryClearException();
+                TRY_CLEAR_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
             } else {
                 return exception;
@@ -422,12 +423,12 @@ static JSValue handleVirtualModuleResult(
             const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
             auto esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
             if (scope.exception()) [[unlikely]] {
-                RELEASE_AND_RETURN(scope, reject(scope.exception()));
+                return rejectOrResolve({});
             }
             if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
                 auto defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
                 if (scope.exception()) [[unlikely]] {
-                    RELEASE_AND_RETURN(scope, reject(scope.exception()));
+                    return rejectOrResolve({});
                 }
                 if (defaultValue && !defaultValue.isUndefined()) {
                     commonJSModule->setExportsObject(defaultValue);
@@ -565,6 +566,11 @@ JSValue fetchBuiltinModuleWithoutResolution(
         case SyntheticModuleType::ESM: {
             res->success = false;
             RELEASE_AND_RETURN(scope, jsNumber(-1));
+        }
+
+        // A text file embedded by `bun build --compile`: the string is `module.exports`.
+        case SyntheticModuleType::ExportDefaultObject: {
+            return JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         }
 
         default: {
@@ -1063,6 +1069,20 @@ static JSValue fetchESMSourceCode(
     }
             BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(LAZY_CASE)
 #undef LAZY_CASE
+
+        // A text file embedded by `bun build --compile`: the string is the default export.
+        case SyntheticModuleType::ExportDefaultObject: {
+            JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+            if (!value) {
+                RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+            }
+            auto function = generateJSValueExportDefaultObjectSourceCode(globalObject, value);
+            auto source = JSC::SourceCode(
+                JSC::SyntheticSourceProvider::create(WTF::move(function),
+                    JSC::SourceOrigin(), WTF::move(moduleKey)));
+            JSC::ensureStillAliveHere(value);
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
+        }
 
         // CommonJS modules from src/js/*
         default: {

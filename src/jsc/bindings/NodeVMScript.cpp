@@ -137,7 +137,6 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
-    RETURN_IF_EXCEPTION(scope, {});
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});
@@ -580,7 +579,7 @@ public:
 
     static NodeVMScriptPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
-        NodeVMScriptPrototype* ptr = new (NotNull, allocateCell<NodeVMScriptPrototype>(vm)) NodeVMScriptPrototype(vm, structure);
+        NodeVMScriptPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(NodeVMScriptPrototype))) NodeVMScriptPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -594,7 +593,7 @@ public:
     }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
     }
 
 private:
@@ -621,8 +620,8 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
 void NodeVMScriptPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, NodeVMScript::info(), scriptPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, NodeVMScript::info(), scriptPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSObject* NodeVMScript::createPrototype(VM& vm, JSGlobalObject* globalObject)

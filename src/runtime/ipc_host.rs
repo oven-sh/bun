@@ -34,20 +34,17 @@ pub(crate) fn attach_windows_socket_payload(
     message: JSValue,
     fd: bun_sys::Fd,
     peer_pid: u32,
-) -> Option<Box<[u8]>> {
+) -> JsResult<Option<Box<[u8]>>> {
     if peer_pid == 0 {
-        return None;
+        return Ok(None);
     }
     let Some(hex) = IPC::windows_export_socket_hex(fd, peer_pid) else {
         log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
-        return None;
+        return Ok(None);
     };
-    let Ok(str_js) = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex) else {
-        global.clear_exception();
-        return None;
-    };
+    let str_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex)?;
     message.put(global, IPC::WIN_SOCKET_INFO_KEY, str_js);
-    Some(hex)
+    Ok(Some(hex))
 }
 
 #[bun_jsc::host_fn]
@@ -262,7 +259,7 @@ pub(crate) fn do_send(
 
     #[cfg(windows)]
     if let Some(h) = &mut zig_handle {
-        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
+        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid)? {
             Some(hex) => {
                 h.win_export_hex = Some(hex);
                 h.peer_pid = peer_pid;
@@ -335,7 +332,7 @@ pub(crate) fn emit_handle_ipc_message(
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-        unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) };
+        unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
     } else {
         if !target.is_cell() {
             return Ok(JSValue::UNDEFINED);
@@ -345,7 +342,7 @@ pub(crate) fn emit_handle_ipc_message(
         };
         // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS
         // wrapper holds it alive for the call.
-        unsafe { (*subprocess).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) };
+        unsafe { (*subprocess).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -426,7 +423,7 @@ impl IPCInstance {
     }
 
     /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub fn handle_ipc_message(&self, message: &DecodedIPCMessage, handle: JSValue) {
+    pub fn handle_ipc_message(&self, message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
         // SAFETY: VM singleton + its event loop are process-lifetime.
         let vm = bun_jsc::virtual_machine::VirtualMachine::get().as_mut();
         let global_this = vm.global();
@@ -444,18 +441,15 @@ impl IPCInstance {
             }
             DecodedIPCMessage::Internal(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
-                event_loop.enter();
-                // SAFETY: `global_this` is the live VM global; JS thread.
-                unsafe {
-                    crate::jsc_hooks::handle_ipc_internal_child(
-                        core::ptr::from_ref(global_this).cast_mut(),
-                        data,
-                        handle,
-                    )
-                };
-                event_loop.exit();
+                let _entered = vm.enter_event_loop_scope();
+                crate::node::node_cluster_binding::handle_internal_message_child(
+                    global_this,
+                    data,
+                    handle,
+                )?;
             }
         }
+        Ok(())
     }
 
     /// Tears down the IPC channel and emits the disconnect events on `process`.

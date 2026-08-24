@@ -372,10 +372,12 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 #endif
 #endif
 
+    auto scope = DECLARE_THROW_SCOPE(vm);
     mi_collect(false);
     if (char* json = mi_stats_get_json(0, nullptr)) {
         JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
         mi_free(json);
+        RETURN_IF_EXCEPTION(scope, {});
         object->putDirect(vm, Identifier::fromString(vm, "mimalloc"_s),
             parsed.isEmpty() ? jsNull() : parsed);
     }
@@ -384,8 +386,14 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isObject()) {
         JSValue dump = arg0.getObject()->get(globalObject, Identifier::fromString(vm, "dump"_s));
+        RETURN_IF_EXCEPTION(scope, {});
         if (dump.toBoolean(globalObject)) {
-            const bool includeBlocks = dump.isString() && dump.toWTFString(globalObject) == "blocks"_s;
+            bool includeBlocks = false;
+            if (dump.isString()) {
+                auto dumpString = dump.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                includeBlocks = dumpString == "blocks"_s;
+            }
 #if BUN_DEBUG
             const bool hashAddresses = false;
 #else
@@ -394,6 +402,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
             if (char* json = mi_heap_dump_json(includeBlocks, hashAddresses)) {
                 JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
                 mi_free(json);
+                RETURN_IF_EXCEPTION(scope, {});
                 object->putDirect(vm, Identifier::fromString(vm, "mimallocDump"_s),
                     parsed.isEmpty() ? jsNull() : parsed);
             }
@@ -732,9 +741,9 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         RETURN_IF_EXCEPTION(throwScope, {});
 
         JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        result->putDirect(vm, Identifier::fromString(vm, "functions"_s), jsString(vm, topFunctions.toString()));
-        result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s), jsString(vm, byteCodes.toString()));
-        result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s), stackTraces);
+        Bun::putDirectNamed(vm, result, "functions"_s, jsString(vm, topFunctions.toString()));
+        Bun::putDirectNamed(vm, result, "bytecodes"_s, jsString(vm, byteCodes.toString()));
+        Bun::putDirectNamed(vm, result, "stackTraces"_s, stackTraces);
 
         return result;
     };

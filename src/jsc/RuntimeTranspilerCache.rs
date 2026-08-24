@@ -597,18 +597,6 @@ pub struct RuntimeTranspilerCache {
     // arena scratch is needed at all.
 }
 
-impl Default for RuntimeTranspilerCache {
-    fn default() -> Self {
-        Self {
-            input_hash: None,
-            input_byte_length: None,
-            features_hash: None,
-            exports_kind: ExportsKind::None,
-            entry: None,
-        }
-    }
-}
-
 pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
 }
@@ -1017,7 +1005,7 @@ pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
 // ──────────────────────────────────────────────────────────────────────────
 
 bun_ast::link_impl_TranspilerCacheImpl! {
-    Jsc for bun_ast::RuntimeTranspilerCache => |this| {
+    Jsc for extern bun_ast::RuntimeTranspilerCache => |this| {
         get(source, parser_options, used_jsx) => {
             let this = &mut *this;
             let parser_options = parser_options.cast::<ParserOptions<'_>>().as_ref();

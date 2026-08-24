@@ -37,7 +37,6 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     for (const auto& [key, value] : m_importAttributes) {
         attributes->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), key), JSC::jsString(globalObject->vm(), value),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
-        RETURN_IF_EXCEPTION(scope, {});
     }
     array->putDirectIndex(globalObject, 1, attributes);
     RETURN_IF_EXCEPTION(scope, {});
@@ -399,7 +398,7 @@ NodeVMModulePrototype* NodeVMModulePrototype::create(VM& vm, Structure* structur
 
 Structure* NodeVMModulePrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 NodeVMModulePrototype::NodeVMModulePrototype(VM& vm, Structure* structure)
@@ -411,7 +410,7 @@ void NodeVMModulePrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    reifyStaticProperties(vm, info(), NodeVMModulePrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), NodeVMModulePrototypeTableValues, *this);
     this->structure()->setMayBePrototype(true);
 }
 
@@ -542,10 +541,12 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // vm.ts validated the timeout by value (or passes -1 for none); the number may still be boxed
+    // as a double, which isUInt32() rejects.
     JSValue timeoutValue = callFrame->argument(0);
     uint32_t timeout = 0;
-    if (timeoutValue.isUInt32()) {
-        timeout = timeoutValue.asUInt32();
+    if (timeoutValue.isUInt32AsAnyInt()) {
+        timeout = timeoutValue.asUInt32AsAnyInt();
     }
 
     JSValue breakOnSigintValue = callFrame->argument(1);
@@ -788,7 +789,7 @@ NodeVMModuleConstructor::NodeVMModuleConstructor(VM& vm, Structure* structure)
 
 JSC::Structure* NodeVMModuleConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, Base::StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, Base::StructureFlags), info());
 }
 
 void NodeVMModuleConstructor::finishCreation(VM& vm, JSObject* prototype)

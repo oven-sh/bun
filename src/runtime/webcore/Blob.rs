@@ -184,12 +184,6 @@ pub trait BlobExt {
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
     );
-    fn on_structured_clone_transfer(
-        &self,
-        _global_this: &JSGlobalObject,
-        _ctx: *mut c_void,
-        _write: crate::generated_classes::WriteBytesFn,
-    );
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
@@ -252,7 +246,6 @@ pub trait BlobExt {
         content_type: BlobContentType,
     ) -> JSValue;
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
-    fn get_mime_type(&self) -> Option<MimeType>;
     fn get_mime_type_or_content_type(&self) -> Option<MimeType>;
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue;
     fn get_name_string(&self) -> Option<BunString>;
@@ -812,14 +805,6 @@ impl BlobExt for Blob {
         let _ = self._on_structured_clone_serialize(&mut writer);
     }
 
-    fn on_structured_clone_transfer(
-        &self,
-        _global_this: &JSGlobalObject,
-        _ctx: *mut c_void,
-        _write: crate::generated_classes::WriteBytesFn,
-    ) {
-        // no-op
-    }
     // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
     // trait signature is fixed, so the deref is documented with the SAFETY comment below.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -1643,7 +1628,7 @@ impl BlobExt for Blob {
                     jsc::js_promise::Status::Fulfilled => {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
-                        readable_stream.done(global_this);
+                        readable_stream.done();
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
                             JSValue::js_number(0.0),
@@ -2031,10 +2016,6 @@ impl BlobExt for Blob {
         }
 
         Ok(self.get_slice_from(global_this, relative_start, relative_end, content_type))
-    }
-
-    fn get_mime_type(&self) -> Option<MimeType> {
-        self.store().map(|s| s.mime_type.clone())
     }
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
@@ -2814,9 +2795,9 @@ impl BlobExt for Blob {
                 // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
                 unsafe { drop(bun_core::heap::take(raw_bytes)) };
             }
-            return Ok(
-                global.create_syntax_error_instance(format_args!("Unexpected end of JSON input"))
-            );
+            return Err(global.throw_value(
+                global.create_syntax_error_instance(format_args!("Unexpected end of JSON input")),
+            ));
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
@@ -2866,7 +2847,7 @@ impl BlobExt for Blob {
                 }
                 let result = ZigString::init_utf16(&external).to_json_object(global);
                 drop(external);
-                return Ok(result);
+                return result;
             }
 
             if LIFETIME != Lifetime::Temporary {
@@ -2874,7 +2855,7 @@ impl BlobExt for Blob {
             }
         }
 
-        Ok(ZigString::init(buf).to_json_object(global))
+        ZigString::init(buf).to_json_object(global)
     }
 
     /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
@@ -3492,10 +3473,6 @@ impl BlobExt for Blob {
 
                 _ => {
                     let sliced = current.to_slice(global)?;
-                    if global.has_exception() {
-                        let _end_result = joiner.done();
-                        return Err(jsc::JsError::Thrown);
-                    }
                     could_have_non_ascii = could_have_non_ascii || !sliced.is_wtf_backed();
                     joiner.push_cloned(sliced.slice());
                 }
@@ -5911,7 +5888,7 @@ pub(crate) fn on_file_stream_resolve_request_stream(
     };
     let strong = core::mem::take(&mut this.readable_stream_ref);
     if let Some(stream) = strong.get() {
-        stream.done(global_this);
+        stream.done();
     }
     this.promise.resolve(global_this, JSValue::js_number(0.0))?;
     Ok(JSValue::UNDEFINED)
@@ -6499,7 +6476,7 @@ impl Any {
                 let str = ib.to_json(global);
                 // the GC will collect the string
                 *self = Any::Blob(Blob::default());
-                Ok(str)
+                str
             }
             Any::WTFStringImpl(impl_) => {
                 // Adopts a +1 WTF ref; `OwnedString` releases it on every exit
@@ -6782,7 +6759,7 @@ impl Internal {
         }
     }
 
-    pub(crate) fn to_json(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_json(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
         let json = str_bytes.to_json_object(global_this);
         self.bytes = Vec::new();

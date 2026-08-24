@@ -571,8 +571,6 @@ pub mod js_bundler {
 
                     if let Some(err) = plugin_result.to_error() {
                         return Err(global_this.throw_value(err));
-                    } else if global_this.has_exception() {
-                        return Err(JsError::Thrown);
                     }
 
                     onstart_promise_array = plugin_result;
@@ -1374,19 +1372,15 @@ pub mod js_bundler {
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
         // cannot depend on those).
-        let completion =
-            crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
-                config,
-                plugins.and_then(core::ptr::NonNull::new),
-                global_this,
-            )
-            .map_err(|_| JsError::OutOfMemory)?;
-        // SAFETY: `completion` is the freshly-boxed allocation returned above;
-        // sole owner on the JS thread until enqueued task runs.
-        unsafe {
-            (*completion).promise = jsc::JSPromiseStrong::init(global_this);
-            Ok((*completion).promise.value())
-        }
+        let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
+            config,
+            plugins.and_then(core::ptr::NonNull::new),
+            global_this,
+        );
+        completion.promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = completion.promise.value();
+        completion.schedule();
+        Ok(promise)
     }
 
     /// `Bun.build(config)`
@@ -1406,7 +1400,7 @@ pub mod js_bundler {
     // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
     // C-ABI exports) live here.
     pub use bun_bundler::bundle_v2::api::JSBundler::{
-        Load, LoadSuccess, LoadValue, MiniImportRecord, Resolve, ResolveSuccess, ResolveValue,
+        Load, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
     };
 
     /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
@@ -1888,7 +1882,6 @@ pub mod js_bundler {
 }
 
 pub use js_bundler as JSBundler;
-pub use js_bundler::Config;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
@@ -1907,8 +1900,7 @@ pub struct BuildArtifact {
 
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
 /// definition lives in `bun_bundler::options` (it backs
-/// `OutputFile.output_kind`); re-exported so `crate::api::OutputKind`
-/// callers stay unchanged.
+/// `OutputFile.output_kind`).
 pub use bun_bundler::options::OutputKind;
 
 /// `JSValue::as(Blob)` BuildArtifact fallback — declared

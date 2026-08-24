@@ -4020,10 +4020,8 @@ impl BunXFastPath {
 
         if let Some(self_exe) = self_exe {
             let bytes = self_exe.as_bytes();
-            if strings::eql_case_insensitive_ascii_check_length(
-                paths::basename(bytes),
-                b"bunx.exe",
-            ) {
+            if strings::eql_case_insensitive_ascii_check_length(paths::basename(bytes), b"bunx.exe")
+            {
                 if let Some(dir) = paths::dirname(bytes) {
                     let mut sibling = Vec::with_capacity(dir.len() + b"\\bun.exe".len());
                     sibling.extend_from_slice(dir);

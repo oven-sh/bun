@@ -530,8 +530,8 @@ impl App {
         Self::route_this::<U, H>(RouteKind::Any, self, p, this);
     }
 
-    /// [`listen_with_config`](Self::listen_with_config) whose (synchronous)
-    /// handler receives `this` and the listen socket (`None` on failure).
+    /// Listen with `config`; the (synchronous) handler receives `this` and the
+    /// listen socket (`None` on failure).
     pub fn listen_with_config_this<U: 'static, H>(
         &mut self,
         this: ThisPtr<U>,

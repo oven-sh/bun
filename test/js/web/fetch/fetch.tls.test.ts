@@ -1155,7 +1155,7 @@ describe("fetch TLS fingerprint options", () => {
   });
 
   it("ja3 with TLS 1.3 suites only offers TLS 1.3 only", async () => {
-    const hello = await captureClientHello({ ja3: "771,4865-4866-4867,0-10-13-16-43-45-51,29,0" });
+    const hello = await captureClientHello({ ja3: "771,4865-4866-4867,0-10-13-16-43-45-51,29," });
     expect(hello.ciphers).toEqual(TLS13_SUITES);
     expect(hello.supportedVersions).toEqual([0x0304]);
     expect(hello.extensionTypes).not.toContain(EXT.sessionTicket);
@@ -1303,7 +1303,7 @@ describe("fetch TLS fingerprint options", () => {
     const request = fetch("https://example.invalid/", {
       proxy: `http://127.0.0.1:${proxy.port}`,
       tls: { rejectUnauthorized: false, ja3: CHROME_JA3, grease: true },
-    }).catch(() => {});
+    }).catch(reject);
     const hello = parseClientHello(await promise);
     await request;
 
@@ -1341,7 +1341,7 @@ describe("fetch TLS fingerprint options", () => {
       ["771,4865", "expected 5 comma-separated fields"],
       ["771,4865-4866-4867,0,29", "expected 5 comma-separated fields"],
       ["771,4865-x,0,29,0", "ciphers must be dash-separated decimal numbers"],
-      ["771,4865-4866-4867,0-10-13-16-43-45-51,70000,0", "groups must be dash-separated decimal numbers"],
+      ["771,4865-4866-4867,0-10-13-16-43-45-51,70000,", "groups must be dash-separated decimal numbers"],
       ["768,4865-4866-4867,0,29,0", "unsupported TLS version 768"],
       ["772,4865-4866-4867,0,29,0", "unsupported TLS version 772"],
       ["771,,0-10,29,0", "the cipher list is empty"],
@@ -1360,10 +1360,12 @@ describe("fetch TLS fingerprint options", () => {
       ["771,49195,0-10-11-13-16-23-65281-65037,29,0", "extension 65037 is not sent"],
       ["771,4865-4866-4867,0-10-11-13-16-23-43-45-51-65281,29,0", "extension 11 is not sent"],
       ["771,4865-4866-4867,0-10-13-16-35-43-45-51,29,0", "extension 35 is not sent"],
-      ["771,4865-4866-4867,0-10-13-16-43-45-51,,0", "the supported groups list is empty"],
-      ["771,4865-4866-4867,0-10-13-16-43-45-51,2570,0", "the supported groups list is empty"],
-      ["771,4865-4866-4867,0-10-13-16-43-45-51,256-29,0", "supported group 256 is not supported"],
-      ["771,4865-4866-4867,0-10-13-16-43-45-51,29,1", "only point format 0"],
+      ["771,4865-4866-4867,0-10-13-16-43-45-51,,", "the supported groups list is empty"],
+      ["771,4865-4866-4867,0-10-13-16-43-45-51,2570,", "the supported groups list is empty"],
+      ["771,4865-4866-4867,0-10-13-16-43-45-51,256-29,", "supported group 256 is not supported"],
+      ["771,4865-4866-4867-49195,0-10-11-13-16-23-43-45-51-65281,29,1", "the point formats field must be"],
+      ["771,4865-4866-4867-49195,0-10-11-13-16-23-43-45-51-65281,29,", "the point formats field must be"],
+      ["771,4865-4866-4867,0-10-13-16-43-45-51,29,0", "the point formats field must be"],
     ])("ja3 %s", async (ja3, message) => {
       await expect(attempt({ ja3 })).rejects.toThrow(message);
     });

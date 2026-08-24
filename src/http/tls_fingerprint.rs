@@ -100,7 +100,9 @@ impl fmt::Display for Ja3Error {
             }
             Self::Group(id) => write!(f, "supported group {id} is not supported by BoringSSL"),
             Self::NoGroups => f.write_str("the supported groups list is empty"),
-            Self::PointFormats => f.write_str("only point format 0 (uncompressed) is supported"),
+            Self::PointFormats => f.write_str(
+                "the point formats field must be 0 when TLS 1.2 is offered and empty otherwise",
+            ),
         }
     }
 }
@@ -327,10 +329,11 @@ impl Ja3 {
             return Err(Ja3Error::NoGroups);
         }
 
-        // Point formats. BoringSSL only ever sends uncompressed (0).
+        // Point formats: BoringSSL sends `ec_point_formats` with only 0 (uncompressed), TLS 1.2 only.
         ids.clear();
         parse_ids(formats, "pointFormats", &mut ids)?;
-        if !matches!(ids[..], [] | [0]) {
+        let expected: &[u16] = if has_tls12 { &[0] } else { &[] };
+        if ids[..] != *expected {
             return Err(Ja3Error::PointFormats);
         }
 

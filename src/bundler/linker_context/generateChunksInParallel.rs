@@ -1063,9 +1063,52 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             ))
                         };
 
+                        // For --compile, bytecode must be generated from the
+                        // exact code units the executable stores (see
+                        // `stores_transcoded_contents` in
+                        // `StandaloneModuleGraph.rs`), or the SourceCodeKey
+                        // won't match at runtime.
+                        let transcoded = if c.options.compile_mode.is_executable()
+                            && side == options::Side::Server
+                        {
+                            bun_core::handle_oom(
+                                strings::to_wtf_units_alloc(&code_result.buffer)
+                                    .map_err(|_| bun_alloc::AllocError),
+                            )
+                        } else {
+                            None
+                        };
+                        let (source, source_encoding): (&[u8], strings::EncodingNonAscii) =
+                            match &transcoded {
+                                Some(units) => (
+                                    units.as_bytes(),
+                                    if units.is_utf16() {
+                                        strings::EncodingNonAscii::Utf16
+                                    } else {
+                                        strings::EncodingNonAscii::Latin1
+                                    },
+                                ),
+                                None => (
+                                    &code_result.buffer,
+                                    if c.options.compile_mode.is_executable() {
+                                        // Client chunks are stored `Binary`
+                                        // (raw UTF-8, read back with
+                                        // `clone_utf8`); pure-ASCII server
+                                        // text is width-identical either way.
+                                        strings::EncodingNonAscii::Utf8
+                                    } else {
+                                        // The `.jsc` loader's `already_bundled`
+                                        // path builds its runtime string with
+                                        // `clone_latin1`; the key must match.
+                                        strings::EncodingNonAscii::Latin1
+                                    },
+                                ),
+                            };
+
                         if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                             c.options.output_format,
-                            &code_result.buffer,
+                            source,
+                            source_encoding,
                             &source_provider_url,
                             c.options.bytecode_depth,
                             external_string_table.as_ref().and_then(|table| table.get()),

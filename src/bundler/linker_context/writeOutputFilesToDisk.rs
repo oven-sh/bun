@@ -404,6 +404,9 @@ pub(crate) fn write_output_files_to_disk(
                     if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                         c.options.output_format,
                         &code_result.buffer,
+                        // The `.jsc` loader's `already_bundled` path builds its
+                        // runtime string with `clone_latin1`; the key must match.
+                        bun_core::strings::EncodingNonAscii::Latin1,
                         &source_provider_url,
                         c.options.bytecode_depth,
                         None,

@@ -1411,6 +1411,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
+                source_encoding: bun_core::strings::EncodingNonAscii,
                 source_provider_url: &bun_core::String,
                 depth: u32,
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
@@ -1464,6 +1465,7 @@ pub mod bv2_impl {
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
+            source_encoding: bun_core::strings::EncodingNonAscii,
             source_provider_url: &bun_core::String,
             depth: u32,
             external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
@@ -1476,6 +1478,7 @@ pub mod bv2_impl {
             __bun_jsc_generate_cached_bytecode(
                 format,
                 source,
+                source_encoding,
                 source_provider_url,
                 depth,
                 external_strings,

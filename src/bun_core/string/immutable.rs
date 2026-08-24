@@ -2622,6 +2622,50 @@ pub fn to_utf16_alloc(
     Ok(Some(out))
 }
 
+/// UTF-8 text converted to the code units a WTF/JSC string stores it in: 8-bit
+/// Latin-1 when every code point is ≤ U+00FF, 16-bit UTF-16 otherwise.
+pub enum WtfUnits {
+    Latin1(Vec<u8>),
+    Utf16(Vec<u16>),
+}
+
+impl WtfUnits {
+    /// Raw-byte view of the code units (UTF-16 is native/little-endian).
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            WtfUnits::Latin1(bytes) => bytes,
+            WtfUnits::Utf16(units) => {
+                // SAFETY: a `u8` view over an initialized `u16` slice is always
+                // in-bounds and aligned.
+                unsafe { core::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len() * 2) }
+            }
+        }
+    }
+
+    pub fn is_utf16(&self) -> bool {
+        matches!(self, WtfUnits::Utf16(_))
+    }
+}
+
+/// Convert UTF-8 `bytes` into the width a WTF/JSC string would store them in:
+/// `Ok(None)` when `bytes` is pure ASCII (already its own Latin-1 form),
+/// otherwise [`WtfUnits::Latin1`] when every code point is ≤ U+00FF, else
+/// [`WtfUnits::Utf16`]. Invalid UTF-8 sequences become U+FFFD.
+pub fn to_wtf_units_alloc(bytes: &[u8]) -> Result<Option<WtfUnits>, ToUTF16Error> {
+    let Some(utf16) = to_utf16_alloc(bytes, false, false)? else {
+        return Ok(None);
+    };
+    if utf16.iter().any(|&unit| unit > 0xFF) {
+        return Ok(Some(WtfUnits::Utf16(utf16)));
+    }
+    let mut latin1: Vec<u8> = Vec::new();
+    latin1
+        .try_reserve_exact(utf16.len())
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
+    latin1.extend(utf16.iter().map(|&unit| unit as u8));
+    Ok(Some(WtfUnits::Latin1(latin1)))
+}
+
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
 pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
     first_non_ascii(bytes)?;

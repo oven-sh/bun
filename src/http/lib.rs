@@ -1145,11 +1145,9 @@ pub enum AlpnOffer {
     H1OrH2,
 }
 
-/// Sets SNI (when `hostname` is non-empty), the legacy-server-connect option,
-/// the ALPN protocol list for `offer`, and the per-connection ClientHello
-/// knobs from `fingerprint` (SCT and OCSP stapling are on by default). Called
-/// from `on_open` for every TLS socket — must run even when the hostname is an
-/// IP literal (with empty SNI) so ALPN is still advertised.
+/// Sets SNI (when `hostname` is non-empty), the ALPN list for `offer` and the
+/// per-connection ClientHello knobs from `fingerprint`. Called from `on_open`
+/// for every TLS socket, IP literals included (null SNI, ALPN still advertised).
 ///
 // `ssl` is the live SSL handle for a just-opened socket (BoringSSL never
 // returns null); `hostname` is null (no SNI for IP literals) or a
@@ -1182,8 +1180,7 @@ pub fn configure_http_client_with_alpn(
         let rc = boringssl::c::SSL_set_alpn_protos(ssl, alpns.as_ptr(), alpns.len());
         debug_assert_eq!(rc, 0);
 
-        // SAFETY: `ssl` is live and its handshake has not started (the socket
-        // was just opened).
+        // SAFETY: `ssl` is live and pre-handshake (the socket was just opened).
         tls_fingerprint::apply_to_ssl(
             ssl,
             fingerprint.unwrap_or(&ssl_config::Fingerprint::DEFAULT),

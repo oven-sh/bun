@@ -269,9 +269,7 @@ impl SSLConfigFromJs for SSLConfig {
     }
 }
 
-/// `ja3` and the explicit ClientHello knobs. `ja3` fills in whatever the
-/// caller left unset (cipher list, groups, version bounds, extension toggles);
-/// an explicit option always wins over the value `ja3` implies.
+/// `ja3` fills in what the caller left unset; an explicit option wins over it.
 fn apply_fingerprint_options(
     global: &JSGlobalObject,
     generated: &jsc::generated::SSLConfig,

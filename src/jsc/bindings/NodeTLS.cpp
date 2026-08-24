@@ -288,13 +288,9 @@ JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject,
 
 } // namespace Bun
 
-// BoringSSL declares this one with C++ linkage only (inside `extern "C++"` in
-// ssl.h), so the Rust fetch client cannot call it directly. It decides whether
-// the TLS 1.3 cipher suites go AES-first or ChaCha20-first in the ClientHello.
+// C++-linkage-only in ssl.h, and hidden entirely under BORINGSSL_NO_CXX (the
+// Windows build), so Rust gets it through this shim.
 #if defined(BORINGSSL_NO_CXX)
-// The Windows build compiles Bun's C++ with BORINGSSL_NO_CXX, which hides the
-// `extern "C++"` block of ssl.h. The function is still compiled into
-// BoringSSL; this is the declaration ssl.h provides elsewhere.
 namespace bssl {
 void SSL_set_aes_hw_override_for_testing(SSL* ssl, bool override_value);
 }

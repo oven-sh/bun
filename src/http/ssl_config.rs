@@ -51,8 +51,7 @@ pub struct SSLConfig {
     pub requires_custom_request_ctx: bool,
     pub is_using_default_ciphers: bool,
     pub low_memory_mode: bool,
-    /// ClientHello fingerprint knobs. Only the fetch client applies them
-    /// (`crate::tls_fingerprint`).
+    /// ClientHello shape; applied by the fetch client (`crate::tls_fingerprint`).
     pub fingerprint: Fingerprint,
     /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
     /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
@@ -60,35 +59,30 @@ pub struct SSLConfig {
     pub(crate) cached_hash: AtomicU64,
 }
 
-/// How the fetch client shapes its ClientHello beyond the cipher, group and
-/// signature-algorithm lists. Every field maps to one BoringSSL call; see
-/// `crate::tls_fingerprint::apply_to_ssl_ctx` / `apply_to_ssl`.
+/// ClientHello knobs beyond the cipher, group and sigalg lists. One BoringSSL
+/// call each; see `crate::tls_fingerprint`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Fingerprint {
-    /// `SSL_CTX_set_grease_enabled`: RFC 8701 GREASE values in the cipher,
-    /// extension, group and version lists.
+    /// RFC 8701 GREASE values (`SSL_CTX_set_grease_enabled`).
     pub grease: bool,
-    /// `SSL_set_permute_extensions`: shuffle the extension order.
+    /// Random extension order (`SSL_set_permute_extensions`).
     pub permute_extensions: bool,
-    /// `SSL_set_enable_ech_grease`: a GREASE `encrypted_client_hello` (65037).
+    /// GREASE `encrypted_client_hello`, extension 65037.
     pub ech_grease: bool,
-    /// `SSL_enable_ocsp_stapling`: `status_request` (5).
+    /// `status_request`, extension 5.
     pub ocsp_stapling: bool,
-    /// `SSL_enable_signed_cert_timestamps`: `signed_certificate_timestamp` (18).
+    /// `signed_certificate_timestamp`, extension 18.
     pub signed_cert_timestamps: bool,
-    /// Cleared: `SSL_OP_NO_TICKET`, which drops `session_ticket` (35).
+    /// `session_ticket`, extension 35 (`false` sets `SSL_OP_NO_TICKET`).
     pub session_tickets: bool,
-    /// ALPS (`application_settings`) for `h2`: 0 = off, else the extension
-    /// codepoint, 17513 (old) or 17613 (new).
+    /// ALPS for `h2`: 0 = off, else the codepoint (17513 or 17613).
     pub alps_codepoint: u16,
-    /// `compress_certificate` (27) algorithms in preference order. Values are
-    /// the RFC 8879 ids (1 zlib, 2 brotli, 3 zstd); 0 ends the list.
+    /// `compress_certificate` RFC 8879 ids in preference order, 0-terminated.
     pub cert_compression: [u8; 3],
-    /// Order of the TLS 1.3 suites in the ClientHello. BoringSSL fixes the set
-    /// but lets the client pick which of its two orders to use.
     pub tls13_cipher_order: Tls13CipherOrder,
 }
 
+/// BoringSSL fixes the TLS 1.3 suite set and offers two orders.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[repr(u8)]
 pub enum Tls13CipherOrder {

@@ -752,20 +752,17 @@ pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
 /// `#define SSL_OP_NO_TICKET 0x00004000L` — do not offer `session_ticket`.
 pub const SSL_OP_NO_TICKET: u32 = 0x0000_4000;
 
-/// `TLS1_VERSION` .. `TLS1_2_VERSION` (`openssl/tls1.h`); `TLS1_3_VERSION` is
-/// declared with the QUIC block below.
+/// `openssl/tls1.h`. `TLS1_3_VERSION` is declared with the QUIC block below.
 pub const TLS1_VERSION: u16 = 0x0301;
 pub const TLS1_1_VERSION: u16 = 0x0302;
 pub const TLS1_2_VERSION: u16 = 0x0303;
 
-/// `TLSEXT_cert_compression_*` (`openssl/tls1.h`) plus the RFC 8879 zstd id,
-/// which BoringSSL does not name.
+/// RFC 8879 certificate compression algorithm ids.
 pub const TLSEXT_cert_compression_zlib: u16 = 1;
 pub const TLSEXT_cert_compression_brotli: u16 = 2;
 pub const TLSEXT_cert_compression_zstd: u16 = 3;
 
-/// `TLSEXT_TYPE_application_settings_old` / `TLSEXT_TYPE_application_settings`
-/// (`openssl/tls1.h`): the two ALPS extension codepoints.
+/// The two ALPS extension codepoints (`openssl/tls1.h`).
 pub const TLSEXT_TYPE_application_settings_old: u16 = 17513;
 pub const TLSEXT_TYPE_application_settings: u16 = 17613;
 
@@ -856,15 +853,11 @@ pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX)
 pub(crate) type pem_password_cb =
     unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
 
-/// `int (*ssl_cert_compression_func_t)(SSL *ssl, CBB *out, const uint8_t *in,
-/// size_t in_len)`. The `CBB*` is opaque here: Bun never registers a compressor.
+/// `ssl_cert_compression_func_t`; the `CBB*` stays opaque.
 pub type ssl_cert_compression_func_t =
     unsafe extern "C" fn(*mut SSL, *mut c_void, *const u8, usize) -> c_int;
 
-/// `int (*ssl_cert_decompression_func_t)(SSL *ssl, CRYPTO_BUFFER **out,
-/// size_t uncompressed_len, const uint8_t *in, size_t in_len)`. On success the
-/// callback stores a buffer of exactly `uncompressed_len` bytes in `*out` and
-/// returns 1; BoringSSL frees it.
+/// `ssl_cert_decompression_func_t(ssl, out, uncompressed_len, in, in_len)`.
 pub type ssl_cert_decompression_func_t =
     unsafe extern "C" fn(*mut SSL, *mut *mut CRYPTO_BUFFER, usize, *const u8, usize) -> c_int;
 
@@ -954,8 +947,6 @@ unsafe extern "C" {
     // ── ClientHello fingerprint knobs (see bun_http::tls_fingerprint) ───
     pub fn SSL_CTX_set_grease_enabled(ctx: *mut SSL_CTX, enabled: c_int);
     pub fn SSL_set_permute_extensions(ssl: *mut SSL, enabled: c_int);
-    /// `compress` may be null: the context then only decompresses. Each
-    /// `alg_id` can be registered once per context.
     pub fn SSL_CTX_add_cert_compression_alg(
         ctx: *mut SSL_CTX,
         alg_id: u16,

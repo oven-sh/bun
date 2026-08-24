@@ -126,8 +126,7 @@ export const SSLConfig = b.dictionary(
       type: b.String.nullable,
       internalName: "ecdh_curve",
     },
-    // ClientHello fingerprint options. Parsed for every TLS consumer, applied
-    // by the fetch client only (src/http/tls_fingerprint.rs).
+    // ClientHello fingerprint options; only fetch applies them (src/http/tls_fingerprint.rs).
     ja3: b.String.nullable,
     grease: b.bool.nullable,
     permuteExtensions: {

@@ -1,13 +1,6 @@
-//! ClientHello fingerprint control for the fetch client.
-//!
-//! Two halves:
-//! - [`Ja3`] parses a JA3 string (`version,ciphers,extensions,groups,formats`,
-//!   decimal IANA ids) into the cipher list, group list, version bounds and
-//!   [`Fingerprint`] toggles that reproduce it. Anything BoringSSL cannot send
-//!   is a parse error, so a caller never gets a silently different fingerprint.
-//! - [`apply_to_ssl_ctx`] / [`apply_to_ssl`] turn a [`Fingerprint`] into the
-//!   BoringSSL calls, on the custom `SSL_CTX` the fetch client builds for a TLS
-//!   config and on each `SSL` before its handshake.
+//! ClientHello fingerprint control for the fetch client: [`Ja3`] parses a JA3
+//! string into BoringSSL terms (strictly: what BoringSSL cannot send is an
+//! error), and [`apply_to_ssl_ctx`] / [`apply_to_ssl`] make the calls.
 
 use core::ffi::c_int;
 use core::fmt;
@@ -18,13 +11,11 @@ use bun_core::strings;
 use crate::ssl_config::{Fingerprint, Tls13CipherOrder};
 
 unsafe extern "C" {
-    /// `src/jsc/bindings/NodeTLS.cpp`: wraps `bssl::SSL_set_aes_hw_override_for_testing`,
-    /// which only has C++ linkage.
+    /// `bssl::SSL_set_aes_hw_override_for_testing` via `NodeTLS.cpp` (C++ linkage).
     fn Bun__SSL_set_aes_hw_override(ssl: *mut ssl::SSL, aes_hw: bool);
 }
 
-// TLS 1.3 suites. Not part of the configurable cipher list: BoringSSL always
-// offers all three and orders them by `aes_hw` (see `ssl_write_client_cipher_list`).
+// TLS 1.3 suites: always all three, ordered by `aes_hw` (`ssl_write_client_cipher_list`).
 const TLS_AES_128_GCM_SHA256: u16 = 0x1301;
 const TLS_AES_256_GCM_SHA384: u16 = 0x1302;
 const TLS_CHACHA20_POLY1305_SHA256: u16 = 0x1303;
@@ -56,28 +47,17 @@ fn is_grease(value: u16) -> bool {
     value & 0x0f0f == 0x0a0a && (value >> 8) == (value & 0xff)
 }
 
+/// Each variant's `Display` is the user-facing reason.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Ja3Error {
-    /// Not five comma-separated fields.
     Shape,
-    /// A field holds something other than dash-separated decimal numbers
-    /// that fit in 16 bits.
     Number { field: &'static str },
-    /// The first field is not 769..=772.
     Version(u16),
-    /// No cipher suite at all once GREASE values are dropped.
     NoCiphers,
-    /// This BoringSSL does not implement the suite, or cannot offer it
-    /// (PSK suites need a PSK callback).
     Cipher(u16),
-    /// TLS 1.3 suites must appear as a complete set in one of BoringSSL's two
-    /// orders: AES first (`4865-4866-4867`) or ChaCha20 first (`4867-4865-4866`).
     Tls13Ciphers,
-    /// BoringSSL cannot send this extension, or the fetch client cannot toggle it.
     Extension(u16),
-    /// `SSL_get_group_name` does not know this group.
     Group(u16),
-    /// Only the uncompressed point format (`0`) is supported.
     PointFormats,
 }
 
@@ -108,18 +88,15 @@ impl fmt::Display for Ja3Error {
     }
 }
 
-/// What a JA3 string asks the ClientHello to look like, in BoringSSL terms.
+/// A JA3 string in BoringSSL terms. Versions are 0 when the string leaves
+/// them to the default; the lists are colon-separated names, empty when unset.
 #[derive(Debug, Default)]
 pub struct Ja3 {
-    /// `TLS1_VERSION`..`TLS1_3_VERSION`, or 0 to keep the default floor.
     pub min_version: u16,
-    /// `TLS1_2_VERSION` when the string offers no TLS 1.3 suite, else 0.
     pub max_version: u16,
-    /// Colon-separated IETF names for `SSL_CTX_set_cipher_list`, TLS 1.2 and
-    /// below only. Empty when the string lists TLS 1.3 suites only.
+    /// `SSL_CTX_set_cipher_list` input: TLS 1.2 and below only.
     pub ciphers: Vec<u8>,
-    /// Colon-separated group names for `SSL_CTX_set1_groups_list`. Empty when
-    /// the string lists no group.
+    /// `SSL_CTX_set1_groups_list` input.
     pub groups: Vec<u8>,
     pub fingerprint: Fingerprint,
 }
@@ -195,12 +172,10 @@ impl Ja3 {
             if cipher.is_null() {
                 return Err(Ja3Error::Cipher(id));
             }
-            // SAFETY: `cipher` is a pointer into BoringSSL's static cipher table
-            // and `SSL_CIPHER_standard_name` returns a static NUL-terminated string.
+            // SAFETY: static cipher table entry; the name is a static C string.
             let name =
                 unsafe { bun_core::ffi::cstr(ssl::SSL_CIPHER_standard_name(cipher)) }.to_bytes();
-            // The client masks PSK suites out of the ClientHello when no PSK
-            // callback is configured, and fetch never configures one.
+            // Without a PSK callback BoringSSL drops PSK suites from the hello.
             if strings::contains(name, b"_PSK_") {
                 return Err(Ja3Error::Cipher(id));
             }
@@ -223,20 +198,16 @@ impl Ja3 {
         };
         match (has_tls12, tls13.is_empty()) {
             (false, true) => return Err(Ja3Error::NoCiphers),
-            // TLS 1.3 only: no legacy suites, so no TLS 1.2 handshake either.
             (false, false) => this.min_version = ssl::TLS1_3_VERSION,
-            // No TLS 1.3 suites: the client does not speak TLS 1.3.
             (true, true) => this.max_version = ssl::TLS1_2_VERSION,
             (true, false) => {}
         }
-        // The JA3 version field is the ClientHello's legacy_version: 771 for
-        // every TLS 1.2+ client. It only carries information below that.
+        // legacy_version is 771 for every TLS 1.2+ client; only lower values carry information.
         if has_tls12 && version < ssl::TLS1_2_VERSION {
             this.min_version = version;
         }
 
-        // Extensions: the ones the fetch client can toggle set a flag; the
-        // ones BoringSSL sends on its own are accepted as-is.
+        // Extensions: toggles set a flag, the ones BoringSSL always sends pass through.
         let fp = &mut this.fingerprint;
         fp.ocsp_stapling = false;
         fp.signed_cert_timestamps = false;
@@ -281,13 +252,12 @@ impl Ja3 {
                 this.fingerprint.grease = true;
                 continue;
             }
-            // SAFETY: `SSL_get_group_name` takes a plain id and returns a
-            // static NUL-terminated string or null.
+            // SAFETY: plain-id lookup; returns a static C string or null.
             let name = unsafe { ssl::SSL_get_group_name(id) };
             if name.is_null() {
                 return Err(Ja3Error::Group(id));
             }
-            // SAFETY: non-null, static, NUL-terminated (checked above).
+            // SAFETY: non-null, static, NUL-terminated.
             push_name(
                 &mut this.groups,
                 unsafe { bun_core::ffi::cstr(name) }.to_bytes(),
@@ -305,16 +275,13 @@ impl Ja3 {
     }
 }
 
-/// Context-wide knobs: the two settings BoringSSL only exposes on the
-/// `SSL_CTX`. Both are read from the context when the handshake runs, so this
-/// may also be called on a context whose `SSL` already exists, as long as no
-/// handshake has started on it.
+/// The settings BoringSSL only exposes on the `SSL_CTX`. Both are read at
+/// handshake time, so an `SSL` may already exist on `ctx`.
 ///
 /// # Safety
 /// `ctx` must be a live `SSL_CTX*` on which no handshake has started.
 pub unsafe fn apply_to_ssl_ctx(ctx: *mut ssl::SSL_CTX, fp: &Fingerprint) {
-    // SAFETY: caller guarantees `ctx` is live; these only set flags and
-    // register static callbacks on it.
+    // SAFETY: caller guarantees `ctx` is live.
     unsafe {
         if fp.grease {
             ssl::SSL_CTX_set_grease_enabled(ctx, 1);
@@ -326,18 +293,17 @@ pub unsafe fn apply_to_ssl_ctx(ctx: *mut ssl::SSL_CTX, fp: &Fingerprint) {
                 ssl::TLSEXT_cert_compression_zstd => decompress_zstd,
                 _ => continue,
             };
-            // Only fails on OOM or a duplicate id, and `Fingerprint` never
-            // holds duplicates.
+            // Fails only on OOM or a duplicate id; `Fingerprint` holds no duplicates.
             let _ =
                 ssl::SSL_CTX_add_cert_compression_alg(ctx, u16::from(alg), None, Some(decompress));
         }
     }
 }
 
-/// Per-connection knobs. Call on a client `SSL` before its handshake starts.
+/// Per-connection knobs.
 ///
 /// # Safety
-/// `ssl` must be a live client `SSL*` whose handshake has not started.
+/// `ssl_ptr` must be a live client `SSL*` whose handshake has not started.
 pub unsafe fn apply_to_ssl(ssl_ptr: *mut ssl::SSL, fp: &Fingerprint) {
     // SAFETY: caller guarantees `ssl_ptr` is live and pre-handshake.
     unsafe {
@@ -373,14 +339,9 @@ pub unsafe fn apply_to_ssl(ssl_ptr: *mut ssl::SSL, fp: &Fingerprint) {
 }
 
 // ── compress_certificate (RFC 8879) decompression callbacks ──────────────
-//
-// BoringSSL hands over the compressed bytes and the length the peer claims;
-// the callback must produce exactly that many bytes in a `CRYPTO_BUFFER`.
-// Each decoder is given an output bound of `uncompressed_len` so a server
-// cannot make the client inflate more than it announced.
+// Each decoder writes into a buffer bounded by the announced `uncompressed_len`.
 
-/// Wraps `out` in a `CRYPTO_BUFFER` when it is exactly `uncompressed_len`
-/// bytes. Returns the BoringSSL status code.
+/// Wraps `out` in a `CRYPTO_BUFFER` when it is exactly `uncompressed_len` bytes.
 ///
 /// # Safety
 /// `out_buf` must be the `CRYPTO_BUFFER**` BoringSSL passed to the callback.
@@ -392,8 +353,7 @@ unsafe fn finish_decompression(
     if out.len() != uncompressed_len {
         return 0;
     }
-    // SAFETY: `CRYPTO_BUFFER_new` copies `out`; `out_buf` is valid per the
-    // callback contract.
+    // SAFETY: `CRYPTO_BUFFER_new` copies `out`; `out_buf` is valid per the callback contract.
     let buf = unsafe { ssl::CRYPTO_BUFFER_new(out.as_ptr(), out.len(), core::ptr::null_mut()) };
     if buf.is_null() {
         return 0;
@@ -449,8 +409,6 @@ unsafe extern "C" fn decompress_brotli(
         None,
     );
     BrotliDecoder::destroy_instance(decoder);
-    // Anything but a completed stream that consumed all input and filled the
-    // announced length exactly is a malformed or oversized certificate.
     if result != BrotliDecoderResult::success || available_in != 0 {
         return 0;
     }
@@ -477,8 +435,7 @@ unsafe extern "C" fn decompress_zlib(
     let Ok(mut decoder) = InflateDecoder::new(bun_zlib::MAX_WBITS) else {
         return 0;
     };
-    // `step` uses the whole spare capacity as the output window, so the
-    // decoder cannot write past the announced length (plus allocator slack).
+    // The spare capacity is the output window, so inflate cannot write past it.
     let (consumed, rc) = decoder.step(input, &mut out, 0, FlushValue::Finish);
     if rc != ReturnCode::StreamEnd || consumed != input.len() {
         return 0;
@@ -499,8 +456,7 @@ unsafe extern "C" fn decompress_zstd(
     let Some(mut out) = reserve_exact(uncompressed_len) else {
         return 0;
     };
-    // One-shot decode bounded by the spare capacity: a frame larger than
-    // `uncompressed_len` fails with `dstSize_tooSmall`.
+    // Bounded by the spare capacity: a larger frame fails with `dstSize_tooSmall`.
     if bun_zstd::decompress_append(&mut out, input).is_err() {
         return 0;
     }

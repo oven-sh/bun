@@ -535,8 +535,9 @@ describe("web worker", () => {
       // Wait for the flood to reach us (worker boot is slow in debug builds).
       // Three timer turns while it is running is the property; not the timing.
       await flooding.promise;
+      const before = received;
       for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
-      expect(received).toBeGreaterThan(0);
+      expect(received).toBeGreaterThan(before);
       w.terminate();
       await once(w, "close");
     });

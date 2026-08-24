@@ -159,7 +159,7 @@ function receiveMessageFromWorker(source, value, memory) {
 // Bun half of Node's createMainThreadPort: create the channel linking a (future)
 // thread to the main thread. Called before `new Worker`.
 function createMessagingChannel() {
-  const { port1, port2 } = new globalThis.MessageChannel();
+  const { port1, port2 } = new MessageChannel();
   // port1 (portToMain) stays with the hub; port2 (portToWorker) is transferred to
   // the new thread where it becomes that thread's mainThreadPort.
   return { portToMain: port1, portToWorker: port2 };

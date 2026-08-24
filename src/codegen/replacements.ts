@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
@@ -51,39 +53,38 @@ export const globalReplacements: ReplacementRule[] = [
   },
 ];
 
-// This is a list of globals we should access using @ notation
-// This prevents a global override attacks.
-// Note that the public `Bun` global is immutable.
+// Globals from ZigGlobalObject.lut.txt whose value is an object the runtime
+// creates (constructors, `process`, `crypto`, ...). Builtins reference these as
+// @Name, which Zig::GlobalObject::getOwnPropertySlot resolves to the original
+// value even if user code replaced or deleted globalThis.Name — the same
+// guarantee Node's lib/ gets from taking them off internalBinding().
+export const intrinsicGlobals = [
+  ...readFileSync(path.join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8").matchAll(
+    /^\s+([A-Za-z]\w*)\s+(\S+)\s+(\S+)\s*$/gm,
+  ),
+]
+  .filter(
+    ([, , value, attributes]) =>
+      /\b(CellProperty|ClassStructure)\b/.test(attributes) ||
+      (/\bPropertyCallback\b/.test(attributes) && value.endsWith("ConstructorCallback")),
+  )
+  .map(([, name]) => name);
+
+// Globals builtins access as @Name so user code replacing globalThis.Name cannot
+// reach them. The rest are provided by JSC.
 // undefined -> __intrinsic__undefined -> @undefined
 export const globalsToPrefix = [
-  "AbortSignal",
+  ...intrinsicGlobals,
   "Array",
   "ArrayBuffer",
-  "Buffer",
   "Infinity",
   "Promise",
-  "ReadableByteStreamController",
-  "ReadableStream",
-  "ReadableStreamBYOBReader",
-  "ReadableStreamBYOBRequest",
-  "ReadableStreamDefaultController",
-  "ReadableStreamDefaultReader",
-  "TransformStream",
-  "TransformStreamDefaultController",
   "Uint8Array",
   "String",
   "RegExp",
-  "WritableStream",
-  "WritableStreamDefaultController",
-  "WritableStreamDefaultWriter",
   "isFinite",
   "undefined",
 ];
-
-replacements.push({
-  from: new RegExp(`\\bextends\\s+(${globalsToPrefix.join("|")})`, "g"),
-  to: "extends __no_intrinsic__%1",
-});
 
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
 // Make sure to define in ./builtins.d.ts

@@ -57,7 +57,7 @@ function open(port?: number, host?: string, wait?: boolean) {
   const hostname = typeof host === "string" && host.length > 0 ? host : "127.0.0.1";
   // Bracket bare IPv6 hosts so they survive URL parsing.
   const hostPart = hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
-  const requestedUrl = `ws://${hostPart}:${portNumber}/${globalThis.crypto.randomUUID()}`;
+  const requestedUrl = `ws://${hostPart}:${portNumber}/${crypto.randomUUID()}`;
 
   const disposable = {
     __proto__: null,

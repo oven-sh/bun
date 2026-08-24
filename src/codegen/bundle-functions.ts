@@ -49,7 +49,7 @@ import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
-import { applyGlobalReplacements, define } from "./replacements";
+import { applyGlobalReplacements, define, intrinsicGlobals } from "./replacements";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -329,8 +329,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
             (usesAssert ? createAssertClientJS(fn.name) : ""),
         )
         .replace(/^\((async )?function\(/, "($1function (")
-        .replace(/__intrinsic__/g, "@")
-        .replace(/__no_intrinsic__/g, "") + "\n";
+        .replace(/__intrinsic__/g, "@") + "\n";
 
     const errors = [...finalReplacement.matchAll(/@bundleError\((.*)\)/g)];
     if (errors.length) {
@@ -415,7 +414,8 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
   }
   const combinedSourceCodeLength = combinedSourceCode.length;
 
-  let additionalPrivateNames = new Set();
+  // Every @Name a builtin can reference must exist as a private symbol.
+  let additionalPrivateNames = new Set(intrinsicGlobals);
 
   function privateName(name) {
     additionalPrivateNames.add(name);

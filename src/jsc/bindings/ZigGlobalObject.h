@@ -128,6 +128,7 @@ public:
 
     ~GlobalObject();
     static void destroy(JSC::JSCell*);
+    static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
 
     static constexpr const JSC::ClassInfo* info() { return &s_info; }
 

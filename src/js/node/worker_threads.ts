@@ -52,16 +52,12 @@ function validateWorkerFilename(filename) {
   throw $ERR_WORKER_PATH(message);
 }
 
-const {
-  MessageChannel,
-  BroadcastChannel,
-  Worker: WebWorker,
-} = globalThis as typeof globalThis & {
-  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-  // instance. This is so that it can emit the `worker` event on the process with the
-  // node:worker_threads instance instead of the Web Worker instance.
-  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
-};
+// The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+// instance. This is so that it can emit the `worker` event on the process with the
+// node:worker_threads instance instead of the Web Worker instance.
+const WebWorker = $Worker as unknown as new (
+  ...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]
+) => WebWorker;
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
@@ -281,10 +277,7 @@ function injectFakeEmitter(Class) {
   Object.setPrototypeOf(proto, inherited);
 }
 
-const _MessagePort = globalThis.MessagePort;
-injectFakeEmitter(_MessagePort);
-
-const MessagePort = _MessagePort;
+injectFakeEmitter(MessagePort);
 
 // node's close(cb) registers cb as a one-time "close" listener before the native close.
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
@@ -442,7 +435,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
       item !== null &&
       typeof item === "object" &&
       !(item instanceof ArrayBuffer) &&
-      !(item instanceof _MessagePort) &&
+      !(item instanceof MessagePort) &&
       !$isTypedArrayView(item)
     ) {
       hasCandidate = true;

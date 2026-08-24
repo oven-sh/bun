@@ -358,25 +358,23 @@ export function pch(
   opts: {
     flags: string[];
     /**
-     * Files whose change must invalidate the PCH. Typically: dep output
-     * libs (libJavaScriptCore.a etc.).
+     * Files whose change must invalidate the PCH: dep output libs
+     * (libJavaScriptCore.a etc.) and generated headers.
      *
-     * Can't be order-only: the depfile tracks headers, but ninja stats at
-     * startup. Local WebKit headers live in buildDir and get regenerated
-     * by dep_build MID-RUN. At startup ninja sees old headers → thinks
-     * PCH is fresh → cxx fails with "file modified since PCH was built"
-     * → needs a second build. With these implicit, restat propagates the
-     * lib change to PCH and it rebuilds in the same run.
+     * Can't be order-only: the depfile tracks headers, but ninja stats them
+     * at startup and records them by absolute path (a different node from
+     * the producing edge's declared output). Anything regenerated MID-RUN —
+     * local WebKit headers by dep_build, codegen headers by their step —
+     * leaves the PCH looking fresh → cxx builds against a stale PCH or fails
+     * with "file modified since PCH was built" → needs a second build. With
+     * these implicit, restat propagates the change to the PCH and it
+     * rebuilds in the same run.
      *
      * Cost: PCH also rebuilds on unrelated dep bumps (brotli etc.). Rare
      * enough to accept for correctness.
      */
     implicitInputs?: string[];
-    /**
-     * Must exist before PCH compiles; changes don't invalidate it.
-     * Codegen outputs go here — they only change when inputs change,
-     * and inputs don't change mid-build.
-     */
+    /** Must exist before PCH compiles; changes don't invalidate it. */
     orderOnlyInputs?: string[];
   },
 ): { pch: string; wrapperHeader: string } {

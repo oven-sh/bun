@@ -26,9 +26,7 @@
  * the per-file Generated*.h headers and not just the .cpp that gets compiled.
  *
  * Files nothing compiles may stay undeclared (.d.ts twins, bundle-modules'
- * eval/ dir, JSSink.lut.txt consumed within its own step). The remaining
- * #included exception is BunBuiltinNames+extras.h from bundle-functions.ts,
- * reached through the PCH.
+ * eval/ dir, JSSink.lut.txt consumed within its own step).
  */
 
 import { spawnSync } from "node:child_process";
@@ -759,10 +757,16 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
   // stale error numbers in the JS bundles while the C++ enum regenerates.
   const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
+  // replacements.ts derives the @Name intrinsic globals from this table, and
+  // bundle-functions.ts emits BunBuiltinNames+extras.h as the ones missing from
+  // BunBuiltinNames.h.
+  const globalObjectTableInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ZigGlobalObject.lut.txt");
+  const builtinNamesInput = resolve(cfg.cwd, "src", "js", "builtins", "BunBuiltinNames.h");
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.h"),
+    resolve(cfg.codegenDir, "BunBuiltinNames+extras.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistryConstants.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+createInternalModuleById.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h"),
@@ -785,7 +789,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput, globalObjectTableInput, builtinNamesInput],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

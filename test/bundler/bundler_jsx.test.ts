@@ -1,5 +1,5 @@
-import { describe, expect } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -523,6 +523,175 @@ describe("bundler", () => {
     run: {
       stdout: `{\n  $$typeof: Symbol(hello_jsxDEV),\n  type: \"div\",\n  props: {\n    children: \"Hello World\",\n  },\n  key: undefined,\n}`,
     },
+  });
+
+  // The classic transform reads the first member of the factory and fragment
+  // member lists. A factory or fragment option whose text has no identifier
+  // in it ("." or "..") must keep the list that was configured before it,
+  // instead of reaching the parser as an empty list (which crashed it with
+  // "index out of bounds: the len is 0 but the index is 0").
+  describe("factoryMemberList", () => {
+    // Defines the default factory and fragment (React.createElement and
+    // React.Fragment), so the output shows which factory the transform used.
+    const defaultFactoryPrelude = /* js */ `
+      const React = {
+        createElement: (tag, props) => ["default factory", tag, props],
+        Fragment: "default fragment",
+      };
+    `;
+    const defaultFactoryStdout = `[["default factory","a",null],["default factory","default fragment",null]]`;
+
+    itBundled("jsx/TsconfigFactoryWithoutIdentifierKeepsDefault", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          ${defaultFactoryPrelude}
+          console.log(JSON.stringify([<a></a>, <></>]));
+        `,
+        "/tsconfig.json": /* json */ `{
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": ".",
+            "jsxFragmentFactory": ".."
+          }
+        }`,
+      },
+      target: "bun",
+      bundleWarnings: {
+        "/tsconfig.json": ['Invalid JSX member expression: "."', 'Invalid JSX member expression: ".."'],
+      },
+      run: { stdout: defaultFactoryStdout },
+    });
+
+    itBundled("jsx/TsconfigFactoryNotAnIdentifierKeepsDefault", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          ${defaultFactoryPrelude}
+          console.log(JSON.stringify([<a></a>, <></>]));
+        `,
+        "/tsconfig.json": /* json */ `{
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "foo-bar",
+            "jsxFragmentFactory": ""
+          }
+        }`,
+      },
+      target: "bun",
+      // An empty string is treated as unset and does not warn.
+      bundleWarnings: {
+        "/tsconfig.json": ['Invalid JSX member expression: "foo-bar"'],
+      },
+      run: { stdout: defaultFactoryStdout },
+    });
+
+    test("bun run keeps the default factory when tsconfig jsxFactory has no identifier", async () => {
+      using dir = tempDir("jsx-factory-without-identifier", {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { jsx: "react", jsxFactory: ".", jsxFragmentFactory: "." },
+        }),
+        "index.tsx": `
+          ${defaultFactoryPrelude}
+          console.log(JSON.stringify([<a></a>, <></>]));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.tsx"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe(defaultFactoryStdout + "\n");
+      expect(stderr).toContain('Invalid JSX member expression: "."');
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.Transpiler keeps the default factory when tsconfig jsxFactory is empty", async () => {
+      const tsconfig = JSON.stringify({
+        compilerOptions: { jsx: "react", jsxFactory: "", jsxFragmentFactory: "" },
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const transpiler = new Bun.Transpiler({ loader: "jsx", tsconfig: ${JSON.stringify(tsconfig)} });
+           console.log(transpiler.transformSync("export default [<a></a>, <></>];"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe(
+        'export default [React.createElement("a", null), React.createElement(React.Fragment, null)];\n\n',
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    itBundled("jsx/PragmaFactoryWithoutIdentifierKeepsDefault", {
+      files: {
+        "/index.jsx": /* jsx */ `
+          // @jsx .
+          // @jsxFrag ..
+          ${defaultFactoryPrelude}
+          console.log(JSON.stringify([<a></a>, <></>]));
+        `,
+      },
+      target: "bun",
+      jsx: { runtime: "classic" },
+      bundleWarnings: {
+        "/index.jsx": ['Invalid JSX factory: "."', 'Invalid JSX fragment: ".."'],
+      },
+      run: { stdout: defaultFactoryStdout },
+    });
+
+    // "React" is a prefix of the default "React.createElement" / "React.Fragment".
+    // It used to compare equal to the default, which left the default in place.
+    const prefixPrelude = /* js */ `
+      function React(tag, props) {
+        return [tag === React ? "fragment" : tag, props];
+      }
+    `;
+    const prefixStdout = `[["a",null],["fragment",null]]`;
+
+    // "cli" passes the option as --jsx-factory, "api" as Bun.build({ jsx: { factory } }).
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`jsx/FactoryPrefixOfDefault-${backend}`, {
+        files: {
+          "/index.jsx": /* jsx */ `
+            ${prefixPrelude}
+            console.log(JSON.stringify([<a></a>, <></>]));
+          `,
+        },
+        backend,
+        target: "bun",
+        jsx: { runtime: "classic", factory: "React", fragment: "React" },
+        run: { stdout: prefixStdout },
+        onAfterBundle(api) {
+          expect(api.readFile("out.js")).toContain("React(React, null)");
+        },
+      });
+    }
+
+    itBundled("jsx/PragmaFactoryPrefixOfDefault", {
+      files: {
+        "/index.jsx": /* jsx */ `
+          // @jsx React
+          // @jsxFrag React
+          ${prefixPrelude}
+          console.log(JSON.stringify([<a></a>, <></>]));
+        `,
+      },
+      target: "bun",
+      jsx: { runtime: "classic" },
+      run: { stdout: prefixStdout },
+      onAfterBundle(api) {
+        expect(api.readFile("out.js")).toContain("React(React, null)");
+      },
+    });
   });
 
   // Test for jsxSideEffects option - equivalent to esbuild's TestJSXSideEffects

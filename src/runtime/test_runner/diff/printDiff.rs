@@ -4,11 +4,9 @@ use std::fmt::Write;
 
 use bstr::BStr;
 
-use super::diff_match_patch;
-use bun_core::strings;
-
-type Dmp = diff_match_patch::DiffMatchPatch<u8>;
-type DmpUsize = diff_match_patch::DiffMatchPatch<usize>;
+use super::text_diff::{self as diff, Hunk};
+use bun_core::output::ansi as colors;
+use bun_core::strings::{self, str_utf8};
 
 pub(crate) struct DiffConfig {
     pub(crate) min_bytes_before_chunking: usize,
@@ -28,13 +26,6 @@ impl DiffConfig {
             truncate_context: if is_agent { 50 } else { 100 },
         }
     }
-}
-
-fn remove_trailing_newline(text: &[u8]) -> &[u8] {
-    if !text.ends_with(b"\n") {
-        return text;
-    }
-    &text[0..text.len() - 1]
 }
 
 pub(crate) fn print_diff_main(
@@ -58,654 +49,584 @@ pub(crate) fn print_diff_main(
         return Ok(());
     }
 
-    // check if the diffs are single-line
+    let mut p = Printer {
+        out: Vec::with_capacity(
+            ((received_slice.len() + expected_slice.len()) * 2 + 256).min(FLUSH_AT * 2),
+        ),
+        writer,
+        result: Ok(()),
+        colors: config.enable_ansi_colors,
+        limit: config.truncate_threshold.max(config.truncate_context * 2),
+        config,
+        chars: diff::CharDiff::default(),
+    };
+
     if strings::index_of_char(received_slice, b'\n').is_none()
         && strings::index_of_char(expected_slice, b'\n').is_none()
     {
-        print_modified_segment(
-            &DiffSegment {
-                removed: expected_slice,
-                inserted: received_slice,
-                mode: DiffSegmentMode::Modified,
-                removed_line_count: 0,
-                inserted_line_count: 0,
-                skip: false,
-            },
-            writer,
-            config,
-            ModifiedStyle { single_line: true },
-        )?;
-        return Ok(());
+        p.modified(expected_slice, received_slice, true);
+    } else {
+        let hunks = diff::diff_lines(expected_slice, received_slice);
+        p.diff(expected_slice, received_slice, &hunks);
     }
-
-    let mut dmp = DmpUsize::default();
-    dmp.config.diff_timeout = 200;
-    let lines_to_chars = bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(
-        expected_slice,
-        received_slice,
-    ));
-    let char_diffs =
-        bun_core::handle_oom(dmp.diff(&lines_to_chars.chars_1, &lines_to_chars.chars_2, false));
-    let diffs = bun_core::handle_oom(diff_match_patch::diff_chars_to_lines(
-        &char_diffs,
-        lines_to_chars.line_array.as_slice(),
-    ));
-
-    let mut diff_segments: Vec<DiffSegment> = Vec::new();
-    for diff in diffs.iter() {
-        if diff.operation == diff_match_patch::Operation::Delete {
-            diff_segments.push(DiffSegment {
-                removed: &diff.text,
-                inserted: b"",
-                mode: DiffSegmentMode::Removed,
-                removed_line_count: 0,
-                inserted_line_count: 0,
-                skip: false,
-            });
-        } else if diff.operation == diff_match_patch::Operation::Insert {
-            if !diff_segments.is_empty()
-                && diff_segments[diff_segments.len() - 1].mode == DiffSegmentMode::Removed
-            {
-                let last = diff_segments.len() - 1;
-                diff_segments[last].inserted = &diff.text;
-                diff_segments[last].mode = DiffSegmentMode::Modified;
-            } else {
-                diff_segments.push(DiffSegment {
-                    removed: b"",
-                    inserted: &diff.text,
-                    mode: DiffSegmentMode::Inserted,
-                    removed_line_count: 0,
-                    inserted_line_count: 0,
-                    skip: false,
-                });
-            }
-        } else if diff.operation == diff_match_patch::Operation::Equal {
-            diff_segments.push(DiffSegment {
-                removed: &diff.text,
-                inserted: &diff.text,
-                mode: DiffSegmentMode::Equal,
-                removed_line_count: 0,
-                inserted_line_count: 0,
-                skip: false,
-            });
-        }
-    }
-
-    // trim all segments except the last one
-    if !diff_segments.is_empty() {
-        let last = diff_segments.len() - 1;
-        for diff_segment in &mut diff_segments[0..last] {
-            diff_segment.removed = remove_trailing_newline(diff_segment.removed);
-            diff_segment.inserted = remove_trailing_newline(diff_segment.inserted);
-        }
-    }
-
-    // Determine if the diff needs to be chunked
-    if expected_slice.len() > config.min_bytes_before_chunking
-        || received_slice.len() > config.min_bytes_before_chunking
-    {
-        // Split 'equal' segments into lines
-        let mut new_diff_segments: Vec<DiffSegment> = Vec::new();
-
-        for diff_segment in &diff_segments {
-            if diff_segment.mode == DiffSegmentMode::Equal {
-                for line in strings::split(diff_segment.removed, b"\n") {
-                    new_diff_segments.push(DiffSegment {
-                        removed: line,
-                        inserted: line,
-                        mode: DiffSegmentMode::Equal,
-                        removed_line_count: 0,
-                        inserted_line_count: 0,
-                        skip: true,
-                    });
-                }
-            } else {
-                new_diff_segments.push(*diff_segment);
-            }
-        }
-
-        diff_segments = new_diff_segments;
-
-        // Forward pass: unskip segments after non-equal segments
-        // reshaped for borrowck (capture len before mutable slice borrow)
-        let len = diff_segments.len();
-        for i in 0..len {
-            if diff_segments[i].mode != DiffSegmentMode::Equal {
-                let end = i
-                    .saturating_add(config.chunk_context_lines)
-                    .saturating_add(1)
-                    .min(len);
-                for seg in &mut diff_segments[i..end] {
-                    seg.skip = false;
-                }
-            }
-        }
-
-        {
-            // Reverse pass: unskip segments before non-equal segments
-            let mut i = diff_segments.len();
-            while i > 0 {
-                i -= 1;
-                if diff_segments[i].mode != DiffSegmentMode::Equal {
-                    let start = i.saturating_sub(config.chunk_context_lines);
-                    for seg in &mut diff_segments[start..i + 1] {
-                        seg.skip = false;
-                    }
-                }
-            }
-        }
-    }
-
-    // fill removed_line_count and inserted_line_count
-    for segment in &mut diff_segments {
-        for &char in segment.removed {
-            if char == b'\n' {
-                segment.removed_line_count += 1;
-            }
-        }
-        segment.removed_line_count += 1;
-
-        for &char in segment.inserted {
-            if char == b'\n' {
-                segment.inserted_line_count += 1;
-            }
-        }
-        segment.inserted_line_count += 1;
-    }
-    print_diff(writer, &diff_segments, config)
+    p.flush();
+    p.result
 }
 
-use bun_core::output::ansi as colors;
+/// Rendered output is handed to the writer in chunks of about this size, cut
+/// at row boundaries.
+const FLUSH_AT: usize = 64 << 10;
 
-mod prefix_styles {
-    use super::{PrefixStyle, colors};
-    pub(super) const INSERTED: PrefixStyle = PrefixStyle {
-        msg: "+ ",
-        color: colors::RED,
-    };
-    pub(super) const REMOVED: PrefixStyle = PrefixStyle {
-        msg: "- ",
-        color: colors::GREEN,
-    };
-    pub(super) const EQUAL: PrefixStyle = PrefixStyle {
-        msg: "  ",
-        color: "",
-    };
-    pub(super) const SINGLE_LINE_INSERTED: PrefixStyle = PrefixStyle {
-        msg: "Received: ",
-        color: "",
-    };
-    pub(super) const SINGLE_LINE_REMOVED: PrefixStyle = PrefixStyle {
-        msg: "Expected: ",
-        color: "",
-    };
-}
-
-mod base_styles {
-    use super::{Style, colors, prefix_styles};
-    pub(super) const RED_BG_INSERTED: Style = Style {
-        prefix: prefix_styles::INSERTED,
-        text_color: const_format::concatcp!(colors::RED, colors::INVERT),
-    };
-    pub(super) const GREEN_BG_REMOVED: Style = Style {
-        prefix: prefix_styles::REMOVED,
-        text_color: const_format::concatcp!(colors::GREEN, colors::INVERT),
-    };
-    pub(super) const DIM_EQUAL: Style = Style {
-        prefix: prefix_styles::EQUAL,
-        text_color: colors::DIM,
-    };
-    pub(super) const RED_FG_INSERTED: Style = Style {
-        prefix: prefix_styles::INSERTED,
-        text_color: colors::RED,
-    };
-    pub(super) const GREEN_FG_REMOVED: Style = Style {
-        prefix: prefix_styles::REMOVED,
-        text_color: colors::GREEN,
-    };
+#[derive(Clone, Copy)]
+struct Style {
+    prefix: &'static str,
+    prefix_color: &'static str,
+    text_color: &'static str,
 }
 
 mod styles {
-    use super::{Style, base_styles};
-    pub(super) const INSERTED_LINE: Style = base_styles::RED_FG_INSERTED;
-    pub(super) const REMOVED_LINE: Style = base_styles::GREEN_FG_REMOVED;
-    pub(super) const INSERTED_DIFF: Style = base_styles::RED_FG_INSERTED;
-    pub(super) const REMOVED_DIFF: Style = base_styles::GREEN_FG_REMOVED;
-    pub(super) const EQUAL: Style = base_styles::DIM_EQUAL;
-    pub(super) const INSERTED_EQUAL: Style = base_styles::RED_FG_INSERTED;
-    pub(super) const REMOVED_EQUAL: Style = base_styles::GREEN_FG_REMOVED;
+    use super::{Style, colors};
+    const RED_INVERT: &str = const_format::concatcp!(colors::RED, colors::INVERT);
+    const GREEN_INVERT: &str = const_format::concatcp!(colors::GREEN, colors::INVERT);
+
+    pub(super) const INSERTED: Style = Style {
+        prefix: "+ ",
+        prefix_color: colors::RED,
+        text_color: colors::RED,
+    };
+    pub(super) const REMOVED: Style = Style {
+        prefix: "- ",
+        prefix_color: colors::GREEN,
+        text_color: colors::GREEN,
+    };
+    pub(super) const INSERTED_WHITESPACE: Style = Style {
+        text_color: RED_INVERT,
+        ..INSERTED
+    };
+    pub(super) const REMOVED_WHITESPACE: Style = Style {
+        text_color: GREEN_INVERT,
+        ..REMOVED
+    };
+    pub(super) const EQUAL: Style = Style {
+        prefix: "  ",
+        prefix_color: "",
+        text_color: colors::DIM,
+    };
+    pub(super) const SINGLE_LINE_INSERTED: Style = Style {
+        prefix: "Received: ",
+        prefix_color: "",
+        ..INSERTED
+    };
+    pub(super) const SINGLE_LINE_REMOVED: Style = Style {
+        prefix: "Expected: ",
+        prefix_color: "",
+        ..REMOVED
+    };
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DiffSegmentMode {
-    Equal,
-    Removed,
-    Inserted,
-    Modified,
+struct Printer<'c, W: Write> {
+    out: Vec<u8>,
+    writer: &'c mut W,
+    result: std::fmt::Result,
+    colors: bool,
+    /// Lines longer than this have their middle elided.
+    limit: usize,
+    config: &'c DiffConfig,
+    chars: diff::CharDiff,
 }
 
-// `removed`/`inserted` borrow from caller input and diff_match_patch output
-// (tracked by `'a`).
-#[derive(Copy, Clone)]
-pub struct DiffSegment<'a> {
-    pub(crate) removed: &'a [u8],
-    pub(crate) inserted: &'a [u8],
-    pub(crate) mode: DiffSegmentMode,
-    pub(crate) removed_line_count: usize,
-    pub(crate) inserted_line_count: usize,
-    pub(crate) skip: bool,
-}
-
-fn print_diff_footer(
-    writer: &mut impl Write,
-    config: &DiffConfig,
-    removed_diff_lines: usize,
-    inserted_diff_lines: usize,
-) -> std::fmt::Result {
-    if config.enable_ansi_colors {
-        writer.write_str(styles::REMOVED_LINE.prefix.color)?;
-    }
-    writer.write_str(styles::REMOVED_LINE.prefix.msg)?;
-    writer.write_str("Expected")?;
-    write!(
-        writer,
-        "  {}{}",
-        styles::REMOVED_LINE.prefix.msg,
-        removed_diff_lines
-    )?;
-    if config.enable_ansi_colors {
-        writer.write_str(colors::RESET)?;
-    }
-    writer.write_str("\n")?;
-    if config.enable_ansi_colors {
-        writer.write_str(styles::INSERTED_LINE.prefix.color)?;
-    }
-    writer.write_str(styles::INSERTED_LINE.prefix.msg)?;
-    writer.write_str("Received")?;
-    write!(
-        writer,
-        "  {}{}",
-        styles::INSERTED_LINE.prefix.msg,
-        inserted_diff_lines
-    )?;
-    if config.enable_ansi_colors {
-        writer.write_str(colors::RESET)?;
-    }
-    Ok(())
-}
-
+/// One row-group of the rendered diff. `Equal` covers a whole run of
+/// unchanged lines; context trimming happens at print time.
 #[derive(Clone, Copy)]
-pub struct PrefixStyle {
-    pub(crate) msg: &'static str,
-    pub(crate) color: &'static str,
+enum Segment<'a> {
+    Equal {
+        text: &'a [u8],
+        lines: usize,
+    },
+    Removed {
+        text: &'a [u8],
+        lines: usize,
+    },
+    Inserted {
+        text: &'a [u8],
+        lines: usize,
+    },
+    Modified {
+        removed: &'a [u8],
+        inserted: &'a [u8],
+        removed_lines: usize,
+        inserted_lines: usize,
+    },
+    /// Unchanged lines elided from the output.
+    Skipped {
+        lines: usize,
+    },
 }
 
-#[derive(Clone, Copy)]
-pub struct Style {
-    pub(crate) prefix: PrefixStyle,
-    pub(crate) text_color: &'static str,
+fn write_usize(out: &mut Vec<u8>, n: usize) {
+    out.extend_from_slice(bun_core::fmt::itoa(&mut bun_core::fmt::ItoaBuf::new(), n));
 }
 
-fn print_line_prefix(
-    writer: &mut impl Write,
-    config: &DiffConfig,
-    prefix: PrefixStyle,
-) -> std::fmt::Result {
-    if config.enable_ansi_colors {
-        writer.write_str(prefix.color)?;
-    }
-    writer.write_str(prefix.msg)?;
-    if config.enable_ansi_colors {
-        writer.write_str(colors::RESET)?;
-    }
-    Ok(())
+fn line_count(text: &[u8]) -> usize {
+    strings::count_char(text, b'\n') + 1
 }
 
-fn print_truncated_line(
-    line: &[u8],
-    writer: &mut impl Write,
-    config: &DiffConfig,
-    style: Style,
-) -> std::fmt::Result {
-    if line.len() <= config.truncate_threshold || line.len() <= config.truncate_context * 2 {
-        if config.enable_ansi_colors {
-            writer.write_str(style.text_color)?;
+fn single_line_pair(a: &[u8], b: &[u8]) -> bool {
+    strings::index_of_char(a, b'\n').is_none() && strings::index_of_char(b, b'\n').is_none()
+}
+
+fn max_line_len(text: &[u8]) -> usize {
+    let mut max = 0;
+    let mut start = 0;
+    loop {
+        let end =
+            strings::index_of_char_usize(&text[start..], b'\n').map_or(text.len(), |i| start + i);
+        max = max.max(end - start);
+        if end == text.len() {
+            return max;
         }
-        write!(writer, "{}", BStr::new(line))?;
-        if config.enable_ansi_colors {
-            writer.write_str(colors::RESET)?;
+        start = end + 1;
+    }
+}
+
+/// Byte offset just past the `n`th newline, or `None` if there are fewer.
+fn after_nth_newline(text: &[u8], n: usize) -> Option<usize> {
+    let mut at = 0;
+    for _ in 0..n {
+        at += strings::index_of_char_usize(&text[at..], b'\n')? + 1;
+    }
+    Some(at)
+}
+
+/// Byte offset of the start of the `n`th-from-last line, or `None` if there
+/// are no more than `n` lines.
+fn start_of_last_n_lines(text: &[u8], n: usize) -> Option<usize> {
+    let mut at = text.len();
+    for _ in 0..n {
+        at = strings::last_index_of_char(&text[..at], b'\n')?;
+    }
+    Some(at + 1)
+}
+
+impl<'c, W: Write> Printer<'c, W> {
+    #[inline]
+    fn s(&mut self, s: &str) {
+        self.out.extend_from_slice(s.as_bytes());
+    }
+    #[inline]
+    fn b(&mut self, b: &[u8]) {
+        self.out.extend_from_slice(b);
+    }
+    #[inline]
+    fn color(&mut self, c: &str) {
+        if self.colors {
+            self.s(c);
         }
-        return Ok(());
     }
-
-    // Line is too long, truncate it.
-    if config.enable_ansi_colors {
-        writer.write_str(style.text_color)?;
+    fn num(&mut self, n: usize) {
+        write_usize(&mut self.out, n);
     }
-    write!(writer, "{}", BStr::new(&line[0..config.truncate_context]))?;
-    if config.enable_ansi_colors {
-        writer.write_str(colors::RESET)?;
+    /// Hands the buffer to the writer. Only called between rows, so a chunk
+    /// never ends inside a UTF-8 sequence that the input didn't already break.
+    fn flush(&mut self) {
+        if self.result.is_ok() && !self.out.is_empty() {
+            self.result = match str_utf8(&self.out) {
+                Some(s) => self.writer.write_str(s),
+                None => write!(self.writer, "{}", BStr::new(&self.out)),
+            };
+        }
+        self.out.clear();
     }
-
-    if config.enable_ansi_colors {
-        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97
-    }
-    // The context is shown on both sides, so we truncate line.len - 2 * context
-    write!(
-        writer,
-        "... ({} bytes truncated) ...",
-        line.len() - 2 * config.truncate_context
-    )?;
-    if config.enable_ansi_colors {
-        writer.write_str(colors::RESET)?;
-    }
-
-    if config.enable_ansi_colors {
-        writer.write_str(style.text_color)?;
-    }
-    write!(
-        writer,
-        "{}",
-        BStr::new(&line[line.len() - config.truncate_context..])
-    )?;
-    if config.enable_ansi_colors {
-        writer.write_str(colors::RESET)?;
-    }
-    Ok(())
-}
-
-fn print_segment(
-    text: &[u8],
-    writer: &mut impl Write,
-    config: &DiffConfig,
-    style: Style,
-) -> std::fmt::Result {
-    let mut lines = strings::split(text, b"\n");
-
-    print_truncated_line(lines.next().unwrap(), writer, config, style)?;
-
-    for line in lines {
-        writer.write_str("\n")?;
-        print_line_prefix(writer, config, style.prefix)?;
-        print_truncated_line(line, writer, config, style)?;
-    }
-    Ok(())
-}
-
-fn print_modified_segment_without_diffdiff(
-    writer: &mut impl Write,
-    config: &DiffConfig,
-    segment: &DiffSegment<'_>,
-    modified_style: ModifiedStyle,
-) -> std::fmt::Result {
-    let removed_prefix = match modified_style.single_line {
-        true => prefix_styles::SINGLE_LINE_REMOVED,
-        false => prefix_styles::REMOVED,
-    };
-    let inserted_prefix = match modified_style.single_line {
-        true => prefix_styles::SINGLE_LINE_INSERTED,
-        false => prefix_styles::INSERTED,
-    };
-
-    print_line_prefix(writer, config, removed_prefix)?;
-    print_segment(segment.removed, writer, config, styles::REMOVED_LINE)?;
-    writer.write_str("\n")?;
-    print_line_prefix(writer, config, inserted_prefix)?;
-    print_segment(segment.inserted, writer, config, styles::INSERTED_LINE)?;
-    if !modified_style.single_line {
-        writer.write_str("\n")?;
-    }
-    Ok(())
-}
-
-fn should_highlight_char(char: u8) -> bool {
-    // Highlight whitespace and control characters:
-    // - Control characters (< 0x20)
-    // - Space (0x20)
-    // - Tab is included in control chars (0x09)
-    // - Delete character (0x7F)
-    if char <= 0x20 {
-        return true;
-    } // includes space and all control chars
-    if char == 0x7F {
-        return true;
-    } // DEL character
-    false
-}
-
-#[derive(Clone, Copy)]
-struct ModifiedStyle {
-    single_line: bool,
-}
-
-fn print_modified_segment(
-    segment: &DiffSegment<'_>,
-    writer: &mut impl Write,
-    config: &DiffConfig,
-    modified_style: ModifiedStyle,
-) -> std::fmt::Result {
-    let removed_prefix = match modified_style.single_line {
-        true => prefix_styles::SINGLE_LINE_REMOVED,
-        false => prefix_styles::REMOVED,
-    };
-    let inserted_prefix = match modified_style.single_line {
-        true => prefix_styles::SINGLE_LINE_INSERTED,
-        false => prefix_styles::INSERTED,
-    };
-
-    // Fast-path the post-diff "diff too significant" check below: the maximum
-    // possible Equal length in the char-level diff is `min(removed, inserted)`,
-    // so the larger side's highlighted length is at least `larger - smaller`.
-    // When `smaller * 3 < larger`, that lower bound already exceeds
-    // `larger * 2/3`, which is exactly the bailout threshold below — so the
-    // expensive `Dmp::diff` (which on a multi-megabyte segment burns its full
-    // 1-second deadline inside `diff_bisect` and allocates two O(n) work
-    // vectors) would be discarded anyway. Skip straight to the no-diffdiff
-    // renderer in that case. Output is byte-identical to falling through.
-    {
-        let r = segment.removed.len();
-        let i = segment.inserted.len();
-        let larger = r.max(i);
-        let smaller = r.min(i);
-        if larger > 30 && smaller.saturating_mul(3) < larger {
-            return print_modified_segment_without_diffdiff(
-                writer,
-                config,
-                segment,
-                modified_style,
-            );
+    fn end_row(&mut self) {
+        self.s("\n");
+        if self.out.len() >= FLUSH_AT {
+            self.flush();
         }
     }
 
-    let mut char_diff =
-        bun_core::handle_oom(Dmp::default().diff(segment.removed, segment.inserted, true));
-    bun_core::handle_oom(diff_match_patch::diff_cleanup_semantic(&mut char_diff));
-
-    let mut deleted_highlighted_length: usize = 0;
-    let mut inserted_highlighted_length: usize = 0;
-    let mut unhighlighted_length: usize = 0;
-    for item in char_diff.iter() {
-        match item.operation {
-            diff_match_patch::Operation::Delete => deleted_highlighted_length += item.text.len(),
-            diff_match_patch::Operation::Insert => inserted_highlighted_length += item.text.len(),
-            diff_match_patch::Operation::Equal => unhighlighted_length += item.text.len(),
+    fn diff(&mut self, expected: &[u8], received: &[u8], hunks: &[Hunk]) {
+        // Every segment but the last ends in a newline that belongs to the row
+        // structure rather than the content; `seg` strips it for display and
+        // counts rows.
+        let end = expected.len();
+        fn seg(text: &[u8], last: bool) -> (&[u8], usize) {
+            let shown = if last {
+                text
+            } else {
+                text.strip_suffix(b"\n").unwrap_or(text)
+            };
+            (shown, line_count(shown))
         }
-    }
-    let _ = unhighlighted_length;
-
-    if (deleted_highlighted_length > 10
-        && deleted_highlighted_length > segment.removed.len() / 3 * 2)
-        || (inserted_highlighted_length > 10
-            && inserted_highlighted_length > segment.inserted.len() / 3 * 2)
-    {
-        // the diff is too significant (more than 2/3 of the original text on one side is modified), so skip printing the second layer of diffs.
-        return print_modified_segment_without_diffdiff(writer, config, segment, modified_style);
-    }
-
-    let is_valid_utf_8 = char_diff
-        .iter()
-        .all(|item| strings::is_valid_utf8(&item.text));
-
-    if !is_valid_utf_8 {
-        // utf-8 was cut up, so skip printing the second layer of diffs. ideally we would update the diff cleanup to handle this case instead.
-        return print_modified_segment_without_diffdiff(writer, config, segment, modified_style);
-    }
-
-    print_line_prefix(writer, config, removed_prefix)?;
-
-    for item in char_diff.iter() {
-        match item.operation {
-            diff_match_patch::Operation::Delete => {
-                let only_highlightable = item.text.iter().all(|&c| should_highlight_char(c));
-
-                if only_highlightable {
-                    // Use background color for whitespace/control character differences
-                    print_segment(&item.text, writer, config, base_styles::GREEN_BG_REMOVED)?;
-                } else {
-                    print_segment(&item.text, writer, config, styles::REMOVED_DIFF)?;
-                }
+        let mut segments: Vec<Segment> = Vec::with_capacity(hunks.len() * 3 + 2);
+        let mut prev_a = 0;
+        for (i, h) in hunks.iter().enumerate() {
+            if h.a_lo > prev_a {
+                let (text, lines) = seg(&expected[prev_a..h.a_lo], false);
+                segments.push(Segment::Equal { text, lines });
             }
-            diff_match_patch::Operation::Insert => {}
-            diff_match_patch::Operation::Equal => {
-                print_segment(&item.text, writer, config, styles::REMOVED_EQUAL)?;
-            }
+            let last = i + 1 == hunks.len() && h.a_hi == end;
+            let (removed, removed_lines) = seg(&expected[h.a_lo..h.a_hi], last);
+            let (inserted, inserted_lines) = seg(&received[h.b_lo..h.b_hi], last);
+            segments.push(match (h.deleted() > 0, h.inserted() > 0) {
+                (true, true) => Segment::Modified {
+                    removed,
+                    inserted,
+                    removed_lines,
+                    inserted_lines,
+                },
+                (true, false) => Segment::Removed {
+                    text: removed,
+                    lines: removed_lines,
+                },
+                (false, _) => Segment::Inserted {
+                    text: inserted,
+                    lines: inserted_lines,
+                },
+            });
+            prev_a = h.a_hi;
         }
-    }
-    writer.write_str("\n")?;
-
-    print_line_prefix(writer, config, inserted_prefix)?;
-    for item in char_diff.iter() {
-        match item.operation {
-            diff_match_patch::Operation::Delete => {}
-            diff_match_patch::Operation::Insert => {
-                let only_highlightable = item.text.iter().all(|&c| should_highlight_char(c));
-
-                if only_highlightable {
-                    // Use background color for whitespace/control character differences
-                    print_segment(&item.text, writer, config, base_styles::RED_BG_INSERTED)?;
-                } else {
-                    print_segment(&item.text, writer, config, styles::INSERTED_DIFF)?;
-                }
-            }
-            diff_match_patch::Operation::Equal => {
-                print_segment(&item.text, writer, config, styles::INSERTED_EQUAL)?;
-            }
-        }
-    }
-    if !modified_style.single_line {
-        writer.write_str("\n")?;
-    }
-    Ok(())
-}
-
-pub(crate) fn print_hunk_header(
-    writer: &mut impl Write,
-    config: &DiffConfig,
-    original_line_number: usize,
-    original_line_count: usize,
-    changed_line_number: usize,
-    changed_line_count: usize,
-) -> std::fmt::Result {
-    if config.enable_ansi_colors {
-        writeln!(
-            writer,
-            "{}@@ -{},{} +{},{} @@{}",
-            colors::YELLOW,
-            original_line_number,
-            original_line_count,
-            changed_line_number,
-            changed_line_count,
-            colors::RESET
-        )
-    } else {
-        writeln!(
-            writer,
-            "@@ -{},{} +{},{} @@",
-            original_line_number, original_line_count, changed_line_number, changed_line_count
-        )
-    }
-}
-
-pub(crate) fn print_diff(
-    writer: &mut impl Write,
-    diff_segments: &[DiffSegment<'_>],
-    config: &DiffConfig,
-) -> std::fmt::Result {
-    let mut removed_line_number: usize = 1;
-    let mut inserted_line_number: usize = 1;
-    let mut removed_diff_lines: usize = 0;
-    let mut inserted_diff_lines: usize = 0;
-
-    let has_skipped_segments = diff_segments.iter().any(|seg| seg.skip);
-
-    let mut was_skipped = false;
-    for (i, segment) in diff_segments.iter().enumerate() {
-        // `removed_line_number` / `inserted_line_number` are bumped at the end
-        // of the loop body and before `continue` below.
-
-        if (was_skipped && !segment.skip) || (has_skipped_segments && i == 0 && !segment.skip) {
-            // have to calculate the length of the non-skipped segment
-            let mut original_line_count: usize = 0;
-            let mut changed_line_count: usize = 0;
-            for seg in &diff_segments[i..] {
-                if seg.skip {
-                    break;
-                }
-                original_line_count += seg.removed_line_count;
-                changed_line_count += seg.inserted_line_count;
-            }
-            print_hunk_header(
-                writer,
-                config,
-                removed_line_number,
-                original_line_count,
-                inserted_line_number,
-                changed_line_count,
-            )?;
-            was_skipped = false;
+        if prev_a < end {
+            let (text, lines) = seg(&expected[prev_a..], true);
+            segments.push(Segment::Equal { text, lines });
         }
 
-        match segment.mode {
-            DiffSegmentMode::Equal => {
-                if segment.skip {
-                    was_skipped = true;
-                    removed_line_number += segment.removed_line_count;
-                    inserted_line_number += segment.inserted_line_count;
+        let chunked = expected.len() > self.config.min_bytes_before_chunking
+            || received.len() > self.config.min_bytes_before_chunking;
+        if chunked {
+            // Keep `ctx` lines of each equal run next to a change; elide the rest.
+            let ctx = self.config.chunk_context_lines;
+            let mut out: Vec<Segment> = Vec::with_capacity(segments.len() + hunks.len() + 2);
+            let n = segments.len();
+            for (i, seg) in segments.into_iter().enumerate() {
+                let Segment::Equal { text, lines } = seg else {
+                    out.push(seg);
+                    continue;
+                };
+                let keep_head = if i > 0 { ctx } else { 0 };
+                let keep_tail = if i + 1 < n { ctx } else { 0 };
+                if lines <= keep_head + keep_tail {
+                    out.push(seg);
                     continue;
                 }
-                print_line_prefix(writer, config, prefix_styles::EQUAL)?;
-                print_segment(segment.removed, writer, config, styles::EQUAL)?;
-                writer.write_str("\n")?;
+                if keep_head > 0 {
+                    let head_end = after_nth_newline(text, keep_head).unwrap();
+                    out.push(Segment::Equal {
+                        text: &text[..head_end - 1],
+                        lines: keep_head,
+                    });
+                }
+                out.push(Segment::Skipped {
+                    lines: lines - keep_head - keep_tail,
+                });
+                if keep_tail > 0 {
+                    let tail_start = start_of_last_n_lines(text, keep_tail).unwrap();
+                    out.push(Segment::Equal {
+                        text: &text[tail_start..],
+                        lines: keep_tail,
+                    });
+                }
             }
-            DiffSegmentMode::Removed => {
-                print_line_prefix(writer, config, prefix_styles::REMOVED)?;
-                print_segment(segment.removed, writer, config, styles::REMOVED_LINE)?;
-                writer.write_str("\n")?;
-                removed_diff_lines += segment.removed_line_count;
-            }
-            DiffSegmentMode::Inserted => {
-                print_line_prefix(writer, config, prefix_styles::INSERTED)?;
-                print_segment(segment.inserted, writer, config, styles::INSERTED_LINE)?;
-                writer.write_str("\n")?;
-                inserted_diff_lines += segment.inserted_line_count;
-            }
-            DiffSegmentMode::Modified => {
-                print_modified_segment(
-                    segment,
-                    writer,
-                    config,
-                    ModifiedStyle { single_line: false },
-                )?;
-                removed_diff_lines += segment.removed_line_count;
-                inserted_diff_lines += segment.inserted_line_count;
-            }
+            segments = out;
         }
 
-        removed_line_number += segment.removed_line_count;
-        inserted_line_number += segment.inserted_line_count;
+        self.segments(&segments);
     }
 
-    writer.write_str("\n")?;
+    fn segments(&mut self, segments: &[Segment<'_>]) {
+        let mut removed_line_number: usize = 1;
+        let mut inserted_line_number: usize = 1;
+        let mut removed_diff_lines: usize = 0;
+        let mut inserted_diff_lines: usize = 0;
 
-    print_diff_footer(writer, config, removed_diff_lines, inserted_diff_lines)
+        let has_skipped = segments
+            .iter()
+            .any(|s| matches!(s, Segment::Skipped { .. }));
+        let mut was_skipped = has_skipped;
+        for (i, seg) in segments.iter().enumerate() {
+            if let Segment::Skipped { lines } = *seg {
+                was_skipped = true;
+                removed_line_number += lines;
+                inserted_line_number += lines;
+                continue;
+            }
+            if was_skipped {
+                was_skipped = false;
+                let (mut original, mut changed) = (0, 0);
+                for seg in &segments[i..] {
+                    match *seg {
+                        Segment::Skipped { .. } => break,
+                        Segment::Equal { lines, .. } => {
+                            original += lines;
+                            changed += lines;
+                        }
+                        Segment::Removed { lines, .. } => original += lines,
+                        Segment::Inserted { lines, .. } => changed += lines,
+                        Segment::Modified {
+                            removed_lines,
+                            inserted_lines,
+                            ..
+                        } => {
+                            original += removed_lines;
+                            changed += inserted_lines;
+                        }
+                    }
+                }
+                self.hunk_header(removed_line_number, original, inserted_line_number, changed);
+            }
+            match *seg {
+                Segment::Equal { text, lines } => {
+                    self.rows(text, styles::EQUAL);
+                    removed_line_number += lines;
+                    inserted_line_number += lines;
+                }
+                Segment::Removed { text, lines } => {
+                    self.rows(text, styles::REMOVED);
+                    removed_line_number += lines;
+                    removed_diff_lines += lines;
+                }
+                Segment::Inserted { text, lines } => {
+                    self.rows(text, styles::INSERTED);
+                    inserted_line_number += lines;
+                    inserted_diff_lines += lines;
+                }
+                Segment::Modified {
+                    removed,
+                    inserted,
+                    removed_lines,
+                    inserted_lines,
+                } => {
+                    self.modified(removed, inserted, false);
+                    removed_line_number += removed_lines;
+                    inserted_line_number += inserted_lines;
+                    removed_diff_lines += removed_lines;
+                    inserted_diff_lines += inserted_lines;
+                }
+                Segment::Skipped { .. } => unreachable!(),
+            }
+        }
+        self.end_row();
+
+        // Footer.
+        self.color(styles::REMOVED.prefix_color);
+        self.s("- Expected  - ");
+        self.num(removed_diff_lines);
+        self.color(colors::RESET);
+        self.s("\n");
+        self.color(styles::INSERTED.prefix_color);
+        self.s("+ Received  + ");
+        self.num(inserted_diff_lines);
+        self.color(colors::RESET);
+    }
+
+    fn hunk_header(
+        &mut self,
+        original_line: usize,
+        original_count: usize,
+        changed_line: usize,
+        changed_count: usize,
+    ) {
+        self.color(colors::YELLOW);
+        self.s("@@ -");
+        self.num(original_line);
+        self.s(",");
+        self.num(original_count);
+        self.s(" +");
+        self.num(changed_line);
+        self.s(",");
+        self.num(changed_count);
+        self.s(" @@");
+        self.color(colors::RESET);
+        self.end_row();
+    }
+
+    fn prefix(&mut self, style: Style) {
+        self.color(style.prefix_color);
+        self.s(style.prefix);
+        self.color(colors::RESET);
+    }
+
+    /// `text` as whole rows: prefix, content, newline for each line.
+    fn rows(&mut self, text: &[u8], style: Style) {
+        self.prefix(style);
+        self.segment(text, style);
+        self.end_row();
+    }
+
+    /// `text` continuing the current row; embedded newlines start new rows
+    /// with `style`'s prefix.
+    fn segment(&mut self, text: &[u8], style: Style) {
+        self.color(style.text_color);
+        let mut start = 0;
+        loop {
+            let end = strings::index_of_char_usize(&text[start..], b'\n')
+                .map_or(text.len(), |i| start + i);
+            let line = &text[start..end];
+            if line.len() <= self.limit {
+                self.b(line);
+            } else {
+                self.truncated_line(line, style);
+            }
+            if end == text.len() {
+                break;
+            }
+            self.color(colors::RESET);
+            self.s("\n");
+            self.prefix(style);
+            self.color(style.text_color);
+            start = end + 1;
+        }
+        self.color(colors::RESET);
+    }
+
+    /// An over-long `line` with its middle elided. Assumes the style's text
+    /// colour is active and leaves it active.
+    fn truncated_line(&mut self, line: &[u8], style: Style) {
+        let (mut head, mut tail) = (
+            self.config.truncate_context,
+            line.len() - self.config.truncate_context,
+        );
+        while head > 0 && diff::is_utf8_cont(line, head) {
+            head -= 1;
+        }
+        while diff::is_utf8_cont(line, tail) {
+            tail += 1;
+        }
+        self.b(&line[..head]);
+        self.color(colors::RESET);
+
+        self.color(colors::BRIGHT_WHITE);
+        self.s("... (");
+        self.num(tail - head);
+        self.s(" bytes truncated) ...");
+        self.color(colors::RESET);
+
+        self.color(style.text_color);
+        self.b(&line[tail..]);
+    }
+
+    fn modified_without_highlight(
+        &mut self,
+        removed: &[u8],
+        inserted: &[u8],
+        rs: Style,
+        is: Style,
+        single_line: bool,
+    ) {
+        self.prefix(rs);
+        self.segment(removed, styles::REMOVED);
+        self.s("\n");
+        self.prefix(is);
+        self.segment(inserted, styles::INSERTED);
+        if !single_line {
+            self.end_row();
+        }
+    }
+
+    fn modified(&mut self, removed: &[u8], inserted: &[u8], single_line: bool) {
+        let (rs, is) = match single_line {
+            true => (styles::SINGLE_LINE_REMOVED, styles::SINGLE_LINE_INSERTED),
+            false => (styles::REMOVED, styles::INSERTED),
+        };
+
+        // When `smaller * 3 < larger`, the larger side's highlighted length is
+        // at least `larger - smaller > larger * 2/3`, which trips the bailout
+        // below regardless, so skip the character diff.
+        let larger = removed.len().max(inserted.len());
+        let smaller = removed.len().min(inserted.len());
+        if larger > 30 && smaller.saturating_mul(3) < larger {
+            return self.modified_without_highlight(removed, inserted, rs, is, single_line);
+        }
+
+        // Without colours the character diff is only visible through its effect
+        // on long-line truncation (pieces are truncated individually), so skip
+        // it when no line is long enough to be truncated.
+        if !self.colors
+            && max_line_len(removed) <= self.limit
+            && max_line_len(inserted) <= self.limit
+        {
+            return self.modified_without_highlight(removed, inserted, rs, is, single_line);
+        }
+
+        let mut chars = core::mem::take(&mut self.chars);
+        let hunks = chars.diff(removed, inserted);
+        'highlight: {
+            let deleted_highlighted: usize = hunks.iter().map(Hunk::deleted).sum();
+            let inserted_highlighted: usize = hunks.iter().map(Hunk::inserted).sum();
+            if (deleted_highlighted > 10 && deleted_highlighted > removed.len() / 3 * 2)
+                || (inserted_highlighted > 10 && inserted_highlighted > inserted.len() / 3 * 2)
+                || (single_line_pair(removed, inserted)
+                    && hunks.len() > 32
+                    && hunks.len() * 16 > removed.len().min(inserted.len()))
+            {
+                // More than 2/3 of one side modified, or one long line
+                // shredded into an edit every few characters: highlighting
+                // would just be noise (and would defeat truncation).
+                self.modified_without_highlight(removed, inserted, rs, is, single_line);
+                break 'highlight;
+            }
+
+            // Only possible if the inputs themselves are malformed UTF-8.
+            let splits_utf8 = |h: &Hunk| {
+                let cont = diff::is_utf8_cont;
+                cont(removed, h.a_lo)
+                    || cont(removed, h.a_hi)
+                    || cont(inserted, h.b_lo)
+                    || cont(inserted, h.b_hi)
+            };
+            if hunks.iter().any(splits_utf8) {
+                self.modified_without_highlight(removed, inserted, rs, is, single_line);
+                break 'highlight;
+            }
+
+            self.prefix(rs);
+            let mut prev = 0;
+            for h in hunks {
+                self.nonempty_segment(&removed[prev..h.a_lo], styles::REMOVED);
+                self.highlighted(
+                    &removed[h.a_lo..h.a_hi],
+                    styles::REMOVED,
+                    styles::REMOVED_WHITESPACE,
+                );
+                prev = h.a_hi;
+            }
+            self.nonempty_segment(&removed[prev..], styles::REMOVED);
+            self.s("\n");
+
+            self.prefix(is);
+            let mut prev = 0;
+            for h in hunks {
+                self.nonempty_segment(&inserted[prev..h.b_lo], styles::INSERTED);
+                self.highlighted(
+                    &inserted[h.b_lo..h.b_hi],
+                    styles::INSERTED,
+                    styles::INSERTED_WHITESPACE,
+                );
+                prev = h.b_hi;
+            }
+            self.nonempty_segment(&inserted[prev..], styles::INSERTED);
+            if !single_line {
+                self.end_row();
+            }
+        }
+        self.chars = chars;
+    }
+
+    fn nonempty_segment(&mut self, text: &[u8], style: Style) {
+        if !text.is_empty() {
+            self.segment(text, style);
+        }
+    }
+
+    fn highlighted(&mut self, text: &[u8], style: Style, whitespace_style: Style) {
+        if text.is_empty() {
+            return;
+        }
+        // Whitespace/control-only changes are invisible in a foreground
+        // colour, so those get a background instead.
+        if text.iter().all(|&c| c <= 0x20 || c == 0x7F) {
+            self.segment(text, whitespace_style);
+        } else {
+            self.segment(text, style);
+        }
+    }
 }

@@ -1,4 +1,4 @@
-use bun_core::String;
+use bun_core::{String, StringView};
 use bun_jsc::JSValue;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -33,9 +33,9 @@ impl super::validators::StringEnum for OptionValueType {
 
 /// Metadata of an option known to the args parser,
 /// i.e. the values passed to `parseArgs(..., { options: <values> })`
-pub(crate) struct OptionDefinition {
+pub(crate) struct OptionDefinition<'a> {
     // e.g. "abc" for --abc
-    pub long_name: String,
+    pub long_name: StringView<'a>,
 
     /// e.g. "a" for -a
     /// if len is 0, it has no short name
@@ -48,10 +48,10 @@ pub(crate) struct OptionDefinition {
     pub default_value: Option<JSValue>,
 }
 
-impl Default for OptionDefinition {
+impl Default for OptionDefinition<'_> {
     fn default() -> Self {
         Self {
-            long_name: String::empty(),
+            long_name: StringView::EMPTY,
             short_name: String::empty(),
             r#type: OptionValueType::Boolean,
             multiple: false,

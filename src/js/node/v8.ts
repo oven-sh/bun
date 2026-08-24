@@ -3,7 +3,6 @@
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { validateString, validateOneOf } = require("internal/validators");
-const { uncurryThis } = require("internal/primordials");
 const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 const {
@@ -27,6 +26,8 @@ const {
 } = $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 const DateNow = Date.now;
+const FunctionPrototypeCall = Function.prototype.call;
+const uncurryThis = func => FunctionPrototypeCall.bind(func);
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const Uint8ArrayCtor = Uint8Array;
 const BufferAllocUnsafe = Buffer.allocUnsafe;

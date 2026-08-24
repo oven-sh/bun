@@ -14,12 +14,9 @@ namespace WebCore {
 template<typename Res>
 static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, Res* res)
 {
-    auto& vm = JSC::getVM(global_this);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     // Loop over modified cookies and write Set-Cookie headers to the response
     for (auto& cookie : cookie_map->getAllChanges()) {
         auto utf8 = cookie->toString(global_this->vm()).utf8();
-        RETURN_IF_EXCEPTION(scope, );
         res->writeHeader("Set-Cookie", utf8.data());
     }
 }

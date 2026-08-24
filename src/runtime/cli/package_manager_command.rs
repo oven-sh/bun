@@ -18,12 +18,14 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
+use crate::cli::pm_diff_command as PmDiffCommand;
 use crate::cli::pm_licenses_command::{LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
 use crate::cli::pm_version_command::PmVersionCommand;
 use crate::cli::pm_view_command as PmViewCommand;
 use crate::cli::pm_why_command::PmWhyCommand;
+use bun_collections::index_sort;
 
 pub(crate) use crate::cli::pack_command::PackCommand;
 pub(crate) use crate::cli::scan_command::ScanCommand;
@@ -188,6 +190,13 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
+  <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>           show what changed between two versions of a package (or vs a folder/tarball)\n\
+  <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\
+  <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>\n\
+  <d>├<r> <d>bun pm diff axios@1.6.0:lib 1.6.1<r>  only files under lib/ <d>(also<r> <d>:file.js<r><d>, or paths after the two sides)<r>\n\
+  <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks\n\
+  <d>├<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)\n\
+  <d>└<r> <cyan>--json<r>                    one JSON document (files, patch text, notes, totals)\n\
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license\n\
   <d>├<r> <cyan>--json<r>                    output as JSON\n\
   <d>├<r> <cyan>--prod<r>                    omit devDependencies\n\
@@ -241,6 +250,17 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             dev_only: cli.dev_only,
             long: cli.long,
         };
+        let diff_flags = PmDiffCommand::DiffFlags {
+            raw: cli.diff_raw,
+            json: cli.json_output,
+            unminify: cli.diff_unminify,
+            minify: cli.diff_minify,
+            ignore_space: cli.diff_ignore_space,
+            name_only: cli.diff_name_only,
+            stat: cli.diff_stat,
+            context: cli.diff_context.unwrap_or(3),
+        };
+        let diff_args: Vec<&'static [u8]> = cli.diff_args.clone();
         let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
@@ -616,7 +636,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let root_deps = slice.items_dependencies()[0];
 
                 Output::println(format_args!(
-                    "{} node_modules ({})",
+                    "{} node_modules ({} installed)",
                     bstr::BStr::new(path),
                     lockfile.buffers.hoisted_dependencies.len(),
                 ));
@@ -630,9 +650,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     dependencies,
                     buf: string_bytes,
                 };
-                // `sort_unstable_by` is pdqsort; names are
-                // unique so stability is irrelevant.
-                sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+                // The root lists a workspace it also declares once per declaration.
+                index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
+                sorted_dependencies.dedup_by(|a, b| by_name.cmp(*a, *b) == Ordering::Equal);
 
                 if trusted_only {
                     sorted_dependencies.retain(|&dep_id| {
@@ -746,6 +766,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let positionals: &[&[u8]] = pm.options.positionals;
             PmWhyCommand::exec(&&mut *ctx, pm, positionals)?;
             Global::exit(0);
+        } else if strings::eql_comptime(subcommand, b"diff") {
+            let positionals: Vec<&[u8]> = pm.options.positionals.to_vec();
+            PmDiffCommand::exec(pm, &positionals, &diff_args, diff_flags, &cwd)?;
+            Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {
             let positionals: &[&[u8]] = pm.options.positionals;
             PmLicensesCommand::exec(pm, positionals, &cwd, licenses_flags)?;
@@ -853,7 +877,7 @@ fn print_node_modules_folder_structure(
     };
     // `sort_unstable_by` is pdqsort; names are unique so
     // stability is irrelevant.
-    sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+    index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
 
     let sorted_len = sorted_dependencies.len();
     for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
@@ -1007,7 +1031,7 @@ fn print_trusted_dependencies_flat(
         dependencies,
         buf: string_bytes,
     };
-    trusted.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+    index_sort::sort_indices_unstable(&mut trusted, &mut |a, b| by_name.cmp(a, b));
 
     for (index, &dep_id) in trusted.iter().enumerate() {
         let package_id = resolutions_buf[dep_id as usize];

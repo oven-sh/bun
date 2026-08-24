@@ -4,7 +4,7 @@ use core::ffi::c_int;
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{WStr, ZStr, ZigString};
+use bun_core::{WStr, ZStr};
 use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
@@ -297,24 +297,6 @@ impl StringOrBuffer {
     }
 }
 
-impl Drop for StringOrBuffer {
-    fn drop(&mut self) {
-        match self {
-            Self::ThreadsafeString(str) | Self::String(str) => {
-                // `SliceWithUnderlyingString` has no `Drop` of its own; release
-                // the WTF refcount in place. `str.utf8: ZigStringSlice` is then
-                // dropped by the enum's field drop glue — no need to
-                // `mem::take()` and write a ~56B default back.
-                str.underlying.deref();
-            }
-            Self::EncodedSlice(_encoded) => {
-                // ZigStringSlice has Drop; cleanup is implicit.
-            }
-            Self::Buffer(_) => {}
-        }
-    }
-}
-
 impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
     /// JS-side half of cleanup — owned
     /// payloads are released by `Drop` (which runs next when held in a
@@ -373,7 +355,6 @@ impl StringOrBuffer {
         }
 
         let str = bun_core::String::from_js(value, global_object)?;
-        scopeguard::defer! { str.deref(); }
 
         let result = str.to_owned_slice();
         global_object.vm().report_extra_memory(result.len());
@@ -382,7 +363,7 @@ impl StringOrBuffer {
 
     pub fn to_js(&mut self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            Self::ThreadsafeString(str) | Self::String(str) => str.transfer_to_js(ctx),
+            Self::ThreadsafeString(str) | Self::String(str) => core::mem::take(str).into_js(ctx),
             Self::EncodedSlice(encoded_slice) => {
                 let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, encoded_slice.slice());
                 *encoded_slice = ZigStringSlice::default();
@@ -430,31 +411,19 @@ impl StringOrBuffer {
                 if string_objects == StringObjects::Reject && str_type != JSType::String {
                     return Ok(false);
                 }
-                let mut str = bun_core::String::from_js(value, global)?;
+                let str = bun_core::String::from_js(value, global)?;
                 if flavor == Flavor::Async {
-                    let mut possible_clone = str;
-                    let mut sliced = possible_clone.to_thread_safe_slice();
+                    let mut sliced = str.into_thread_safe_slice();
                     sliced.report_extra_memory(global.vm());
-                    // Release the ref `from_js` took. On the WTF paths above
-                    // `to_thread_safe_slice` left `str` intact (and took its
-                    // own refs as needed); on the non-WTF fall-through it
-                    // moved the value into `sliced.underlying`, so this is a
-                    // no-op. Previously a `scopeguard` did this at scope exit.
-                    str.deref();
 
                     if sliced.underlying.is_empty() {
-                        // partial-move out of `SliceWithUnderlyingString` —
-                        // take `utf8` and leave the rest defaulted (no Drop on the type).
                         *out = Self::EncodedSlice(core::mem::take(&mut sliced.utf8));
                         return Ok(true);
                     }
 
                     *out = Self::ThreadsafeString(sliced);
                 } else {
-                    // `to_slice()` moves the ref into `.underlying` and leaves
-                    // `str` EMPTY, so no trailing `deref()` is needed here —
-                    // the old scopeguard's closure was always a no-op on this arm.
-                    *out = Self::String(str.to_slice());
+                    *out = Self::String(str.into_slice());
                 }
                 Ok(true)
             }
@@ -575,13 +544,13 @@ impl StringOrBuffer {
         }
 
         if value.is_string() {
-            let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
+            let str = bun_core::String::from_js(value, global)?;
             if str.is_empty() {
                 return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
             }
 
             use crate::webcore::encoding::BunStringEncode as _;
-            let encoded = str.get().encode(encoding);
+            let encoded = str.encode(encoding);
             global.vm().report_extra_memory(encoded.len());
 
             *out = Self::EncodedSlice(ZigStringSlice::init_owned(encoded));
@@ -744,7 +713,7 @@ impl Encoding {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
         // `from_bun_string` narrows into a stack buffer — no `to_utf8()`
         // allocation needed for a short ASCII key.
-        let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
+        let str = bun_core::String::from_js(value, global)?;
         Ok(Self::from_bun_string(&str))
     }
 
@@ -772,7 +741,7 @@ impl Encoding {
         global_object: &JSGlobalObject,
         default: Encoding,
     ) -> JsResult<Option<Encoding>> {
-        let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global_object)?);
+        let str = bun_core::String::from_js(value, global_object)?;
         if str.is_empty() {
             return Ok(Some(default));
         }
@@ -813,14 +782,13 @@ impl Encoding {
         match self {
             Self::Base64 => {
                 let encoded_len = bun_core::base64::encode_len(input);
-                let (mut encoded, bytes) =
-                    bun_core::String::create_uninitialized_latin1(encoded_len);
+                let (encoded, bytes) = bun_core::String::create_uninitialized_latin1(encoded_len);
                 if encoded.is_dead() {
-                    return encoded.transfer_to_js(global_object);
+                    return encoded.into_js(global_object);
                 }
                 let n = bun_core::base64::encode(bytes, input);
                 debug_assert_eq!(n, encoded_len);
-                encoded.transfer_to_js(global_object)
+                encoded.into_js(global_object)
             }
             Self::Base64url => {
                 let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
@@ -830,16 +798,16 @@ impl Encoding {
                 // The byte-by-byte `write!` formatting machinery is pathologically
                 // slow in debug builds, so encode via LUT directly into the
                 // destination JS string buffer.
-                let (mut encoded, bytes) =
+                let (encoded, bytes) =
                     bun_core::String::create_uninitialized_latin1(input.len() * 2);
                 if encoded.is_dead() {
                     // WTF OOM — match webcore::encoding pattern; transfer the
                     // Dead string (becomes JS empty) rather than indexing a
                     // zero-length `bytes`.
-                    return encoded.transfer_to_js(global_object);
+                    return encoded.into_js(global_object);
                 }
                 bun_core::fmt::bytes_to_hex_lower(input, bytes);
-                encoded.transfer_to_js(global_object)
+                encoded.into_js(global_object)
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             enc => crate::webcore::encoding::to_string(input, global_object, enc),
@@ -937,7 +905,7 @@ pub trait PathLikeExt {
         Self: Sized;
     fn from_bun_string(
         global: &JSGlobalObject,
-        str: &mut bun_core::String,
+        str: bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike>
     where
@@ -1213,20 +1181,18 @@ impl PathLikeExt for PathLike {
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
-                let mut str = bun_core::OwnedString::new(arg.to_bun_string(ctx)?);
-
+                let str = arg.to_bun_string(ctx)?;
                 arguments.eat();
-
                 Ok(Some(Self::from_bun_string(
                     ctx,
-                    &mut str,
+                    str,
                     arguments.will_be_async,
                 )?))
             }
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
                     use jsc::dom_url::ToFileSystemPathError;
-                    let mut str = bun_core::OwnedString::new(match domurl.file_system_path() {
+                    let str = match domurl.file_system_path() {
                         Ok(s) => s,
                         Err(ToFileSystemPathError::NotFileUrl) => {
                             return Err(ctx
@@ -1252,7 +1218,7 @@ impl PathLikeExt for PathLike {
                                 )
                                 .throw());
                         }
-                    });
+                    };
                     if str.is_empty() {
                         return Err(ctx
                             .err(
@@ -1265,7 +1231,7 @@ impl PathLikeExt for PathLike {
 
                     return Ok(Some(Self::from_bun_string(
                         ctx,
-                        &mut str,
+                        str,
                         arguments.will_be_async,
                     )?));
                 }
@@ -1277,19 +1243,17 @@ impl PathLikeExt for PathLike {
 
     fn from_bun_string(
         global: &JSGlobalObject,
-        str: &mut bun_core::String,
+        str: bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> {
         if will_be_async {
-            let sliced = str.to_thread_safe_slice();
-            let sliced = scopeguard::guard(sliced, |s| s.deinit());
+            let mut sliced = str.into_thread_safe_slice();
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
             Valid::path_string_length(sliced.slice().len(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
-            let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
             sliced.report_extra_memory(global.vm());
 
             if sliced.underlying.is_empty() {
@@ -1297,15 +1261,12 @@ impl PathLikeExt for PathLike {
             }
             Ok(Self::ThreadsafeString(sliced))
         } else {
-            let sliced = str.to_slice();
-            let sliced = scopeguard::guard(sliced, |s| s.deinit());
+            let mut sliced = str.into_slice();
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
             Valid::path_string_length(sliced.slice().len(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
-
-            let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
 
             // Costs nothing to keep both around.
             if sliced.is_wtf_allocated() {
@@ -1316,11 +1277,8 @@ impl PathLikeExt for PathLike {
 
             // It is expensive to keep both around. `utf8` here is an Owned
             // transcoded copy (UTF-16 or non-ASCII Latin-1 input), so the
-            // returned EncodedSlice is independent of `underlying` — release
-            // the WTFStringImpl ref `to_slice` moved into it.
-            let utf8 = core::mem::take(&mut sliced.utf8);
-            sliced.deinit();
-            Ok(Self::EncodedSlice(utf8))
+            // returned EncodedSlice is independent of `underlying`.
+            Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)))
         }
     }
 }
@@ -1339,7 +1297,7 @@ impl Valid {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                         .to_system_error();
-                system_error.syscall = bun_core::String::DEAD.into();
+                system_error.syscall = bun_core::String::DEAD;
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
@@ -1359,7 +1317,7 @@ impl Valid {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                         .to_system_error();
-                system_error.syscall = bun_core::String::DEAD.into();
+                system_error.syscall = bun_core::String::DEAD;
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
@@ -1530,12 +1488,8 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         // the example), specifies permissions for the group. The right-most
         // digit (5 in the example), specifies the permissions for others.
 
-        let mut zig_str = ZigString::EMPTY;
-        value.to_zig_string(&mut zig_str, ctx)?;
-        // `to_slice()` handles both storage forms: the 8-bit-only `slice()`
-        // would misread a UTF-16 buffer, and JSC can store pure-ASCII content
-        // 16-bit, so bitness cannot be used to pre-filter.
-        let utf8 = zig_str.to_slice();
+        let str_view = value.to_js_string_view(ctx)?;
+        let utf8 = str_view.to_utf8();
         let slice = utf8.slice();
 
         // Node validates mode strings against /^[0-7]+$/ before parsing.
@@ -1668,10 +1622,10 @@ impl FileSystemFlags {
         // Node switches on the value with strict equality, so only primitive
         // strings can match; `new String("w")` and every other object throw.
         if val.is_string_literal() {
-            let str = val.get_zig_string(ctx)?;
+            let str = val.to_js_string_view(ctx)?;
             // The longest valid flag string is 3 bytes ("as+" etc).
-            if str.len >= 1 && str.len <= 3 {
-                let key_slice = str.to_slice();
+            if str.length() >= 1 && str.length() <= 3 {
+                let key_slice = str.to_utf8();
                 if let Some(flags) = FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied() {
                     return Ok(Some(FileSystemFlags(flags)));
                 }
@@ -1805,8 +1759,8 @@ unsafe extern "C" {
     safe fn Bun__Dirent__toJS(
         global: &JSGlobalObject,
         kind: i32,
-        name: &mut bun_core::String,
-        path: &mut bun_core::String,
+        name: bun_core::String,
+        path: bun_core::String,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JSValue;
 }
@@ -1816,8 +1770,8 @@ impl Dirent {
         Bun__JSDirentObjectConstructor(global)
     }
 
-    pub fn to_js(
-        &mut self,
+    pub fn into_js(
+        self,
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
@@ -1840,27 +1794,11 @@ impl Dirent {
             Bun__Dirent__toJS(
                 global_object,
                 kind_int,
-                &mut self.name,
-                &mut self.path,
+                self.name,
+                self.path,
                 cached_previous_path_jsvalue,
             )
         })
-    }
-
-    pub(crate) fn to_js_newly_created(
-        &mut self,
-        global_object: &JSGlobalObject,
-        previous_jsstring: Option<&mut *mut jsc::JSString>,
-    ) -> JsResult<JSValue> {
-        // Shouldn't techcnically be necessary.
-        let result = self.to_js(global_object, previous_jsstring);
-        self.deref();
-        result
-    }
-
-    pub fn deref(&self) {
-        self.name.deref();
-        self.path.deref();
     }
 }
 

@@ -136,16 +136,6 @@ pub struct Query {
     pub i: u32,
 }
 
-impl Default for Query {
-    fn default() -> Self {
-        Self {
-            expr: Expr::EMPTY,
-            loc: Loc::EMPTY,
-            i: 0,
-        }
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // ── live Expr accessor surface ─────────────────────────────────────────────
 // Subset of the gated impl below; bodies adapted to the live `E::Object` /
@@ -1629,11 +1619,6 @@ impl Data {
         } else {
             None
         }
-    }
-    /// True if this is an `EString`.
-    #[inline]
-    pub fn is_e_string(&self) -> bool {
-        matches!(self, Data::EString(_))
     }
 
     // ── Remaining StoreRef<E::*> field-style accessors ──────────────────

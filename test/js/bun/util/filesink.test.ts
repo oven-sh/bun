@@ -566,6 +566,38 @@ it("start() without path/fd on an already-open writer does not crash", async () 
   expect(await Bun.file(path).text()).toBe("hello");
 });
 
+it("start() with a path/fd getter that closes the writer throws instead of crashing", async () => {
+  const dir = tmpdirSync();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { join } = require("node:path");
+      for (const key of ["path", "fd"]) {
+        const p = join(process.argv[1], "start-reentrant-" + key + ".txt");
+        const w = Bun.file(p).writer();
+        w.write("hello");
+        let err;
+        try {
+          w.start({ get [key]() { w.close(); return key === "path" ? p : 1; } });
+        } catch (e) { err = e; }
+        console.log(key, /already been closed/.test(err?.message));
+        try { w.write("x"); console.log("write ok"); } catch (e) { console.log("write", /already been closed/.test(e.message)); }
+      }
+      `,
+      dir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("path true\nwrite true\nfd true\nwrite true\n");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {
   const dir = tmpdirSync();
   const target = join(dir, "ro.txt");
@@ -834,4 +866,60 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+});
+
+it.skipIf(isWindows)("throws on invalid writer options instead of crashing", async () => {
+  const stderr = Bun.stderr;
+  const baseline = fileSinkInternals.liveCount();
+  const iterations = 8;
+  for (let i = 0; i < iterations; i++) {
+    expect(() => stderr.writer({ path: 123 } as any)).toThrow(
+      expect.objectContaining({
+        code: "EINVAL",
+        syscall: "write",
+      }),
+    );
+    expect(() => stderr.writer({ fd: "not a number" } as any)).toThrow(
+      expect.objectContaining({
+        code: "EBADF",
+        syscall: "write",
+      }),
+    );
+    expect(() =>
+      stderr.writer({
+        get path() {
+          throw new Error("boom");
+        },
+      } as any),
+    ).toThrow("boom");
+  }
+  for (let i = 0; i < 50; i++) {
+    Bun.gc(true);
+    if (fileSinkInternals.liveCount() <= baseline) break;
+    await Bun.sleep(10);
+  }
+  // Each early return in get_writer must release the sink's +1 ref; a missing
+  // deref leaks one native FileSink per failed call.
+  expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
+it("start() with invalid options throws instead of silently ignoring them", async () => {
+  const dir = tmpdirSync();
+  const writer = Bun.file(join(dir, "start-invalid.txt")).writer();
+  expect(() => writer.start({ path: 123 } as any)).toThrow(
+    expect.objectContaining({
+      code: "EINVAL",
+      syscall: "write",
+    }),
+  );
+  expect(() => writer.start({ fd: "not a number" } as any)).toThrow(
+    expect.objectContaining({
+      code: "EBADF",
+      syscall: "write",
+    }),
+  );
+  // Valid usage on the same writer still works after the failed start calls.
+  writer.write("ok");
+  await writer.end();
+  expect(await Bun.file(join(dir, "start-invalid.txt")).text()).toBe("ok");
 });

@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
-use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt};
+use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
@@ -61,12 +61,9 @@ pub(crate) use crate::linker_context::scan_imports_and_exports::scan_imports_and
 
 pub(crate) use crate::linker_context::compute_chunks::compute_chunks;
 pub use crate::linker_context::metafile_builder as MetafileBuilder;
-pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
-pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
-pub use crate::linker_context::do_step5;
 pub(crate) use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
 pub(crate) use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
 pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
@@ -901,9 +898,17 @@ impl<'a> LinkerContext<'a> {
                 worklist: Vec::new(),
             };
 
-            // Tree shaking: Each entry point marks all files reachable from itself
+            // Tree shaking: Each entry point marks all files reachable from itself.
+            // `import()` targets are marked live from the live part that holds
+            // the `import()` instead (see `mark_part_live_step`).
+            let root_dynamic_imports = !self.options.tree_shaking;
             for i in 0..entry_points_len {
                 let entry_point = entry_points[i];
+                if !root_dynamic_imports
+                    && entry_point_kinds[entry_point as usize] == EntryPoint::Kind::DynamicImport
+                {
+                    continue;
+                }
                 self.mark_file_live_for_tree_shaking(&mut ctx, entry_point);
             }
         }
@@ -1244,6 +1249,7 @@ impl From<BunError> for LinkError {
 
 pub struct LinkerOptions {
     pub(crate) generate_bytecode_cache: bool,
+    pub(crate) generate_internal_module_bytecode: bool,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1283,6 +1289,7 @@ impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
             generate_bytecode_cache: false,
+            generate_internal_module_bytecode: false,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,
@@ -2548,7 +2555,7 @@ impl<'a> LinkerContext<'a> {
                 r#ref: export_ref,
             });
         }
-        list.sort_by(|a, b| {
+        index_sort::sort_slice_by(list, |a, b| {
             if StableRef::is_less_than((), *a, *b) {
                 core::cmp::Ordering::Less
             } else {
@@ -2905,10 +2912,9 @@ impl<'a> LinkerContext<'a> {
             ctx.worklist.push(TreeShakeWork::File(source_index));
         }
 
-        let dependencies =
-            &ctx.parts[source_index as usize].as_slice()[part_index as usize].dependencies;
+        let part = &ctx.parts[source_index as usize].as_slice()[part_index as usize];
 
-        for dependency in dependencies.iter() {
+        for dependency in part.dependencies.iter() {
             let dep_source = dependency.source_index.get();
             let dep_part = dependency.part_index;
             if !ctx.parts_live[dep_source as usize].is_set(dep_part as usize) {
@@ -2916,6 +2922,22 @@ impl<'a> LinkerContext<'a> {
                     part_index: dep_part,
                     source_index: dep_source,
                 });
+            }
+        }
+
+        // `scan_imports_and_exports` adds no wrapper dependency for external `import()`.
+        if self.graph.code_splitting {
+            let records = &ctx.import_records[source_index as usize];
+            for &import_index in part.import_record_indices.iter() {
+                let record = &records[import_index as usize];
+                if record.source_index.is_valid()
+                    && self.is_external_dynamic_import(record, source_index)
+                {
+                    let other = record.source_index.get();
+                    if !self.graph.files_live.is_set(other as usize) {
+                        ctx.worklist.push(TreeShakeWork::File(other));
+                    }
+                }
             }
         }
     }
@@ -3840,12 +3862,16 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: same column-validity invariant as `keys` above.
         let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
         // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
-        let mut order: Vec<usize> = (0..unsafe { (&*keys).len() }).collect();
+        let mut order = index_sort::identity(unsafe { (&*keys).len() });
         // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
-        order
-            .sort_by(|&a, &b| unsafe { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
+        index_sort::sort_indices(&mut order, &mut |a, b| unsafe {
+            (&*keys)[a as usize]
+                .inner_index()
+                .cmp(&(&*keys)[b as usize].inner_index())
+        });
 
         for &i in &order {
+            let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
             let (import_ref, named_import) = unsafe { ((*keys)[i], &(*values)[i]) };
 

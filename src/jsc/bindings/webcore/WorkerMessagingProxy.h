@@ -133,6 +133,9 @@ private:
     bool m_keepAliveReleased { false };
 
     const ScriptExecutionContextIdentifier m_loaderContextIdentifier;
+    // The parent loop that was current at `new Worker()`: a macro that creates a worker and awaits
+    // it is the one that hears from it.
+    const BunLoopKind m_loaderLoopKind;
     const ScriptExecutionContextIdentifier m_workerContextIdentifier;
     WorkerOptions m_options;
 

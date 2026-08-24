@@ -710,7 +710,7 @@ This is equivalent to calling `new S3Client(credentials).presign("my-file.txt", 
 
 To list some or all (up to 1,000) objects in a bucket, use the `S3Client.list` static method.
 
-```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-20, 24-29}
+```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-22, 27-35}
 import { S3Client } from "bun";
 
 const credentials = {
@@ -741,7 +741,7 @@ if (uploads.isTruncated) {
     {
       prefix: "uploads/",
       maxKeys: 500,
-      startAfter: uploads.contents!.at(-1).key,
+      startAfter: uploads.contents!.at(-1)!.key,
       fetchOwner: true,
     },
     credentials,

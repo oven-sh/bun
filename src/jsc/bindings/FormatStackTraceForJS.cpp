@@ -668,9 +668,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
-    // Once .stack is materialized the frames are gone and materializeErrorInfoIfNeeded never runs
-    // again, so frames stored now would never render and would stay alive for the whole life of
-    // the destination. Same no-op as Bun__attachAsyncStackFromPromise.
+    // A materialized destination never renders frames again (same no-op as Bun__attachAsyncStackFromPromise).
     if (destination->hasMaterializedErrorInfo()) {
         return JSC::JSValue::encode(jsUndefined());
     }
@@ -680,8 +678,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (source->stackTrace()) {
-        // ErrorInstance::visitChildren reads the frames under the cell lock. Take the two locks
-        // one after the other: source and destination can be the same error.
+        // The GC reads these under the cell lock. Sequential scopes: source and destination can be the same error.
         {
             WTF::Locker locker { destination->cellLock() };
             destination->stackTrace()->appendVector(*source->stackTrace());

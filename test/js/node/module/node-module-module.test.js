@@ -874,23 +874,26 @@ console.log("survived", require("./late.js"));`,
     // real cache, not a stand-in object.
     const code = `
       const Module = require("node:module");
-      // The deepest frame probes require.cache, then rethrows so the next frame
-      // up probes Module._cache. Every frame above that returns normally.
-      const probes = [];
-      function recurse() {
-        try {
-          recurse();
-        } catch (e) {
-          if (probes.length === 2) return;
+      // One recursion per accessor. Only the deepest frame catches the overflow,
+      // and there any call into the builtin overflows again, so the probe result
+      // does not depend on frame sizes.
+      function probe(useModuleCache) {
+        let outcome;
+        function recurse() {
           try {
-            probes.push(typeof (probes.length === 0 ? require.cache : Module._cache));
-          } catch (err) {
-            probes.push(err.constructor.name);
+            recurse();
+          } catch {
+            try {
+              outcome = typeof (useModuleCache ? Module._cache : require.cache);
+            } catch (err) {
+              outcome = err.constructor.name;
+            }
           }
-          throw e;
         }
+        recurse();
+        return outcome;
       }
-      recurse();
+      const probes = [probe(false), probe(true)];
       const cache = require.cache;
       const hasEvalEntry = Object.keys(cache).some(key => key.endsWith("[eval]"));
       const marker = {};

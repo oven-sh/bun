@@ -12,7 +12,7 @@ use bun_install::lockfile::{
     tree,
 };
 use bun_install::package_manager_real::{
-    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, update_lockfile_if_needed,
+    PackageJSONEditor, ProgressStrings, update_lockfile_if_needed,
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
@@ -543,10 +543,11 @@ impl TrustCommand {
         };
         let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
 
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
-        // (single-threaded startup) and immutable thereafter.
+        // SAFETY: `pm_raw` singleton; the path is written once in `init` and
+        // never mutated, so this borrow does not overlap the `&mut` uses below.
+        let root_package_json_path = unsafe { (*pm_raw).root_package_json_path.as_bytes() };
         let package_json_source = bun_ast::Source::init_path_string(
-            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
+            root_package_json_path,
             package_json_contents.as_slice(),
         );
 

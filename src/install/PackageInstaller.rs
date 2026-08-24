@@ -358,8 +358,7 @@ fn abs_node_modules_path(
         &mut rel_buf,
         &mut depth_buf,
     );
-    let top = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-    let mut abs = AbsPath::from(top).unwrap_or_oom();
+    let mut abs = AbsPath::from(FileSystem::instance().top_level_dir()).unwrap_or_oom();
     abs.append(rel.as_bytes()).unwrap_or_oom();
     abs
 }

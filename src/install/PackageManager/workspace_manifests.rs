@@ -7,7 +7,7 @@ use crate::lockfile::{Lockfile, Package};
 use crate::{Features, PackageNameHash};
 
 use super::PackageManager;
-use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry, root_package_json_path};
+use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry};
 use super::workspace_selection::WorkspaceGraph;
 
 /// Root + member package.json files parsed the way `bun install` parses them, into a throw-away lockfile.
@@ -28,11 +28,7 @@ impl ScratchManifests {
 
     /// Must run first: it fills `lockfile.workspace_paths`, which `workspace:` rows in every file resolve through.
     pub(crate) fn parse_root(&mut self, manager: &mut PackageManager) -> crate::Result<()> {
-        let root_target = WorkspaceTarget {
-            name: Box::default(),
-            name_hash: None,
-            package_json_path: root_package_json_path(),
-        };
+        let root_target = WorkspaceTarget::root(manager);
         // Cloned because the `workspaces` walk below may grow the cache holding this entry.
         let (root_source, root_json) = {
             let entry = fetch_entry(manager, &root_target);

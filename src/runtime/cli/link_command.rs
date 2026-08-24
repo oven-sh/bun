@@ -3,7 +3,6 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::{AbsPath, PathBuffer};
-use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
 use bun_install::Features;
@@ -168,15 +167,9 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
             #[cfg(windows)]
             {
-                use bun_core::ZStr;
                 use bun_paths::{platform, resolve_path};
                 // create the junction
-                let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
-                let mut link_path_buf = PathBuffer::uninit();
-                link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
-                link_path_buf.0[top_level.len()] = 0;
-                // SAFETY: NUL written at link_path_buf[top_level.len()] above.
-                let link_path = ZStr::from_buf(&link_path_buf.0[..], top_level.len());
+                let link_path = bun_core::cwd::get();
                 let global_path = pm::global_link_dir_path(manager);
                 let dest_path =
                     resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
@@ -199,7 +192,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             {
                 // create the symlink
                 if let Err(e) = node_modules.sym_link(
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
+                    bun_core::cwd::get().as_bytes(),
                     name,
                     // is_directory
                     true,

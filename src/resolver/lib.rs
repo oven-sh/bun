@@ -251,20 +251,13 @@ pub mod fs {
         /// RLIMIT_NOFILE is raised and `file_limit`/`file_quota` carry the
         /// real fd budget — `need_to_close_files` depends on that to enable
         /// directory-fd caching.
-        pub fn init() -> crate::CrateResult<*mut FileSystem> {
+        pub fn init() -> *mut FileSystem {
             // SAFETY: single-threaded startup; called from
             // `Transpiler::init` before any worker spawn.
             unsafe {
                 if INSTANCE_LOADED.load(Ordering::Acquire) {
-                    return Ok((*INSTANCE.get()).as_mut_ptr());
+                    return (*INSTANCE.get()).as_mut_ptr();
                 }
-            }
-            // Whoever starts the process decides whether an unreadable working
-            // directory is fatal (`bun_core::cwd::init`) or falls back
-            // (`bun_core::cwd::get`); by here it is settled either way.
-            bun_core::cwd::get();
-            // SAFETY: see above.
-            unsafe {
                 (*INSTANCE.get()).write(FileSystem {
                     fs: Implementation::init(),
                     dirname_store: DirnameStore::instance(),
@@ -275,7 +268,7 @@ pub mod fs {
                 // touch the singleton so it's initialized before any resolver
                 // worker hits it.
                 let _ = dir_entry::EntryStore::instance();
-                Ok((*INSTANCE.get()).as_mut_ptr())
+                (*INSTANCE.get()).as_mut_ptr()
             }
         }
 
@@ -358,22 +351,10 @@ pub mod fs {
             bun_paths::resolve_path::relative(self.top_level_dir(), to)
         }
 
-        /// The directory resolution starts from: the process working
-        /// directory ([`bun_core::cwd`]). To change it, `bun_sys::chdir`.
+        /// The directory resolution starts from: [`bun_core::cwd`].
         #[inline]
         pub fn top_level_dir(&self) -> &'static [u8] {
             bun_core::cwd::get().as_bytes()
-        }
-
-        /// `top_level_dir` with any trailing separator stripped (root `/` is
-        /// left intact).
-        pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
-            let d = self.top_level_dir();
-            if d.len() > 1 && d.last() == Some(&bun_paths::SEP) {
-                &d[..d.len() - 1]
-            } else {
-                d
-            }
         }
 
         /// Normalizes `str` in the shared scratch space, returning the input

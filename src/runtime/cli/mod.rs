@@ -1129,11 +1129,6 @@ pub mod command {
 
         if USES_GLOBAL_OPTIONS[cmd] {
             ctx.args = arguments::parse(cmd, ctx)?;
-        } else {
-            // `arguments::parse` decides per command whether an unreadable
-            // working directory is tolerable; the commands that skip it
-            // (package manager, create, bunx) all write relative to it.
-            bun_core::cwd::init()?;
         }
 
         #[cfg(windows)]
@@ -1393,6 +1388,7 @@ pub mod command {
             // If no compile_exec_argv, skip executable name if present
             offset_for_passthrough = 1.min(bun::argv().len());
 
+            bun_core::cwd::init_or_exe_dir();
             break 'brk write_context_no_parse(log);
         };
 

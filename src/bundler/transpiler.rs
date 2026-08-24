@@ -1041,10 +1041,6 @@ fn to_parser_module_type(
     m
 }
 
-fn init_file_system() -> crate::Result<*mut Fs::FileSystem> {
-    Fs::FileSystem::init().map_err(Into::into)
-}
-
 /// Project this crate's `options::BundleOptions<'a>` into the
 /// resolver-crate FORWARD_DECL subset (`bun_resolver::options::BundleOptions`).
 /// The two are nominally distinct until MOVE_DOWN to `bun_options_types`
@@ -1224,14 +1220,7 @@ impl<'a> Transpiler<'a> {
         // `reset()` branches to `enter()` on null ARENA), so per-file ASTs
         // *do* get the side arena from the first parsed file onward.
 
-        // `FileSystem::init` wants `&'static [u8]`. Intern via `DirnameStore`
-        // (the same path `FileSystem::init` already uses for the
-        // `None`/getcwd case — fs.rs:222) so the cwd lives in the
-        // process-lifetime BSS string store without `Box::leak`. PORTING.md
-        // §Forbidden bars `Box::leak` even for singletons; on subsequent
-        // per-worker `Transpiler::init` calls the previous leak was discarded
-        // (`FileSystem::init` only stores `top_level_dir` on first call).
-        let fs: *mut Fs::FileSystem = init_file_system()?;
+        let fs: *mut Fs::FileSystem = Fs::FileSystem::init();
 
         let env_loader: *mut dot_env::Loader = match env_loader_ {
             Some(l) => l,

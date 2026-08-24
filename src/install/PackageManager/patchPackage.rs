@@ -974,7 +974,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
                 &mut bufn[..],
                 &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
+                    FileSystem::instance().top_level_dir(),
                     module_folder
                 ]
             )),
@@ -984,7 +984,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
                 &mut bufn[..],
                 &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
+                    FileSystem::instance().top_level_dir(),
                     module_folder
                 ]
             )),

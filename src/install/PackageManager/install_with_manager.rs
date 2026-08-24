@@ -6,7 +6,7 @@ use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
 
-use bun_core::{ZStr, strings};
+use bun_core::{ZBox, ZStr, strings};
 use bun_semver::String as SemverString;
 
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
@@ -50,9 +50,10 @@ use super::security_scanner;
 pub fn install_with_manager(
     manager: &mut PackageManager,
     ctx: Command::Context,
-    root_package_json_path: &ZStr,
     original_cwd: &[u8],
 ) -> crate::Result<()> {
+    let root_package_json_path = ZBox::from_bytes(manager.root_package_json_path.as_bytes());
+    let root_package_json_path: &ZStr = &root_package_json_path;
     let log_level = manager.options.log_level;
 
     // Start resolving DNS for the default registry immediately.

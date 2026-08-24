@@ -608,10 +608,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
-    let _fs = match bun_resolver::fs::FileSystem::init() {
-        Ok(fs) => fs,
-        Err(err) => return Err(global.throw_error(err, generic_action)),
-    };
+    bun_resolver::fs::FileSystem::init();
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`

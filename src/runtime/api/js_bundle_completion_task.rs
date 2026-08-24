@@ -1168,11 +1168,6 @@ impl CompletionStruct for JSBundleCompletionTask {
             },
             entry_points: config.entry_points.keys().to_vec(),
             target: Some(config.target.to_api()),
-            absolute_working_dir: if !config.dir.list.is_empty() {
-                Some(Box::from(config.dir.list.as_slice()))
-            } else {
-                None
-            },
             inject: Vec::new(),
             external: config.external.keys().to_vec(),
             main_fields: Vec::new(),

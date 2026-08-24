@@ -36,12 +36,14 @@ pub(crate) struct WorkspaceTarget {
     pub(crate) package_json_path: Box<[u8]>,
 }
 
-pub(crate) fn root_package_json_path() -> Box<[u8]> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-    let mut buf = path_buffer_pool::get();
-    let path: Box<[u8]> =
-        join_abs_string_buf::<platform::Auto>(top_level, &mut buf.0, &[b"package.json"]).into();
-    path
+impl WorkspaceTarget {
+    pub(crate) fn root(manager: &PackageManager) -> WorkspaceTarget {
+        WorkspaceTarget {
+            name: Box::default(),
+            name_hash: None,
+            package_json_path: Box::from(manager.root_package_json_path.as_bytes()),
+        }
+    }
 }
 
 fn print_log_and_crash(
@@ -63,7 +65,7 @@ pub(crate) struct WorkspaceMembers {
 }
 
 pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceMembers {
-    let root_path = root_package_json_path();
+    let root_path: Box<[u8]> = Box::from(manager.root_package_json_path.as_bytes());
 
     let (root_expr, root_source, root_name): (bun_ast::Expr, bun_ast::Source, Box<[u8]>) = {
         let log = manager.log_mut();
@@ -152,7 +154,7 @@ pub(crate) fn select_targets(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> Result<Vec<WorkspaceTarget>, Error> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let WorkspaceMembers {
         root_path,
         root_name,
@@ -613,12 +615,7 @@ pub(super) fn update_filtered_workspaces_and_install(
     let catalog_mode = subcommand == Subcommand::Add && manager.options.add_catalog.is_some();
     debug_assert!(manager.root_package_id.id.is_none());
 
-    let root_package_json_path = root_package_json_path();
-    let root_target = WorkspaceTarget {
-        name: Box::default(),
-        name_hash: None,
-        package_json_path: root_package_json_path.clone(),
-    };
+    let root_target = WorkspaceTarget::root(manager);
 
     let (mut updates, assigned) = if subcommand == Subcommand::Remove {
         (updates, vec![Vec::new(); targets.len()])
@@ -731,11 +728,7 @@ pub(super) fn update_filtered_workspaces_and_install(
         }));
     }
 
-    {
-        let mut zbuf = path_buffer_pool::get();
-        let root_package_json_path = resolve_path::z(&root_package_json_path, &mut zbuf);
-        install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
-    }
+    install_with_manager(manager, ctx, original_cwd)?;
     package_json_write_back::flush(manager)?;
 
     if subcommand == Subcommand::Remove && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {

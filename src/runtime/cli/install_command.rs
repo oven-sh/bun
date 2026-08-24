@@ -2,7 +2,7 @@ use crate::Error;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
-    CommandLineArguments, PackageManager, ROOT_PACKAGE_JSON_PATH, Subcommand, install_with_manager,
+    CommandLineArguments, PackageManager, Subcommand, install_with_manager,
     update_package_json_and_install_with_manager,
 };
 
@@ -184,10 +184,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
         Output::flush();
     }
 
-    // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside
-    // `PackageManager::init` (above) on this thread; only read thereafter.
-    let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-    install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)?;
+    install_with_manager(manager, &mut *ctx, &original_cwd)?;
 
     if manager.any_failed_to_install {
         Global::exit(1);

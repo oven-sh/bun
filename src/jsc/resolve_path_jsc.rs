@@ -14,8 +14,6 @@ extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
 ) -> BunString {
     let str = input.to_utf8_without_ref();
 
-    // The cwd is the FileSystem singleton's top_level_dir (resolver_jsc.rs
-    // uses the same backing storage).
     let cwd: &[u8] = bun_core::cwd::get().as_bytes();
     let _ = global_object; // bun_vm() retained for future direct field access
 

@@ -90,6 +90,28 @@ impl Tag {
         }
     }
 
+    /// Whether this command starts when the working directory cannot be
+    /// read (deleted while a shell sat in it): running code does, like Node,
+    /// with the executable's directory standing in and `process.cwd()`
+    /// reporting the error; commands that act on a project refuse to guess
+    /// which one. Applied at each command's first read of the directory,
+    /// which comes after any `--cwd`/`--global` it accepts has moved it.
+    pub fn starts_without_cwd(self) -> bool {
+        matches!(
+            self,
+            Tag::AutoCommand | Tag::RunCommand | Tag::RunAsNodeCommand
+        )
+    }
+
+    /// [`starts_without_cwd`](Self::starts_without_cwd), applied.
+    pub fn read_cwd(self) -> Result<&'static bun_core::ZStr, bun_core::Error> {
+        if self.starts_without_cwd() {
+            Ok(bun_core::cwd::init_or_exe_dir())
+        } else {
+            bun_core::cwd::init()
+        }
+    }
+
     pub fn read_global_config(self) -> bool {
         matches!(
             self,

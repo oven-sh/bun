@@ -538,7 +538,7 @@ impl UpgradeCommand {
         HTTP::http_thread::init(&Default::default());
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *fs::FileSystem::init()? };
+        let filesystem = unsafe { &mut *fs::FileSystem::init() };
         let mut env_loader = DotEnv::Loader::init();
         env_loader.load_process()?;
 
@@ -771,10 +771,6 @@ impl UpgradeCommand {
             };
 
             let tmpdir_path_len = tmpdir_path.len();
-            tmpdir_path_buf[tmpdir_path_len] = 0;
-            // SAFETY: buf[tmpdir_path_len] == 0 written above
-            let tmpdir_z = ZStr::from_buf(&tmpdir_path_buf[..], tmpdir_path_len);
-            let _ = sys::chdir(tmpdir_z);
 
             // SAFETY: literal ends with NUL.
             let tmpname: &ZStr = ZStr::from_static(b"bun.zip\0");

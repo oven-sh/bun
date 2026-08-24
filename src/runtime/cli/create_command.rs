@@ -278,8 +278,9 @@ impl CreateCommand {
             return CreateListExamplesCommand::exec(ctx);
         }
 
+        bun_core::cwd::init()?;
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
-        let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init()? };
+        let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init() };
         let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
@@ -1288,7 +1289,7 @@ impl CreateCommand {
     pub(crate) fn extract_info(ctx: &Command::Context<'_>) -> crate::Result<ExtractedInfo> {
         let example_tag;
         // SAFETY: process-lifetime singleton; init returns *mut.
-        let filesystem = unsafe { &*fs::FileSystem::init()? };
+        let filesystem = unsafe { &*fs::FileSystem::init() };
 
         let create_options = CreateOptions::parse(ctx)?;
         let positionals = &create_options.positionals;
@@ -2318,7 +2319,7 @@ struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
     fn exec(ctx: &Command::Context) -> crate::Result<()> {
-        let filesystem = fs::FileSystem::init()?;
+        let filesystem = fs::FileSystem::init();
         let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;

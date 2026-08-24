@@ -131,7 +131,7 @@ impl FileSystemRouter {
         let vm = global_this.bun_vm().as_mut();
 
         let mut root_dir_path: ZigStringSlice =
-            ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
+            ZigStringSlice::from_utf8_never_free(bun_core::cwd::get().as_bytes());
         let mut origin_str: ZigStringSlice = ZigStringSlice::default();
         let mut asset_prefix_slice: ZigStringSlice = ZigStringSlice::default();
 

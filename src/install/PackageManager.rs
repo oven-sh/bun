@@ -338,6 +338,9 @@ pub struct PackageManager {
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
 
     pub root_package_json_file: bun_sys::File,
+    /// `<cwd>/package.json`: the project root's manifest (the workspace root
+    /// when run from a member).
+    pub root_package_json_path: ZBox,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
     /// could be any of the workspaces.
@@ -797,9 +800,6 @@ mod holder {
     pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
-/// `<cwd>/package.json` once `init()` has changed into the project root;
-/// written once there on the main thread, read on main + CLI commands after.
-pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCell::new(ZStr::EMPTY);
 
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
@@ -1486,7 +1486,10 @@ pub fn init(
         bun_sys::fchdir(global_dir)?;
     }
 
-    bun_resolver::fs::FileSystem::init()?;
+    // First read of the working directory for package-manager commands
+    // (`Tag::read_cwd`): `--cwd`/`--global` above have already moved it.
+    bun_core::cwd::init()?;
+    bun_resolver::fs::FileSystem::init();
     let fs = FileSystem::instance();
     let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
 
@@ -1789,7 +1792,9 @@ pub fn init(
 
     // The project root becomes the working directory; `fs.top_level_dir()`
     // and every path below derive from it.
-    bun_sys::chdir(&ZBox::from_bytes(root_dir))?;
+    if root_dir != fs.top_level_dir() {
+        bun_sys::chdir(&ZBox::from_bytes(root_dir))?;
+    }
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
     // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
@@ -1798,21 +1803,11 @@ pub fn init(
         cli.config,
         ctx,
     )?;
-    {
-        let root_package_json_path: &'static [u8] = Box::leak(
-            ZBox::from_bytes(
-                resolve_path::join_abs_string::<resolve_path::platform::Auto>(
-                    fs.top_level_dir(),
-                    &[b"package.json"],
-                ),
-            )
-            .into_boxed_slice_with_nul(),
-        );
-        // SAFETY: main-thread global, written once here before any reader.
-        unsafe {
-            ROOT_PACKAGE_JSON_PATH.write(ZStr::from_slice_with_nul(root_package_json_path));
-        }
-    }
+    let root_package_json_path =
+        ZBox::from_bytes(resolve_path::join_abs_string::<resolve_path::platform::Auto>(
+            fs.top_level_dir(),
+            &[b"package.json"],
+        ));
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
@@ -2006,6 +2001,7 @@ pub fn init(
         // `Lockfile::default()` ≡ `Lockfile::init_empty()`.
         wr!(lockfile, Box::new(Lockfile::default()));
         wr!(root_package_json_file, root_package_json_file);
+        wr!(root_package_json_path, root_package_json_path);
         // .progress
         wr!(event_loop, AnyEventLoop::init());
         wr!(
@@ -2115,8 +2111,8 @@ pub fn init(
         // bytes by every resolver-side caller. On Windows the path uses `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
-        // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
-        let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
+        // SAFETY: singleton fully initialized; main thread, no workers yet.
+        let raw: &[u8] = unsafe { &*manager_ptr }.root_package_json_path.as_bytes();
         let mut buf = PathBuffer::uninit();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
@@ -2466,6 +2462,10 @@ fn init_with_runtime_once(
         wr!(
             root_package_json_file,
             bun_sys::File::from_fd(Fd::invalid())
+        );
+        wr!(
+            root_package_json_path,
+            ZBox::from_bytes(&original_package_json_path[..original_package_json_path.len() - 1])
         );
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).

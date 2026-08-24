@@ -804,9 +804,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
-    // This is where the process working directory (`bun_core::cwd`) is first
-    // read; everything after here derives paths from it.
-    let cwd: &[u8] = if let Some(cwd_arg) = args.option(b"--cwd") {
+    if let Some(cwd_arg) = args.option(b"--cwd") {
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
@@ -825,19 +823,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
-        bun_core::cwd::get().as_bytes()
-    } else if matches!(
-        cmd,
-        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
-    ) {
-        // A deleted cwd must not abort the runtime (Node boots and lets
-        // `process.cwd()` throw later); `get` falls back to the executable's dir.
-        bun_core::cwd::get().as_bytes()
-    } else {
-        // Everything else (install/test/build/...) must not silently act on
-        // whatever project happens to live above the executable.
-        bun_core::cwd::init()?.as_bytes()
-    };
+    }
+    let cwd: &[u8] = cmd.read_cwd()?.as_bytes();
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
     // (uses_global_options=false). bunx picks up no-orphans via the
@@ -880,7 +867,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         parse_test_command_options(&args, ctx);
     }
 
-    ctx.args.absolute_working_dir = Some(Box::from(cwd));
     ctx.positionals = slice_to_owned(args.positionals());
 
     if command::LOADS_CONFIG[cmd] {
@@ -934,7 +920,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
         let mut spill = Vec::new();
         Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
-            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            cwd,
             &mut spill,
             &[ts],
         ))

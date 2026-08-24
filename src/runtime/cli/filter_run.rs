@@ -785,7 +785,7 @@ pub(crate) fn run_scripts_with_filter(
     post_script_name[0..4].copy_from_slice(b"post");
     post_script_name[4..].copy_from_slice(script_name);
 
-    let _ = bun_resolver::fs::FileSystem::init()?;
+    let _ = bun_resolver::fs::FileSystem::init();
     let fsinstance = bun_resolver::fs::FileSystem::get();
 
     // TODO(refactor): out-param init — `configureEnvForRun` writes through the

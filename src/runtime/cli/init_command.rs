@@ -393,9 +393,9 @@ impl InitCommand {
         }
 
         bun_core::cwd::init()?;
-        let _ = Fs::FileSystem::init()?;
+        let _ = Fs::FileSystem::init();
         let pathname =
-            Fs::PathName::init(Fs::FileSystem::get().top_level_dir_without_trailing_slash());
+            Fs::PathName::init(bun_core::cwd::get().as_bytes());
         let destination_dir = Fd::cwd();
 
         let mut fields = PackageJSONFields::default();

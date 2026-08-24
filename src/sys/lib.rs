@@ -883,24 +883,21 @@ pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
     Ok(ZStr::from_buf(&buf[..], len))
 }
 
-/// After the OS working directory changed: read it back and record it in
-/// [`bun_core::cwd`]. If it cannot be read, change back to the recorded one
-/// so the process and its record never disagree.
+/// After the OS working directory changed: re-read it into [`bun_core::cwd`].
+/// An error here (tagged `getcwd`) means the directory did change but its
+/// name could not be read back; the previous record is still in place.
 fn cwd_changed() -> Maybe<()> {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    match getcwd(&mut buf[..]) {
-        Ok(len) => {
-            bun_core::cwd::set(&buf[..len]);
-            Ok(())
-        }
-        Err(err) => {
-            let _ = chdir_os(bun_core::cwd::get());
-            Err(err)
-        }
+    if bun_core::cwd::refresh().is_ok() {
+        return Ok(());
     }
+    #[cfg(windows)]
+    return Err(Error::from_code(windows::get_last_errno(), Tag::getcwd));
+    #[cfg(not(windows))]
+    return Err(Error::from_code_int(last_errno(), Tag::getcwd));
 }
 
-/// Change the process working directory. [`bun_core::cwd`] follows.
+/// Change the process working directory; [`bun_core::cwd`] follows. On an
+/// error tagged `chdir` the process did not move.
 pub fn chdir(path: &ZStr) -> Maybe<()> {
     chdir_os(path)?;
     cwd_changed()
@@ -1351,7 +1348,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const utimensat: Tag = Tag(47);
     pub const write: Tag = Tag(48);
-    pub(crate) const getcwd: Tag = Tag(49);
+    pub const getcwd: Tag = Tag(49);
     pub const chdir: Tag = Tag(51);
     #[cfg(target_os = "macos")]
     pub(crate) const fcopyfile: Tag = Tag(52);

@@ -364,7 +364,7 @@ pub struct VirtualMachine {
 
 #[derive(Default)]
 pub struct TestIsolationState {
-    pub saved_cwd: Option<Box<[u8]>>,
+    pub saved_cwd: Option<&'static bun_core::ZStr>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1051,14 +1051,6 @@ impl VirtualMachine {
         // process-lifetime `Fs::FileSystem` singleton; never null while a VM
         // is installed.
         unsafe { &*self.transpiler.fs }
-    }
-
-    /// Safe accessor for the process-lifetime cwd string
-    /// (`vm.transpiler.fs.top_level_dir()`). The `FileSystem` singleton is
-    /// allocated once during VM init and never freed.
-    #[inline]
-    pub fn top_level_dir(&self) -> &'static [u8] {
-        self.fs().top_level_dir()
     }
 
     /// Safe `&mut Debugger` accessor — the [`JsCell`] escape hatch applied to
@@ -4428,7 +4420,7 @@ impl VirtualMachine {
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
-        let top_level_dir = self.top_level_dir();
+        let top_level_dir = bun_core::cwd::get().as_bytes();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 // SAFETY: PORT — `dir_with_trailing_slash()` returns a
@@ -4968,10 +4960,6 @@ impl VirtualMachine {
         Some(f(&mut self.test_isolation_state))
     }
 
-    pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
-        bun_sys::chdir(to)
-    }
-
     /// Replaces the global object between test files so each file runs in a fresh realm.
     ///
     /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
@@ -4988,9 +4976,7 @@ impl VirtualMachine {
         Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
-            let mut buf = bun_paths::PathBuffer::uninit();
-            let z = bun_paths::resolve_path::z(&cwd, &mut buf);
-            let _ = self.set_process_cwd(z);
+            let _ = bun_sys::chdir(cwd);
         }
 
         let _ = self.event_loop_mut().drain_microtasks();
@@ -5245,7 +5231,7 @@ impl VirtualMachine {
                 }
                 if let Some(list) = exception_list {
                     let origin = self.is_from_devserver.then_some(&self.origin);
-                    zig_exception.add_to_error_list(list, self.top_level_dir(), origin);
+                    zig_exception.add_to_error_list(list, bun_core::cwd::get().as_bytes(), origin);
                 }
                 holder.deinit(self);
             }
@@ -5367,7 +5353,7 @@ impl VirtualMachine {
         } else {
             None
         };
-        let dir = vm.top_level_dir();
+        let dir = bun_core::cwd::get().as_bytes();
 
         for frame in stack {
             let file_slice = frame.source_url.to_utf8();
@@ -5549,7 +5535,7 @@ impl VirtualMachine {
                 }
                 if let Some(list) = self.exception_list.take() {
                     let origin = this.is_from_devserver.then_some(&this.origin);
-                    exception.add_to_error_list(list, this.top_level_dir(), origin);
+                    exception.add_to_error_list(list, bun_core::cwd::get().as_bytes(), origin);
                 }
             }
         }

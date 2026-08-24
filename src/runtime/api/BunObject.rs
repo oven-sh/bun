@@ -546,7 +546,7 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
     // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
     let mut path_str =
         ZigStringSlice::from_utf8_never_free(vm.env_loader().get(b"PATH").unwrap_or(b""));
-    let mut cwd_str = ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
+    let mut cwd_str = ZigStringSlice::from_utf8_never_free(bun_core::cwd::get().as_bytes());
 
     if let Some(arg) = arguments.next_eat() {
         if !arg.is_empty_or_undefined_or_null() && arg.is_object() {

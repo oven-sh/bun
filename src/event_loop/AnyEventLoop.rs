@@ -494,9 +494,6 @@ impl EventLoopHandle {
         }
     }
 
-    pub fn top_level_dir(self) -> &'static [u8] {
-        bun_core::cwd::get().as_bytes()
-    }
 
     pub fn create_null_delimited_env_map(
         self,

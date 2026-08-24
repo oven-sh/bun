@@ -488,37 +488,31 @@ mod _impl {
         }
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm().as_mut();
-        // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem` accessor for
-        // the process-lifetime singleton (centralised single-unsafe deref).
-        let fs = vm.transpiler.fs_mut();
 
         let mut buf = PathBuffer::uninit();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
             return Err(global_object.throw(format_args!("Invalid path")));
         };
 
-        // path=cwd, dest=target so the
-        // resulting Node SystemError carries `path: cwd`, `dest: target` and the
-        // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
-        let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir());
-        match vm.set_process_cwd(slice) {
+        let prev_cwd = bun_core::cwd::get();
+        match bun_sys::chdir(slice) {
             bun_sys::Result::Ok(()) => {
                 vm.test_isolation_scope(|state| {
                     state.saved_cwd.get_or_insert(prev_cwd);
                 });
-                let fs = vm.transpiler.fs_mut();
-                #[cfg(windows)]
-                let without_trailing_slash =
-                    bun_paths::string_paths::without_trailing_slash_windows_path;
-                #[cfg(not(windows))]
-                let without_trailing_slash = strings::without_trailing_slash;
-                bun_string_jsc::create_utf8_for_js(
-                    global_object,
-                    without_trailing_slash(fs.top_level_dir()),
-                )
+                bun_string_jsc::create_utf8_for_js(global_object, bun_core::cwd::get().as_bytes())
             }
             bun_sys::Result::Err(e) => {
-                let e = e.with_path_dest(&prev_cwd, slice.as_bytes());
+                if e.syscall == bun_sys::Tag::getcwd {
+                    // Moved, but the new directory's name could not be read:
+                    // go back rather than run with a stale `process.cwd()`.
+                    let _ = bun_sys::chdir(prev_cwd);
+                }
+                // path=cwd, dest=target so the resulting Node SystemError
+                // carries `path: cwd`, `dest: target` and the
+                // `chdir '<cwd>' -> '<target>'` message format
+                // (test-process-chdir-errormessage).
+                let e = e.with_path_dest(prev_cwd.as_bytes(), slice.as_bytes());
                 Err(global_object.throw_value(e.to_js(global_object)))
             }
         }

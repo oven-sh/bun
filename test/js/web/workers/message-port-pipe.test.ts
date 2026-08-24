@@ -319,7 +319,9 @@ describe("MessagePort pipe", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+    // 10000 MessageChannels across 5 threads take 10s+ under a loaded debug
+    // ASAN build; the 5s default flakes.
+  }, 60_000);
 
   test.skipIf(!isDebug && !isASAN)("burst of postMessage across threads delivers every message in order", async () => {
     await using proc = Bun.spawn({

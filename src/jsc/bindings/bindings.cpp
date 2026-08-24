@@ -752,10 +752,7 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     return true;
 }
 
-// Mirrors the wellKnownConstructors set in node's
-// lib/internal/util/comparisons.js: the built-in constructors (Object, Array,
-// the typed arrays, Buffer, ...) of any realm. Subclass constructors and user
-// functions are not in the set.
+// node's wellKnownConstructors set (lib/internal/util/comparisons.js), matched for any realm.
 static bool isWellKnownConstructor(JSValue value)
 {
     if (!value.isCell())
@@ -877,26 +874,13 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     ASSERT(c1);
     ASSERT(c2);
 
-    // Node's deepStrictEqual compares the effective class, not [[Prototype]]
-    // identity (objectComparisonStart in lib/internal/util/comparisons.js).
-    // When v1's "constructor" is inherited or is a well-known built-in, node
-    // compares the two "constructor" values with ===, so Object.create({ x: 1 })
-    // equals {} (both inherit constructor === Object). Only when v1 has no
-    // constructor, or an own non-built-in one, does node compare the
-    // [[Prototype]]s with ===, so Object.create(null) does not equal {}. Every
-    // node mode, including skipPrototype, then requires equal
-    // Object.prototype.toString tags. Only the node:assert/node:util entry
-    // point does this; Bun.deepEquals and expect() keep their prototype-blind
-    // semantics.
+    // node's objectComparisonStart (lib/internal/util/comparisons.js): the constructor /
+    // [[Prototype]] rule in strict mode, then equal Object.prototype.toString tags in every mode.
     if constexpr (checkPrototypes) {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
         if (protoCheck1 && protoCheck2) {
             if constexpr (!skipPrototypeIdentity) {
-                // One property-slot walk yields both val1.constructor and, through the
-                // slot base, hasOwn(val1, "constructor"). A cacheable data slot found on
-                // the prototype chain holds the same value for any object with the same
-                // (mono-proto) structure, so val2.constructor needs no second walk then.
                 const auto& constructorName = vm.propertyNames->constructor;
                 PropertySlot slot1(protoCheck1, PropertySlot::InternalMethodType::Get);
                 bool hasConstructor1 = protoCheck1->getPropertySlot(globalObject, constructorName, slot1);
@@ -915,6 +899,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     }
                 }
                 if (compareConstructors) {
+                    // Same mono-proto structure means the same prototype chain, so a data slot found on it is val2.constructor too.
                     bool inheritedFromSharedChain = slot1.isCacheableValue() && slot1.slotBase() != protoCheck1
                         && protoCheck1->structureID() == protoCheck2->structureID() && !protoCheck1->structure()->hasPolyProto();
                     if (!inheritedFromSharedChain) {

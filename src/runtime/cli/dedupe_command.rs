@@ -44,7 +44,7 @@ impl DedupeCommand {
         if let Err(e) =
             install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)
         {
-            return InstallCommand::handle_error(crate::Error::from(e));
+            return InstallCommand::handle_error(ctx, crate::Error::from(e));
         }
 
         if manager.any_failed_to_install {

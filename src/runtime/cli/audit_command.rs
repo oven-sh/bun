@@ -282,7 +282,7 @@ impl AuditCommand {
 
         let root_package_json_path = root_package_json_path();
         if let Err(e) = install_with_manager(pm, &mut *ctx, root_package_json_path, original_cwd) {
-            InstallCommand::handle_error(crate::Error::from(e))?;
+            InstallCommand::handle_error(ctx, crate::Error::from(e))?;
             Global::exit(1);
         }
 

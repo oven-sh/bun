@@ -715,7 +715,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"why") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmWhyCommand::exec(&&mut *ctx, pm, positionals)?;
+            PmWhyCommand::exec(pm, positionals)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"diff") {
             let positionals: Vec<&[u8]> = pm.options.positionals.to_vec();

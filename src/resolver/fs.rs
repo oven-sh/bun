@@ -207,7 +207,7 @@ impl Entry {
     // (double-checked: the cached fast path stays lock-free).
     // Generic over `R: EntryKindResolver` so this block is independent of
     // which `RealFS` copy `fs` points at (see file-top comment).
-    pub fn kind<R: EntryKindResolver>(&self, fs: &R, store_fd: bool) -> EntryKind {
+    pub fn kind<R: EntryKindResolver + ?Sized>(&self, fs: &R, store_fd: bool) -> EntryKind {
         if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
             // Relaxed: every write happens under `mutex`, which we hold.
@@ -230,7 +230,11 @@ impl Entry {
     }
 
     /// See [`Entry::kind`].
-    pub(crate) fn symlink<R: EntryKindResolver>(&self, fs: &R, store_fd: bool) -> &'static [u8] {
+    pub(crate) fn symlink<R: EntryKindResolver + ?Sized>(
+        &self,
+        fs: &R,
+        store_fd: bool,
+    ) -> &'static [u8] {
         if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
             // Relaxed: every write happens under `mutex`, which we hold.
@@ -334,22 +338,24 @@ pub mod dir_entry {
     }
 }
 
-/// Per-entry hook invoked by `add_entry`/`readdir`.
+/// Per-entry hook invoked by `add_entry`/`readdir`. `fs` is the `RealFS`
+/// doing the read, for `Entry::kind`/`symlink` — the hook runs while that
+/// `RealFS` is mutably borrowed, so it must not reach it through the singleton.
 pub trait DirEntryIterator {
     const IS_VOID: bool = false;
-    fn next(&self, entry: &mut Entry, fd: Fd);
+    fn next(&self, fs: &dyn EntryKindResolver, entry: &mut Entry, fd: Fd);
 }
 
 impl DirEntryIterator for () {
     const IS_VOID: bool = true;
-    fn next(&self, _entry: &mut Entry, _fd: Fd) {}
+    fn next(&self, _fs: &dyn EntryKindResolver, _entry: &mut Entry, _fd: Fd) {}
 }
 
 impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     const IS_VOID: bool = T::IS_VOID;
     #[inline]
-    fn next(&self, entry: &mut Entry, fd: Fd) {
-        (**self).next(entry, fd)
+    fn next(&self, fs: &dyn EntryKindResolver, entry: &mut Entry, fd: Fd) {
+        (**self).next(fs, entry, fd)
     }
 }
 
@@ -379,6 +385,7 @@ impl DirEntry {
 
     pub(crate) fn add_entry_with_store<I: DirEntryIterator>(
         &mut self,
+        fs: &dyn EntryKindResolver,
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
         filename_store: &mut FilenameStoreAppender,
@@ -545,7 +552,7 @@ impl DirEntry {
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
         if !I::IS_VOID {
-            iterator.next(stored_ref, self.fd);
+            iterator.next(fs, stored_ref, self.fd);
         }
 
         Ok(())

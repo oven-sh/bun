@@ -16,18 +16,18 @@ use bun_install::package_manager_real::command_line_arguments::CommandLineArgume
 use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
 
 use crate::build_command::BuildCommand;
-use crate::command::{self, Context};
+use crate::command::Context;
 
 pub(crate) fn update_package_json_and_install_catch_error(
     ctx: Context,
     subcommand: Subcommand,
 ) -> Result<(), Error> {
-    match update_package_json_and_install(ctx, subcommand) {
+    match update_package_json_and_install(&mut *ctx, subcommand) {
         Ok(()) => Ok(()),
         Err(crate::Error::Install(
             bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON,
         )) => {
-            let _ = command::get()
+            let _ = ctx
                 .log_ref()
                 .print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);

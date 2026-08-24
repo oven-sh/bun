@@ -2703,23 +2703,31 @@ impl TestCommand {
         file_name: &[u8],
         first_last: bun_test::FirstLast,
     ) -> crate::Result<()> {
-        scopeguard::defer! {
-            bun_ast::Expr::data_store_reset();
-            bun_ast::Stmt::data_store_reset();
+        let result = Self::run_inner(reporter, vm, file_name, first_last);
 
-            // `vm` is this thread's VM; go through the singleton so the guard
-            // does not borrow the parameter.
-            if let Some(log) = VirtualMachine::get().log_mut() {
-                if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
-                    log.msgs.clear();
-                    log.errors = 0;
-                }
+        bun_ast::Expr::data_store_reset();
+        bun_ast::Stmt::data_store_reset();
+
+        if let Some(log) = vm.log_mut() {
+            if log.errors > 0 {
+                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ));
+                log.msgs.clear();
+                log.errors = 0;
             }
-
-            Output::flush();
         }
 
+        Output::flush();
+        result
+    }
+
+    fn run_inner(
+        reporter: &'static CommandLineReporter,
+        vm: &mut VirtualMachine,
+        file_name: &[u8],
+        first_last: bun_test::FirstLast,
+    ) -> crate::Result<()> {
         // Restore test.only state after each module.
         let prev_only = reporter.jest.only.get();
         scopeguard::defer! { reporter.jest.only.set(prev_only); }

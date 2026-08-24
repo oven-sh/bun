@@ -62,8 +62,8 @@ bun_core::oom_from_alloc!(ScanError);
 /// for the duration of one `read_directory_with_iterator` call.
 struct ScannerDirIter<'s, 'a>(core::cell::RefCell<&'s mut Scanner<'a>>);
 impl DirEntryIterator for ScannerDirIter<'_, '_> {
-    fn next(&self, entry: &mut fs::Entry, _fd: Fd) {
-        self.0.borrow_mut().next(entry)
+    fn next(&self, fs: &dyn fs::EntryKindResolver, entry: &mut fs::Entry, _fd: Fd) {
+        self.0.borrow_mut().next(fs, entry)
     }
 }
 
@@ -176,7 +176,7 @@ impl<'a> Scanner<'a> {
                     v
                 };
                 for entry in sorted {
-                    self.next(entry);
+                    self.next(&self.fs.fs, entry);
                 }
             }
         }
@@ -319,10 +319,10 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub(crate) fn next(&mut self, entry: &fs::Entry) {
+    pub(crate) fn next(&mut self, fs: &dyn fs::EntryKindResolver, entry: &fs::Entry) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
-        match entry.kind(&self.fs().fs, false) {
+        match entry.kind(fs, false) {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;

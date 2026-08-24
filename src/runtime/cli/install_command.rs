@@ -15,7 +15,7 @@ impl InstallCommand {
     pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), Error> {
         match install(ctx) {
             Ok(()) => Ok(()),
-            Err(e) => Self::handle_error(e),
+            Err(e) => Self::handle_error(ctx, e),
         }
     }
 
@@ -24,14 +24,14 @@ impl InstallCommand {
     /// touches this code, and demand-paging it in pollutes the startup window).
     #[cold]
     #[inline(never)]
-    pub(crate) fn handle_error(e: Error) -> Result<(), Error> {
+    pub(crate) fn handle_error(ctx: &ContextData, e: Error) -> Result<(), Error> {
         if matches!(
             e,
             crate::Error::Install(
                 bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON
             )
         ) {
-            let _ = crate::cli::Command::get()
+            let _ = ctx
                 .log_ref()
                 .print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);

@@ -1164,6 +1164,7 @@ pub mod fs {
             while let Some(entry_) = iter.next()? {
                 // debug("readdir entry {}", BStr::new(entry_.name.slice()));
                 dir.add_entry_with_store(
+                    &*self,
                     prev_map.as_deref_mut(),
                     &entry_,
                     &mut filename_store,

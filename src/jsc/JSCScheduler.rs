@@ -11,7 +11,8 @@ bun_opaque::opaque_ffi! {
 impl Taskable for JSCDeferredWorkTask {
     const TAG: TaskTag = task_tag::JSCDeferredWorkTask;
     /// A cross-thread Atomics.notify / Wasm / FinalizationRegistry completion:
-    /// delete the C++ job (its `Ref<Ticket>` drops before ~VM).
+    /// release the C++ job unrun (it takes its ticket out of the DeferredWorkTimer
+    /// and gives the event loop ref back; its `Ref<Ticket>` drops before ~VM).
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract; heap-allocated by JSCTaskScheduler::onScheduleWorkSoon.
         unsafe { Bun__deleteDeferredWorkTask(this) }
@@ -24,17 +25,19 @@ unsafe extern "C" {
     // C++ side consuming it is interior to the opaque cell.
     safe fn Bun__runDeferredWork(task: &mut JSCDeferredWorkTask);
     fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
+    fn Bun__discardDeferredWorkTask(task: *mut JSCDeferredWorkTask);
 }
 
 impl JSCDeferredWorkTask {
-    /// Delete the C++ job without running it (its ticket is cancelled with the
-    /// DeferredWorkTimer at VM teardown).
+    /// Delete the C++ job the closed VM handle refused, on whatever thread posted
+    /// it. Nothing is balanced here: the ticket stays pending and is cancelled
+    /// with the VM.
     ///
     /// # Safety
     /// `this` is the job handed over by `onScheduleWorkSoon`, not yet run.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: fn contract.
-        unsafe { Bun__deleteDeferredWorkTask(this) };
+        unsafe { Bun__discardDeferredWorkTask(this) };
     }
 
     /// The C++ side reports what a job throws at its own boundary; what can

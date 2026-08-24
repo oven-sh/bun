@@ -114,11 +114,24 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
     runPendingWork(job);
 }
 
-// Reclaim a queued-but-never-dispatched job during shutdown. Called while the
-// JSC VM is still alive, so ~Ref<Ticket> and the captured Task lambda may
-// safely touch TZone-allocated / JSC-owned state. The ticket itself stays
-// pending; the VM's teardown cancels or releases it.
+// Release a queued job unrun during the teardown, on the VM's thread while the
+// JSC VM is alive and the VM handle still takes refs. The job is consumed like a
+// run one: the ticket leaves the pending set and gives its event loop ref back
+// here, where the ref still lands. Left for ~JSGlobalObject, the release would
+// come after the handle closed and be dropped.
 extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
+{
+    auto* clientData = job->clientData;
+    Ticket& ticket = job->ticket.get();
+    if (clientData->deferredWorkTimer.vm().deferredWorkTimer->takePendingWork(ticket))
+        releaseEventLoopRef(clientData, ticket);
+    delete job;
+}
+
+// Drop a job the VM handle refused because it had already closed. Any thread.
+// Nothing is left to balance: the loop the ref held open is gone, and the
+// ticket is cancelled with the VM.
+extern "C" void Bun__discardDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
 {
     delete job;
 }

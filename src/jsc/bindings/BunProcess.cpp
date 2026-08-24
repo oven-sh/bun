@@ -4655,32 +4655,37 @@ extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* lexica
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto* process = globalObject->processObject();
-    // The static-table property is only materialized once it has been read or written.
+    // The static-table property is only materialized as an own property once it has been read
+    // or written (and deleting it reifies the whole table first), so an empty slot on a
+    // non-reified object means `cwd` is untouched.
     const auto& name = builtinNames(vm).cwdPublicName();
-    if (JSValue direct = process->getDirect(vm, name)) [[unlikely]] {
+    JSValue direct = process->getDirect(vm, name);
+    if (!direct && process->hasNonReifiedStaticProperties()) [[likely]]
+        return JSValue::encode(getCachedCwd(globalObject));
+    if (direct) {
         auto* function = dynamicDowncast<JSFunction>(direct);
-        if (!function || !function->isHostFunction() || function->nativeFunction() != Process_functionCwd) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            // `direct` is the raw slot, i.e. a GetterSetter when `cwd` was redefined as an
-            // accessor; `process.cwd` in lib/path.js is a [[Get]], so do the same.
-            JSValue custom = process->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto callData = JSC::getCallData(custom);
-            if (callData.type == CallData::Type::None) [[unlikely]] {
-                JSC::throwTypeError(globalObject, scope, "process.cwd is not a function"_s);
-                return {};
-            }
-            JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, custom, callData, process, JSC::MarkedArgumentBuffer());
-            RETURN_IF_EXCEPTION(scope, {});
-            if (result.isUndefinedOrNull()) [[unlikely]] {
-                return JSValue::encode(result);
-            }
-            auto* string = result.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, JSValue::encode(string));
-        }
+        if (function && function->isHostFunction() && function->nativeFunction() == Process_functionCwd)
+            return JSValue::encode(getCachedCwd(globalObject));
     }
-    return JSValue::encode(getCachedCwd(globalObject));
+
+    // Replaced, redefined as an accessor (`direct` is then the raw GetterSetter) or deleted:
+    // `process.cwd` in lib/path.js is a [[Get]], so do the same, and call whatever it finds.
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue custom = process->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = JSC::getCallData(custom);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "process.cwd is not a function"_s);
+        return {};
+    }
+    JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, custom, callData, process, JSC::MarkedArgumentBuffer());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (result.isUndefinedOrNull()) [[unlikely]] {
+        return JSValue::encode(result);
+    }
+    auto* string = result.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(string));
 }
 
 #if !OS(WINDOWS)

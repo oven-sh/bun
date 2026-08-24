@@ -357,6 +357,20 @@ test("path.resolve() and path.relative() use an overridden process.cwd()", () =>
     expect(path.posix.resolve("x")).toBe("/from/getter/x");
     Object.defineProperty(process, "cwd", { get: () => "not callable", configurable: true });
     expect(() => path.posix.resolve("x")).toThrow(TypeError);
+    // A deleted one leaves nothing to call, unless the prototype chain provides it.
+    delete process.cwd;
+    expect(() => path.posix.resolve("x")).toThrow(TypeError);
+    expect(() => path.win32.resolve("x")).toThrow(TypeError);
+    const originalProto = Object.getPrototypeOf(process);
+    Object.setPrototypeOf(
+      process,
+      Object.create(originalProto, { cwd: { value: () => "/proto", configurable: true } }),
+    );
+    try {
+      expect([path.posix.resolve("x"), path.win32.resolve("x")]).toEqual(["/proto/x", "\\proto\\x"]);
+    } finally {
+      Object.setPrototypeOf(process, originalProto);
+    }
   } finally {
     Object.defineProperty(process, "cwd", originalDescriptor);
   }

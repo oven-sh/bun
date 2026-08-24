@@ -620,9 +620,7 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let Some(&result_ptr) = self.data.get(query) else {
-            // A resolution in progress remembers what it did not find, so a
-            // miss can check whether the entry appeared since the listing
-            // was read.
+            // A resolution in progress records its negatives; see `Resolver::bust_touched_dirs`.
             crate::resolver::record_missing_entry(self.dir, query_);
             return None;
         };

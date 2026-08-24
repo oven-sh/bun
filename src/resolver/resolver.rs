@@ -562,10 +562,9 @@ pub struct Resolver<'a> {
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 }
 
-/// What the resolution in progress on this thread looked for in the directory
-/// caches and did not find; see `Resolver::bust_touched_dirs`. Thread-local,
-/// not a `Resolver` field: the runtime copies its `Transpiler` bytewise into
-/// every transpiler job, and a `Vec` must have one owner.
+/// What the resolution in progress on this thread did not find; see
+/// `Resolver::bust_touched_dirs`. Thread-local, not a `Resolver` field: the
+/// runtime copies its `Transpiler` bytewise into every transpiler job.
 #[derive(Default)]
 struct TouchedDirs {
     recording: bool,
@@ -582,10 +581,8 @@ enum TouchedKind {
     MissingEntry,
     /// A `node_modules` search level whose cached listing has no `node_modules`.
     NoNodeModules,
-    /// Any other `node_modules` search level: one that was searched, or a
-    /// `node_modules` directory itself. Dropped with a `NoNodeModules` level
-    /// above it that gained a `node_modules`, so its cached parent link is
-    /// rebuilt.
+    /// A searched level, or a `node_modules` directory. Dropped with a
+    /// `NoNodeModules` level above it that gained one, so its parent link is rebuilt.
     SearchLevel,
 }
 
@@ -624,8 +621,7 @@ thread_local! {
         const { core::cell::RefCell::new(None) };
 }
 
-/// The cached listing of `dir` was probed for `name` and had no such entry.
-/// Called from `DirEntry::get`, the one lookup every listing probe goes through.
+/// The cached listing of `dir` has no entry `name`; called from `DirEntry::get`.
 #[inline]
 pub(crate) fn record_missing_entry(dir: &[u8], name: &[u8]) {
     record_touched(TouchedKind::MissingEntry, dir, name);
@@ -1790,11 +1786,8 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// `resolve_without_symlinks`, then once more after a miss if the cached
-    /// directory state the miss rested on no longer matches the disk. The
-    /// cache holds misses for the life of the process and nothing outside
-    /// watch mode invalidates them, so a file installed after the first miss
-    /// would otherwise stay invisible.
+    /// `resolve_without_symlinks`, then once more after a miss whose cached
+    /// negatives no longer match the disk. Nothing else invalidates a cached miss.
     fn resolve_without_symlinks_retrying(
         &mut self,
         source_dir: &[u8],
@@ -2554,8 +2547,7 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
-    /// Record what the next resolution on this thread looks for and does not
-    /// find, for `bust_touched_dirs`.
+    /// Record what the next resolution on this thread does not find.
     fn start_recording_touched_dirs() {
         TOUCHED_DIRS.with(|slot| {
             let mut slot = slot.borrow_mut();
@@ -2593,11 +2585,8 @@ impl<'a> Resolver<'a> {
         record_touched(TouchedKind::SearchLevel, dir, b"");
     }
 
-    /// After a miss, check on disk each thing the lookup did not find and drop
-    /// the cached directories that disagree with the disk, so a retry reads
-    /// them again. Returns whether anything was dropped. A lookup that still
-    /// fails for the same reasons costs one `access()` per record and keeps
-    /// every cache entry.
+    /// Check each recorded negative on disk and drop the cached directories that
+    /// disagree. Returns whether anything was dropped.
     fn bust_touched_dirs(&mut self) -> bool {
         let Some(mut touched) = TOUCHED_DIRS.with(|slot| slot.borrow_mut().take()) else {
             return false;
@@ -2639,9 +2628,8 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        // `load_node_modules` reaches each level through the cached parent
-        // link of the level below it, so every level from the source directory
-        // up to the one that gained a `node_modules` is rebuilt.
+        // `load_node_modules` reaches a level through the parent link of the level
+        // below it, so every level up to the one that gained `node_modules` is rebuilt.
         for &gained in &gained_node_modules {
             let gained_dir = touched.records[gained].dir(&touched.bytes);
             for record in &touched.records {
@@ -2687,8 +2675,7 @@ impl<'a> Resolver<'a> {
         bun_sys::exists_z(bun_core::ZStr::from_buf(&buf[..], len))
     }
 
-    /// Whether `path` is `ancestor` or a directory inside it. Both are cache
-    /// keys: absolute, and without a trailing separator unless they are a root.
+    /// Both are cache keys: absolute, no trailing separator unless a root.
     fn is_dir_or_inside(path: &[u8], ancestor: &[u8]) -> bool {
         path.starts_with(ancestor)
             && (path.len() == ancestor.len()
@@ -2696,10 +2683,8 @@ impl<'a> Resolver<'a> {
                 || ancestor.last().is_some_and(|&c| ResolvePath::is_sep_any(c)))
     }
 
-    /// `dir` exists now but was cached as missing. Drop it, then walk up and
-    /// drop every ancestor whose cached listing does not know the child below
-    /// it: that listing predates the child and is where the child's entry
-    /// (and a symlink's target) is read from.
+    /// Drop `dir`, then each ancestor whose cached listing does not know the child
+    /// below it: that listing is where the entry and a symlink's target are read from.
     fn bust_dir_and_stale_parents(&mut self, dir: &[u8]) -> bool {
         let mut busted = self.bust_dir_cache(dir);
         let mut child = dir;
@@ -5847,9 +5832,8 @@ impl<'a> Resolver<'a> {
 
         // Try using the main field(s) from "package.json"
         if dir_info.package_json().is_none() {
-            // Absent, or present but unparseable when the directory was read.
-            // The listing lookup happened at that read, so `DirEntry::get`
-            // does not see this probe.
+            // Absent, or unparseable; `DirEntry::get` saw that lookup when the
+            // directory was read, not now.
             record_missing_entry(dir_info.abs_path, b"package.json");
         }
         if let Some(pkg_json) = dir_info.package_json() {

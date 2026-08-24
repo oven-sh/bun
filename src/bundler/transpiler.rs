@@ -1412,8 +1412,7 @@ impl<'a> Transpiler<'a> {
             ) {
                 Ok(e) => e,
                 Err(err) => {
-                    // The cached listing that produced this path is stale (file
-                    // removed, package reinstalled); drop it for the next resolution.
+                    // The cached listing that produced this path is stale.
                     if matches!(
                         err,
                         resolver::Error::Sys(bun_errno::SystemErrno::ENOENT)

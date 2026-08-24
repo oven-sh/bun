@@ -494,7 +494,6 @@ impl EventLoopHandle {
         }
     }
 
-
     pub fn create_null_delimited_env_map(
         self,
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {

@@ -973,20 +973,14 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
             bstr::BStr::new(pkg_name),
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
                 &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir(),
-                    module_folder
-                ]
+                &[FileSystem::instance().top_level_dir(), module_folder]
             )),
         );
         bun_core::pretty!(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
                 &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir(),
-                    module_folder
-                ]
+                &[FileSystem::instance().top_level_dir(), module_folder]
             )),
         );
     } else {

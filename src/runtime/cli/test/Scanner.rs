@@ -122,7 +122,8 @@ impl<'a> Scanner<'a> {
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [bun_core::cwd::get().as_bytes(), path_literal];
-        let Some(path) = Self::abs_buf_projected(bun_core::cwd::get().as_bytes(), &parts, &mut scan_dir_buf)
+        let Some(path) =
+            Self::abs_buf_projected(bun_core::cwd::get().as_bytes(), &parts, &mut scan_dir_buf)
         else {
             return Err(ScanError::DoesNotExist);
         };
@@ -387,16 +388,19 @@ impl<'a> Scanner<'a> {
                 // reshaped for borrowck — drop the &mut borrow from
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
-                let Some(path_len) =
-                    Self::abs_buf_projected(bun_core::cwd::get().as_bytes(), &parts, &mut self.open_dir_buf)
-                        .map(<[u8]>::len)
-                else {
+                let Some(path_len) = Self::abs_buf_projected(
+                    bun_core::cwd::get().as_bytes(),
+                    &parts,
+                    &mut self.open_dir_buf,
+                )
+                .map(<[u8]>::len) else {
                     return;
                 };
                 let path = &self.open_dir_buf[..path_len];
 
                 if !self.does_absolute_path_match_filter(path) {
-                    let rel_path = bun_paths::resolve_path::relative(bun_core::cwd::get().as_bytes(), path);
+                    let rel_path =
+                        bun_paths::resolve_path::relative(bun_core::cwd::get().as_bytes(), path);
                     if !self.does_path_match_filter(rel_path) {
                         return;
                     }

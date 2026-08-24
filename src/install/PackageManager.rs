@@ -800,7 +800,6 @@ mod holder {
     pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
 // ──────────────────────────────────────────────────────────────────────────
@@ -1803,11 +1802,9 @@ pub fn init(
         cli.config,
         ctx,
     )?;
-    let root_package_json_path =
-        ZBox::from_bytes(resolve_path::join_abs_string::<resolve_path::platform::Auto>(
-            fs.top_level_dir(),
-            &[b"package.json"],
-        ));
+    let root_package_json_path = ZBox::from_bytes(resolve_path::join_abs_string::<
+        resolve_path::platform::Auto,
+    >(fs.top_level_dir(), &[b"package.json"]));
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.

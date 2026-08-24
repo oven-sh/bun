@@ -629,7 +629,6 @@ fn update_package_json_and_install_with_manager_with_updates(
         if manager.options.add_catalog.is_some() && manager.workspace_name_hash.is_some() {
             add_catalog::edit_root_entry_before_install(manager, root_package_json)?;
         }
-
     }
 
     install_with_manager::install_with_manager(manager, ctx, original_cwd)?;

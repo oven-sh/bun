@@ -14,8 +14,7 @@ use crate::{Dependency, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
-    WorkspaceTarget, fetch_entry, fetch_entry_root, store_entry,
-    write_target,
+    WorkspaceTarget, fetch_entry, fetch_entry_root, store_entry, write_target,
 };
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};

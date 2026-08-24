@@ -22,9 +22,6 @@
 #include <ctime>
 #include <functional>
 #include <map>
-#include <mutex>
-#include <thread>
-#include <vector>
 
 #include <wtf/Assertions.h>
 

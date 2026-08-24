@@ -124,8 +124,6 @@ impl Default for CustomLoader {
     }
 }
 
-// Memory management is complicated because JSValues are stored in gc-visitable
-// WriteBarriers in C++ but the hash map for extensions is in Rust for flexibility.
 fn on_require_extension_modify(
     global: &JSGlobalObject,
     str: &[u8],

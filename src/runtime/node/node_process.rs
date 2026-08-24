@@ -271,12 +271,18 @@ mod _impl {
                     // SAFETY: non-null impl borrowed from the live `WorkerOptions`
                     // (see `worker_option_string`); only read here, never retained.
                     let imp = unsafe { &*wtf };
-                    // `--` and option names are ASCII, so a 16-bit entry is neither:
-                    // it is an ordinary token that terminates nothing and awaits nothing.
+                    // `is_8bit()` is the storage encoding, not the content: ASCII
+                    // decoded from UTF-16 bytes arrives in 16-bit storage. Narrow it
+                    // for the comparison; a token with non-ASCII units or longer than
+                    // any option name is an ordinary token either way.
+                    let mut narrow = [0u8; 64];
                     let bytes: &[u8] = if imp.is_8bit() {
                         imp.latin1_slice()
                     } else {
-                        b""
+                        match bun_core::strings::narrow_ascii_u16(imp.utf16_slice(), &mut narrow) {
+                            Some(n) => n,
+                            None => b"",
+                        }
                     };
                     if bytes == b"--" {
                         end = i;

@@ -1699,6 +1699,49 @@ it.skipIf(isWindows)("process.execArgv drops `--` after a flag whose value is on
   expect(exitCode).toBe(0);
 });
 
+it("worker execArgv `--` handling does not depend on the strings' storage encoding", async () => {
+  // A UTF-16 decode yields ASCII content in 16-bit storage. The terminator
+  // scan must still see such a `--conditions` as value-taking and such a `--`
+  // as the terminator; a non-ASCII token stays an ordinary token.
+  using dir = tempDir("execargv-wide", {
+    "fixture.js": `
+      const { Worker, isMainThread, parentPort } = require("worker_threads");
+      if (!isMainThread) {
+        parentPort.postMessage(process.execArgv);
+      } else {
+        const wide = s => Buffer.from(s, "utf16le").toString("utf16le");
+        const run = execArgv => new Promise((resolve, reject) => {
+          const w = new Worker(__filename, { execArgv });
+          w.once("message", resolve);
+          w.once("error", reject);
+        });
+        (async () => {
+          console.log(JSON.stringify({
+            wideValueParamKeepsTerminator: await run([wide("--conditions"), "--", "x"]),
+            wideTerminatorTruncates: await run(["--smol", wide("--"), "after"]),
+            nonAsciiIsOrdinary: await run(["--smol", "ключ", "--", "x"]),
+          }));
+        })();
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    wideValueParamKeepsTerminator: ["--conditions", "--", "x"],
+    wideTerminatorTruncates: ["--smol"],
+    nonAsciiIsOrdinary: ["--smol", "ключ"],
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("process.exitCode", () => {
   it("normal", async () => {
     await runInlineFixture(

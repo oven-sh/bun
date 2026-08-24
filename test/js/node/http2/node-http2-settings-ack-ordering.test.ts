@@ -34,7 +34,7 @@ function settingsFrame(entries: Array<[number, number]>): Buffer {
 }
 
 test("client sends the SETTINGS ACK before DATA unblocked by a larger INITIAL_WINDOW_SIZE", async () => {
-  const { promise: done, resolve: bodyReceived } = Promise.withResolvers<void>();
+  const { promise: done, resolve: bodyReceived, reject: failed } = Promise.withResolvers<void>();
   let raised = false;
   // The server sends two SETTINGS frames (the initial one and the raise), so the
   // raise is acknowledged by the second ACK. Matching ACKs by count matters: the
@@ -115,10 +115,10 @@ test("client sends the SETTINGS ACK before DATA unblocked by a larger INITIAL_WI
   const { port } = server.address() as net.AddressInfo;
 
   const client = http2.connect(`http://127.0.0.1:${port}`);
-  client.on("error", () => {});
+  client.on("error", failed);
   try {
     const req = client.request({ ":method": "POST", ":path": "/" });
-    req.on("error", () => {});
+    req.on("error", failed);
     req.write(Buffer.alloc(BODY, 0x61));
 
     await done;

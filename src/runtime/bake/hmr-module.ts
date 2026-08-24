@@ -662,13 +662,18 @@ function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
   const ownKeys = new Set(Object.keys(exp));
   let lateIds: Id[] | null = null;
 
-  const defineForward = (starId: Id, key: string) => {
+  // The getter reads the module that declares the name, not the star
+  // dependency that forwards it. A name declared by a module is an own
+  // property of its namespace object, so the read ends there. A getter that
+  // read the star dependency instead would loop when two barrels star each
+  // other and a third module provides the name.
+  const defineForward = (ownerId: Id, key: string) => {
     if (key === "default" || ownKeys.has(key)) return;
     Object.defineProperty(exp, key, {
       // HMRModule instances are mutated across hot updates, never replaced,
       // so resolving through the registry reads the latest exports.
       get: () => {
-        const m = registry.get(starId);
+        const m = registry.get(ownerId);
         return m && getEsmExports(m)[key];
       },
       enumerable: true,
@@ -679,31 +684,16 @@ function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
   for (const starId of stars) {
     const unloaded = unloadedModuleRegistry[starId];
     if (Array.isArray(unloaded)) {
-      // ESM: collect the export names of the dependency and of its own
-      // `export *` chain. The walk is seeded with this module's id so a
-      // circular star re-export does not forward a name back to its only
-      // concrete provider (that getter would recurse forever).
-      const visited = new Set<Id>([mod.id, starId]);
-      const queue: Id[] = [starId];
-      let sawDynamic = false;
-      while (queue.length > 0) {
-        const next = unloadedModuleRegistry[queue.shift()!];
-        if (!Array.isArray(next)) {
-          // A nested star through a CommonJS module: its names are only
-          // known after it runs, so re-merge this dependency late.
-          sawDynamic = true;
-          continue;
-        }
-        for (const key of next[ESMProps.exports]) {
-          defineForward(starId, key);
-        }
-        for (const nested of next[ESMProps.stars]) {
-          if (!visited.has(nested)) {
-            visited.add(nested);
-            queue.push(nested);
-          }
-        }
+      // ESM: resolve every name the dependency provides to the module that
+      // declares it. The walk starts with this module on the stack, so a
+      // star chain that comes back here contributes nothing.
+      const names = new Map<string, Id>();
+      const sawDynamic = resolveStarNames(starId, [mod.id], names);
+      for (const [key, ownerId] of names) {
+        defineForward(ownerId, key);
       }
+      // A nested star through a CommonJS module: its names are only known
+      // after it runs, so re-merge this dependency late.
       if (sawDynamic) (lateIds ??= []).push(starId);
     } else if (typeof unloaded === "function") {
       // CommonJS: the export names are only known after the module runs.
@@ -725,6 +715,28 @@ function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
     }
   }
   return lateIds;
+}
+
+/** Maps every name that the ESM module `id` provides to the module that
+ * declares it, with the precedence of a namespace object: an own name wins
+ * over a star, and a later star wins over an earlier one. `stack` holds the
+ * modules whose stars are being resolved, so a circular star re-export is cut
+ * where it closes. Returns whether a CommonJS module was met: its names are
+ * only known after it runs. */
+function resolveStarNames(id: Id, stack: Id[], names: Map<string, Id>): boolean {
+  const unloaded = unloadedModuleRegistry[id];
+  if (!Array.isArray(unloaded)) return true;
+  let sawDynamic = false;
+  stack.push(id);
+  for (const nested of unloaded[ESMProps.stars]) {
+    if (stack.includes(nested)) continue;
+    if (resolveStarNames(nested, stack, names)) sawDynamic = true;
+  }
+  stack.pop();
+  for (const key of unloaded[ESMProps.exports]) {
+    names.set(key, id);
+  }
+  return sawDynamic;
 }
 
 /** Second half of `mergeStarExports`, after the dependencies load. Only adds

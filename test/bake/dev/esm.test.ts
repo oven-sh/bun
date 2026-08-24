@@ -279,6 +279,102 @@ devTest("export star through require() (sync loader) circular", {
     await c.expectMessage("PASS");
   },
 });
+// Two barrels star each other and both star a third module that declares the
+// name. The forwarding getter must read the module that declares the name,
+// not the other barrel, or the two getters call each other forever.
+devTest("export star: mutual barrels with a shared provider", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "a.ts": `
+      export * from './c';
+      export * from './b';
+    `,
+    "b.ts": `
+      export * from './c';
+      export * from './a';
+    `,
+    "c.ts": `
+      export let z = 1;
+      export function bump() { z++; }
+    `,
+    "index.ts": `
+      import * as a from './a';
+      import * as b from './b';
+      a.bump();
+      if (a.z === 2 && b.z === 2) console.log("PASS");
+      else console.log("FAIL: " + JSON.stringify({ a_z: a.z, b_z: b.z }));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star: a ring of barrels with a shared provider", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "a.ts": `
+      export * from './p';
+      export * from './b';
+    `,
+    "b.ts": `
+      export * from './p';
+      export * from './c';
+    `,
+    "c.ts": `
+      export * from './p';
+      export * from './a';
+    `,
+    "p.ts": `
+      export const v = 1;
+    `,
+    "index.ts": `
+      import * as a from './a';
+      import * as b from './b';
+      import * as c from './c';
+      if (a.v === 1 && b.v === 1 && c.v === 1) console.log("PASS");
+      else console.log("FAIL: " + JSON.stringify({ a: a.v, b: b.v, c: c.v }));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+// Inside a star chain, a module's own name wins over the same name from its
+// own stars, so the barrel above it forwards to that module, not deeper.
+devTest("export star: an own name wins inside a nested chain", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "top.ts": `
+      export * from './mid';
+    `,
+    "mid.ts": `
+      export * from './deep';
+      export const shadowed = "mid";
+    `,
+    "deep.ts": `
+      export const shadowed = "deep";
+      export const onlyDeep = "deep";
+    `,
+    "index.ts": `
+      import * as top from './top';
+      const got = [top.shadowed, top.onlyDeep].join(",");
+      if (got === "mid,deep") console.log("PASS");
+      else console.log("FAIL: " + got);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
 devTest("export * as ns from preserves live bindings across HMR", {
   framework: minimalFramework,
   files: {

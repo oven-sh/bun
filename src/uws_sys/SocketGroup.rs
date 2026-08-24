@@ -393,3 +393,132 @@ unsafe extern "C" {
         fds: *mut [LIBUS_SOCKET_DESCRIPTOR; 2],
     ) -> *mut us_socket_t;
 }
+
+/// A [`SocketGroup`] embedded (address-stable) in an owner that is reached
+/// only through shared references. uSockets links the group into the loop and
+/// mutates it from C; this wrapper only ever hands the group's address to
+/// those C entry points and never forms a Rust reference to it, so it can be
+/// used re-entrantly from socket callbacks. Closes every socket and unlinks
+/// from the loop on drop if it was initialised.
+#[repr(transparent)]
+pub struct SocketGroupCell(core::cell::UnsafeCell<SocketGroup>);
+
+impl Default for SocketGroupCell {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SocketGroupCell {
+    pub fn new() -> Self {
+        Self(core::cell::UnsafeCell::new(bun_core::ffi::zeroed()))
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut SocketGroup {
+        self.0.get()
+    }
+
+    /// Whether [`init`](Self::init) has run (the group knows its loop).
+    pub fn is_initialized(&self) -> bool {
+        // SAFETY: reads one pointer field of the C struct; C only writes it
+        // in `us_socket_group_init`, on this thread.
+        !unsafe { (*self.as_ptr()).loop_ }.is_null()
+    }
+
+    /// See [`SocketGroup::init`]. `loop_` must be the calling thread's loop.
+    pub fn init(&self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
+        // SAFETY: `self` is an address-stable `#[repr(C)]` slot; C initialises
+        // it in place.
+        unsafe {
+            us_socket_group_init(
+                self.as_ptr(),
+                loop_,
+                vt.map_or(ptr::null(), std::ptr::from_ref::<VTable>),
+                owner_ptr,
+            );
+        }
+    }
+
+    /// See [`SocketGroup::connect`].
+    pub fn connect(
+        &self,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        host: &core::ffi::CStr,
+        port: c_int,
+        options: c_int,
+        socket_ext_size: c_int,
+    ) -> ConnectResult {
+        debug_assert!(self.is_initialized());
+        let mut has_dns_resolved: c_int = 0;
+        // SAFETY: initialised group; `host` is NUL-terminated.
+        let p = unsafe {
+            us_socket_group_connect(
+                self.as_ptr(),
+                kind as u8,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
+                host.as_ptr(),
+                port,
+                ptr::null(),
+                0,
+                options,
+                socket_ext_size,
+                &raw mut has_dns_resolved,
+            )
+        };
+        if p.is_null() {
+            return ConnectResult::Failed;
+        }
+        if has_dns_resolved != 0 {
+            ConnectResult::Socket(p.cast::<us_socket_t>())
+        } else {
+            ConnectResult::Connecting(p.cast::<ConnectingSocket>())
+        }
+    }
+
+    /// See [`SocketGroup::connect_unix`].
+    pub fn connect_unix(
+        &self,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        path: &[u8],
+        options: c_int,
+        socket_ext_size: c_int,
+    ) -> *mut us_socket_t {
+        debug_assert!(self.is_initialized());
+        // SAFETY: initialised group; `path` ptr+len from a valid slice.
+        unsafe {
+            us_socket_group_connect_unix(
+                self.as_ptr(),
+                kind as u8,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
+                path.as_ptr(),
+                path.len(),
+                options,
+                socket_ext_size,
+            )
+        }
+    }
+
+    /// Force-close every socket in the group (their close callbacks run).
+    pub fn close_all(&self) {
+        if self.is_initialized() {
+            // SAFETY: initialised group on its own thread.
+            unsafe { us_socket_group_close_all(self.as_ptr()) }
+        }
+    }
+}
+
+impl Drop for SocketGroupCell {
+    fn drop(&mut self) {
+        if self.is_initialized() {
+            // SAFETY: initialised group on its own thread; closing everything
+            // first means the loop holds no socket that points back at it.
+            unsafe {
+                us_socket_group_close_all(self.as_ptr());
+                us_socket_group_deinit(self.as_ptr());
+            }
+        }
+    }
+}

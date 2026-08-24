@@ -343,13 +343,7 @@ pub(crate) fn list_objects(
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
         b"",
-        bun_http::HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpSimpleTask::http_callback,
-            S3HttpSimpleTask::release_at_shutdown,
-        ),
+        bun_http::HTTPClientResultCallback::new::<S3HttpSimpleTask>(task_ptr),
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {
             http_proxy,
@@ -1251,13 +1245,7 @@ fn download_stream(
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
         b"",
-        bun_http::HTTPClientResultCallback::new_with_release::<S3HttpDownloadStreamingTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpDownloadStreamingTask::http_callback,
-            S3HttpDownloadStreamingTask::release_at_shutdown,
-        ),
+        bun_http::HTTPClientResultCallback::new::<S3HttpDownloadStreamingTask>(task_ptr),
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {
             http_proxy,

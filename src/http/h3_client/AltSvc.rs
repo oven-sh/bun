@@ -126,21 +126,10 @@ struct Record {
     expires_at: i64,
 }
 
-// module-level mutable state; safe because
-// every access is on the single HTTP thread (see module doc).
-// PORTING.md §Global mutable state: HTTP-thread-only map → RacyCell.
-static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::RacyCell::new(None);
-
-/// Borrow the (lazily-initialized) per-HTTP-thread cache. PORTING.md §Global
-/// mutable state: only ever accessed from the single HTTP thread (see module
-/// doc), so the `&'static mut` is the unique live borrow at every call site.
-/// Callers must not hold the result across a call that re-enters this
-/// accessor (per-statement reborrow shape — same contract the prior `*mut`
-/// API imposed, now centralized here).
-fn cache() -> &'static mut StringHashMap<Record> {
-    // SAFETY: HTTP-thread only; lazy init cannot race. Every call site is a
-    // per-statement reborrow (audited in r3); no two `&mut` overlap.
-    unsafe { (*CACHE.get()).get_or_insert_with(StringHashMap::default) }
+/// The per-HTTP-thread cache; lives in the thread's `ThreadState`.
+#[derive(Default)]
+pub(crate) struct Cache {
+    map: StringHashMap<Record>,
 }
 
 /// Hard cap on cached origins. When reached, `record()` first sweeps expired
@@ -164,72 +153,72 @@ fn key<'a>(buf: &'a mut [u8], hostname: &[u8], port: u16) -> &'a [u8] {
     &buf[..written]
 }
 
-fn sweep_expired(now: i64) {
-    // `retain` (hashbrown, via DerefMut) is removal-safe during iteration;
-    // dropping each removed entry frees its owned key.
-    cache().retain(|_, v| now < v.expires_at);
-}
-
-/// Remember (or refresh / clear) the h3 alternative for `origin_host:origin_port`
-/// from a received `Alt-Svc` field-value. Runs on the HTTP thread inside
-/// `handleResponseMetadata`.
-pub(crate) fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
-    let mut buf = [0u8; 256 + 8];
-    if origin_host.len() > 256 {
-        return;
+impl Cache {
+    fn sweep_expired(&mut self, now: i64) {
+        // `retain` (hashbrown, via DerefMut) is removal-safe during iteration;
+        // dropping each removed entry frees its owned key.
+        self.map.retain(|_, v| now < v.expires_at);
     }
-    let k = key(&mut buf, origin_host, origin_port);
 
-    // SAFETY: HTTP-thread only; reborrowed per-statement (no overlap with
-    // `sweep_expired`'s internal borrow — that call takes its own).
-    let entry = match parse(field_value) {
-        Err(ParseError::Clear) => {
-            // `clear`
-            cache().remove(k);
-            bun_core::scoped_log!(h3_client, "alt-svc clear {}", bstr::BStr::new(k));
+    /// Remember (or refresh / clear) the h3 alternative for `origin_host:origin_port`
+    /// from a received `Alt-Svc` field-value. Runs on the HTTP thread inside
+    /// `handleResponseMetadata`.
+    pub(crate) fn record(&mut self, origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
+        let mut buf = [0u8; 256 + 8];
+        if origin_host.len() > 256 {
             return;
         }
-        Ok(None) => return,
-        Ok(Some(e)) => e,
-    };
+        let k = key(&mut buf, origin_host, origin_port);
 
-    let now = timestamp();
-    if cache().len() >= MAX_ENTRIES && !cache().contains_key(k) {
-        sweep_expired(now);
-        if cache().len() >= MAX_ENTRIES {
-            return;
+        let entry = match parse(field_value) {
+            Err(ParseError::Clear) => {
+                // `clear`
+                self.map.remove(k);
+                bun_core::scoped_log!(h3_client, "alt-svc clear {}", bstr::BStr::new(k));
+                return;
+            }
+            Ok(None) => return,
+            Ok(Some(e)) => e,
+        };
+
+        let now = timestamp();
+        if self.map.len() >= MAX_ENTRIES && !self.map.contains_key(k) {
+            self.sweep_expired(now);
+            if self.map.len() >= MAX_ENTRIES {
+                return;
+            }
         }
+        // `StringHashMap::put` dupes the key on insert.
+        let _ = self.map.put(
+            k,
+            Record {
+                h3_port: entry.port,
+                expires_at: now + i64::from(entry.ma),
+            },
+        );
+        bun_core::scoped_log!(
+            h3_client,
+            "alt-svc h3 {} -> :{} ma={}",
+            bstr::BStr::new(k),
+            entry.port,
+            entry.ma
+        );
     }
-    // `StringHashMap::put` dupes the key on insert.
-    let _ = cache().put(
-        k,
-        Record {
-            h3_port: entry.port,
-            expires_at: now + i64::from(entry.ma),
-        },
-    );
-    bun_core::scoped_log!(
-        h3_client,
-        "alt-svc h3 {} -> :{} ma={}",
-        bstr::BStr::new(k),
-        entry.port,
-        entry.ma
-    );
-}
 
-/// Look up a previously-advertised h3 alternative for `origin_host:origin_port`.
-/// Expired entries are dropped on access. Runs on the HTTP thread inside
-/// `start_()`.
-pub(crate) fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
-    let mut buf = [0u8; 256 + 8];
-    if origin_host.len() > 256 {
-        return None;
+    /// Look up a previously-advertised h3 alternative for `origin_host:origin_port`.
+    /// Expired entries are dropped on access. Runs on the HTTP thread inside
+    /// `start_()`.
+    pub(crate) fn lookup(&mut self, origin_host: &[u8], origin_port: u16) -> Option<u16> {
+        let mut buf = [0u8; 256 + 8];
+        if origin_host.len() > 256 {
+            return None;
+        }
+        let k = key(&mut buf, origin_host, origin_port);
+        let rec = *self.map.get(k)?;
+        if timestamp() >= rec.expires_at {
+            self.map.remove(k);
+            return None;
+        }
+        Some(rec.h3_port)
     }
-    let k = key(&mut buf, origin_host, origin_port);
-    let rec = *cache().get(k)?;
-    if timestamp() >= rec.expires_at {
-        cache().remove(k);
-        return None;
-    }
-    Some(rec.h3_port)
 }

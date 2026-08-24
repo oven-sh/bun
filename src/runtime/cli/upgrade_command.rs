@@ -180,7 +180,7 @@ impl UpgradeCommand {
     pub(crate) fn get_latest_version<const SILENT: bool>(
         env_loader: &mut DotEnv::Loader,
         refresher: Option<&mut Progress::Progress>,
-        mut progress: Option<&mut Progress::Node>,
+        progress: Option<&mut Progress::Node>,
         use_profile: bool,
     ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
@@ -270,10 +270,10 @@ impl UpgradeCommand {
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if !SILENT {
-            // `progress_node` stores an untracked NonNull borrow of the caller's
-            // `progress`; sound because `send_sync` below completes before this
-            // frame returns, so the pointee outlives every use.
-            async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
+            // `send_sync` below completes before this frame returns, so
+            // `progress` outlives every use.
+            async_http.client.progress_node =
+                Some(bun_ptr::BackRef::new(progress.as_deref().unwrap()));
         }
         let response = async_http.send_sync(metadata_body)?;
 
@@ -659,9 +659,12 @@ impl UpgradeCommand {
                 HTTP::FetchRedirect::Follow,
             ));
             // `progress` is intentionally leaked (process-lifetime), so the
-            // untracked NonNull stored in `progress_node` can never dangle.
-            async_http.client.progress_node =
-                Some(NonNull::new(progress).expect("leaked Box is non-null"));
+            // back-reference stored in `progress_node` can never dangle.
+            async_http.client.progress_node = Some(
+                NonNull::new(progress)
+                    .expect("leaked Box is non-null")
+                    .into(),
+            );
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
             let response = async_http.send_sync(zip_file_buffer)?;

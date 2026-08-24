@@ -258,7 +258,9 @@ mod sql_hooks {
     unsafe fn ssl_config_server_name(this: *const c_void) -> *const core::ffi::c_char {
         // SAFETY: `this` is a live boxed `SSLConfig`; returned ptr borrows its
         // heap-owned C-string field, valid until `ssl_config_free`.
-        unsafe { &*this.cast::<crate::socket::SSLConfig>() }.server_name
+        unsafe { &*this.cast::<crate::socket::SSLConfig>() }
+            .server_name_cstr()
+            .map_or(core::ptr::null(), core::ffi::CStr::as_ptr)
     }
     unsafe fn ssl_config_reject_unauthorized(this: *const c_void) -> i32 {
         // SAFETY: `this` is a live boxed `SSLConfig`.

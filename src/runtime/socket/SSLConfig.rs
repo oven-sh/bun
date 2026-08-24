@@ -11,8 +11,6 @@
 //! rule on a foreign type), so they're provided via the [`SSLConfigFromJs`]
 //! extension trait. Import that trait to call `SSLConfig::from_js(..)`.
 
-use core::ffi::c_char;
-
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
 
@@ -58,24 +56,25 @@ impl From<JsError> for ReadFromBlobError {
 // so `free_sensitive` would not pair with `Box`-owned memory.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `ZBox` is global-allocator memory; re-allocate via `dupe_z` so `mi_free` can free it.
+/// `ZBox` is global-allocator memory; re-allocate into a zero-on-free C string.
 #[inline]
-fn zbox_into_raw(z: &bun_core::ZBox) -> *const c_char {
-    bun_core::dupe_z(z.as_bytes())
+fn zbox_into_raw(z: &bun_core::ZBox) -> SecretCString {
+    SecretCString::new(z.as_bytes())
 }
 
-/// `dupeZ` a byte slice into a fresh mimalloc allocation.
+/// `dupeZ` a byte slice into a fresh zero-on-free C string.
 #[inline]
-fn dupe_z(bytes: &[u8]) -> *const c_char {
-    bun_core::dupe_z(bytes)
+fn dupe_z(bytes: &[u8]) -> SecretCString {
+    SecretCString::new(bytes)
 }
 
-type CStrSlice = Option<Box<[*const c_char]>>;
+use bun_core::SecretCString;
+use bun_http::ssl_config::CStrSlice;
 
 fn read_from_blob(
     global: &JSGlobalObject,
     blob: &Blob,
-) -> Result<*const c_char, ReadFromBlobError> {
+) -> Result<SecretCString, ReadFromBlobError> {
     let store = blob
         .store
         .get()
@@ -155,15 +154,16 @@ impl SSLConfigFromJs for SSLConfig {
         let mut any = false;
 
         if let Some(passphrase) = generated.passphrase.as_ref() {
-            result.passphrase = zbox_into_raw(&passphrase.to_owned_slice_z());
+            result.passphrase = Some(zbox_into_raw(&passphrase.to_owned_slice_z()));
             any = true;
         }
         if let Some(dh_params_file) = generated.dh_params_file.as_ref() {
-            result.dh_params_file_name = handle_path(global, "dhParamsFile", dh_params_file)?;
+            result.dh_params_file_name =
+                Some(handle_path(global, "dhParamsFile", dh_params_file)?);
             any = true;
         }
         if let Some(server_name) = generated.server_name.as_ref() {
-            result.server_name = zbox_into_raw(&server_name.to_owned_slice_z());
+            result.server_name = Some(zbox_into_raw(&server_name.to_owned_slice_z()));
             result.requires_custom_request_ctx = true;
         }
 
@@ -179,7 +179,7 @@ impl SSLConfigFromJs for SSLConfig {
         result.session_timeout = generated.session_timeout;
         result.allow_partial_trust_chain = generated.allow_partial_trust_chain;
         if let Some(sigalgs) = generated.sigalgs.as_ref() {
-            result.sigalgs = zbox_into_raw(&sigalgs.to_owned_slice_z());
+            result.sigalgs = Some(zbox_into_raw(&sigalgs.to_owned_slice_z()));
             any = true;
         }
         if let Some(ecdh_curve) = generated.ecdh_curve.as_ref() {
@@ -188,7 +188,7 @@ impl SSLConfigFromJs for SSLConfig {
             // "use the library's default group list", i.e. skip the
             // SSL_CTX_set1_groups_list call entirely.
             if bytes.as_bytes() != b"auto" {
-                result.ecdh_curve = zbox_into_raw(&bytes);
+                result.ecdh_curve = Some(zbox_into_raw(&bytes));
                 any = true;
             }
         }
@@ -214,42 +214,42 @@ impl SSLConfigFromJs for SSLConfig {
             || result.secure_options != 0
             || result.ssl_min_version != 0
             || result.ssl_max_version != 0
-            || !result.sigalgs.is_null()
-            || !result.ecdh_curve.is_null()
+            || result.sigalgs.is_some()
+            || result.ecdh_curve.is_some()
             || result.session_timeout != 0
             || result.allow_partial_trust_chain;
 
         if let Some(key_file) = generated.key_file.as_ref() {
-            result.key_file_name = handle_path(global, "keyFile", key_file)?;
+            result.key_file_name = Some(handle_path(global, "keyFile", key_file)?);
             result.requires_custom_request_ctx = true;
         }
         if let Some(cert_file) = generated.cert_file.as_ref() {
-            result.cert_file_name = handle_path(global, "certFile", cert_file)?;
+            result.cert_file_name = Some(handle_path(global, "certFile", cert_file)?);
             result.requires_custom_request_ctx = true;
         }
         if let Some(ca_file) = generated.ca_file.as_ref() {
-            result.ca_file_name = handle_path(global, "caFile", ca_file)?;
+            result.ca_file_name = Some(handle_path(global, "caFile", ca_file)?);
             result.requires_custom_request_ctx = true;
         }
 
-        let protocols: *const c_char = match &generated.alpn_protocols {
-            jsc::generated::SSLConfigAlpnProtocols::None => core::ptr::null(),
+        let protocols: Option<SecretCString> = match &generated.alpn_protocols {
+            jsc::generated::SSLConfigAlpnProtocols::None => None,
             jsc::generated::SSLConfigAlpnProtocols::String(val) => {
-                zbox_into_raw(&val.as_ref().to_owned_slice_z())
+                Some(zbox_into_raw(&val.as_ref().to_owned_slice_z()))
             }
             jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
                 // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
                 // owned by the GenVal for the duration of `generated`.
                 let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
-                dupe_z(buffer.byte_slice())
+                Some(dupe_z(buffer.byte_slice()))
             }
         };
-        if !protocols.is_null() {
+        if protocols.is_some() {
             result.protos = protocols;
             result.requires_custom_request_ctx = true;
         }
         if let Some(ciphers) = generated.ciphers.as_ref() {
-            result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
+            result.ssl_ciphers = Some(zbox_into_raw(&ciphers.to_owned_slice_z()));
             result.is_using_default_ciphers = false;
             result.requires_custom_request_ctx = true;
         }
@@ -295,17 +295,14 @@ fn handle_path(
     global: &JSGlobalObject,
     field: &'static str,
     string: &bun_core::String,
-) -> JsResult<*const c_char> {
+) -> JsResult<SecretCString> {
     let name = string.to_owned_slice_z();
     // `bun_sys::access` routes to `access(2)` on POSIX and
     // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
     // cross-platform existence probe.
     if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
-        // Error path: free_sensitive(name) — zero before drop. Route through
-        // the canonical helper so the secure-zero core stays single-sourced.
-        // SAFETY: `zbox_into_raw` yields a `default_alloc::malloc`-backed,
-        // NUL-terminated buffer whose ownership we now hold exclusively.
-        unsafe { bun_core::free_sensitive(zbox_into_raw(&name)) };
+        // zero before drop, like every other copy of these values
+        drop(zbox_into_raw(&name));
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
     }
     Ok(zbox_into_raw(&name))
@@ -367,17 +364,10 @@ fn handle_file_array(
     if elements.is_empty() {
         return Ok(None);
     }
-    let mut result: Vec<*const c_char> = Vec::with_capacity(elements.len());
-    // Error path: free_sensitive each, then drop result — need zeroing on error:
-    let mut guard = scopeguard::guard(&mut result, |r| {
-        for p in r.drain(..) {
-            // SAFETY: every pushed `p` came from `handle_single_file` →
-            // `zbox_into_raw`, a `default_alloc::malloc`-backed NUL-terminated buffer.
-            unsafe { bun_core::free_sensitive(p) };
-        }
-    });
+    // Each entry zeroes itself on drop, so the error path needs no cleanup.
+    let mut result: Vec<SecretCString> = Vec::with_capacity(elements.len());
     for elem in elements {
-        guard.push(handle_single_file(
+        result.push(handle_single_file(
             global,
             match elem {
                 jsc::generated::SSLConfigSingleFile::String(val) => {
@@ -396,8 +386,7 @@ fn handle_file_array(
             },
         )?);
     }
-    let result = scopeguard::ScopeGuard::into_inner(guard);
-    Ok(Some(core::mem::take(result).into_boxed_slice()))
+    Ok(Some(result.into_boxed_slice()))
 }
 
 enum SingleFile<'a> {
@@ -409,7 +398,7 @@ enum SingleFile<'a> {
 fn handle_single_file(
     global: &JSGlobalObject,
     file: SingleFile<'_>,
-) -> Result<*const c_char, ReadFromBlobError> {
+) -> Result<SecretCString, ReadFromBlobError> {
     match file {
         SingleFile::String(string) => Ok(zbox_into_raw(&string.to_owned_slice_z())),
         SingleFile::Buffer(jsc_buffer) => {

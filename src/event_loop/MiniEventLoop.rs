@@ -165,6 +165,42 @@ pub fn init_global(
     global_ptr
 }
 
+/// Drive the calling thread's uSockets loop for the rest of the process:
+/// `before_tick`, one `us_loop` tick (kept referenced so it blocks for I/O),
+/// the loop's deferred-free hook, `after_tick`, repeat. Initializes the
+/// thread's [`MiniEventLoop`] first (uSockets' DNS path needs the loop's parent
+/// set). The closures run outside any borrow of the loop, so socket callbacks
+/// fired from inside the tick may use anything the closures use.
+pub fn run_uws_loop_forever(mut before_tick: impl FnMut(), mut after_tick: impl FnMut()) -> ! {
+    let mini = init_global(None, None);
+    // SAFETY: `mini` is this thread's leaked singleton and `loop_` its C-owned
+    // loop (see `loop_ptr`); every `&mut` below is statement-scoped and this
+    // thread is the only one that forms references to either.
+    let uws_loop = unsafe { (*mini).loop_ptr() };
+    // SAFETY: as above.
+    unsafe {
+        #[cfg(unix)]
+        {
+            (*uws_loop).num_polls = (*uws_loop).num_polls.max(2);
+        }
+        #[cfg(windows)]
+        {
+            (*uws_loop).inc();
+        }
+    }
+    loop {
+        before_tick();
+        // SAFETY: as above.
+        unsafe {
+            (*uws_loop).inc();
+            (*uws_loop).tick();
+            (*uws_loop).dec();
+            (*mini).on_after_event_loop();
+        }
+        after_tick();
+    }
+}
+
 impl MiniEventLoop {
     /// Raw `*mut uws::Loop`.
     ///

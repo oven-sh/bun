@@ -2,14 +2,17 @@ use crate::Error;
 use bun_core::MutableString;
 use bun_core::Output;
 
-use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
+use crate::{CertificateInfo, Decompressor, Encoding, Body, HTTPResponseMetadata};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 
-pub struct InternalState<'a> {
+pub struct InternalState {
+    /// The HTTP thread's state, for its libdeflate scratch; set once the
+    /// request starts there.
+    pub(crate) thread: Option<&'static crate::http_thread::ThreadState>,
     pub(crate) response_message_buffer: MutableString,
     /// This is the cloned metadata containing the response headers, url and status code after the .headers phase are received
     /// will be turned None once returned to the user (the ownership is transferred to the user)
@@ -35,7 +38,7 @@ pub struct InternalState<'a> {
     // outlives-holder invariant (the backing `original_request_body` is a
     // sibling field, so it lives exactly as long as this struct).
     pub(crate) request_body: bun_ptr::RawSlice<u8>,
-    pub(crate) original_request_body: HTTPRequestBody<'a>,
+    pub(crate) original_request_body: Body,
     pub(crate) request_sent_len: usize,
     pub(crate) fail: Option<Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
@@ -97,9 +100,10 @@ impl InternalStateFlags {
     }
 }
 
-impl Default for InternalState<'_> {
+impl Default for InternalState {
     fn default() -> Self {
         Self {
+            thread: None,
             response_message_buffer: MutableString::init_empty(),
             cloned_metadata: None,
             flags: InternalStateFlags::new(),
@@ -114,7 +118,7 @@ impl Default for InternalState<'_> {
             content_length: None,
             total_body_received: 0,
             request_body: bun_ptr::RawSlice::EMPTY,
-            original_request_body: HTTPRequestBody::Bytes(b""),
+            original_request_body: Body::EMPTY,
             request_sent_len: 0,
             fail: None,
             dns_error: 0,
@@ -126,10 +130,14 @@ impl Default for InternalState<'_> {
     }
 }
 
-impl<'a> InternalState<'a> {
-    pub(crate) fn init(body: HTTPRequestBody<'a>) -> InternalState<'a> {
+impl InternalState {
+    pub(crate) fn init(
+        thread: &'static crate::http_thread::ThreadState,
+        body: Body,
+    ) -> InternalState {
         let request_body = bun_ptr::RawSlice::new(body.slice());
         InternalState {
+            thread: Some(thread),
             original_request_body: body,
             request_body,
             compressed_body: MutableString::init_empty(),
@@ -149,15 +157,12 @@ impl<'a> InternalState<'a> {
         // can deliver its bytes after calling `reset()`; clearing happens in
         // the caller after `callback.run()`.
         let decoded_body = core::mem::take(&mut self.decoded_body);
-        // `*self = ...` below drops every field via drop glue. Only
-        // `original_request_body` needs an explicit `deinit()` because
-        // `HTTPRequestBody` deliberately has no `Drop` (see HTTPRequestBody.rs).
-        self.original_request_body.deinit();
         *self = InternalState {
+            thread: self.thread,
             decoded_body,
             compressed_body: MutableString::init_empty(),
             response_message_buffer: MutableString::init_empty(),
-            original_request_body: HTTPRequestBody::Bytes(b""),
+            original_request_body: Body::EMPTY,
             request_body: bun_ptr::RawSlice::EMPTY,
             certificate_info: None,
             flags: InternalStateFlags::new(),
@@ -262,7 +267,11 @@ impl<'a> InternalState<'a> {
                 self.flags.is_libdeflate_fast_path_disabled = true;
 
                 log!("Decompressing {} bytes with libdeflate\n", buffer.len());
-                let deflater = crate::http_thread().deflater();
+                let mut deflater = self
+                    .thread
+                    .expect("decompressing off the HTTP thread")
+                    .deflater();
+                let deflater = &mut *deflater;
 
                 // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
                 // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.

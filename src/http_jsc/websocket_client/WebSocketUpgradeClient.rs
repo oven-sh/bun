@@ -662,9 +662,9 @@ where
                     bun_http::configure_http_client_with_alpn(
                         ssl,
                         if bun_core::ip_address::is_ip_address(hostname.as_bytes()) {
-                            core::ptr::null()
+                            None
                         } else {
-                            hostname.as_ptr()
+                            Some(hostname.as_cstr())
                         },
                         bun_http::AlpnOffer::H1,
                     );

@@ -601,3 +601,31 @@ impl fmt::Display for Headers<'_> {
 
 pub use c::phr_chunked_decoder;
 pub use c::phr_decode_chunked;
+
+/// Outcome of [`decode_chunked`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChunkedDecode {
+    /// The terminating chunk was reached; `n` decoded bytes are at the front
+    /// of the buffer (anything after them is trailing input).
+    Done(usize),
+    /// More input is needed; `n` decoded bytes are at the front of the buffer.
+    Incomplete(usize),
+    /// The input is not valid chunked encoding; `n` bytes had been decoded.
+    Invalid(usize),
+}
+
+/// Decode `buf` (chunked transfer coding) in place. The decoded payload is
+/// compacted to the front of `buf`; the return value says how many bytes that
+/// is and whether the final chunk has been seen.
+pub fn decode_chunked(decoder: &mut phr_chunked_decoder, buf: &mut [u8]) -> ChunkedDecode {
+    let mut len = buf.len();
+    // SAFETY: `buf` is an exclusive, initialized `len`-byte buffer; the decoder
+    // only rewrites bytes within it and lowers `len`.
+    let ret = unsafe { phr_decode_chunked(decoder, buf.as_mut_ptr(), &raw mut len) };
+    debug_assert!(len <= buf.len());
+    match ret {
+        -1 => ChunkedDecode::Invalid(len),
+        -2 => ChunkedDecode::Incomplete(len),
+        _ => ChunkedDecode::Done(len),
+    }
+}

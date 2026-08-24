@@ -944,6 +944,21 @@ pub unsafe trait IntrusiveField<F>: Sized {
         // SAFETY: per fn contract.
         unsafe { container_of::<Self, F>(field, Self::OFFSET) }
     }
+
+    /// The address of the `Self` whose `<field>` is at `field` — pointer
+    /// arithmetic only (nothing is dereferenced), so this is safe; the result
+    /// is only as valid as `field` was.
+    #[inline(always)]
+    fn container_nn(field: core::ptr::NonNull<F>) -> core::ptr::NonNull<Self> {
+        core::ptr::NonNull::new(
+            field
+                .as_ptr()
+                .cast::<u8>()
+                .wrapping_sub(Self::OFFSET)
+                .cast::<Self>(),
+        )
+        .expect("intrusive field of a non-null container")
+    }
 }
 
 /// Stamp `unsafe impl IntrusiveField<$F> for $T { const OFFSET = offset_of!($T, $field); }`.
@@ -2443,6 +2458,33 @@ pub mod ffi {
     impl<'a, T> From<&'a [T]> for FfiSlice<'a, T> {
         #[inline]
         fn from(s: &'a [T]) -> Self {
+            Self::new(s)
+        }
+    }
+
+    /// [`FfiSlice`] for an exclusive borrow: the callee may read and write
+    /// `len` elements at `ptr` for the duration of the call and nothing else.
+    #[repr(C)]
+    pub struct FfiSliceMut<'a, T = u8> {
+        ptr: *mut T,
+        len: usize,
+        _borrow: core::marker::PhantomData<&'a mut [T]>,
+    }
+
+    impl<'a, T> FfiSliceMut<'a, T> {
+        #[inline]
+        pub fn new(s: &'a mut [T]) -> Self {
+            Self {
+                ptr: s.as_mut_ptr(),
+                len: s.len(),
+                _borrow: core::marker::PhantomData,
+            }
+        }
+    }
+
+    impl<'a, T> From<&'a mut [T]> for FfiSliceMut<'a, T> {
+        #[inline]
+        fn from(s: &'a mut [T]) -> Self {
             Self::new(s)
         }
     }

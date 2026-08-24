@@ -874,7 +874,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(1);
             }
 
-            bun_http::async_http::preconnect(url);
+            bun_http::async_http::preconnect(&url);
         }
     }
 
@@ -3082,33 +3082,21 @@ struct RemoteImageDownload {
     // Self-referential: borrows from `url: Box<[u8]>` below.
     async_http: bun_http::AsyncHTTP<'static>,
     response_buffer: bun_core::MutableString,
+    /// The terminal result's error and status, read by the second pass.
+    err: Option<bun_http::Error>,
+    status_code: u32,
     url: Box<[u8]>,
     done: *const DoneChannel,
 }
 
-impl RemoteImageDownload {
-    fn on_done(
-        this: *mut RemoteImageDownload,
-        async_http: *mut bun_http::AsyncHTTP<'static>,
-        mut result: bun_http::HTTPClientResult<'_>,
-    ) {
-        // The worker's
-        // ThreadlocalAsyncHTTP is about to be freed, so copy its
-        // mutated state back into our owned AsyncHTTP before writing
-        // to the channel.
-        // SAFETY: `this` was passed as the callback ctx in `prefetch_remote_images`;
-        // `async_http` is the worker-thread temporary whose `.real` points back at
-        // `this.async_http`.
+impl bun_http::RawResultCallback for RemoteImageDownload {
+    fn on_result(this: *mut RemoteImageDownload, mut result: bun_http::HTTPClientResult<'_>) {
+        // SAFETY: `this` was passed as the callback ctx in `prefetch_remote_images`
+        // and is only touched here until the channel write below.
         unsafe {
             let this = &mut *this;
-            let async_http = &mut *async_http;
-            if let Some(real) = async_http.real {
-                // Raw bitwise overwrite with
-                // NO destructor on the old value: `ptr::write` —
-                // `*real.as_ptr() = …` would run Drop on the previous
-                // `this.async_http` (whose state the fresh copy still aliases).
-                real.as_ptr().write(::core::ptr::read(async_http));
-            }
+            this.err = result.fail;
+            this.status_code = result.metadata.as_ref().map_or(0, |m| m.status_code());
             result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
             // walks `downloads[]` to read per-task state after N wakeups.
@@ -3203,6 +3191,8 @@ impl RunCommand {
             unsafe {
                 ::core::ptr::addr_of_mut!((*slot).response_buffer).write(response_buffer);
                 ::core::ptr::addr_of_mut!((*slot).url).write(raw_url);
+                ::core::ptr::addr_of_mut!((*slot).err).write(None);
+                ::core::ptr::addr_of_mut!((*slot).status_code).write(0);
                 ::core::ptr::addr_of_mut!((*slot).done).write(&raw const done_channel);
             }
             // SAFETY: `(*slot).url` is heap-owned and outlives the AsyncHTTP
@@ -3218,10 +3208,7 @@ impl RunCommand {
                 Default::default(),
                 b"",
                 b"",
-                bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
-                    d_ptr,
-                    RemoteImageDownload::on_done,
-                ),
+                bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(d_ptr),
                 bun_http::FetchRedirect::Follow,
                 Default::default(),
             );
@@ -3256,16 +3243,10 @@ impl RunCommand {
         // AFTER every network request has settled.
         let tmpdir = bun_resolver::fs::RealFS::tmpdir_path();
         for d in downloads.iter_mut() {
-            if d.async_http.err.is_some() {
+            if d.err.is_some() {
                 continue;
             }
-            let status = d
-                .async_http
-                .response
-                .as_ref()
-                .map(|r| r.status_code)
-                .unwrap_or(0);
-            if status != 200 {
+            if d.status_code != 200 {
                 continue;
             }
             let bytes = d.response_buffer.slice();

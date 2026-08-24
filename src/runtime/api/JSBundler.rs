@@ -113,8 +113,7 @@ pub mod js_bundler {
 
     pub struct Config {
         pub(crate) target: Target,
-        /// Explicit browser targets for CSS downleveling (the `cssTarget`
-        /// option). `None` means derive the CSS targets from `target`.
+        /// The `cssTarget` option. `None`: derive the CSS targets from `target`.
         pub(crate) css_target: Option<bun_css::Browsers>,
         pub(crate) entry_points: StringSet,
         pub(crate) react_fast_refresh: bool,

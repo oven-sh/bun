@@ -212,8 +212,7 @@ pub struct BundlerOptions {
     pub footer: Box<[u8]>,
     pub css_chunking: bool,
     pub min_chunk_size: u64,
-    /// Explicit browser targets for CSS downleveling (the `--css-target`
-    /// flag). `None` means derive the CSS targets from the build target.
+    /// The `--css-target` flag. `None`: derive the CSS targets from the build target.
     pub css_target: Option<bun_css::Browsers>,
     pub bake: bool,
     pub bake_debug_dump_server: bool,

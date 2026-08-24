@@ -1209,8 +1209,7 @@ pub struct BundleOptions<'a> {
 
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
-    /// Explicit browser targets for CSS downleveling (the `cssTarget` build
-    /// option). `None` means derive the CSS targets from `target`.
+    /// The `cssTarget` build option. `None`: derive the CSS targets from `target`.
     pub css_target: Option<bun_css::Browsers>,
     pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log

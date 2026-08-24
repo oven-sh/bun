@@ -238,13 +238,12 @@ describe("bunfig.toml test options", () => {
         `--reporter-outfile=${join(String(dir), "cli.xml")}`,
       );
       expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-
       expect(existsSync(join(String(dir), "from-bunfig.xml"))).toBe(false);
       const xml = readFileSync(join(String(dir), "cli.xml"), "utf8");
       expect(xml).toContain("<testsuites");
       expect(xml).toContain('name="alpha"');
       expect(xml).toContain('name="bravo"');
+      expect(exitCode).toBe(0);
     });
 
     test.concurrent("--reporter-outfile without --reporter names the file for [test.reporter] junit", async () => {
@@ -255,10 +254,9 @@ describe("bunfig.toml test options", () => {
 
       const { stderr, exitCode } = await runTest(String(dir), `--reporter-outfile=${join(String(dir), "cli.xml")}`);
       expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-
       expect(existsSync(join(String(dir), "from-bunfig.xml"))).toBe(false);
       expect(readFileSync(join(String(dir), "cli.xml"), "utf8")).toContain('name="alpha"');
+      expect(exitCode).toBe(0);
     });
 
     test.concurrent("[test.reporter] junit writes its own path when the command line has no outfile", async () => {
@@ -269,9 +267,8 @@ describe("bunfig.toml test options", () => {
 
       const { stderr, exitCode } = await runTest(String(dir));
       expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-
       expect(readFileSync(join(String(dir), "from-bunfig.xml"), "utf8")).toContain('name="alpha"');
+      expect(exitCode).toBe(0);
     });
 
     test.concurrent("--dots wins over [test.reporter] dots = false", async () => {
@@ -282,11 +279,10 @@ describe("bunfig.toml test options", () => {
 
       const { stdout, stderr, exitCode } = await runTest(String(dir), "--dots");
       expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-
       const output = stdout + stderr;
       expect(output).toContain("..");
       expect(output).not.toContain("(pass)");
+      expect(exitCode).toBe(0);
     });
 
     test.concurrent("[test.reporter] dots = true still applies next to --reporter=junit", async () => {
@@ -301,12 +297,11 @@ describe("bunfig.toml test options", () => {
         `--reporter-outfile=${join(String(dir), "cli.xml")}`,
       );
       expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-
       const output = stdout + stderr;
       expect(output).toContain("..");
       expect(output).not.toContain("(pass)");
       expect(readFileSync(join(String(dir), "cli.xml"), "utf8")).toContain('name="alpha"');
+      expect(exitCode).toBe(0);
     });
 
     test.concurrent("--reporter=junit accepts the outfile from [test.reporter] junit", async () => {
@@ -317,9 +312,8 @@ describe("bunfig.toml test options", () => {
 
       const { stderr, exitCode } = await runTest(String(dir), "--reporter=junit");
       expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-
       expect(readFileSync(join(String(dir), "from-bunfig.xml"), "utf8")).toContain('name="alpha"');
+      expect(exitCode).toBe(0);
     });
 
     test.concurrent("--coverage wins over [test] coverage = false", async () => {
@@ -330,11 +324,10 @@ describe("bunfig.toml test options", () => {
 
       const { stdout, stderr, exitCode } = await runTest(String(dir), "--coverage");
       expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-
       const output = stdout + stderr;
       expect(output).toContain("% Funcs");
       expect(output).toContain("helper.ts");
+      expect(exitCode).toBe(0);
     });
 
     test.concurrent("--only-failures wins over [test] onlyFailures = false", async () => {
@@ -345,9 +338,8 @@ describe("bunfig.toml test options", () => {
 
       const { stdout, stderr, exitCode } = await runTest(String(dir), "--only-failures");
       expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-
       expect(stdout + stderr).not.toContain("(pass)");
+      expect(exitCode).toBe(0);
     });
 
     test.concurrent("--randomize wins over [test] randomize = false", async () => {

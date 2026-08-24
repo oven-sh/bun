@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { LIBUV_COMMIT } from "./deps/libuv.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange } from "./tools.ts";
 
@@ -65,6 +66,22 @@ export interface Workaround {
 }
 
 export const workarounds: Workaround[] = [
+  {
+    id: "libuv-win-close-crt-assert",
+    issue: "https://github.com/libuv/libuv/pull/5237",
+    description:
+      "libuv's Windows close path does not suppress debug CRT assertion dialogs for invalid file descriptors",
+    applies: cfg => cfg.windows,
+    expectedToBeFixed: _cfg => {
+      // The upstream merge commit is not known yet. Stop at the next libuv
+      // bump so the patch is either removed or this baseline is advanced.
+      const LIBUV_COMMIT_WITHOUT_FIX = "8023581113b276e7c1aee3f82da57ca0893faab1";
+      return LIBUV_COMMIT !== LIBUV_COMMIT_WITHOUT_FIX;
+    },
+    cleanup:
+      `Delete patches/libuv/win-close-disable-crt-assert.patch, remove it from the patches array in ` +
+      `scripts/build/deps/libuv.ts, and delete this entry.`,
+  },
   {
     id: "asan-dyld-shim",
     issue: "https://github.com/llvm/llvm-project/issues/182943",

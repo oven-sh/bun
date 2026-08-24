@@ -25,7 +25,7 @@ import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 // ws2_32 directly (oven-sh/libuv#15), and LoadLibraryExW for those lazy
 // loads (oven-sh/libuv#16).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "8023581113b276e7c1aee3f82da57ca0893faab1";
+export const LIBUV_COMMIT = "8023581113b276e7c1aee3f82da57ca0893faab1";
 
 // prettier-ignore
 const SHARED = [

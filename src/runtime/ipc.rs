@@ -2192,38 +2192,35 @@ fn handle_ipc_message(
                 if let Some(marker) = msg_data.get(global_this, "$hasHandle")?
                     && marker.to_boolean()
                 {
-                    {
-                        #[cfg(windows)]
-                        let imported = import_windows_socket_payload(global_this, msg_data)?;
-                        #[cfg(windows)]
-                        let ack = imported.is_some();
-                        #[cfg(not(windows))]
-                        let ack = send_queue.incoming_fd.get().is_some();
-                        let packet = if ack {
-                            get_ack_packet(send_queue.mode)
-                        } else {
-                            get_nack_packet(send_queue.mode)
-                        };
-                        let mut reply = SendHandle {
-                            data: StreamBuffer::default(),
-                            handle: None,
-                            callbacks: CallbackList::AckNack,
-                        };
-                        handle_oom(reply.data.write(packet));
-                        send_queue.insert_message(reply);
-                        log!("IPC call continueSend() from internal $hasHandle ack");
-                        send_queue
-                            .continue_send(global_this, ContinueSendReason::NewMessageAppended);
-                        if !ack {
-                            return Ok(());
-                        }
-                        #[cfg(windows)]
-                        let fd = imported.unwrap();
-                        #[cfg(not(windows))]
-                        let fd = send_queue.incoming_fd.take().unwrap();
-                        received_fd = Some(fd);
-                        handle_js = received_fd_to_js(fd);
+                    #[cfg(windows)]
+                    let imported = import_windows_socket_payload(global_this, msg_data)?;
+                    #[cfg(windows)]
+                    let ack = imported.is_some();
+                    #[cfg(not(windows))]
+                    let ack = send_queue.incoming_fd.get().is_some();
+                    let packet = if ack {
+                        get_ack_packet(send_queue.mode)
+                    } else {
+                        get_nack_packet(send_queue.mode)
+                    };
+                    let mut reply = SendHandle {
+                        data: StreamBuffer::default(),
+                        handle: None,
+                        callbacks: CallbackList::AckNack,
+                    };
+                    handle_oom(reply.data.write(packet));
+                    send_queue.insert_message(reply);
+                    log!("IPC call continueSend() from internal $hasHandle ack");
+                    send_queue.continue_send(global_this, ContinueSendReason::NewMessageAppended);
+                    if !ack {
+                        return Ok(());
                     }
+                    #[cfg(windows)]
+                    let fd = imported.unwrap();
+                    #[cfg(not(windows))]
+                    let fd = send_queue.incoming_fd.take().unwrap();
+                    received_fd = Some(fd);
+                    handle_js = received_fd_to_js(fd);
                 }
             }
         }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { gc as gcTrace, withoutAggressiveGC } from "harness";
 
-// WTF-8 reference encoder: lone surrogates become U+FFFD, like TextEncoder.
+// UTF-8 reference encoder: lone surrogates become U+FFFD, like TextEncoder.
 function utf8Reference(str) {
   const out = [];
   for (let i = 0; i < str.length; i++) {

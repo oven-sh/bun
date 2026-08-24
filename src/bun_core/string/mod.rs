@@ -706,11 +706,11 @@ impl String {
     ///
     /// The returned slice borrows the impl's buffer, so it is only safe to pair
     /// with a value whose `underlying` keeps the impl alive (e.g. the
-    /// [`SliceWithUnderlyingString`] returned by [`to_slice`]). All other tags
+    /// [`SliceWithUnderlyingString`] returned by [`into_slice`]). All other tags
     /// behave exactly like [`to_utf8`] / [`to_utf8_without_ref`].
     ///
     /// [`to_utf8`]: Self::to_utf8
-    /// [`to_slice`]: Self::to_slice
+    /// [`into_slice`]: Self::into_slice
     #[inline]
     pub(crate) fn to_utf8_borrowed(&self) -> ZigStringSlice {
         match self.0.tag {
@@ -1683,7 +1683,7 @@ pub enum ZigStringSlice {
     /// can promote it to an owning [`Self::WTF`]. Drop is a no-op. Produced by
     /// [`String::to_utf8_borrowed`] — it avoids the redundant `ref`/`deref`
     /// pair that the ref-holding `WTF` variant would cost on the
-    /// `String::to_slice` hot path.
+    /// `String::into_slice` hot path.
     ///
     /// [`clone_ref`]: ZigStringSlice::clone_ref
     WtfBorrowed {

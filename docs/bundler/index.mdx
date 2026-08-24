@@ -1808,6 +1808,7 @@ interface BuildConfig {
   entrypoints: string[]; // list of file path
   outdir?: string; // output directory
   target?: Target; // default: "browser"
+  cssTarget?: string | string[]; // browser versions to compile CSS for
   /**
    * Output module format. Top-level await is only supported for `"esm"`.
    *

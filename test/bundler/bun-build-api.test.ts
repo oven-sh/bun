@@ -214,6 +214,94 @@ describe("Bun.build", () => {
     }
   });
 
+  // Runs in a child because the unfixed behavior was a process abort: the
+  // disabled entry point was dropped without an error and the linker ran with
+  // zero entry points.
+  test.concurrent("an entry point disabled by the package.json browser field is a build error", async () => {
+    using dir = tempDir("build-entry-point-disabled-by-browser-field", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./entry.js": false } }),
+      "entry.js": `console.log("entry");`,
+      "build.mjs": `
+        const returned = await Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false });
+        let thrown;
+        try {
+          await Bun.build({ entrypoints: ["./entry.js"], target: "browser" });
+        } catch (e) {
+          thrown = {
+            isAggregateError: e instanceof AggregateError,
+            errors: e.errors.map(error => ({ name: error.name, level: error.level, position: error.position, message: error.message })),
+          };
+        }
+        console.log(JSON.stringify({
+          returned: {
+            success: returned.success,
+            outputs: returned.outputs.length,
+            logs: returned.logs.map(log => ({ name: log.name, level: log.level, position: log.position, message: log.message })),
+          },
+          thrown,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const message = {
+      name: "BuildMessage",
+      level: "error",
+      position: null,
+      message: '"./entry.js" is disabled due to "browser" field in package.json (entry point)',
+    };
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      returned: { success: false, outputs: 0, logs: [message] },
+      thrown: { isAggregateError: true, errors: [message] },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an entry point too long for a path buffer is reported like any other missing one", async () => {
+    // Resolving it failed without logging anything, so the build went on
+    // with the entry point silently dropped: a successful build when another
+    // entry point was given, a crash in the linker when it was the only one.
+    // Runs in a child so the crash shows up as a failed assertion.
+    using dir = tempDir("build-api-long-entrypoint", { "valid.js": "console.log(1);" });
+    const fixture = /* ts */ `
+      // Longer than the path buffer on every platform, Windows included.
+      const long = Buffer.alloc(100_000, "a").toString();
+      const report = async (entrypoints: string[]) => {
+        const { success, outputs, logs } = await Bun.build({ entrypoints, throw: false });
+        return { success, outputs: outputs.length, logs: logs.map(log => [log.name, log.message]) };
+      };
+      console.log(JSON.stringify({
+        alone: await report([long]),
+        withValidEntryPoint: await report(["./valid.js", long]),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const notFound = {
+      success: false,
+      outputs: 0,
+      logs: [["BuildMessage", `ModuleNotFound resolving "${Buffer.alloc(100_000, "a").toString()}" (entry point)`]],
+    };
+    expect(JSON.parse(stdout)).toEqual({ alone: notFound, withValidEntryPoint: notFound });
+    expect(exitCode).toBe(0);
+  });
+
   test("returns output files", async () => {
     Bun.gc(true);
     const build = await Bun.build({
@@ -1562,6 +1650,75 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(exitCode).toBe(0);
 }, 180_000);
 
+// A module shared by several entry points is printed once per chunk, and those
+// prints run in parallel on the thread pool against the same AST. The printer
+// used to flatten `"a" + "b" + "c"` ropes in place, through the `StoreRef`, so
+// one thread's write of `data` / `next = None` raced every other thread's read
+// of the same node. Observed results on the unfixed printer: the tail printed
+// twice ("abcbc"), the tail dropped ("a"), or a crash on a torn `next` pointer
+// (a `Bus error` / `Segmentation fault` at a 4 GiB aligned address).
+//
+// The race needs many chunks printing many ropes at the same time, so this
+// builds 64 entry points over one module with 400 folded ropes, twice, and
+// checks every folded string in every output. With the in-place flatten the
+// first build corrupts hundreds of strings on a 16 core machine.
+//
+// Needs an explicit timeout: two real 64-entry bundles on a debug build take
+// well over bun:test's 5s default.
+test("Bun.build does not corrupt folded string ropes shared across chunks", async () => {
+  const ENTRIES = 64;
+  const ROPES = 400;
+  const ROUNDS = 2;
+  let shared = "export function helper(...a) { return a; }\n";
+  for (let i = 0; i < ROPES; i++) {
+    // The rope is a call argument inside an arrow body, the shape the printer
+    // crashed on in the field. It folds only with `minify.syntax`.
+    shared +=
+      `export const fn${i} = helper("first${i}", () => { const q = ${i}; ` +
+      `helper(q, "alpha-${i}-" + "beta-" + "gamma-" + "delta-${i}"); return q; });\n`;
+  }
+  const files: Record<string, string> = { "shared.js": shared };
+  for (let i = 0; i < ENTRIES; i++) {
+    files[`entry${i}.js`] = `import * as s from "./shared.js";\nconsole.log(s, ${i});\n`;
+  }
+  files["run.ts"] = `
+    import { join } from "node:path";
+    const dir = process.argv[2];
+    const entrypoints = Array.from({ length: ${ENTRIES} }, (_, i) => join(dir, "entry" + i + ".js"));
+    let bad = 0;
+    for (let round = 0; round < ${ROUNDS}; round++) {
+      const res = await Bun.build({ entrypoints, minify: { syntax: true }, target: "bun" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const output of res.outputs) {
+        const text = await output.text();
+        for (let i = 0; i < ${ROPES}; i++) {
+          const expected = '"alpha-' + i + '-beta-gamma-delta-' + i + '"';
+          if (!text.includes(expected)) {
+            bad++;
+            if (bad <= 5) {
+              const actual = text.match(new RegExp('"alpha-' + i + '-[^"]*"'));
+              console.log("BAD round " + round + " " + output.path + " expected " + expected + " got " + actual?.[0]);
+            }
+          }
+        }
+      }
+    }
+    console.log("DONE " + bad);
+  `;
+  const dir = tempDirWithFiles("bun-build-rope-print-race", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), dir],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("DONE 0");
+  expect(exitCode).toBe(0);
+}, 180_000);
+
 test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
   // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
   // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used
@@ -1583,3 +1740,66 @@ test("sourcemap sourcesContent is valid JSON when source contains C0 control cha
   const parsed = JSON.parse(text);
   expect(parsed.sourcesContent[0]).toBe(source);
 });
+
+// Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
+// own tasks, so any unrelated pool work extended the build by its full duration — a
+// node:fs read parked on a FIFO nobody writes made every later build hang forever.
+test.skipIf(isWindows)(
+  "Bun.build does not wait for unrelated thread-pool work",
+  async () => {
+    using dir = tempDir("build-pool-wait", {
+      "a.ts": `import { b } from "./b"; import "./s.css"; console.log(b);`,
+      "b.ts": `export const b = 1;`,
+      "s.css": `body { color: red }`,
+      "run.js": `
+      const { join } = require("path");
+      const dir = process.argv[2];
+      const fs = require("fs");
+      const fifo = join(dir, "fifo");
+      require("child_process").execFileSync("mkfifo", [fifo]);
+      await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      let readDone = false, readErr;
+      // a pool thread blocks opening/reading the FIFO
+      const readFinished = new Promise((resolve) => fs.readFile(fifo, (err) => { readErr = err; readDone = true; resolve(); }));
+      // A non-blocking write-open of a FIFO only succeeds once a reader has it open, so this both
+      // waits for the pool thread to be in there and, by staying open without writing, keeps it
+      // parked in read() until we close it below.
+      let writer;
+      for (const deadline = Date.now() + 10_000; ; ) {
+        try { writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); break; } catch (e) {
+          if (e.code !== "ENXIO" || Date.now() > deadline) throw e;
+          await Bun.sleep(5);
+        }
+      }
+      // Release the pool thread after 5 s regardless, so a regression shows up as readDone
+      // being true below rather than as the whole test hanging until its timeout.
+      let closed = false;
+      const closeWriter = () => { if (!closed) { closed = true; fs.closeSync(writer); } };
+      setTimeout(closeWriter, 5000).unref();
+      const t = performance.now();
+      const result = await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      const elapsed = performance.now() - t;
+      // readDone must still be false: the build finished before the release of the FIFO reader,
+      // i.e. it did not wait for that unrelated pool task. elapsed is diagnostic only.
+      console.error("second build took " + Math.round(elapsed) + " ms");
+      console.log(result.success, result.outputs.length > 0, readDone);
+      closeWriter(); // EOF for the reader: let the pool thread go before exiting
+      await readFinished;
+      console.log(readDone, readErr ? readErr.code : "ok");
+      process.exit(0);
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js", String(dir)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toStartWith("second build took ");
+    expect(stdout).toBe("true true false\ntrue ok\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

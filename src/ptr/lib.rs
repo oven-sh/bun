@@ -22,12 +22,14 @@
 // `cow_slice::CowSlice<u8>`.
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
+mod js_cell;
+pub use js_cell::JsCell;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the
 // `bun_string → bun_core` merge); re-exported here unchanged.
 pub use bun_core::external_shared;
-pub use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
+pub use bun_core::{ExternalShared, ExternalSharedDescriptor, WTFString};
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
 pub use bun_core::{RawSlice, cast_fn_ptr};
 
@@ -59,7 +61,8 @@ pub use weak_ptr::WeakPtr;
 // (lowest tier, every crate can reach them); re-exported here so callers can
 // spell `bun_ptr::container_of` / `bun_ptr::from_field_ptr!`.
 pub use bun_core::{
-    IntrusiveField, container_of, from_field_ptr, impl_field_parent, intrusive_field,
+    IntrusiveField, assert_not_freeze, container_of, from_field_ptr, impl_field_parent,
+    intrusive_field,
 };
 
 // C-callback `void *user_data` → `&mut T` recovery — same tiering rationale
@@ -86,6 +89,10 @@ pub use bun_core::callback_ctx;
 
 pub struct Shared;
 pub struct Mut;
+/// Provenance marker: the back-reference was minted from a [`ThisPtr`] (or a
+/// leaked `Box`), i.e. it is the root pointer of a live heap allocation, so it
+/// may hand a [`ThisPtr`] back out. `BackRef<T, Mut>` (any `&mut T`) may not.
+pub struct Root;
 
 /// Non-owning, non-null back-reference to an object that outlives `self`.
 /// For struct fields where the pointee is the owner/parent and is
@@ -156,11 +163,6 @@ impl<T: ?Sized> BackRef<T, Mut> {
         // liveness/alignment; `Mut` records write provenance.
         unsafe { self.0.as_mut() }
     }
-
-    #[inline]
-    pub const fn shared(self) -> BackRef<T, Shared> {
-        BackRef(self.0, core::marker::PhantomData)
-    }
 }
 
 impl<T, P> BackRef<T, P> {
@@ -195,6 +197,44 @@ impl<T: ?Sized, P> BackRef<T, P> {
         // SAFETY: BackRef invariant — pointee outlives holder; non-null,
         // aligned, dereferenceable.
         unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> BackRef<T, Root> {
+    /// View the pointee as a [`ThisPtr`] again for the dispatch entry points
+    /// that take one. Safe under the `BackRef` invariant (the pointee is live
+    /// for as long as this back-reference is held — [`ThisPtr::new`]'s
+    /// precondition) plus what `Root` records: this pointer *is* a heap
+    /// allocation's root, so the callee may release refs through it.
+    #[inline]
+    pub fn this_ptr(&self) -> ThisPtr<T> {
+        // SAFETY: see above.
+        unsafe { ThisPtr::new(self.0.as_ptr()) }
+    }
+
+    /// Wrap the root pointer of a live heap allocation.
+    ///
+    /// # Safety
+    /// [`BackRef::from_raw`]'s contract, and `p` is what `Box::into_raw` /
+    /// `heap::into_raw` returned for an allocation that stays live while the
+    /// result is held.
+    #[inline]
+    pub const unsafe fn from_root(p: *mut T) -> Self {
+        // SAFETY: caller contract — `p` is non-null.
+        BackRef(
+            unsafe { core::ptr::NonNull::new_unchecked(p) },
+            core::marker::PhantomData,
+        )
+    }
+}
+
+impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
+    /// Record a dispatch-time [`ThisPtr`] as a back-reference. The holder takes
+    /// on the `BackRef` invariant: it must drop/clear this before the pointee
+    /// can be freed.
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        BackRef(p.0, core::marker::PhantomData)
     }
 }
 
@@ -711,12 +751,6 @@ impl<T> DetachablePtr<T> {
         self.0.get().is_null()
     }
 
-    /// Recover the raw pointer (for forwarding / identity checks).
-    #[inline]
-    pub fn as_ptr(&self) -> *mut T {
-        self.0.get()
-    }
-
     /// Load the parked `&mut T`, or `None` if detached.
     ///
     /// # Safety (encapsulated)
@@ -780,3 +814,135 @@ pub trait AsCtxPtr {
     }
 }
 impl<T: ?Sized> AsCtxPtr for T {}
+
+#[cfg(test)]
+mod container_of_tests {
+    //! The shapes `container_of` / `impl_field_parent!` are used in, kept
+    //! Miri-clean under Tree Borrows (`bun run rust:miri`). Stacked Borrows
+    //! rejects every reference-derived form by design; only
+    //! `raw_place_projection` is defined under both models.
+    use core::cell::{Cell, UnsafeCell};
+
+    struct Parent {
+        count: Cell<u32>,
+        plain: u32,
+        by_mut: ByMut,
+        by_shared: UnsafeCell<ByShared>,
+    }
+    /// A `Freeze` child reached through `&mut self`.
+    struct ByMut {
+        hits: u32,
+    }
+    /// A `!Freeze` child reached through `&self`, itself sitting in an
+    /// interior-mutable slot the parent writes through (the `JsCell` shape).
+    struct ByShared {
+        hits: Cell<u32>,
+    }
+
+    bun_core::impl_field_parent! { ByMut => Parent.by_mut; fn parent; fn mut parent_ptr; }
+    bun_core::impl_field_parent! { ByShared => Parent.by_shared; fn shared parent; }
+
+    impl Parent {
+        fn boxed() -> *mut Parent {
+            bun_core::heap::into_raw(Box::new(Parent {
+                count: Cell::new(0),
+                plain: 0,
+                by_mut: ByMut { hits: 0 },
+                by_shared: UnsafeCell::new(ByShared { hits: Cell::new(0) }),
+            }))
+        }
+        /// Parent method that reaches back into the child it was called from.
+        fn bump_shared_child(&self) {
+            // SAFETY: single-threaded test; no `&mut ByShared` is live.
+            unsafe {
+                (*self.by_shared.get())
+                    .hits
+                    .set((*self.by_shared.get()).hits.get() + 1)
+            };
+            self.count.set(self.count.get() + 1);
+        }
+    }
+
+    impl ByMut {
+        fn touch(&mut self) {
+            self.hits += 1;
+            self.parent().count.set(10);
+            // SAFETY: `plain` is disjoint from `by_mut`; deref at point of use.
+            unsafe { (*self.parent_ptr()).plain = 20 };
+            self.hits += 1;
+        }
+    }
+
+    impl ByShared {
+        fn touch(&self) {
+            self.hits.set(1);
+            self.parent().count.set(30);
+            self.parent().bump_shared_child();
+            assert_eq!(self.hits.get(), 2);
+        }
+    }
+
+    #[test]
+    fn raw_place_projection() {
+        let p = Parent::boxed();
+        // SAFETY: `p` is live; the field pointer keeps whole-`Parent` provenance.
+        unsafe {
+            let field = &raw mut (*p).by_mut;
+            let back: *mut Parent = bun_core::from_field_ptr!(Parent, by_mut, field);
+            assert!(core::ptr::eq(back, p));
+            (*back).plain = 1;
+            (*back).by_mut.hits = 1;
+            assert_eq!(((*p).plain, (*p).by_mut.hits), (1, 1));
+            drop(bun_core::heap::take(p));
+        }
+    }
+
+    /// `&mut self` arms, called the way the runtime calls them: through a
+    /// `&mut Parent` that is a protected function argument.
+    #[test]
+    fn mut_receiver_under_parent_borrow() {
+        fn drive(parent: &mut Parent) {
+            parent.by_mut.touch();
+            assert_eq!(
+                (parent.count.get(), parent.plain, parent.by_mut.hits),
+                (10, 20, 2)
+            );
+        }
+        let p = Parent::boxed();
+        // SAFETY: `p` is live and uniquely owned here.
+        unsafe {
+            drive(&mut *p);
+            drop(bun_core::heap::take(p));
+        }
+    }
+
+    /// `shared` arm: `&self` on a `!Freeze` child, writing the parent's cells
+    /// and letting the parent write back into the child mid-call.
+    #[test]
+    fn shared_receiver_with_reentrant_parent() {
+        fn drive(parent: &Parent) {
+            // SAFETY: single-threaded test; no `&mut ByShared` is live.
+            unsafe { (*parent.by_shared.get()).touch() };
+            assert_eq!(parent.count.get(), 31);
+        }
+        let p = Parent::boxed();
+        // SAFETY: `p` is live.
+        unsafe {
+            drive(&*p);
+            drop(bun_core::heap::take(p));
+        }
+    }
+
+    #[test]
+    fn freeze_detection() {
+        use bun_core::__NotFreeze as _;
+        const {
+            assert!(<bun_core::__IsFreeze<ByMut>>::IS_FREEZE);
+            assert!(!<bun_core::__IsFreeze<ByShared>>::IS_FREEZE);
+            assert!(!<bun_core::__IsFreeze<Parent>>::IS_FREEZE);
+            // Interior mutability behind a pointer does not count.
+            assert!(<bun_core::__IsFreeze<Box<Cell<u32>>>>::IS_FREEZE);
+        }
+        bun_core::assert_not_freeze!(ByShared, Parent);
+    }
+}

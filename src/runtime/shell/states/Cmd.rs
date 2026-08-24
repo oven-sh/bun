@@ -889,7 +889,7 @@ impl Cmd {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
             Exec::Subproc(sub) if !sub.child.is_null() => {
-                // SAFETY: `child` was set by `initSubproc` from a
+                // SAFETY: `child` was set by `spawn_async` from a
                 // `heap::alloc(ShellSubprocess)` and stays valid until this
                 // drop. Single-threaded. Reclaiming the box runs
                 // `ShellSubprocess::drop` → `finalize_sync` (closes stdio).
@@ -915,7 +915,6 @@ impl Cmd {
         // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
         // `base.shell` is borrowed (or, when parent is Pipeline, freed by
         // `Pipeline::child_done` before this runs) — never freed here.
-        interp.as_cmd_mut(this).base.end_scope();
     }
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────

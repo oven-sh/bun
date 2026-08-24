@@ -40,7 +40,6 @@ pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
 pub struct PostgresSQLQuery {
     pub(crate) statement: Cell<Option<*mut PostgresSQLStatement>>,
     pub(crate) query: BunString,
-    pub(crate) cursor_name: BunString,
 
     pub(crate) this_value: JsCell<JsRef>,
 
@@ -54,15 +53,10 @@ pub struct PostgresSQLQuery {
     pub(crate) flags: Cell<Flags>,
 }
 
-// On drop: deref the statement (if any), then deref query/cursor_name.
-// `BunString` is `Copy` (FFI by-value, NO `Drop`), so the
-// +1 ref taken by `to_bun_string` in `call()` must be released here explicitly.
 // `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
         self.release_statement();
-        self.query.deref();
-        self.cursor_name.deref();
     }
 }
 
@@ -71,7 +65,6 @@ impl Default for PostgresSQLQuery {
         Self {
             statement: Cell::new(None),
             query: BunString::empty(),
-            cursor_name: BunString::empty(),
             this_value: JsCell::new(JsRef::empty()),
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
@@ -90,13 +83,20 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    pub(crate) pipelined: bool,
-    /// Set when this request's dispatch incremented the connection's
-    /// `pipelined_requests` / `nonpipelinable_requests` counter; cleared when
-    /// `finish_request` consumes that contribution. Makes the decrement
-    /// idempotent across the three `finish_request` call sites.
-    pub(crate) counted: bool,
+    /// Which connection counter this request's dispatch incremented; reset to
+    /// `None` when `finish_request` consumes that contribution, so the
+    /// decrement is idempotent across its call sites.
+    pub(crate) counter: RequestCounter,
     pub(crate) result_mode: PostgresSQLQueryResultMode,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RequestCounter {
+    None,
+    /// `PostgresSQLConnection::nonpipelinable_requests`
+    Nonpipelinable,
+    /// `PostgresSQLConnection::pipelined_requests`
+    Pipelined,
 }
 
 impl Default for Flags {
@@ -106,8 +106,7 @@ impl Default for Flags {
             binary: false,
             bigint: false,
             simple: false,
-            pipelined: false,
-            counted: false,
+            counter: RequestCounter::None,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
     }
@@ -547,7 +546,7 @@ impl PostgresSQLQuery {
                 connection
                     .nonpipelinable_requests
                     .set(connection.nonpipelinable_requests.get() + 1);
-                this.update_flags(|f| f.counted = true);
+                this.update_flags(|f| f.counter = RequestCounter::Nonpipelinable);
                 this.status.set(Status::Running);
             } else {
                 this.status.set(Status::Pending);
@@ -681,10 +680,7 @@ impl PostgresSQLQuery {
                                     connection.flags.set(f);
                                 }
                                 this.status.set(Status::Binding);
-                                this.update_flags(|f| {
-                                    f.pipelined = true;
-                                    f.counted = true;
-                                });
+                                this.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                 connection
                                     .pipelined_requests
                                     .set(connection.pipelined_requests.get() + 1);

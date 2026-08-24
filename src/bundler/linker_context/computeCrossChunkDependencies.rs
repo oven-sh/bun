@@ -1,7 +1,7 @@
 use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::{ArrayHashMap, VecExt, index_sort};
 
 use crate::LinkerContext;
 use crate::js_meta;
@@ -28,7 +28,6 @@ pub(crate) fn compute_cross_chunk_dependencies(
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
         })
         .collect();
-    // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
 
     {
         // Constructed on the stack and dropped at scope end.
@@ -419,7 +418,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // of hash calculation.
         if chunk_metas[chunk_index].dynamic_imports.count() > 0 {
             let dynamic_chunk_indices = chunk_metas[chunk_index].dynamic_imports.keys_mut();
-            dynamic_chunk_indices.sort_unstable();
+            index_sort::sort_slice_unstable_by(dynamic_chunk_indices, |a, b| a.cmp(b));
 
             let chunk = &mut chunks[chunk_index];
             // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
@@ -443,7 +442,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug_assert!(chunk_metas.len() == chunks.len());
         let mut r = renamer::ExportRenamer::init();
-        // defer r.deinit() — handled by Drop
         debug!("Generating cross-chunk exports");
 
         let mut stable_ref_list: Vec<StableRef> = Vec::new();
@@ -536,7 +534,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
-        // defer list.deinit() — handled by Drop
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`

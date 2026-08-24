@@ -56,11 +56,7 @@ namespace WebCore {
 using ReducedResolutionSeconds = Seconds;
 using DOMHighResTimeStamp = double;
 
-class CachedResource;
 class Document;
-class DocumentLoadTiming;
-class DocumentLoader;
-class NetworkLoadMetrics;
 class PerformanceUserTiming;
 class PerformanceEntry;
 class PerformanceMark;

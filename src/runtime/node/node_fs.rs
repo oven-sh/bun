@@ -16,7 +16,9 @@ use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, ThreadSafe, Unprotect};
+use bun_jsc::{
+    EventLoopHandle, JSGlobalObject, JSValue, JsResult, StringJsc as _, ThreadSafe, Unprotect,
+};
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
@@ -154,11 +156,13 @@ use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
     ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
+    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects, StringOrBuffer,
+    VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
-// canonical path used by `cli/build_command.rs` et al.
-pub use super::types::PathOrFileDescriptor;
+// canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
+// by every caller that runs an operation directly (`read_file(.., Flavor::Sync)`).
+pub use super::types::{Flavor, PathOrFileDescriptor};
 
 /// Local alias for the many `node::foo` call sites below, routing to `super::*`.
 mod node {
@@ -181,7 +185,6 @@ mod node {
 // `validators::*` — `super::util::validators` is a `pub use` of a
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
-use super::MaybeTodo as _;
 use super::util::validators;
 
 // Trait imports for inherent-looking method calls on upstream types:
@@ -473,15 +476,6 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
 // per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
 
-/// All async FS functions are run in a thread pool, but some implementations may
-/// decide to do something slightly different. For example, reading a file has
-/// an extra stack buffer in the async case.
-#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum Flavor {
-    Sync,
-    Async,
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
@@ -569,9 +563,12 @@ mod _async_tasks {
         /// Used internally. Not from JavaScript.
         pub struct AsyncMkdirp {
             pub(crate) completion_ctx: *mut (),
-            pub(crate) completion: fn(*mut (), Maybe<()>),
+            /// Pool thread; `ticket` is this task's, for the callee to post its
+            /// hop back through.
+            pub(crate) completion: fn(*mut (), Maybe<()>, &bun_jsc::Ticket),
             /// Memory is not owned by this struct
             pub path: *const [u8], // BORROW: not owned
+            pub(crate) ticket: bun_jsc::Ticket,
             pub task: WorkPoolTask,
         }
 
@@ -606,23 +603,12 @@ mod _async_tasks {
                             // `with_path` already clones into a fresh `Box<[u8]>`; pass the
                             // existing path slice.
                             Err(err.with_path(&err.path)),
+                            &self.ticket,
                         );
                     }
                     Ok(_) => {
-                        (self.completion)(self.completion_ctx, Ok(()));
+                        (self.completion)(self.completion_ctx, Ok(()), &self.ticket);
                     }
-                }
-            }
-        }
-
-        #[cfg(windows)]
-        impl Default for AsyncMkdirp {
-            fn default() -> Self {
-                Self {
-                    completion_ctx: core::ptr::null_mut(),
-                    completion: |_, _| {},
-                    path: core::ptr::slice_from_raw_parts(core::ptr::null(), 0),
-                    task: WorkPoolTask::default(),
                 }
             }
         }
@@ -942,7 +928,7 @@ mod _async_tasks {
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
             // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
             let _deinit =
                 scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
@@ -1228,7 +1214,7 @@ mod _async_tasks {
     }
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
-    /// buffers are protected (`ThreadSafe`) and read under the pool's VM borrow.
+    /// buffers are protected (`ThreadSafe`) and read under the job's ticket.
     pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
         pub args: ThreadSafe<A>,
         pub(crate) result: Maybe<R>,
@@ -1254,7 +1240,6 @@ mod _async_tasks {
 
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::vm_handle::Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
@@ -1279,13 +1264,13 @@ mod _async_tasks {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 },
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 },
             };
@@ -1294,7 +1279,7 @@ mod _async_tasks {
             if Self::HAVE_ABORT_SIGNAL {
                 if let Some(signal) = this.args.signal() {
                     if let Some(abort_error) = signal.node_abort_error_if_aborted(global_object) {
-                        return Ok(promise.reject(global_object, Ok(abort_error))?);
+                        return promise.reject(global_object, Ok(abort_error));
                     }
                 }
             }
@@ -1362,8 +1347,11 @@ mod _async_tasks {
         pub args: ThreadSafe<args::Cp>,
         /// Owning-thread uses (global object, keep-alive context).
         pub(crate) evtloop: EventLoopHandle,
-        /// How the last subtask's thread delivers the completion.
-        pub(crate) poster: bun_jsc::ConcurrentPoster,
+        /// How the last subtask's thread delivers the completion (moved out
+        /// by it: the loop may free `self` once the completion is queued). For
+        /// a JS loop this is the ticket its VM waits for — the arguments may
+        /// point into JS buffers and the promise lives on the JS heap.
+        pub(crate) poster: core::cell::Cell<Option<bun_jsc::ConcurrentPoster>>,
         pub task: WorkPoolTask,
         /// Written from any workpool thread (first `finish_concurrently` caller wins via
         /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
@@ -1546,7 +1534,7 @@ mod _async_tasks {
                 JSPromiseStrong::init(global_object),
                 cp_args,
                 EventLoopHandle::init(vm.event_loop.cast()),
-                bun_jsc::ConcurrentPoster::Js(vm.js_poster()),
+                bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 core::ptr::null_mut(),
             );
@@ -1589,7 +1577,7 @@ mod _async_tasks {
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
                 evtloop,
-                poster,
+                poster: core::cell::Cell::new(Some(poster)),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker,
@@ -1601,9 +1589,6 @@ mod _async_tasks {
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
             }
-            // Its arguments may point into JS buffers and its promise lives on
-            // the JS heap: counted, so the VM waits for it (embedded work).
-            task.poster.embedded_work_scheduled();
 
             let raw = bun_core::heap::release(task);
             WorkPool::schedule(&raw mut raw.task);
@@ -1669,13 +1654,14 @@ mod _async_tasks {
             // Count reached zero ⇒ exclusive access. `this` carries mutable
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
-            let poster = this_ref.poster.clone();
+            let poster = this_ref
+                .poster
+                .take()
+                .expect("fs.cp in flight holds its poster");
             if poster.is_js() {
-                let ct = ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(this));
-                // Counted work: the VM has not closed its handle.
-                let bun_jsc::vm_handle::Posted::Queued = poster.post_js(ct) else {
-                    unreachable!("VM handle closed with an fs.cp outstanding");
-                };
+                poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
+                    this,
+                )));
             } else {
                 let at = AnyTaskWithExtraContext::from_callback_auto_deinit(
                     this,
@@ -1688,14 +1674,14 @@ mod _async_tasks {
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
             }
             // The pool side is done (`this` may already be freed by its loop).
-            poster.embedded_work_finished();
+            drop(poster);
         }
 
         pub(crate) fn run_from_js_thread_mini(&mut self, _: *mut c_void) {
             let _ = self.run_from_js_thread(); // TODO: properly propagate exception upwards
         }
 
-        pub(crate) fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
             if IS_SHELL {
                 // SAFETY: shelltask is set by create_for_shell and outlives this task
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
@@ -2131,7 +2117,7 @@ mod _async_tasks {
     /// `readdir(.., { recursive: true })`: a scan fanned out over pool subtasks
     /// that share this state (it is the job's off-thread part, so its address
     /// is stable while any subtask runs). Subtasks touch only owned data here —
-    /// never the JS-backed `args` — since they run outside the VM borrow.
+    /// never the JS-backed `args` — since they run outside `run`.
     pub struct AsyncReaddirRecursiveTask {
         /// Protected arguments; their JS-backed path is not read off-thread
         /// (`root_path` is the owned copy).
@@ -2185,7 +2171,6 @@ mod _async_tasks {
 
         fn run(
             this: &mut Self,
-            _vm: &bun_jsc::vm_handle::Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             this.done = Some(done);
@@ -2216,7 +2201,7 @@ mod _async_tasks {
                 match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 }
             } else {
@@ -2233,7 +2218,7 @@ mod _async_tasks {
                 match res.to_js(global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Ok(promise.reject(global_object, Err(e))?);
+                        return promise.reject(global_object, Err(e));
                     }
                 }
             };
@@ -2253,34 +2238,6 @@ mod _async_tasks {
         WithFileTypes(Vec<Dirent>),
         Buffers(Vec<Buffer>),
         Files(Vec<BunString>),
-    }
-
-    impl ResultListEntryValue {
-        pub(crate) fn deinit(&mut self) {
-            match self {
-                ResultListEntryValue::WithFileTypes(res) => {
-                    for item in res.iter() {
-                        item.deref();
-                    }
-                    res.clear();
-                }
-                ResultListEntryValue::Buffers(res) => {
-                    // `MarkedArrayBuffer::destroy` frees the owned byte slice when
-                    // `owns_buffer` (set by `Buffer::from_string` in
-                    // `ReaddirEntry::append_entry*`).
-                    for item in res.iter_mut() {
-                        item.destroy();
-                    }
-                    res.clear();
-                }
-                ResultListEntryValue::Files(res) => {
-                    for item in res.iter() {
-                        item.deref();
-                    }
-                    res.clear();
-                }
-            }
-        }
     }
 
     pub struct ResultListEntry {
@@ -2372,8 +2329,8 @@ mod _async_tasks {
                 ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
                 ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
             };
-            // Subtasks read the root path outside the VM borrow, so it must be an
-            // owned copy rather than the (possibly JS-backed) argument. NUL-terminated.
+            // Subtasks read the root path after `run` has returned its borrow of the
+            // arguments, so it must be an owned copy. NUL-terminated.
             let root_path = {
                 let src = args.path.slice();
                 let mut owned = Vec::with_capacity(src.len() + 1);
@@ -2433,9 +2390,6 @@ mod _async_tasks {
                     );
                     match res {
                         Err(err) => {
-                            for item in &mut entries {
-                                <$T as ReaddirEntry>::destroy_entry(item);
-                            }
                             {
                                 let _lock = self.pending_err_mutex.lock_guard();
                                 if self.pending_err.is_none() {
@@ -2548,7 +2502,7 @@ mod _async_tasks {
         }
 
         fn clear_result_list(&mut self) {
-            self.result_list.deinit();
+            self.result_list.clear();
             let batch = self.result_list_queue.pop_batch();
             let mut iter = batch.iterator();
             let mut to_destroy: Option<*mut ResultListEntry> = None;
@@ -2557,8 +2511,6 @@ mod _async_tasks {
                 if val.is_null() {
                     break;
                 }
-                // SAFETY: `val` is a live queue node until freed below
-                unsafe { &mut *val }.value.deinit();
                 if let Some(dest) = to_destroy {
                     // SAFETY: paired with heap::alloc in write_results()
                     unsafe { drop(bun_core::heap::take(dest)) };
@@ -2599,6 +2551,13 @@ mod _async_tasks {
     impl ResultListEntryValue {
         fn from_vec<T: IntoResultListEntry>(v: Vec<T>) -> Self {
             T::into_variant(v)
+        }
+        fn clear(&mut self) {
+            match self {
+                Self::WithFileTypes(v) => v.clear(),
+                Self::Buffers(v) => v.clear(),
+                Self::Files(v) => v.clear(),
+            }
         }
         fn reserve_exact(&mut self, n: usize) {
             match self {
@@ -2918,14 +2877,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) mode: Mode,
     }
-    impl Default for Chmod {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                mode: 0x777,
-            }
-        }
-    }
     fs_args_path_forwarders!(Chmod; path);
     impl Chmod {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
@@ -2952,14 +2903,6 @@ pub mod args {
     pub struct FChmod {
         pub(crate) fd: FD,
         pub(crate) mode: Mode,
-    }
-    impl Default for FChmod {
-        fn default() -> Self {
-            Self {
-                fd: FD::INVALID,
-                mode: 0x777,
-            }
-        }
     }
     impl FChmod {
         pub(crate) fn to_thread_safe(&self) {}
@@ -3013,15 +2956,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) big_int: bool,
         pub(crate) throw_if_no_entry: bool,
-    }
-    impl Default for Stat {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                big_int: false,
-                throw_if_no_entry: true,
-            }
-        }
     }
     fs_args_path_forwarders!(Stat; path);
     impl Stat {
@@ -3135,7 +3069,6 @@ pub mod args {
                     if next_val.is_string() {
                         arguments.eat();
                         let str = next_val.to_bun_string(ctx)?;
-                        let str = scopeguard::guard(str, |s| s.deref());
                         if str.eql_comptime("dir") {
                             break 'link_type SymlinkLinkType::Dir;
                         }
@@ -3145,7 +3078,7 @@ pub mod args {
                         if str.eql_comptime("junction") {
                             break 'link_type SymlinkLinkType::Junction;
                         }
-                        return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", *str)).throw());
+                        return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw());
                     }
                     // not a string. fallthrough to auto detect.
                     return Err(ctx
@@ -3279,17 +3212,6 @@ pub mod args {
         pub(crate) max_retries: u32,
         pub(crate) recursive: bool,
         pub(crate) retry_delay: c_uint,
-    }
-    impl Default for RmDir {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                force: false,
-                max_retries: 0,
-                recursive: false,
-                retry_delay: 100,
-            }
-        }
     }
     fs_args_path_forwarders!(RmDir; path);
     impl RmDir {
@@ -3435,18 +3357,6 @@ pub mod args {
         pub(crate) prefix: PathLike,
         pub(crate) encoding: Encoding,
     }
-    impl Default for MkdirTemp {
-        fn default() -> Self {
-            Self {
-                prefix: PathLike::Buffer(Buffer {
-                    buffer: bun_jsc::ArrayBuffer::EMPTY,
-                    owns_buffer: false,
-                    pinned: false,
-                }),
-                encoding: Encoding::Utf8,
-            }
-        }
-    }
     fs_args_path_forwarders!(MkdirTemp; prefix);
     impl MkdirTemp {
         pub fn from_js(
@@ -3535,15 +3445,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) flags: FileSystemFlags,
         pub(crate) mode: Mode,
-    }
-    impl Default for Open {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                flags: FileSystemFlags::R,
-                mode: DEFAULT_PERMISSION,
-            }
-        }
     }
     fs_args_path_forwarders!(Open; path);
     impl Open {
@@ -3964,9 +3865,7 @@ pub mod args {
                 if position.order(-1i64) == core::cmp::Ordering::Less
                     || position.order(max_position) == core::cmp::Ordering::Greater
                 {
-                    let position_str = position.to_string(ctx)?;
-                    let position_bytes = position_str.to_owned_slice();
-                    position_str.deref();
+                    let position_bytes = position.to_string(ctx)?.to_owned_slice();
                     return Err(ctx.throw_range_error(
                         &position_bytes[..],
                         bun_jsc::RangeErrorOptions {
@@ -4222,11 +4121,14 @@ pub mod args {
                     }
                 }
             }
+            let flavor = if arguments.will_be_async {
+                Flavor::Async
+            } else {
+                Flavor::Sync
+            };
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
-            let allow_string_object = false;
-            let is_async = arguments.will_be_async;
-            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
+            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, flavor, StringObjects::Reject)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(WriteFile {
@@ -4394,7 +4296,6 @@ pub mod args {
         }
     }
 
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch<'a> = super::Watcher::Arguments<'a>;
     // `StatWatcher::Arguments` owns its `PathLike` (no borrowed slice), so it
     // has no lifetime parameter — unlike `Watcher::Arguments<'a>` above.
@@ -4437,9 +4338,7 @@ pub enum StringOrUndefined {
 impl StringOrUndefined {
     fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            StringOrUndefined::String(s) => {
-                bun_jsc::bun_string_jsc::transfer_to_js(s, global_object)
-            }
+            StringOrUndefined::String(s) => core::mem::take(s).into_js(global_object),
             StringOrUndefined::None => Ok(JSValue::UNDEFINED),
         }
     }
@@ -4447,11 +4346,6 @@ impl StringOrUndefined {
 
 /// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
 pub struct Null;
-impl Null {
-    pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::NULL
-    }
-}
 
 pub mod ret {
     use super::*;
@@ -4516,15 +4410,13 @@ pub mod ret {
     impl Readdir {
         pub fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             match self {
-                Readdir::WithFileTypes(mut items) => {
+                Readdir::WithFileTypes(items) => {
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     let mut previous_jsstring: *mut bun_jsc::JSString = core::ptr::null_mut();
-                    for (i, item) in items.iter_mut().enumerate() {
-                        let res =
-                            item.to_js_newly_created(global_object, Some(&mut previous_jsstring))?;
+                    for (i, item) in items.into_vec().into_iter().enumerate() {
+                        let res = item.into_js(global_object, Some(&mut previous_jsstring))?;
                         array.put_index(global_object, i as u32, res)?;
                     }
-                    // items dropped here (auto free)
                     Ok(array)
                 }
                 Readdir::Buffers(mut items) => {
@@ -4566,7 +4458,6 @@ pub mod ret {
     pub(crate) type Symlink = ();
     pub(crate) type Truncate = ();
     pub(crate) type Unlink = ();
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch = JSValue;
     pub(crate) type WatchFile = JSValue;
     pub(crate) type Utimes = ();
@@ -4727,13 +4618,14 @@ impl NodeFS {
                 unsafe { libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
         }
 
-        let mut stack_buf = [0u8; 64 * 1024];
-        let stack_buf_len = stack_buf.len();
+        const STACK_BUF_LEN: usize = 64 * 1024;
+        let mut stack_buf = bun_core::vec::UninitBuf::<STACK_BUF_LEN>::uninit();
         let mut buf_to_free: Vec<u8> = Vec::new();
-        let mut buf: &mut [u8] = &mut stack_buf;
+        // SAFETY: `Syscall::read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+        let mut buf: &mut [u8] = unsafe { stack_buf.as_bytes_mut() };
 
         'maybe_allocate_large_temp_buf: {
-            if stat_size > stack_buf_len * 16 {
+            if stat_size > STACK_BUF_LEN * 16 {
                 // Don't allocate more than 8 MB at a time
                 let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
                 // The slab must stay uninitialised: `Vec::resize` here was a
@@ -5491,7 +5383,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let _ = args;
-            return Maybe::<ret::Lchmod>::todo();
+            return Err(sys::Error::todo());
         }
         #[cfg(target_os = "android")]
         {
@@ -6346,23 +6238,11 @@ impl NodeFS {
         }
 
         let mut dirent_path = BunString::DEAD;
-        // `dirent_path.deref()` cannot be expressed as a scope guard
-        // (the loop body needs `&mut dirent_path`); deref is idempotent on DEAD/EMPTY
-        // so it is called inline on every exit path below instead.
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         loop {
             let current = match iterator.next() {
-                Err(err) => {
-                    for item in entries.iter_mut() {
-                        item.destroy_entry();
-                    }
-                    // The caller owns the Vec; drain it on error so the caller's
-                    // `T::into_readdir` never sees stale entries.
-                    entries.clear();
-                    dirent_path.deref();
-                    return Err(err.with_path(args.path.slice()));
-                }
+                Err(err) => return Err(err.with_path(args.path.slice())),
                 Ok(None) => break,
                 Ok(Some(ent)) => ent,
             };
@@ -6388,7 +6268,6 @@ impl NodeFS {
             T::append_entry(entries, utf8_name, &dirent_path, kind, args.encoding);
         }
 
-        dirent_path.deref();
         Ok(())
     }
 
@@ -6416,14 +6295,7 @@ impl NodeFS {
 
         loop {
             let current = match iterator.next() {
-                Err(err) => {
-                    for item in entries.iter_mut() {
-                        item.destroy_entry();
-                    }
-                    entries.clear();
-                    dirent_path.deref();
-                    return Err(err.with_path(args.path.slice()));
-                }
+                Err(err) => return Err(err.with_path(args.path.slice())),
                 Ok(None) => break,
                 Ok(Some(ent)) => ent,
             };
@@ -6448,8 +6320,12 @@ impl NodeFS {
             );
         }
 
-        dirent_path.deref();
         Ok(())
+    }
+
+    /// Gone or not enterable since the parent listed it. Reading a gone directory gives ENOENT too.
+    fn readdir_skips_subdir(errno: E) -> bool {
+        matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }
 
     pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
@@ -6493,13 +6369,8 @@ impl NodeFS {
         let fd = match open_res {
             Err(err) => {
                 if !is_root {
-                    match err.get_errno() {
-                        // These things can happen and there's nothing we can do about it.
-                        //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
-                        _ => {}
+                    if Self::readdir_skips_subdir(err.get_errno()) {
+                        return Ok(());
                     }
                     if root_basename.len() + 1 + basename.as_bytes().len() + 1
                         < paths::MAX_PATH_BYTES
@@ -6532,8 +6403,10 @@ impl NodeFS {
 
         loop {
             let current = match iterator.next() {
+                Ok(Some(ent)) => ent,
+                Ok(None) => break,
+                Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => break,
                 Err(err) => {
-                    dirent_path_prev.deref();
                     if !is_root
                         && root_basename.len() + 1 + basename.as_bytes().len() + 1
                             < paths::MAX_PATH_BYTES
@@ -6546,8 +6419,6 @@ impl NodeFS {
                     }
                     return Err(err.with_path(root_basename));
                 }
-                Ok(None) => break,
-                Ok(Some(ent)) => ent,
             };
             let utf8_name = current.name.slice();
 
@@ -6615,7 +6486,6 @@ impl NodeFS {
                 );
                 let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                 if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
-                    dirent_path_prev.deref();
                     dirent_path_prev = BunString::clone_utf8(path_u8);
                 }
             }
@@ -6631,7 +6501,6 @@ impl NodeFS {
             );
         }
 
-        dirent_path_prev.deref();
         Ok(())
     }
 
@@ -6700,11 +6569,7 @@ impl NodeFS {
                         return Err(err.with_path(args.path.slice()));
                     }
                     match err.get_errno() {
-                        // These things can happen and there's nothing we can do about it.
-                        //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => continue,
+                        errno if Self::readdir_skips_subdir(errno) => continue,
                         _ => {
                             // TODO: propagate file path (removed previously because it leaked the path)
                             return Err(err);
@@ -6727,12 +6592,12 @@ impl NodeFS {
 
             loop {
                 let current = match iterator.next() {
+                    Ok(Some(ent)) => ent,
+                    Ok(None) => break,
+                    Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => break,
                     Err(err) => {
-                        dirent_path_prev.deref();
                         return Err(err.with_path(args.path.slice()));
                     }
-                    Ok(None) => break,
-                    Ok(Some(ent)) => ent,
                 };
                 let utf8_name = current.name.slice();
 
@@ -6794,7 +6659,6 @@ impl NodeFS {
                     );
                     let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                     if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
-                        dirent_path_prev.deref();
                         dirent_path_prev = webcore::encoding::to_bun_string(
                             without_nt_prefix::<u8>(path_u8),
                             encoding_to_node(args.encoding),
@@ -6812,7 +6676,6 @@ impl NodeFS {
                     true,
                 );
             }
-            dirent_path_prev.deref();
         }
 
         Ok(())
@@ -6864,20 +6727,13 @@ impl NodeFS {
         if recursive && flavor == Flavor::Sync {
             let mut buf_to_pass = PathBuffer::uninit();
             let mut entries: Vec<T> = Vec::new();
-            return match Self::readdir_with_entries_recursive_sync::<T>(
+            return Self::readdir_with_entries_recursive_sync::<T>(
                 &mut buf_to_pass,
                 args,
                 path,
                 &mut entries,
-            ) {
-                Err(err) => {
-                    for result in &mut entries {
-                        result.destroy_entry();
-                    }
-                    Err(err)
-                }
-                Ok(()) => Ok(T::into_readdir(entries)),
-            };
+            )
+            .map(|()| T::into_readdir(entries));
         }
 
         if recursive {
@@ -6906,10 +6762,8 @@ impl NodeFS {
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
         let mut entries: Vec<T> = Vec::new();
-        match Self::readdir_with_entries::<T>(args, fd, path, &mut entries) {
-            Err(err) => Err(err),
-            Ok(()) => Ok(T::into_readdir(entries)),
-        }
+        Self::readdir_with_entries::<T>(args, fd, path, &mut entries)
+            .map(|()| T::into_readdir(entries))
     }
 
     /// Caller has already checked `is_bun_standalone_file_path(path)`.
@@ -6954,6 +6808,7 @@ impl NodeFS {
                     Some(i) => (&name[i + 1..], &name[..i]),
                     None => (&name[..], b"".as_slice()),
                 };
+                let joined_path;
                 let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
                     joined.clear();
                     joined.extend_from_slice(args.path.slice());
@@ -6961,25 +6816,24 @@ impl NodeFS {
                         joined.push(paths::SEP);
                     }
                     joined.extend_from_slice(parent);
-                    BunString::clone_utf8(&joined)
+                    joined_path = BunString::clone_utf8(&joined);
+                    &joined_path
                 } else {
-                    root_path.dupe_ref()
+                    &root_path
                 };
                 T::append_entry_recursive(
                     &mut entries,
                     base,
                     &name,
-                    &dirent_path,
+                    dirent_path,
                     kind,
                     args.encoding,
                     flavor == Flavor::Sync,
                 );
-                dirent_path.deref();
             } else {
                 T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
             }
         }
-        root_path.deref();
         Ok(T::into_readdir(entries))
     }
 
@@ -7125,32 +6979,33 @@ impl NodeFS {
         // If we manage to read the entire file, we don't need to call stat() at all.
         // This will make it slightly slower to read e.g. 512 KB files, but usually the OS won't return a full 512 KB in one read anyway.
         //
-        // The sync case borrows `vm.rareData().pipeReadBuffer()` (a per-VM
-        // 256 KB heap slab) when a VM is present, otherwise leaves the buffer
-        // zero-length so the loop is skipped and we fall through to fstat.
-        // The async path heap-allocates a 256 KB buffer instead (Zig used a
-        // comptime-sized stack array; Rust cannot size a stack array on
-        // `flavor`, so heap is forced, but the slab stays uninitialised: it
-        // is write-only, `Syscall::read` hands it straight to the kernel).
+        // The sync case claims the per-VM pipe-read scratch when it is free;
+        // otherwise (async, no VM, or a read further up the stack holds it)
+        // a heap buffer stands in. It stays uninitialised: it is write-only,
+        // `Syscall::read` hands it straight to the kernel.
         use bun_collections::vec_ext::VecExt as _;
-        let mut async_stack_buffer: Vec<u8> = Vec::new();
-        if flavor != Flavor::Sync && async_stack_buffer.try_reserve_exact(256 * 1024).is_ok() {
+        let mut scratch = match self.vm {
+            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine` (single-threaded VM), which outlives this call.
+            Some(vm) if flavor == Flavor::Sync => unsafe {
+                (*(*vm.as_ptr()).rare_data_ptr()).pipe_read_scratch.claim()
+            },
+            _ => None,
+        };
+        let mut heap_buffer: Vec<u8> = Vec::new();
+        if scratch.is_none() && heap_buffer.try_reserve_exact(256 * 1024).is_ok() {
             // SAFETY: `u8` has no validity invariant; the buffer is handed
             // straight to the kernel which only stores into it. Only the
             // `[..total]` prefix actually filled by `read` is ever observed.
-            unsafe { async_stack_buffer.expand_to_capacity() };
+            unsafe { heap_buffer.expand_to_capacity() };
         }
-        let pre_stat_buf: &mut [u8] = if flavor == Flavor::Sync {
-            match self.vm {
-                // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
-                // `rare_data()` lazily inits the heap slab and the returned
-                // `&mut [u8; 256*1024]` outlives this call (single-threaded VM).
-                Some(vm) => unsafe { &mut (*vm.as_ptr()).rare_data().pipe_read_buffer()[..] },
-                None => &mut [][..],
-            }
-        } else {
-            &mut async_stack_buffer[..]
+        let pre_stat_buf: &mut [u8] = match scratch.as_mut() {
+            Some(scratch) => &mut scratch[..],
+            None => &mut heap_buffer[..],
         };
+        let pre_stat_len = pre_stat_buf
+            .len()
+            .min(args.max_size.map_or(usize::MAX, |v| v as usize));
+        let pre_stat_buf = &mut pre_stat_buf[..pre_stat_len];
         let temporary_read_buffer_before_stat_call: &[u8] = {
             let mut available: &mut [u8] = &mut pre_stat_buf[..];
             while !available.is_empty() {
@@ -7172,9 +7027,7 @@ impl NodeFS {
                         if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            // `self.vm` is the live owning `VirtualMachine`
-                            // (per-thread singleton; see `pipe_read_buffer`
-                            // above) — `BackRef` invariant holds.
+                            // `self.vm` is the live owning `VirtualMachine` (per-thread singleton) — `BackRef` invariant holds.
                             let global = vm.global();
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
@@ -8098,9 +7951,9 @@ impl NodeFS {
                 );
                 let _ = global_this.throw_value(
                     bun_jsc::SystemError {
-                        message: BunString::init(&buf[..]).into(),
-                        code: BunString::init(err.name()).into(),
-                        path: BunString::init(path.as_slice()).into(),
+                        message: BunString::init(&buf[..]),
+                        code: BunString::init(err.name()),
+                        path: BunString::init(path.as_slice()),
                         ..Default::default()
                     }
                     .to_error_instance(&global_this),
@@ -8108,14 +7961,6 @@ impl NodeFS {
                 Ok(JSValue::UNDEFINED)
             }
         }
-    }
-
-    pub(crate) fn unwatch_file(
-        &mut self,
-        _: args::UnwatchFile,
-        _: Flavor,
-    ) -> Maybe<ret::UnwatchFile> {
-        Maybe::<ret::UnwatchFile>::todo()
     }
 
     pub(crate) fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
@@ -8699,7 +8544,7 @@ impl NodeFS {
             let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if mode.is_force_clone() {
-                return Maybe::<ret::CopyFile>::todo();
+                return Err(sys::Error::todo());
             }
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
@@ -8995,7 +8840,7 @@ impl NodeFS {
                 // fall back to a non-CoW `CopyFileW`, per
                 // Node.js' documented FICLONE_FORCE contract and matching the
                 // Linux/FreeBSD arms above. Return a concrete ENOSYS rather
-                // than `Maybe::todo()` so debug builds do not panic.
+                // than `sys::Error::todo()` so debug builds do not panic.
                 return Err(sys::Error {
                     errno: SystemErrno::ENOSYS as _,
                     syscall: sys::Tag::copyfile,
@@ -9142,7 +8987,7 @@ impl NodeFS {
         )))]
         {
             let _ = (src, dest, mode, reuse_stat);
-            Maybe::<ret::CopyFile>::todo()
+            Err(sys::Error::todo())
         }
     }
 
@@ -9360,7 +9205,6 @@ pub trait ReaddirEntry: Sized {
     const IS_DIRENT: bool;
     /// Windows: entry names arrive as UTF-16 (`append_entry_w`).
     const IS_U16: bool;
-    fn destroy_entry(&mut self);
     /// Windows-only: append from a UTF-16 directory entry name.
     /// Non-recursive readdir; `re_encoding_buffer` is the pooled scratch for
     /// `strings::from_w_path` when `encoding != utf8`. Only ever invoked when
@@ -9403,9 +9247,6 @@ pub trait ReaddirEntry: Sized {
 impl ReaddirEntry for BunString {
     const IS_DIRENT: bool = false;
     const IS_U16: bool = Environment::IS_WINDOWS;
-    fn destroy_entry(&mut self) {
-        self.deref();
-    }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::Files(v.into_boxed_slice())
     }
@@ -9458,9 +9299,6 @@ impl ReaddirEntry for BunString {
 impl ReaddirEntry for Dirent {
     const IS_DIRENT: bool = true;
     const IS_U16: bool = Environment::IS_WINDOWS;
-    fn destroy_entry(&mut self) {
-        self.deref();
-    }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::WithFileTypes(v.into_boxed_slice())
     }
@@ -9473,7 +9311,7 @@ impl ReaddirEntry for Dirent {
     ) {
         entries.push(Dirent {
             name: webcore::encoding::to_bun_string(utf8_name, encoding),
-            path: dirent_path.dupe_ref(),
+            path: dirent_path.clone(),
             kind,
         });
     }
@@ -9489,7 +9327,7 @@ impl ReaddirEntry for Dirent {
         // name (no re-encoding) and skips the lstatat() DT_UNKNOWN fallback.
         entries.push(Dirent {
             name: BunString::clone_utf16(utf16_name),
-            path: dirent_path.dupe_ref(),
+            path: dirent_path.clone(),
             kind,
         });
     }
@@ -9508,7 +9346,7 @@ impl ReaddirEntry for Dirent {
             } else {
                 BunString::clone_utf8(utf8_name)
             },
-            path: dirent_path.dupe_ref(),
+            path: dirent_path.clone(),
             kind,
         });
     }
@@ -9516,9 +9354,6 @@ impl ReaddirEntry for Dirent {
 impl ReaddirEntry for Buffer {
     const IS_DIRENT: bool = false;
     const IS_U16: bool = false;
-    fn destroy_entry(&mut self) {
-        self.destroy();
-    }
     fn into_readdir(v: Vec<Self>) -> ret::Readdir {
         ret::Readdir::Buffers(v.into_boxed_slice())
     }

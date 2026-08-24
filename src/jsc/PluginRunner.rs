@@ -10,7 +10,7 @@
 use std::io::Write as _;
 
 use bun_bundler::transpiler::{BunPluginTarget, PluginResolver};
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_paths::fs::Path as FsPath;
 
 use crate::JSGlobalObject;
@@ -53,13 +53,7 @@ impl PluginResolver for PluginRunner {
         target: BunPluginTarget,
     ) -> bun_bundler::Result<Option<FsPath<'static>>> {
         let global = self.global();
-        let js_err = |e: crate::JsError| {
-            bun_bundler::Error::Js(match e {
-                crate::JsError::Thrown => bun_core::JsError::Thrown,
-                crate::JsError::OutOfMemory => bun_core::JsError::OutOfMemory,
-                crate::JsError::Terminated => bun_core::JsError::Terminated,
-            })
-        };
+        let js_err = bun_bundler::Error::Js;
 
         let namespace_slice = Self::extract_namespace(specifier);
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
@@ -69,13 +63,13 @@ impl PluginResolver for PluginRunner {
         };
         let Some(on_resolve_plugin) = global
             .run_on_resolve_plugins(
-                namespace,
-                BunString::init(specifier).substring(if namespace.length() > 0 {
+                &namespace,
+                &BunString::init(specifier).substring(if namespace.length() > 0 {
                     namespace.length() + 1
                 } else {
                     0
                 }),
-                BunString::init(importer),
+                &BunString::init(importer),
                 target,
             )
             .map_err(js_err)?
@@ -93,10 +87,7 @@ impl PluginResolver for PluginRunner {
             return Ok(None);
         }
 
-        // `bun_core::String`
-        // is `Copy` (no `Drop`), so RAII-wrap the +1 WTF ref across every
-        // remaining `?` / early-return.
-        let file_path = OwnedString::new(path_value.to_bun_string(global).map_err(js_err)?);
+        let file_path = path_value.to_bun_string(global).map_err(js_err)?;
 
         if file_path.length() == 0 {
             log.add_error(
@@ -127,22 +118,18 @@ impl PluginResolver for PluginRunner {
 
                 let namespace_str = namespace_value.to_bun_string(global).map_err(js_err)?;
                 if namespace_str.length() == 0 {
-                    namespace_str.deref();
                     break 'brk BunString::init(b"file");
                 }
 
                 if namespace_str.eql_comptime(b"file") {
-                    namespace_str.deref();
                     break 'brk BunString::init(b"file");
                 }
 
                 if namespace_str.eql_comptime(b"bun") {
-                    namespace_str.deref();
                     break 'brk BunString::init(b"bun");
                 }
 
                 if namespace_str.eql_comptime(b"node") {
-                    namespace_str.deref();
                     break 'brk BunString::init(b"node");
                 }
 
@@ -153,7 +140,6 @@ impl PluginResolver for PluginRunner {
 
             break 'brk BunString::init(b"file");
         };
-        let user_namespace = OwnedString::new(user_namespace);
 
         // `FsPath<'static>` borrows, so the formatted buffer is leaked to
         // model the caller-owns-forever contract (these are

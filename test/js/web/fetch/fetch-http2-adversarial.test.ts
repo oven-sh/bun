@@ -26,6 +26,8 @@ const setting = (id: number, value: number) => {
   return b;
 };
 const hpackStatus200 = Buffer.from([0x80 | 8]);
+// Literal field, indexed name (:status is static index 8), literal value.
+const hpackStatus = (code: string) => Buffer.concat([Buffer.from([0x08, code.length]), Buffer.from(code)]);
 const hpackLit = (name: string, value: string) =>
   Buffer.concat([Buffer.from([0x10, name.length]), Buffer.from(name), Buffer.from([value.length]), Buffer.from(value)]);
 
@@ -159,9 +161,104 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         // Connection should error well before the ~80 MB of CONTINUATION payload
         // accumulates. Allow generous slack for TLS/allocator overhead.
         // ASAN's quarantine retains freed allocations so widen the threshold there.
-        expect(out.result).toBe("HTTP2HeaderListTooLarge");
+        // The frame-count cap (8 frames x ~16 KB = ~128 KB) fires before the
+        // 256 KiB byte-size cap for this payload shape.
+        expect(out.result).toBe("HTTP2EnhanceYourCalm");
         expect(out.growth).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
         expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  // 1b. Zero-length CONTINUATION flood (CVE-2024-28182): empty payloads never
+  //     advance the byte-size cap above, so bound the frame count too.
+  test("zero-length CONTINUATION flood is rejected", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          // HEADERS :status 200, no END_HEADERS, no END_STREAM.
+          socket.write(frame(1, 0, id, hpackStatus200));
+          // 10 000 empty CONTINUATION frames = 90 000 bytes of 9-byte headers
+          // with zero payload; header_block.len() stays at 1 forever.
+          const flood = Buffer.concat(Array.from({ length: 10_000 }, () => frame(9, 0, id)));
+          socket.write(flood);
+        },
+      },
+      async url => {
+        const code = await fetch(url, { ...h2, signal: AbortSignal.timeout(8000) }).then(r => r.status, errcode);
+        expect(code).toBe("HTTP2EnhanceYourCalm");
+      },
+    );
+  });
+
+  // 1c. Boundary: exactly the CONTINUATION budget (8 frames) is accepted.
+  test("header block split across the full CONTINUATION budget is accepted", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          socket.write(
+            Buffer.concat([
+              frame(1, 0x1, id, hpackStatus200), // HEADERS, END_STREAM, no END_HEADERS
+              ...Array.from({ length: 7 }, () => frame(9, 0, id)),
+              frame(9, 0x4, id), // 8th CONTINUATION, END_HEADERS
+            ]),
+          );
+        },
+      },
+      async url => {
+        const r = await fetch(url, h2);
+        expect(r.status).toBe(200);
+        expect(await r.text()).toBe("");
+      },
+    );
+  });
+
+  // 1d. Boundary: the 9th CONTINUATION is rejected even when it carries
+  //     END_HEADERS and would have completed the block (nghttp2 / node agree).
+  test("9th CONTINUATION is rejected even if it ends the block", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          socket.write(
+            Buffer.concat([
+              frame(1, 0x1, id, hpackStatus200), // HEADERS, END_STREAM, no END_HEADERS
+              ...Array.from({ length: 8 }, () => frame(9, 0, id)),
+              frame(9, 0x4, id), // 9th CONTINUATION, END_HEADERS
+            ]),
+          );
+        },
+      },
+      async url => {
+        const code = await fetch(url, h2).then(r => r.status, errcode);
+        expect(code).toBe("HTTP2EnhanceYourCalm");
+      },
+    );
+  });
+
+  // 1e. The budget is per header block, not per stream or per connection: a
+  //     103 block and the final 200 block on the same stream may each use all
+  //     8 frames (16 CONTINUATIONs total on one stream).
+  test("CONTINUATION budget resets for each header block on a stream", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          const splitBlock = (headersFlags: number, block: Buffer) => [
+            frame(1, headersFlags, id, block), // no END_HEADERS
+            ...Array.from({ length: 7 }, () => frame(9, 0, id)),
+            frame(9, 0x4, id), // 8th CONTINUATION, END_HEADERS
+          ];
+          socket.write(
+            Buffer.concat([
+              ...splitBlock(0, hpackStatus("103")), // informational, stream stays open
+              ...splitBlock(0x1, hpackStatus200), // final response, END_STREAM
+            ]),
+          );
+        },
+      },
+      async url => {
+        const r = await fetch(url, h2);
+        expect(r.status).toBe(200);
+        expect(await r.text()).toBe("");
       },
     );
   });

@@ -89,6 +89,8 @@ pub struct Listener {
     pub(crate) ssl: bool,
     pub(crate) protos: Option<Box<[u8]>>,
     pub(crate) reject_unauthorized: bool,
+    /// Accepted sockets carry `Flags::PAUSE_ON_CONNECT` (see `NewSocket::on_open`).
+    pub(crate) pause_on_connect: bool,
     pub(crate) strong_data: JsCell<Strong>,
     /// Reference to this listener's JS wrapper. Strong while it is listening or
     /// has connections, downgraded to weak once idle so GC can reclaim it.
@@ -188,6 +190,7 @@ impl Listener {
         let port = socket_config.port;
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
+        let pause_on_connect = socket_config.pause_on_connect;
 
         #[cfg(windows)]
         if port.is_none() {
@@ -229,6 +232,7 @@ impl Listener {
                         ssl_cfg_taken.as_ref(),
                         true,
                     ),
+                    pause_on_connect,
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
                     secure_ctx: Cell::new(None),
@@ -356,6 +360,7 @@ impl Listener {
                 ssl_cfg_taken.as_ref(),
                 true,
             ),
+            pause_on_connect,
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
@@ -603,11 +608,10 @@ impl Listener {
 
     // `OWNED_PROTOS` stays unset: accepted sockets clone the listener's `protos`.
     fn accepted_socket_flags(&self) -> SocketFlags {
-        if self.reject_unauthorized {
-            SocketFlags::REJECT_UNAUTHORIZED
-        } else {
-            SocketFlags::empty()
-        }
+        let mut flags = SocketFlags::empty();
+        flags.set(SocketFlags::REJECT_UNAUTHORIZED, self.reject_unauthorized);
+        flags.set(SocketFlags::PAUSE_ON_CONNECT, self.pause_on_connect);
+        flags
     }
 
     #[cfg(windows)]
@@ -1270,6 +1274,12 @@ impl Listener {
                         ssl_taken.as_ref(),
                         false,
                     ));
+                    tls_ref.update_flags(|f| {
+                        f.set(
+                            SocketFlags::PAUSE_ON_CONNECT,
+                            socket_config.pause_on_connect,
+                        )
+                    });
                     TLSSocket::data_set_cached(
                         tls_ref.get_this_value(global),
                         global,
@@ -1351,6 +1361,12 @@ impl Listener {
                         })
                     };
                     let tcp_ref = tcp;
+                    tcp_ref.update_flags(|f| {
+                        f.set(
+                            SocketFlags::PAUSE_ON_CONNECT,
+                            socket_config.pause_on_connect,
+                        )
+                    });
                     tcp_ref.ref_();
                     TCPSocket::data_set_cached(
                         tcp_ref.get_this_value(global),
@@ -1420,6 +1436,7 @@ impl Listener {
         default_data.ensure_still_alive();
 
         let allow_half_open = socket_config.allow_half_open;
+        let pause_on_connect = socket_config.pause_on_connect;
         let mut ssl_taken = socket_config.ssl.take();
 
         let promise = jsc::JSPromise::create(global);
@@ -1442,6 +1459,7 @@ impl Listener {
                 owned_ssl_ctx,
                 default_data,
                 allow_half_open,
+                pause_on_connect,
                 port,
                 promise_value,
             )
@@ -1456,6 +1474,7 @@ impl Listener {
                 owned_ssl_ctx,
                 default_data,
                 allow_half_open,
+                pause_on_connect,
                 port,
                 promise_value,
             )
@@ -1537,6 +1556,7 @@ fn connect_finish<const IS_SSL: bool>(
     owned_ssl_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
     default_data: JSValue,
     allow_half_open: bool,
+    pause_on_connect: bool,
     port: Option<u16>,
     promise_value: JSValue,
 ) -> JsResult<JSValue> {
@@ -1614,78 +1634,87 @@ fn connect_finish<const IS_SSL: bool>(
     socket_ref.reset_client_tls_flags(
         IS_SSL && crate::socket::resolve_reject_unauthorized(vm, ssl.as_deref(), false),
     );
-    {
-        let mut f = socket_ref.flags.get();
+    socket_ref.update_flags(|f| {
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
-        socket_ref.flags.set(f);
-    }
+        f.set(SocketFlags::PAUSE_ON_CONNECT, pause_on_connect);
+    });
+    // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.
+    socket_ref
+        .poll_ref
+        .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     // Note: `do_connect` reads `self.connection` directly so no second
     // borrow is needed here.
-    if socket_ref.do_connect().is_err() {
-        // Winsock sets WSAGetLastError, not the CRT `_errno()` that
-        // `last_errno()` reads.
-        #[cfg(windows)]
-        let os_errno = {
-            let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
-            // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
-            // or not; Node distinguishes ENOENT via `CreateFile`.
-            if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
-                if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
-                    if !bun_sys::exists(path) {
-                        e = bun_sys::SystemErrno::ENOENT as c_int;
+    // An already-open fd socket runs `on_open` synchronously; what settling
+    // the connect promise there left pending is not a connect failure.
+    let opened_err = match socket_ref.do_connect() {
+        Ok(()) => None,
+        Err(crate::Error::Js(err)) => Some(err),
+        Err(_) => {
+            // Winsock sets WSAGetLastError, not the CRT `_errno()` that
+            // `last_errno()` reads.
+            #[cfg(windows)]
+            let os_errno = {
+                let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
+                // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
+                // or not; Node distinguishes ENOENT via `CreateFile`.
+                if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
+                    if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
+                        if !bun_sys::exists(path) {
+                            e = bun_sys::SystemErrno::ENOENT as c_int;
+                        }
                     }
                 }
-            }
-            e
-        };
-        #[cfg(not(windows))]
-        let os_errno = bun_sys::last_errno();
-        let errno = if port.is_none() {
-            // Preserve the real errno from the failed connect(2) on a unix path:
-            // connecting to an existing non-socket file is ENOTSOCK, a
-            // permission-denied path is EACCES, a missing one is ENOENT.
-            if os_errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
-                // libuv reports UV_EINVAL for a pipe path it cannot express.
-                bun_sys::SystemErrno::EINVAL as c_int
-            } else if os_errno != 0 {
-                os_errno
+                e
+            };
+            #[cfg(not(windows))]
+            let os_errno = bun_sys::last_errno();
+            let errno = if port.is_none() {
+                // Preserve the real errno from the failed connect(2) on a unix path:
+                // connecting to an existing non-socket file is ENOTSOCK, a
+                // permission-denied path is EACCES, a missing one is ENOENT.
+                if os_errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
+                    // libuv reports UV_EINVAL for a pipe path it cannot express.
+                    bun_sys::SystemErrno::EINVAL as c_int
+                } else if os_errno != 0 {
+                    os_errno
+                } else {
+                    bun_sys::SystemErrno::ENOENT as c_int
+                }
             } else {
-                bun_sys::SystemErrno::ENOENT as c_int
-            }
-        } else {
-            // A synchronous TCP connect failure is almost always the local
-            // bind() (localAddress/localPort) failing - preserve the errnos a
-            // bind() meaningfully produces (EADDRINUSE: port busy,
-            // EADDRNOTAVAIL: address not local, EACCES: privileged port,
-            // EINVAL: address family mismatch); everything else stays
-            // ECONNREFUSED. Mirrors handle_connect_error's whitelist.
-            if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
-                || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int
-                || os_errno == bun_sys::SystemErrno::EACCES as c_int
-                || os_errno == bun_sys::SystemErrno::EINVAL as c_int
+                // A synchronous TCP connect failure is almost always the local
+                // bind() (localAddress/localPort) failing - preserve the errnos a
+                // bind() meaningfully produces (EADDRINUSE: port busy,
+                // EADDRNOTAVAIL: address not local, EACCES: privileged port,
+                // EINVAL: address family mismatch); everything else stays
+                // ECONNREFUSED. Mirrors handle_connect_error's whitelist.
+                if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
+                    || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int
+                    || os_errno == bun_sys::SystemErrno::EACCES as c_int
+                    || os_errno == bun_sys::SystemErrno::EINVAL as c_int
+                {
+                    os_errno
+                } else {
+                    bun_sys::SystemErrno::ECONNREFUSED as c_int
+                }
+            };
             {
-                os_errno
-            } else {
-                bun_sys::SystemErrno::ECONNREFUSED as c_int
+                let this = socket;
+                let handled = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
+                // Balance the unconditional `socket_ref.ref_()` above.
+                NewSocket::deref(&this);
+                // A `connectError` handler that threw on this synchronous failure
+                // throws from `connect()`.
+                handled?;
+                return Ok(promise_value);
             }
-        };
-        {
-            let this = socket;
-            NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
-            // Balance the unconditional `socket_ref.ref_()` above.
-            NewSocket::deref(&this);
         }
-        return Ok(promise_value);
-    }
+    };
 
-    // if this is from node:net there's surface where the user can .ref() and .deref()
-    // before the connection starts. make sure we honor that here.
-    if socket_ref.ref_pollref_on_connect.get() {
-        socket_ref
-            .poll_ref
-            .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+    // What settling the connect promise in `on_open` left pending (allocation
+    // failure, a terminating VM).
+    if let Some(err) = opened_err {
+        return Err(err);
     }
-
     Ok(promise_value)
 }
 

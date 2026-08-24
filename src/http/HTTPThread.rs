@@ -135,7 +135,6 @@ pub struct HttpThread {
     pub(crate) has_awoken: AtomicBool,
     pub(crate) timer: Instant,
     pub(crate) lazy_libdeflater: Option<Box<LibdeflateState>>,
-    pub(crate) lazy_request_body_buffer: Option<Box<HeapRequestBodyBuffer>>,
 
     /// Every `ThreadlocalAsyncHTTP` box currently in flight on this thread.
     /// Inserted by [`start_queued_task`] right after `heap::release`; removed
@@ -189,69 +188,19 @@ impl HttpThread {
             has_awoken: AtomicBool::new(false),
             timer: Instant::now(),
             lazy_libdeflater: None,
-            lazy_request_body_buffer: None,
             in_flight: Vec::new(),
         }
     }
 }
 
-pub struct HeapRequestBodyBuffer {
-    pub(crate) buffer: [u8; 512 * 1024],
-    // Plain write cursor into `buffer`.
-    pub(crate) cursor: usize,
-}
-
-// SAFETY: `[u8; N]` and `usize` are both valid at the all-zero bit pattern.
-unsafe impl bun_core::Zeroable for HeapRequestBodyBuffer {}
-
-impl HeapRequestBodyBuffer {
-    pub(crate) fn init() -> Box<Self> {
-        bun_core::boxed_zeroed()
-    }
-
-    pub(crate) fn put(mut self: Box<Self>) {
-        // SAFETY: HTTP-thread-only access to the global.
-        let thread = crate::http_thread_mut();
-        if thread.lazy_request_body_buffer.is_none() {
-            self.cursor = 0; // .reset()
-            thread.lazy_request_body_buffer = Some(self);
-        } else {
-            // This case hypothetically should never happen
-            drop(self);
-        }
-    }
-}
-
-pub enum RequestBodyBuffer {
-    // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
-    Heap(Option<Box<HeapRequestBodyBuffer>>),
-    // Inline stack buffer with a heap fallback.
-    Stack(Box<[u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]>),
-}
-
-impl Drop for RequestBodyBuffer {
-    fn drop(&mut self) {
-        if let Self::Heap(heap) = self {
-            if let Some(h) = heap.take() {
-                h.put();
-            }
-        }
-    }
-}
-
-impl RequestBodyBuffer {
-    fn allocated_slice(&mut self) -> &mut [u8] {
-        match self {
-            Self::Heap(heap) => &mut heap.as_mut().unwrap().buffer,
-            Self::Stack(stack) => &mut stack[..],
-        }
-    }
-
-    pub(crate) fn to_array_list(&mut self) -> Vec<u8> {
-        // A `Vec` cannot adopt a foreign allocator+buffer, so this
-        // allocates a fresh Vec of the same capacity.
-        // Callers that can should write into allocated_slice() directly instead.
-        Vec::with_capacity(self.allocated_slice().len())
+/// Initial capacity of the `Vec` the request head (plus as much body as fits) is assembled into.
+pub(crate) fn request_body_send_buffer_capacity(estimated_size: usize) -> usize {
+    const SMALL: usize = 32 * 1024;
+    const LARGE: usize = 512 * 1024;
+    if estimated_size >= SMALL {
+        LARGE
+    } else {
+        SMALL
     }
 }
 
@@ -300,8 +249,6 @@ impl LibdeflateState {
             .expect("set in HttpThread::deflater()")
     }
 }
-
-pub(crate) const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 
 pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
@@ -406,26 +353,6 @@ impl HttpThread {
     #[inline]
     fn timer_read(&self) -> u64 {
         u64::try_from(self.timer.elapsed().as_nanos()).expect("int cast")
-    }
-
-    #[inline]
-    pub(crate) fn get_request_body_send_buffer(
-        &mut self,
-        estimated_size: usize,
-    ) -> RequestBodyBuffer {
-        if estimated_size >= REQUEST_BODY_SEND_STACK_BUFFER_SIZE {
-            if self.lazy_request_body_buffer.is_none() {
-                bun_core::scoped_log!(
-                    HTTPThread_log,
-                    "Allocating HeapRequestBodyBuffer due to {} bytes request body",
-                    estimated_size
-                );
-                return RequestBodyBuffer::Heap(Some(HeapRequestBodyBuffer::init()));
-            }
-
-            return RequestBodyBuffer::Heap(self.lazy_request_body_buffer.take());
-        }
-        RequestBodyBuffer::Stack(Box::new([0u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]))
     }
 
     pub(crate) fn deflater(&mut self) -> &mut LibdeflateState {

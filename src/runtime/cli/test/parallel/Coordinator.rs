@@ -587,13 +587,29 @@ impl<'a> Coordinator<'a> {
             // Bun or addon bug and must not be
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
-            // regular failure (commonly the OOM killer or the user).
+            // regular failure (commonly the OOM killer or the user). When the
+            // kill was ours (`Worker::on_channel_done`, corrupt IPC stream),
+            // the status says nothing the user can act on; report the cause.
             let panicked = is_panic_status(status);
             if self.stop_reason == Some(StopReason::WorkerPanicked) && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
                 self.record_timing(idx, w.dispatched_at);
-                self.account_crash(idx, status);
+                if w.ipc.corrupt_frame.get() && !panicked {
+                    self.account_crash(
+                        idx,
+                        format_args!("worker killed: corrupt IPC frame, something wrote to fd 3"),
+                    );
+                } else {
+                    let mut buf = [0u8; 32];
+                    self.account_crash(
+                        idx,
+                        format_args!(
+                            "worker crashed: {}",
+                            bstr::BStr::new(describe_status(&mut buf, status))
+                        ),
+                    );
+                }
             }
             Output::flush();
             // SAFETY: fresh root derivation — `account_crash` can reach `bail_out`, which retags the slots.
@@ -661,13 +677,12 @@ impl<'a> Coordinator<'a> {
         self.files_done += 1;
     }
 
-    fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
+    fn account_crash(&mut self, file_idx: u32, detail: core::fmt::Arguments<'_>) {
         self.break_dots();
-        let mut buf = [0u8; 32];
         bun_core::pretty_error!(
-            "<r><red>✗<r> <b>{}<r> <d>(worker crashed: {})<r>\n",
+            "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
             bstr::BStr::new(self.rel_path(file_idx)),
-            bstr::BStr::new(describe_status(&mut buf, status)),
+            detail,
         );
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;

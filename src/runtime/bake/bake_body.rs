@@ -172,7 +172,7 @@ impl UserOptions {
         if !config.is_object() {
             // Allow users to do `export default { app: 'react' }` for convenience
             if config.is_string() {
-                let bunstr = bun_core::OwnedString::new(config.to_bun_string(global)?);
+                let bunstr = config.to_bun_string(global)?;
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
@@ -372,7 +372,11 @@ impl SplitBundlerOptions {
                 // be resolved before the first bundle task can begin.
                 // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachineRef`
                 // live for the lifetime of the global object.
-                global.bun_vm().as_mut().wait_for_promise(promise)?;
+                global
+                    .bun_vm()
+                    .as_mut()
+                    .wait_for_promise(promise)
+                    .map_err(|stopped| stopped.throw(global))?;
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
                     bun_jsc::PromiseResult::Pending => unreachable!("wait_for_promise returned Ok"),
                     bun_jsc::PromiseResult::Fulfilled(_val) => {}
@@ -505,10 +509,10 @@ impl Framework {
     pub fn react(arena: &Arena) -> crate::Result<Framework> {
         // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
-            BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/client.tsx")
-                    .as_bytes(),
-            ),
+            // Browser-side source: compressed in release builds.
+            BuiltInModule::Code(bun_zstd::embed_compressed!(
+                src "runtime/bake/bun-framework-react/client.tsx"
+            )),
             BuiltInModule::Code(
                 bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/server.tsx")
                     .as_bytes(),
@@ -585,8 +589,7 @@ impl Framework {
                 import_source: b"react-refresh/runtime/index.js",
             });
             let react_refresh_code = BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Codegen, "node-fallbacks/react-refresh.js")
-                    .as_bytes(),
+                bun_zstd::embed_compressed!(codegen "node-fallbacks/react-refresh.js"),
             );
             let _ = arena;
             fw.built_in_modules.put(
@@ -751,7 +754,7 @@ impl Framework {
         arena: &Arena,
     ) -> JsResult<Framework> {
         if opts.is_string() {
-            let str = bun_core::OwnedString::new(opts.to_bun_string(global)?);
+            let str = opts.to_bun_string(global)?;
 
             // Deprecated
             if str.eql_comptime("react-server-components") {
@@ -810,7 +813,7 @@ impl Framework {
                 }
             };
 
-            let str = bun_core::OwnedString::new(prop.to_bun_string(global)?);
+            let str = prop.to_bun_string(global)?;
 
             Some(ReactFastRefresh {
                 import_source: refs.track(str.to_utf8()),
@@ -1381,7 +1384,7 @@ fn get_optional_string(
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
+    let str = value.to_bun_string(global)?;
     Ok(Some(allocations.track(str.to_utf8())))
 }
 
@@ -1407,26 +1410,26 @@ pub(crate) fn get_hmr_runtime(side: Side) -> HmrRuntime {
     // costs one extra copy at first call; the cost is negligible vs. keeping
     // a per-call-site `#[cfg]` pair in sync.)
     use std::sync::OnceLock;
-    fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
+    fn nul_terminate(s: &'static [u8], cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
         let buf = cell.get_or_init(|| {
             let mut v = Vec::with_capacity(s.len() + 1);
-            v.extend_from_slice(s.as_bytes());
+            v.extend_from_slice(s);
             v.push(0);
             v.into_boxed_slice()
         });
         // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
         ZStr::from_slice_with_nul(&buf[..])
     }
-    static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
     static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
     hmr_runtime_init(match side {
-        Side::Client => nul_terminate(
-            bun_core::runtime_embed_file!(CodegenEager, "bake.client.js"),
-            &CLIENT,
-        ),
+        // Shipped to the browser, so release builds embed it compressed; the
+        // bundler owns the one inflated (NUL-terminated) copy.
+        Side::Client => {
+            ZStr::from_slice_with_nul(bun_bundler::bake_types::bake_client_js_with_nul())
+        }
         // server runtime is loaded once, so it is pointless to make this eager.
         Side::Server => nul_terminate(
-            bun_core::runtime_embed_file!(Codegen, "bake.server.js"),
+            bun_core::runtime_embed_file!(Codegen, "bake.server.js").as_bytes(),
             &SERVER,
         ),
     })

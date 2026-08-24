@@ -91,6 +91,42 @@ test("node-fetch uses node streams instead of web streams", async () => {
   }
 });
 
+// node-fetch pipes every network response into a stream, so a response without
+// a body (204, HEAD) still has a stream body that ends at once, while a Response
+// constructed with a null body has `body === null`.
+test("node-fetch gives a fetched response without a body an empty stream", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname === "/204") return new Response(null, { status: 204 });
+      return new Response("hello world");
+    },
+  });
+  const webBody = Object.getOwnPropertyDescriptor(originalResponse.prototype, "body").get;
+
+  for (const [path, init, status] of [
+    ["/204", {}, 204],
+    ["/", { method: "HEAD" }, 200],
+  ]) {
+    const result = await fetch2(new URL(path, server.url), init);
+    expect(result.status).toBe(status);
+    expect(webBody.call(result)).toBeNull();
+    const body = result.body;
+    expect(body).toBeInstanceOf(stream.Readable);
+    expect(result.body).toBe(body); // cached lazy getter
+    expect(result.clone().body).toBeInstanceOf(stream.Readable);
+    const chunks = [];
+    for await (const chunk of body) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toEqual([]);
+    expect(await result.text()).toBe("");
+  }
+
+  expect(new Response(null, { status: 204 }).body).toBeNull();
+  expect(new Response(null, { status: 204 }).clone().body).toBeNull();
+});
+
 test("node-fetch request body streams properly", async () => {
   let responseResolve;
   const responsePromise = new Promise(resolve => {

@@ -1,5 +1,7 @@
 #pragma once
 #include "root.h"
+#include <JavaScriptCore/IteratorOperations.h>
+#include <utility>
 
 namespace Bun {
 
@@ -30,5 +32,28 @@ ALWAYS_INLINE JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::
  * This is the strictest form of property access - use for security-critical options.
  */
 JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name);
+
+// Whether `getIteratorResult` runs `get(value)` on a result whose `done` is true. IteratorStepValue never does.
+enum class IteratorDoneValue : uint8_t {
+    Read,
+    Skip,
+};
+
+// `{ done, value }` of an iterator result: the inline slots when `result` has the realm's iteratorResultObjectStructure, else `get(done)` then `get(value)` (both empty if either throws).
+ALWAYS_INLINE std::pair<JSC::JSValue, JSC::JSValue> getIteratorResult(JSC::JSGlobalObject* globalObject, JSC::JSObject* result, IteratorDoneValue doneValue = IteratorDoneValue::Read)
+{
+    if (result->structureID() == globalObject->iteratorResultObjectStructure()->id()) [[likely]]
+        return { result->getDirect(JSC::iteratorResultObjectDonePropertyOffset), result->getDirect(JSC::iteratorResultObjectValuePropertyOffset) };
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue done = result->get(globalObject, vm.propertyNames->done);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (doneValue == IteratorDoneValue::Skip && done.toBoolean(globalObject))
+        return { done, JSC::jsUndefined() };
+    JSC::JSValue value = result->get(globalObject, vm.propertyNames->value);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { done, value };
+}
 
 }

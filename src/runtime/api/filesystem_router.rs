@@ -137,7 +137,10 @@ impl FileSystemRouter {
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
         if let Some(style_val) = argument.get(global_this, "style")? {
-            if !(style_val.get_zig_string(global_this)?).eql_comptime("nextjs") {
+            if !style_val
+                .to_js_string_view(global_this)?
+                .eql_comptime("nextjs")
+            {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Only 'nextjs' style is currently implemented"
                 )));

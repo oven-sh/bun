@@ -260,12 +260,20 @@ impl Handlers {
         false
     }
 
-    pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
+    /// Route an error a socket handler produced to the `error` handler, or —
+    /// with none registered — to the VM's uncaught-exception path. The `error`
+    /// handler is a top-level call of its own: what *it* throws is reported here
+    /// and the socket handler goes on (it still has state to settle, and often a
+    /// close to deliver). `Err` is only a termination pending from the preceding
+    /// callback, which nothing may run over.
+    pub(crate) fn call_error_handler(
+        &self,
+        this_value: JSValue,
+        args: &[JSValue; 2],
+    ) -> JsResult<()> {
         let global_object = self.global_object;
-        // Termination raised inside the preceding callback.call() cannot be
-        // cleared; entering JS again trips executeCallImpl's assertNoException.
         if global_object.has_exception() {
-            return false;
+            return Err(bun_jsc::JsError::Thrown);
         }
         let on_error = self.on_error();
 
@@ -276,14 +284,16 @@ impl Handlers {
                     .bun_vm()
                     .as_mut()
                     .uncaught_exception(&global_object, args[1], false);
-            return false;
+            return Ok(());
         }
 
-        if let Err(e) = on_error.call(&global_object, this_value, args) {
-            global_object.report_active_exception_as_unhandled(e);
-        }
-
-        true
+        global_object.bun_vm().event_loop_mut().run_callback(
+            on_error,
+            &global_object,
+            this_value,
+            args,
+        );
+        Ok(())
     }
 
     pub fn from_js(
@@ -442,6 +452,8 @@ pub struct SocketConfig {
     pub(crate) allow_half_open: bool,
     pub(crate) reuse_port: bool,
     pub(crate) ipv6_only: bool,
+    /// node:net's `pauseOnConnect`: the socket, or every accepted one, opens paused.
+    pub(crate) pause_on_connect: bool,
 }
 
 impl SocketConfig {
@@ -461,6 +473,9 @@ impl SocketConfig {
         }
         if self.ipv6_only {
             flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
+        }
+        if self.pause_on_connect {
+            flags |= uws::LIBUS_SOCKET_OPEN_PAUSED;
         }
 
         flags
@@ -508,6 +523,7 @@ impl SocketConfig {
                 allow_half_open: false,
                 reuse_port: false,
                 ipv6_only: false,
+                pause_on_connect: false,
             };
         };
         // On any `?` below, `result` drops and releases what it owns — no
@@ -517,10 +533,11 @@ impl SocketConfig {
         result.allow_half_open = generated.allow_half_open;
         result.reuse_port = generated.reuse_port;
         result.ipv6_only = generated.ipv6_only;
+        result.pause_on_connect = generated.pause_on_connect;
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
-        } else if let Some(unix) = generated.unix_.get() {
+        } else if let Some(unix) = generated.unix_.as_ref() {
             if unix.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
@@ -534,7 +551,7 @@ impl SocketConfig {
                 let without_prefix = slice[7..].to_vec();
                 result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
             }
-        } else if let Some(hostname) = generated.hostname.get() {
+        } else if let Some(hostname) = generated.hostname.as_ref() {
             if hostname.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));

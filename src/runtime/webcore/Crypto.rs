@@ -84,7 +84,7 @@ impl Crypto {
         global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+        let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
@@ -94,7 +94,7 @@ impl Crypto {
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        str.transfer_to_js(global)
+        str.into_js(global)
     }
 
     // DOMJIT fast path.
@@ -221,13 +221,13 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     );
 
     if encoding == Encoding::Hex {
-        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+        let (str, bytes) = BunString::create_uninitialized_latin1(36);
         uuid.print(
             (&mut bytes[0..36])
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        return str.transfer_to_js(global);
+        return str.into_js(global);
     }
 
     encoding.encode_with_max_size(global, 32, &uuid.bytes)
@@ -283,7 +283,7 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     // `bun_core::ZigStringSlice` is a borrow-or-own UTF-8 slice.
     let name: bun_core::ZigStringSlice = 'brk: {
         if name_value.is_string() {
-            let name_str = bun_core::OwnedString::new(name_value.to_bun_string(global)?);
+            let name_str = name_value.to_bun_string(global)?;
             let result = name_str.to_utf8();
 
             break 'brk result;
@@ -303,7 +303,7 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
     let namespace: [u8; 16] = 'brk: {
         if namespace_value.is_string() {
-            let namespace_str = bun_core::OwnedString::new(namespace_value.to_bun_string(global)?);
+            let namespace_str = namespace_value.to_bun_string(global)?;
             let namespace_slice = namespace_str.to_utf8();
 
             if namespace_slice.slice().len() != 36 {
@@ -352,13 +352,13 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let uuid = UUID5::init(&namespace, name.slice());
 
     if encoding == Encoding::Hex {
-        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+        let (str, bytes) = BunString::create_uninitialized_latin1(36);
         uuid.print(
             (&mut bytes[0..36])
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        return str.transfer_to_js(global);
+        return str.into_js(global);
     }
 
     encoding.encode_with_max_size(global, 32, &uuid.bytes)

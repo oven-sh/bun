@@ -161,7 +161,10 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
 /// way InternalModuleRegistry::generateModule consumes it. Specifiers that are not JS internal modules are skipped.
 #[unsafe(no_mangle)]
 /// `depth` bounds nested-function code blocks (`u32::MAX` = all of them; 0 = just each module wrapper's own).
-pub(crate) fn __bun_jsc_generate_internal_module_bytecode(specifiers: &[&[u8]], depth: u32) -> Vec<(u32, Box<[u8]>)> {
+pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
+    specifiers: &[&[u8]],
+    depth: u32,
+) -> Vec<(u32, Box<[u8]>)> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
 
@@ -172,7 +175,8 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(specifiers: &[&[u8]], 
         }
     };
     for specifier in specifiers {
-        let alias = bun_resolve_builtins::Alias::get(specifier, bun_ast::Target::Bun, Default::default());
+        let alias =
+            bun_resolve_builtins::Alias::get(specifier, bun_ast::Target::Bun, Default::default());
         let canonical: &[u8] = match &alias {
             Some(alias) => alias.path.as_bytes(),
             None => specifier,
@@ -203,10 +207,14 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(specifiers: &[&[u8]], 
         let mut size: usize = 0;
         let mut handle: Option<NonNull<CachedBytecode>> = None;
         // SAFETY: out-params are initialized locals; C++ fills them on success.
-        if !unsafe { Bun__generateInternalModuleBytecode(id, depth, &mut bytes, &mut size, &mut handle) } {
+        if !unsafe {
+            Bun__generateInternalModuleBytecode(id, depth, &mut bytes, &mut size, &mut handle)
+        } {
             continue;
         }
-        let (Some(bytes), Some(handle)) = (bytes, handle) else { continue };
+        let (Some(bytes), Some(handle)) = (bytes, handle) else {
+            continue;
+        };
         // SAFETY: `bytes[..size]` is the CachedBytecode's payload, valid until the deref below.
         let owned = Box::<[u8]>::from(unsafe { core::slice::from_raw_parts(bytes.as_ptr(), size) });
         CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));

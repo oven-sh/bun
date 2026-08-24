@@ -1090,7 +1090,9 @@ impl BuildCommand {
                         options::OutputKind::Asset => "<magenta>",
                         options::OutputKind::Sourcemap => "<d>",
                         options::OutputKind::Bytecode => "<d>",
-                        options::OutputKind::ModuleInfo | options::OutputKind::BuiltinBytecode => "<d>",
+                        options::OutputKind::ModuleInfo | options::OutputKind::BuiltinBytecode => {
+                            "<d>"
+                        }
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
                     }))?;

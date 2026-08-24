@@ -388,9 +388,21 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // `chunk-<hash>` when the default naming is in effect.
             if c.options.compile_mode.is_executable()
                 && !chunk.entry_point.is_entry_point()
-                && matches!(&*chunk.template.data, b"./chunk-[hash].[ext]" | b"./[name]-[hash].[ext]" | b"[name]-[hash].[ext]" | b"chunk-[hash].[ext]")
+                && matches!(
+                    &*chunk.template.data,
+                    b"./chunk-[hash].[ext]"
+                        | b"./[name]-[hash].[ext]"
+                        | b"[name]-[hash].[ext]"
+                        | b"chunk-[hash].[ext]"
+                )
             {
-                write!(&mut rel_path, "./{}.{}", compact_chunk_index, bstr::BStr::new(&chunk.template.placeholder.ext)).expect("write to Vec<u8>");
+                write!(
+                    &mut rel_path,
+                    "./{}.{}",
+                    compact_chunk_index,
+                    bstr::BStr::new(&chunk.template.placeholder.ext)
+                )
+                .expect("write to Vec<u8>");
                 compact_chunk_index += 1;
             } else {
                 // Use the byte-writer (`PathTemplate::print`) directly —
@@ -1339,7 +1351,9 @@ fn append_internal_module_bytecode(c: &LinkerContext, output_files: &mut Vec<opt
     let import_records = c.graph.ast.items_import_records();
     let mut specifiers: Vec<&[u8]> = Vec::new();
     for source_index in &c.graph.reachable_files {
-        let Some(records) = import_records.get(source_index.get() as usize) else { continue };
+        let Some(records) = import_records.get(source_index.get() as usize) else {
+            continue;
+        };
         for record in records.as_slice() {
             if record.source_index.is_valid() || record.path.text.is_empty() {
                 continue;
@@ -1348,7 +1362,11 @@ fn append_internal_module_bytecode(c: &LinkerContext, output_files: &mut Vec<opt
             let is_builtin = record.tag == bun_ast::ImportRecordTag::Builtin
                 || text.starts_with(b"node:")
                 || text.starts_with(b"bun:")
-                || bun_resolve_builtins::HardcodedModule::Alias::has(text, crate::options::Target::Bun, Default::default());
+                || bun_resolve_builtins::HardcodedModule::Alias::has(
+                    text,
+                    crate::options::Target::Bun,
+                    Default::default(),
+                );
             if is_builtin && !specifiers.contains(&text) {
                 specifiers.push(text);
             }
@@ -1357,7 +1375,9 @@ fn append_internal_module_bytecode(c: &LinkerContext, output_files: &mut Vec<opt
     if specifiers.is_empty() {
         return;
     }
-    for (id, bytecode) in crate::bundle_v2::dispatch::generate_internal_module_bytecode(&specifiers, u32::MAX) {
+    for (id, bytecode) in
+        crate::bundle_v2::dispatch::generate_internal_module_bytecode(&specifiers, u32::MAX)
+    {
         debug!("Internal module bytecode {}: {} bytes", id, bytecode.len());
         output_files.push(options::OutputFile::init(options::OutputFileInit {
             output_path: id.to_string().into_bytes().into_boxed_slice(),

@@ -439,7 +439,8 @@ writeIfNotChangedBinary(path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.
 // the internal modules an app uses); computed over the bundled outputs so it is meaningful in debug builds too.
 const internalModulesStamp = (() => {
   const h = new Bun.CryptoHasher("sha256");
-  for (const id of moduleList.slice(0, nativeStartIndex)) h.update(outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "");
+  for (const id of moduleList.slice(0, nativeStartIndex))
+    h.update(outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "");
   return new DataView(h.digest().buffer).getUint32(0);
 })();
 

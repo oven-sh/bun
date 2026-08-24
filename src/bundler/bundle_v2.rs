@@ -1413,7 +1413,10 @@ pub mod bv2_impl {
 
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`: (registry id, bytecode) for the internal modules named
             /// by `specifiers` plus their static requires.
-            safe fn __bun_jsc_generate_internal_module_bytecode(specifiers: &[&[u8]], depth: u32) -> Vec<(u32, Box<[u8]>)>;
+            safe fn __bun_jsc_generate_internal_module_bytecode(
+                specifiers: &[&[u8]],
+                depth: u32,
+            ) -> Vec<(u32, Box<[u8]>)>;
         }
 
         unsafe extern "Rust" {
@@ -1456,7 +1459,10 @@ pub mod bv2_impl {
         }
 
         #[inline]
-        pub(crate) fn generate_internal_module_bytecode(specifiers: &[&[u8]], depth: u32) -> Vec<(u32, Box<[u8]>)> {
+        pub(crate) fn generate_internal_module_bytecode(
+            specifiers: &[&[u8]],
+            depth: u32,
+        ) -> Vec<(u32, Box<[u8]>)> {
             __bun_jsc_generate_internal_module_bytecode(specifiers, depth)
         }
 

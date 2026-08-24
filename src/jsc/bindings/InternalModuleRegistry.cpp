@@ -71,7 +71,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     const uint8_t* cachedBytes = nullptr;
     size_t cachedSize = 0;
     if (Bun__standaloneInternalModuleBytecode(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), id, &cachedBytes, &cachedSize)) {
-        Ref<JSC::CachedBytecode> cached = JSC::CachedBytecode::create(std::span<uint8_t> { const_cast<uint8_t*>(cachedBytes), cachedSize }, [](const void*) { }, { });
+        Ref<JSC::CachedBytecode> cached = JSC::CachedBytecode::create(std::span<uint8_t> { const_cast<uint8_t*>(cachedBytes), cachedSize }, [](const void*) {}, {});
         cached->setPayloadIsPersistent();
         executable = JSC::decodeBuiltinFunction(vm, WTF::move(cached), *source.provider(), InternalModuleRegistryConstants::sourceStamp);
         if (executable)
@@ -239,7 +239,9 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
 
 } // namespace Bun
 
-namespace Zig { JSC::VM& vmForBytecodeCache(); }
+namespace Zig {
+JSC::VM& vmForBytecodeCache();
+}
 
 // bun build --compile: bytecode for internal JS module `id` (an index below BUN_NATIVE_MODULE_START_INDEX), generated the
 // way generateModule() will consume it. The caller owns *handle and releases it with CachedBytecode__deref.

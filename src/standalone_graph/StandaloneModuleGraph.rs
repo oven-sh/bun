@@ -742,7 +742,11 @@ impl StandaloneModuleGraph {
         if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
             let table_offset = offsets.modules_ptr.offset as usize
                 + offsets.modules_ptr.length as usize
-                + if source_hashes.is_some() { modules_list_count * size_of::<u32>() } else { 0 };
+                + if source_hashes.is_some() {
+                    modules_list_count * size_of::<u32>()
+                } else {
+                    0
+                };
             // SAFETY: `to_bytes` wrote `u32 count` + `count` records right here; read-only, unaligned-safe reads.
             let read_u32 = |at: usize| -> u32 {
                 debug_assert!(at + 4 <= raw_len);
@@ -753,9 +757,17 @@ impl StandaloneModuleGraph {
             for i in 0..count {
                 let record = table_offset + size_of::<u32>() + i * 3 * size_of::<u32>();
                 let id = read_u32(record);
-                let pointer = StringPointer { offset: read_u32(record + 4), length: read_u32(record + 8) };
+                let pointer = StringPointer {
+                    offset: read_u32(record + 4),
+                    length: read_u32(record + 8),
+                };
                 // SAFETY: same provenance rules as `File::bytecode`: a writable subrange JSC may patch in place.
-                let bytes = unsafe { core::ptr::slice_from_raw_parts_mut(raw_ptr.add(pointer.offset as usize), pointer.length as usize) };
+                let bytes = unsafe {
+                    core::ptr::slice_from_raw_parts_mut(
+                        raw_ptr.add(pointer.offset as usize),
+                        pointer.length as usize,
+                    )
+                };
                 builtin_bytecode.push((id, bytes));
             }
         }
@@ -866,7 +878,10 @@ impl StandaloneModuleGraph {
 
     /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.
     pub fn builtin_module_bytecode(&self, id: u32) -> Option<*mut [u8]> {
-        self.builtin_bytecode.iter().find(|(candidate, _)| *candidate == id).map(|(_, bytes)| *bytes)
+        self.builtin_bytecode
+            .iter()
+            .find(|(candidate, _)| *candidate == id)
+            .map(|(_, bytes)| *bytes)
     }
 }
 
@@ -1201,8 +1216,15 @@ pub(crate) fn to_bytes(
             if output_file.output_kind != options::OutputKind::BuiltinBytecode {
                 continue;
             }
-            let options::OutputFileValue::Buffer { bytes } = &output_file.value else { continue };
-            let Some(id) = core::str::from_utf8(&output_file.dest_path).ok().and_then(|s| s.parse::<u32>().ok()) else { continue };
+            let options::OutputFileValue::Buffer { bytes } = &output_file.value else {
+                continue;
+            };
+            let Some(id) = core::str::from_utf8(&output_file.dest_path)
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+            else {
+                continue;
+            };
             let pointer = append_bytecode_aligned(&mut string_builder, bytes);
             builtin_bytecode_table.extend_from_slice(&id.to_le_bytes());
             builtin_bytecode_table.extend_from_slice(&pointer.offset.to_le_bytes());
@@ -1286,13 +1308,19 @@ pub(crate) fn to_bytes(
     let hashes_ptr = string_builder.append_count(&source_hashes);
     debug_assert_eq!(hashes_ptr.offset, modules_ptr.offset + modules_ptr.length);
     let builtin_table_ptr = string_builder.append_count(&builtin_bytecode_table);
-    debug_assert_eq!(builtin_table_ptr.offset, hashes_ptr.offset + hashes_ptr.length);
+    debug_assert_eq!(
+        builtin_table_ptr.offset,
+        hashes_ptr.offset + hashes_ptr.length
+    );
     let offsets = Offsets {
         entry_point_id: entry_point_id as u32,
         modules_ptr,
         compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
         byte_count: string_builder.len,
-        flags: flags | Flags::SOURCE_TEXT_CONTIGUOUS | Flags::HAS_SOURCE_HASHES | Flags::HAS_BUILTIN_BYTECODE,
+        flags: flags
+            | Flags::SOURCE_TEXT_CONTIGUOUS
+            | Flags::HAS_SOURCE_HASHES
+            | Flags::HAS_BUILTIN_BYTECODE,
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.
@@ -2551,10 +2579,17 @@ impl StandaloneModuleGraph {
 /// populates it from bytes, sets it globally, and returns the pointer.
 /// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins
 /// 8 bytes after a page-aligned address (the length header), so the offset must be 120 mod 128.
-fn append_bytecode_aligned(string_builder: &mut bun_core::StringBuilder, bytecode: &[u8]) -> StringPointer {
+fn append_bytecode_aligned(
+    string_builder: &mut bun_core::StringBuilder,
+    bytecode: &[u8],
+) -> StringPointer {
     let target_mod: usize = 128 - size_of::<u64>();
     let current_mod = string_builder.len % 128;
-    let padding = if current_mod <= target_mod { target_mod - current_mod } else { 128 - current_mod + target_mod };
+    let padding = if current_mod <= target_mod {
+        target_mod - current_mod
+    } else {
+        128 - current_mod + target_mod
+    };
     let writable = string_builder.writable();
     writable[0..padding].fill(0);
     string_builder.len += padding;
@@ -2564,7 +2599,10 @@ fn append_bytecode_aligned(string_builder: &mut bun_core::StringBuilder, bytecod
     let unaligned_space = &writable_after_padding[bytecode.len()..];
     let len = bytecode.len() + unaligned_space.len().min(128);
     string_builder.len += len;
-    StringPointer { offset: aligned_offset as u32, length: len as u32 }
+    StringPointer {
+        offset: aligned_offset as u32,
+        length: len as u32,
+    }
 }
 
 fn from_bytes_alloc(

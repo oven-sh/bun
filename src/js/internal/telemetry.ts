@@ -62,7 +62,7 @@ function wrap(sc: any) {
 /** Coerce anything span-like (ours, a foreign api Span, or a bare SpanContext) to a TelemetrySpan. */
 function toNativeSpan(span: any) {
   if (span == null) return undefined;
-  if ($isTelemetrySpan(span)) return span;
+  if ($isEmbedderInternalFieldObject(span)) return span;
   if (typeof span.spanContext === "function") {
     const sc = span.spanContext();
     return sc == null ? undefined : wrap(sc);

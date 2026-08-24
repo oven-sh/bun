@@ -45,7 +45,7 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   // undefined is OK
   if (array === undefined) return true;
   // A bare telemetry span header (a span cell or a pooled-span handle) is OK
-  const isSpanHeader = (v: unknown) => $isTelemetrySpan(v) || typeof v === "number";
+  const isSpanHeader = (v: unknown) => $isEmbedderInternalFieldObject(v) || typeof v === "number";
   if (!$isJSArray(array)) {
     $assert(isSpanHeader(array), "AsyncContextData should be undefined, a span header or an array, got", array);
     return true;

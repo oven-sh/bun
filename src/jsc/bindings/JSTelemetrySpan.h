@@ -20,7 +20,7 @@ using namespace JSC;
 class JSTelemetrySpan final : public JSC::JSInternalFieldObjectImpl<11> {
 public:
     using Base = JSC::JSInternalFieldObjectImpl<11>;
-    static constexpr JSC::JSType Type = static_cast<JSC::JSType>(JSC::BunTelemetrySpanType);
+    static constexpr JSC::JSType Type = static_cast<JSC::JSType>(JSC::EmbedderInternalFieldObjectType);
 
     enum class Field : unsigned {
         // int32 of State bits

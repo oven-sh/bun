@@ -39,14 +39,10 @@ impl TestingAPIs {
         };
         match diff {
             Ok(s) => bun_string_jsc::create_utf8_for_js(global, s.as_slice()),
-            Err(e) => {
-                let result = Err(global.throw(format_args!(
-                    "failed to make diff: {}",
-                    bstr::BStr::new(e.as_slice())
-                )));
-                drop(e);
-                result
-            }
+            Err(e) => Err(global.throw(format_args!(
+                "failed to make diff: {}",
+                bstr::BStr::new(e.as_slice())
+            ))),
         }
     }
 

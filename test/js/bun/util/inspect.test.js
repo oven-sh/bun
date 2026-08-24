@@ -123,6 +123,41 @@ it("does not call a $$typeof getter while checking for a React element", () => {
   expect(Bun.inspect(element)).toBe('<div id="x" />');
 });
 
+it("prints a React element without calling getters on its type, key, props or children", () => {
+  const $$typeof = Symbol.for("react.element");
+  let called = 0;
+  const getter = {
+    get() {
+      called++;
+      throw new Error("Test failed!");
+    },
+    enumerable: true,
+  };
+  const withGetter = (target, name) => Object.defineProperty(target, name, getter);
+
+  expect(Bun.inspect(withGetter({ $$typeof, props: {} }, "type"))).toBe("<unknown />");
+  expect(Bun.inspect(withGetter({ $$typeof, type: "div", props: {} }, "key"))).toBe("<div />");
+  expect(Bun.inspect(withGetter({ $$typeof, type: "div" }, "props"))).toBe("<div />");
+  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({}, "children") })).toBe("<div />");
+  // An accessor prop prints like every other accessor.
+  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({ id: "x" }, "hidden") })).toBe(
+    '<div id="x" hidden=[Getter] />',
+  );
+  // A Proxy props object is read through its target.
+  const trap = () => {
+    called++;
+    throw new Error("Test failed!");
+  };
+  const proxyProps = new Proxy({ id: "x" }, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap });
+  expect(Bun.inspect({ $$typeof, type: "div", props: proxyProps })).toBe('<div id="x" />');
+  expect(called).toBe(0);
+
+  // Data props, including a numeric key, still print.
+  expect(Bun.inspect({ $$typeof, type: "div", key: "k", props: { 0: "a", b: 1, children: "hi" } })).toBe(
+    '<div key="k" 0="a" b=1>hi</div>',
+  );
+});
+
 it("Timeout", () => {
   const id = setTimeout(() => {}, 0);
   expect(Bun.inspect(id)).toBe(`Timeout (#${+id})`);

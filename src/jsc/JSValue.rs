@@ -2373,6 +2373,7 @@ impl JSValue {
     /// `JSValue.getOwnNonObservable` — own-property lookup that never runs
     /// user code. A Proxy trap or module namespace is not consulted, and an
     /// accessor or custom property yields `None` instead of a getter call.
+    /// Like `get` and `get_own_truthy`, an `undefined` value is `None`.
     pub fn get_own_non_observable(
         self,
         global: &JSGlobalObject,
@@ -2380,7 +2381,11 @@ impl JSValue {
     ) -> Option<JSValue> {
         let name = bun_core::String::borrow_utf8(property_name.as_ref());
         let v = JSC__JSValue__getOwnNonObservable(self, global, &name);
-        if v.is_empty() { None } else { Some(v) }
+        if v.is_empty() || v.is_undefined() {
+            None
+        } else {
+            Some(v)
+        }
     }
     /// `JSValue.getOwnObject` — own-property lookup; throws "{prop} must be an
     /// object" when the own-truthy value is not an object.

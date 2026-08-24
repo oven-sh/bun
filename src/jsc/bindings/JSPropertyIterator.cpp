@@ -164,17 +164,25 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(
     }
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
-    auto has = object->getNonIndexPropertySlot(globalObject, prop, slot);
+    // getPropertySlot, not getNonIndexPropertySlot: the names can include an index
+    // (a props object with a numeric key) and getNonIndexPropertySlot asserts on one.
+    auto has = object->getPropertySlot(globalObject, prop, slot);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!has) {
-        return {};
-    }
-    if (slot.isAccessor() || slot.isCustom()) {
+    if (!has || slot.isCustom()) {
         return {};
     }
 
-    JSValue result = slot.getPureResult();
-    RETURN_IF_EXCEPTION(scope, {});
+    // A JS accessor is reported as its GetterSetter cell, which the formatters print as
+    // [Getter]. The getter itself never runs. A data slot is read in place: getPureResult
+    // would return null for a slot without a structure offset, such as an index property.
+    JSValue result;
+    if (slot.isAccessor()) {
+        result = slot.getterSetter();
+    } else if (slot.isValue()) {
+        result = slot.getValue(globalObject, prop);
+    } else {
+        return {};
+    }
 
     *propertyName = Bun::toString(prop.impl());
     return JSValue::encode(result);

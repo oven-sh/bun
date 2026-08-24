@@ -427,13 +427,14 @@ test("inline snapshot of a React element does not call getters on its type, key,
   expect({ $$typeof, type: "div", props: withGetter({}, "hidden") }).toMatchInlineSnapshot(
     `<div hidden=[native code] />`,
   );
-  // A Proxy props object is read through its target.
+  // A Proxy props object, nested or not, is read through its innermost target.
   const trap = () => {
     called++;
     throw new Error("Test failed!");
   };
   const proxyProps = new Proxy({ id: "x" }, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap });
   expect({ $$typeof, type: "div", props: proxyProps }).toMatchInlineSnapshot(`<div id="x" />`);
+  expect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) }).toMatchInlineSnapshot(`<div id="x" />`);
   expect(called).toBe(0);
 
   // Data props, including a numeric key, still print.

@@ -5065,12 +5065,11 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 self.quote_strings = true;
 
-                // A Proxy is read through its target, as `print_proxy` does, so no trap runs.
-                let props = if props.is_cell() && props.js_type() == jsc::JSType::ProxyObject {
-                    props.get_proxy_target()
-                } else {
-                    props
-                };
+                // A Proxy is read through its innermost target, so no trap runs.
+                let mut props = props;
+                while props.is_cell() && props.js_type() == jsc::JSType::ProxyObject {
+                    props = props.get_proxy_target();
+                }
                 let Some(props_obj) = props.get_object() else {
                     writer.write_all(b" />");
                     if writer.failed {

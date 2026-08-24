@@ -2040,12 +2040,11 @@ impl<'a> Formatter<'a> {
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
-                        // A Proxy is read through its target, so no trap runs.
-                        let props = if props.is_cell() && props.js_type() == JSType::ProxyObject {
-                            props.get_proxy_target()
-                        } else {
-                            props
-                        };
+                        // A Proxy is read through its innermost target, so no trap runs.
+                        let mut props = props;
+                        while props.is_cell() && props.js_type() == JSType::ProxyObject {
+                            props = props.get_proxy_target();
+                        }
 
                         // `quote_strings` (and nested `indent` scopes) must be restored on
                         // every exit, including thrown exceptions. Wrap the fallible body in a

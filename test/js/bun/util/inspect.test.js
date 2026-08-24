@@ -143,13 +143,14 @@ it("prints a React element without calling getters on its type, key, props or ch
   expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({ id: "x" }, "hidden") })).toBe(
     '<div id="x" hidden=[Getter] />',
   );
-  // A Proxy props object is read through its target.
+  // A Proxy props object, nested or not, is read through its innermost target.
   const trap = () => {
     called++;
     throw new Error("Test failed!");
   };
   const proxyProps = new Proxy({ id: "x" }, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap });
   expect(Bun.inspect({ $$typeof, type: "div", props: proxyProps })).toBe('<div id="x" />');
+  expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) })).toBe('<div id="x" />');
   expect(called).toBe(0);
 
   // Data props, including a numeric key, still print.

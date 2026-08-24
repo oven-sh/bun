@@ -19,6 +19,8 @@ pub struct ResolvedSource {
     pub source_url: BunString,
 
     pub is_commonjs_module: bool,
+    /// `bun build --compile`: `StringImpl::hash()` of `source_code`, computed at build time (0 = not known).
+    pub source_code_hash: u32,
 
     /// When .tag is .common_js_custom_extension, this is special-cased to hold
     /// the JSFunction extension. It is kept alive by
@@ -51,6 +53,8 @@ pub struct Bytecode {
     ptr: *mut u8,
     len: usize,
     owned: bool,
+    /// The bytes outlive every VM (executable section, retired compile-cache blob), so JSC may alias them instead of copying.
+    persistent: bool,
 }
 
 impl Default for Bytecode {
@@ -59,6 +63,7 @@ impl Default for Bytecode {
             ptr: core::ptr::null_mut(),
             len: 0,
             owned: false,
+            persistent: false,
         }
     }
 }
@@ -72,6 +77,15 @@ impl Bytecode {
             ptr: bytes.as_ptr().cast_mut(),
             len: bytes.len(),
             owned: false,
+            persistent: false,
+        }
+    }
+    /// Borrowed from memory the caller guarantees is never freed or unmapped for the rest of the process
+    /// (the executable's module graph section, NodeCompileCache's retired blobs).
+    pub fn persistent(bytes: &[u8]) -> Self {
+        Self {
+            persistent: !bytes.is_empty(),
+            ..Self::borrowed(bytes)
         }
     }
     pub fn owned(bytes: Box<[u8]>) -> Self {
@@ -83,6 +97,7 @@ impl Bytecode {
             ptr: bun_core::heap::into_raw(bytes).cast::<u8>(),
             len,
             owned: true,
+            persistent: false,
         }
     }
 }

@@ -44,8 +44,9 @@ test("spawnSync, spawn, and fork pass argv through with patched Array.prototype.
         const forkOut = [];
         collect(child, childOut);
         collect(forked, forkOut);
-        await closed(child);
-        await closed(forked);
+        // Both "close" listeners go on before the first await: a child that
+        // closes while the other one is awaited must not be missed.
+        await Promise.all([closed(child), closed(forked)]);
         console.log(
           JSON.stringify({
             sync: String(sync.stdout).trim(),

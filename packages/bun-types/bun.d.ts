@@ -8977,8 +8977,8 @@ declare module "bun" {
 
     /**
      * Rectangle for {@link Bun.Image.extract | `extract()`}, in pixels of the
-     * upright (post-rotation) source. `left`/`top` default to `0`;
-     * `width`/`height` are required and must be at least 1.
+     * upright (post-rotation) source. `left`/`top` default to `0` and must be
+     * non-negative integers. `width`/`height` are required positive integers.
      */
     interface Region {
       /** Left edge of the region. @default 0 */
@@ -9086,9 +9086,11 @@ declare module "bun" {
     resize(width: number, height?: number, options?: Image.ResizeOptions): this;
     /**
      * Crop to an exact region of the source, before any `resize()`. The
-     * region addresses upright (post-rotation) source pixels; a region that
-     * falls outside the image rejects with `ERR_IMAGE_BAD_EXTRACT_AREA`.
-     * Calling it again replaces the previous region.
+     * region addresses upright (post-rotation) source pixels; `left`/`top`
+     * must be non-negative integers and `width`/`height` positive integers.
+     * A region that falls outside the image rejects with
+     * `ERR_IMAGE_BAD_EXTRACT_AREA`. Calling it again replaces the previous
+     * region.
      */
     extract(region: Image.Region): this;
     /** Rotate by a multiple of 90°. */

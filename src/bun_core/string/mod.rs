@@ -699,6 +699,32 @@ impl String {
             _ => ZigStringSlice::EMPTY,
         }
     }
+    /// Consuming [`to_utf8`]: moves `self`'s ref into the slice instead of
+    /// taking another, and copies a borrowed `ZigString` so the result never
+    /// depends on `self`'s backing.
+    ///
+    /// [`to_utf8`]: Self::to_utf8
+    pub fn into_utf8(self) -> ZigStringSlice {
+        match self.0.tag {
+            Tag::WTFStringImpl => {
+                let wtf = self.as_wtf();
+                if !wtf.is_8bit() {
+                    return ZigStringSlice::init_owned(strings::to_utf8_alloc(wtf.utf16_slice()));
+                }
+                if let Some(utf8) = strings::to_utf8_from_latin1(wtf.latin1_slice()) {
+                    return ZigStringSlice::init_owned(utf8);
+                }
+                let bytes = RawSlice::new(wtf.latin1_slice());
+                ZigStringSlice::WTF {
+                    string_impl: self.leak_wtf_impl(),
+                    bytes,
+                }
+            }
+            Tag::ZigString => self.as_zig().to_slice().clone_if_borrowed(),
+            Tag::StaticZigString => ZigStringSlice::from_utf8_never_free(self.as_zig().slice()),
+            _ => ZigStringSlice::EMPTY,
+        }
+    }
     /// Like [`to_utf8`] but, for the 8-bit all-ASCII `WTFStringImpl` fast path,
     /// returns a non-owning [`ZigStringSlice::WtfBorrowed`] view instead of
     /// [`to_utf8`]'s ref-holding [`ZigStringSlice::WTF`] — skipping the

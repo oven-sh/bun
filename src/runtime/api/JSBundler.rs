@@ -1070,7 +1070,7 @@ pub mod js_bundler {
                         )));
                     }
 
-                    let val = property_value.to_bun_string(global_this)?;
+                    let val = property_value.to_js_string_view(global_this)?;
                     let key = prop.to_owned_slice();
                     let value = val.to_utf8();
 
@@ -1448,12 +1448,12 @@ pub mod js_bundler {
         } else {
             let global = bv2_plugin(resolve.bv2).global_object();
             let path = path_value
-                .to_js_string_view(global)
+                .to_bun_string(global)
                 .expect("Unexpected: path is not a string")
                 .to_owned_slice()
                 .into_boxed_slice();
             let namespace = namespace_value
-                .to_js_string_view(global)
+                .to_bun_string(global)
                 .expect("Unexpected: namespace is not a string")
                 .to_owned_slice()
                 .into_boxed_slice();

@@ -100,9 +100,10 @@ typedef union ErrorableStringResult {
     JSC::EncodedJSValue err;
 } ErrorableStringResult;
 typedef struct ErrorableString {
-    ErrorableStringResult result;
-    bool success;
+    ErrorableStringResult result {};
+    bool success { false };
 } ErrorableString;
+static_assert(sizeof(ErrorableString) == 32 && alignof(ErrorableString) == 8, "ErrorableString layout is mirrored in src/jsc/Errorable.rs");
 struct bun_ModuleInfoDeserialized;
 // Every BunString here is owned by whichever frame holds the struct (see
 // ~ErrorableResolvedSource / Rust `Drop`). Consumers that keep a string take it
@@ -156,6 +157,7 @@ public:
             zig__ModuleInfoDeserialized__deinit(result.value.module_info);
     }
 };
+static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 
 typedef struct SystemError {
     int errno_;
@@ -381,10 +383,8 @@ extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,
     const BunString* specifier,
-    const BunString* referrer,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
-    void* bunVM,
     const BunString* specifier,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);

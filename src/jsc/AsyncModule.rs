@@ -191,6 +191,7 @@ impl AsyncModule {
 // ABI-identical to non-null `*const`); `res` stays owned by this frame — C++
 // takes the fields it keeps by transfer (zeroing them) and the rest drops here.
 unsafe extern "C" {
+    #[allow(improper_ctypes)]
     safe fn Bun__onFulfillAsyncModule(
         global_object: &JSGlobalObject,
         promise_value: JSValue,

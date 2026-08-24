@@ -33,9 +33,9 @@ unsafe extern "C" {
 /// Consume `this`: the +1 moves into the resulting `JSString` (no ref/deref
 /// pair). Borrowed (`ZigString`) contents are copied.
 #[track_caller]
-pub fn into_js(mut this: String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-    // SAFETY: `this` is a live `&mut String`; C++ moves the ref out (leaving it
-    // Dead) and the cppbind wrapper opens its own validation scope.
+pub(crate) fn into_js(mut this: String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    // SAFETY: C++ moves the ref out of `this` (leaving it Dead) and the cppbind
+    // wrapper opens its own validation scope.
     unsafe { crate::cpp::BunString__transferToJS(&raw mut this, global_this) }
 }
 

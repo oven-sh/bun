@@ -1,5 +1,5 @@
 const { test, expect } = require("bun:test");
-const { bunEnv, bunExe, isASAN, isDebug } = require("harness");
+const { expectRssDeltaBelow } = require("harness");
 
 test("SourceMap is available from node:module", () => {
   const module = require("node:module");
@@ -27,7 +27,7 @@ test("Can create SourceMap instance from node:module", () => {
   expect(sourceMap.payload).toBe(payload);
 });
 
-test("new SourceMap(payload) does not leak sources/names", async () => {
+test.concurrent("new SourceMap(payload) does not leak sources/names", async () => {
   const code = /* js */ `
     const { SourceMap } = require("module");
     const base = Buffer.alloc(256 * 1024, "a").toString();
@@ -40,22 +40,6 @@ test("new SourceMap(payload) does not leak sources/names", async () => {
     console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
   // Unfixed: ~158 MiB. Fixed: allocator slack only.
-  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 80 : 60);
-  expect(exitCode).toBe(0);
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 60, debug: 80 });
 });

@@ -514,42 +514,40 @@ extern "C" void Bun__onFulfillAsyncModule(
     }
 }
 
-JSValue fetchBuiltinModuleWithoutResolution(
+BuiltinModule fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
     const BunString* specifier,
     ErrorableResolvedSource* res)
 {
+    using Kind = BuiltinModule::Kind;
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunString referrer = BunStringEmpty;
-    if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, &referrer, res)) {
+    if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, res)) {
         ASSERT(res->success);
 
         auto tag = res->result.value.tag;
         switch (tag) {
         // require("bun")
         case SyntheticModuleType::BunObject: {
-            return globalObject->bunObject();
+            return { Kind::Exports, globalObject->bunObject() };
         }
         // require("module"), require("node:module")
         case SyntheticModuleType::NodeModule: {
-            return globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+            return { Kind::Exports, globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject) };
         }
         // require("process"), require("node:process")
         case SyntheticModuleType::NodeProcess: {
-            return globalObject->processObject();
+            return { Kind::Exports, globalObject->processObject() };
         }
 
-        // Populated `res`, but not servable as a `require()` fast-path value;
-        // the caller decides (evaluate as CJS / go through the ESM loader).
         case SyntheticModuleType::ESM: {
-            RELEASE_AND_RETURN(scope, jsNumber(-1));
+            return { Kind::Source };
         }
 
         // A text file embedded by `bun build --compile`: the string is `module.exports`.
         case SyntheticModuleType::ExportDefaultObject: {
-            return JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+            return { Kind::Exports, JSC::JSValue::decode(res->result.value.jsvalue_for_export) };
         }
 
         default: {
@@ -557,10 +555,9 @@ JSValue fetchBuiltinModuleWithoutResolution(
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
                 auto result = globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask));
                 RETURN_IF_EXCEPTION(scope, {});
-                return result;
-            } else {
-                RELEASE_AND_RETURN(scope, jsNumber(-1));
+                return { Kind::Exports, result };
             }
+            return { Kind::Source };
         }
         }
     }
@@ -569,13 +566,12 @@ JSValue fetchBuiltinModuleWithoutResolution(
 
 JSValue resolveAndFetchBuiltinModule(
     Zig::GlobalObject* globalObject,
-    BunString* specifier)
+    const BunString* specifier)
 {
-    void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource res;
-    if (Bun__resolveAndFetchBuiltinModule(bunVM, specifier, &res)) {
+    if (Bun__resolveAndFetchBuiltinModule(specifier, &res)) {
         ASSERT(res.success);
 
         auto tag = res.result.value.tag;
@@ -702,23 +698,27 @@ JSValue fetchCommonJSModule(
 
     auto builtin = fetchBuiltinModuleWithoutResolution(globalObject, &specifier, res);
     RETURN_IF_EXCEPTION(scope, {});
-    if (builtin) {
-        if (builtin.isNumber() && builtin.asNumber() == -1) {
-            // A file embedded in a standalone executable is served by the builtin probe.
-            // A CommonJS one is evaluated right here like any require()d CJS file (the
-            // module loader path would find `target` already in the require map and
-            // never give it its source); only ES modules go through the loader, which
-            // fetches its own copy — this one is released with `res`.
-            if (res->result.value.isCommonJSModule) {
-                target->evaluate(globalObject, specifierWtfString, res->result.value);
-                RETURN_IF_EXCEPTION(scope, {});
-                RELEASE_AND_RETURN(scope, target);
-            }
-            RELEASE_AND_RETURN(scope, builtin);
+    switch (builtin.kind) {
+    case BuiltinModule::Kind::Source: {
+        // A file embedded in a standalone executable is served by the builtin probe.
+        // A CommonJS one is evaluated right here like any require()d CJS file (the
+        // module loader path would find `target` already in the require map and
+        // never give it its source); only ES modules go through the loader, which
+        // fetches its own copy — this one is released with `res`.
+        if (res->result.value.isCommonJSModule) {
+            target->evaluate(globalObject, specifierWtfString, res->result.value);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, target);
         }
-        target->setExportsObject(builtin);
+        RELEASE_AND_RETURN(scope, jsNumber(-1));
+    }
+    case BuiltinModule::Kind::Exports: {
+        target->setExportsObject(builtin.exports);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
+    }
+    case BuiltinModule::Kind::None:
+        break;
     }
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
@@ -978,7 +978,7 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, referrer, res)) {
+    if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, res)) {
         ASSERT(res->success);
 
         // This can happen if it's a `bun build --compile`'d CommonJS file

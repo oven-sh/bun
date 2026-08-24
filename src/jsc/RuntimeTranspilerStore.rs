@@ -968,7 +968,7 @@ impl TranspilerJob {
             self.resolved_source = ResolvedSource {
                 source_code: core::mem::take(&mut entry.output_code),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
-                module_info: module_info.into(),
+                module_info,
                 tag: this_tag,
                 ..Default::default()
             };
@@ -1152,12 +1152,10 @@ impl TranspilerJob {
         self.resolved_source = ResolvedSource {
             source_code,
             is_commonjs_module,
-            module_info: module_info
-                .map(|mi| {
-                    use analyze_transpiled_module::ModuleInfoExt;
-                    mi.into_deserialized()
-                })
-                .into(),
+            module_info: module_info.map(|mi| {
+                use analyze_transpiled_module::ModuleInfoExt;
+                mi.into_deserialized()
+            }),
             tag: this_tag,
             ..Default::default()
         };

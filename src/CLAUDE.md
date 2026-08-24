@@ -169,18 +169,18 @@ let joined  = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[a, b]
 `bun_paths::os_path_buffer_pool` selects the wide (`u16`) variant on Windows
 and the narrow (`u8`) variant on POSIX.
 
-## URL Parsing (`bun_url::whatwg::URL`)
+## URL Parsing (`bun_url::whatwg`)
 
-WHATWG-compliant, backed by WebKit's URL parser. Returns `None` for invalid
-input. `bun_jsc::URL` re-exports the same type; the JS-value entry points
-(`URL::from_js`, `URL::href_from_js`) come from the `bun_jsc::URLJsc` trait.
+WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++
+`WTF::URL` (freed on `Drop`) and derefs to `URL` for the getters; parsing
+returns `None` for invalid input. `bun_jsc::url` re-exports both; the
+JS-value entry points (`URL::from_js` → `Option<Parsed>`, `URL::href_from_js`)
+come from the `bun_jsc::URLJsc` trait.
 
 ```rust
-use bun_url::whatwg::URL;
+use bun_url::whatwg::Parsed;
 
-let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
-// caller owns the C++ object — destroy it when done:
-// unsafe { URL::destroy(url.as_ptr()) }           // or use `whatwg::Parsed` (RAII)
+let url: Parsed = Parsed::from_utf8(href)?;       // or Parsed::from_string(&bun_string)?
 
 url.protocol()   // bun_core::String
 url.pathname()   // bun_core::String

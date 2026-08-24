@@ -3334,12 +3334,15 @@ JSC::JSObject* JSC__JSCell__toObject(JSC::JSCell* cell, JSC::JSGlobalObject* glo
 #pragma mark - JSC::JSString
 
 // Throws (and returns empty) when resolving a rope runs out of memory.
+// `JSString::view`: a substring rope is viewed in place; other ropes resolve
+// (and can throw on OOM). The characters belong to `str` (or its base), which
+// the caller keeps alive.
 BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
-    auto value = str->value(global);
+    auto view = str->view(global);
     RETURN_IF_EXCEPTION(scope, BunStringEmpty);
-    return Bun::toString(value.data);
+    return Bun::toStringView(view.data);
 }
 
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
@@ -4929,16 +4932,15 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     return value.toStringOrNull(arg1);
 }
 
-/// `toStringOrNull` + a borrowed view of its characters in one call. The view
-/// aliases the returned JSString's StringImpl.
-extern "C" JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view)
+/// `toStringOrNull` + `JSString::view` in one call.
+JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
     auto* str = JSC::JSValue::decode(JSValue0).toStringOrNull(global);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    auto value = str->value(global);
+    auto data = str->view(global);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    *view = Bun::toString(value.data);
+    *view = Bun::toStringView(data.data);
     return str;
 }
 
@@ -4979,6 +4981,13 @@ void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
     arg0->finalizeSynchronousJSExecution();
 }
 
+static BunString toStringAdopt(WTF::String&& s)
+{
+    if (s.isEmpty())
+        return BunStringEmpty;
+    return { BunStringTag::WTFStringImpl, { .wtf = s.releaseImpl().leakRef() } };
+}
+
 BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSValue value = JSValue::decode(JSValue0);
@@ -4999,7 +5008,7 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
 
     auto calculated = JSObject::calculatedClassName(obj);
     if (calculated.length() > 0) {
-        return Bun::toStringRef(calculated);
+        return toStringAdopt(WTF::move(calculated));
     }
 
     // `className()` is a static C string.
@@ -5032,7 +5041,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
     if (name && name.isString()) {
         auto str = name.toWTFString(arg1);
         if (!str.isEmpty()) {
-            return Bun::toStringRef(str);
+            return toStringAdopt(WTF::move(str));
         }
     }
 
@@ -5040,12 +5049,10 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
 
         WTF::String actualName = function->name(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
-            return Bun::toStringRef(actualName);
+            return toStringAdopt(WTF::move(actualName));
         }
 
-        actualName = function->jsExecutable()->name().string();
-
-        return Bun::toStringRef(actualName);
+        return Bun::toStringRef(function->jsExecutable()->name().string());
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {

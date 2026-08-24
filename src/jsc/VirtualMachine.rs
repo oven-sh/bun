@@ -1430,7 +1430,7 @@ impl VirtualMachine {
             let display = result
                 .to_error()
                 .unwrap_or(result)
-                .to_bun_string(global)
+                .to_js_string_view(global)
                 .ok();
             match display {
                 Some(s) => {
@@ -4197,7 +4197,7 @@ impl VirtualMachine {
         debug_assert!(VirtualMachine::is_loaded());
 
         if let Some(resolved) =
-            ModuleLoader::fetch_builtin_module(jsc_vm, global_object, specifier, referrer)
+            ModuleLoader::__bun_fetch_builtin_module(jsc_vm, global_object, specifier)
         {
             return Ok(resolved);
         }
@@ -4287,11 +4287,13 @@ impl VirtualMachine {
             input_specifier: specifier,
             log: std::ptr::from_mut::<bun_ast::Log>(log),
             virtual_source: lr.virtual_source,
-            global_object: std::ptr::from_ref::<JSGlobalObject>(global_object).cast_mut(),
+            global_object,
             flags,
             extra: &raw mut extra,
         };
-        let result = ModuleLoader::transpile_source_code(guard.0, &args);
+        // SAFETY: `guard.0` is the live per-thread VM; `args.extra` points at
+        // the live `extra` above.
+        let result = unsafe { ModuleLoader::__bun_transpile_source_code(guard.0, &args) };
         if result.is_err() && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
         }

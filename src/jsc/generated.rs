@@ -41,10 +41,13 @@ use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsResult};
 #[derive(Debug, Default)]
 pub struct GenOpt<T>(Option<T>);
 
-impl<T: Clone> GenOpt<T> {
+impl<T> GenOpt<T> {
     #[inline]
-    pub fn get(&self) -> Option<T> {
-        self.0.clone()
+    pub fn get(&self) -> Option<T>
+    where
+        T: Copy,
+    {
+        self.0
     }
     #[inline]
     pub fn as_ref(&self) -> Option<&T> {
@@ -56,10 +59,13 @@ impl<T: Clone> GenOpt<T> {
 #[derive(Debug)]
 pub struct GenVal<T>(T);
 
-impl<T: Clone> GenVal<T> {
+impl<T> GenVal<T> {
     #[inline]
-    pub fn get(&self) -> T {
-        self.0.clone()
+    pub fn get(&self) -> T
+    where
+        T: Copy,
+    {
+        self.0
     }
     #[inline]
     pub fn as_ref(&self) -> &T {

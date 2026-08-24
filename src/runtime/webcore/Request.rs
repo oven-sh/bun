@@ -421,7 +421,7 @@ impl Request {
         method: Method,
     ) -> Request {
         Request {
-            url: bun_ptr::JsCell::new(url),
+            url: JsCell::new(url),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -985,7 +985,7 @@ impl Request {
         // (the +1) is moved into `req.body` next.
         let body_seed_ptr = body.as_ptr();
         let mut req = Request {
-            url: bun_ptr::JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -1492,7 +1492,7 @@ impl Request {
             core::ptr::write(
                 req,
                 Request {
-                    url: bun_ptr::JsCell::new(url),
+                    url: JsCell::new(url),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
@@ -1518,7 +1518,7 @@ impl Request {
         // `clone_into` `ptr::write`s the new fields over the seed
         // without reading or dropping it.
         let mut req = Box::new(Request {
-            url: bun_ptr::JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
@@ -1550,7 +1550,7 @@ impl Request {
         body: BodyHiveHandle,
     ) -> Request {
         Request {
-            url: bun_ptr::JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),

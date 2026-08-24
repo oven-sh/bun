@@ -3418,7 +3418,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 
     ErrorableString res;
-    res.success = false;
     BunString keyZ = Bun::toString(keyString);
     BunString referrerZ = Bun::toString(referrerString);
     BunString queryZ = BunStringEmpty;
@@ -3504,7 +3503,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
 
         ErrorableString res;
-        res.success = false;
         BunString moduleNameZ = Bun::toString(moduleName);
         BunString sourceOriginZ = Bun::toString(sourceOriginStringHolder);
         BunString queryZ = BunStringEmpty;

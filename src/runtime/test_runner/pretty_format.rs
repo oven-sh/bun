@@ -1098,8 +1098,8 @@ impl<'a> Formatter<'a> {
                     );
                 }
                 Tag::String => {
-                    let str = value.to_js_string_view(self.global_this)?;
-                    let str = str.to_zig_string();
+                    let view = value.to_js_string_view(self.global_this)?;
+                    let str = view.to_zig_string();
                     self.add_for_new_line(str.len);
 
                     if value.js_type() == JSType::StringObject
@@ -1963,6 +1963,7 @@ impl<'a> Formatter<'a> {
 
                     let mut needs_space;
 
+                    let tag_name_view;
                     let tag_name_slice: ZigStringSlice;
                     let mut is_tag_kind_primitive = false;
 
@@ -1972,7 +1973,8 @@ impl<'a> Formatter<'a> {
                         if _tag.cell == JSType::Symbol {
                             tag_name_slice = ZigStringSlice::EMPTY;
                         } else if _tag.cell.is_string_like() {
-                            tag_name_slice = type_value.to_slice(self.global_this)?;
+                            tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                            tag_name_slice = tag_name_view.to_utf8();
                             is_tag_kind_primitive = true;
                         } else if _tag.cell.is_object() || type_value.is_callable() {
                             let name = type_value.get_name_property(self.global_this)?;
@@ -1982,7 +1984,8 @@ impl<'a> Formatter<'a> {
                                 name.to_utf8()
                             };
                         } else {
-                            tag_name_slice = type_value.to_slice(self.global_this)?;
+                            tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                            tag_name_slice = tag_name_view.to_utf8();
                         }
 
                         needs_space = true;

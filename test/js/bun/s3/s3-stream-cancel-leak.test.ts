@@ -1,7 +1,7 @@
 import { S3Client } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { expectRssDeltaBelow } from "harness";
 
 // Test that ReadableStream objects from cancelled S3 download streams are properly GC'd.
 //
@@ -89,37 +89,21 @@ test("ReadableStream from S3 stream() should be GC'd after reader.cancel()", asy
   expect(leaked).toBeLessThanOrEqual(5);
 });
 
-test("S3 error code/message are not leaked", async () => {
+test.concurrent("S3 error code/message are not leaked", async () => {
   const code = /* js */ `
-    const big = "m".repeat(256 * 1024);
+    const big = Buffer.alloc(256 * 1024, "m").toString();
     let n = 0;
     const server = Bun.serve({ port: 0, fetch() { return new Response("<?xml version=\\"1.0\\"?><Error><Code>NoSuchKey" + (n++) + "</Code><Message>" + big + (n++) + "</Message></Error>", { status: 404, headers: { "content-type": "application/xml" } }); } });
     const client = new Bun.S3Client({ endpoint: server.url.href, accessKeyId: "a", secretAccessKey: "b", bucket: "b" });
     for (let i = 0; i < 10; i++) await client.file("k").text().catch(e => e);
     Bun.gc(true);
     const before = process.memoryUsage.rss();
-    for (let i = 0; i < 150; i++) await client.file("k").text().catch(e => e);
+    for (let i = 0; i < 300; i++) await client.file("k").text().catch(e => e);
     Bun.gc(true);
     console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
     server.stop(true);
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
-  // Unfixed: ~47 MiB. Fixed: allocator slack only.
-  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 45 : 25);
-  expect(exitCode).toBe(0);
+  // Unfixed: ~90 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
 });

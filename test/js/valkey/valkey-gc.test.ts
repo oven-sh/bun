@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isASAN, isDebug, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, expectRssDeltaBelow, isASAN, isMusl, isWindows } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -906,9 +906,9 @@ test.concurrent("a client closed and collected from within its own reply does no
   console.log(`close-from-reply fixture: ${reached![1]} of 10 rounds reached the window`);
 });
 
-test("new RedisClient(url) does not leak the URL and its components", async () => {
+test.concurrent("new RedisClient(url) does not leak the URL and its components", async () => {
   const code = /* js */ `
-    const base = "a".repeat(200 * 1024);
+    const base = Buffer.alloc(200 * 1024, "a").toString();
     function once(i) { try { new Bun.RedisClient("redis://user:" + base + i + "@127.0.0.1:1/0"); } catch {} }
     for (let i = 0; i < 20; i++) once(i);
     Bun.gc(true);
@@ -918,30 +918,14 @@ test("new RedisClient(url) does not leak the URL and its components", async () =
     console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
   // Unfixed: ~148 MiB. Fixed: allocator slack only.
-  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 90 : 70);
-  expect(exitCode).toBe(0);
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 70, debug: 90 });
 });
 
-test("RESP map keys are not leaked", async () => {
+test.concurrent("RESP map keys are not leaked", async () => {
   const code = /* js */ `
     const net = require("net");
-    const big = "k".repeat(200 * 1024);
+    const big = Buffer.alloc(400 * 1024, "k").toString();
     let n = 0;
     const server = net.createServer(sock => {
       sock.on("data", d => {
@@ -968,21 +952,6 @@ test("RESP map keys are not leaked", async () => {
     server.close();
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    env: {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
-  // Unfixed: ~150 MiB (two 200 KiB keys per reply). Fixed: JS string churn only.
-  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 120 : 100);
-  expect(exitCode).toBe(0);
+  // Unfixed: ~270 MiB (two 400 KiB keys per reply). Fixed: ~30 MiB of JS string churn.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 130, debug: 160 });
 });

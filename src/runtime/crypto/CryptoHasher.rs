@@ -483,8 +483,8 @@ impl CryptoHasher {
             return Err(global.throw_invalid_arguments(format_args!("algorithm must be a string")));
         }
 
-        let algorithm_js_view = algorithm_name.to_js_string_view(global)?;
-        let algorithm = algorithm_js_view.to_utf8();
+        let algorithm_view = algorithm_name.to_js_string_view(global)?;
+        let algorithm = algorithm_view.to_utf8();
         if algorithm.slice().is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }

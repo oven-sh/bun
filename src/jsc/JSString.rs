@@ -24,6 +24,7 @@ impl JSString {
         JSValue::from_cell(self)
     }
 
+    #[inline]
     pub fn ensure_still_alive(&self) {
         // Keep the cell pointer observable to the GC's conservative stack scan.
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
@@ -51,26 +52,17 @@ impl JSString {
     }
 }
 
-/// A JSString's characters, borrowed. Keeps the cell observable to the GC's
+/// A JSString's characters, borrowed via `JSString::view` (a substring rope
+/// is viewed in place, not flattened). Keeps the cell observable to the GC's
 /// conservative stack scan until dropped (the Rust counterpart of
 /// `GCOwnedDataScope`), so a string `toString()` just created cannot be
 /// collected while its characters are in use.
 pub struct JSStringView<'a> {
-    cell: &'a JSString,
-    view: StringView<'a>,
+    pub(crate) cell: &'a JSString,
+    pub(crate) view: StringView<'a>,
 }
 
-impl<'a> JSStringView<'a> {
-    #[inline]
-    pub(crate) fn new(cell: &'a JSString, view: StringView<'a>) -> Self {
-        Self { cell, view }
-    }
-
-    #[inline]
-    pub fn cell(&self) -> &'a JSString {
-        self.cell
-    }
-
+impl JSStringView<'_> {
     /// UTF-8 bytes; borrows when 8-bit ASCII, allocates otherwise. Never refs.
     #[inline]
     pub fn to_utf8(&self) -> ZigStringSlice {

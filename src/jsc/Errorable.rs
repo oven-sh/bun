@@ -29,12 +29,19 @@ impl<T> Errorable<T> {
 
     /// `value` is the JS error to throw/reject with.
     pub fn err(value: JSValue) -> Self {
+        // SAFETY: a union has no validity invariant; zeroing the whole of it
+        // means C++ never sees uninitialized bytes in the `value` arm.
+        let mut result: Result<T> = unsafe { core::mem::MaybeUninit::zeroed().assume_init() };
+        result.err = value;
         Self {
-            result: Result { err: value },
+            result,
             success: false,
         }
     }
 }
+
+bun_core::assert_ffi_layout!(Errorable<crate::ResolvedSource>, 144, 8);
+bun_core::assert_ffi_layout!(Errorable<bun_core::String>, 32, 8);
 
 impl<T> Drop for Errorable<T> {
     fn drop(&mut self) {

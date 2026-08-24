@@ -5025,8 +5025,8 @@ impl Resolver {
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
-        let ip_slice_view = ip_value.to_js_string_view(global_this)?;
-        let ip_slice = ip_slice_view.to_utf8();
+        let ip_view = ip_value.to_js_string_view(global_this)?;
+        let ip_slice = ip_view.to_utf8();
         if ip_slice.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "reverse",

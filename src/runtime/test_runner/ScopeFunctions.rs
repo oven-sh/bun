@@ -326,7 +326,7 @@ impl ScopeFunctions {
             if debugger.test_reporter_agent.is_enabled() {
                 debugger.test_reporter_agent.next_test_id += 1;
                 let id = debugger.test_reporter_agent.next_test_id;
-                let mut name = BunString::init(description.unwrap_or(b"(unnamed)"));
+                let name = BunString::init(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
                     parent.base.test_id_for_debugger
@@ -336,7 +336,7 @@ impl ScopeFunctions {
                 debugger.test_reporter_agent.report_test_found(
                     frame,
                     id,
-                    &mut name,
+                    &name,
                     match self.mode {
                         Mode::Describe => TestReporterKind::Describe,
                         Mode::Test => TestReporterKind::Test,

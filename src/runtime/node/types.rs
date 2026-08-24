@@ -1488,8 +1488,8 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         // the example), specifies permissions for the group. The right-most
         // digit (5 in the example), specifies the permissions for others.
 
-        let js_str_view = value.to_js_string_view(ctx)?;
-        let utf8 = js_str_view.to_utf8();
+        let str_view = value.to_js_string_view(ctx)?;
+        let utf8 = str_view.to_utf8();
         let slice = utf8.slice();
 
         // Node validates mode strings against /^[0-7]+$/ before parsing.

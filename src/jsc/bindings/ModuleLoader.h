@@ -117,9 +117,22 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
 JSValue resolveAndFetchBuiltinModule(
     Zig::GlobalObject* globalObject,
-    BunString* specifier);
+    const BunString* specifier);
 
-JSValue fetchBuiltinModuleWithoutResolution(
+struct BuiltinModule {
+    enum class Kind : uint8_t {
+        /// Not a builtin; `res` is untouched.
+        None,
+        /// `exports` is the module's exports value.
+        Exports,
+        /// `res` holds the module's source; the caller evaluates it.
+        Source,
+    };
+    Kind kind = Kind::None;
+    JSValue exports {};
+};
+
+BuiltinModule fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
     const BunString* specifier,
     ErrorableResolvedSource* res);

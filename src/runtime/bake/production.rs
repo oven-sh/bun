@@ -1098,7 +1098,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                jsc::bun_string_jsc::into_js(src_path, global).map_err(js_err)?,
+                src_path.into_js(global).map_err(js_err)?,
             )
             .map_err(js_err)?;
 

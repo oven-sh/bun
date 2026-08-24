@@ -797,9 +797,8 @@ impl Default for IntegerRange {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ResolvedSource — `#[repr(C)]` mirror of the C struct in
-// src/jsc/bindings/headers-handwritten.h:115. Passed by value across the
-// Rust → C++ module-loader boundary (`ErrorableResolvedSource`).
+// ResolvedSource — `#[repr(C)]` mirror of the C++ struct in
+// src/jsc/bindings/headers-handwritten.h.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "ResolvedSource.rs"]
 pub mod resolved_source;

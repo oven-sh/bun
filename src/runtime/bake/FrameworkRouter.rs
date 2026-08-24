@@ -1882,8 +1882,14 @@ impl JSFrameworkRouter {
                         JSValue::create_empty_object(global, params_out.params.len() as usize);
                     for param in params_out.params.slice() {
                         // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        let value_str = bun_core::String::clone_utf8(param.value.slice());
-                        params_obj.put(global, param.key.slice(), value_str.into_js(global)?);
+                        params_obj.put(
+                            global,
+                            param.key.slice(),
+                            bun_jsc::bun_string_jsc::create_utf8_for_js(
+                                global,
+                                param.value.slice(),
+                            )?,
+                        );
                     }
                     params_obj
                 } else {

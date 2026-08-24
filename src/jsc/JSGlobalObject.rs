@@ -1429,18 +1429,14 @@ use bun_core::fmt::VecWriter as WriteVec;
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__resolve(
-    res: *mut ErrorableString,
-    global: *const JSGlobalObject,
-    specifier: *const BunString,
-    source: *const BunString,
-    query: *mut BunString,
+extern "C" fn Zig__GlobalObject__resolve(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
+    query: &mut BunString,
 ) {
     crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers; the caller keeps ownership
-    // of `specifier`/`source`; `res`/`query` are initialized out-params.
-    let (global, specifier, source, res, query) =
-        unsafe { (&*global, &*specifier, &*source, &mut *res, &mut *query) };
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         global,
         specifier,

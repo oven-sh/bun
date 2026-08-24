@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 import { parseArgs } from "node:util";
 
 describe("parseArgs", () => {
@@ -1154,27 +1154,11 @@ test("parseArgs does not leak argv strings", async () => {
     for (let i = 0; i < 20; i++) once(i);
     Bun.gc(true);
     const before = process.memoryUsage.rss();
-    for (let i = 0; i < 300; i++) once(i);
+    for (let i = 0; i < 400; i++) once(i);
     Bun.gc(true);
     console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
-  // Unfixed: ~77 MiB. Fixed: allocator slack only.
-  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 60 : 40);
-  expect(exitCode).toBe(0);
+  // Unfixed: ~100 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
 });

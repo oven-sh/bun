@@ -114,8 +114,7 @@ pub struct TranspileArgs<'a> {
     pub input_specifier: &'a bun_core::String,
     pub log: *mut bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source>,
-    /// Null on the low-tier `Bun__*` entry points.
-    pub global_object: *mut JSGlobalObject,
+    pub global_object: &'a JSGlobalObject,
     pub flags: FetchFlags,
     /// Raw so the `.wasm` re-entry can mutate `loader` and recurse.
     pub extra: *mut TranspileExtra,
@@ -134,52 +133,28 @@ pub struct TranspileExtra {
 
 unsafe extern "Rust" {
     /// Defined in `bun_runtime::jsc_hooks`.
-    fn __bun_transpile_source_code(
+    pub(crate) fn __bun_transpile_source_code(
         jsc_vm: *mut VirtualMachine,
         args: &TranspileArgs<'_>,
     ) -> Result<ResolvedSource, crate::CrateError>;
     /// Defined in `bun_runtime::jsc_hooks`. `None` when the specifier is not a
     /// builtin / standalone-graph module.
-    fn __bun_fetch_builtin_module(
-        jsc_vm: *mut VirtualMachine,
+    pub(crate) safe fn __bun_fetch_builtin_module(
+        jsc_vm: &VirtualMachine,
         global: &JSGlobalObject,
         specifier: &bun_core::String,
-        referrer: &bun_core::String,
     ) -> Option<ResolvedSource>;
 }
 
-pub(crate) fn transpile_source_code(
-    jsc_vm: &mut VirtualMachine,
-    args: &TranspileArgs<'_>,
-) -> Result<ResolvedSource, crate::CrateError> {
-    // SAFETY: `jsc_vm` is the live per-thread VM; `args.extra` points at a
-    // live `TranspileExtra`.
-    unsafe { __bun_transpile_source_code(jsc_vm, args) }
-}
-
-pub(crate) fn fetch_builtin_module(
-    jsc_vm: &mut VirtualMachine,
-    global: &JSGlobalObject,
-    specifier: &bun_core::String,
-    referrer: &bun_core::String,
-) -> Option<ResolvedSource> {
-    // SAFETY: `jsc_vm` is the live per-thread VM.
-    unsafe { __bun_fetch_builtin_module(jsc_vm, global, specifier, referrer) }
-}
-
-pub use crate::virtual_machine::process_fetch_log;
-
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__fetchBuiltinModule(
-    jsc_vm: *mut VirtualMachine,
+extern "C" fn Bun__fetchBuiltinModule(
+    jsc_vm: &VirtualMachine,
     global_object: &JSGlobalObject,
     specifier: &bun_core::String,
-    referrer: &bun_core::String,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
-    // SAFETY: `jsc_vm` is the live per-thread VM.
-    match unsafe { __bun_fetch_builtin_module(jsc_vm, global_object, specifier, referrer) } {
+    match __bun_fetch_builtin_module(jsc_vm, global_object, specifier) {
         Some(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             true
@@ -279,8 +254,8 @@ unsafe extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        &bun_core::String::init(bun_core::ZigString::init(namespace)),
-        &bun_core::String::init(bun_core::ZigString::init(after_namespace)),
+        &bun_core::String::init(namespace),
+        &bun_core::String::init(after_namespace),
         crate::BunPluginTarget::Bun,
     ) {
         Ok(Some(v)) => v,

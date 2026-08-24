@@ -854,7 +854,10 @@ impl JSValue {
         crate::call_null_is_throw(global, || {
             JSC__JSValue__toJSStringView(self, global, &mut view)
         })
-        .map(|p| JSStringView::new(JSString::opaque_ref(p.as_ptr()), view))
+        .map(|p| JSStringView {
+            cell: JSString::opaque_ref(p.as_ptr()),
+            view,
+        })
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         bun_string_jsc::from_js(self, global)
@@ -862,7 +865,7 @@ impl JSValue {
     /// `toString()` then UTF-8. The slice holds its own ref/allocation, so it
     /// is independent of the `JSString` cell.
     pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
-        Ok(self.to_bun_string(global)?.to_utf8())
+        Ok(self.to_bun_string(global)?.into_utf8())
     }
     pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
         JSC__JSValue__toZigException(self, global, exception)
@@ -879,7 +882,7 @@ impl JSValue {
     ) -> JsResult<E> {
         E::from_js_value(self, global, property_name)
     }
-    pub fn as_string<'a>(self) -> &'a JSString {
+    pub fn as_string(self) -> &'static JSString {
         debug_assert!(self.is_string_literal());
         JSString::opaque_ref(JSC__JSValue__asString(self))
     }

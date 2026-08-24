@@ -769,7 +769,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(protocol_val) = obj.get(global_this, "protocol")? {
                     if protocol_val.is_string() {
-                        let str = protocol_val.to_bun_string(global_this)?;
+                        let str = protocol_val.to_js_string_view(global_this)?;
                         if str.eql_comptime(b"http2") || str.eql_comptime(b"h2") {
                             forced_protocol = Some(http::Protocol::Http2);
                         } else if str.eql_comptime(b"http3") || str.eql_comptime(b"h3") {
@@ -884,7 +884,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(verb) = obj.get(global_this, "verbose")? {
                     if verb.is_string() {
-                        if verb.to_bun_string(global_this)?.eql_comptime(b"curl") {
+                        if verb.to_js_string_view(global_this)?.eql_comptime(b"curl") {
                             break 'extract_verbose http::HTTPVerboseLevel::Curl;
                         }
                     } else if verb.is_boolean() {

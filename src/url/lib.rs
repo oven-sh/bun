@@ -48,9 +48,8 @@ pub mod whatwg {
     use super::strings;
 
     bun_opaque::opaque_ffi! {
-        /// Opaque handle to a heap-allocated `WTF::URL` (C++). Construct via
-        /// `from_string`/`from_utf8`; the caller owns it and frees via
-        /// `destroy` (or use [`Parsed`]).
+        /// Opaque handle to a heap-allocated `WTF::URL` (C++); owned via
+        /// [`Parsed`].
         pub struct URL;
     }
 
@@ -110,18 +109,6 @@ pub mod whatwg {
     }
 
     impl URL {
-        pub fn from_string(str: &String) -> Option<NonNull<URL>> {
-            URL__fromString(str)
-        }
-        pub fn from_utf8(input: &[u8]) -> Option<NonNull<URL>> {
-            Self::from_string(&String::borrow_utf8(input))
-        }
-        /// # Safety
-        /// `this` came from `from_string`/`from_utf8` and is freed exactly once.
-        pub unsafe fn destroy(this: *mut Self) {
-            // SAFETY: forwarded to caller.
-            unsafe { URL__deinit(this) }
-        }
         /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
             URL__fragmentIdentifier(self)
@@ -167,15 +154,23 @@ pub mod whatwg {
     pub struct Parsed(NonNull<URL>);
 
     impl Parsed {
+        pub fn from_string(str: &String) -> Option<Self> {
+            URL__fromString(str).map(Self)
+        }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
-            URL::from_utf8(input).map(Self)
+            Self::from_string(&String::borrow_utf8(input))
+        }
+        /// # Safety
+        /// `url` is a heap `WTF::URL` nothing else frees.
+        pub unsafe fn from_raw(url: NonNull<URL>) -> Self {
+            Self(url)
         }
     }
 
     impl core::ops::Deref for Parsed {
         type Target = URL;
         fn deref(&self) -> &URL {
-            // SAFETY: `from_utf8` returned a live heap `WTF::URL` that only `Drop` frees.
+            // SAFETY: `self.0` is a live heap `WTF::URL` that only `Drop` frees.
             unsafe { self.0.as_ref() }
         }
     }
@@ -183,7 +178,7 @@ pub mod whatwg {
     impl Drop for Parsed {
         fn drop(&mut self) {
             // SAFETY: this handle is the only owner of the `WTF::URL`, so it is deleted once.
-            unsafe { URL::destroy(self.0.as_ptr()) }
+            unsafe { URL__deinit(self.0.as_ptr()) }
         }
     }
 }

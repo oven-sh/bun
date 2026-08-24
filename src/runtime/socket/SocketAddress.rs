@@ -10,7 +10,7 @@ use core::mem;
 
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc};
 use bun_ptr::JsCell;
 
 // The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
@@ -196,15 +196,9 @@ impl SocketAddress {
             str
         };
 
-        let Some(url_ptr) = URL::from_string(&url_str) else {
+        let Some(url) = bun_jsc::url::Parsed::from_string(&url_str) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: URL::from_string returns an owned C++ heap pointer; freed exactly once via destroy().
-        let _url_guard = scopeguard::guard(url_ptr, |p| unsafe { URL::destroy(p.as_ptr()) });
-        // `_url_guard` keeps the C++ allocation live for this scope, so the
-        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
-        // `NonNull::as_ref` site.
-        let url = bun_ptr::BackRef::from(url_ptr);
         let host: BunString = url.host();
         let port_: u16 = {
             let port32 = url.port();
@@ -516,9 +510,13 @@ impl SocketAddress {
     /// that will not be around for very long. `createDTO` is even faster, but
     /// requires callers to already have a presentation-formatted address.
     pub(crate) fn into_dto(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let address = match self._presentation.take() {
+            cached if cached.tag() != bun_core::Tag::Dead => cached,
+            _ => self.fmt_presentation(),
+        };
         Ok(JSSocketAddressDTO__create(
             global,
-            self.address().to_js(global)?,
+            address.into_js(global)?,
             self.port(),
             self.family() == AF::INET6,
         ))
@@ -582,10 +580,13 @@ impl SocketAddress {
     /// - replace `addressToString` in the dns module with this
     /// - use this impl in the server module
     pub(crate) fn address(&self) -> &BunString {
-        let cached = self._presentation.get();
-        if cached.tag() != bun_core::Tag::Dead {
-            return cached;
+        if self._presentation.get().tag() == bun_core::Tag::Dead {
+            self._presentation.set(self.fmt_presentation());
         }
+        self._presentation.get()
+    }
+
+    fn fmt_presentation(&self) -> BunString {
         let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
         let formatted = self._addr.fmt(&mut buf);
         let presentation = crate::webcore::encoding::to_bun_string(
@@ -593,8 +594,7 @@ impl SocketAddress {
             crate::node::types::Encoding::Latin1,
         );
         debug_assert!(presentation.tag() != bun_core::Tag::Dead);
-        self._presentation.set(presentation);
-        self._presentation.get()
+        presentation
     }
 
     /// `sockaddr.family`

@@ -773,7 +773,6 @@ impl<'a> TablePrinter<'a> {
                             break 'brk 1 + idx;
                         }
 
-                        // The column outlives the iterator that lends `col_key`.
                         columns.push(Column {
                             name: (*col_key).clone(),
                             width: 1,
@@ -4989,6 +4988,7 @@ pub mod formatter {
             writer.write_all(b"<");
 
             let mut needs_space: bool;
+            let tag_name_view;
             let tag_name_slice: bun_core::ZigStringSlice;
             let mut is_tag_kind_primitive = false;
 
@@ -4998,7 +4998,8 @@ pub mod formatter {
                 if _tag.cell == jsc::JSType::Symbol {
                     tag_name_slice = bun_core::ZigStringSlice::EMPTY;
                 } else if _tag.cell.is_string_like() {
-                    tag_name_slice = type_value.to_slice(self.global_this)?;
+                    tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                    tag_name_slice = tag_name_view.to_utf8();
                     is_tag_kind_primitive = true;
                 } else if _tag.cell.is_object() || type_value.is_callable() {
                     let name = type_value.get_name_property(self.global_this)?;
@@ -5008,7 +5009,8 @@ pub mod formatter {
                         name.to_utf8()
                     };
                 } else {
-                    tag_name_slice = type_value.to_slice(self.global_this)?;
+                    tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                    tag_name_slice = tag_name_view.to_utf8();
                 }
 
                 needs_space = true;

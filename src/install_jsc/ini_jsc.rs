@@ -33,7 +33,7 @@ impl IniTestingAPIs {
         use bun_install::npm::Registry;
 
         let arg = frame.argument(0);
-        let npmrc_contents = arg.to_bun_string(global)?;
+        let npmrc_contents = arg.to_js_string_view(global)?;
         let npmrc_utf8 = npmrc_contents.to_utf8();
         let source = Source::init_path_string(b"<js>", npmrc_utf8.slice());
 
@@ -169,7 +169,7 @@ impl IniTestingAPIs {
         let arguments = frame.arguments();
 
         let jsstr = arguments[0];
-        let bunstr = jsstr.to_bun_string(global)?;
+        let bunstr = jsstr.to_js_string_view(global)?;
         let utf8str = bunstr.to_utf8();
 
         let env = global.bun_vm().as_mut().transpiler.env();

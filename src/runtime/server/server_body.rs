@@ -1419,8 +1419,8 @@ where
             )));
         }
 
-        let topic_js_view = topic_value.to_js_string_view(global)?;
-        let topic = topic_js_view.to_utf8();
+        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic = topic_view.to_utf8();
 
         if topic.slice().is_empty() {
             return Ok(JSValue::js_number(0.0));

@@ -29,15 +29,13 @@ pub(crate) fn to_match_inline_snapshot(
         );
     }
 
-    let mut has_expected = false;
-    let mut expected_string = bun_core::String::EMPTY;
+    let mut expected_string = None;
     let mut property_matchers: Option<JSValue> = None;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
-                has_expected = true;
-                expected_string = arguments[0].to_bun_string(global)?;
+                expected_string = Some(arguments[0].to_js_string_view(global)?);
             } else if arguments[0].is_object() {
                 property_matchers = Some(arguments[0]);
             } else {
@@ -67,16 +65,14 @@ pub(crate) fn to_match_inline_snapshot(
             property_matchers = Some(arguments[0]);
 
             if arguments[1].is_string() {
-                has_expected = true;
-                expected_string = arguments[1].to_bun_string(global)?;
+                expected_string = Some(arguments[1].to_js_string_view(global)?);
             }
         }
     }
 
-    let expected = expected_string.to_utf8();
-    // `defer expected.deinit()` — handled by Drop on the returned slice guard.
+    let expected = expected_string.as_ref().map(|s| s.to_utf8());
 
-    let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
+    let expected_slice = expected.as_ref().map(|s| s.slice());
 
     let value = this.get_value(
         global,

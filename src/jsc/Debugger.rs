@@ -808,17 +808,17 @@ unsafe extern "C" {
         agent: &mut TestReporterHandle,
         call_frame: &CallFrame,
         test_id: c_int,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
         agent: &mut TestReporterHandle,
         test_id: c_int,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: c_int,
-        source_url: &mut BunString,
+        source_url: &BunString,
         line: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestStart(agent: &mut TestReporterHandle, test_id: c_int);
@@ -835,7 +835,7 @@ impl TestReporterHandle {
         &mut self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {
@@ -847,10 +847,10 @@ impl TestReporterHandle {
     pub fn report_test_found_with_location(
         &mut self,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
-        source_url: &mut BunString,
+        source_url: &BunString,
         line: i32,
     ) {
         Bun__TestReporterAgentReportTestFoundWithLocation(
@@ -929,7 +929,7 @@ impl TestReporterAgent {
         &self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {

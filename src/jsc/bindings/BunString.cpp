@@ -565,7 +565,7 @@ extern "C" BunString URL__fragmentIdentifier(WTF::URL* url)
 {
     const auto& fragment = url->fragmentIdentifier().isEmpty()
         ? emptyString()
-        : url->fragmentIdentifier().toStringWithoutCopying();
+        : url->fragmentIdentifier().toString();
     return Bun::toStringRef(fragment);
 }
 
@@ -581,7 +581,7 @@ extern "C" WTF::URL* URL__fromString(const BunString* input)
 
 extern "C" BunString URL__protocol(WTF::URL* url)
 {
-    return Bun::toStringRef(url->protocol().toStringWithoutCopying());
+    return Bun::toStringRef(url->protocol().toString());
 }
 
 extern "C" void URL__deinit(WTF::URL* url)
@@ -613,7 +613,7 @@ extern "C" BunString URL__password(WTF::URL* url)
 /// ```
 extern "C" BunString URL__host(WTF::URL* url)
 {
-    return Bun::toStringRef(url->host().toStringWithoutCopying());
+    return Bun::toStringRef(url->host().toString());
 }
 
 /// Returns the host WITH the port.
@@ -641,7 +641,7 @@ extern "C" uint32_t URL__port(WTF::URL* url)
 
 extern "C" BunString URL__pathname(WTF::URL* url)
 {
-    return Bun::toStringRef(url->path().toStringWithoutCopying());
+    return Bun::toStringRef(url->path().toString());
 }
 
 WTF::String BunString::toWTFString() const

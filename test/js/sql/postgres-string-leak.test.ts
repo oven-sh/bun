@@ -1,50 +1,22 @@
 // Fault-injection test: mock server so no Postgres is needed. All wire bytes
 // come from wire-frames.ts via the fixture.
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { test } from "bun:test";
+import { expectRssDeltaBelow } from "harness";
 import path from "node:path";
 
 const fixture = path.join(import.meta.dir, "postgres-json-bind-leak.fixture.ts");
 
 // https://github.com/oven-sh/bun/issues/40102
-test("json/jsonb bind parameter does not leak the stringified payload", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), fixture],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine pins freed blocks; disable it so RSS reflects frees.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr.trim()).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
+test.concurrent("json/jsonb bind parameter does not leak the stringified payload", async () => {
   // Unfixed: ~300 × 512 KiB retained (≈160 MiB). Fixed: allocator slack only
   // (≈10 MiB Linux release, ≈30 MiB macOS, more under debug/ASAN).
-  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 80 : 60);
-  expect(exitCode).toBe(0);
+  await expectRssDeltaBelow([fixture], { release: 60, debug: 80 });
 });
 
 // Every field of each ErrorResponse was leaked (3 × 256 KiB × 150 ≈ 110 MiB).
-test("error response fields are not leaked", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "postgres-error-field-leak.fixture.ts")],
-    env: {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
+test.concurrent("error response fields are not leaked", async () => {
+  await expectRssDeltaBelow([path.join(import.meta.dir, "postgres-error-field-leak.fixture.ts")], {
+    release: 70,
+    debug: 90,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr.trim()).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
-  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 90 : 70);
-  expect(exitCode).toBe(0);
 });

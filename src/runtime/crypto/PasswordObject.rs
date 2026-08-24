@@ -56,7 +56,7 @@ impl AlgorithmValue {
                     ));
                 }
 
-                let algorithm_string = algorithm_value.to_bun_string(global_object)?;
+                let algorithm_string = algorithm_value.to_js_string_view(global_object)?;
 
                 let Some(algo) = algorithm_from_string(&algorithm_string) else {
                     return Err(global_object.throw_invalid_argument_type(
@@ -161,7 +161,7 @@ impl AlgorithmValue {
                 ));
             }
         } else if value.is_string() {
-            let algorithm_string = value.to_bun_string(global_object)?;
+            let algorithm_string = value.to_js_string_view(global_object)?;
 
             let Some(algo) = algorithm_from_string(&algorithm_string) else {
                 return Err(global_object.throw_invalid_argument_type(
@@ -748,7 +748,7 @@ fn js_password_object_verify(
             return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
-        let algorithm_string = arguments[2].to_bun_string(global_object)?;
+        let algorithm_string = arguments[2].to_js_string_view(global_object)?;
 
         let Some(a) = algorithm_from_string(&algorithm_string) else {
             return Err(global_object.throw_invalid_argument_type(
@@ -823,7 +823,7 @@ fn js_password_object_verify_sync(
             return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
-        let algorithm_string = arguments[2].to_bun_string(global_object)?;
+        let algorithm_string = arguments[2].to_js_string_view(global_object)?;
 
         let Some(a) = algorithm_from_string(&algorithm_string) else {
             return Err(global_object.throw_invalid_argument_type(

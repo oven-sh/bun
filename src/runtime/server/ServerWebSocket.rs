@@ -345,8 +345,8 @@ impl ServerWebSocket {
             return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", args[0]));
         }
 
-        let topic_js_view = args[0].to_js_string_view(global_this)?;
-        let topic = topic_js_view.to_utf8();
+        let topic_view = args[0].to_js_string_view(global_this)?;
+        let topic = topic_view.to_utf8();
 
         if topic.slice().is_empty() {
             return Err(

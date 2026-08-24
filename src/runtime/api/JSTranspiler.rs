@@ -208,7 +208,7 @@ impl Config {
                     }
 
                     names.push(prop.to_owned_slice().into());
-                    let val = property_value.to_bun_string(global)?;
+                    let val = property_value.to_js_string_view(global)?;
                     values.push(if val.is_empty() {
                         Box::from(&b"\"\""[..])
                     } else {
@@ -494,7 +494,7 @@ impl Config {
                             if !value.is_string() {
                                 continue;
                             }
-                            let str = value.to_bun_string(global)?;
+                            let str = value.to_js_string_view(global)?;
                             if str.is_empty() {
                                 continue;
                             }
@@ -913,7 +913,7 @@ fn export_replacement_value(
     }
 
     if value.is_string() {
-        let str = value.to_bun_string(global)?;
+        let str = value.to_js_string_view(global)?;
         let utf8 = str.to_utf8();
         // Bump-allocate so the bytes
         // live as long as the JSTranspiler arena that owns the resulting Expr;

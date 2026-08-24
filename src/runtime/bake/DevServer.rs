@@ -1206,8 +1206,6 @@ impl Drop for DevServer {
 
 impl DevServer {
     fn init_server_runtime(&mut self) {
-        // Zero-copy external StringImpl over the embedded runtime; JSC keeps it
-        // for the SourceProvider's lifetime.
         let runtime = BunString::create_static_external(
             crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server)
                 .code
@@ -2474,7 +2472,7 @@ impl DevServer {
                     {
                         let mut buf = paths::path_buffer_pool::get();
                         // SAFETY: `relative_path(&self)` only reads `self.root`; no `&mut *this` is live.
-                        let route_name = BunString::clone_utf8(unsafe {
+                        let route_name = unsafe {
                             (*this).relative_path(
                                 &mut *buf,
                                 &keys[from_opaque_file_id::<{ bake::Side::Server }>(
@@ -2482,25 +2480,29 @@ impl DevServer {
                                 )
                                 .get() as usize],
                             )
-                        });
-                        arr.put_index(global, 0, route_name.into_js(global)?)?;
+                        };
+                        arr.put_index(
+                            global,
+                            0,
+                            bun_jsc::bun_string_jsc::create_utf8_for_js(global, route_name)?,
+                        )?;
                     }
                     n = 1;
                     loop {
                         if let Some(layout) = route.file_layout {
                             let mut buf = paths::path_buffer_pool::get();
                             // SAFETY: `relative_path(&self)` only reads `self.root`; no `&mut *this` is live.
-                            let layout_name = BunString::clone_utf8(unsafe {
+                            let layout_name = unsafe {
                                 (*this).relative_path(
                                     &mut *buf,
                                     &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout)
                                         .get() as usize],
                                 )
-                            });
+                            };
                             arr.put_index(
                                 global,
                                 u32::try_from(n).expect("int cast"),
-                                layout_name.into_js(global)?,
+                                bun_jsc::bun_string_jsc::create_utf8_for_js(global, layout_name)?,
                             )?;
                             n += 1;
                         }
@@ -3608,11 +3610,10 @@ impl DevServer {
                 let written = buf_len - cursor.len();
                 &buf[..written]
             };
-            let s = BunString::clone_utf8(path);
             arr.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                s.into_js(global)?,
+                bun_jsc::bun_string_jsc::create_utf8_for_js(global, path)?,
             )?;
         }
         Ok(arr)
@@ -3690,12 +3691,11 @@ impl DevServer {
         let names = self.server_graph.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
             let mut buf = paths::path_buffer_pool::get();
-            let s =
-                BunString::clone_utf8(self.relative_path(&mut *buf, &names[item.get() as usize]));
+            let s = self.relative_path(&mut *buf, &names[item.get() as usize]);
             arr.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                s.into_js(global)?,
+                bun_jsc::bun_string_jsc::create_utf8_for_js(global, s)?,
             )?;
         }
         Ok(arr)
@@ -5357,8 +5357,10 @@ impl DevServer {
             debug_assert!(agent.is_enabled());
             let failures_encoded = &buf[failures_start_buf_pos..];
             // base64 output is pure ASCII so a UTF-8 borrow is safe.
-            let mut s = BunString::borrow_utf8(failures_encoded);
-            agent.notify_bundle_failed(self.inspector_server_id, &mut s);
+            agent.notify_bundle_failed(
+                self.inspector_server_id,
+                BunString::borrow_utf8(failures_encoded),
+            );
         }
         Ok(())
     }

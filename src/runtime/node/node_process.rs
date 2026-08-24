@@ -512,8 +512,10 @@ mod _impl {
                     bun_paths::string_paths::without_trailing_slash_windows_path;
                 #[cfg(not(windows))]
                 let without_trailing_slash = strings::without_trailing_slash;
-                BunString::clone_utf8(without_trailing_slash(fs.top_level_dir))
-                    .into_js(global_object)
+                bun_string_jsc::create_utf8_for_js(
+                    global_object,
+                    without_trailing_slash(fs.top_level_dir),
+                )
             }
             bun_sys::Result::Err(e) => {
                 let e = e.with_path_dest(&prev_cwd, slice.as_bytes());

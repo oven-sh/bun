@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized;
 
 use bun_core::String as BunString;
@@ -36,35 +34,12 @@ pub struct ResolvedSource {
 
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
-    pub module_info: ModuleInfo,
+    pub module_info: Option<Box<ModuleInfoDeserialized>>,
     /// The file path used as the source origin for bytecode cache validation.
     /// JSC validates bytecode by checking if the origin URL matches exactly what
     /// was used at build time. If empty, the origin is derived from source_url.
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
-}
-
-/// `ResolvedSource.module_info`: C++ sees a nullable `bun_ModuleInfoDeserialized*`
-/// and takes ownership by swapping in null.
-// `c_void` pointee: the C++ side only ever sees an opaque pointer, and
-// `improper_ctypes` would otherwise recurse into `ModuleInfoDeserialized`.
-#[repr(transparent)]
-#[derive(Default)]
-pub struct ModuleInfo(Option<core::ptr::NonNull<c_void>>);
-
-impl From<Option<Box<ModuleInfoDeserialized>>> for ModuleInfo {
-    fn from(b: Option<Box<ModuleInfoDeserialized>>) -> Self {
-        Self(b.map(|b| bun_core::heap::into_raw_nn(b).cast()))
-    }
-}
-
-impl Drop for ModuleInfo {
-    fn drop(&mut self) {
-        if let Some(p) = self.0.take() {
-            // SAFETY: sole owner of the `heap::into_raw` allocation.
-            drop(unsafe { bun_core::heap::take(p.cast::<ModuleInfoDeserialized>().as_ptr()) });
-        }
-    }
 }
 
 /// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; }`.
@@ -129,6 +104,4 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-// C++ mirror: `ResolvedSource` in headers-handwritten.h (2×BunString, bool,
-// 3×ptr-size, u32, bool, Bytecode{ptr,usize,bool}, ptr, BunString).
 bun_core::assert_ffi_layout!(ResolvedSource, 136, 8);

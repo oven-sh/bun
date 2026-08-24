@@ -836,12 +836,10 @@ impl WebWorker {
                     // to `err`, which is dropped immediately after).
                     vm_log.add_error(None, bun_ast::Loc::EMPTY, err.slice().to_vec());
                 }
-                drop(resolve_error);
                 self.flush_logs(vm);
                 return self.shutdown();
             }
         };
-        drop(resolve_error);
 
         // Terminated while resolving — exit code 0, no error.
         if self.has_requested_terminate() {

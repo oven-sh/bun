@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
@@ -723,27 +723,11 @@ test("element.attributes iterator does not leak names/values", async () => {
     for (let i = 0; i < 20; i++) await once();
     Bun.gc(true);
     const before = process.memoryUsage.rss();
-    for (let i = 0; i < 300; i++) await once();
+    for (let i = 0; i < 400; i++) await once();
     Bun.gc(true);
     console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
-  // Unfixed: ~95 MiB. Fixed: allocator slack only.
-  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 70 : 50);
-  expect(exitCode).toBe(0);
+  // Unfixed: ~120 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 50, debug: 70 });
 });

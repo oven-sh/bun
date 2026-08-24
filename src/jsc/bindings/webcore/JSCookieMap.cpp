@@ -483,13 +483,10 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
     }
 
     if (nameValue && nameValue.isString()) {
-        RETURN_IF_EXCEPTION(throwScope, {});
-
         if (!nameValue.isUndefined() && !nameValue.isNull()) {
             deleteOptions.name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
-
-        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
     }

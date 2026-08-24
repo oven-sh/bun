@@ -113,9 +113,6 @@ pub(crate) fn to_throw(
                 Some(JSValue::from_cell(result.to_js_string(global)?))
             })
             .unwrap_or(JSValue::UNDEFINED);
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
 
             // TODO: remove this allocation
             // partial match
@@ -146,9 +143,6 @@ pub(crate) fn to_throw(
             })
             .unwrap_or(JSValue::UNDEFINED);
 
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
             // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
             if let Some(test_fn) = expected_value.get(global, "test")? {
                 let matches = test_fn.call(global, expected_value, &[received_message])?;
@@ -175,9 +169,6 @@ pub(crate) fn to_throw(
                 Some(JSValue::from_cell(result.to_js_string(global)?))
             })
             .unwrap_or(JSValue::UNDEFINED);
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
 
             // no partial match for this case
             if !expected_message.is_same_value(received_message, global)? {
@@ -308,10 +299,6 @@ pub(crate) fn to_throw(
         if Expect::is_asymmetric_matcher(expected_value) {
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
             let is_equal = result.jest_strict_deep_equals(expected_value, global)?;
-
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
 
             if is_equal {
                 return Ok(JSValue::UNDEFINED);

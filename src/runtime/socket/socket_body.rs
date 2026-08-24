@@ -3428,9 +3428,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let socket_obj = opts
             .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
         // Bytes already consumed from the wire before the upgrade (e.g. the
         // ClientHello sitting in the readable buffer of the socket being
         // wrapped); fed into the TLS engine once the upgrade is wired up.
@@ -3445,9 +3442,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // server-ness lives in the SSL accept state (adopt_tls
         // is_client=!is_server) + the ServerHandlers JS table, not here.
         let handlers = Handlers::from_js(global, socket_obj, super::SocketMode::Client)?;
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
         // Nothing holds the callback cell until the TLS wrapper below does.
         let _cell_root = handlers.root_cell(global);
 
@@ -3549,9 +3543,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             return Err(global.throw(format_args!("Expected \"tls\" option")));
         }
-        if global.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
 
         let mut default_data = JSValue::ZERO;
         if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? {
@@ -3630,15 +3621,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `deref` runs `deinit_and_destroy`, which drops the owned_ctx
                 // ref and the handlers `Rc`. Sole owner of the fresh allocation.
                 tls.get().deref();
-                if err != 0 && !global.has_exception() {
+                if err != 0 {
                     return Err(global.throw_value(boringssl_err_to_js(global, err)));
                 }
-                if !global.has_exception() {
-                    return Err(global.throw(format_args!(
-                        "Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?",
-                    )));
-                }
-                return Ok(JSValue::UNDEFINED);
+                return Err(global.throw(format_args!(
+                    "Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?",
+                )));
             }
         };
 

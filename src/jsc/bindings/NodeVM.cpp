@@ -743,8 +743,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
                 return;
             }
 
-            outOptions.allowStrings = allowStringsValue.toBoolean(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
+            outOptions.allowStrings = allowStringsValue.asBoolean();
         }
 
         auto allowWasmValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "wasm"_s));
@@ -755,8 +754,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
                 return;
             }
 
-            outOptions.allowWasm = allowWasmValue.toBoolean(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
+            outOptions.allowWasm = allowWasmValue.asBoolean();
         }
     }
 }
@@ -1642,7 +1640,7 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
 
     if (sourceOrigin.fetcher() == nullptr && sourceOrigin.url().isEmpty()) {
         if (globalObject->dynamicImportCallback().isCallable()) {
-            return NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {});
+            RELEASE_AND_RETURN(scope, NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {}));
         }
 
         promise->reject(vm, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));

@@ -348,19 +348,19 @@ fn reject_on_exception(
     result: JsResult<JSValue>,
 ) -> JsResult<JSValue> {
     let err = match result {
-        Ok(v) if !v.is_empty() => return Ok(v),
+        Ok(v) => return Ok(v),
         Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
         // A terminated worker gets no rejected promise: its termination keeps unwinding.
-        Ok(_) | Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
+        Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
             if global_this.has_pending_termination_exception() =>
         {
             return Err(jsc::JsError::Thrown);
         }
         Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
-        Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
+        Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
             Some(exc) => exc.to_error().unwrap_or(exc),
             None => {
-                // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
+                // `fetch_impl` only returns Err(Thrown) with an exception
                 // pending; reaching here means it was cleared, which is a bug.
                 debug_assert!(
                     false,
@@ -555,10 +555,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_url BunString::empty();
     });
 
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-
     if url_str.is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_URL,
@@ -661,19 +657,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         break 'extract_disable_decompression decompression_value.to_int32() == 0;
                     }
                 }
-
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
         }
 
         break 'extract_disable_decompression disable_decompression;
     };
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     // "compress: boolean | string | { encoding, level? }"
     'extract_compress: {
@@ -690,16 +678,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         break 'extract_compress;
                     }
                 }
-
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
         }
-    }
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
     }
 
     // "maxRedirects: number"
@@ -728,16 +708,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         break 'extract_max_redirects;
                     }
                 }
-
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
         }
-    }
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
     }
 
     // "tls: TLSConfig"
@@ -759,10 +731,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             }
                         }
 
-                        if global_this.has_exception() {
-                            return Ok(JSValue::ZERO);
-                        }
-
                         if let Some(check_server_identity_) = tls.get(ctx, "checkServerIdentity")? {
                             if check_server_identity_.is_cell()
                                 && check_server_identity_.is_callable()
@@ -771,19 +739,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             }
                         }
 
-                        if global_this.has_exception() {
-                            return Ok(JSValue::ZERO);
-                        }
-
-                        match SSLConfig::from_js(vm, global_this, tls) {
-                            Err(_) => {
-                                return Ok(JSValue::ZERO);
-                            }
-                            Ok(Some(config)) => {
-                                // Intern via `ssl_config::global_registry` for dedup and pointer equality
-                                break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
-                            }
-                            Ok(None) => {}
+                        if let Some(config) = SSLConfig::from_js(vm, global_this, tls)? {
+                            // Intern via `ssl_config::global_registry` for dedup and pointer equality
+                            break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
                         }
                     }
                 }
@@ -792,10 +750,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         break 'extract_ssl_config ssl_config;
     };
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     // No `tls` options, but this thread's --use-system-ca decision differs from the process
     // default the HTTP thread's shared client context was built with: give the request a config of
@@ -820,18 +774,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         break 'extract_unix_socket_path socket_path.to_slice_clone(global_this)?;
                     }
                 }
-
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
         }
         break 'extract_unix_socket_path unix_socket_path;
     };
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
     'extract_protocol: {
@@ -894,19 +840,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             || timeout_value.to_int32() == 0;
                     }
                 }
-
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
         }
 
         break 'extract_disable_timeout disable_timeout;
     };
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     // redirect: "follow" | "error" | "manual" | undefined;
     redirect_type = 'extract_redirect_type: {
@@ -923,24 +861,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                match obj.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
-                    Err(_) => {
-                        return Ok(JSValue::ZERO);
-                    }
-                    Ok(Some(redirect_value)) => {
-                        break 'extract_redirect_type redirect_value;
-                    }
-                    Ok(None) => {}
+                if let Some(redirect_value) =
+                    obj.get_optional_enum::<FetchRedirect>(global_this, "redirect")?
+                {
+                    break 'extract_redirect_type redirect_value;
                 }
             }
         }
 
         break 'extract_redirect_type redirect_type;
     };
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     // keepalive: boolean | undefined;
     disable_keepalive = 'extract_disable_keepalive: {
@@ -958,19 +888,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         break 'extract_disable_keepalive keepalive_value.to_int32() == 0;
                     }
                 }
-
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
         }
 
         break 'extract_disable_keepalive disable_keepalive;
     };
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     // verbose: boolean | "curl" | undefined;
     verbose = 'extract_verbose: {
@@ -993,10 +915,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             http::HTTPVerboseLevel::None
                         };
                     }
-                }
-
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
                 }
             }
         }
@@ -1124,19 +1042,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         }
                     }
                 }
-
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
         }
 
         break 'extract_proxy url_proxy_buffer;
     };
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     // signal: AbortSignal | null | undefined;
     // WebIDL `AbortSignal?` member: present iff not undefined. A present `null`
@@ -1163,10 +1073,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         err,
                     ),
                 );
-            }
-
-            if global_this.has_exception() {
-                return Ok(JSValue::ZERO);
             }
         }
 
@@ -1203,10 +1109,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_signal None;
     };
 
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-
     // We do this 2nd to last instead of last so that if it's a FormData
     // object, we can still insert the boundary.
     //
@@ -1225,10 +1127,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if !body__.is_undefined() {
                     break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
                 }
-            }
-
-            if global_this.has_exception() {
-                return Ok(JSValue::ZERO);
             }
         }
 
@@ -1308,14 +1206,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     .unwrap_or_default();
 
+    // HTTPRequestBody::from_js() throws without returning Err; see Blob::from_dom_form_data
     if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
+        return Err(jsc::JsError::Thrown);
     }
 
     // headers: Headers | undefined;
     headers = 'extract_headers: {
-        // Releases the +1 from `create_from_js` on every exit path (including
-        // the `has_exception()` early returns below).
+        // Releases the +1 from `create_from_js` on every exit path.
         let mut fetch_headers_to_deref = FetchHeadersRef(None);
 
         let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
@@ -1339,10 +1237,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                         break 'brk None;
                     }
-                }
-
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
                 }
             }
 
@@ -1376,16 +1270,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            if global_this.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
-
             break 'extract_headers headers;
         };
-
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         let result = if let Some(headers_) = fetch_headers {
             // `headers_` points to a live FetchHeaders (either JS-owned or
@@ -1419,10 +1305,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_headers result;
     };
 
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-
     if proxy.is_some() && !unix_socket_path.slice().is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1434,10 +1316,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 err,
             ),
         );
-    }
-
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
     }
 
     // This is not 100% correct.

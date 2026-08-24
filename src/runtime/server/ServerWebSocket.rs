@@ -452,10 +452,8 @@ impl ServerWebSocket {
             result: Ok(JSValue::ZERO),
         };
         ws.cork(&mut corker, Corker::run);
-        let result = corker
-            .result
-            .unwrap_or_else(|e| global_object.take_exception(e));
-        if let Some(err_value) = result.to_error() {
+        if let Err(e) = corker.result {
+            let err_value = global_object.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onOpen exception");
 
             let mut closed_here = false;
@@ -532,19 +530,15 @@ impl ServerWebSocket {
         };
 
         ws.cork(&mut corker, Corker::run);
-        let result = corker
-            .result
-            .unwrap_or_else(|e| global_object.take_exception(e));
-
-        if result.is_empty_or_undefined_or_null() {
-            return Ok(());
-        }
-
-        if let Some(err_value) = result.to_error() {
-            return self
-                .handler()
-                .run_error_callback(on_error, global_object, err_value);
-        }
+        let result = match corker.result {
+            Ok(result) => result,
+            Err(e) => {
+                let err_value = global_object.take_error(e);
+                return self
+                    .handler()
+                    .run_error_callback(on_error, global_object, err_value);
+            }
+        };
 
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
@@ -595,11 +589,8 @@ impl ServerWebSocket {
             };
             let _loop_guard = vm.enter_event_loop_scope();
             self.websocket().cork(&mut corker, Corker::run);
-            let result = corker
-                .result
-                .unwrap_or_else(|e| global_object.take_exception(e));
-
-            if let Some(err_value) = result.to_error() {
+            if let Err(e) = corker.result {
+                let err_value = global_object.take_error(e);
                 handler.run_error_callback(on_error, global_object, err_value)?;
             }
         }
@@ -648,7 +639,7 @@ impl ServerWebSocket {
             data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
-            let err = global_this.take_exception(e);
+            let err = global_this.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onPing error");
             handler.run_error_callback(on_error, global_this, err)?;
         }
@@ -680,7 +671,7 @@ impl ServerWebSocket {
             data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
-            let err = global_this.take_exception(e);
+            let err = global_this.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onPong error");
             handler.run_error_callback(on_error, global_this, err)?;
         }
@@ -771,7 +762,7 @@ impl ServerWebSocket {
             let message_js = match jsc::bun_string_jsc::create_utf8_for_js(global_object, message) {
                 Ok(v) => v,
                 Err(e) => {
-                    let err = global_object.take_exception(e);
+                    let err = global_object.take_error(e);
                     bun_output::scoped_log!(
                         WebSocketServer,
                         "onClose error (message) {}",
@@ -783,7 +774,7 @@ impl ServerWebSocket {
 
             let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
             if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
-                let err = global_object.take_exception(e);
+                let err = global_object.take_error(e);
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
                 return handler.run_error_callback(on_error, global_object, err);
             }
@@ -858,7 +849,7 @@ impl ServerWebSocket {
         // triggers GC, so both are converted (and their JSStrings held) before
         // the handler state is read.
         let topic_string = topic_value.to_js_string(global_this)?;
-        let topic_slice = topic_string.view(global_this).to_slice();
+        let topic_slice = topic_string.view(global_this)?.to_slice();
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publish requires a non-empty topic")));
         }
@@ -883,7 +874,7 @@ impl ServerWebSocket {
             (slice, Opcode::Binary)
         } else {
             let string = message_value.to_js_string(global_this)?;
-            message_slice = string.view(global_this).to_slice();
+            message_slice = string.view(global_this)?.to_slice();
             message_string = Some(string);
             (message_slice.slice(), Opcode::Text)
         };
@@ -921,7 +912,7 @@ impl ServerWebSocket {
         }
 
         let topic_string = topic_value.to_js_string(global_this)?;
-        let topic_slice = topic_string.view(global_this).to_slice();
+        let topic_slice = topic_string.view(global_this)?.to_slice();
 
         let compress = Self::parse_compress_arg(
             global_this,
@@ -935,7 +926,7 @@ impl ServerWebSocket {
         }
 
         let message_string = message_value.to_js_string(global_this)?;
-        let message_slice = message_string.view(global_this).to_slice();
+        let message_slice = message_string.view(global_this)?.to_slice();
 
         let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
@@ -975,7 +966,7 @@ impl ServerWebSocket {
         }
 
         let topic_string = topic_value.to_js_string(global_this)?;
-        let topic_slice = topic_string.view(global_this).to_slice();
+        let topic_slice = topic_string.view(global_this)?.to_slice();
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
         }
@@ -1106,7 +1097,7 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
-            let view = js_string.view(global_this);
+            let view = js_string.view(global_this)?;
             let slice = view.to_slice();
 
             let buffer = slice.slice();
@@ -1151,7 +1142,7 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
-        let view = js_string.view(global_this);
+        let view = js_string.view(global_this)?;
         let slice = view.to_slice();
 
         let buffer = slice.slice();
@@ -1272,7 +1263,7 @@ impl ServerWebSocket {
                     return Ok(ret);
                 } else if value.is_string() {
                     // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
-                    let string_value = value.to_js_string(global_this)?.to_slice(global_this);
+                    let string_value = value.to_js_string(global_this)?.to_slice(global_this)?;
                     let buffer = string_value.slice();
                     if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
                         return Err(throw_control_frame_too_large(global_this, buffer.len()));

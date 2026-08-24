@@ -19,7 +19,7 @@ use bun_core::{ZigString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
-use bun_ptr::{BackRef, JsCell, Mut, RefPtr, ThisPtr};
+use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -106,7 +106,7 @@ pub struct WebSocket<const SSL: bool> {
     /// The queued `InitialDataTask` (handshake-overflow bytes) until it runs or
     /// `handle_data` drains it first; detached in `Drop` so a task that
     /// outlives us does nothing.
-    pending_initial_task: Cell<Option<BackRef<InitialDataTask<SSL>, Mut>>>,
+    pending_initial_task: Cell<Option<BackRef<InitialDataTask<SSL>, Root>>>,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
     /// Track if current message is compressed
@@ -1860,7 +1860,7 @@ impl InitialDataHandler {
 pub(crate) struct InitialDataTask<const SSL: bool> {
     /// Detached by `WebSocket`'s `Drop` (or by `handle_data` draining `data`
     /// first) so a task that outlives its client does nothing.
-    ws: Cell<Option<BackRef<WebSocket<SSL>, Mut>>>,
+    ws: Cell<Option<BackRef<WebSocket<SSL>, Root>>>,
     data: JsCell<Option<InitialDataHandler>>,
 }
 

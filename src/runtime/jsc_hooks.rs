@@ -1418,26 +1418,6 @@ fn load_standalone_sourcemap(
     unsafe { (*graph).find(path)?.sourcemap.load() }
 }
 
-/// `node_cluster_binding.handleInternalMessageChild(global, data)` — the
-/// `IPCInstance.handleIPCMessage` `.internal` arm.
-///
-/// # Safety
-/// `global` is the live VM global; called on the JS thread inside an
-/// `event_loop.enter()` scope.
-pub(crate) unsafe fn handle_ipc_internal_child(
-    global: *mut JSGlobalObject,
-    data: JSValue,
-    handle: JSValue,
-) {
-    // SAFETY: per fn contract.
-    let global = unsafe { &*global };
-    // Spec discards a JS exception here (`catch |err| switch (err) {
-    // error.JSError => {} }`); the low tier already wrapped this call in
-    // `event_loop.enter()/exit()` which clears any pending exception, so
-    // dropping the `Err` is correct.
-    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data, handle);
-}
-
 /// `node_cluster_binding.child_singleton.deinit()` —
 /// `IPCInstance.handleIPCClose`.
 ///
@@ -3937,7 +3917,7 @@ fn get_hardcoded_module(
 /// `jsc_vm` is the live per-thread VM; `out` is a valid out-param.
 unsafe fn fetch_builtin_module(
     jsc_vm: *mut VirtualMachine,
-    _global: *mut JSGlobalObject,
+    global: *mut JSGlobalObject,
     specifier: &bun_core::String,
     _referrer: &bun_core::String,
     out: *mut ErrorableResolvedSource,
@@ -4043,6 +4023,29 @@ export default db;
                         specifier: specifier.dupe_ref(),
                         source_url: specifier.dupe_ref(),
                         source_code_needs_deref: false,
+                        ..ResolvedSource::default()
+                    });
+                }
+                return FetchBuiltinResult::Found;
+            }
+
+            if file.is_text_module() {
+                // The bytes are already a string body (`encode_text_module`):
+                // the default export is a JSString over the section, no copy.
+                // SAFETY: per fn contract — `global` is the live global object.
+                let global = unsafe { &*global };
+                let string = file.to_wtf_string();
+                // Only a `Dead` string throws; `to_wtf_string` never yields one.
+                let value = bun_jsc::bun_string_jsc::to_js(&string, global)
+                    .expect("embedded text module string is never dead");
+                string.deref();
+                // No `specifier`/`source_url`: the ExportDefaultObject consumers
+                // never read or deref them.
+                // SAFETY: per fn contract — `out` is a valid out-param.
+                unsafe {
+                    *out = ErrorableResolvedSource::ok(ResolvedSource {
+                        jsvalue_for_export: value,
+                        tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
                         ..ResolvedSource::default()
                     });
                 }

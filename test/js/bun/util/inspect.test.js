@@ -519,9 +519,13 @@ it("native inspect.custom functions do not return the scope object of a bare cal
     // Closing over the binding makes the bare call below pass a scope object as `this`.
     // A negative depth takes the early-return path in every one of these functions.
     const bare = () => inspectCustom(-1, {});
-    return [klass.name, typeof inspectCustom, bare()];
+    // An ordinary wrong receiver must still come back unchanged: util.inspect relies on
+    // that to fall through to its default formatting.
+    const ordinaryReceiver = {};
+    const roundTripped = inspectCustom.call(ordinaryReceiver, -1, {}) === ordinaryReceiver;
+    return [klass.name, typeof inspectCustom, bare(), roundTripped];
   });
-  expect(results).toEqual(classes.map(klass => [klass.name, "function", undefined]));
+  expect(results).toEqual(classes.map(klass => [klass.name, "function", undefined, true]));
 
   const inspectURL = URL.prototype[util.inspect.custom];
   expect(inspectURL.call(new URL("http://example.com/"), 2, {})).toContain("http://example.com/");

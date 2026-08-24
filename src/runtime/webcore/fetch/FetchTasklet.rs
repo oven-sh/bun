@@ -1738,7 +1738,11 @@ impl FetchTasklet {
     /// stream's buffer now holds what no consumer took.
     fn after_body_chunk_delivered(&self, bytes: &crate::webcore::ByteStream) {
         let buffered = bytes.buffered_len();
-        bun_output::scoped_log!(FetchTasklet, "afterBodyChunkDelivered buffered={}", buffered);
+        bun_output::scoped_log!(
+            FetchTasklet,
+            "afterBodyChunkDelivered buffered={}",
+            buffered
+        );
         // `readableStreamTo*(res.body)`: a whole-body consumer, like `on_start_buffering_callback`.
         if bytes.buffer_action.get().is_some() {
             if self.signal_store.receive_all() {

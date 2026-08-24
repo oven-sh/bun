@@ -847,14 +847,15 @@ impl Channel {
     pub unsafe fn resolve(
         &mut self,
         name: &[u8],
-        lookup_name: &[u8],
         ns_type: NSType,
         raw_callback: AresCallback,
         ctx: *mut c_void,
     ) {
+        // The empty name is the root zone, which only NS and SOA can ask about.
+        let allows_empty_name = matches!(ns_type, NSType::ns_t_ns | NSType::ns_t_soa);
         if name.len() >= 1023
             || bun_core::strings::contains_char(name, 0)
-            || (name.is_empty() && !(lookup_name == b"ns" || lookup_name == b"soa"))
+            || (name.is_empty() && !allows_empty_name)
         {
             // SAFETY: thunk handles ARES_EBADNAME path.
             unsafe { raw_callback(ctx, ARES_EBADNAME, 0, ptr::null_mut(), 0) };

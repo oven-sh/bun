@@ -5072,15 +5072,7 @@ impl Resolver {
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
         // pointer and calls `kind.raw_callback` (→ `on_cares_complete`) which
         // consumes the request.
-        unsafe {
-            (*channel).resolve(
-                name,
-                kind.type_name.as_bytes(),
-                kind.ns_type,
-                kind.raw_callback,
-                request.cast(),
-            )
-        };
+        unsafe { (*channel).resolve(name, kind.ns_type, kind.raw_callback, request.cast()) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());

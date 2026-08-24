@@ -1269,8 +1269,7 @@ describe("resolve record types", () => {
     }
   });
 
-  // The empty name is only let through to c-ares for these two types, which
-  // the resolver tells apart by the type's name.
+  // The empty name is only let through to c-ares for these two RR types.
   test.concurrent("resolveNs('') and resolveSoa('') query the root zone", async () => {
     const { socket, queries, resolver } = await startFakeServer();
     try {

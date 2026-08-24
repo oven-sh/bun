@@ -2553,6 +2553,51 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect(out).toContain("no changes");
 });
 
+// #40366: a workspace package listed in a normal dependency group and again in
+// peerDependencies. Loading bun.lock kept the duplicate peer entry's version
+// unresolved instead of giving it the workspace path a fresh package.json parse
+// produces, so prune and dedupe reported the lockfile as out of sync.
+test.concurrent("workspace dependency duplicated as a peer dependency stays in sync", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  // both the workspace: protocol and a plain version that resolves to the workspace
+  for (const spec of ["workspace:*", "1.0.0"]) {
+    await Promise.all([
+      rm(join(packageDir, "bun.lock"), { force: true }),
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    ]);
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          devDependencies: { "no-deps": spec },
+          peerDependencies: { "no-deps": spec },
+        }),
+      ),
+      write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+    ]);
+
+    await runBunInstall(env, packageDir);
+
+    for (const cmd of ["prune", "dedupe"]) {
+      await using proc = spawn({
+        cmd: [bunExe(), cmd],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("bun.lock does not match package.json");
+      expect(exitCode).toBe(0);
+    }
+  }
+});
+
 // While linking, the hoisted installer formats each package's version label (its
 // version, or for tarball/folder/git packages the spec it was resolved from) into a
 // 512 byte stack buffer. Labels longer than that used to abort the whole install.

@@ -3101,6 +3101,10 @@ pub(crate) fn parse_into_binary_lockfile(
         let package_index = &lockfile.package_index;
         let overrides = &lockfile.overrides;
         let catalogs: &CatalogMap = &lockfile.catalogs;
+        let workspace_versions = &lockfile.workspace_versions;
+        let link_workspace_packages = manager
+            .as_deref()
+            .is_none_or(|m| m.options.link_workspace_packages);
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
@@ -3146,7 +3150,25 @@ pub(crate) fn parse_into_binary_lockfile(
                         .get_or_put(dep.name.slice(string_buf))?
                         .found_existing
                 {
-                    resolutions[dep_id as usize] = res_id;
+                    if duplicate_resolves_to_workspace(
+                        dep,
+                        res_id,
+                        pkg_resolutions,
+                        link_workspace_packages,
+                        workspace_versions,
+                        string_buf,
+                    ) {
+                        map_dep_to_pkg(
+                            dep,
+                            dep_id,
+                            res_id,
+                            resolutions,
+                            lockfile_version,
+                            pkg_resolutions,
+                        );
+                    } else {
+                        resolutions[dep_id as usize] = res_id;
+                    }
                     continue;
                 }
 
@@ -3227,7 +3249,25 @@ pub(crate) fn parse_into_binary_lockfile(
                     };
 
                     if seen_deps.get_or_put(dep_name)?.found_existing {
-                        resolutions[dep_id as usize] = res_id;
+                        if duplicate_resolves_to_workspace(
+                            dep,
+                            res_id,
+                            pkg_resolutions,
+                            link_workspace_packages,
+                            workspace_versions,
+                            string_buf,
+                        ) {
+                            map_dep_to_pkg(
+                                dep,
+                                dep_id,
+                                res_id,
+                                resolutions,
+                                lockfile_version,
+                                pkg_resolutions,
+                            );
+                        } else {
+                            resolutions[dep_id as usize] = res_id;
+                        }
                         continue;
                     }
 
@@ -3489,6 +3529,48 @@ fn map_dep_to_pkg(
                 },
             };
         }
+    }
+}
+
+/// A name already seen in another dependency group of the same package skips
+/// `map_dep_to_pkg`, so it keeps the version it was parsed with: a peer
+/// `2.0.0` next to a dev `workspace:*` must stay an npm range (#18560). But
+/// when the duplicate itself resolves to the workspace, a fresh
+/// `package.json` parse gives it the workspace path, and the loaded lockfile
+/// must match or `Diff::generate` reports a stale lockfile (#40366). That is
+/// every `workspace:` duplicate, and an npm duplicate whose range matches the
+/// workspace version while `linkWorkspacePackages` applies, the same rule
+/// `Package::parse_dependency` uses.
+fn duplicate_resolves_to_workspace(
+    dep: &Dependency,
+    res_id: PackageID,
+    pkg_resolutions: &[Resolution],
+    link_workspace_packages: bool,
+    workspace_versions: &VersionHashMap,
+    string_buf: &[u8],
+) -> bool {
+    if (res_id as usize) >= pkg_resolutions.len()
+        || pkg_resolutions[res_id as usize].tag != ResolutionTag::Workspace
+    {
+        return false;
+    }
+
+    match dep.version.tag {
+        DependencyVersionTag::Workspace => true,
+        DependencyVersionTag::Npm => {
+            link_workspace_packages
+                && workspace_versions
+                    .get(&StringBuilder::string_hash(
+                        dep.version.npm().name.slice(string_buf),
+                    ))
+                    .is_some_and(|&workspace_version| {
+                        dep.version
+                            .npm()
+                            .version
+                            .satisfies(workspace_version, string_buf, string_buf)
+                    })
+        }
+        _ => false,
     }
 }
 

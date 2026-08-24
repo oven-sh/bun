@@ -106,7 +106,7 @@ describe("spawnSync", () => {
   });
 
   describe.skipIf(!isPosix)("drains piped stdio to EOF after the direct child exits", () => {
-    // The grandchild inherits both pipes and writes to them after the direct
+    // The grandchild inherits the stdio and writes to both fds after the direct
     // child has exited. The first pause lets spawnSync see the exit before more
     // output arrives; the second keeps B and C in separate reads.
     const cmd = [
@@ -114,26 +114,33 @@ describe("spawnSync", () => {
       "-c",
       "printf A; printf a >&2; ( sleep 0.1; printf B; printf b >&2; sleep 0.05; printf C; printf c >&2 ) & exit 0",
     ];
-    for (const maxBuffer of [undefined, 1024 * 1024]) {
-      it(`stdout and stderr (maxBuffer=${maxBuffer})`, () => {
-        const result = Bun.spawnSync({ cmd, stdio: ["ignore", "pipe", "pipe"], maxBuffer });
-        expect(summary(result)).toEqual({
-          exitCode: 0,
-          signalCode: undefined,
-          success: true,
-          exitedDueToTimeout: undefined,
-          exitedDueToMaxBuffer: maxBuffer === undefined ? undefined : false,
-          stdout: "ABC",
-          stderr: "abc",
+    const layouts: [string, "pipe" | "ignore", "pipe" | "ignore"][] = [
+      ["stdout", "pipe", "ignore"],
+      ["stderr", "ignore", "pipe"],
+      ["stdout and stderr", "pipe", "pipe"],
+    ];
+    for (const [piped, stdout, stderr] of layouts) {
+      for (const maxBuffer of [undefined, 1024 * 1024]) {
+        it(`${piped} (maxBuffer=${maxBuffer})`, () => {
+          const result = Bun.spawnSync({ cmd, stdio: ["ignore", stdout, stderr], maxBuffer });
+          expect(summary(result)).toEqual({
+            exitCode: 0,
+            signalCode: undefined,
+            success: true,
+            exitedDueToTimeout: undefined,
+            exitedDueToMaxBuffer: maxBuffer === undefined ? undefined : false,
+            stdout: stdout === "pipe" ? "ABC" : undefined,
+            stderr: stderr === "pipe" ? "abc" : undefined,
+          });
         });
-      });
+      }
     }
 
     it("timeout still bounds the wait when a grandchild never closes the pipe", () => {
       const result = Bun.spawnSync({
-        cmd: ["/bin/sh", "-c", "printf A; sleep 2 & exit 0"],
+        cmd: ["/bin/sh", "-c", "printf A; sleep 5 & exit 0"],
         stdio: ["ignore", "pipe", "ignore"],
-        timeout: 300,
+        timeout: 500,
       });
       // The direct child exited 0 on its own. The grandchild holds the pipe
       // open and writes nothing, so the timeout must end the wait.

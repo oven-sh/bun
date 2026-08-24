@@ -2,11 +2,12 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 // On Windows a pipe inherited as stdin is a synchronous file object, and the
-// kernel serialises all I/O on it. libuv reads such a pipe through a zero-byte
-// ReadFile parked on a pool thread, which holds that serialisation lock until
-// data arrives. A second uv_pipe_t over fd 0 then blocks the JS thread inside
-// uv_pipe_open. Bun refuses the second reader with EBUSY instead, and frees
-// the fd for a new reader as soon as the first one is closed.
+// kernel serialises all I/O on it. A read that waits for input (libuv's
+// zero-byte ReadFile for a uv_pipe_t, or the ReadFile behind Bun.stdin.text())
+// holds that serialisation lock until data arrives. A second uv_pipe_t over
+// fd 0 then blocks the JS thread inside uv_pipe_open. Bun refuses the second
+// reader with EBUSY instead, and frees the fd for a new reader as soon as the
+// first one is closed.
 
 type Child = ReturnType<typeof spawnReader>;
 
@@ -187,6 +188,100 @@ test.concurrent.skipIf(!isWindows)(
     ]);
     expect(stderr).toBe("");
     expect(lines).toEqual(["net first", "r2 EBUSY open", "r3 opened", "r3 third"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.skipIf(!isWindows)(
+  "process.stdin fails with EBUSY while Bun.stdin.text() waits for input, and a reader opens once text() has finished",
+  async () => {
+    await using proc = spawnReader(`
+      ${helpers}
+      const all = Bun.stdin.text();
+      await nextTurn();
+      try {
+        process.stdin.on("data", d => out("stdin " + d.toString().trim()));
+        out("stdin attached");
+      } catch (e) {
+        out("stdin " + fail(e));
+      }
+      out("text " + JSON.stringify(await all));
+      const r3 = Bun.file(0).stream().getReader();
+      out("r3 " + text(await r3.read()));
+      process.exit(0);
+    `);
+    const [lines, stderr, exitCode] = await Promise.all([
+      readLines(proc, line => {
+        if (line === "stdin EBUSY open") {
+          feed(proc, "all of it");
+          proc.stdin.end();
+        }
+      }),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(lines).toEqual(["stdin EBUSY open", 'text "all of it\\n"', "r3 EOF"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.skipIf(!isWindows)(
+  "Bun.stdin.text() rejects with EBUSY while process.stdin is reading the pipe",
+  async () => {
+    await using proc = spawnReader(`
+      ${helpers}
+      let chunks = 0;
+      process.stdin.on("data", async d => {
+        out("stdin " + d.toString().trim());
+        if (++chunks === 2) process.exit(0);
+        await nextTurn();
+        try {
+          out("text " + JSON.stringify(await Bun.stdin.text()));
+        } catch (e) {
+          out("text " + fail(e));
+        }
+      });
+    `);
+    feed(proc, "first");
+    const [lines, stderr, exitCode] = await Promise.all([
+      readLines(proc, line => {
+        if (line === "text EBUSY read") feed(proc, "second");
+      }),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(lines).toEqual(["stdin first", "text EBUSY read", "stdin second"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The pipe stays claimed while process.stdin is paused: the two handles would
+// share one file object, and a resume() while the other reader waits for input
+// would block the JS thread again. Cancel or close the first reader instead.
+test.concurrent.skipIf(!isWindows)(
+  "Bun.file(0).stream() fails with EBUSY while a paused process.stdin still holds the pipe",
+  async () => {
+    await using proc = spawnReader(`
+      ${helpers}
+      process.stdin.once("data", async d => {
+        out("stdin " + d.toString().trim());
+        process.stdin.pause();
+        await nextTurn();
+        try {
+          Bun.file(0).stream().getReader();
+          out("r2 opened");
+        } catch (e) {
+          out("r2 " + fail(e));
+        }
+        process.exit(0);
+      });
+    `);
+    feed(proc, "first");
+    const [lines, stderr, exitCode] = await Promise.all([readLines(proc, () => {}), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(lines).toEqual(["stdin first", "r2 EBUSY open"]);
     expect(exitCode).toBe(0);
   },
 );

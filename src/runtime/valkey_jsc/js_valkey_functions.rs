@@ -10,15 +10,14 @@ use super::protocol_jsc as protocol;
 use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
 
-/// Reinterpret an ASCII byte-string literal as `&str` for the
+/// An ASCII byte-string literal as `&str` for the
 /// `throw_invalid_argument_type` family (which take `&'static str`).
-/// SAFETY: every command/method name passed to the `cmd_*!` macros is a
-/// static ASCII byte-string literal, so it is always valid UTF-8.
 #[inline(always)]
 const fn bname(b: &'static [u8]) -> &'static str {
-    // SAFETY: every caller passes a `b"..."` ASCII literal (command/method
-    // names from the `cmd_*!` macros), which is guaranteed valid UTF-8.
-    unsafe { core::str::from_utf8_unchecked(b) }
+    match core::str::from_utf8(b) {
+        Ok(s) => s,
+        Err(_) => panic!("command names are ASCII literals"),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1824,7 +1823,7 @@ impl JSValkeyClient {
         // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
         // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
         // stays live across those calls.
-        let _guard = this.ref_guard();
+        let _guard = this.ref_scope();
 
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
@@ -1937,7 +1936,7 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         // Hold a ref so `*this` stays live across the handler-map updates and
         // the `send()` below.
-        let _guard = this.ref_guard();
+        let _guard = this.ref_scope();
 
         // Check if we're in subscription mode
         require_subscriber(this, b"unsubscribe")?;
@@ -2081,11 +2080,9 @@ impl JSValkeyClient {
         let _ = frame;
 
         let new_client_ptr = this.clone_without_connecting(global)?;
-        // SAFETY: clone_without_connecting returns a freshly allocated, leaked
-        // JSValkeyClient (heap::alloc); valid for the rest of this scope.
-        let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };
+        let new_client: &JSValkeyClient = &new_client_ptr;
 
-        let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);
+        let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr.as_ptr(), global);
         new_client.this_value.set(JsRef::init_weak(new_client_js));
         new_client
             ._subscription_ctx
@@ -2095,10 +2092,7 @@ impl JSValkeyClient {
             && !this.client.get().flags.is_manually_closed
         {
             // Use strong reference during connection to prevent premature GC
-            new_client
-                .client_mut()
-                .flags
-                .connection_promise_returns_client = true;
+            new_client.with_client(|c| c.flags.connection_promise_returns_client = true);
             return new_client.do_connect(global, new_client_js);
         }
 

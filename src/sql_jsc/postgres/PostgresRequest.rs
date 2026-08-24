@@ -286,7 +286,7 @@ pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     query: &[u8],
     array_value: JSValue,
     mut writer: protocol::NewWriter<Context>,
-    signature: &mut Signature,
+    signature: &Signature,
 ) -> Result<(), AnyPostgresError> {
     write_query(
         query,
@@ -330,8 +330,8 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
         global,
         array_value,
         columns_value,
-        &statement.parameters,
-        &statement.fields,
+        statement.parameters.get(),
+        statement.fields.get(),
         writer,
     )?;
     let exec = protocol::Execute {
@@ -386,12 +386,13 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
     // Bind — use server-provided types if available (binary format), otherwise
     // fall back to signature types (text format for unknowns). The server will
     // handle text-to-type conversion based on the parameter types from Parse.
-    let param_fields = if !statement.parameters.is_empty() {
-        &statement.parameters[..]
+    let parameters = statement.parameters.get();
+    let param_fields = if !parameters.is_empty() {
+        &parameters[..]
     } else {
         &statement.signature.fields[..]
     };
-    let result_fields = &statement.fields;
+    let result_fields = statement.fields.get();
 
     write_bind(
         name,
@@ -531,7 +532,8 @@ pub(crate) fn on_data<Context: ReaderContext>(
     }
 }
 
-/// Each entry holds a ref on its query.
+// `bun.LinearFifo(*PostgresSQLQuery, .Dynamic)` — each entry is the ref the
+// queue holds on that query, released when the entry is discarded.
 pub(crate) type Queue = std::collections::VecDeque<bun_ptr::RefPtr<PostgresSQLQuery>>;
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};

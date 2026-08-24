@@ -387,28 +387,6 @@ pub trait BlobExt {
     fn is_all_ascii(&self) -> Option<bool>;
 }
 
-/// C-ABI trampoline for `Blob::shared_view` so C++ (`ZigGeneratedClasses`)
-/// can read blob bytes.
-///
-/// # Safety
-/// `this` must be a live `*const Blob` (the codegen `m_ctx` payload obtained
-/// via `Blob__fromJS`), valid for shared read for the duration of the call.
-/// `len` must be a writable `usize` out-param (caller stack slot). Kept as a
-/// raw-pointer ABI (not `&Blob`/`&mut usize`) because the sole Rust caller is
-/// the type-erased `SqlRuntimeHooks` vtable in `hw_exports.rs`, which forwards
-/// `*const c_void` without materialising a reference.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__Blob__sharedView(
-    this: *const Blob,
-    len: *mut usize,
-) -> *const u8 {
-    // SAFETY: preconditions documented on the fn item above.
-    let view = unsafe { (*this).shared_view() };
-    // SAFETY: `len` is a valid writable out-param per the fn safety contract.
-    unsafe { *len = view.len() };
-    view.as_ptr()
-}
-
 #[allow(non_snake_case, clippy::too_many_arguments)]
 impl BlobExt for Blob {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {

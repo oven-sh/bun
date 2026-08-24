@@ -130,6 +130,12 @@ macro_rules! new_evp {
                 this
             }
 
+            /// One-shot digest with BoringSSL's built-in implementation.
+            pub fn digest(bytes: &[u8], out: &mut [u8; $digest_size]) {
+                // SAFETY: a null `ENGINE*` selects the default implementation.
+                unsafe { Self::hash(bytes, out, ptr::null_mut()) }
+            }
+
             /// # Safety
             /// `engine` must be null (default engine) or a live `ENGINE*`.
             pub unsafe fn hash(

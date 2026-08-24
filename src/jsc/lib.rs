@@ -1233,7 +1233,10 @@ pub use self::js_property_iterator::{
 #[path = "event_loop.rs"]
 pub mod event_loop;
 pub use self::event_loop as EventLoop;
+pub mod auto_flusher;
 pub mod job;
+pub use self::array_buffer::PinnedBytes;
+pub use self::auto_flusher::{AutoFlushTarget, AutoFlusher};
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
     DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, ManagedTask,

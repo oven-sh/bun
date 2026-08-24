@@ -7,7 +7,6 @@ use bun_collections::OffsetByteList;
 use bun_core::UnwrapOrOom;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_ptr::RefPtr;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
@@ -276,8 +275,6 @@ pub struct ValkeyClient {
     pub(crate) flags: ConnectionFlags,
 
     // Auto-pipelining
-    pub(crate) auto_flusher: AutoFlusher,
-
     pub(crate) vm: &'static VirtualMachine,
 }
 
@@ -295,7 +292,7 @@ struct DeferredFailure {
     queue: command::entry::Queue,
 }
 
-impl DeferredFailure {
+impl bun_event_loop::ManagedTask::RunOnce for DeferredFailure {
     fn run(self) -> JsResult<()> {
         debug!("running deferred failure");
         let mut this = self;
@@ -307,20 +304,14 @@ impl DeferredFailure {
             err,
         )
     }
+}
 
+impl DeferredFailure {
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
-        // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
-        fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
-            let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(*this)
-        }
-        let managed_task =
-            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
         VirtualMachine::get()
             .event_loop_mut()
-            .enqueue_task(managed_task);
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_boxed(self));
     }
 }
 
@@ -333,7 +324,7 @@ fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
 // SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed).
 // `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the field offset is
 // unchanged. Every `JSValkeyClient` method this reaches is `&self`.
-bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; fn mut parent_ptr; }
+bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; }
 
 impl ValkeyClient {
     /// Clean up resources used by the Valkey client
@@ -366,28 +357,23 @@ impl ValkeyClient {
 
     // ** Auto-pipelining **
     fn register_auto_flusher(&mut self, vm: &VirtualMachine) {
-        if !self.auto_flusher.registered.get() {
-            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
-            self.auto_flusher.registered.set(true);
-        }
+        bun_jsc::AutoFlusher::register(self.parent().this_ptr(), vm);
     }
 
     fn unregister_auto_flusher(&mut self) {
-        if self.auto_flusher.registered.get() {
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, self.vm);
-            self.auto_flusher.registered.set(false);
-        }
+        let vm = self.vm;
+        self.parent().auto_flusher.unregister(vm);
     }
 
-    // Drain auto-pipelined commands
+    // Drain auto-pipelined commands. The return value is whether to stay
+    // registered for the next drain.
     pub(crate) fn on_auto_flush(&mut self) -> bool {
         // Don't process if not connected or already processing
         if self.status != Status::Connected {
-            self.auto_flusher.registered.set(false);
             return false;
         }
 
-        let _guard = self.parent().ref_guard();
+        let _guard = self.parent().ref_scope();
 
         // Start draining the command queue
         let mut total_bytelength: usize = 0;
@@ -426,11 +412,8 @@ impl ValkeyClient {
 
         let _ = self.flush_data();
 
-        let have_more = !self.queue.is_empty();
-        self.auto_flusher.registered.set(have_more);
-
         // Return true if we should schedule another flush
-        have_more
+        !self.queue.is_empty()
     }
     // ** End of auto-pipelining **
 
@@ -647,11 +630,11 @@ impl ValkeyClient {
         if !is_semi_socket {
             return thrown;
         }
-        // SAFETY: takes over the keep-alive ref `connect()` handed to this
-        // socket, as `SocketHandler::on_close` does for one uSockets closes.
-        // Every caller of `close()` holds a scoped ref of its own, so the
-        // client outlives this scope.
-        let _socket_ref = unsafe { RefPtr::from_raw(self.parent_ptr()) };
+        // The keep-alive ref `connect()` took for this socket, released here
+        // as `SocketHandler::on_close` does for one uSockets closes. Every
+        // caller of `close()` holds a scoped ref of its own, so the client
+        // outlives this scope.
+        let _socket_ref = self.parent().socket_ref.take();
         self.status = Status::Disconnected;
         let closed = self.on_close();
         thrown.and(closed)
@@ -1364,7 +1347,7 @@ impl ValkeyClient {
     }
 
     pub(crate) fn on_writable(&mut self) {
-        let _guard = self.parent().ref_guard();
+        let _guard = self.parent().ref_scope();
         self.send_next_command();
     }
 
@@ -1544,22 +1527,6 @@ impl ValkeyClient {
 
     pub(crate) fn on_valkey_close(&mut self) -> JsResult<()> {
         self.parent().on_valkey_close()
-    }
-}
-
-// Auto-pipelining
-use crate::webcore::{AutoFlusher, HasAutoFlusher};
-
-impl HasAutoFlusher for ValkeyClient {
-    #[inline]
-    fn auto_flusher(&self) -> &AutoFlusher {
-        &self.auto_flusher
-    }
-    unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` was registered as `&ValkeyClient` cast to `*mut c_void`;
-        // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread after
-        // microtasks), so no aliasing across the call.
-        unsafe { (*this).on_auto_flush() }
     }
 }
 

@@ -3,7 +3,9 @@ use core::ptr;
 
 use crate as jsc;
 use crate::SysErrorJsc;
-use crate::{ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult};
+use crate::{
+    ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult, MarkedArgumentBuffer,
+};
 use bun_alloc::mimalloc;
 use bun_sys::{self, Fd, FdExt};
 
@@ -138,6 +140,101 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    // safe: by-value `JSValue`; out-params are `&mut` (same ABI as `*mut`).
+    // The obligation is on the *returned* bytes (see `MarkedArgumentBuffer::pin_bytes`).
+    safe fn JSC__JSValue__borrowBytesForOffThread(
+        v: JSValue,
+        out_ptr: &mut *const u8,
+        out_len: &mut usize,
+    ) -> i32;
+}
+
+/// The bytes of an ArrayBuffer / view argument, readable until dropped even
+/// if JS that runs meanwhile tries to detach the buffer or drops its last
+/// reference: [`MarkedArgumentBuffer::pin_bytes`] roots the value in the
+/// argument buffer (so the cell outlives `'a`) and pins a detachable
+/// `ArrayBuffer` until this drops; a `FastTypedArray`'s GC-movable inline
+/// vector is copied instead.
+pub struct PinnedBytes<'a> {
+    bytes: bun_core::Utf8Bytes<'a>,
+    /// The value whose `ArrayBuffer` this pinned, unpinned on drop; `ZERO`
+    /// when nothing was pinned.
+    pinned: JSValue,
+}
+
+impl PinnedBytes<'_> {
+    pub const EMPTY: Self = Self {
+        bytes: bun_core::Utf8Bytes::EMPTY,
+        pinned: JSValue::ZERO,
+    };
+
+    #[inline]
+    pub fn slice(&self) -> &[u8] {
+        self.bytes.slice()
+    }
+}
+
+impl core::ops::Deref for PinnedBytes<'_> {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        self.bytes.slice()
+    }
+}
+
+impl Drop for PinnedBytes<'_> {
+    fn drop(&mut self) {
+        if !self.pinned.is_empty() {
+            JSC__JSValue__unpinArrayBuffer(self.pinned);
+        }
+    }
+}
+
+impl MarkedArgumentBuffer {
+    /// `value`'s ArrayBuffer / view bytes, kept readable for as long as this
+    /// argument buffer is borrowed (see [`PinnedBytes`]). `None` for a
+    /// detached buffer or a value that is not a buffer/view at all.
+    pub fn pin_bytes(&self, value: JSValue) -> Option<PinnedBytes<'_>> {
+        let mut ptr: *const u8 = core::ptr::null();
+        let mut len: usize = 0;
+        let kind = JSC__JSValue__borrowBytesForOffThread(value, &mut ptr, &mut len);
+        if kind == 0 {
+            return None;
+        }
+        let bytes: &[u8] = if ptr.is_null() || len == 0 {
+            &[]
+        } else {
+            // SAFETY: for kinds 1..=3 C++ returned the live (ptr, len) of the
+            // buffer's storage; each arm below keeps it put for `'_`.
+            unsafe { core::slice::from_raw_parts(ptr, len) }
+        };
+        Some(match kind {
+            // A `FastTypedArray`'s GC-movable inline vector: copy it now.
+            1 => PinnedBytes {
+                bytes: bun_core::Utf8Bytes::Owned(bytes.to_vec()),
+                pinned: JSValue::ZERO,
+            },
+            // An `ArrayBuffer`, now pinned (non-detachable) until the unpin on
+            // drop; rooted here so the cell that owns the storage outlives it.
+            2 => {
+                self.append(value);
+                PinnedBytes {
+                    bytes: bun_core::Utf8Bytes::Borrowed(bytes),
+                    pinned: value,
+                }
+            }
+            // A bufferless oversize view: the storage is immovable for the
+            // cell's lifetime, and the cell is rooted here.
+            3 => {
+                self.append(value);
+                PinnedBytes {
+                    bytes: bun_core::Utf8Bytes::Borrowed(bytes),
+                    pinned: JSValue::ZERO,
+                }
+            }
+            _ => unreachable!("borrowBytesForOffThread kind {kind}"),
+        })
+    }
 }
 
 impl JSValue {

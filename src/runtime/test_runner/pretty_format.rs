@@ -496,9 +496,10 @@ impl Tag {
             return Tag::get(value.get_proxy_target(), global_this);
         }
 
-        // Is this a react element?
+        // Is this a react element? Formatting never runs a user getter, so a
+        // `$$typeof` accessor is not a React element.
         if js_type.is_object() && js_type != JSType::ProxyObject {
-            if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
+            if let Some(typeof_symbol) = value.get_own_non_observable(global_this, "$$typeof") {
                 if typeof_symbol
                     .is_same_value(JSValue::symbol_for(global_this, b"react.element"), global_this)?
                     || typeof_symbol.is_same_value(

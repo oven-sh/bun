@@ -371,6 +371,42 @@ test("basic unchanging inline snapshot", () => {
   );
 });
 
+test("inline snapshot does not call a $$typeof getter", () => {
+  // The React element check reads `$$typeof`. An accessor is printed like any other
+  // getter and never called, so it is not mistaken for a React element.
+  let called = 0;
+  const obj = {
+    get $$typeof() {
+      called++;
+      return Symbol.for("react.element");
+    },
+  };
+  expect(obj).toMatchInlineSnapshot(`
+{
+  "$$typeof": [native code],
+}
+`);
+  expect(called).toBe(0);
+
+  const throwing = {
+    get $$typeof() {
+      throw new Error("Test failed!");
+    },
+  };
+  expect([throwing, "after"]).toMatchInlineSnapshot(`
+[
+  {
+    "$$typeof": [native code],
+  },
+  "after",
+]
+`);
+
+  // A plain data property still marks a React element.
+  const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { id: "x" } };
+  expect(element).toMatchInlineSnapshot(`<div id="x" />`);
+});
+
 class InlineSnapshotTester {
   tmpdir: string;
   tmpid: number;

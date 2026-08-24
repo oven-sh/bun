@@ -2189,9 +2189,10 @@ pub mod formatter {
                 });
             }
 
-            // Is this a react element?
+            // Is this a react element? Inspection never runs a user getter, so
+            // a `$$typeof` accessor is not a React element.
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
-                if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
+                if let Some(typeof_symbol) = value.get_own_non_observable(global_this, "$$typeof") {
                     // React 18 and below
                     if typeof_symbol.is_same_value(
                         JSValue::symbol_for(global_this, b"react.element"),

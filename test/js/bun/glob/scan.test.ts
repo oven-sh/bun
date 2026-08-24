@@ -938,6 +938,30 @@ test("scan handles a cwd with redundant trailing separators when following symli
   expect(exitCode).toBe(0);
 });
 
+// With `this === globalThis`, the private `@resolveSync` that scanSync calls is
+// the module resolver's internal entry point, called with a single argument.
+test("scanSync called with globalThis as this throws instead of crashing", async () => {
+  const script = `
+    try {
+      Bun.Glob.prototype.scanSync.call(globalThis, 4096);
+      console.log("no error");
+    } catch (e) {
+      console.log(e.code);
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("ERR_INVALID_ARG_TYPE");
+  expect(exitCode).toBe(0);
+});
+
 // A pattern segment that spells out a leading `.` is an explicit request for
 // that dotfile/dot-directory, so the `dot: false` default must not hide it.
 // This matches bash, picomatch, minimatch and fast-glob.

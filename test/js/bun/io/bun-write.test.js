@@ -1028,7 +1028,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         }),
       );
       for (const res of [streamed, arrived, js]) {
-        expect(Bun.write("/dev/full", res)).rejects.toThrow(expect.objectContaining({ code: "ENOSPC" }));
+        await expect(Bun.write("/dev/full", res)).rejects.toThrow(expect.objectContaining({ code: "ENOSPC" }));
       }
     });
 
@@ -1063,7 +1063,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         },
       });
       const res = await fetch(`http://127.0.0.1:${listener.port}/`);
-      expect(Bun.write(join(String(dir), "out.bin"), res)).rejects.toThrow(
+      await expect(Bun.write(join(String(dir), "out.bin"), res)).rejects.toThrow(
         expect.objectContaining({ code: "ECONNRESET" }),
       );
     });
@@ -1073,16 +1073,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       await using server = await origin();
       const used = await fetch(server.url);
       await used.arrayBuffer();
-      expect(Bun.write(join(String(dir), "a"), used)).rejects.toThrow(
+      await expect(Bun.write(join(String(dir), "a"), used)).rejects.toThrow(
         expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
       );
       const reading = await fetch(server.url);
       const reader = reading.body.getReader();
-      expect(Bun.write(join(String(dir), "b"), reading)).rejects.toThrow(
+      await expect(Bun.write(join(String(dir), "b"), reading)).rejects.toThrow(
         expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
       );
       reader.releaseLock();
-      expect(
+      await expect(
         Bun.write(join(String(dir), "missing", "c"), await fetch(server.url), { createPath: false }),
       ).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));
     });

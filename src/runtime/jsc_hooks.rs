@@ -752,7 +752,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
     // failed to build its transpiler never reaches `load_preloads` (this hook
     // only runs via `reload_entry_point*`, which operate on an already-`Ok` VM).
-    let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir;
+    let top_level_dir = Fs::FileSystem::get().top_level_dir();
     // SAFETY: per fn contract.
     let global_cache = if unsafe { &*vm }.standalone_module_graph.is_none() {
         GlobalCache::read_only
@@ -781,11 +781,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             bun_core::String::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────
-            // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
-            // singleton field.
+            // SAFETY: per fn contract.
             let mut result = match unsafe {
                 (*vm).transpiler.resolver.resolve_and_auto_install(
-                    &*top_level_dir,
+                    top_level_dir,
                     normalized,
                     ImportKind::Stmt,
                     global_cache,
@@ -3480,7 +3479,7 @@ fn transpile_source_code_inner(
                 // need to copy the ~12 borrowed slices out (perf: was a
                 // per-asset-import `url::URL::clone`).
                 let origin = unsafe { &(*jsc_vm).origin };
-                let top_level_dir = Fs::FileSystem::get().top_level_dir;
+                let top_level_dir = Fs::FileSystem::get().top_level_dir();
                 crate::api::bun_object::get_public_path_with_asset_prefix(
                     specifier,
                     top_level_dir,

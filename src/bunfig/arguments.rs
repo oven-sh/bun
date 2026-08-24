@@ -193,25 +193,13 @@ pub fn load_config(
         config_buf[config_path_.len()] = 0;
         config_path_len = config_path_.len();
     } else {
-        if ctx.args.absolute_working_dir.is_none() {
-            let mut secondbuf = PathBuffer::uninit();
-            let cwd_len = match bun_sys::getcwd(&mut *secondbuf) {
-                Ok(n) => n,
-                Err(_) => return Ok(()),
-            };
-            ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
-        }
-
-        // Reshaped for borrowck: `join_abs_string_buf` ties the
-        // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
-        // and `config_buf`. We only need the length to NUL-terminate and
-        // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
-        // the `&mut ctx` call below.
         config_path_len = {
-            let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
-            let parts: [&[u8]; 2] = [awd, config_path_];
-            let joined =
-                resolve_path::join_abs_string_buf::<platform::Auto>(awd, &mut *config_buf, &parts);
+            let cwd = bun_core::cwd::get().as_bytes();
+            let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+                cwd,
+                &mut *config_buf,
+                &[config_path_],
+            );
             joined.len()
         };
         config_buf[config_path_len] = 0;

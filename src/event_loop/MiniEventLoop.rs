@@ -25,7 +25,7 @@ use core::ptr::NonNull;
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
-use bun_sys::{self as sys, Fd, Mode};
+use bun_sys::{Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
 
@@ -74,8 +74,6 @@ pub struct MiniEventLoop {
     /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
     /// mutable provenance.
     pub env: Option<NonNull<DotEnvLoader>>,
-    // Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
-    pub top_level_dir: Box<[u8]>,
     // Opaque ctx assigned externally; only read/cleared here.
     pub(crate) after_event_loop_callback_ctx: Option<NonNull<c_void>>,
     pub(crate) after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
@@ -95,10 +93,7 @@ thread_local! {
 /// here would let two calls (or `init_global` + any reader of `GLOBAL`) hold
 /// overlapping `&mut` to the same allocation — UB. Return the raw pointer;
 /// callers reborrow `&mut` for the scope they need.
-pub fn init_global(
-    env: Option<&'static mut DotEnvLoader>,
-    cwd: Option<&[u8]>,
-) -> *mut MiniEventLoop {
+pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> *mut MiniEventLoop {
     if GLOBAL_INITIALIZED.with(|g| g.get()) {
         // Already initialized: hand back the stored raw pointer. No `&mut` is
         // materialized here (see fn doc — avoids aliased `&'static mut` UB).
@@ -137,22 +132,6 @@ pub fn init_global(
     if global.env.is_none() {
         // Thread-lifetime singleton.
         global.env = Some(bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init())));
-    }
-
-    // Set top_level_dir from provided cwd or get current working directory
-    if let Some(dir) = cwd {
-        // Dupe to keep Box<[u8]> ownership uniform.
-        global.top_level_dir = Box::<[u8]>::from(dir);
-    } else if global.top_level_dir.is_empty() {
-        let mut buf = bun_paths::PathBuffer::uninit();
-        match sys::getcwd(&mut buf[..]) {
-            Ok(len) => {
-                global.top_level_dir = Box::<[u8]>::from(&buf[..len]);
-            }
-            Err(_) => {
-                global.top_level_dir = Box::default();
-            }
-        }
     }
 
     // Publish the thread-local pointer only AFTER the scoped `&mut *global_ptr`
@@ -255,7 +234,6 @@ impl MiniEventLoop {
             loop_: UwsLoop::get(),
             file_polls: None,
             env: None,
-            top_level_dir: Box::default(),
             after_event_loop_callback_ctx: None,
             after_event_loop_callback: None,
             pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),

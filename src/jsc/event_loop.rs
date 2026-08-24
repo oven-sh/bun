@@ -1529,7 +1529,6 @@ bun_event_loop::link_impl_JsEventLoop! {
         enqueue_task_after_yield(task) => (*this).enqueue_task_after_yield(task),
         js_poster() => (*this).js_poster(),
         env() => (*this).vm_ref().transpiler.env,
-        top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>
             (*(*this).vm_ref().transpiler.env).map.create_null_delimited_env_map(),
     }

@@ -495,14 +495,7 @@ impl EventLoopHandle {
     }
 
     pub fn top_level_dir(self) -> &'static [u8] {
-        match self {
-            // SAFETY: slice borrowed for VM lifetime.
-            EventLoopHandle::Js { owner } => unsafe { &*owner.top_level_dir() },
-            // SAFETY: `BackRef::get()` ties the borrow to the local `mini`, but
-            // the pointee is the per-thread singleton (process-lifetime); widen
-            // to `'static` so the return type matches the Js arm.
-            EventLoopHandle::Mini(mini) => unsafe { &(*mini.as_ptr()).top_level_dir },
-        }
+        bun_core::cwd::get().as_bytes()
     }
 
     pub fn create_null_delimited_env_map(

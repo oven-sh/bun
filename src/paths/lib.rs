@@ -507,81 +507,27 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 //
 // The full `FileSystem` (DirEntry cache, RealFS impl, FilenameStore/DirnameStore)
 // stays in `bun_resolver`; only the path-shaped types (`Path`, `PathName`)
-// and the `top_level_dir` singleton accessor move here so
-// lower tiers (`bun_logger`, `bun_paths::resolve_path`, `bun_paths::Path`) can
-// resolve them without a `bun_resolver` edge.
+// live here so lower tiers (`bun_logger`, `bun_paths::resolve_path`,
+// `bun_paths::Path`) can use them without a `bun_resolver` edge.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
-    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU32, Ordering};
     use std::io::Write as _;
-    use std::sync::OnceLock;
 
     use bun_core::ZStr;
 
     use crate::resolve_path::{is_sep_any, last_index_of_sep};
 
-    /// Minimal `FileSystem` singleton: holds `top_level_dir` only. The dir-entry
-    /// cache and filename arenas remain in `bun_resolver` and reach back here
-    /// for the cwd string.
-    ///
-    /// Concurrency: init-once via `OnceLock<FileSystem>`.
-    pub struct FileSystem {
-        // Stored as raw bytes (not `String`): POSIX paths are arbitrary byte
-        // sequences, not guaranteed UTF-8, and every reader
-        // (`top_level_dir()`, resolve_path.rs) wants `&[u8]`.
-        top_level_dir: Vec<u8>,
-    }
-
-    static INSTANCE: OnceLock<FileSystem> = OnceLock::new();
-    // Kept as a separate flag so `instance_loaded()` is a cheap relaxed load.
-    static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
-
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
+    /// Namespace for the associated functions the resolver's `FileSystem`
+    /// shares with lower tiers; the working directory itself lives in
+    /// [`bun_core::cwd`].
+    pub struct FileSystem;
+
     impl FileSystem {
-        #[inline]
-        pub(crate) fn instance_loaded() -> bool {
-            INSTANCE_LOADED.load(Ordering::Relaxed)
-        }
-
-        /// Panics if `init` has not been called.
-        #[inline]
-        pub fn instance() -> &'static FileSystem {
-            INSTANCE
-                .get()
-                .expect("FileSystem.instance accessed before init")
-        }
-
-        /// Higher-tier `bun_resolver::fs` calls this during its own `initWithForce` after it
-        /// resolves the cwd. Takes raw bytes — POSIX cwd is not guaranteed UTF-8.
-        pub fn init(top_level_dir: &[u8]) -> &'static FileSystem {
-            let _ = INSTANCE.set(FileSystem {
-                top_level_dir: top_level_dir.to_vec(),
-            });
-            INSTANCE_LOADED.store(true, Ordering::Release);
-            INSTANCE.get().unwrap()
-        }
-
-        /// `PackageManager.init` reassigns the top-level dir after walking up
-        /// to the workspace root. The canonical
-        /// writable storage lives in `bun_core::TOP_LEVEL_DIR` (updated by
-        /// `bun_resolver::FileSystem::set_top_level_dir`). Delegate the read
-        /// there so `Path::init_top_level_dir` observes the post-chdir value
-        /// instead of the `OnceLock` snapshot taken at process start.
-        #[inline]
-        pub fn top_level_dir(&self) -> &[u8] {
-            let d = bun_core::top_level_dir();
-            // Fallback to the seeded value only if `bun_core` was never set
-            // (unit tests that init this module directly).
-            if d == b"." {
-                self.top_level_dir.as_slice()
-            } else {
-                d
-            }
-        }
-
         /// Writes `.<hex(hash^nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
-        /// the NUL-terminated borrow. Static (no `&self`).
+        /// the NUL-terminated borrow.
         pub fn tmpname<'b>(
             extname: &[u8],
             buf: &'b mut [u8],

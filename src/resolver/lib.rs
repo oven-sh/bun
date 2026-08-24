@@ -164,16 +164,10 @@ pub mod fs {
 
     // ── FileSystem ───────────────────────────────────────────────────────
 
-    /// Process-global filesystem facade for the resolver: holds the cached
-    /// top-level dir, the real-FS backend, and the dirname/filename interning
-    /// stores.
+    /// Process-global filesystem facade for the resolver: the real-FS
+    /// backend and the dirname/filename interning stores. Paths are resolved
+    /// against the process working directory, [`bun_core::cwd`].
     pub struct FileSystem {
-        pub top_level_dir: &'static [u8],
-
-        // used on subsequent updates (process.chdir writes here and re-slices
-        // `top_level_dir` to point into it).
-        pub top_level_dir_buf: bun_paths::PathBuffer,
-
         pub fs: Implementation,
         pub dirname_store: &'static DirnameStore,
         pub filename_store: &'static FilenameStore,
@@ -257,50 +251,22 @@ pub mod fs {
         /// RLIMIT_NOFILE is raised and `file_limit`/`file_quota` carry the
         /// real fd budget — `need_to_close_files` depends on that to enable
         /// directory-fd caching.
-        pub fn init(top_level_dir: Option<&[u8]>) -> crate::CrateResult<*mut FileSystem> {
-            Self::init_with_force::<false>(top_level_dir)
-        }
-
-        /// When `FORCE`, re-seeds
-        /// the singleton even if already loaded — used by the router test
-        /// harness which `chdir`s between fixtures and needs a fresh
-        /// `top_level_dir`.
-        pub(crate) fn init_with_force<const FORCE: bool>(
-            top_level_dir: Option<&[u8]>,
-        ) -> crate::CrateResult<*mut FileSystem> {
+        pub fn init() -> crate::CrateResult<*mut FileSystem> {
             // SAFETY: single-threaded startup; called from
             // `Transpiler::init` before any worker spawn.
             unsafe {
-                if INSTANCE_LOADED.load(Ordering::Acquire) && !FORCE {
+                if INSTANCE_LOADED.load(Ordering::Acquire) {
                     return Ok((*INSTANCE.get()).as_mut_ptr());
                 }
             }
-            let cwd: &'static [u8] = match top_level_dir {
-                // intern into the process-lifetime `DirnameStore` so
-                // callers may pass a borrowed path without leaking it themselves
-                // (the singleton outlives every caller).
-                Some(d) => DirnameStore::instance().append_slice(d)?,
-                None => {
-                    let mut buf = bun_paths::PathBuffer::default();
-                    DirnameStore::instance().append_slice(bun_core::getcwd(&mut buf)?.as_bytes())?
-                }
-            };
-            // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the
-            // same cwd. `bun_paths::resolve_path::relative*` and
-            // `Path::init_top_level_dir` reach `bun_paths::fs::FileSystem::
-            // instance()` (a strict `OnceLock` — panics if unset), and the
-            // doc-comment on that `init` names this as the intended seeding
-            // point. This keeps both halves in lockstep.
-            // The call is a no-op on subsequent inits (`OnceLock::set` returns
-            // `Err`). `cwd` is passed as raw bytes — POSIX paths are not
-            // guaranteed UTF-8, and the lower tier stores/serves bytes.
-            bun_paths::fs::FileSystem::init(cwd);
+            // Whoever starts the process decides whether an unreadable working
+            // directory is fatal (`bun_core::cwd::init`) or falls back
+            // (`bun_core::cwd::get`); by here it is settled either way.
+            bun_core::cwd::get();
             // SAFETY: see above.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {
-                    top_level_dir: cwd,
-                    top_level_dir_buf: bun_paths::PathBuffer::uninit(),
-                    fs: Implementation::init(cwd),
+                    fs: Implementation::init(),
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),
                 });
@@ -341,13 +307,13 @@ pub mod fs {
         /// absolute path slice.
         pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{join_abs_string_buf, platform};
-            join_abs_string_buf::<platform::Loose>(self.top_level_dir, buf, parts)
+            join_abs_string_buf::<platform::Loose>(self.top_level_dir(), buf, parts)
         }
 
         /// Returns `None` on overflow.
         pub fn abs_buf_checked<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-            join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
+            join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir(), buf, parts)
         }
 
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
@@ -360,7 +326,7 @@ pub mod fs {
         /// into the resolver-shared threadlocal join buffer.
         pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
             use bun_paths::resolve_path::{join_abs_string, platform};
-            join_abs_string::<platform::Loose>(self.top_level_dir, parts)
+            join_abs_string::<platform::Loose>(self.top_level_dir(), parts)
         }
 
         /// Like `abs`, but interns the joined path into `DirnameStore` and
@@ -370,7 +336,7 @@ pub mod fs {
             parts: &[&[u8]],
         ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
             use bun_paths::resolve_path::{join_abs_string, platform};
-            let joined = join_abs_string::<platform::Loose>(self.top_level_dir, parts);
+            let joined = join_abs_string::<platform::Loose>(self.top_level_dir(), parts);
             // Route through DirnameStore so
             // the resolver's `&'static [u8]` storage contract holds.
             DirnameStore::instance()
@@ -389,30 +355,20 @@ pub mod fs {
         /// `top_level_dir` to `to`. Returns a slice into the resolver-shared
         /// threadlocal relative buffer; caller must dup before the next call.
         pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(self.top_level_dir, to)
+            bun_paths::resolve_path::relative(self.top_level_dir(), to)
         }
 
-        /// Cached cwd captured at `FileSystem::init`.
+        /// The directory resolution starts from: the process working
+        /// directory ([`bun_core::cwd`]). To change it, `bun_sys::chdir`.
         #[inline]
         pub fn top_level_dir(&self) -> &'static [u8] {
-            self.top_level_dir
-        }
-
-        /// `dir` must be
-        /// `'static` (interned in `DirnameStore` or a process-lifetime buffer
-        /// like `cwd_buf`). Takes `&mut self` — callers hold `&'static mut
-        /// FileSystem` from `instance()`; only called during single-threaded
-        /// CLI init.
-        #[inline]
-        pub fn set_top_level_dir(&mut self, dir: &'static [u8]) {
-            self.top_level_dir = dir;
-            bun_core::set_top_level_dir(dir);
+            bun_core::cwd::get().as_bytes()
         }
 
         /// `top_level_dir` with any trailing separator stripped (root `/` is
         /// left intact).
         pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
-            let d = self.top_level_dir;
+            let d = self.top_level_dir();
             if d.len() > 1 && d.last() == Some(&bun_paths::SEP) {
                 &d[..d.len() - 1]
             } else {
@@ -1025,7 +981,6 @@ pub mod fs {
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
-        pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,
     }
@@ -1034,14 +989,13 @@ pub mod fs {
         /// Raise RLIMIT_NOFILE and
         /// record the resulting fd budget so `need_to_close_files` can decide
         /// whether to cache directory fds.
-        pub(crate) fn init(cwd: &'static [u8]) -> RealFS {
+        pub(crate) fn init() -> RealFS {
             let file_limit = Self::adjust_ulimit().expect("unreachable");
             #[cfg(windows)]
             let _ = file_limit;
             RealFS {
                 entries_mutex: Mutex::default(),
                 entries: EntriesMap::new(),
-                cwd,
                 #[cfg(not(windows))]
                 file_limit,
             }
@@ -1380,7 +1334,7 @@ pub mod fs {
             let mut outpath = bun_paths::PathBuffer::uninit();
             let join_capacity = outpath.len() - 2;
             let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
-                self.cwd,
+                bun_core::cwd::get().as_bytes(),
                 &mut outpath[..join_capacity],
                 &combo,
             ) else {
@@ -1685,12 +1639,9 @@ pub mod fs {
                             >(profile, &mut buf[..], &parts);
                             return out.to_vec();
                         }
-                        let mut tmp_buf = bun_paths::PathBuffer::uninit();
-                        let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
-                            Ok(len) => &tmp_buf[..len],
-                            Err(_) => panic!("Failed to get cwd for platformTempDir"),
-                        };
-                        let root = bun_paths::resolve_path::windows_filesystem_root(cwd);
+                        let root = bun_paths::resolve_path::windows_filesystem_root(
+                            bun_core::cwd::get().as_bytes(),
+                        );
                         let mut out = bun_core::strings::without_trailing_slash(root).to_vec();
                         out.extend_from_slice(b"\\Windows\\Temp");
                         out

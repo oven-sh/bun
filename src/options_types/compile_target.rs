@@ -209,7 +209,7 @@ impl CompileTarget {
         // T1 fallback ignores `_env` (full env-override chain lives in bun_install).
         let cache_dir = bun_sys::fetch_cache_directory_path();
         let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-            path::fs::FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get().as_bytes(),
             &mut buf[..],
             &[cache_dir.as_slice(), version_str.as_bytes()],
         );

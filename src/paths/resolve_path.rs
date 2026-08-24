@@ -1,7 +1,6 @@
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 
-use crate::fs as Fs;
 use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
 use bun_core::{ZStr, strings};
 
@@ -691,7 +690,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // afterwards (overwrites relative_to_buf anyway).
         let norm_len = normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
         join_abs_string_buf::<P>(
-            Fs::FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get().as_bytes(),
             relative_from_buf,
             &[&relative_to_buf[..norm_len]],
         )
@@ -723,7 +722,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // and disjoint from both threadlocals), then join into relative_to_buf.
         let norm_len = normalize_string_buf::<true, P, true>(to, buf).len();
         join_abs_string_buf::<P>(
-            Fs::FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get().as_bytes(),
             relative_to_buf,
             &[&buf[..norm_len]],
         )

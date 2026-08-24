@@ -904,11 +904,8 @@ where
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            // Note: `fs.relative_to(file_path)` would borrow `&*fs`
-                            // while `rfs = &mut fs.fs` is live; inline the body so the
-                            // split-borrow on `fs.top_level_dir` is visible to borrowck.
                             bstr::BStr::new(bun_paths::resolve_path::relative(
-                                fs.top_level_dir,
+                                bun_core::cwd::get().as_bytes(),
                                 file_path
                             ))
                         ));
@@ -1257,7 +1254,7 @@ where
                                         Self::debug(format_args!(
                                             "File change: {}",
                                             bstr::BStr::new(bun_paths::resolve_path::relative(
-                                                fs.top_level_dir,
+                                                bun_core::cwd::get().as_bytes(),
                                                 abs_path,
                                             ))
                                         ));
@@ -1270,7 +1267,7 @@ where
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
                                 bstr::BStr::new(bun_paths::resolve_path::relative(
-                                    fs.top_level_dir,
+                                    bun_core::cwd::get().as_bytes(),
                                     file_path
                                 )),
                                 affected_len
@@ -1357,7 +1354,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn watcher_top_level_dir(&self) -> &'static [u8] {
-        FileSystem::get().top_level_dir
+        FileSystem::get().top_level_dir()
     }
 
     fn install_bun_watcher(

@@ -1390,11 +1390,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         only_files: bool,
         ignore_filter_fn: Option<IgnoreFilterFn>,
     ) -> Result<Maybe<Self>, Error> {
-        // `bun_paths::fs::FileSystem` (singleton holds only the cwd string; the
-        // DirEntry cache stays in `bun_resolver`).
         Self::init_with_cwd(
             pattern,
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get().as_bytes(),
             dot,
             absolute,
             follow_symlinks,

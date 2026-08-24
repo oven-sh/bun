@@ -396,7 +396,7 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
         #[cfg(windows)]
         windows: process::sync::WindowsOptions {
             loop_: EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },

@@ -785,7 +785,7 @@ pub(crate) fn run_scripts_with_filter(
     post_script_name[0..4].copy_from_slice(b"post");
     post_script_name[4..].copy_from_slice(script_name);
 
-    let _ = bun_resolver::fs::FileSystem::init(None)?;
+    let _ = bun_resolver::fs::FileSystem::init()?;
     let fsinstance = bun_resolver::fs::FileSystem::get();
 
     // TODO(refactor): out-param init — `configureEnvForRun` writes through the
@@ -808,7 +808,7 @@ pub(crate) fn run_scripts_with_filter(
     let selected = FilterArg::select_packages(
         &*ctx,
         &mut this_transpiler.resolver,
-        fsinstance.top_level_dir,
+        fsinstance.top_level_dir(),
     )?;
 
     let mut scripts: Vec<ScriptConfig> = Vec::new();
@@ -922,7 +922,6 @@ pub(crate) fn run_scripts_with_filter(
     let event_loop = MiniEventLoopMod::init_global(
         // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
         Some(unsafe { &mut *env_ptr }),
-        None,
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
     // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
@@ -941,7 +940,7 @@ pub(crate) fn run_scripts_with_filter(
             RunCommand::find_shell(
                 // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
                 unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
-                fsinstance.top_level_dir,
+                fsinstance.top_level_dir(),
             )
             .ok_or(crate::Error::MissingShell)?
         }

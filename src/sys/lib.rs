@@ -883,6 +883,29 @@ pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
     Ok(ZStr::from_buf(&buf[..], len))
 }
 
+/// After the OS working directory changed: read it back and record it in
+/// [`bun_core::cwd`]. If it cannot be read, change back to the recorded one
+/// so the process and its record never disagree.
+fn cwd_changed() -> Maybe<()> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    match getcwd(&mut buf[..]) {
+        Ok(len) => {
+            bun_core::cwd::set(&buf[..len]);
+            Ok(())
+        }
+        Err(err) => {
+            let _ = chdir_os(bun_core::cwd::get());
+            Err(err)
+        }
+    }
+}
+
+/// Change the process working directory. [`bun_core::cwd`] follows.
+pub fn chdir(path: &ZStr) -> Maybe<()> {
+    chdir_os(path)?;
+    cwd_changed()
+}
+
 pub mod coreutils_error_map;
 pub(crate) mod libuv_error_map;
 #[path = "SignalCode.rs"]
@@ -3037,14 +3060,15 @@ mod posix_impl {
         let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
         Ok(rc)
     }
-    pub fn chdir(path: &ZStr) -> Maybe<()> {
+    pub(crate) fn chdir_os(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);
         Ok(())
     }
+    /// Change the process working directory to `fd`. [`bun_core::cwd`] follows.
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         check!(safe_libc::fchdir(fd.native()), Tag::fchdir);
-        Ok(())
+        super::cwd_changed()
     }
     pub fn umask(mode: Mode) -> Mode {
         // `Mode` is normalized to u32 across platforms; libc::mode_t is u16 on
@@ -4341,7 +4365,7 @@ mod windows_impl {
         }
         Ok(usize::try_from(new).expect("int cast"))
     }
-    pub fn chdir(path: &ZStr) -> Maybe<()> {
+    pub(crate) fn chdir_os(path: &ZStr) -> Maybe<()> {
         // `SetCurrentDirectoryW(toWDirPath(..))`.
         // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
         // as the drive root, not the drive's saved cwd.

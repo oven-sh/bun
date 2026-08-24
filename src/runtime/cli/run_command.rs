@@ -325,7 +325,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // outlives the call (process-lifetime in `configure_env_for_run`).
             let mini = bun_event_loop::MiniEventLoop::init_global(
                 Some(unsafe { &mut *std::ptr::from_mut::<DotEnv::Loader>(env) }),
-                Some(cwd),
             );
             // SAFETY: `init_global` returns the thread-local singleton as a raw
             // pointer; reborrow `&'static mut` for the
@@ -410,7 +409,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: `env` outlives the mini event loop.
                         Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
                     ),
                 ),
                 ..Default::default()
@@ -625,7 +623,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
@@ -898,17 +896,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
 
-        let top_level_dir: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap_or(b"");
         let mini = bun_event_loop::MiniEventLoop::init_global(
             // SAFETY: `bundle.env` points to the process-lifetime DotEnv
             // singleton (set by `Transpiler::init`).
             Some(unsafe { &mut *bundle.env }),
-            None,
         );
         // SAFETY: `init_global` returns the thread-local singleton; single-
         // threaded mini loop, no aliasing `&mut` exists across this call.
         let mini = unsafe { &mut *mini };
-        mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
         let mut path_buf = PathBuffer::uninit();
@@ -1412,7 +1407,7 @@ impl Run<'_> {
         if entry == b"." {
             // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
             // singleton (set in `Transpiler::init`).
-            let tld = unsafe { (*vm.transpiler.fs).top_level_dir };
+            let tld = unsafe { (*vm.transpiler.fs).top_level_dir() };
             if !tld.is_empty() {
                 entry = tld;
             }
@@ -1879,7 +1874,6 @@ impl RunCommand {
             bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
         let found_node = env_loader
             .load_node_js_config(
-                bun_paths::fs::FileSystem::instance(),
                 if force_using_bun {
                     bun_node_exe.as_bytes()
                 } else {
@@ -2097,7 +2091,6 @@ impl RunCommand {
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: env loader is process-lifetime.
                         Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
                     ),
                 ),
                 ..Default::default()
@@ -2487,7 +2480,7 @@ impl RunCommand {
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
         bun_core::scoped_log!(
             RUN_LOG,
             "Try resolve `{}` in `{}`",
@@ -2504,7 +2497,7 @@ impl RunCommand {
                         .get()
                         .unwrap_or(false);
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
-            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
@@ -2614,7 +2607,7 @@ impl RunCommand {
             let _ = force_using_bun;
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };
-            let top_level_dir = fs.top_level_dir;
+            let top_level_dir = fs.top_level_dir();
             let path = env_loader.get(b"PATH").unwrap_or(b"");
             let mut path_for_which = path;
             if bin_dirs_only {
@@ -3508,7 +3501,7 @@ impl RunCommand {
         this_transpiler.configure_linker();
 
         // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
         let Some(root_dir_info) = this_transpiler
             .resolver
             .read_dir_info(top_level_dir)

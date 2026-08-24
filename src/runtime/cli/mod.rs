@@ -1129,6 +1129,11 @@ pub mod command {
 
         if USES_GLOBAL_OPTIONS[cmd] {
             ctx.args = arguments::parse(cmd, ctx)?;
+        } else {
+            // `arguments::parse` decides per command whether an unreadable
+            // working directory is tolerable; the commands that skip it
+            // (package manager, create, bunx) all write relative to it.
+            bun_core::cwd::init()?;
         }
 
         #[cfg(windows)]

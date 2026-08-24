@@ -916,7 +916,7 @@ impl ServerConfig {
 
                     let root = bb::arena_dupe_z(
                         &arena,
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
+                        bun_core::cwd::get().as_bytes(),
                     );
 
                     // Convert `crate::bake::FileSystemRouterType` (Cow-backed)

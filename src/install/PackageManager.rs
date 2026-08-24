@@ -797,12 +797,8 @@ mod holder {
     pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
-// PORTING.md §Global mutable state: single-thread (main) scratch buffers →
-// RacyCell. `ROOT_PACKAGE_JSON_PATH` is a slice into the buf above it; written
-// once in `init()`, read on main + CLI commands afterwards.
-static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
-    bun_core::RacyCell::new(PathBuffer::ZEROED);
+/// `<cwd>/package.json` once `init()` has changed into the project root;
+/// written once there on the main thread, read on main + CLI commands after.
 pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCell::new(ZStr::EMPTY);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1091,10 +1087,7 @@ fn configure_env_for_scripts_run(
         };
     }
 
-    // The resolver-tier
-    // `FileSystem` mirrors `bun_paths::fs::FileSystem` for `top_level_dir`.
-    let paths_fs = bun_paths::fs::FileSystem::instance();
-    this.env_mut().load_ccache_path(paths_fs);
+    this.env_mut().load_ccache_path();
 
     {
         // Run node-gyp jobs in parallel.
@@ -1115,10 +1108,10 @@ fn configure_env_for_scripts_run(
 
     {
         let mut node_path = PathBuffer::uninit();
-        if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
+        if let Some(node_path_z) = this.env_mut().get_node_path(&mut node_path) {
             let _ = this
                 .env_mut()
-                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
+                .load_node_js_config(node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1131,7 +1124,7 @@ fn configure_env_for_scripts_run(
                     break 'brk;
                 }
                 this.env_mut().map.put(b"PATH", &path_var)?;
-                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                let _ = this.env_mut().load_node_js_config(bun_path)?;
             }
         }
     }
@@ -1495,36 +1488,9 @@ pub fn init(
         bun_sys::fchdir(global_dir)?;
     }
 
-    // Registers the resolver-tier singleton
-    // and seeds `top_level_dir` from `getcwd`.
-    bun_resolver::fs::FileSystem::init(None)?;
+    bun_resolver::fs::FileSystem::init()?;
     let fs = FileSystem::instance();
     let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
-    // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
-    // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.
-    unsafe {
-        let cwd_ptr = CWD_BUF.get().cast::<u8>();
-        #[cfg(windows)]
-        {
-            let _ = bun_paths::path_to_posix_buf::<u8>(
-                top_level_dir_no_trailing_slash,
-                &mut *CWD_BUF.get(),
-            );
-        }
-        #[cfg(not(windows))]
-        {
-            // Avoid memcpy alias when source and dest are the same
-            if cwd_ptr.cast_const() != top_level_dir_no_trailing_slash.as_ptr() {
-                core::ptr::copy_nonoverlapping(
-                    top_level_dir_no_trailing_slash.as_ptr(),
-                    cwd_ptr,
-                    top_level_dir_no_trailing_slash.len(),
-                );
-            }
-        }
-        #[cfg(windows)]
-        let _ = cwd_ptr;
-    }
 
     // Per-cfg const literal, no runtime alloc.
     #[cfg(windows)]
@@ -1562,7 +1528,7 @@ pub fn init(
     //
     // We will walk up from the cwd, trying to find the nearest package.json file.
     let mut no_project = false;
-    let root_package_json_file = 'root_package_json_file: {
+    let (root_dir, root_package_json_file): (&[u8], bun_sys::File) = 'root_package_json_file: {
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
         let child_json: bun_sys::File = 'child: {
@@ -1699,14 +1665,8 @@ pub fn init(
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file.pread_all(&mut json_buf, 0)?;
-                    // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
-                    // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
-                    let json_path = unsafe {
-                        bun_sys::get_fd_path(
-                            json_file.handle,
-                            &mut *ROOT_PACKAGE_JSON_PATH_BUF.get(),
-                        )?
-                    };
+                    let mut json_path_buf = bun_paths::path_buffer_pool::get();
+                    let json_path = bun_sys::get_fd_path(json_file.handle, &mut json_path_buf)?;
                     let json_source =
                         bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
                     initialize_store();
@@ -1807,9 +1767,6 @@ pub fn init(
                             let maybe_workspace_path = child_path;
 
                             if strings::eql_long(maybe_workspace_path, path_, true) {
-                                // Intern via the resolver's DirnameStore so the slice is
-                                // process-lifetime (`set_top_level_dir` requires `'static`).
-                                fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                                 let _ = child_json.close();
                                 #[cfg(windows)]
                                 {
@@ -1817,7 +1774,7 @@ pub fn init(
                                 }
                                 workspace_name_hash =
                                     Some(Semver::string::Builder::string_hash(&entry.name));
-                                break 'root_package_json_file json_file;
+                                break 'root_package_json_file (parent, json_file);
                             }
                         }
 
@@ -1829,13 +1786,12 @@ pub fn init(
             }
         }
 
-        // Intern via DirnameStore so the slice is process-lifetime.
-        fs.set_top_level_dir(fs.dirname_store().append(child_cwd)?);
-        break 'root_package_json_file child_json;
+        break 'root_package_json_file (child_cwd, child_json);
     };
 
-    let top_level_dir_z = ZBox::from_bytes(fs.top_level_dir());
-    bun_sys::chdir(&top_level_dir_z)?;
+    // The project root becomes the working directory; `fs.top_level_dir()`
+    // and every path below derive from it.
+    bun_sys::chdir(&ZBox::from_bytes(root_dir))?;
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
     // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
@@ -1844,30 +1800,18 @@ pub fn init(
         cli.config,
         ctx,
     )?;
-    // SAFETY: main-thread global
-    unsafe {
-        let tld = fs.top_level_dir();
-        let cwd = &mut *CWD_BUF.get();
-        cwd[..tld.len()].copy_from_slice(tld);
-        cwd[tld.len()] = 0;
-        // Route through the FsVTable setter so the resolver's cached cwd is
-        // rebound to the process-lifetime CWD_BUF (it was a transient slice
-        // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
-        // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
-        fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // bun_sys exposes the non-Z `get_fd_path`;
-        // append the NUL ourselves so the static `&ZStr` invariant holds.
-        let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let plen = if no_project {
-            // Where the file would be; nothing reads it in this mode.
-            let p = original_package_json_path.as_bytes();
-            root_buf[..p.len()].copy_from_slice(p);
-            p.len()
-        } else {
-            bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
-        };
-        root_buf[plen] = 0;
-        ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
+    {
+        let root_package_json_path: &'static [u8] = Box::leak(
+            ZBox::from_bytes(resolve_path::join_abs_string::<resolve_path::platform::Auto>(
+                fs.top_level_dir(),
+                &[b"package.json"],
+            ))
+            .into_boxed_slice_with_nul(),
+        );
+        // SAFETY: main-thread global, written once here before any reader.
+        unsafe {
+            ROOT_PACKAGE_JSON_PATH.write(ZStr::from_slice_with_nul(root_package_json_path));
+        }
     }
 
     // Returns the resolver's BSSMap-owned
@@ -2168,7 +2112,7 @@ pub fn init(
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
         // separators before hashing; `FolderResolution.hash` is always fed `/`-separated
-        // bytes by every resolver-side caller. On Windows `get_fd_path` yields `\`, so
+        // bytes by every resolver-side caller. On Windows the path uses `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.

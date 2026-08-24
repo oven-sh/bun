@@ -1656,7 +1656,7 @@ impl<'a> Printer<'a> {
         // Bootstrap the resolver FS singleton. `Printer::print` is an entry
         // point (`bun bun.lockb`), so
         // the singleton may not exist yet.
-        let _ = FileSystem::init(None)?;
+        let _ = FileSystem::init()?;
 
         let mut lockfile = Box::<Lockfile>::default();
 
@@ -1728,7 +1728,7 @@ impl<'a> Printer<'a> {
 
         // Capture the `'static` cwd slice
         // before borrowing `fs.fs` mutably.
-        let top_level_dir = fs.top_level_dir;
+        let top_level_dir = fs.top_level_dir();
         // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
         // with the `&mut self` borrow `read_directory` took.
         let entries_option: *const Fs::EntriesOption =

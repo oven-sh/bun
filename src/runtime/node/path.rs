@@ -286,7 +286,7 @@ fn without_trailing_slash(s: &[u8]) -> &[u8] {
 }
 
 pub(crate) fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
-    let cached_cwd = without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir());
+    let cached_cwd = without_trailing_slash(bun_core::cwd::get().as_bytes());
     buf[0..cached_cwd.len()].copy_from_slice(cached_cwd);
     Ok(&mut buf[0..cached_cwd.len()])
 }
@@ -294,7 +294,7 @@ pub(crate) fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
 fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
     let result = strings::convert_utf8_to_utf16_in_buffer(
         buf,
-        without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir()),
+        without_trailing_slash(bun_core::cwd::get().as_bytes()),
     );
     Ok(result)
 }

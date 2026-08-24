@@ -15,34 +15,6 @@ use crate::debug_allocator_data;
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Process-wide top-level directory (cwd at startup). Storage lives at T0 so
-// `bun_sys::File::read_from_user_input` reads it directly; the resolver's
-// `FileSystem::init` writes it once via `set_top_level_dir`.
-// ──────────────────────────────────────────────────────────────────────────
-
-// Stored behind a `RwLock<&'static [u8]>` rather than a split (AtomicPtr,
-// AtomicUsize) pair: `install::PackageManager` calls `fs.set_top_level_dir()`
-// during workspace discovery (potentially after worker threads exist), so a
-// reader could otherwise observe an OLD len with a NEW ptr (or vice-versa) and
-// build an out-of-bounds `from_raw_parts`. The read path is cold (display /
-// path-relative formatting) so one uncontended read-lock is cheaper than a UB
-// window; writes are rare and serial.
-static TOP_LEVEL_DIR: crate::RwLock<&'static [u8]> = crate::RwLock::new(b".");
-
-/// Record the top-level directory (interned `'static` slice). Idempotent;
-/// later calls overwrite. Called from `FileSystem::init` / `set_top_level_dir`.
-#[inline]
-pub fn set_top_level_dir(dir: &'static [u8]) {
-    *TOP_LEVEL_DIR.write() = dir;
-}
-
-/// Top-level directory recorded at startup (defaults to `"."`).
-#[inline]
-pub fn top_level_dir() -> &'static [u8] {
-    *TOP_LEVEL_DIR.read()
-}
-
 /// Set by `bun_crash_handler::init()` once it has installed its segfault
 /// handlers. `raise_ignoring_panic_handler` consults this to decide whether
 /// the crash signals need resetting to `SIG_DFL` before re-raising.

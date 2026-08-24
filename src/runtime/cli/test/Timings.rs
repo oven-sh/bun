@@ -109,7 +109,7 @@ impl Timings {
     }
 
     fn key_for(abs_path: &[u8]) -> Vec<u8> {
-        let rel = bun_paths::resolve_path::relative(FileSystem::get().top_level_dir, abs_path);
+        let rel = bun_paths::resolve_path::relative(FileSystem::get().top_level_dir(), abs_path);
         let mut key = rel.to_vec();
         if cfg!(windows) {
             bun_paths::resolve_path::platform_to_posix_in_place(&mut key[..]);

@@ -425,6 +425,30 @@ devTest("require of a throwing ESM module throws again on retry", {
     await c.expectMessage("boom boom");
   },
 });
+devTest("dynamic import with a throwing dependency rejects again on retry", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "dep.cts": `
+      throw new Error("dep-boom");
+    `,
+    "parent.ts": `
+      import './dep.cts';
+      export const x = 1;
+    `,
+    "index.ts": `
+      let first, second;
+      try { await import('./parent'); } catch (e) { first = e.message; }
+      try { await import('./parent'); } catch (e) { second = e.message; }
+      console.log(first + " " + second);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("dep-boom dep-boom");
+  },
+});
 devTest("dynamic import of a throwing top-level-await module rejects again on retry", {
   files: {
     "index.html": emptyHtmlFile({

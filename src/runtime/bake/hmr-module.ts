@@ -479,7 +479,15 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (selfIsAsync) {
       // Top-level await keeps the one-phase form: an async load function,
       // because a generator cannot suspend on `await`.
-      const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
+      let list: (HMRModule | Promise<HMRModule>)[];
+      let isAsync: boolean;
+      try {
+        ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
+      } catch (e) {
+        mod.state = State.Error;
+        mod.failure = e;
+        throw e;
+      }
       DEBUG.ASSERT(
         isAsync //
           ? list.some(x => x instanceof Promise)
@@ -508,18 +516,20 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     // Two-phase load. See the comment in `loadModuleSync`.
     let gen: ModuleLoadGenerator;
     let lateStars: Id[] | null;
+    let list: (HMRModule | Promise<HMRModule>)[];
+    let isAsync: boolean;
     try {
       gen = load(mod) as ModuleLoadGenerator;
       const exportsBefore = mod.exports;
       gen.next();
       if (mod.exports === exportsBefore) mod.exports = {};
       lateStars = mergeStarExports(mod, stars);
+      ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
     } catch (e) {
       mod.state = State.Error;
       mod.failure = e;
       throw e;
     }
-    const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
     DEBUG.ASSERT(
       isAsync //
         ? list.some(x => x instanceof Promise)

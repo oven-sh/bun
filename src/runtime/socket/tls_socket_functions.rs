@@ -1316,12 +1316,6 @@ extern "C" fn always_allow_ssl_verify_callback(
 #[inline(never)]
 fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue {
     let mut message = EncodedSlice::EMPTY;
-    // Backing storage for the formatted "OpenSSL ..." message. Declared at
-    // function scope so it outlives `to_error_instance` below. The string is
-    // tagged UTF-8 (`EncodedSlice::utf8`) so that `to_error_instance` takes the copying
-    // path (`fromUTF8ReplacingInvalidSequences`); an UNTAGGED EncodedSlice would
-    // be wrapped with `StringImpl::createWithoutCopying` and the JS Error's
-    // message would dangle into this freed Vec.
     let mut formatted: Vec<u8> = Vec::new();
     let mut output_buf: [u8; 4096] = [0; 4096];
 
@@ -1380,11 +1374,6 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
             use std::io::Write;
             let _ = write!(&mut formatted, "OpenSSL {}", ::bstr::BStr::new(text));
         }
-        // `message` borrows `formatted`, which lives until this function
-        // returns. The UTF-8 tag is what makes `to_error_instance` clone the
-        // bytes (untagged strings are wrapped without copying — see
-        // Zig::toString in src/jsc/bindings/helpers.h), matching the
-        // "Ensure we clone it" pattern in JSGlobalObject::create_error_instance.
         message = EncodedSlice::utf8(&formatted);
 
         // We shouldn't *need* to do this but it's not entirely clear.
@@ -1395,10 +1384,6 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         message = EncodedSlice::latin1(default_message);
     }
 
-    // store the exception in here
-    // (UTF-8-tagged strings are cloned by toErrorInstance; the untagged
-    // `default_message` fallback is wrapped without copying, which is safe
-    // because callers pass static literals)
     let exception = message.to_error_instance(global);
 
     // reference it in stack memory

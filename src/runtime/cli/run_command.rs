@@ -3998,6 +3998,62 @@ impl BunXFastPath {
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }
 
+    /// The POSIX equivalent of this fast path execs the bin through the temp
+    /// `node` shim, so the child process carries no bun/bunx CLI flags in
+    /// argv and `process.execPath` resolves (through the shim symlink) to
+    /// `bun`. The in-process launch keeps the original argv
+    /// (`bunx --bun --no-install <pkg>`): the `process.execArgv` re-parse
+    /// would report the bunx CLI flags as runtime flags, and when invoked as
+    /// `bunx.exe` a `child_process.fork` child would re-enter bunx CLI mode
+    /// (#40298). Rewrite the global argv to the `bun <script> <args>` shape
+    /// and point `process.execPath` at the sibling `bun.exe` before the VM
+    /// boots.
+    fn assume_runtime_identity(script_path: &[u8], passthrough: &[Box<[u8]>]) {
+        fn leak_zstr(bytes: &[u8]) -> &'static ZStr {
+            let mut v = Vec::with_capacity(bytes.len() + 1);
+            v.extend_from_slice(bytes);
+            v.push(0);
+            ZStr::from_slice_with_nul(v.leak())
+        }
+
+        let self_exe: Option<&'static ZStr> = core::self_exe_path().ok();
+
+        if let Some(self_exe) = self_exe {
+            let bytes = self_exe.as_bytes();
+            if strings::eql_case_insensitive_ascii_check_length(
+                paths::basename(bytes),
+                b"bunx.exe",
+            ) {
+                if let Some(dir) = paths::dirname(bytes) {
+                    let mut sibling = Vec::with_capacity(dir.len() + b"\\bun.exe".len());
+                    sibling.extend_from_slice(dir);
+                    sibling.extend_from_slice(b"\\bun.exe");
+                    if sys::exists(&sibling) {
+                        let _ = cli::Bun__Node__ExecPathOverride.set(sibling.into_boxed_slice());
+                    }
+                }
+            }
+        }
+
+        let argv0: &'static ZStr = match cli::Bun__Node__ExecPathOverride.get() {
+            Some(path) => leak_zstr(path),
+            None => match self_exe {
+                Some(z) => z,
+                None => core::argv().get(0).unwrap_or(core::zstr!("bun")),
+            },
+        };
+
+        let mut new_argv: Vec<&'static ZStr> = Vec::with_capacity(2 + passthrough.len());
+        new_argv.push(argv0);
+        new_argv.push(leak_zstr(script_path));
+        for arg in passthrough {
+            new_argv.push(leak_zstr(arg));
+        }
+        // SAFETY: single-threaded CLI dispatch, before the VM boots; no
+        // concurrent `argv()` readers exist yet.
+        unsafe { core::set_argv(core::intern_argv(new_argv)) };
+    }
+
     fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         // `try_launch` (still on the call stack) holds live `&mut [u16]`
@@ -4014,6 +4070,7 @@ impl BunXFastPath {
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
+        Self::assume_runtime_identity(utf8, &ctx.passthrough);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));

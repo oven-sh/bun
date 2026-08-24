@@ -26,13 +26,23 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
     EncodedSlice::from_bytes(argv0).to_js(global_object)
 }
 
+/// `process.execPath` bytes: the CLI-set override (the Windows bunx fast
+/// path boots the bin script inside `bunx.exe`, whose own path cannot be
+/// re-spawned as a runtime) or the resolved executable path.
+pub(crate) fn exec_path_bytes() -> Option<&'static [u8]> {
+    if let Some(path) = crate::cli::Bun__Node__ExecPathOverride.get() {
+        return Some(path);
+    }
+    bun_core::self_exe_path().ok().map(|z| z.as_bytes())
+}
+
 #[unsafe(export_name = "Bun__Process__getExecPath")]
 extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
-    let Ok(out) = bun_core::self_exe_path() else {
+    let Some(out) = exec_path_bytes() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
     };
-    EncodedSlice::from_bytes(out.as_bytes()).to_js(global_object)
+    EncodedSlice::from_bytes(out).to_js(global_object)
 }
 
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
@@ -359,9 +369,8 @@ mod _impl {
             // Even if they didn't type "bun", we still want to add it as argv[0]
             args_list.push(BunString::static_("bun"));
         } else {
-            let exe_path = bun_core::self_exe_path().ok();
-            args_list.push(match exe_path {
-                Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
+            args_list.push(match super::exec_path_bytes() {
+                Some(bytes) => BunString::borrow_utf8(bytes),
                 None => BunString::static_("bun"),
             });
         }

@@ -2295,10 +2295,13 @@ private:
             return m_identifier;
         }
 
-        JSValue jsString(JSGlobalObject* lexicalGlobalObject)
+        JSValue jsString(CloneDeserializer& deserializer)
         {
-            if (!m_jsString)
-                m_jsString = JSC::jsString(lexicalGlobalObject->vm(), m_string);
+            if (!m_jsString) {
+                m_jsString = JSC::jsString(deserializer.m_lexicalGlobalObject->vm(), m_string);
+                // m_constantPool is not scanned by the GC.
+                deserializer.m_gcBuffer.appendWithCrashOnOverflow(m_jsString);
+            }
             return m_jsString;
         }
         const String& string() { return m_string; }
@@ -3640,7 +3643,7 @@ private:
             CachedStringRef cachedString;
             if (!readStringData(cachedString))
                 return JSValue();
-            return cachedString->jsString(m_lexicalGlobalObject);
+            return cachedString->jsString(*this);
         }
         case EmptyStringTag:
             return jsEmptyString(m_lexicalGlobalObject->vm());
@@ -3648,7 +3651,7 @@ private:
             CachedStringRef cachedString;
             if (!readStringData(cachedString))
                 return JSValue();
-            StringObject* obj = constructString(m_lexicalGlobalObject->vm(), m_globalObject, cachedString->jsString(m_lexicalGlobalObject));
+            StringObject* obj = constructString(m_lexicalGlobalObject->vm(), m_globalObject, cachedString->jsString(*this));
             addToObjectPool(obj);
             return obj;
         }

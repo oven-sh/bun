@@ -53,10 +53,11 @@ test.concurrent("issue #29286: --bytecode --format=esm --outdir emits .jsc sidec
   expect(readFileSync(jscPath).byteLength).toBeGreaterThan(0);
 
   // End-to-end: running the bundle must work with top-level await,
-  // loading the .jsc sidecar bytecode.
+  // loading the .jsc sidecar bytecode. Bytecode fails open (a broken
+  // sidecar falls back to parsing source), so assert the cache hit.
   await using run = Bun.spawn({
     cmd: [bunExe(), jsPath],
-    env: bunEnv,
+    env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
@@ -64,9 +65,9 @@ test.concurrent("issue #29286: --bytecode --format=esm --outdir emits .jsc sidec
 
   const [runStdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
 
-  expect({ stdout: runStdout.trim(), stderr: runStderr, exitCode: runExit }).toEqual({
+  expect(runStderr).toMatch(/\[Disk Cache\].*Cache hit/i);
+  expect({ stdout: runStdout.trim(), exitCode: runExit }).toEqual({
     stdout: "Server starting on port 3000",
-    stderr: expect.any(String),
     exitCode: 0,
   });
 });
@@ -155,18 +156,19 @@ test.concurrent("issue #29286: shared ESM bytecode chunk loads and runs", async 
   expect(sharedJsc).toBeDefined();
 
   // Running the entry loads the shared chunk's .jsc sidecar at runtime.
+  // Bytecode fails open, so assert the cache hit.
   await using run = Bun.spawn({
     cmd: [bunExe(), join(distDir, "a.js")],
-    env: bunEnv,
+    env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
   });
 
   const [runStdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  expect({ stdout: runStdout.trim(), stderr: runStderr, exitCode: runExit }).toEqual({
+  expect(runStderr).toMatch(/\[Disk Cache\].*Cache hit/i);
+  expect({ stdout: runStdout.trim(), exitCode: runExit }).toEqual({
     stdout: "a: 42",
-    stderr: expect.any(String),
     exitCode: 0,
   });
 });

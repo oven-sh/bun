@@ -12,6 +12,8 @@
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/ProxyConstructorInlines.h>
+#include <JavaScriptCore/Symbol.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
@@ -1173,8 +1175,14 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
 
             auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
 
+            // A LazyProperty initializer cannot throw, so the builtin must not
+            // read user-writable globals like `Proxy` or `Symbol`.
+            JSC::MarkedArgumentBuffer args;
+            args.append(JSC::ProxyConstructor::create(vm, JSC::ProxyConstructor::createStructure(vm, globalObject, globalObject->functionPrototype())));
+            args.append(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
+
             NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
+            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, args, returnedException);
             ASSERT(!returnedException);
             init.set(result.toObject(globalObject));
         });

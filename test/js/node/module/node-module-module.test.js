@@ -832,6 +832,25 @@ console.log("survived", require("./late.js"));`,
       delete require.cache["util/types"];
     }
   });
+  test("require.cache does not depend on user-writable globals", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Proxy, Map, Symbol } = globalThis;
+globalThis.Proxy = globalThis.Map = globalThis.Symbol = undefined;
+const cache = require.cache;
+Object.assign(globalThis, { Proxy, Map, Symbol });
+console.log(Object.getPrototypeOf(cache), cache === require("node:module")._cache, Object.keys(cache).length, Bun.inspect(cache).includes("[eval]"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("null true 1 true\n");
+    expect(exitCode).toBe(0);
+  });
   test("require a cjs file uses the 'module.exports' export", () => {
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });

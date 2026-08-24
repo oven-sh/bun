@@ -73,7 +73,24 @@
 #include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
+#include "JavaScriptCore/ArrayConstructor.h"
+#include "JavaScriptCore/BigIntConstructor.h"
+#include "JavaScriptCore/BooleanConstructor.h"
+#include "JavaScriptCore/DateConstructor.h"
+#include "JavaScriptCore/ErrorConstructor.h"
+#include "JavaScriptCore/JSArrayBufferConstructor.h"
+#include "JavaScriptCore/JSTypedArrayConstructors.h"
+#include "JavaScriptCore/MapConstructor.h"
+#include "JavaScriptCore/NumberConstructor.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/ObjectPrototypeInlines.h"
+#include "JavaScriptCore/RegExpConstructor.h"
+#include "JavaScriptCore/SetConstructor.h"
+#include "JavaScriptCore/StringConstructor.h"
+#include "JavaScriptCore/SymbolConstructor.h"
+#include "JavaScriptCore/WeakMapConstructor.h"
+#include "JavaScriptCore/WeakSetConstructor.h"
+#include "JSBuffer.h"
 #include "JavaScriptCore/ParserError.h"
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/StackFrame.h"
@@ -735,6 +752,48 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     return true;
 }
 
+// node's wellKnownConstructors set (lib/internal/util/comparisons.js), matched for any realm.
+static bool isWellKnownConstructor(JSValue value)
+{
+    if (!value.isCell())
+        return false;
+    JSCell* cell = value.asCell();
+    if (cell->type() != InternalFunctionType && cell->type() != JSFunctionType)
+        return false;
+    const ClassInfo* info = cell->classInfo();
+    return info == JSC::ObjectConstructor::info()
+        || info == JSC::ArrayConstructor::info()
+        || info == JSC::FunctionConstructor::info()
+        || info == JSC::RegExpConstructor::info()
+        || info == JSC::JSPromiseConstructor::info()
+        || info == JSC::StringConstructor::info()
+        || info == JSC::SymbolConstructor::info()
+        || info == JSC::BigIntConstructor::info()
+        || info == JSC::BooleanConstructor::info()
+        || info == JSC::NumberConstructor::info()
+        || info == JSC::DateConstructor::info()
+        || info == JSC::ErrorConstructor::info()
+        || info == JSC::MapConstructor::info()
+        || info == JSC::SetConstructor::info()
+        || info == JSC::WeakMapConstructor::info()
+        || info == JSC::WeakSetConstructor::info()
+        || info == JSC::JSArrayBufferConstructor::info()
+        || info == JSC::JSInt8ArrayConstructor::info()
+        || info == JSC::JSInt16ArrayConstructor::info()
+        || info == JSC::JSInt32ArrayConstructor::info()
+        || info == JSC::JSUint8ArrayConstructor::info()
+        || info == JSC::JSUint8ClampedArrayConstructor::info()
+        || info == JSC::JSUint16ArrayConstructor::info()
+        || info == JSC::JSUint32ArrayConstructor::info()
+        || info == JSC::JSFloat16ArrayConstructor::info()
+        || info == JSC::JSFloat32ArrayConstructor::info()
+        || info == JSC::JSFloat64ArrayConstructor::info()
+        || info == JSC::JSBigInt64ArrayConstructor::info()
+        || info == JSC::JSBigUint64ArrayConstructor::info()
+        || info == JSC::JSDataViewConstructor::info()
+        || info == WebCore::JSBufferConstructor::info();
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
@@ -815,19 +874,63 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     ASSERT(c1);
     ASSERT(c2);
 
-    // Node's deepStrictEqual compares [[Prototype]]s with ===. Only the
-    // node:assert/node:util entry point does this; Bun.deepEquals and
-    // expect() keep their prototype-blind semantics.
-    if constexpr (checkPrototypes && !skipPrototypeIdentity) {
+    // node's objectComparisonStart (lib/internal/util/comparisons.js): the constructor /
+    // [[Prototype]] rule in strict mode, then equal Object.prototype.toString tags in every mode.
+    if constexpr (checkPrototypes) {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
         if (protoCheck1 && protoCheck2) {
-            JSValue proto1 = protoCheck1->getPrototype(globalObject);
+            if constexpr (!skipPrototypeIdentity) {
+                const auto& constructorName = vm.propertyNames->constructor;
+                PropertySlot slot1(protoCheck1, PropertySlot::InternalMethodType::Get);
+                bool hasConstructor1 = protoCheck1->getPropertySlot(globalObject, constructorName, slot1);
+                RETURN_IF_EXCEPTION(scope, false);
+                JSValue constructor1 = hasConstructor1 ? slot1.getValue(globalObject, constructorName) : jsUndefined();
+                RETURN_IF_EXCEPTION(scope, false);
+                bool compareConstructors = isWellKnownConstructor(constructor1);
+                if (!compareConstructors && !constructor1.isUndefined()) {
+                    if (slot1.isTaintedByOpaqueObject()) {
+                        PropertySlot ownSlot(protoCheck1, PropertySlot::InternalMethodType::GetOwnProperty);
+                        bool hasOwnConstructor = protoCheck1->methodTable()->getOwnPropertySlot(protoCheck1, globalObject, constructorName, ownSlot);
+                        RETURN_IF_EXCEPTION(scope, false);
+                        compareConstructors = !hasOwnConstructor;
+                    } else {
+                        compareConstructors = slot1.slotBase() != protoCheck1;
+                    }
+                }
+                if (compareConstructors) {
+                    // Same mono-proto structure means the same prototype chain, so a data slot found on it is val2.constructor too.
+                    bool inheritedFromSharedChain = slot1.isCacheableValue() && slot1.slotBase() != protoCheck1
+                        && protoCheck1->structureID() == protoCheck2->structureID() && !protoCheck1->structure()->hasPolyProto();
+                    if (!inheritedFromSharedChain) {
+                        JSValue constructor2 = protoCheck2->get(globalObject, constructorName);
+                        RETURN_IF_EXCEPTION(scope, false);
+                        bool sameConstructor = JSC::JSValue::strictEqual(globalObject, constructor1, constructor2);
+                        RETURN_IF_EXCEPTION(scope, false);
+                        if (!sameConstructor) {
+                            return false;
+                        }
+                    }
+                } else {
+                    JSValue proto1 = protoCheck1->getPrototype(globalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    JSValue proto2 = protoCheck2->getPrototype(globalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (proto1 != proto2) {
+                        return false;
+                    }
+                }
+            }
+            JSString* tag1 = objectPrototypeToString(globalObject, protoCheck1);
             RETURN_IF_EXCEPTION(scope, false);
-            JSValue proto2 = protoCheck2->getPrototype(globalObject);
+            JSString* tag2 = objectPrototypeToString(globalObject, protoCheck2);
             RETURN_IF_EXCEPTION(scope, false);
-            if (proto1 != proto2) {
-                return false;
+            if (tag1 != tag2) {
+                bool sameTag = tag1->equal(globalObject, tag2);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!sameTag) {
+                    return false;
+                }
             }
         }
     }
@@ -952,7 +1055,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
-    if constexpr (isStrict && !skipPrototypeIdentity) {
+    if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
@@ -1625,7 +1728,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
         }
 
-        if (!mode.skipPrototypeIdentity) {
+        if (!mode.checkPrototypes && !mode.skipPrototypeIdentity) {
             if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
                 return false;
             }

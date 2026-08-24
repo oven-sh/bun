@@ -22,7 +22,5 @@ test("new Worker works after globalThis.MessagePort is replaced", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("hi\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "hi\n", stderr: "", exitCode: 0 });
 });

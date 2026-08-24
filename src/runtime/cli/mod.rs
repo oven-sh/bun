@@ -1198,17 +1198,16 @@ pub mod command {
             }
         }
 
-        // Fast path: `bun -v` / `bun --version` / `bun --revision`, the
-        // empty-eval forms `bun -e ''` / `bun -p ''` (and the `--eval=` /
-        // `--print=` spellings), and the dominant `bun <path>` / `bun .` run
-        // shape. Hoisted ABOVE `which()` and the per-tag `match` so these
-        // common invocations never decode the subcommand-name classifier
-        // (`which()` + its `RootCommandMatcher` name table / rodata) or walk
-        // the per-tag dispatch `match`. `bun --version` also skips
-        // `create_context_data` entirely (`arguments::parse` builds-and-drops
-        // a full `api::TransformOptions` and forces two `LazyLock`s for what
-        // is a no-op). Keeps `command::which`'s code/rodata and `arguments`'s
-        // clap tables out of the `--version` / `bun <file>` working set.
+        // Fast path: `bun -v` / `bun --version` / `bun --revision` and the
+        // dominant `bun <path>` / `bun .` run shape. Hoisted ABOVE `which()`
+        // and the per-tag `match` so these common invocations never decode
+        // the subcommand-name classifier (`which()` + its `RootCommandMatcher`
+        // name table / rodata) or walk the per-tag dispatch `match`.
+        // `bun --version` also skips `create_context_data` entirely
+        // (`arguments::parse` builds-and-drops a full `api::TransformOptions`
+        // and forces two `LazyLock`s for what is a no-op). Keeps
+        // `command::which`'s code/rodata and `arguments`'s clap tables out of
+        // the `--version` / `bun <file>` working set.
         //
         // Correctness guards:
         //  * argv0 must be a plain `bun` invocation — a `node` / `bunx` shim
@@ -1217,13 +1216,12 @@ pub mod command {
         //    the *predicates* are read here; `which()` performs the matching
         //    `PRETEND_TO_BE_NODE` / `IS_BUNX_EXE` side effects.
         //  * the standalone-graph probe above already ran, so a compiled
-        //    executable's `--version` / `-e ''` is still passed through to
-        //    user code (it returned via `boot_standalone`).
+        //    executable's `--version` is still passed through to user code
+        //    (it returned via `boot_standalone`).
         //  * the version check is exact-argv-shape (`len == 2`) so it cannot
         //    intercept `bun <bin> --version`, where the flag belongs to
         //    `<bin>` (the bug the old argv-scan shim had — see the
-        //    NOTE below). The empty-eval check is likewise exact-shape, falling
-        //    through to `HelpCommand.exec`.
+        //    NOTE below).
         {
             let argv = bun::argv();
             let argv0 = argv.get(0).map(bun_core::ZStr::as_bytes).unwrap_or(b"");
@@ -1234,25 +1232,6 @@ pub mod command {
                         Some(b"--revision") => print_revision_and_exit(),
                         _ => {}
                     }
-                }
-
-                let empty_eval = match argv.len() {
-                    2 => matches!(
-                        argv.get(1).map(bun_core::ZStr::as_bytes),
-                        Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
-                    ),
-                    3 => {
-                        argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
-                            && matches!(
-                                argv.get(1).map(bun_core::ZStr::as_bytes),
-                                Some(b"-e" | b"-p" | b"--eval" | b"--print")
-                            )
-                    }
-                    _ => false,
-                };
-                if empty_eval {
-                    Output::flush();
-                    return HelpCommand::exec();
                 }
 
                 // `bun <path>` / `bun .` — the dominant run shape. argv[1] is
@@ -1460,7 +1439,7 @@ pub mod command {
             }
         }
 
-        if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
+        if tag == Tag::AutoCommand && ctx.runtime_options.eval.script.is_some() {
             return run_command::RunCommand::exec_eval(ctx);
         }
 

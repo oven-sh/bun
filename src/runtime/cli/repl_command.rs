@@ -141,16 +141,14 @@ impl ReplCommand {
             repl,
             vm,
             arena,
-            // ctx is the process-global ContextData; extend the borrow past the
-            // local reborrow lifetime via raw ptr (the runner never outlives
-            // ctx — global_exit() is `!`).
-            eval_script: {
-                let ptr: *const [u8] = &raw const *ctx.runtime_options.eval.script;
-                // SAFETY: ctx.runtime_options.eval.script lives in the process-global
-                // ContextData; the raw-ptr reborrow is sound because the runner never
-                // outlives it — hold_api_lock returns into global_exit() (`!`).
-                unsafe { &*ptr }
-            },
+            // The runner never returns (hold_api_lock ends in global_exit()),
+            // so the script can simply be leaked for the process lifetime.
+            eval_script: ctx
+                .runtime_options
+                .eval
+                .script
+                .take()
+                .map(|script| &*Box::leak(script)),
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
         // vm.arena stores a *mut Arena pointing at runner.arena;
@@ -202,7 +200,8 @@ struct ReplRunner<'a, 'r> {
     repl: &'a mut Repl<'r>,
     vm: *mut VirtualMachine,
     arena: Arena,
-    eval_script: &'a [u8],
+    /// `-e`/`-p` script; `None` runs the interactive loop instead.
+    eval_script: Option<&'a [u8]>,
     eval_and_print: bool,
 }
 
@@ -222,10 +221,10 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             vm.global_exit();
         }
 
-        if !this.eval_script.is_empty() || this.eval_and_print {
+        if let Some(eval_script) = this.eval_script {
             // Non-interactive: evaluate the -e/--eval or -p/--print script,
             // drain the event loop, and exit
-            let had_error = this.repl.eval_script(this.eval_script, this.eval_and_print);
+            let had_error = this.repl.eval_script(eval_script, this.eval_and_print);
             Output::flush();
             if had_error {
                 // Only overwrite on error so `process.exitCode = N` in the

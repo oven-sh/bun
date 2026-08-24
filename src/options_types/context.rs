@@ -564,7 +564,10 @@ pub struct RuntimeOptions {
 
 #[derive(Default)]
 pub struct Eval {
-    pub script: Box<[u8]>,
+    /// The `-e`/`-p` argument, or the bytes read from stdin for `bun -`.
+    /// `None` when neither was given; `Some` even when the script is empty,
+    /// since `bun -e ""` runs an empty program like `node -e ""` does.
+    pub script: Option<Box<[u8]>>,
     pub eval_and_print: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them

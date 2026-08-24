@@ -108,6 +108,64 @@ for (const flag of ["-e", "--print"]) {
   });
 }
 
+// `node -e ""` and `node -p ""` run an empty program. Bun used to treat an
+// empty script the same as no script at all and printed the help text instead.
+describe.concurrent("empty script", () => {
+  async function runBun(args: string[], options: { cwd?: string; stdin?: Buffer } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: options.cwd,
+      stdin: options.stdin ?? "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    [["-e", ""], ""],
+    [["--eval", ""], ""],
+    [["-e="], ""],
+    [["--eval="], ""],
+    [["-p", ""], "undefined\n"],
+    [["--print", ""], "undefined\n"],
+    [["-p="], "undefined\n"],
+    [["--print="], "undefined\n"],
+    [["-pe", ""], "undefined\n"],
+  ])("bun %j runs an empty program instead of printing help", async (args, expectedStdout) => {
+    expect(await runBun(args)).toEqual({ stdout: expectedStdout, stderr: "", exitCode: 0 });
+  });
+
+  test.each(["-e", "-p"])(
+    "bun %s '' still runs preloads and keeps the remaining arguments as process.argv",
+    async flag => {
+      using dir = tempDir("empty-eval", {
+        "preload.js": `console.log(JSON.stringify({ _eval: typeof process._eval, argv: process.argv.slice(1) }));`,
+      });
+      // Without the fix, "abc" is looked up as a script to run instead.
+      const { stdout, stderr, exitCode } = await runBun(["-r", "./preload.js", flag, "", "abc", "def"], {
+        cwd: String(dir),
+      });
+      expect(stderr).toBe("");
+      const [preloadLine, ...rest] = stdout.split("\n");
+      // Like node, process._eval is only defined for a non-empty script.
+      expect(JSON.parse(preloadLine)).toEqual({ _eval: "undefined", argv: ["abc", "def"] });
+      expect(rest.join("\n")).toBe(flag === "-p" ? "undefined\n" : "");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.each([
+    ["bun -", ["-"]],
+    ["bun run -", ["run", "-"]],
+  ])("%s with empty stdin runs an empty program", async (_, args) => {
+    // Without the fix this fails with "Module not found '<cwd>/[stdin]'".
+    expect(await runBun(args, { stdin: Buffer.alloc(0) })).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("--print for cjs/esm", () => {
   test("eval result between esm imports", async () => {
     let cwd = tmpdirSync();

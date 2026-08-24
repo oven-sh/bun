@@ -43,10 +43,17 @@ static BunLoopKind loopKindOf(Ticket& ticket)
     return static_cast<BunLoopKind>(ticket.embedderData() & loopKindMask);
 }
 
-static void releaseEventLoopRef(WebCore::JSVMClientData* clientData, Ticket& ticket)
+static bool tookEventLoopRef(Ticket& ticket)
 {
-    if (ticket.embedderData() & holdsEventLoopRef)
-        Bun__VmHandle__refKeepAlive(clientData->vmHandle, BunLoopKind::Regular, -1);
+    return ticket.embedderData() & holdsEventLoopRef;
+}
+
+// VM thread only: the ref goes back the way onAddPendingWork took it, so it
+// lands whatever state the VM handle is in. Other threads go through the handle.
+static void releaseEventLoopRefOnVMThread(WebCore::JSVMClientData* clientData, Ticket& ticket)
+{
+    if (tookEventLoopRef(ticket))
+        Bun__eventLoop__refKeepAlive(clientData->bunVM, -1);
 }
 
 void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ticket& ticket)
@@ -64,7 +71,8 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Tic
 // The ticket stops being pending here or in runPendingWork, never both.
 void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket& ticket)
 {
-    releaseEventLoopRef(clientData, ticket);
+    if (tookEventLoopRef(ticket))
+        Bun__VmHandle__refKeepAlive(clientData->vmHandle, BunLoopKind::Regular, -1);
 }
 
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, Task&& task)
@@ -89,7 +97,7 @@ static void runPendingWork(JSCDeferredWorkTask* job)
     // False once a collection found the ticket's realm dead, or once an earlier job
     // for the same ticket ran. Nothing the ticket points at may be read then.
     if (vm.deferredWorkTimer->takePendingWork(ticket)) {
-        releaseEventLoopRef(clientData, ticket);
+        releaseEventLoopRefOnVMThread(clientData, ticket);
 
         // Deferred work runs script (FinalizationRegistry callbacks, wasm
         // completions); not once the VM's stop was requested. Like any other
@@ -115,16 +123,16 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 }
 
 // Release a queued job unrun during the teardown, on the VM's thread while the
-// JSC VM is alive and the VM handle still takes refs. The job is consumed like a
-// run one: the ticket leaves the pending set and gives its event loop ref back
-// here, where the ref still lands. Left for ~JSGlobalObject, the release would
-// come after the handle closed and be dropped.
+// JSC VM and its event loop are alive. The job is consumed like a run one: the
+// ticket leaves the pending set and gives its event loop ref back. The VM handle
+// may already be closed here (the last pass after Closed), which is why the ref
+// does not go through it.
 extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
 {
     auto* clientData = job->clientData;
     Ticket& ticket = job->ticket.get();
     if (clientData->deferredWorkTimer.vm().deferredWorkTimer->takePendingWork(ticket))
-        releaseEventLoopRef(clientData, ticket);
+        releaseEventLoopRefOnVMThread(clientData, ticket);
     delete job;
 }
 

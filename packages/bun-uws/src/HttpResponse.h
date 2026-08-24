@@ -53,10 +53,6 @@ public:
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
 
-    static HttpResponseData<SSL> *getHttpResponseDataS(us_socket_t *s) {
-        return (HttpResponseData<SSL> *) us_socket_ext(s);
-    }
-
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
@@ -299,20 +295,6 @@ public:
         }
     }
 
-public:
-    /* If we have proxy support; returns the proxed source address as reported by the proxy. */
-#ifdef UWS_WITH_PROXY
-    std::string_view getProxiedRemoteAddress() {
-        return getHttpResponseData()->proxyParser.getSourceAddress();
-    }
-
-    std::string_view getProxiedRemoteAddressAsText() {
-        return Super::addressAsText(getProxiedRemoteAddress());
-    }
-
-
-#endif
-
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
     template <typename UserData>
@@ -406,6 +388,11 @@ public:
         if (((AsyncSocketData<SSL> *) responseData)->filteredOpen) {
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) this, -1);
+            }
+        }
+        if (((AsyncSocketData<SSL> *) responseData)->filteredAccept) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) this, -2);
             }
         }
 
@@ -559,15 +546,6 @@ public:
         writeUnsigned64(value);
         Super::write("\r\n", 2);
         return this;
-    }
-
-    /* End without a body (no content-length) or end with a spoofed content-length. */
-    void endWithoutBody(std::optional<size_t> reportedContentLength = std::nullopt, bool closeConnection = false) {
-        if (reportedContentLength.has_value()) {
-            internalEnd({nullptr, 0}, reportedContentLength.value(), false, true, closeConnection);
-        } else {
-            internalEnd({nullptr, 0}, 0, false, false, closeConnection);
-        }
     }
 
     /* End the response with an optional data chunk. Always starts a timeout. */
@@ -855,13 +833,6 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         return httpResponseData->offset;
-    }
-
-    /* If you are messing around with sendfile you might want to override the offset. */
-    void overrideWriteOffset(uint64_t offset) {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        httpResponseData->offset = offset;
     }
 
     /* Checking if we have fully responded and are ready for another request */

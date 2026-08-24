@@ -20,8 +20,7 @@ pub(crate) fn from_binary(bytes: &[u8]) -> f64 {
     if microseconds == i64::MIN {
         return f64::NEG_INFINITY;
     }
-    let double_microseconds: f64 = microseconds as f64;
-    (double_microseconds / US_PER_MS as f64) + POSTGRES_EPOCH_DATE as f64
+    (microseconds.div_euclid(US_PER_MS) + POSTGRES_EPOCH_DATE) as f64
 }
 
 /// `'infinity'` / `'-infinity'` as Postgres emits them for date / timestamp /
@@ -58,8 +57,6 @@ pub(crate) fn timestamp_text_to_ms_utc(
             i32::from(parsed.hour),
             i32::from(parsed.minute),
             i32::from(parsed.second),
-            // Fractional seconds → milliseconds (JS Date is ms-precision, like
-            // the binary path's f64 truncation).
             (parsed.microsecond / 1000) as i32,
         )
         .ok()
@@ -71,9 +68,8 @@ pub(crate) fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResul
     } else if value.is_number() {
         value.as_number()
     } else if value.is_string() {
-        let mut str =
-            bun_core::OwnedString::new(value.to_bun_string(global_object).expect("unreachable"));
-        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)?
+        let str = value.to_bun_string(global_object).expect("unreachable");
+        crate::jsc::bun_string_jsc::parse_date(&str, global_object)?
     } else {
         return Ok(0);
     };

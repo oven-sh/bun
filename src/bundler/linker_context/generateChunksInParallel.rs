@@ -625,7 +625,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };
-    // defer static_route_visitor.deinit() — handled by Drop
 
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
     // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
@@ -759,12 +758,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
                     buf.extend_from_slice(&buffer);
                     buf.extend_from_slice(source_map_start);
-
-                    let old_len = buf.len();
-                    // Capacity reserved above; resize zero-fills then base64 overwrites.
-                    buf.resize(old_len + encode_len, 0);
-                    let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
-
+                    bun_base64::encode_append(&mut buf, &output_source_map);
                     buf.push(b'\n');
                     buffer = buf.into_boxed_slice();
                 }
@@ -1001,12 +995,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
                     buf.extend_from_slice(&code_result.buffer);
                     buf.extend_from_slice(source_map_start);
-
-                    let old_len = buf.len();
-                    // Capacity reserved above; resize zero-fills then base64 overwrites.
-                    buf.resize(old_len + encode_len, 0);
-                    let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
-
+                    bun_base64::encode_append(&mut buf, &output_source_map);
                     buf.push(b'\n');
                     code_result.buffer = buf.into_boxed_slice();
                     drop(output_source_map);
@@ -1064,16 +1053,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 BYTECODE_EXTENSION
                             ))
                         };
-                        source_provider_url.ref_();
-                        // RAII: `defer source_provider_url.deref()` — `OwnedString::Drop`
-                        // releases the ref bumped above on every exit path (incl. `break 'brk`).
-                        let mut source_provider_url =
-                            bun_core::OwnedString::new(source_provider_url);
 
                         if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                             c.options.output_format,
                             &code_result.buffer,
-                            &mut source_provider_url,
+                            &source_provider_url,
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(

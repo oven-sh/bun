@@ -99,13 +99,13 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
 
     auto dValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.d);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "d"_s), dValue);
+    Bun::putDirectNamed(vm, result, "d"_s, dValue);
     auto rValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.r);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "r"_s), rValue);
+    Bun::putDirectNamed(vm, result, "r"_s, rValue);
     auto tValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.t);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "t"_s), tValue);
+    Bun::putDirectNamed(vm, result, "t"_s, tValue);
     return result;
 }
 

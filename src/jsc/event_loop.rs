@@ -165,7 +165,7 @@ impl JSGlobalObject {
     /// JSC microtask queue, and nothing else. No timers, no I/O, no deferred
     /// tasks, so this cannot re-enter the event loop.
     ///
-    /// `Err` means the drain found this VM's termination: the loop stands down (the exception stays pending).
+    /// `Err` means the drain met this VM's termination; it is left pending for the caller's landing frame.
     pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), Stopped> {
         jsc::mark_binding();
         match JSC__JSGlobalObject__drainMicrotasks(self) {
@@ -180,18 +180,23 @@ impl JSGlobalObject {
 /// code -- ticks, task completions, waits, "should I enter JS?" -- returns to say "stand down". Only
 /// loop-level code reads the gate (`script_allowed`) and speaks `Stopped`; code inside a JS operation
 /// (`JsResult`) only ever sees exceptions. A boundary that entered JS produces `Stopped` when the
-/// exception it takes is the termination (WebCore: `isTerminationException(returned)`); the opposite
-/// crossing -- a stop that must become a `JsError` -- is [`Stopped::throw`], never an implicit `From`.
+/// exception it takes is the termination (WebCore: `isTerminationException(returned)`) -- and takes it:
+/// nothing stays pending past a landing frame; the stop itself is the closed gate. The opposite crossing
+/// -- a stop that must become a `JsError` -- is [`Stopped::throw`], never an implicit `From`.
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 #[error("Stopped")]
 pub struct Stopped;
 
 impl Stopped {
-    /// Cross into a `JsResult` function: throw the VM's TerminationException for real (what `VMTraps`
-    /// does on trap), so `Err(Thrown)` keeps meaning "an exception is pending" for every caller above.
-    /// For a nested wait/drain *inside a host function* only; loop-level code propagates `Stopped`.
+    /// Cross into a `JsResult` function. Beneath script (a nested wait/drain inside a host function),
+    /// throw the VM's TerminationException for real — what `VMTraps` does on trap — so JSC unwinds the
+    /// script above and `Err(Thrown)` keeps meaning "an exception is pending". Outside script there is
+    /// nothing to unwind: `Terminated`, nothing pending.
     #[cold]
     pub fn throw(self, global: &JSGlobalObject) -> crate::JsError {
+        if !global.vm().is_entered() {
+            return crate::JsError::Terminated;
+        }
         match crate::cpp::JSC__JSGlobalObject__throwTerminationException(global) {
             Err(err) => err,
             Ok(()) => {
@@ -266,6 +271,25 @@ impl Drop for EventLoopEnterGuard {
     }
 }
 
+/// RAII pairing for [`EventLoop::enter`] / [`EventLoop::exit_without_checkpoint`].
+///
+/// Holds the raw pointer for the same reason as [`EventLoopEnterGuard`].
+/// Construct via [`EventLoop::enter_scope_without_checkpoint`].
+#[must_use = "dropping immediately exits the event loop scope"]
+pub struct EventLoopEnterNoCheckpointGuard {
+    loop_: *mut EventLoop,
+}
+
+impl Drop for EventLoopEnterNoCheckpointGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: as `EventLoopEnterGuard`: `loop_` was live at
+        // `enter_scope_without_checkpoint` and the VM owns it for the process
+        // lifetime; short-lived `&mut` only.
+        unsafe { (*self.loop_).exit_without_checkpoint() };
+    }
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -308,6 +332,48 @@ impl EventLoop {
         // SAFETY: caller contract — `loop_` is live; short-lived `&mut` only.
         unsafe { (*loop_).enter() };
         EventLoopEnterGuard { loop_ }
+    }
+
+    /// Balance an [`enter`](Self::enter) without the checkpoint [`exit`](Self::exit)
+    /// runs at the outermost level. See [`Self::enter_scope_without_checkpoint`].
+    #[inline]
+    pub fn exit_without_checkpoint(&mut self) {
+        bun_core::scoped_log!(
+            EventLoop,
+            "exit_without_checkpoint() = {}",
+            self.entered_event_loop_count - 1
+        );
+        self.entered_event_loop_count -= 1;
+    }
+
+    /// `enter()` now, [`exit_without_checkpoint`](Self::exit_without_checkpoint)
+    /// on drop.
+    ///
+    /// For a dispatcher that runs the checkpoint itself once the callback has
+    /// returned, at points of its own choosing: the HTTP request paths drain
+    /// explicitly so that they can look at a returned promise that the drain
+    /// settled (`RequestContext::on_response`, the node:http dispatch), and a
+    /// checkpoint on exit would add an empty one per request.
+    ///
+    /// What the scope is for is the count. Only while it is above zero is the
+    /// callback's frame safe from a checkpoint in the middle of it: a native
+    /// call made from inside the callback that dispatches another callback
+    /// through `enter()`/`exit()` (`server.upgrade()` running `open()`,
+    /// `ws.close()` running `close()`) is then a nested pair, not the outermost
+    /// one, so its exit does not run the nextTicks and promise reactions the
+    /// callback queued before its next statement. The dispatcher's explicit
+    /// drains are unconditional, so the held count does not skip them, and the
+    /// continuations they run are covered by it as well.
+    ///
+    /// # Safety
+    /// As [`Self::enter_scope`].
+    #[inline]
+    pub unsafe fn enter_scope_without_checkpoint(
+        loop_: *mut EventLoop,
+    ) -> EventLoopEnterNoCheckpointGuard {
+        // SAFETY: caller contract — `loop_` is live; short-lived `&mut` only.
+        unsafe { (*loop_).enter() };
+        EventLoopEnterNoCheckpointGuard { loop_ }
     }
 
     pub fn exit_maybe_drain_microtasks(
@@ -432,8 +498,8 @@ impl EventLoop {
         // process-lifetime `VirtualMachine`); short-lived `&mut` only.
         unsafe { (*this).enter() };
         if let Err(err) = callback.call(global_object, this_value, arguments) {
-            // A top-level call: reported here; a stop stays pending for the
-            // caller's gates and its dispatcher's fold.
+            // A top-level call: reported (or, for the VM's termination, taken) here; the caller reads
+            // the gate, not a pending exception, to know the VM has stopped.
             let _ = crate::task::report_error_or_terminate(global_object, err);
         }
         // Force a re-escape between the JS call and the post-call `exit()` so
@@ -473,20 +539,12 @@ impl EventLoop {
         result
     }
 
-    fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> u32 {
+    /// `None`: a task's fold or the checkpoint after it met the VM's termination and landed it; the
+    /// turn is over (`tick()` / `tick_tasks_only()` return rather than run more against that VM).
+    fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> Result<u32, Stopped> {
         let mut counter: u32 = 0;
-        // On `Stopped`, report 0 so the `while tick_with_count() > 0`
-        // drain loops in `tick()` / `tick_tasks_only()` stop immediately. The
-        // termination exception is left on the VM (`tryClearException` never
-        // clears it), so continuing to drain would re-enter
-        // `executeCallImpl` with an exception pending and trip its
-        // `scope.assertNoException()` RELEASE_ASSERT. `tick()` observes the
-        // pending exception via `scope.has_exception()` on the next line and
-        // returns.
-        if tick_queue_with_count(self, virtual_machine, &mut counter).is_err() {
-            return 0;
-        }
-        counter
+        tick_queue_with_count(self, virtual_machine, &mut counter)?;
+        Ok(counter)
     }
 
     fn tick_concurrent(&mut self) {
@@ -497,6 +555,17 @@ impl EventLoop {
     /// `VmHandle`) has been queued but not yet applied to the loop's `active` count.
     pub fn has_pending_refs(&self) -> bool {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
+            || self
+                .macro_loop_if_not_running()
+                .is_some_and(|m| m.concurrent_ref.load(Ordering::SeqCst) > 0)
+    }
+
+    /// Other threads have posted work that this loop's next drain will pick up.
+    pub(crate) fn has_concurrent_tasks(&self) -> bool {
+        !self.concurrent_tasks.is_empty()
+            || self
+                .macro_loop_if_not_running()
+                .is_some_and(|m| !m.concurrent_tasks.is_empty())
     }
 
     pub fn run_imminent_gc_timer(&mut self) {
@@ -528,14 +597,20 @@ impl EventLoop {
 
         self.run_imminent_gc_timer();
 
+        let start_count = self.tasks.readable_length();
+        if let Some(macro_loop) = self.macro_loop_if_not_running() {
+            macro_loop.apply_concurrent_ref_delta();
+            let batch = macro_loop.concurrent_tasks.pop_batch();
+            self.take_concurrent_tasks(batch);
+        }
+
         let concurrent = self.concurrent_tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {
-            return 0;
+            return self.tasks.readable_length() - start_count;
         }
 
         let mut iter = concurrent.iterator();
-        let start_count = self.tasks.readable_length();
         let _ = self.tasks.ensure_unused_capacity(count);
 
         // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
@@ -569,6 +644,25 @@ impl EventLoop {
         }
 
         self.tasks.readable_length() - start_count
+    }
+
+    /// The macro loop, when this is the regular loop and no macro is running.
+    /// Work a macro started (a ticket or weak post of `LoopKind::Macro`) posts
+    /// its completion and keep-alive release there, but that loop only ticks
+    /// while a macro is being waited on; whatever finishes after the macro
+    /// returned is this loop's to run, and the platform loop both share stays
+    /// alive for it until then.
+    fn macro_loop_if_not_running(&self) -> Option<&EventLoop> {
+        let vm = self.vm();
+        // SAFETY: `vm` is the live owning VM (set in `init()`). `addr_of!`
+        // projects to sibling fields without materializing a
+        // `&VirtualMachine` that would alias the `&mut self` callers hold.
+        unsafe {
+            (core::ptr::addr_of!((*vm).has_enabled_macro_mode).read()
+                && !core::ptr::addr_of!((*vm).macro_mode).read()
+                && core::ptr::eq(self, core::ptr::addr_of!((*vm).regular_event_loop)))
+            .then(|| &*core::ptr::addr_of!((*vm).macro_event_loop))
+        }
     }
 
     /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`
@@ -658,16 +752,19 @@ impl EventLoop {
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
     pub fn has_pending_tasks(&self) -> bool {
-        self.tasks.readable_length() > 0 || !self.concurrent_tasks.is_empty()
+        self.tasks.readable_length() > 0 || self.has_concurrent_tasks()
     }
 
     pub fn tick(&mut self) {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
-        // The scope/counter cleanup is inlined at each return site below (a
-        // scopeguard closure would alias `&mut self`).
+        // `Err(Stopped)`: a fold or checkpoint met the VM's termination; the turn is over.
+        let _ = self.tick_turn(&mut scope);
+        self.entered_event_loop_count -= 1;
+    }
 
+    fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {
         let ctx = self.vm();
         self.tick_concurrent();
         self.process_gc_timer();
@@ -679,27 +776,25 @@ impl EventLoop {
 
         let mut refills = 0u32;
         'tick: loop {
-            while self.tick_with_count(ctx) > 0 {
+            loop {
+                if self.tick_with_count(ctx)? == 0 {
+                    break;
+                }
                 if refills == Self::CONCURRENT_REFILLS_PER_TICK {
                     break 'tick;
                 }
                 refills += 1;
                 self.tick_concurrent();
-                self.global_ref().handle_rejected_promises();
+                self.global_ref()
+                    .handle_rejected_promises()
+                    .map_err(|_| Stopped)?;
             }
-            if self
-                .drain_microtasks_with_global(global, global_vm)
-                .is_err()
-                || scope.has_exception()
-            {
-                // Every task's exception was folded by the drain above; one
-                // still pending here escaped whoever produced it.
-                debug_assert!(
-                    global.has_pending_termination_exception(),
-                    "a task returned Ok with a JS exception pending"
-                );
-                self.entered_event_loop_count -= 1;
-                return;
+            self.drain_microtasks_with_global(global, global_vm)?;
+            if scope.has_exception() {
+                // Every task's exception was folded above; one still pending here escaped whoever
+                // produced it.
+                debug_assert!(false, "a task returned Ok with a JS exception pending");
+                return Ok(());
             }
             if refills == Self::CONCURRENT_REFILLS_PER_TICK {
                 break;
@@ -712,14 +807,17 @@ impl EventLoop {
             break;
         }
 
-        while refills < Self::CONCURRENT_REFILLS_PER_TICK && self.tick_with_count(ctx) > 0 {
+        while refills < Self::CONCURRENT_REFILLS_PER_TICK {
+            if self.tick_with_count(ctx)? == 0 {
+                break;
+            }
             refills += 1;
             self.tick_concurrent();
         }
 
-        self.global_ref().handle_rejected_promises();
-
-        self.entered_event_loop_count -= 1;
+        self.global_ref()
+            .handle_rejected_promises()
+            .map_err(|_| Stopped)
     }
 
     /// Tick the task queue without draining microtasks afterward.
@@ -731,12 +829,18 @@ impl EventLoop {
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
         let prev = self.vm_ref().suppress_microtask_drain.replace(true);
 
-        while self.tick_with_count(vm) > 0 {
+        while let Ok(1..) = self.tick_with_count(vm) {
             self.tick_concurrent();
         }
 
         self.vm_ref().suppress_microtask_drain.set(prev);
         // Note: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
+    }
+
+    /// Teardown has released the queue (after forbidding script); tasks arriving now are released on
+    /// arrival, never run.
+    pub fn is_closed_for_tasks(&self) -> bool {
+        self.closed_for_tasks
     }
 
     pub fn enqueue_task(&mut self, task: Task) {
@@ -770,14 +874,17 @@ impl EventLoop {
         }
     }
 
-    /// Move whatever other threads posted (`concurrent_tasks`) into
+    /// Move a batch other threads posted (`concurrent_tasks`) into
     /// `self.tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
     /// over `self.tasks` releases everything. Called by `release_queued_tasks`
     /// in teardown, after `join_child_workers()` (every child has posted its
     /// close task by then) and before the JSC VM is destroyed (so captured
     /// `Ref<>`s in queued C++ lambdas drop against a live heap).
-    fn take_concurrent_tasks(&mut self) {
-        let mut iter = self.concurrent_tasks.pop_batch().iterator();
+    fn take_concurrent_tasks(
+        &mut self,
+        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
+    ) {
+        let mut iter = batch.iterator();
         loop {
             let node = iter.next();
             if node.is_null() {
@@ -799,7 +906,8 @@ impl EventLoop {
     /// once more after `Closed`.
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
-        self.take_concurrent_tasks();
+        let batch = self.concurrent_tasks.pop_batch();
+        self.take_concurrent_tasks(batch);
         let _ = self.promote_yield_tasks();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
@@ -1008,15 +1116,21 @@ impl EventLoop {
     /// Ticks until `promise` settles. `Err` when it returns with the promise
     /// still pending because the VM can no longer run the script that would
     /// settle it (execution forbidden, or a stop was requested: a worker being
-    /// terminated mid-wait). Nothing is thrown for it; a caller inside a `JsResult`
-    /// function crosses explicitly with [`jsc::Stopped::throw`].
+    /// terminated mid-wait), or because a termination is pending beneath this wait
+    /// (a nested wait under a `node:vm` run whose deadline fired: it must unwind to
+    /// that run, not tick on over it). Nothing is thrown for it; a caller inside a
+    /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
+    /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
         }
         while promise.status() == PromiseStatus::Pending {
-            if jsc_vm.execution_forbidden() || !self.vm_ref().script_allowed() {
+            if jsc_vm.execution_forbidden()
+                || !self.vm_ref().script_allowed()
+                || self.global_ref().has_pending_termination_exception()
+            {
                 return Err(jsc::Stopped);
             }
             self.tick();
@@ -1257,11 +1371,38 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 3);
+    let result = JSValue::create_empty_object(global_object, 9);
     result.put(
         global_object,
         b"activeTasks",
         JSValue::js_number(vm_ref.active_tasks as f64),
+    );
+    result.put(
+        global_object,
+        b"tasks",
+        JSValue::js_number(event_loop.tasks.readable_length() as f64),
+    );
+    result.put(
+        global_object,
+        b"immediateTasks",
+        JSValue::js_number(
+            (event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len()) as f64,
+        ),
+    );
+    result.put(
+        global_object,
+        b"concurrentTasksEmpty",
+        JSValue::from(event_loop.concurrent_tasks.is_empty()),
+    );
+    result.put(
+        global_object,
+        b"loopActive",
+        JSValue::from(vm_ref.platform_loop_opt().is_some_and(|h| h.is_active())),
+    );
+    result.put(
+        global_object,
+        b"eventLoopAlive",
+        JSValue::from(vm_ref.is_event_loop_alive()),
     );
     result.put(
         global_object,
@@ -1280,6 +1421,12 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         global_object,
         b"numPolls",
         JSValue::js_number(num_polls as f64),
+    );
+    result.put(
+        global_object,
+        b"iteration",
+        // SAFETY: usockets_loop() returns the live process-global loop.
+        JSValue::js_number(unsafe { (*event_loop.usockets_loop()).iteration_number() } as f64),
     );
     Ok(result)
 }

@@ -171,18 +171,34 @@ impl Rm {
                             // Check that none of the paths will delete the root.
                             {
                                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
+                                // Operands are unbounded user input, so neither
+                                // step may use the fixed-size thread-local
+                                // buffers behind `join` / `normalize_string`.
+                                // Normalizing never grows a path by more than
+                                // one byte.
+                                let mut join_spill = Vec::new();
+                                let mut normalize_buf = Vec::new();
 
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
                                     let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
                                         path
                                     } else {
-                                        resolve_path::join::<platform::Auto>(&[&cwd, path])
+                                        resolve_path::join_spill::<platform::Auto>(
+                                            &mut join_spill,
+                                            &[&cwd, path],
+                                        )
                                     };
-                                    let normalized = resolve_path::normalize_string::<
+                                    if normalize_buf.len() <= resolved.len() {
+                                        normalize_buf.resize(resolved.len() + 1, 0);
+                                    }
+                                    let normalized = resolve_path::normalize_string_buf::<
                                         false,
                                         platform::Auto,
-                                    >(resolved);
+                                        false,
+                                    >(
+                                        resolved, &mut normalize_buf[..]
+                                    );
                                     let dirname =
                                         resolve_path::dirname::<platform::Auto>(normalized);
                                     if dirname.is_empty() {
@@ -854,11 +870,16 @@ impl ShellRmTask {
     }
 
     /// Join into `buf` honoring [`join_style`].
-    fn buf_join<'a>(&self, buf: &'a mut bun_paths::PathBuffer, parts: &[&[u8]]) -> &'a ZStr {
+    fn buf_join<'a>(
+        &self,
+        buf: &'a mut bun_paths::PathBuffer,
+        spill: &'a mut Vec<u8>,
+        parts: &[&[u8]],
+    ) -> &'a ZStr {
         if self.join_style == JoinStyle::Posix {
-            resolve_path::join_z_buf::<platform::Posix>(buf.as_mut_slice(), parts)
+            resolve_path::join_z_buf_spill::<platform::Posix>(buf.as_mut_slice(), spill, parts)
         } else {
-            resolve_path::join_z_buf::<platform::Windows>(buf.as_mut_slice(), parts)
+            resolve_path::join_z_buf_spill::<platform::Windows>(buf.as_mut_slice(), spill, parts)
         }
     }
 
@@ -892,7 +913,9 @@ impl ShellRmTask {
             }
             return ZBox::from_vec(out);
         }
-        ZBox::from_bytes(resolve_path::join::<platform::Auto>(parts))
+        let mut spill = Vec::new();
+        let joined = resolve_path::join_spill::<platform::Auto>(&mut spill, parts);
+        ZBox::from_bytes(joined)
     }
 
     #[inline]
@@ -1032,6 +1055,7 @@ impl ShellRmTask {
         // `delete_after_waiting_for_children` on this dir and the owning
         // `ShellRmTask` would never be freed.
         let mut i: usize = 0;
+        let mut join_spill = Vec::new();
         let loop_result: bun_sys::Maybe<()> = loop {
             let current = match iterator.next() {
                 Err(e) => break Err(self.error_with_path(&e, path.as_bytes())),
@@ -1057,7 +1081,7 @@ impl ShellRmTask {
                     // Copy the join into an owned ZBox so `buf` is free to
                     // be re-borrowed by the vtable callback.
                     let file_path = {
-                        let joined = self.buf_join(buf, &[path.as_bytes(), name]);
+                        let joined = self.buf_join(buf, &mut join_spill, &[path.as_bytes(), name]);
                         ZBox::from_bytes(joined.as_bytes())
                     };
                     if let Err(e) = self.remove_entry_file(

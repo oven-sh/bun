@@ -798,7 +798,6 @@ impl S3Credentials {
         // `authorization` (Box<[u8]>) drops on `?`.
 
         if sign_query {
-            // defer free(host); defer free(amz_date); — drop at scope exit.
             // SignResult implements Drop, so struct-update `..default()`
             // is forbidden; mutate a default in place instead.
             let mut r = SignResult::default();
@@ -1059,12 +1058,6 @@ fn zero_sensitive(b: &mut Box<[u8]>) {
 #[derive(Clone, Copy)]
 pub struct SignQueryOptions {
     pub expires: usize,
-}
-
-impl Default for SignQueryOptions {
-    fn default() -> Self {
-        Self { expires: 86400 }
-    }
 }
 
 // transient param-pack struct; lifetime added because every field is a caller-owned

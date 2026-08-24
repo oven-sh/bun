@@ -1552,7 +1552,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
          * reusing a closed stream or going backwards (§5.1.1). */
         if (wasResetByPeer(streamId)) return streamError(streamId, nullptr, http2::ERR_STREAM_CLOSED);
         if (wasResetByUs(streamId)) return true;
-        return connectionError(existing || streamId == lastStreamId ? http2::ERR_STREAM_CLOSED : http2::ERR_PROTOCOL_ERROR);
+        return connectionError(streamId == lastStreamId ? http2::ERR_STREAM_CLOSED : http2::ERR_PROTOCOL_ERROR);
     }
     lastStreamId = streamId;
 
@@ -1826,12 +1826,17 @@ inline void Http2Response::markDone() {
 }
 
 inline bool Http2Response::drain() {
+    /* One slice per drain pass (see drainWritable); the onWritable handler
+     * below is likewise bounded through sendAllowance. */
+    size_t budget = conn->drainSlice ? conn->drainSlice : SIZE_MAX;
     while (data.backpressure.length() != 0) {
+        if (budget == 0) return false;
         bool last = data.endAfterDrain;
-        size_t w = conn->writeData(this, data.backpressure.data(), data.backpressure.length(), last);
+        size_t w = conn->writeData(this, data.backpressure.data(), std::min(data.backpressure.length(), budget), last && data.backpressure.length() <= budget);
         if (w == 0) return false;
         data.offset += w;
         data.backpressure.erase(w);
+        budget -= w;
     }
     if (data.endAfterDrain) {
         data.endAfterDrain = false;

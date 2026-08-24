@@ -405,6 +405,14 @@ pub(crate) fn rm_options_for_testing(
     Ok(obj)
 }
 
+/// `fs.openAsBlob(path, type)`: a file-backed Blob with node's type semantics
+/// (no MIME inference from the file extension, an explicit type stored
+/// verbatim). Argument validation happens in `src/js/node/fs.ts`.
+#[bun_jsc::host_fn]
+pub(crate) fn open_as_blob(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    crate::webcore::blob::construct_blob_for_open_as_blob(global, frame)
+}
+
 /// Test-only (`bun:internal-for-testing`): run a flags value through the same
 /// parser `fs.open` uses and return the numeric O_* mask, so node's
 /// `internal/fs/utils` `stringToFlags` tests can assert the production mapping.

@@ -5650,6 +5650,54 @@ pub(crate) fn construct_bun_file(
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
+/// `fs.openAsBlob(path, type)` (node:fs compat). Unlike `Bun.file`, node never
+/// infers a MIME type from the file extension (`blob.type` stays `""`), and an
+/// explicit `options.type` is stored verbatim: no lowercasing, no interned
+/// charset promotion (`text/plain` must not become `text/plain;charset=utf-8`).
+/// Argument validation happens in `src/js/node/fs.ts`.
+pub(crate) fn construct_blob_for_open_as_blob(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: bun_vm() never returns null for a Bun-owned global.
+    let vm = global_object.bun_vm();
+    let arguments_slice = callframe.arguments();
+    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
+
+    let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
+        return Err(global_object
+            .throw_invalid_arguments(format_args!("Expected file path string")));
+    };
+
+    let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
+
+    // Drop the extension-sniffed mime `init_with_store` copied out of the
+    // file store.
+    blob.content_type.set(BlobContentType::default());
+    blob.content_type_was_set.set(false);
+
+    if arguments_slice.len() >= 2 {
+        let file_type = arguments_slice[1];
+        if file_type.is_string() {
+            let str = file_type.to_slice(global_object)?;
+            let slice = str.slice();
+            // Invalid types (bytes outside 0x20..=0x7E) stay "": content_type
+            // is written verbatim into outgoing HTTP headers.
+            if !slice.is_empty() && is_valid_blob_type(slice) {
+                blob.content_type
+                    .set(BlobContentType::Owned(std::sync::Arc::from(slice)));
+                blob.content_type_was_set.set(true);
+            }
+        }
+    }
+
+    let ptr = Blob::new(blob);
+    // SAFETY: ptr was just produced by heap::alloc in Blob::new. Spelled
+    // `BlobExt::to_js(&*ptr, ..)` to pick the `&self` impl over the by-value
+    // `JsClass::to_js`.
+    Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
+}
+
 // `find_or_create_file_from_path`: canonical impl lives later in this file
 // (runtime `check_s3: bool` form). Const-generic duplicate removed here.
 

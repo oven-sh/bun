@@ -160,6 +160,37 @@ it("fs.openAsBlob", async () => {
   expect((await openAsBlob(import.meta.path)).size).toBe(statSync(import.meta.path).size);
 });
 
+it("fs.openAsBlob does not infer the MIME type from the extension", async () => {
+  using dir = tempDir("open-as-blob", {
+    "nofileext": "hello",
+    "note.txt": "hello",
+    "x.png": "png!",
+  });
+  const noExt = await openAsBlob(join(String(dir), "nofileext"));
+  const txt = await openAsBlob(join(String(dir), "note.txt"));
+  const png = await openAsBlob(join(String(dir), "x.png"));
+  expect(noExt.type).toBe("");
+  expect(txt.type).toBe("");
+  expect(png.type).toBe("");
+  expect(await txt.text()).toBe("hello");
+});
+
+it("fs.openAsBlob stores an explicit options.type verbatim", async () => {
+  using dir = tempDir("open-as-blob-type", { "note.txt": "hello" });
+  const file = join(String(dir), "note.txt");
+  expect((await openAsBlob(file, { type: "text/plain" })).type).toBe("text/plain");
+  expect((await openAsBlob(file, { type: "TEXT/PLAIN" })).type).toBe("TEXT/PLAIN");
+  expect((await openAsBlob(file, { type: "" })).type).toBe("");
+  expect((await openAsBlob(file, { type: null })).type).toBe("");
+});
+
+it("fs.openAsBlob validates options like node", () => {
+  const invalidArgType = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" });
+  expect(() => openAsBlob(import.meta.path, null)).toThrow(invalidArgType);
+  expect(() => openAsBlob(import.meta.path, "text/plain")).toThrow(invalidArgType);
+  expect(() => openAsBlob(import.meta.path, { type: 123 })).toThrow(invalidArgType);
+});
+
 it("writing to 1, 2 are possible", () => {
   expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
   expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);

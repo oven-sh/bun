@@ -992,8 +992,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::RunAsNodeCommand
     ) {
         {
-            // Hot-path env read; the actual tokenize/validate stays `#[cold]`
-            // and is only entered when NODE_OPTIONS is set and non-empty.
             let node_options = match env_var::NODE_OPTIONS.get() {
                 Some(raw) if !raw.is_empty() => crate::cli::node_options::parse(raw),
                 _ => crate::cli::node_options::Parsed::default(),
@@ -1018,8 +1016,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 for p in preloads {
                     all.push(Box::<[u8]>::from(*p));
                 }
-                // NODE_OPTIONS preloads of each kind run before the
-                // corresponding command-line preloads (Node.js parity).
+                // Env before CLI within each kind, matching Node.
                 for p in node_options.requires {
                     all.push(p);
                 }

@@ -1,11 +1,5 @@
-//! NODE_OPTIONS environment variable parsing (Node.js compatibility).
-//!
-//! Node.js reads a space-separated list of CLI flags from `NODE_OPTIONS`,
-//! tokenizes it (double-quote aware, `\` escape inside quotes), validates each
-//! flag against a fixed allowlist, and applies it before the real command-line
-//! arguments. This module mirrors that behaviour for the subset of flags Bun
-//! understands and warns on anything outside the allowlist so a misconfigured
-//! `NODE_OPTIONS` is surfaced instead of silently ignored.
+//! `NODE_OPTIONS` parsing, mirroring `ParseNodeOptionsEnvVar` in Node's
+//! `src/node_options.cc`.
 
 use bstr::BStr;
 use bun_core::{Global, Output, strings};
@@ -16,10 +10,7 @@ pub enum TokenizeError {
     InvalidEscape,
 }
 
-/// Tokenize a `NODE_OPTIONS` string using Node.js's rules (see
-/// `ParseNodeOptionsEnvVar` in node/src/node_options.cc): space separates
-/// arguments, `"` toggles a quoted region, and inside a quoted region `\c`
-/// yields `c`. Single quotes and backslashes outside quotes are literal.
+/// Space-separated; `"` quotes; `\c` inside quotes yields `c`. Single quotes are literal.
 pub fn tokenize(input: &[u8]) -> Result<Vec<Box<[u8]>>, TokenizeError> {
     let mut tokens: Vec<Box<[u8]>> = Vec::new();
     let mut is_in_string = false;
@@ -62,19 +53,14 @@ pub fn tokenize(input: &[u8]) -> Result<Vec<Box<[u8]>>, TokenizeError> {
     Ok(tokens)
 }
 
-/// Result of parsing NODE_OPTIONS. `--require` / `-r` and `--import` are kept
-/// separate so the caller can preserve Node's ordering (all requires before
-/// all imports) and Bun's own CLI ordering.
+/// Kept separate: all `--require` run before all `--import` (Node and Bun CLI order).
 #[derive(Default)]
 pub struct Parsed {
     pub requires: Vec<Box<[u8]>>,
     pub imports: Vec<Box<[u8]>>,
 }
 
-/// Split `--name=value` into `(name, Some(value))`; `--name` into
-/// `(name, None)`. Short options (`-x`) are returned whole with no value: Node
-/// only accepts `-r path` / `-C cond` (space-separated), not `-r=path` or
-/// `-rpath`.
+/// Only long options take `=value`; Node rejects `-r=path` and `-rpath`.
 fn split_name_value(tok: &[u8]) -> (&[u8], Option<&[u8]>) {
     if tok.len() >= 2 && tok[0] == b'-' && tok[1] == b'-' {
         if let Some(eq) = strings::index_of_char_usize(tok, b'=') {
@@ -93,9 +79,8 @@ fn normalize(flag: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-/// Flags Node.js permits in NODE_OPTIONS (the `kAllowedInEnvvar` set). Sorted
-/// for binary search. Regenerate from a Node.js build with:
-///   node -e '[...process.allowedNodeEnvironmentFlags].sort().forEach(f => console.log(f))'
+/// Node's `kAllowedInEnvvar` set, sorted. Regenerate with:
+/// `node -e '[...process.allowedNodeEnvironmentFlags].sort().forEach(f => console.log(f))'`
 static ALLOWED: &[&[u8]] = &[
     b"--abort-on-uncaught-exception",
     b"--addons",
@@ -410,9 +395,7 @@ fn is_allowed(flag: &[u8]) -> bool {
     ALLOWED.binary_search(&flag).is_ok()
 }
 
-/// Bun-specific flags that commonly reach NODE_OPTIONS via tooling that
-/// forwards `process.execArgv` to worker processes (Next.js, jest-worker).
-/// Accepted silently so that `bun --bun next build` keeps working.
+/// Next.js forwards `process.execArgv` into worker NODE_OPTIONS; don't warn on these.
 fn is_bun_flag(flag: &[u8]) -> bool {
     matches!(flag, b"--bun" | b"-b" | b"--smol" | b"--hot")
 }
@@ -446,17 +429,8 @@ fn fail_tokenize(detail: &str) -> ! {
     Global::exit(9);
 }
 
-/// Tokenize and validate a `NODE_OPTIONS` value. `--require` / `-r` and
-/// `--import` are collected into `Parsed.requires` / `Parsed.imports`
-/// respectively; other allowed flags are currently accepted without effect. Flags
-/// outside Node's allowlist produce a warning (not a hard error: tooling such
-/// as Next.js forwards `process.execArgv` into worker NODE_OPTIONS and may
-/// carry Bun-specific flags). Tokenizer errors and missing preload values
-/// remain fatal with status 9.
-///
-/// `#[cold]`: only reached when the env var is set; the caller checks
-/// `env_var::NODE_OPTIONS.get()` on the hot path so the common unset case
-/// never faults this page.
+/// Unknown flags warn once; tokenizer errors and a preload flag with no value exit 9.
+/// Caller checks the env var is set before calling, so this stays off the hot path.
 #[cold]
 #[inline(never)]
 pub fn parse(raw: &[u8]) -> Parsed {
@@ -472,10 +446,7 @@ pub fn parse(raw: &[u8]) -> Parsed {
     while i < tokens.len() {
         let tok: &[u8] = &tokens[i];
         i += 1;
-        // Node.js stops option processing at the first non-option token (or a
-        // bare `-`). Without per-flag arity for every allowed option we cannot
-        // distinguish a genuine positional from the value of a preceding
-        // value-taking flag, so skip rather than break.
+        // Skip (not break) non-options: may be the value of a preceding value-taking flag.
         if tok.is_empty() || tok[0] != b'-' || tok == b"-" {
             continue;
         }

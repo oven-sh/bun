@@ -4154,6 +4154,12 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         blob.content_type
             .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
         blob.content_type_was_set.set(content_type_was_set);
+    } else {
+        // The wire value is authoritative: an empty type (`fs.openAsBlob`)
+        // must not be replaced by the extension-sniffed default the File arm
+        // put on the rebuilt blob.
+        blob.content_type.set(BlobContentType::default());
+        blob.content_type_was_set.set(false);
     }
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
@@ -5669,6 +5675,16 @@ pub(crate) fn construct_blob_for_open_as_blob(
             global_object.throw_invalid_arguments(format_args!("Expected file path string"))
         );
     };
+
+    // Copy a Buffer path into owned bytes. Node's openAsBlob does not alias
+    // the caller's Buffer, and the store must not hold a JS ref: its
+    // finalizer-driven drop would unprotect the cell during a GC sweep.
+    if let PathOrFileDescriptor::Path(p) = &mut path {
+        if matches!(p, crate::webcore::node_types::PathLike::Buffer(_)) {
+            let owned = bun_core::handle_oom(bun_ptr::cow_slice::CowSlice::init_dupe(p.slice()));
+            *p = crate::webcore::node_types::PathLike::String(owned);
+        }
+    }
 
     let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 

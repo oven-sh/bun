@@ -8,6 +8,7 @@ const {
   validateObject,
   validateString,
   getValidatedPath,
+  getValidatedFsPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
 
@@ -60,7 +61,7 @@ function openAsBlob(path, options = kEmptyObject) {
   validateObject(options, "options");
   const type = options.type || "";
   validateString(type, "options.type");
-  path = getValidatedPath(path);
+  path = getValidatedFsPath(path);
   return Promise.$resolve(openAsBlobNative(path, type));
 }
 

@@ -175,6 +175,41 @@ it("fs.openAsBlob does not infer the MIME type from the extension", async () => 
   expect(await txt.text()).toBe("hello");
 });
 
+it("fs.openAsBlob accepts Buffer and URL paths", async () => {
+  using dir = tempDir("open-as-blob-path", { "note.txt": "hello" });
+  const file = join(String(dir), "note.txt");
+  const fromBuffer = await openAsBlob(Buffer.from(file));
+  expect(fromBuffer.type).toBe("");
+  expect(await fromBuffer.text()).toBe("hello");
+  const fromUrl = await openAsBlob(Bun.pathToFileURL(file));
+  expect(await fromUrl.text()).toBe("hello");
+});
+
+it("fs.openAsBlob body sends no Content-Type header when the type is empty", async () => {
+  using dir = tempDir("open-as-blob-fetch", { "note.txt": "hello" });
+  const file = join(String(dir), "note.txt");
+  let seen: (string | null)[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(req.headers.get("content-type"));
+      return new Response("ok");
+    },
+  });
+  await fetch(server.url, { method: "POST", body: await openAsBlob(file) });
+  await fetch(server.url, { method: "POST", body: await openAsBlob(file, { type: "text/plain" }) });
+  expect(seen).toEqual([null, "text/plain"]);
+});
+
+it("fs.openAsBlob type survives structuredClone", async () => {
+  using dir = tempDir("open-as-blob-clone", { "note.txt": "hello" });
+  const file = join(String(dir), "note.txt");
+  const clone = structuredClone(await openAsBlob(file));
+  expect(clone.type).toBe("");
+  expect(await clone.text()).toBe("hello");
+  expect(structuredClone(await openAsBlob(file, { type: "text/plain" })).type).toBe("text/plain");
+});
+
 it("fs.openAsBlob stores an explicit options.type verbatim", async () => {
   using dir = tempDir("open-as-blob-type", { "note.txt": "hello" });
   const file = join(String(dir), "note.txt");

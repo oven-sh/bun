@@ -272,6 +272,10 @@ pub struct VirtualMachine {
     pub(crate) origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
+    /// For fake timers: the wall-clock time (ms since the Unix epoch) that the
+    /// overridden `performance.now() == 0` corresponds to, so that
+    /// `performance.timeOrigin + performance.now()` tracks the fake `Date.now()`.
+    pub overridden_time_origin: Option<f64>,
     pub event_loop: bun_ptr::JsCell<EventLoop>,
 
     pub(crate) ref_strings: crate::ref_string::Map,
@@ -403,6 +407,29 @@ static STANDALONE_MODULE_GRAPH: std::sync::OnceLock<
 /// See [`STANDALONE_MODULE_GRAPH`]. Any thread.
 pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::StandaloneModuleGraph> {
     STANDALONE_MODULE_GRAPH.get().copied()
+}
+
+/// InternalModuleRegistry::generateModule: ahead-of-time bytecode for internal module `id` from a `bun build --compile`
+/// executable (process-lifetime bytes JSC may alias), if this process is one and it carries it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
+    _vm: *mut c_void,
+    id: u32,
+    bytes: *mut *const u8,
+    size: *mut usize,
+) -> bool {
+    let Some(graph) = standalone_module_graph() else {
+        return false;
+    };
+    let Some(found) = graph.builtin_module_bytecode(id) else {
+        return false;
+    };
+    // SAFETY: out-params supplied by the C++ caller; `found` points into the executable's mapped section.
+    unsafe {
+        *bytes = found.cast::<u8>();
+        *size = found.len();
+    }
+    true
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -836,6 +863,22 @@ impl VirtualMachine {
     #[allow(clippy::mut_from_ref)]
     pub fn event_loop_ref(&self) -> &mut EventLoop {
         self.event_loop_mut()
+    }
+
+    /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
+    fn install_bytecode_string_table(
+        &self,
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    ) {
+        let table = graph.bytecode_string_table();
+        if table.is_empty() {
+            return;
+        }
+        unsafe extern "C" {
+            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
+        }
+        // SAFETY: `jsc_vm` set in `init()`; `table` is a mmapped process-lifetime span from the executable's own section.
+        unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
     }
 
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
@@ -3769,6 +3812,7 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
+        vm_ref.install_bytecode_string_table(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         vm_ref.transpiler.resolver.store_fd = false;
@@ -3815,6 +3859,9 @@ impl VirtualMachine {
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
+        if let Some(graph) = opts.graph {
+            vm_ref.install_bytecode_string_table(graph);
+        }
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
@@ -6509,7 +6556,7 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     const MSG_1: &str = "This error originated either by throwing inside of an async function \
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";
-    if reason_str.is_string() {
+    if reason_str.is_string_literal() {
         let view = reason_str.as_string().view(global_object)?;
         return Ok(global_object
             .err(

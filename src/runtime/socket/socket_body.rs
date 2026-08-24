@@ -443,7 +443,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
-    fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
+    pub(crate) fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
         let mut v = self.flags.get();
         f(&mut v);
         self.flags.set(v);
@@ -667,6 +667,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 self.socket.set(SocketHandler::<SSL>::from(s));
             }
             Some(UnixOrHost::Fd(f)) => {
+                // The fd is connected, so it is registered paused outright; a dial is paused in on_open.
+                let flags = if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
+                    flags | uws::LIBUS_SOCKET_OPEN_PAUSED
+                } else {
+                    flags
+                };
                 // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET`
                 // (`usize`) on Windows; `Fd::native()` is `c_int` / HANDLE
                 // (`*mut c_void`) respectively; cast to bridge the Rust-side `usize` alias.
@@ -729,11 +735,23 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.flags.get().contains(Flags::BYPASS_TLS) {
             return Ok(JSValue::UNDEFINED);
         }
-        if !this.flags.get().contains(Flags::IS_PAUSED) {
-            let paused = this.socket.get().pause_stream();
-            this.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
-        }
+        this.pause_reads();
         Ok(JSValue::UNDEFINED)
+    }
+
+    fn pause_reads(&self) {
+        if !self.flags.get().contains(Flags::IS_PAUSED) {
+            let paused = self.socket.get().pause_stream();
+            self.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
+        }
+    }
+
+    /// Consumes `PAUSE_ON_CONNECT`: a TLS client dispatches another handshake after a renegotiation.
+    fn pause_on_connect_once(&self) {
+        if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
+            self.update_flags(|f| f.remove(Flags::PAUSE_ON_CONNECT));
+            self.pause_reads();
+        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1428,6 +1446,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.ref_pollref_on_connect.replace(true) {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         }
+        if !SSL {
+            this.pause_on_connect_once();
+        }
         jsc::mark_binding!();
 
         // Add SNI support for TLS (mongodb and others requires this)
@@ -1823,6 +1844,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             if let Some(twin) = this.twin.get().as_ref() {
                 twin.update_flags(|f| f.insert(Flags::REJECTED));
             }
+        } else if SSL {
+            this.pause_on_connect_once();
         }
 
         let mut callback = handlers.on_handshake();
@@ -4141,6 +4164,8 @@ bitflags::bitflags! {
         /// even though its `Handlers` mode is `Client` (no listener), so the
         /// client-only server-identity check must not run against its peer.
         const TLS_SERVER_ROLE      = 1 << 14;
+        /// node:net's `pauseOnConnect`: paused in `on_open` (plain; free for a socket that was registered with `LIBUS_SOCKET_OPEN_PAUSED`) or after the handshake (TLS).
+        const PAUSE_ON_CONNECT     = 1 << 15;
     }
 }
 

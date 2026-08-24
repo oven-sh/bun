@@ -3784,7 +3784,8 @@ export default db;
                 source_code: file.to_wtf_string(),
                 source_url: specifier.clone(),
                 bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
-                bytecode_cache: Bytecode::borrowed(bytecode),
+                bytecode_cache: Bytecode::persistent(bytecode),
+                source_code_hash: file.source_hash,
                 module_info: if !module_info.is_empty() {
                     bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
                         ::create_from_cached_record(module_info)

@@ -80,39 +80,33 @@ Ref<MessageEvent> MessageEvent::create(const AtomString& type, Init&& initialize
 
 MessageEvent::~MessageEvent() = default;
 
-auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> MessageEventWithStrongData
+auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> std::optional<MessageEventWithStrongData>
 {
     return create(globalObject, WTF::move(data), {}, {}, WTF::move(source), WTF::move(ports));
 }
 
-auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> MessageEventWithStrongData
+auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> std::optional<MessageEventWithStrongData>
 {
     auto& vm = globalObject.vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps (7.3):
-    // "Let deserializeRecord be StructuredDeserializeWithTransfer(serializeWithTransferResult, targetRealm).
-    //  If this throws an exception, catch it, fire an event named messageerror at finalTargetPort, using
-    //  MessageEvent, and then return." A termination is not caught; the caller sees it on its scope.
-    bool didThrow = false;
     JSValue deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::Throwing);
-    if (scope.exception()) [[unlikely]] {
-        if (!vm.hasPendingTerminationException())
-            scope.clearException();
-        didThrow = true;
-        deserialized = jsNull();
-    }
-
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     JSC::Strong<JSC::Unknown> strongData(vm, deserialized);
 
-    auto& eventType = didThrow ? eventNames().messageerrorEvent : eventNames().messageEvent;
-    auto event = adoptRef(*new MessageEvent(eventType, WTF::move(data), origin, lastEventId, WTF::move(source), WTF::move(ports)));
+    auto event = adoptRef(*new MessageEvent(eventNames().messageEvent, WTF::move(data), origin, lastEventId, WTF::move(source), WTF::move(ports)));
     JSC::Strong<JSC::JSObject> strongWrapper(vm, uncheckedDowncast<JSC::JSObject>(toJS(&globalObject, uncheckedDowncast<JSDOMGlobalObject>(&globalObject), event.get())));
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     // Since we've already deserialized the SerializedScriptValue, cache the result so we don't have to deserialize
     // again the next time JSMessageEvent::data() gets called by the main world.
     event->cachedData().set(vm, strongWrapper.get(), deserialized);
 
     return MessageEventWithStrongData { event, WTF::move(strongWrapper) };
+}
+
+Ref<MessageEvent> MessageEvent::createMessageErrorEvent(RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports)
+{
+    return adoptRef(*new MessageEvent(eventNames().messageerrorEvent, Init { {}, jsNull(), {}, {}, WTF::move(source), WTF::move(ports) }, IsTrusted::Yes));
 }
 
 void MessageEvent::initMessageEvent(const AtomString& type, bool canBubble, bool cancelable, JSValue data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports)

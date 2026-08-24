@@ -366,12 +366,17 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
         return;
     }
 
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps (7.3): if
+    // deserializing throws, catch it and fire messageerror instead.
     auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
     if (scope.exception()) [[unlikely]] {
-        RELEASE_ASSERT(vm->hasPendingTerminationException());
+        if (vm->hasPendingTerminationException())
+            return;
+        scope.clearException();
+        dispatchEvent(MessageEvent::createMessageErrorEvent());
         return;
     }
-    dispatchEvent(event.event);
+    dispatchEvent(event->event);
 }
 
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)

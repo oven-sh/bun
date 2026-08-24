@@ -370,11 +370,10 @@ describe("MessagePort pipe", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Each onmessage enqueues the next message mid-drain, so the drain's budget
-  // (1000 when the inbox starts with one message) runs out with the inbox
-  // non-empty while the in-handler send has already posted the continuation
-  // drain task. Exercises the budget-yield handoff; out-of-order or missing
-  // delivery fails.
+  // Each onmessage enqueues the next message mid-drain, so the drain's fixed
+  // budget runs out with the inbox non-empty while the in-handler send has
+  // already posted a wakeup task. Exercises the budget-yield handoff;
+  // out-of-order or missing delivery fails.
   test("self-feeding chain outlives the drain budget and stays in order", async () => {
     await using proc = Bun.spawn({
       cmd: [

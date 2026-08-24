@@ -2483,48 +2483,51 @@ impl<'a> Resolver<'a> {
 
     /// Record the directory cache keys the next resolution on this thread reads.
     pub fn start_recording_touched_dirs(&mut self) {
-        let mut p = touched_dirs_get();
-        if p.is_null() {
-            p = touched_dirs_init();
+        let mut slot = touched_dirs_get();
+        if slot.is_null() {
+            slot = touched_dirs_init();
         }
-        // SAFETY: thread-local; no reference into it outlives one `Resolver` method.
-        let touched = unsafe { &mut *p };
-        touched.hashes.clear();
-        touched.recording = true;
+        // SAFETY: thread-local; no reference into it outlives this statement.
+        unsafe {
+            (*slot).hashes.clear();
+            (*slot).recording = true;
+        }
     }
 
     /// Keeps the recorded keys for `bust_touched_dirs`.
     pub fn stop_recording_touched_dirs(&mut self) {
-        let p = touched_dirs_get();
-        if !p.is_null() {
-            // SAFETY: see `start_recording_touched_dirs`.
-            unsafe { (*p).recording = false };
+        let slot = touched_dirs_get();
+        if !slot.is_null() {
+            // SAFETY: thread-local; no reference into it outlives this statement.
+            unsafe { (*slot).recording = false };
         }
     }
 
     #[inline]
     fn record_touched_dir_hash(&self, hash: u64) {
-        let p = touched_dirs_get();
-        if p.is_null() {
+        let slot = touched_dirs_get();
+        if slot.is_null() {
             return;
         }
-        // SAFETY: see `start_recording_touched_dirs`.
-        let touched = unsafe { &mut *p };
-        if touched.recording {
-            touched.hashes.push(hash);
+        // SAFETY: thread-local; no reference into it outlives this statement.
+        unsafe {
+            if (*slot).recording {
+                (*slot).hashes.push(hash);
+            }
         }
     }
 
     #[inline]
     fn record_touched_dir(&self, dir: &[u8]) {
-        let p = touched_dirs_get();
-        if p.is_null() {
+        let slot = touched_dirs_get();
+        if slot.is_null() {
             return;
         }
-        // SAFETY: see `start_recording_touched_dirs`.
-        let touched = unsafe { &mut *p };
-        if touched.recording {
-            touched.hashes.push(DirInfo::HashMap::key_hash(dir));
+        // SAFETY: thread-local; no reference into it outlives this statement.
+        unsafe {
+            if (*slot).recording {
+                (*slot).hashes.push(DirInfo::HashMap::key_hash(dir));
+            }
         }
     }
 
@@ -2532,15 +2535,14 @@ impl<'a> Resolver<'a> {
     /// from disk. A miss caches what it did not find, and nothing outside watch
     /// mode invalidates that. Returns whether anything was cached.
     pub fn bust_touched_dirs(&mut self) -> bool {
-        let p = touched_dirs_get();
-        if p.is_null() {
+        let slot = touched_dirs_get();
+        if slot.is_null() {
             return false;
         }
-        // SAFETY: see `start_recording_touched_dirs`; the borrow ends before the cache calls.
-        let mut hashes = {
-            let touched = unsafe { &mut *p };
-            touched.recording = false;
-            core::mem::take(&mut touched.hashes)
+        // SAFETY: thread-local; no reference into it outlives this statement.
+        let mut hashes = unsafe {
+            (*slot).recording = false;
+            core::mem::take(&mut (*slot).hashes)
         };
         hashes.sort_unstable();
         hashes.dedup();
@@ -2557,8 +2559,8 @@ impl<'a> Resolver<'a> {
             busted
         );
         hashes.clear();
-        // SAFETY: see above; keep the allocation for the next recording.
-        unsafe { (*p).hashes = hashes };
+        // SAFETY: thread-local; keeps the allocation for the next recording.
+        unsafe { (*slot).hashes = hashes };
         busted
     }
 
@@ -3399,6 +3401,7 @@ impl<'a> Resolver<'a> {
 
         Self::assert_valid_cache_key(dir_path);
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
+        self.record_touched_dir_hash(dir_cache_info_result.hash);
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
             // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
@@ -4397,6 +4400,7 @@ impl<'a> Resolver<'a> {
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
             let result = self.dir_cache_mut().get_or_put(top)?;
+            self.record_touched_dir_hash(result.hash);
 
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
@@ -4440,6 +4444,7 @@ impl<'a> Resolver<'a> {
 
         if top == root_path {
             let result = self.dir_cache_mut().get_or_put(root_path)?;
+            self.record_touched_dir_hash(result.hash);
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {

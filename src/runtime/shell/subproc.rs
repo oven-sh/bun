@@ -972,7 +972,7 @@ impl ShellSubprocess {
             if let Status::Exited(exited) = &status {
                 #[cfg(windows)]
                 if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
-                    break 'brk SignalCode::SIGINT.to_exit_code();
+                    break 'brk Some(bun_sys::SignalCode::SIGINT.to_exit_code());
                 }
                 break 'brk Some(exited.code);
             }

@@ -3069,7 +3069,11 @@ impl DeferredRequest {
             Handler::ServerHandler(saved) => {
                 deferred_request::debug_log_dr!(
                     "  request url: {}",
-                    bstr::BStr::new(saved.request().map_or(&b""[..], |r| r.url.get().byte_slice()))
+                    bstr::BStr::new(
+                        saved
+                            .request()
+                            .map_or(&b""[..], |r| r.url.get().byte_slice())
+                    )
                 );
                 saved
                     .ctx

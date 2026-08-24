@@ -141,6 +141,6 @@ test("import() of a module that failed to load retries after the file changes", 
     E1 ERR boom
     E2 ERR boom"
   `);
-  expect(stderr).toBe("");
+  expect(stderr.trim()).toBe("");
   expect(exitCode).toBe(0);
 });

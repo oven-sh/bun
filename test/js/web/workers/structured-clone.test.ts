@@ -726,24 +726,25 @@ describe.concurrent("structuredClone with ArrayBuffer larger than serialization 
           Bun.gc(true);
         }
       `);
-      // The host's OOM killer reclaiming the child on a small CI runner before it reported
-      // anything is not a structuredClone failure; any other signal (SIGSEGV/SIGABRT/...) still is.
-      if (result.signalCode === "SIGKILL" && result.lines.length === 0) continue;
-      expect({ ...result, lines: result.lines.map(line => JSON.parse(line)) }).toEqual({
-        lines: batch.map(({ label, type, resizable = false }) => ({
-          label,
-          type,
-          byteLength: size,
-          first: 1,
-          last: 2,
-          // A view reports neither; a fixed-length ArrayBuffer reports maxByteLength === byteLength.
-          resizable: type === "ArrayBuffer" ? resizable : null,
-          maxByteLength: type === "ArrayBuffer" ? size : null,
-        })),
-        stderr: "",
-        signalCode: null,
-        exitCode: 0,
-      });
+      const lines = result.lines.map(line => JSON.parse(line));
+      const expected = batch.map(({ label, type, resizable = false }) => ({
+        label,
+        type,
+        byteLength: size,
+        first: 1,
+        last: 2,
+        // A view reports neither; a fixed-length ArrayBuffer reports maxByteLength === byteLength.
+        resizable: type === "ArrayBuffer" ? resizable : null,
+        maxByteLength: type === "ArrayBuffer" ? size : null,
+      }));
+      // The host's OOM killer reclaiming the child on a small CI runner is not a structuredClone
+      // failure: the cases the child reported before the kill are still checked, the rest are
+      // skipped. Any other signal (SIGSEGV/SIGABRT/...) still fails.
+      if (result.signalCode === "SIGKILL") {
+        expect(lines).toEqual(expected.slice(0, lines.length));
+        continue;
+      }
+      expect({ ...result, lines }).toEqual({ lines: expected, stderr: "", signalCode: null, exitCode: 0 });
     }
   }, 60_000);
 });

@@ -937,3 +937,52 @@ test("new RedisClient(url) does not leak the URL and its components", async () =
   expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 90 : 70);
   expect(exitCode).toBe(0);
 });
+
+test("RESP map keys are not leaked", async () => {
+  const code = /* js */ `
+    const net = require("net");
+    const big = "k".repeat(200 * 1024);
+    let n = 0;
+    const server = net.createServer(sock => {
+      sock.on("data", d => {
+        const s = d.toString();
+        for (const _ of s.split("\\r\\n").filter(x => x.startsWith("*"))) {
+          if (s.includes("HELLO")) sock.write("%1\\r\\n+server\\r\\n+mock\\r\\n");
+          else {
+            const k1 = big + n++, k2 = big + n++;
+            sock.write("%2\\r\\n$" + k1.length + "\\r\\n" + k1 + "\\r\\n:1\\r\\n$" + k2.length + "\\r\\n" + k2 + "\\r\\n:2\\r\\n");
+          }
+        }
+      });
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const client = new Bun.RedisClient("redis://127.0.0.1:" + server.address().port);
+    await client.connect();
+    for (let i = 0; i < 10; i++) await client.send("HGETALL", ["x"]);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) await client.send("HGETALL", ["x"]);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    client.close();
+    server.close();
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", code],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim());
+  // Unfixed: ~150 MiB (two 200 KiB keys per reply). Fixed: JS string churn only.
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 120 : 100);
+  expect(exitCode).toBe(0);
+});

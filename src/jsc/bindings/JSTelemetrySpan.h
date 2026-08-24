@@ -20,6 +20,10 @@ using namespace JSC;
 class JSTelemetrySpan final : public JSC::JSInternalFieldObjectImpl<11> {
 public:
     using Base = JSC::JSInternalFieldObjectImpl<11>;
+    // JSC reserves exactly one JSType byte for an embedder InternalFieldObject;
+    // JSTelemetrySpan is the only class that uses it, which is what makes the
+    // builtins' @isEmbedderInternalFieldObject brand check exact. A second user
+    // of this type would need its own discriminator.
     static constexpr JSC::JSType Type = static_cast<JSC::JSType>(JSC::EmbedderInternalFieldObjectType);
 
     enum class Field : unsigned {

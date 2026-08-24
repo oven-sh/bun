@@ -1,6 +1,6 @@
 import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, makeTree, noCoreDump, tempDirWithFiles } from "harness";
 import path from "path";
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
@@ -408,10 +408,8 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
   });
 
   // This test segfaults on purpose. Windows: never worked. ASAN: traps the SEGV
-  // and aborts before the crash handler can print the name. musl: the crash
-  // handler re-raises and the agent writes a core, which the runner counts as a
-  // failed job even though every test passed.
-  it.skipIf(process.platform === "win32" || isASAN || isMusl)("prints name when plugin crashes", async () => {
+  // and aborts before the crash handler can print the name.
+  it.skipIf(process.platform === "win32" || isASAN)("prints name when plugin crashes", async () => {
     const prelude = /* ts */ `import values from "./stuff.ts"
   const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;
@@ -456,7 +454,10 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     // BUN_CRASH_REPORT_URL="": this segfault is deliberate; uploading it to
     // CI's remap server pins a spurious "crash reported" error on the next
     // unrelated failing test (runner only drains /traces on non-zero exit).
-    const { stdout, stderr } = await Bun.$`${bunExe()} run build.ts`
+    // noCoreDump: the crash handler re-raises the signal, and a core file from
+    // it makes the CI runner count the job as failed even though every test
+    // passed.
+    const { stdout, stderr } = await Bun.$`${noCoreDump([bunExe(), "run", "build.ts"])}`
       .env({ ...bunEnv, BUN_TEST_TEMP_DIR: tempdir, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" })
       .throws(false);
     const errorString = stderr.toString();

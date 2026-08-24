@@ -1473,16 +1473,30 @@ pub mod bv2_impl {
             )
         }
 
-        #[inline]
-        pub(crate) fn encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable> {
-            __bun_jsc_encoder_string_table_new()
+        /// Owns a `JSC::EncoderStringTable` for one link; `take()` serializes and frees it, `Drop` frees it on early return.
+        pub(crate) struct EncoderStringTableHandle(Option<core::ptr::NonNull<EncoderStringTable>>);
+
+        impl EncoderStringTableHandle {
+            #[inline]
+            pub(crate) fn new() -> Self {
+                Self(Some(__bun_jsc_encoder_string_table_new()))
+            }
+            #[inline]
+            pub(crate) fn get(&self) -> Option<core::ptr::NonNull<EncoderStringTable>> {
+                self.0
+            }
+            #[inline]
+            pub(crate) fn take(mut self) -> Box<[u8]> {
+                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"))
+            }
         }
 
-        #[inline]
-        pub(crate) fn encoder_string_table_take(
-            table: core::ptr::NonNull<EncoderStringTable>,
-        ) -> Box<[u8]> {
-            __bun_jsc_encoder_string_table_take(table)
+        impl Drop for EncoderStringTableHandle {
+            fn drop(&mut self) {
+                if let Some(table) = self.0.take() {
+                    drop(__bun_jsc_encoder_string_table_take(table));
+                }
+            }
         }
 
         #[inline]

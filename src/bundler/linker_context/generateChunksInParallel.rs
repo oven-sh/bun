@@ -621,7 +621,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let is_standalone = c.options.compile_mode.is_standalone_html();
     let external_string_table = (c.options.generate_bytecode_cache
         && c.options.compile_mode.is_executable())
-    .then(crate::bundle_v2::dispatch::encoder_string_table_new);
+    .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
             || c.options.generate_bytecode_cache
@@ -1084,7 +1084,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             c.options.output_format,
                             &code_result.buffer,
                             &source_provider_url,
-                            external_string_table,
+                            external_string_table.as_ref().and_then(|table| table.get()),
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
@@ -1348,7 +1348,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         append_internal_module_bytecode(c, &mut result);
     }
     if let Some(table) = external_string_table {
-        let bytes = crate::bundle_v2::dispatch::encoder_string_table_take(table);
+        let bytes = table.take();
         debug!("Bytecode external string table: {} bytes", bytes.len());
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".bytecode-strings".to_vec().into_boxed_slice(),

@@ -746,6 +746,11 @@ impl StandaloneModuleGraph {
             return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
         }
 
+        let read_u32 = |at: usize| -> u32 {
+            debug_assert!(at + 4 <= raw_len);
+            // SAFETY: callers pass offsets of records `to_bytes` wrote inside `[0, raw_len)`; unaligned-safe read.
+            unsafe { core::ptr::read_unaligned(raw_const.add(at).cast::<u32>()) }
+        };
         let mut builtin_bytecode: Vec<(u32, *mut [u8])> = Vec::new();
         if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
             let table_offset = offsets.modules_ptr.offset as usize
@@ -755,11 +760,6 @@ impl StandaloneModuleGraph {
                 } else {
                     0
                 };
-            let read_u32 = |at: usize| -> u32 {
-                debug_assert!(at + 4 <= raw_len);
-                // SAFETY: `to_bytes` wrote `u32 count` + `count` records right here; read-only, unaligned-safe read within `[0, raw_len)`.
-                unsafe { core::ptr::read_unaligned(raw_const.add(at).cast::<u32>()) }
-            };
             let count = read_u32(table_offset) as usize;
             builtin_bytecode.reserve(count);
             for i in 0..count {
@@ -794,11 +794,6 @@ impl StandaloneModuleGraph {
                     } else {
                         0
                     };
-                let read_u32 = |at: usize| -> u32 {
-                    debug_assert!(at + 4 <= raw_len);
-                    // SAFETY: `to_bytes` wrote a `StringPointer` right here; unaligned-safe read within `[0, raw_len)`.
-                    unsafe { core::ptr::read_unaligned(raw_const.add(at).cast::<u32>()) }
-                };
                 let ptr = StringPointer {
                     offset: read_u32(record_at),
                     length: read_u32(record_at + 4),

@@ -948,7 +948,7 @@ impl VirtualMachine {
         self.event_loop_mut()
     }
 
-    /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
+    /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
     fn install_bytecode_string_table(
         &self,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
@@ -964,6 +964,7 @@ impl VirtualMachine {
         unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
     }
 
+    /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
     /// `init()` and live for the VM lifetime.
     #[inline(always)]
     pub fn jsc_vm(&self) -> &VM {

@@ -284,7 +284,10 @@ impl Ja3 {
         // And what it sends only for a TLS version the cipher list does not offer must be absent.
         let unsent: &[u16] = if tls13.is_empty() {
             &[
+                EXT_PRE_SHARED_KEY,
+                EXT_EARLY_DATA,
                 EXT_SUPPORTED_VERSIONS,
+                EXT_COOKIE,
                 EXT_PSK_KEY_EXCHANGE_MODES,
                 EXT_KEY_SHARE,
                 EXT_ENCRYPTED_CLIENT_HELLO,

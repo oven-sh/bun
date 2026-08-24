@@ -96,7 +96,8 @@ impl ProcessHandle {
         let argv: [&CStr; 3] = [
             state.shell_bin.as_cstr(),
             if cfg!(unix) { c"-c" } else { c"exec" },
-            handle.config.combined.as_cstr(),
+            CStr::from_bytes_until_nul(handle.config.combined.as_bytes_with_nul())
+                .expect("built NUL-terminated"),
         ];
         let start_time = Instant::now();
         let spawned: spawn::SpawnProcessResult = {

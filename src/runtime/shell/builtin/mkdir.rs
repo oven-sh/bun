@@ -312,7 +312,7 @@ impl ShellMkdirTask {
             )
         };
 
-        // `NodeFS` expects the `Valid::path_string_length` bound its JS callers
+        // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
         // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
         if filepath.len() >= bun_paths::MAX_PATH_BYTES {
             this.err = Some(

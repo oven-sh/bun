@@ -898,6 +898,7 @@ pub trait PathLikeExt {
     ) -> JsResult<Option<PathLike>>
     where
         Self: Sized;
+    /// Throws ENAMETOOLONG too; [`Self::from_js`] defers it for async bindings instead.
     fn from_bun_string(
         global: &JSGlobalObject,
         str: bun_core::String,
@@ -1140,7 +1141,7 @@ impl PathLikeExt for PathLike {
             return Ok(None);
         };
         use jsc::JSType;
-        match arg.js_type() {
+        let path = match arg.js_type() {
             JSType::Uint8Array | JSType::DataView => {
                 let mut buffer = Buffer::from_js_pinned(ctx, arg)
                     .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
@@ -1155,7 +1156,7 @@ impl PathLikeExt for PathLike {
                 }
 
                 arguments.protect_eat();
-                Ok(Some(Self::Buffer(buffer)))
+                Self::Buffer(buffer)
             }
 
             JSType::ArrayBuffer => {
@@ -1172,17 +1173,13 @@ impl PathLikeExt for PathLike {
                 }
 
                 arguments.protect_eat();
-                Ok(Some(Self::Buffer(buffer)))
+                Self::Buffer(buffer)
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
                 let str = arg.to_bun_string(ctx)?;
                 arguments.eat();
-                Ok(Some(Self::from_bun_string(
-                    ctx,
-                    str,
-                    arguments.will_be_async,
-                )?))
+                path_like_from_string(ctx, str, arguments.will_be_async)?
             }
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
@@ -1223,17 +1220,14 @@ impl PathLikeExt for PathLike {
                             .throw());
                     }
                     arguments.eat();
-
-                    return Ok(Some(Self::from_bun_string(
-                        ctx,
-                        str,
-                        arguments.will_be_async,
-                    )?));
+                    path_like_from_string(ctx, str, arguments.will_be_async)?
+                } else {
+                    return Ok(None);
                 }
-
-                Ok(None)
             }
-        }
+        };
+
+        Valid::path_length(path, ctx, arguments).map(Some)
     }
 
     fn from_bun_string(
@@ -1241,34 +1235,44 @@ impl PathLikeExt for PathLike {
         str: bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> {
-        let utf8 = if will_be_async {
-            str.into_utf8_with_string_thread_safe()
-        } else {
-            str.into_utf8_with_string()
-        };
-
-        // Validate the UTF-8 byte length after conversion, since the path
-        // will be stored in a fixed-size PathBuffer.
-        Valid::path_string_length(utf8.slice().len(), global)?;
-        Valid::path_null_bytes(utf8.slice(), global)?;
-
-        // Costs nothing to keep both around.
-        if utf8.is_shared() {
-            return Ok(if will_be_async {
-                Self::ThreadsafeString(utf8)
-            } else {
-                Self::String(utf8)
-            });
+        let path = path_like_from_string(global, str, will_be_async)?;
+        match Valid::path_too_long(path.slice()) {
+            Some(err) => Err(global.throw_value(err.to_error_instance(global))),
+            None => Ok(path),
         }
-
-        // It is expensive to keep both around: `utf8` here is a transcoded
-        // copy (UTF-16 or non-ASCII Latin-1 input) independent of `string`.
-        let utf8 = utf8.into_utf8();
-        if let Utf8Bytes::Owned(owned) = &utf8 {
-            global.vm().report_extra_memory(owned.len());
-        }
-        Ok(Self::Utf8(utf8))
     }
+}
+
+/// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).
+fn path_like_from_string(
+    global: &JSGlobalObject,
+    str: bun_core::String,
+    will_be_async: bool,
+) -> JsResult<PathLike> {
+    let utf8 = if will_be_async {
+        str.into_utf8_with_string_thread_safe()
+    } else {
+        str.into_utf8_with_string()
+    };
+
+    Valid::path_null_bytes(utf8.slice(), global)?;
+
+    // Costs nothing to keep both around.
+    if utf8.is_shared() {
+        return Ok(if will_be_async {
+            PathLike::ThreadsafeString(utf8)
+        } else {
+            PathLike::String(utf8)
+        });
+    }
+
+    // It is expensive to keep both around: `utf8` here is a transcoded
+    // copy (UTF-16 or non-ASCII Latin-1 input) independent of `string`.
+    let utf8 = utf8.into_utf8();
+    if let Utf8Bytes::Owned(owned) = &utf8 {
+        global.vm().report_extra_memory(owned.len());
+    }
+    Ok(PathLike::Utf8(utf8))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1276,39 +1280,45 @@ impl PathLikeExt for PathLike {
 pub struct Valid;
 
 impl Valid {
-    pub(crate) fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
-        match len {
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            0..MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
+    /// The ENAMETOOLONG the syscall would return: no `PathBuffer` fits this path plus its NUL.
+    pub(crate) fn path_too_long(path: &[u8]) -> Option<bun_sys::SystemError> {
+        if path.len() < MAX_PATH_BYTES {
+            return None;
         }
+        let mut system_error =
+            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                .with_path(path)
+                .to_system_error();
+        system_error.syscall = bun_core::String::DEAD;
+        Some(system_error)
+    }
+
+    /// Sync bindings throw; async ones get it as `arguments.deferred_error` and a placeholder path.
+    pub(crate) fn path_length(
+        path: PathLike,
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<PathLike> {
+        let Some(err) = Self::path_too_long(path.slice()) else {
+            return Ok(path);
+        };
+        drop(path);
+        if !arguments.will_be_async {
+            return Err(ctx.throw_value(err.to_error_instance(ctx)));
+        }
+        if arguments.deferred_error.is_none() {
+            arguments.deferred_error = Some(Box::new(err));
+        }
+        Ok(PathLike::default())
     }
 
     pub(crate) fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
-        let slice = buffer.slice();
-        match slice.len() {
-            0 => {
-                Err(ctx
-                    .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
-            }
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            1..MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
+        if buffer.slice().is_empty() {
+            return Err(
+                ctx.throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty"))
+            );
         }
+        Ok(())
     }
 
     pub(crate) fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {

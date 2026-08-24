@@ -192,7 +192,7 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
     while i < wanted.len() {
         let mut deps: *const u16 = core::ptr::null();
         // SAFETY: C++ returns a pointer into a static table and its length.
-        let count = unsafe { Bun__internalModuleDependencies(wanted[i], &mut deps) };
+        let count = unsafe { Bun__internalModuleDependencies(wanted[i], &raw mut deps) };
         for k in 0..count {
             // SAFETY: k < count.
             let dep = unsafe { *deps.add(k) } as u32;
@@ -208,7 +208,7 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
         let mut handle: Option<NonNull<CachedBytecode>> = None;
         // SAFETY: out-params are initialized locals; C++ fills them on success.
         if !unsafe {
-            Bun__generateInternalModuleBytecode(id, depth, &mut bytes, &mut size, &mut handle)
+            Bun__generateInternalModuleBytecode(id, depth, &raw mut bytes, &raw mut size, &raw mut handle)
         } {
             continue;
         }

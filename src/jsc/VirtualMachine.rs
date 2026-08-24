@@ -3736,10 +3736,7 @@ impl VirtualMachine {
                 return;
             }
             Mode::Strict => {
-                // If describing the rejection throws, that is the error reported instead.
-                let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason)
-                        .unwrap_or_else(|e| global_object.take_exception(e));
+                let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 let _ = self.uncaught_exception(global_object, wrapped, true);
                 let handled = handle_unhandled();
                 if !handled {
@@ -3753,9 +3750,7 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason)
-                        .unwrap_or_else(|e| global_object.take_exception(e));
+                let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 if self.uncaught_exception(global_object, wrapped, true) {
                     drain(self);
                     return;
@@ -6821,6 +6816,27 @@ fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bo
     jsc::from_js_host_call_generic(global_object, || {
         Bun__promises__isErrorLike(global_object, reason)
     })
+}
+
+/// What `--unhandled-rejections=strict|throw` hand to the uncaught-exception path for `reason`. If describing the
+/// rejection itself throws (a hostile Proxy under isErrorLike, an OOM resolving a rope), that failure does not
+/// replace the thing being reported: the rejection is the user's bug, so it is reported as-is — unless what was
+/// thrown is a termination, which has to win.
+fn unhandled_rejection_as_uncaught_error(
+    global_object: &JSGlobalObject,
+    reason: JSValue,
+) -> JSValue {
+    match wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason) {
+        Ok(wrapped) => wrapped,
+        Err(e) => {
+            let secondary = global_object.take_exception(e);
+            if secondary.is_termination_exception() {
+                secondary
+            } else {
+                reason
+            }
+        }
+    }
 }
 
 fn wrap_unhandled_rejection_error_for_uncaught_exception(

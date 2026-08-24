@@ -112,6 +112,8 @@ typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
+    // `bun build --compile`: StringImpl::hash() of source_code computed at build time (0 = unknown).
+    uint32_t source_code_hash;
     JSC::EncodedJSValue cjsCustomExtension;
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
@@ -122,6 +124,8 @@ typedef struct ResolvedSource {
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
     bool bytecode_cache_owned;
+    // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
+    bool bytecode_cache_persistent;
     // Owned; Zig::SourceProvider takes it (nulling the field).
     bun_ModuleInfoDeserialized* module_info;
     // File path used as source origin for bytecode cache validation.

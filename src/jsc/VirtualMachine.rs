@@ -415,6 +415,29 @@ pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::Standalone
     STANDALONE_MODULE_GRAPH.get().copied()
 }
 
+/// InternalModuleRegistry::generateModule: ahead-of-time bytecode for internal module `id` from a `bun build --compile`
+/// executable (process-lifetime bytes JSC may alias), if this process is one and it carries it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
+    _vm: *mut c_void,
+    id: u32,
+    bytes: *mut *const u8,
+    size: *mut usize,
+) -> bool {
+    let Some(graph) = standalone_module_graph() else {
+        return false;
+    };
+    let Some(found) = graph.builtin_module_bytecode(id) else {
+        return false;
+    };
+    // SAFETY: out-params supplied by the C++ caller; `found` points into the executable's mapped section.
+    unsafe {
+        *bytes = found.cast::<u8>();
+        *size = found.len();
+    }
+    true
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Nested types
 // ──────────────────────────────────────────────────────────────────────────
@@ -923,6 +946,22 @@ impl VirtualMachine {
     #[allow(clippy::mut_from_ref)]
     pub fn event_loop_ref(&self) -> &mut EventLoop {
         self.event_loop_mut()
+    }
+
+    /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
+    fn install_bytecode_string_table(
+        &self,
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    ) {
+        let table = graph.bytecode_string_table();
+        if table.is_empty() {
+            return;
+        }
+        unsafe extern "C" {
+            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
+        }
+        // SAFETY: `jsc_vm` set in `init()`; `table` is a mmapped process-lifetime span from the executable's own section.
+        unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
     }
 
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
@@ -3974,6 +4013,7 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
+        vm_ref.install_bytecode_string_table(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         vm_ref.transpiler.resolver.store_fd = false;
@@ -4020,6 +4060,9 @@ impl VirtualMachine {
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
+        if let Some(graph) = opts.graph {
+            vm_ref.install_bytecode_string_table(graph);
+        }
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;

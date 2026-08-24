@@ -328,7 +328,7 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
                 if (vm.hasPendingTerminationException())
                     return false;
                 scope.clearException();
-                dispatch(MessageEvent::createMessageErrorEvent());
+                dispatch(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
             } else
                 dispatch(event->event);
             if (globalObject.drainMicrotasks())

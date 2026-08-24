@@ -68,7 +68,6 @@ public:
     // Deserializes `data` in the target realm. Throws what deserialization throws (nullopt then); the dispatching
     // task turns that into a `messageerror` event (message port post message steps, 7.3).
     static std::optional<MessageEventWithStrongData> create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
-    static Ref<MessageEvent> createMessageErrorEvent(RefPtr<MessagePort>&& source = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     static std::optional<MessageEventWithStrongData> create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 

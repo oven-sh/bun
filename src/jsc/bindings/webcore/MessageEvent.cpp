@@ -104,11 +104,6 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
     return MessageEventWithStrongData { event, WTF::move(strongWrapper) };
 }
 
-Ref<MessageEvent> MessageEvent::createMessageErrorEvent(RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports)
-{
-    return adoptRef(*new MessageEvent(eventNames().messageerrorEvent, Init { {}, jsNull(), {}, {}, WTF::move(source), WTF::move(ports) }, IsTrusted::Yes));
-}
-
 void MessageEvent::initMessageEvent(const AtomString& type, bool canBubble, bool cancelable, JSValue data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports)
 {
     if (isBeingDispatched())

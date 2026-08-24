@@ -89,7 +89,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
         if (vm.hasPendingTerminationException())
             return;
         scope.clearException();
-        dispatchEvent(MessageEvent::createMessageErrorEvent());
+        dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
         return;
     }
     dispatchEvent(event->event);

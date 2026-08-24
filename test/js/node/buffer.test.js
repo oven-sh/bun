@@ -1121,51 +1121,40 @@ for (let withOverridenBufferWrite of [false, true]) {
         // `str` with the code unit at `pos` replaced by `ch`
         const replaceAt = (str, pos, ch) => str.slice(0, pos) + ch + str.slice(pos + 1);
 
-        // Each sweep below records every case and compares the records in one expect():
-        // CI runs with BUN_GARBAGE_COLLECTOR_LEVEL=1, where every expect() requests a GC.
-
         it("decodes valid input at every length around the vector widths", () => {
-          const results = [];
-          const reference = [];
-          for (const pairs of [15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 1024]) {
-            const base = patternHex(pairs);
-            for (const extraChar of ["", "a"]) {
-              // `extraChar` leaves a trailing lone digit that must be ignored
-              const hex = base + extraChar;
-              const expected = referenceHexDecode(hex);
-              results.push({
-                pairs,
-                extraChar,
-                length: expected.length,
-                fromLatin1: Buffer.from(hex, "hex"),
-                fromUTF16: Buffer.from(toUTF16(hex), "hex"),
-              });
-              reference.push({ pairs, extraChar, length: pairs, fromLatin1: expected, fromUTF16: expected });
+          withoutAggressiveGC(() => {
+            for (const pairs of [15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 1024]) {
+              const base = patternHex(pairs);
+              for (const extraChar of ["", "a"]) {
+                // `extraChar` leaves a trailing lone digit that must be ignored
+                const hex = base + extraChar;
+                const expected = referenceHexDecode(hex);
+                expect(expected.length).toBe(pairs);
+
+                const fromLatin1 = Buffer.from(hex, "hex");
+                expect(fromLatin1).toEqual(expected);
+
+                const fromUTF16 = Buffer.from(toUTF16(hex), "hex");
+                expect(fromUTF16).toEqual(expected);
+              }
             }
-          }
-          expect(results).toEqual(reference);
+          });
         });
 
         it("stops at an invalid character at any position", () => {
-          const pairs = 80; // several vector blocks on every target
-          const base = patternHex(pairs);
-          const results = [];
-          const reference = [];
-          for (const bad of ["x", "g", "G", ":", "@", "/", " ", "\x00", "\x80", "\xff"]) {
-            for (let pos = 0; pos < pairs * 2; pos += 7) {
-              const hex = replaceAt(base, pos, bad);
-              const expected = referenceHexDecode(hex);
-              results.push({
-                bad,
-                pos,
-                length: expected.length,
-                fromLatin1: Buffer.from(hex, "hex"),
-                fromUTF16: Buffer.from(toUTF16(hex), "hex"),
-              });
-              reference.push({ bad, pos, length: Math.floor(pos / 2), fromLatin1: expected, fromUTF16: expected });
+          withoutAggressiveGC(() => {
+            const pairs = 80; // several vector blocks on every target
+            const base = patternHex(pairs);
+            for (const bad of ["x", "g", "G", ":", "@", "/", " ", "\x00", "\x80", "\xff"]) {
+              for (let pos = 0; pos < pairs * 2; pos += 7) {
+                const hex = replaceAt(base, pos, bad);
+                const expected = referenceHexDecode(hex);
+                expect(expected.length).toBe(Math.floor(pos / 2));
+                expect(Buffer.from(hex, "hex")).toEqual(expected);
+                expect(Buffer.from(toUTF16(hex), "hex")).toEqual(expected);
+              }
             }
-          }
-          expect(results).toEqual(reference);
+          });
         });
 
         // 75 pairs: on every target the input spans whole vector blocks (pairs
@@ -1176,71 +1165,48 @@ for (let withOverridenBufferWrite of [false, true]) {
         const wideUnitPositions = [0, 1, 31, 32, 63, 64, 127, 128, 143, 144, 149];
 
         it("decodes UTF-16 code units above 0xFF from their low byte, like Node", () => {
-          // U+0130, U+0141, U+3061, U+FF41 narrow to '0', 'A', 'a', 'A'.
-          const pairs = wideUnitPairs;
-          const base = patternHex(pairs);
-          const results = [];
-          const reference = [];
-          for (const wide of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
-            const narrow = String.fromCharCode(wide.charCodeAt(0) & 0xff);
-            for (const pos of wideUnitPositions) {
-              const hex = replaceAt(base, pos, wide);
-              const expected = Buffer.from(replaceAt(base, pos, narrow), "hex");
-              const target = Buffer.alloc(pairs);
-              results.push({
-                wide,
-                pos,
-                length: expected.length,
-                decoded: referenceHexDecode(hex),
-                fromString: Buffer.from(hex, "hex"),
-                written: target.write(hex, "hex"),
-                target,
-              });
-              reference.push({
-                wide,
-                pos,
-                length: pairs,
-                decoded: expected,
-                fromString: expected,
-                written: pairs,
-                target: expected,
-              });
+          withoutAggressiveGC(() => {
+            // U+0130, U+0141, U+3061, U+FF41 narrow to '0', 'A', 'a', 'A'.
+            const pairs = wideUnitPairs;
+            const base = patternHex(pairs);
+            for (const wide of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
+              const narrow = String.fromCharCode(wide.charCodeAt(0) & 0xff);
+              for (const pos of wideUnitPositions) {
+                const hex = replaceAt(base, pos, wide);
+                const expected = Buffer.from(replaceAt(base, pos, narrow), "hex");
+                expect(expected.length).toBe(pairs);
+                expect(expected).toEqual(referenceHexDecode(hex));
+
+                expect(Buffer.from(hex, "hex")).toEqual(expected);
+
+                const target = Buffer.alloc(pairs);
+                expect(target.write(hex, "hex")).toBe(pairs);
+                expect(target).toEqual(expected);
+              }
             }
-          }
-          expect(results).toEqual(reference);
+          });
         });
 
         it("stops at a UTF-16 code unit above 0xFF whose low byte is not a hex digit", () => {
-          // U+0100, U+0147, U+01FF, U+3000 narrow to 0x00, 'G', 0xFF, 0x00.
-          const pairs = wideUnitPairs;
-          const base = patternHex(pairs);
-          const results = [];
-          const reference = [];
-          for (const bad of ["\u0100", "\u0147", "\u01ff", "\u3000"]) {
-            for (const pos of wideUnitPositions) {
-              const hex = replaceAt(base, pos, bad);
-              const expected = referenceHexDecode(hex);
-              const target = Buffer.alloc(pairs, 0xaa);
-              results.push({
-                bad,
-                pos,
-                length: expected.length,
-                fromString: Buffer.from(hex, "hex"),
-                written: target.write(hex, "hex"),
-                target,
-              });
-              reference.push({
-                bad,
-                pos,
-                length: Math.floor(pos / 2),
-                fromString: expected,
-                written: expected.length,
-                // the bytes past the decoded prefix keep their fill
-                target: Buffer.concat([expected, Buffer.alloc(pairs - expected.length, 0xaa)]),
-              });
+          withoutAggressiveGC(() => {
+            // U+0100, U+0147, U+01FF, U+3000 narrow to 0x00, 'G', 0xFF, 0x00.
+            const pairs = wideUnitPairs;
+            const base = patternHex(pairs);
+            for (const bad of ["\u0100", "\u0147", "\u01ff", "\u3000"]) {
+              for (const pos of wideUnitPositions) {
+                const hex = replaceAt(base, pos, bad);
+                const expected = referenceHexDecode(hex);
+                expect(expected.length).toBe(Math.floor(pos / 2));
+
+                expect(Buffer.from(hex, "hex")).toEqual(expected);
+
+                const target = Buffer.alloc(pairs, 0xaa);
+                expect(target.write(hex, "hex")).toBe(expected.length);
+                expect(target.subarray(0, expected.length)).toEqual(expected);
+                expect(target.subarray(expected.length)).toEqual(Buffer.alloc(pairs - expected.length, 0xaa));
+              }
             }
-          }
-          expect(results).toEqual(reference);
+          });
         });
 
         it("buf.write() with long hex input respects the destination length", () => {
@@ -5339,20 +5305,29 @@ describe("read*/write* after JIT tier-up", () => {
   it("keeps working with other ArrayBufferView receivers via .call", () => {
     const u8 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
     const dv8 = new DataView(u8.buffer);
-    let mismatches = 0;
-    let wrongReceiverTypeErrors = 0;
-    for (let i = 0; i < 1500; i++) {
-      if (Buffer.prototype.readInt32LE.call(u8, 0) !== dv8.getInt32(0, true)) mismatches++;
-      if (Buffer.prototype.readUInt16BE.call(u8, 6) !== dv8.getUint16(6, false)) mismatches++;
-      if (Buffer.prototype.writeUInt8.call(u8, i & 0xff, 7) !== 8) mismatches++;
-      if (u8[7] !== (i & 0xff)) mismatches++;
+    // One counter per check, and the .call sites live in a function that is invoked per
+    // iteration so they tier up like the readers in the sibling tests.
+    const mismatches = { readInt32LE: 0, readUInt16BE: 0, writeUInt8: 0, writeUInt8Stored: 0, wrongReceiver: 0 };
+    const step = i => {
+      if (Buffer.prototype.readInt32LE.call(u8, 0) !== dv8.getInt32(0, true)) mismatches.readInt32LE++;
+      if (Buffer.prototype.readUInt16BE.call(u8, 6) !== dv8.getUint16(6, false)) mismatches.readUInt16BE++;
+      if (Buffer.prototype.writeUInt8.call(u8, i & 0xff, 7) !== 8) mismatches.writeUInt8++;
+      if (u8[7] !== (i & 0xff)) mismatches.writeUInt8Stored++;
       try {
         Buffer.prototype.readInt32LE.call({}, 0);
+        mismatches.wrongReceiver++;
       } catch (e) {
-        if (e instanceof TypeError) wrongReceiverTypeErrors++;
+        if (!(e instanceof TypeError)) mismatches.wrongReceiver++;
       }
-    }
-    expect([mismatches, wrongReceiverTypeErrors]).toEqual([0, 1500]);
+    };
+    for (let i = 0; i < 1500; i++) step(i);
+    expect(mismatches).toEqual({
+      readInt32LE: 0,
+      readUInt16BE: 0,
+      writeUInt8: 0,
+      writeUInt8Stored: 0,
+      wrongReceiver: 0,
+    });
     // The bound is the receiver's element count (this.length), as in lib/internal/buffer.js, not
     // its byteLength: on a wider-element view these throw even though the bytes would fit.
     const u16 = new Uint16Array(4);

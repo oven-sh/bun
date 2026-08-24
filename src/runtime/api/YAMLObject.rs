@@ -6,10 +6,11 @@ use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer, wtf,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
+
+use super::stringify_replacer::{Properties, Replacer};
 
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
@@ -25,47 +26,78 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
 fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
 
+    let replacer = Replacer::from_js(global, replacer)?;
+    let value = match &replacer {
+        Some(replacer) => replacer.replace_root(global, value)?,
+        None => value,
+    };
+
     value.ensure_still_alive();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);
     }
 
-    if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
-            "YAML.stringify does not support the replacer argument"
-        )));
-    }
+    MarkedArgumentBuffer::new(|roots| {
+        let mut stringifier = Stringifier::init(global, space_value, replacer, roots)?;
 
-    let mut stringifier = Stringifier::init(global, space_value)?;
+        let root = stringifier
+            .read(global, value, ValueOrigin::Root)
+            .map_err(|err| err.to_js_error(global))?;
 
-    stringifier
-        .find_anchors_and_aliases(global, value, ValueOrigin::Root)
-        .map_err(|err| err.to_js_error(global))?;
+        stringifier
+            .write(global, root)
+            .map_err(|err| err.to_js_error(global))?;
 
-    stringifier
-        .stringify(global, value)
-        .map_err(|err| err.to_js_error(global))?;
-
-    stringifier.builder.to_string(global)
+        stringifier.builder.to_string(global)
+    })
 }
 
-struct Stringifier {
+/// Reads the value once into `nodes` (which runs the replacer and finds the anchors), then writes.
+struct Stringifier<'a> {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
 
-    known_collections: HashMap<JSValue, AnchorAlias>,
+    replacer: Option<Replacer>,
+    /// Every collection read, in the order it was reached.
+    nodes: Vec<Node>,
+    /// Collection to its node. A function replacer keeps only the current path here, see `read`.
+    known_collections: HashMap<JSValue, NodeId>,
     array_item_counter: usize,
     prop_names: StringHashMap<usize>,
+    /// Keeps the values in `nodes` and `known_collections` alive while a replacer or getter runs.
+    roots: &'a mut MarkedArgumentBuffer,
 
     space: Space,
+}
+
+type NodeId = usize;
+
+struct Node {
+    anchor: AnchorAlias,
+    items: Items,
+}
+
+enum Items {
+    Array(Vec<Item>),
+    Object(Vec<(BunString, Item)>),
+}
+
+#[derive(Clone, Copy)]
+enum Item {
+    /// `null`, a number, a boolean or a string, unboxed.
+    Scalar(JSValue),
+    /// A collection written in full here, with an anchor if something refers to it.
+    Collection(NodeId),
+    /// `*anchor` of a collection written earlier.
+    Alias(NodeId),
 }
 
 enum Space {
     Minified,
     Number(u32),
-    Str(bun_core::String),
+    Str(BunString),
 }
 
 impl Space {
@@ -95,34 +127,20 @@ impl Space {
 }
 
 pub(crate) struct AnchorAlias {
-    anchored: bool,
+    /// Something refers to this collection, so it is written with an anchor.
     used: bool,
     name: AnchorAliasName,
-}
-
-impl Default for AnchorAlias {
-    fn default() -> Self {
-        // Exists only because `HashMap::get_or_put` requires `V: Default` to
-        // fill the freshly-inserted slot; the value is immediately overwritten
-        // by the caller (see `find_anchors_and_aliases`).
-        AnchorAlias {
-            anchored: false,
-            used: false,
-            name: AnchorAliasName::Root,
-        }
-    }
 }
 
 impl AnchorAlias {
     fn init(origin: ValueOrigin<'_>) -> AnchorAlias {
         AnchorAlias {
-            anchored: false,
             used: false,
             name: match origin {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
                 ValueOrigin::PropValue(prop_name) => AnchorAliasName::PropValue {
-                    prop_name: (*prop_name).clone(),
+                    prop_name: prop_name.clone(),
                     counter: 0,
                 },
             },
@@ -183,8 +201,13 @@ impl StringifyError {
 
 bun_core::oom_from_alloc!(StringifyError);
 
-impl Stringifier {
-    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+impl<'a> Stringifier<'a> {
+    fn init(
+        global: &JSGlobalObject,
+        space_value: JSValue,
+        replacer: Option<Replacer>,
+        roots: &'a mut MarkedArgumentBuffer,
+    ) -> JsResult<Stringifier<'a>> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -194,31 +217,31 @@ impl Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
             indent: 0,
+            replacer,
+            nodes: Vec::new(),
             known_collections: HashMap::default(),
             array_item_counter: 0,
             prop_names,
+            roots,
             space: Space::init(global, space_value)?,
         })
     }
 
-    fn find_anchors_and_aliases(
+    /// Reads `value` through the replacer into a scalar, a new node, or an alias of an earlier node.
+    fn read(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
         origin: ValueOrigin<'_>,
-    ) -> Result<(), StringifyError> {
+    ) -> Result<Item, StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
 
         let unwrapped = value.unwrap_boxed_primitive(global)?;
 
-        if unwrapped.is_null() {
-            return Ok(());
-        }
-
-        if unwrapped.is_number() {
-            return Ok(());
+        if unwrapped.is_null() || unwrapped.is_number() || unwrapped.is_boolean() {
+            return Ok(Item::Scalar(unwrapped));
         }
 
         if unwrapped.is_big_int() {
@@ -227,118 +250,198 @@ impl Stringifier {
                 .into());
         }
 
-        if unwrapped.is_boolean() {
-            return Ok(());
-        }
-
         if unwrapped.is_string() {
-            return Ok(());
+            self.roots.append(unwrapped);
+            return Ok(Item::Scalar(unwrapped));
         }
 
         debug_assert!(unwrapped.is_object());
 
-        let object_entry = self.known_collections.get_or_put(unwrapped)?;
-        if object_entry.found_existing {
-            // this will become an alias. increment counters here because
-            // now the anchor/alias is confirmed used.
-
-            if object_entry.value_ptr.used {
-                return Ok(());
-            }
-
-            object_entry.value_ptr.used = true;
-
-            match &mut object_entry.value_ptr.name {
-                AnchorAliasName::Root => {
-                    // only one possible
-                }
-                AnchorAliasName::ArrayItem(counter) => {
-                    *counter = self.array_item_counter;
-                    self.array_item_counter += 1;
-                }
-                AnchorAliasName::PropValue { prop_name, counter } => {
-                    // Unsafe names use generated `value<counter>` anchors, keyed on
-                    // "value" so the counter is shared with literal "value" properties.
-                    let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
-                        prop_name.byte_slice()
-                    } else {
-                        b"value"
-                    };
-                    let name_entry = self.prop_names.get_or_put(key)?;
-                    if name_entry.found_existing {
-                        *name_entry.value_ptr += 1;
-                    } else {
-                        *name_entry.value_ptr = 0;
-                    }
-
-                    *counter = *name_entry.value_ptr;
-                }
-            }
-            return Ok(());
+        if let Some(&id) = self.known_collections.get(&unwrapped) {
+            self.mark_used(id)?;
+            return Ok(Item::Alias(id));
         }
 
-        *object_entry.value_ptr = AnchorAlias::init(origin);
+        let id = self.nodes.len();
+        self.nodes.push(Node {
+            anchor: AnchorAlias::init(origin),
+            items: Items::Array(Vec::new()),
+        });
+        self.known_collections.put(unwrapped, id)?;
+        self.roots.append(unwrapped);
 
-        if unwrapped.is_array() {
+        let items = if unwrapped.is_array() {
             let mut iter = unwrapped.array_iterator(global)?;
+            let mut items: Vec<Item> = Vec::new();
+            let mut index: u32 = 0;
             while let Some(item) = iter.next()? {
+                let item = self.replace_element(global, unwrapped, index, item)?;
+                index += 1;
                 if item.is_undefined() || item.is_symbol() || item.is_function() {
                     continue;
                 }
-
-                self.find_anchors_and_aliases(global, item, ValueOrigin::ArrayItem)?;
+                items.push(self.read(global, item, ValueOrigin::ArrayItem)?);
             }
+            Items::Array(items)
+        } else {
+            let mut properties = Properties::init(global, unwrapped, self.replacer.as_ref())?;
+            let mut items: Vec<(BunString, Item)> = Vec::new();
+            while let Some((prop_name, value)) = properties.next()? {
+                let value = self.replace_property(global, unwrapped, &prop_name, value)?;
+                if value.is_undefined() || value.is_symbol() || value.is_function() {
+                    continue;
+                }
+                let item = self.read(global, value, ValueOrigin::PropValue(&prop_name))?;
+                items.push(((*prop_name).clone(), item));
+            }
+            Items::Object(items)
+        };
+        self.nodes[id].items = items;
+
+        // `JSON.stringify` calls a function replacer again for a repeat outside a cycle. Match it.
+        if self.replacer.as_ref().is_some_and(Replacer::is_function) {
+            self.known_collections.remove(&unwrapped);
+        }
+        Ok(Item::Collection(id))
+    }
+
+    /// Gives node `id` an anchor. The counters number the anchors in the order they are confirmed.
+    fn mark_used(&mut self, id: NodeId) -> Result<(), StringifyError> {
+        let anchor = &mut self.nodes[id].anchor;
+        if anchor.used {
             return Ok(());
         }
+        anchor.used = true;
 
-        // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let iter = JSPropertyIterator::init(
-            global,
-            unwrapped.to_object(global)?,
-            JSPropertyIteratorOptions {
-                skip_empty_name: false,
-                include_value: true,
-                ..Default::default()
-            },
-        )?;
-
-        while let Some((prop_name, value)) = iter.next()? {
-            if value.is_undefined() || value.is_symbol() || value.is_function() {
-                continue;
+        match &mut anchor.name {
+            AnchorAliasName::Root => {
+                // only one possible
             }
-            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
-        }
+            AnchorAliasName::ArrayItem(counter) => {
+                *counter = self.array_item_counter;
+                self.array_item_counter += 1;
+            }
+            AnchorAliasName::PropValue { prop_name, counter } => {
+                // An unsafe name becomes `value<counter>`, counted with literal "value" properties.
+                let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
+                    prop_name.byte_slice()
+                } else {
+                    b"value"
+                };
+                let name_entry = self.prop_names.get_or_put(key)?;
+                if name_entry.found_existing {
+                    *name_entry.value_ptr += 1;
+                } else {
+                    *name_entry.value_ptr = 0;
+                }
 
+                *counter = *name_entry.value_ptr;
+            }
+        }
         Ok(())
     }
 
-    fn stringify(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), StringifyError> {
-        let unwrapped = value.unwrap_boxed_primitive(global)?;
-        self.stringify_unwrapped(global, unwrapped)
+    fn replace_property(
+        &self,
+        global: &JSGlobalObject,
+        holder: JSValue,
+        name: &BunString,
+        value: JSValue,
+    ) -> JsResult<JSValue> {
+        match &self.replacer {
+            Some(replacer) => replacer.replace_property(global, holder, name, value),
+            None => Ok(value),
+        }
     }
 
-    /// `unwrapped` has been through `unwrap_boxed_primitive`.
-    fn stringify_unwrapped(
-        &mut self,
+    fn replace_element(
+        &self,
         global: &JSGlobalObject,
-        unwrapped: JSValue,
-    ) -> Result<(), StringifyError> {
+        array: JSValue,
+        index: u32,
+        value: JSValue,
+    ) -> JsResult<JSValue> {
+        match &self.replacer {
+            Some(replacer) => replacer.replace_element(global, array, index, value),
+            None => Ok(value),
+        }
+    }
+
+    fn write(&mut self, global: &JSGlobalObject, item: Item) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
 
-        if unwrapped.is_null() {
+        let id = match item {
+            Item::Scalar(scalar) => return self.write_scalar(global, scalar),
+            Item::Alias(id) => {
+                self.builder.append_lchar(b'*');
+                self.append_anchor_name(id);
+                return Ok(());
+            }
+            Item::Collection(id) => id,
+        };
+
+        if self.nodes[id].anchor.used {
+            self.builder.append_lchar(b'&');
+            self.append_anchor_name(id);
+            match self.space {
+                Space::Minified => {
+                    self.builder.append_lchar(b' ');
+                }
+                Space::Number(_) | Space::Str(_) => {
+                    self.newline();
+                }
+            }
+        }
+
+        // Each node is written once; its items are not needed after this.
+        match core::mem::replace(&mut self.nodes[id].items, Items::Array(Vec::new())) {
+            Items::Array(items) => self.write_array(global, items),
+            Items::Object(items) => self.write_object(global, items),
+        }
+    }
+
+    fn append_anchor_name(&mut self, id: NodeId) {
+        match &self.nodes[id].anchor.name {
+            AnchorAliasName::Root => {
+                self.builder.append_latin1(b"root");
+            }
+            AnchorAliasName::ArrayItem(counter) => {
+                self.builder.append_latin1(b"item");
+                self.builder.append_usize(*counter);
+            }
+            AnchorAliasName::PropValue { prop_name, counter } => {
+                if !can_use_prop_name_as_anchor(prop_name) {
+                    self.builder.append_latin1(b"value");
+                    self.builder.append_usize(*counter);
+                } else {
+                    self.builder.append_string(prop_name);
+                    if *counter != 0 {
+                        self.builder.append_usize(*counter);
+                    }
+                }
+            }
+        }
+    }
+
+    fn write_scalar(
+        &mut self,
+        global: &JSGlobalObject,
+        scalar: JSValue,
+    ) -> Result<(), StringifyError> {
+        if scalar.is_null() {
             self.builder.append_latin1(b"null");
             return Ok(());
         }
 
-        if unwrapped.is_number() {
-            if unwrapped.is_int32() {
-                self.builder.append_int(unwrapped.as_int32());
+        if scalar.is_number() {
+            if scalar.is_int32() {
+                self.builder.append_int(scalar.as_int32());
                 return Ok(());
             }
 
-            let num = unwrapped.as_number();
+            let num = scalar.as_number();
             if num.is_infinite() && num.is_sign_negative() {
                 self.builder.append_latin1(b"-.inf");
                 // } else if num.is_infinite() && num.is_sign_positive() {
@@ -357,14 +460,8 @@ impl Stringifier {
             return Ok(());
         }
 
-        if unwrapped.is_big_int() {
-            return Err(global
-                .throw(format_args!("YAML.stringify cannot serialize BigInt"))
-                .into());
-        }
-
-        if unwrapped.is_boolean() {
-            if unwrapped.as_boolean() {
+        if scalar.is_boolean() {
+            if scalar.as_boolean() {
                 self.builder.append_latin1(b"true");
             } else {
                 self.builder.append_latin1(b"false");
@@ -372,134 +469,61 @@ impl Stringifier {
             return Ok(());
         }
 
-        if unwrapped.is_string() {
-            let value_str = unwrapped.to_bun_string(global)?;
-            self.append_string(&value_str);
+        debug_assert!(scalar.is_string());
+        let value_str = scalar.to_bun_string(global)?;
+        self.append_string(&value_str);
+        Ok(())
+    }
+
+    fn write_array(
+        &mut self,
+        global: &JSGlobalObject,
+        items: Vec<Item>,
+    ) -> Result<(), StringifyError> {
+        if items.is_empty() {
+            self.builder.append_latin1(b"[]");
             return Ok(());
         }
 
-        debug_assert!(unwrapped.is_object());
-
-        let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
-            let Some(anchor) = self.known_collections.get_mut(&unwrapped) else {
-                break 'has_anchor None;
-            };
-
-            if !anchor.used {
-                break 'has_anchor None;
-            }
-
-            Some(anchor)
-        };
-
-        if let Some(anchor) = has_anchor {
-            self.builder
-                .append_lchar(if anchor.anchored { b'*' } else { b'&' });
-
-            match &anchor.name {
-                AnchorAliasName::Root => {
-                    self.builder.append_latin1(b"root");
-                }
-                AnchorAliasName::ArrayItem(counter) => {
-                    self.builder.append_latin1(b"item");
-                    self.builder.append_usize(*counter);
-                }
-                AnchorAliasName::PropValue { prop_name, counter } => {
-                    if !can_use_prop_name_as_anchor(prop_name) {
-                        self.builder.append_latin1(b"value");
-                        self.builder.append_usize(*counter);
-                    } else {
-                        self.builder.append_string(prop_name);
-                        if *counter != 0 {
-                            self.builder.append_usize(*counter);
-                        }
+        match self.space {
+            Space::Minified => {
+                self.builder.append_lchar(b'[');
+                for (i, item) in items.into_iter().enumerate() {
+                    if i > 0 {
+                        self.builder.append_lchar(b',');
                     }
+                    self.write(global, item)?;
                 }
+                self.builder.append_lchar(b']');
             }
+            Space::Number(_) | Space::Str(_) => {
+                self.builder
+                    .ensure_unused_capacity(items.len() * b"- ".len());
+                for (i, item) in items.into_iter().enumerate() {
+                    if i > 0 {
+                        self.newline();
+                    }
 
-            if anchor.anchored {
-                return Ok(());
-            }
+                    self.builder.append_latin1(b"- ");
 
-            // `anchored` is set before `newline()` (the order is irrelevant to
-            // output; doing it here releases the `anchor` borrow first).
-            anchor.anchored = true;
-            match self.space {
-                Space::Minified => {
-                    self.builder.append_lchar(b' ');
-                }
-                Space::Number(_) | Space::Str(_) => {
-                    self.newline();
+                    // don't need to print a newline here for any value
+
+                    self.indent += 1;
+                    self.write(global, item)?;
+                    self.indent -= 1;
                 }
             }
         }
 
-        if unwrapped.is_array() {
-            let mut iter = unwrapped.array_iterator(global)?;
+        Ok(())
+    }
 
-            if iter.len == 0 {
-                self.builder.append_latin1(b"[]");
-                return Ok(());
-            }
-
-            match self.space {
-                Space::Minified => {
-                    self.builder.append_lchar(b'[');
-                    let mut first = true;
-                    while let Some(item) = iter.next()? {
-                        if item.is_undefined() || item.is_symbol() || item.is_function() {
-                            continue;
-                        }
-
-                        if !first {
-                            self.builder.append_lchar(b',');
-                        }
-                        first = false;
-
-                        self.stringify(global, item)?;
-                    }
-                    self.builder.append_lchar(b']');
-                }
-                Space::Number(_) | Space::Str(_) => {
-                    self.builder
-                        .ensure_unused_capacity(iter.len as usize * b"- ".len());
-                    let mut first = true;
-                    while let Some(item) = iter.next()? {
-                        if item.is_undefined() || item.is_symbol() || item.is_function() {
-                            continue;
-                        }
-
-                        if !first {
-                            self.newline();
-                        }
-                        first = false;
-
-                        self.builder.append_latin1(b"- ");
-
-                        // don't need to print a newline here for any value
-
-                        self.indent += 1;
-                        self.stringify(global, item)?;
-                        self.indent -= 1;
-                    }
-                }
-            }
-
-            return Ok(());
-        }
-
-        // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let iter = JSPropertyIterator::init(
-            global,
-            unwrapped.to_object(global)?,
-            JSPropertyIteratorOptions {
-                skip_empty_name: false,
-                include_value: true,
-                ..Default::default()
-            },
-        )?;
-
-        if iter.len == 0 {
+    fn write_object(
+        &mut self,
+        global: &JSGlobalObject,
+        items: Vec<(BunString, Item)>,
+    ) -> Result<(), StringifyError> {
+        if items.is_empty() {
             self.builder.append_latin1(b"{}");
             return Ok(());
         }
@@ -507,53 +531,39 @@ impl Stringifier {
         match self.space {
             Space::Minified => {
                 self.builder.append_lchar(b'{');
-                let mut first = true;
-                while let Some((prop_name, value)) = iter.next()? {
-                    if value.is_undefined() || value.is_symbol() || value.is_function() {
-                        continue;
-                    }
-
-                    if !first {
+                for (i, (prop_name, item)) in items.into_iter().enumerate() {
+                    if i > 0 {
                         self.builder.append_lchar(b',');
                     }
-                    first = false;
 
                     self.append_string(&prop_name);
                     self.builder.append_latin1(b": ");
 
-                    self.stringify(global, value)?;
+                    self.write(global, item)?;
                 }
                 self.builder.append_lchar(b'}');
             }
             Space::Number(_) | Space::Str(_) => {
-                self.builder.ensure_unused_capacity(iter.len * b": ".len());
+                self.builder
+                    .ensure_unused_capacity(items.len() * b": ".len());
 
-                let mut first = true;
-                while let Some((prop_name, value)) = iter.next()? {
-                    if value.is_undefined() || value.is_symbol() || value.is_function() {
-                        continue;
-                    }
-
-                    if !first {
+                for (i, (prop_name, item)) in items.into_iter().enumerate() {
+                    if i > 0 {
                         self.newline();
                     }
-                    first = false;
 
                     self.append_string(&prop_name);
                     self.builder.append_latin1(b": ");
 
                     self.indent += 1;
 
-                    let prop_value = value.unwrap_boxed_primitive(global)?;
-                    if prop_value_needs_newline(prop_value) {
+                    // A collection or an alias starts on its own line.
+                    if !matches!(item, Item::Scalar(_)) {
                         self.newline();
                     }
 
-                    self.stringify_unwrapped(global, prop_value)?;
+                    self.write(global, item)?;
                     self.indent -= 1;
-                }
-                if first {
-                    self.builder.append_latin1(b"{}");
                 }
             }
         }
@@ -656,11 +666,6 @@ impl Stringifier {
         }
         self.builder.append_string(str);
     }
-}
-
-/// Does this (unwrapped) object property value need a newline? True for arrays and objects.
-fn prop_value_needs_newline(value: JSValue) -> bool {
-    !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
 }
 
 /// Can this property name be emitted verbatim as an anchor/alias name?

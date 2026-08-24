@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "fs";
+import { mkdirSync, readdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
@@ -233,6 +233,11 @@ test.skipIf(isWindows)("auto-install native addon packages resolve $ORIGIN-shape
   // sibling symlink from scratch, with no leftover state from the first run.
   rmSync(join(String(dir), ".bun-cache", ".addon-links"), { recursive: true, force: true });
   expect(await runCheck("check.js")).toEqual({ found: true, shaped: true });
+
+  // A skip marker on addon-pkg would disable the view permanently, so the
+  // detection must never write one for a package with a .node file.
+  const storeEntries = readdirSync(join(String(dir), ".bun-cache", ".addon-links"));
+  expect(storeEntries.some(f => f.startsWith("addon-pkg@") && f.endsWith(".skip"))).toBe(false);
 });
 
 test("--install=fallback to install missing packages", async () => {

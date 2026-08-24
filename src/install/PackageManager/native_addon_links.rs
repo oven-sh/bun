@@ -420,8 +420,19 @@ fn ensure_dependency_links(
         match sys::readlinkat(cache_dir, link_z, &mut read_buf.0[..]) {
             Ok(n) if &read_buf.0[..n] == target_z.as_bytes() => {}
             Ok(_) => {
-                let _ = sys::unlinkat(cache_dir, link_z);
-                let _ = sys::symlinkat(target_z, cache_dir, link_z);
+                // Replace atomically: a concurrent dlopen must never observe
+                // the link as missing.
+                let mut tmp_link_buf = PathBuffer::uninit();
+                let hex = bun_fmt::u64_hex_fixed::<true, 16>(bun_core::fast_random());
+                let tmp_link_z = concat_z(
+                    &mut tmp_link_buf,
+                    &[STORE_DIR, b"/", folder_name, b"/node_modules/.tmp-", &hex],
+                );
+                if sys::symlinkat(target_z, cache_dir, tmp_link_z).is_ok()
+                    && sys::renameat(cache_dir, tmp_link_z, cache_dir, link_z).is_err()
+                {
+                    let _ = sys::unlinkat(cache_dir, tmp_link_z);
+                }
             }
             Err(err) if err.get_errno() == sys::E::ENOENT => {
                 if let Some(parent) = path::dirname(link_z.as_bytes()) {

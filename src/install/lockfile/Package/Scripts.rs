@@ -20,7 +20,7 @@ bun_output::declare_scope!(Lockfile, hidden);
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, bytemuck::NoUninit, bytemuck::CheckedBitPattern)]
 pub struct Scripts {
     pub(crate) preinstall: SemverString,
     pub(crate) install: SemverString,
@@ -289,6 +289,7 @@ impl Scripts {
 
     pub fn get_list(
         &mut self,
+        options: &crate::package_manager_real::Options,
         log: &mut bun_ast::Log,
         lockfile: &Lockfile,
         folder_path: &mut bun_paths::AutoAbsPath,
@@ -297,12 +298,10 @@ impl Scripts {
     ) -> Result<Option<List>, crate::Error> {
         if self.has_any() {
             let add_node_gyp_rebuild_script =
-                if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
+                if lockfile.has_trusted_dependency(options, folder_name, folder_name, resolution)
                     && self.install.is_empty()
                     && self.preinstall.is_empty()
                 {
-                    // `defer save.restore()` — `save()` returns an RAII guard that
-                    // restores the path length on Drop and derefs to the path.
                     let mut save = folder_path.save();
                     let _ = save.append(b"binding.gyp");
 
@@ -341,8 +340,6 @@ impl Scripts {
         let json_buf;
         let parsed;
         let json: Expr = {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
             let mut save = folder_path.save();
             let _ = save.append(b"package.json");
 
@@ -370,14 +367,10 @@ impl Scripts {
         resolution_tag: ResolutionTag,
     ) -> Result<Option<List>, crate::Error> {
         let mut tmp = RealLockfile::init_empty_value();
-        // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
-        // auto-drop suffices; Lockfile has no `impl Drop`.
         let mut builder = tmp.string_builder();
         self.fill_from_package_json(&mut builder, log, folder_path)?;
 
         let add_node_gyp_rebuild_script = if self.install.is_empty() && self.preinstall.is_empty() {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
             let mut save = folder_path.save();
             let _ = save.append(b"binding.gyp");
 
@@ -406,7 +399,7 @@ pub enum PrintFormat {
 }
 
 // `Clone` — `List` owns `cwd`/`package_name`/`items`, but
-// `runTasks.rs` (`.run_scripts` arm) and `lifecycle_script_runner` need a
+// `run_tasks.rs` (`.run_scripts` arm) and `lifecycle_script_runner` need a
 // by-value copy while the original allocation in `Store.entries.scripts`
 // must stay live for the post-install pass, so a deep clone is required.
 #[derive(Clone)]
@@ -462,8 +455,6 @@ impl List {
             }
         }
     }
-
-    // No manual deinit: `Box<[u8]>` fields drop automatically.
 
     pub(crate) fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
         for (i, maybe_script) in self.items.iter().enumerate() {

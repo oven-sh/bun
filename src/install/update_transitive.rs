@@ -14,7 +14,7 @@ use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, PackageIndexEntry};
 use crate::npm::PackageManifest;
 use crate::package_manager::Options::LogLevel;
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
+use crate::package_manager::root_package_json_path;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::package_manager_real::{PackageUpdateInfo, enqueue_dependency_with_main};
 use crate::update_scope::UpdateScope;
@@ -463,9 +463,10 @@ pub(crate) fn enqueue_peer_rows(
 }
 
 /// Pending log lines go to stderr; `--silent` drops everything but errors.
-fn print_log(manager: &PackageManager) -> crate::Result<()> {
-    let log = manager.log_mut();
-    if manager.options.log_level != LogLevel::Silent || log.has_errors() {
+fn print_log(manager: &mut PackageManager) -> crate::Result<()> {
+    let silent = manager.options.log_level == LogLevel::Silent;
+    let log = &mut manager.log;
+    if !silent || log.has_errors() {
         log.print(core::ptr::from_mut(Output::error_writer()))?;
     }
     log.reset();
@@ -718,9 +719,8 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
         return;
     }
     let keys: Vec<Box<[u8]>> = {
-        let log = manager.log_mut();
-        // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-        let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+        let log = &mut manager.log;
+        let path: &[u8] = root_package_json_path().as_bytes();
         let opts = GetJsonOptions {
             init_reset_store: false,
             ..Default::default()
@@ -853,15 +853,15 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
 
 /// Pairs each unchecked `(name, version)` with the fetch failure the manifest task logged for it and reports both as one warning; nothing under `--silent`.
 fn warn_unchecked(
-    manager: &PackageManager,
+    manager: &mut PackageManager,
     msgs_before: usize,
     unchecked: &[(Box<[u8]>, Box<[u8]>)],
 ) {
     if unchecked.is_empty() {
         return;
     }
-    let log = manager.log_mut();
     let silent = manager.options.log_level == LogLevel::Silent;
+    let log = &mut manager.log;
     let mut used = DynamicBitSet::init_empty(log.msgs.len()).unwrap_or_oom();
     for (name, version) in unchecked {
         let reason = log
@@ -1126,7 +1126,7 @@ fn plan_edges(
     }
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
-    let msgs_before = manager.log_mut().msgs.len();
+    let msgs_before = manager.log.msgs.len();
     populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&ids))?;
 
     let cache_ctx = manager.manifest_disk_cache_ctx();

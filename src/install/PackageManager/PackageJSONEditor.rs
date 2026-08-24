@@ -192,7 +192,6 @@ pub(crate) fn edit_patched_dependencies(
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
     let arena = &manager.ast_arena;
-    // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {
         if let bun_ast::ExprData::EObject(obj) = &query.expr.data {
@@ -230,14 +229,13 @@ pub fn edit_trusted_dependencies(
 ) -> Result<(), bun_alloc::AllocError> {
     let mut len = names_to_add.len();
 
-    let mut trusted_dependencies: &[Expr] = &[];
-    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
-            // this function; lifetime erased per the parser's `Str` convention.
-            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
-        }
-    }
+    let trusted_array = package_json
+        .as_property(TRUSTED_DEPENDENCIES_STRING)
+        .and_then(|query| query.expr.data.e_array());
+    let trusted_dependencies: &[Expr] = match &trusted_array {
+        Some(arr) => arr.items.slice(),
+        None => &[],
+    };
 
     let mut i = len;
     while i > 0 {
@@ -1053,8 +1051,7 @@ pub(crate) fn edit(
                                                     .expr
                                                     .data
                                                     .e_string()
-                                                    .expect("infallible: variant checked")
-                                                    .as_ptr(),
+                                                    .expect("infallible: variant checked"),
                                             );
                                             remaining -= 1;
                                         } else {
@@ -1107,8 +1104,7 @@ pub(crate) fn edit(
                                                     request.e_string = Some(
                                                         v.data
                                                             .e_string()
-                                                            .expect("infallible: variant checked")
-                                                            .as_ptr(),
+                                                            .expect("infallible: variant checked"),
                                                     );
                                                     remaining -= 1;
                                                     break 'dependency_group;
@@ -1208,8 +1204,7 @@ pub(crate) fn edit(
                         .unwrap()
                         .data
                         .e_string()
-                        .unwrap()
-                        .as_ptr(),
+                        .unwrap(),
                 );
                 break;
             }
@@ -1345,23 +1340,12 @@ pub(crate) fn edit(
     };
     for request in updates.iter_mut() {
         if let Some(e_string) = request.e_string {
-            // SAFETY: `e_string` is a `*mut E::EString` captured at one of two provenance sites:
-            //   (a) the freshly `Expr::allocate`d empty value string in `new_dependencies` (the
-            //       `e_string().unwrap().as_ptr()` call inside the `while k < new_dependencies.len()`
-            //       loop) — backed by `manager.ast_arena`, which is process-lifetime; or
-            //   (b) a pre-existing slot from the parsed `current_package_json` input tree
-            //       (`value.expr.data.e_string()` / `v.data.e_string()` in the earlier
-            //       dependency-group scan) — backed by the thread-local Expr
-            //       Store, which the *caller* guarantees stays live for the duration of `edit`
-            //       (it owns the parsed tree).
-            // Note: `ExprDisabler::scope()` at function entry is a debug guard that *forbids*
-            // Store use, not a keep-alive — it exists precisely so that the (a)-path nodes are
-            // never Store-backed. The `*current_package_json = Expr::allocate(...)` reassignments
-            // above only overwrite a Copy `Expr` handle; they never reset either arena. The Expr
-            // tree references the slot via `StoreRef` (a Copy `NonNull`) and no `&`/`&mut`
-            // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
-            // so this is the sole mutable borrow.
-            let e_string = unsafe { &mut *e_string };
+            // `e_string` points at either the freshly `Expr::allocate`d empty value
+            // string in `new_dependencies` (backed by `manager.ast_arena`,
+            // process-lifetime) or a slot of the parsed `current_package_json`
+            // tree (backed by the caller's Expr store); nothing else borrows it here.
+            let mut e_string = e_string;
+            let e_string = &mut *e_string;
             // `bun update <pkg>` keeps a `catalog:` reference; `bun add` still replaces it.
             if manager.subcommand == Subcommand::Update
                 && dependency::Tag::infer(e_string.data.slice()) == dependency::Tag::Catalog

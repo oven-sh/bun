@@ -333,3 +333,110 @@ impl<T: Node> UnboundedQueue<T> {
         self.back.0.load(Ordering::Acquire).is_null()
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OwnedQueue<T> — an `UnboundedQueue` whose nodes are `Box<T>`
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// An [`UnboundedQueue`] that owns its nodes: producers hand over a `Box<T>`,
+/// the consumer gets `Box<T>`s back. Multi-producer / single-consumer like the
+/// underlying queue.
+pub struct OwnedQueue<T: Node>(UnboundedQueue<T>);
+
+impl<T: Node> Default for OwnedQueue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Node> OwnedQueue<T> {
+    #[inline]
+    pub const fn new() -> Self {
+        Self(UnboundedQueue::new())
+    }
+
+    /// Move `item` into the queue. Callable from any thread.
+    #[inline]
+    pub fn push(&self, item: Box<T>) {
+        // SAFETY: `Box::into_raw` is a live, uniquely-owned node.
+        self.0
+            .push(unsafe { NonNull::new_unchecked(Box::into_raw(item)) });
+    }
+
+    /// Take everything queued so far.
+    #[inline]
+    pub fn drain(&self) -> OwnedDrain<T> {
+        OwnedDrain(self.0.pop_batch().iterator())
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<T: Node> Drop for OwnedQueue<T> {
+    fn drop(&mut self) {
+        self.drain().for_each(drop);
+    }
+}
+
+/// The nodes taken by [`OwnedQueue::drain`], in push order.
+pub struct OwnedDrain<T: Node>(BatchIterator<T>);
+
+impl<T: Node> Iterator for OwnedDrain<T> {
+    type Item = Box<T>;
+    #[inline]
+    fn next(&mut self) -> Option<Box<T>> {
+        let p = self.0.next();
+        if p.is_null() {
+            return None;
+        }
+        // SAFETY: every node in an `OwnedQueue` came from `Box::into_raw` in
+        // `push`, and `pop_batch` unlinked it from the queue, so this is the
+        // only pointer to it.
+        Some(unsafe { Box::from_raw(p) })
+    }
+}
+
+impl<T: Node> Drop for OwnedDrain<T> {
+    fn drop(&mut self) {
+        self.for_each(drop);
+    }
+}
+
+// SAFETY: the queue owns `Box<T>`s that move between the producer and consumer
+// threads, so it is `Send`/`Sync` exactly when `Box<T>: Send`.
+unsafe impl<T: Node + Send> Send for OwnedQueue<T> {}
+// SAFETY: as above — `push(&self)` from any thread moves a `T` across.
+unsafe impl<T: Node + Send> Sync for OwnedQueue<T> {}
+
+/// Implements [`Linked`] for a struct that embeds a `Link<Self>` field.
+///
+/// ```ignore
+/// bun_threading::intrusive_linked!(Task, next);
+/// bun_threading::intrusive_linked!(['a] Task<'a>, next);
+/// ```
+#[macro_export]
+macro_rules! intrusive_linked {
+    ([$($gen:tt)*] $ty:ty, $field:ident) => {
+        // SAFETY: always projects to the same embedded `Link<Self>` field.
+        unsafe impl<$($gen)*> $crate::Linked for $ty {
+            #[inline]
+            unsafe fn link(item: *mut Self) -> *const $crate::Link<Self> {
+                // SAFETY: `item` is valid per the `UnboundedQueue` contract.
+                unsafe { ::core::ptr::addr_of!((*item).$field) }
+            }
+        }
+    };
+    ($ty:ty, $field:ident) => {
+        // SAFETY: always projects to the same embedded `Link<Self>` field.
+        unsafe impl $crate::Linked for $ty {
+            #[inline]
+            unsafe fn link(item: *mut Self) -> *const $crate::Link<Self> {
+                // SAFETY: `item` is valid per the `UnboundedQueue` contract.
+                unsafe { ::core::ptr::addr_of!((*item).$field) }
+            }
+        }
+    };
+}

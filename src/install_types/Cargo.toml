@@ -18,3 +18,4 @@ bun_core.workspace = true
 bun_ast.workspace = true
 bun_semver.workspace = true
 bun_wyhash.workspace = true
+bytemuck = { version = "1", features = ["derive"] }

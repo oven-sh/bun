@@ -54,7 +54,7 @@ impl<'a> ResolverContext for GitResolver<'a> {
     ) -> Result<ResolutionType<u64>, crate::Error> {
         // `git` and `github` share the `Repository` payload in the value union,
         // so writing through `.github` is correct for both tags.
-        // SAFETY: caller guarantees `tag` is `.git` or `.github` (see
+        // Caller guarantees `tag` is `.git` or `.github` (see
         // `process_extracted_tarball_package`); both store a `Repository`.
         let mut repo = *self.resolution.repository();
         repo.resolved = builder.append::<SemverString>(self.resolved);
@@ -148,17 +148,16 @@ impl PackageManager {
                         let package_json_source =
                             &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
 
-                        // SAFETY: `self` is a live `&mut PackageManager`; the callee
-                        // split-borrows `self.lockfile` / `self.log` (separate
-                        // allocations) alongside `self` for the call's duration.
-                        if let Err(err) = unsafe {
-                            pkg.parse_from_real_manager(
-                                std::ptr::from_mut::<PackageManager>(self),
+                        if let Err(err) = self.with_lockfile_and_log(|lockfile, pm, log| {
+                            pkg.parse(
+                                lockfile,
+                                pm,
+                                log,
                                 package_json_source,
                                 &mut resolver,
                                 Features::NPM,
                             )
-                        } {
+                        }) {
                             if log_level != LogLevel::Silent {
                                 let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                                 Output::err(
@@ -192,7 +191,6 @@ impl PackageManager {
                         self.lockfile.buffers.string_bytes.as_slice(),
                         &self.lockfile.buffers.dependencies[dep_id as usize],
                     );
-                    // `defer manager.allocator.free(new_name)` — `new_name: Vec<u8>` drops at scope end.
 
                     {
                         let mut builder = self.lockfile.string_builder();
@@ -245,17 +243,16 @@ impl PackageManager {
                     resolution,
                 };
 
-                // SAFETY: `self` is a live `&mut PackageManager`; the callee
-                // split-borrows `self.lockfile` / `self.log` (separate
-                // allocations) alongside `self` for the call's duration.
-                if let Err(err) = unsafe {
-                    package.parse_from_real_manager(
-                        std::ptr::from_mut::<PackageManager>(self),
+                if let Err(err) = self.with_lockfile_and_log(|lockfile, pm, log| {
+                    package.parse(
+                        lockfile,
+                        pm,
+                        log,
                         package_json_source,
                         &mut resolver,
                         Features::NPM,
                     )
-                } {
+                }) {
                     if log_level != LogLevel::Silent {
                         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                         bun_core::pretty_errorln!(
@@ -299,9 +296,7 @@ impl PackageManager {
                     let package_json_source =
                         &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
                     initialize_store();
-                    // SAFETY: `self.log` is set once by `PackageManager::init()` and
-                    // never null while tasks run.
-                    let log = self.log_mut();
+                    let log = &mut self.log;
                     let parsed = match json::ParsedJson::parse_package_json(
                         package_json_source,
                         log,
@@ -421,29 +416,17 @@ impl PackageManager {
         Ok(())
     }
 
-    pub(crate) fn process_dependency_list<C>(
+    /// Returns whether any root dependency's resolution changed (the caller
+    /// runs its `on_resolve` hook if so).
+    pub(crate) fn process_dependency_list(
         &mut self,
-        dep_list: TaskCallbackList,
-        ctx: C,
-        on_resolve: Option<impl FnOnce(C)>,
+        dep_list: &TaskCallbackList,
         install_peer: bool,
-    ) -> Result<(), crate::Error> {
-        if !dep_list.is_empty() {
-            let dependency_list = dep_list;
-            let any_root = Cell::new(false);
-            for item in dependency_list.iter() {
-                self.process_dependency_list_item(item, Some(&any_root), install_peer)?;
-            }
-
-            if let Some(on_resolve) = on_resolve {
-                if any_root.get() {
-                    on_resolve(ctx);
-                }
-            }
-
-            // `dependency_list.deinit(this.allocator)` — owned `Vec`; drops here.
-            drop(dependency_list);
+    ) -> Result<bool, crate::Error> {
+        let any_root = Cell::new(false);
+        for item in dep_list.iter() {
+            self.process_dependency_list_item(item, Some(&any_root), install_peer)?;
         }
-        Ok(())
+        Ok(any_root.get())
     }
 }

@@ -9,7 +9,7 @@ use crate::repository::Repository;
 use bun_core::ZStr;
 use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
+use bun_install::lockfile::{Format as LockfileFormat, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
@@ -18,14 +18,12 @@ use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::FdDirExt;
 use bun_sys::{self as sys, Dir, Fd, File};
 
-use crate::bun_progress::Node as ProgressNode;
-
 use super::options::{self, Enable, LogLevel};
 use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
 
 // ───────────────────────────── method wrappers ───────────────────────────────
 // Thin `&mut self` shims so call sites can use method-style spelling
-// (`pm.getCacheDirectory()` / `pm.getTemporaryDirectory()`). The bodies live
+// (`pm.get_cache_directory()` / `pm.get_temporary_directory()`). The bodies live
 // in the free functions below to keep them callable without an `impl` path.
 
 impl PackageManager {
@@ -58,11 +56,6 @@ impl PackageManager {
     }
 
     #[inline]
-    pub(crate) fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
-        get_cache_directory_and_abs_path(self)
-    }
-
-    #[inline]
     pub(crate) fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
         get_temporary_directory(self)
     }
@@ -76,45 +69,49 @@ impl PackageManager {
 /// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 #[inline]
 pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
-    // SAFETY: `&mut PackageManager` is exclusive over every field the raw
-    // path projects.
-    unsafe { get_cache_directory_raw(this) }
-}
-
-/// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
-/// borrow (see `PackageManifestMap::by_name_hash_allow_expired`). Never
-/// materializes a `&mut PackageManager` covering the whole struct — only the
-/// disjoint `cache_directory`, `cache_directory_path`, `options.enable`, and
-/// `env` fields are projected, so an outstanding `&mut manifests` derived
-/// from the same provenance root stays valid under Stacked Borrows.
-///
-/// # Safety
-/// `this` must be valid for reads and writes for the call's duration, and the
-/// caller must hold no live borrow that overlaps the fields listed above.
-#[inline]
-pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
-    // SAFETY: caller contract — `cache_directory` is disjoint from any
-    // borrow the caller holds.
-    if let Some(d) = unsafe { (*this).cache_directory.as_ref() } {
+    if let Some(d) = this.cache_directory.as_ref() {
         return d.fd();
     }
-    // SAFETY: caller contract — `this` is valid and no live borrow overlaps
-    // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
-    let d = unsafe { ensure_cache_directory(this) };
+    let d = ensure_cache_directory(this);
     let fd = d.fd();
-    // SAFETY: as above; single writer.
-    unsafe { (*this).cache_directory = Some(d) };
+    this.cache_directory = Some(d);
     fd
 }
 
-#[inline]
-pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPath) {
-    let cache_dir = get_cache_directory(this);
-    (
-        cache_dir,
-        AbsPath::from(this.cache_directory_path.as_bytes())
-            .expect("cache_directory_path is absolute"),
-    )
+impl PackageManager {
+    /// The cache directory once opened (see [`get_cache_directory`]); worker
+    /// threads use this, so the main thread opens it before scheduling them.
+    #[inline]
+    pub fn cache_directory(&self) -> Fd {
+        self.cache_directory
+            .as_ref()
+            .expect("cache directory opened before use")
+            .fd()
+    }
+
+    #[inline]
+    pub fn cache_directory_and_abs_path(&self) -> (Fd, AbsPath) {
+        (
+            self.cache_directory(),
+            AbsPath::from(self.cache_directory_path.as_bytes())
+                .expect("cache_directory_path is absolute"),
+        )
+    }
+
+    /// The temporary directory once opened (see [`get_temporary_directory`]).
+    #[inline]
+    pub fn temporary_directory(&self) -> &'static TemporaryDirectory {
+        GET_TEMPORARY_DIRECTORY_ONCE
+            .get()
+            .expect("temporary directory opened before use")
+    }
+
+    /// Open the cache and temporary directories if they are not already, so
+    /// worker threads can read them through `&PackageManager`.
+    #[inline]
+    pub fn ensure_cache_and_temp_directories(&mut self) {
+        let _ = get_temporary_directory(self);
+    }
 }
 
 #[inline]
@@ -136,7 +133,7 @@ pub struct TemporaryDirectory {
 }
 
 // `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
-// `ZBox` wraps `Box<[u8]>`, and `&'static [u8]` is `Sync`. No `unsafe impl`.
+// `ZBox` wraps `Box<[u8]>`, and `&'static [u8]` is `Sync`.
 const _: fn() = || {
     fn assert<T: Send + Sync>() {}
     assert::<TemporaryDirectory>();
@@ -315,49 +312,29 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     }
 }
 
-/// # Safety
-/// See `get_cache_directory_raw` — only `options.enable`,
-/// `options.cache_directory` (read), `env`, and `cache_directory_path` are
-/// touched; caller must hold no overlapping borrow on those projections.
-/// Borrows into other `options` sub-fields (e.g. `options.registries` /
-/// `options.scope`) remain valid.
 #[cold]
 #[inline(never)]
-unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
+fn ensure_cache_directory(this: &mut PackageManager) -> Dir {
     loop {
-        // SAFETY: field projections through the caller-provided provenance
-        // root; see fn safety contract. Project `enable` narrowly so callers
-        // may hold borrows into disjoint `options` sub-fields.
-        if unsafe { (*this).options.enable.contains(Enable::CACHE) } {
-            // SAFETY: caller-provided provenance root; `env_mut()` itself
-            // encapsulates the BackRef deref + singleton-liveness invariant.
-            let env = unsafe { &*this }.env_mut();
-            // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
-            let cache_dir = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }));
-            // SAFETY: see fn safety contract.
-            unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
+        if this.options.enable.contains(Enable::CACHE) {
+            let cache_dir = fetch_cache_directory_path(this.env.get(), Some(&this.options));
+            this.cache_directory_path = ZBox::from_bytes(&cache_dir.path);
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                 Ok(d) => return d,
                 Err(_) => {
-                    // SAFETY: narrow `&mut enable` projection; disjoint from
-                    // any `&options.{registries,scope}` the caller may hold.
-                    unsafe { (*this).options.enable.set(Enable::CACHE, false) };
-                    // SAFETY: see fn safety contract.
-                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
+                    this.options.enable.set(Enable::CACHE, false);
+                    this.cache_directory_path = ZBox::from_bytes(b"");
                     continue;
                 }
             }
         }
 
-        // SAFETY: see fn safety contract.
-        unsafe {
-            (*this).cache_directory_path =
-                ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
-                    &[b"node_modules", b".cache"],
-                ))
-        };
+        this.cache_directory_path =
+            ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
+                FileSystem::instance().top_level_dir(),
+                &[b"node_modules", b".cache"],
+            ));
 
         match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
             Ok(d) => return d,
@@ -376,7 +353,7 @@ pub struct CacheDir {
     pub path: Vec<u8>,
 }
 
-pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
+pub fn fetch_cache_directory_path(env: &DotEnvLoader, options: Option<&Options>) -> CacheDir {
     if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
         return CacheDir {
             path: FileSystem::instance().abs(&[dir]).to_vec(),
@@ -527,30 +504,28 @@ pub fn cached_git_folder_name_print<'a>(
     w.finish_z()
 }
 
-pub fn cached_git_folder_name(
+pub fn cached_git_folder_name<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
-    cached_git_folder_name_print(
-        cached_package_folder_name_buf(),
-        this.lockfile.str(&repository.resolved),
-        patch_hash,
-    )
+) -> &'a ZStr {
+    cached_git_folder_name_print(buf, this.lockfile.str(&repository.resolved), patch_hash)
 }
 
-pub fn cached_git_folder_name_print_auto(
+pub fn cached_git_folder_name_print_auto<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
+) -> &'a ZStr {
     if !repository.resolved.is_empty() {
-        return cached_git_folder_name(this, repository, patch_hash);
+        return cached_git_folder_name(this, buf, repository, patch_hash);
     }
 
     if !repository.repo.is_empty() && !repository.committish.is_empty() {
         let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-        let mut w = ByteCursor::new(cached_package_folder_name_buf());
+        let mut w = ByteCursor::new(buf);
         w.put(b"@G@");
         w.put(repository.committish.slice(string_buf));
         w.put_cache_version(Some(CacheVersion::CURRENT));
@@ -574,25 +549,23 @@ pub fn cached_github_folder_name_print<'a>(
     w.finish_z()
 }
 
-pub fn cached_github_folder_name(
+pub fn cached_github_folder_name<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
-    cached_github_folder_name_print(
-        cached_package_folder_name_buf(),
-        this.lockfile.str(&repository.resolved),
-        patch_hash,
-    )
+) -> &'a ZStr {
+    cached_github_folder_name_print(buf, this.lockfile.str(&repository.resolved), patch_hash)
 }
 
-pub fn cached_github_folder_name_print_auto(
+pub fn cached_github_folder_name_print_auto<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
+) -> &'a ZStr {
     if !repository.resolved.is_empty() {
-        return cached_github_folder_name(this, repository, patch_hash);
+        return cached_github_folder_name(this, buf, repository, patch_hash);
     }
 
     if !repository.owner.is_empty()
@@ -600,7 +573,7 @@ pub fn cached_github_folder_name_print_auto(
         && !repository.committish.is_empty()
     {
         return cached_github_folder_name_print_guess(
-            cached_package_folder_name_buf(),
+            buf,
             this.lockfile.buffers.string_bytes.as_slice(),
             repository,
             patch_hash,
@@ -636,8 +609,6 @@ pub fn cached_npm_package_folder_name_print<'a>(
         cached_npm_package_folder_print_basename(buf, name, version, None, include_version_number)
             .as_bytes()
             .len();
-    // reshaped for borrowck — resume the cursor at the basename's
-    // tail instead of holding the returned `&ZStr` across the re-borrow.
     let scope_url = scope.url.url();
     let mut w = ByteCursor {
         buf,
@@ -677,19 +648,14 @@ fn cached_github_folder_name_print_guess<'a>(
     w.finish_z()
 }
 
-pub fn cached_npm_package_folder_name(
+pub fn cached_npm_package_folder_name<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     name: &[u8],
     version: Semver::Version,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
-    cached_npm_package_folder_name_print(
-        this,
-        cached_package_folder_name_buf(),
-        name,
-        version,
-        patch_hash,
-    )
+) -> &'a ZStr {
+    cached_npm_package_folder_name_print(this, buf, name, version, patch_hash)
 }
 
 // TODO: normalize to alphanumeric
@@ -739,16 +705,13 @@ pub fn cached_tarball_folder_name_print<'a>(
     w.finish_z()
 }
 
-pub fn cached_tarball_folder_name(
+pub fn cached_tarball_folder_name<'a>(
     this: &PackageManager,
+    buf: &'a mut [u8],
     url: SemverString,
     patch_hash: Option<u64>,
-) -> &'static ZStr {
-    cached_tarball_folder_name_print(
-        cached_package_folder_name_buf(),
-        this.lockfile.str(&url),
-        patch_hash,
-    )
+) -> &'a ZStr {
+    cached_tarball_folder_name_print(buf, this.lockfile.str(&url), patch_hash)
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
@@ -787,7 +750,7 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     let path = FileSystem::instance()
         .dirname_store()
         .append(result.as_bytes_with_nul())?;
-    // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
+    // `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
     // and lives for program lifetime in the dirname store.
     manager.options.bin_path = ZStr::from_slice_with_nul(path);
     Ok(())
@@ -871,8 +834,6 @@ pub fn path_for_cached_npm_path<'a>(
         None,
     );
     let cache_path_len = cache_path.as_bytes().len();
-    // reshaped for borrowck — drop borrow before mutating buffer
-
     debug_assert!(cache_path_buf[package_name.len()] == b'@');
 
     cache_path_buf[package_name.len()] = SEP;
@@ -919,7 +880,6 @@ pub fn path_for_resolution<'a>(
     resolution: &Resolution,
     buf: &'a mut PathBuffer,
 ) -> Result<&'a mut [u8], Error> {
-    // const folder_name = this.cachedNPMPackageFolderName(name, version);
     match resolution.tag {
         ResolutionTag::Npm => {
             let npm = *resolution.npm();
@@ -942,7 +902,7 @@ pub struct CacheDirAndSubpath<'a> {
     pub(crate) cache_dir_subpath: &'a ZStr,
 }
 
-/// this is copy pasted from `installPackageWithNameAndResolution()`
+/// this is copy pasted from `install_package_with_name_and_resolution()`
 /// it's not great to do this
 pub fn compute_cache_dir_and_subpath<'a>(
     manager: &mut PackageManager,
@@ -958,18 +918,20 @@ pub fn compute_cache_dir_and_subpath<'a>(
     match resolution.tag {
         ResolutionTag::Npm => {
             let version = resolution.npm().version;
-            cache_dir_subpath = cached_npm_package_folder_name(manager, name, version, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_subpath =
+                cached_npm_package_folder_name(manager, folder_path_buf, name, version, patch_hash);
         }
         ResolutionTag::Git => {
             let git = resolution.git();
-            cache_dir_subpath = cached_git_folder_name(manager, git, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_subpath = cached_git_folder_name(manager, folder_path_buf, git, patch_hash);
         }
         ResolutionTag::Github => {
             let github = resolution.github();
-            cache_dir_subpath = cached_github_folder_name(manager, github, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_subpath =
+                cached_github_folder_name(manager, folder_path_buf, github, patch_hash);
         }
         ResolutionTag::Folder => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();
@@ -988,13 +950,15 @@ pub fn compute_cache_dir_and_subpath<'a>(
         }
         ResolutionTag::LocalTarball => {
             let tarball = *resolution.local_tarball();
-            cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_subpath =
+                cached_tarball_folder_name(manager, folder_path_buf, tarball, patch_hash);
         }
         ResolutionTag::RemoteTarball => {
             let tarball = *resolution.remote_tarball();
-            cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_subpath =
+                cached_tarball_folder_name(manager, folder_path_buf, tarball, patch_hash);
         }
         ResolutionTag::Workspace => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();
@@ -1083,7 +1047,7 @@ pub fn attempt_to_create_package_json() -> Result<(), Error> {
 
 pub fn save_lockfile(
     this: &mut PackageManager,
-    load_result: &LoadResult,
+    load_result: &dyn crate::lockfile::LoadedFrom,
     save_format: LockfileFormat,
     had_any_diffs: bool,
     // NOTE(dylan-conway): this and `packages_len_before_install` can most likely be deleted
@@ -1095,10 +1059,8 @@ pub fn save_lockfile(
     if this.lockfile.is_empty() {
         if !this.options.dry_run {
             'delete: {
-                let delete_format = match load_result {
-                    LoadResult::NotFound => break 'delete,
-                    LoadResult::Err(err) => err.format,
-                    LoadResult::Ok(ok) => ok.format,
+                let Some(delete_format) = load_result.existing_format() else {
+                    break 'delete;
                 };
 
                 match sys::unlinkat(
@@ -1143,18 +1105,10 @@ pub fn save_lockfile(
         return Ok(false);
     }
 
-    // `Progress::start`
-    // returns `&mut Node` borrowing `this.progress`, which would conflict with
-    // the `&mut this` reborrows below. Stash as a raw pointer
-    // (the node lives inside `this.progress.root`).
-    let mut save_node: *mut ProgressNode = core::ptr::null_mut();
-
+    // The save node is `this.progress.root`.
     if log_level.show_progress() {
         this.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        save_node = this.progress.start(ProgressStrings::save(), 0);
-        // SAFETY: `save_node` was just set by `progress.start()` and is non-null.
-        unsafe { (*save_node).activate() };
-
+        this.progress.start(ProgressStrings::save(), 0).activate();
         this.progress.refresh();
     }
 
@@ -1166,7 +1120,7 @@ pub fn save_lockfile(
     }
 
     if cfg!(debug_assertions) {
-        if !matches!(load_result, LoadResult::NotFound) {
+        if load_result.existing_format().is_some() {
             if load_result.loaded_from_text_lockfile() {
                 if !Lockfile::eql(
                     &this.lockfile,
@@ -1190,10 +1144,7 @@ pub fn save_lockfile(
     }
 
     if log_level.show_progress() {
-        // SAFETY: `save_node` was set to a non-null `&mut Node` in the
-        // matching `show_progress()` branch above and `this.progress` is
-        // unchanged in between.
-        unsafe { (*save_node).end() };
+        this.progress.root.end();
         this.progress.refresh();
         this.progress.root.end();
         this.progress = Default::default();
@@ -1209,9 +1160,9 @@ pub fn update_lockfile_if_needed(
     manager: &mut PackageManager,
     // The caller continues using
     // `load_result` after this call, so take it by shared reference.
-    load_result: &LoadResult,
+    load_result: &crate::lockfile::DetachedLoadResult,
 ) -> Result<(), Error> {
-    if let LoadResult::Ok(ok) = load_result {
+    if let crate::lockfile::DetachedLoadResult::Ok(ok) = load_result {
         if ok.serializer_result.packages_need_update {
             let mut slice = manager.lockfile.packages.slice();
             for meta in slice.items_meta_mut() {
@@ -1296,23 +1247,7 @@ impl CacheVersion {
 
 #[inline]
 fn verbose_install() -> bool {
-    // SAFETY: `VERBOSE_INSTALL` is set once during single-threaded CLI startup
-    // (PackageManagerOptions.load) and only read on the main thread.
     PackageManager::verbose_install()
-}
-
-/// Thread-local cached folder-name buffer accessor.
-/// Single-threaded install, non-reentrant scratch — the `&'static mut [u8]`
-/// is the unique live borrow at every call site. Callers must not hold the
-/// result across a call that re-enters this accessor (per-statement reborrow
-/// shape — same contract the prior `*mut [u8]` API imposed, now centralized
-/// here so the 6 call sites drop their `unsafe` block).
-#[inline]
-fn cached_package_folder_name_buf() -> &'static mut [u8] {
-    // SAFETY: single-threaded usage (install runs on one thread); the
-    // thread-local cell outlives all callers and only one `&mut` is taken at a
-    // time per call site (the buffer is reused non-reentrantly).
-    unsafe { (*super::cached_package_folder_name_buf()).as_mut_slice() }
 }
 
 /// `&'static ZStr` from a NUL-terminated literal.

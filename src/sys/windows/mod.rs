@@ -507,6 +507,40 @@ pub fn CreateHardLinkW(
 
 pub use bun_windows_sys::externs::CopyFileW;
 
+/// `CopyFileW`; false on failure (see `Win32Error::get()`).
+pub fn copy_file_w(src: &bun_core::WStr, dest: &bun_core::WStr, fail_if_exists: bool) -> bool {
+    // SAFETY: both are NUL-terminated wide strings.
+    unsafe { CopyFileW(src.as_ptr(), dest.as_ptr(), fail_if_exists as BOOL) != 0 }
+}
+
+/// `DeleteFileW`; false on failure (see `Win32Error::get()`).
+pub fn delete_file_w(path: &bun_core::WStr) -> bool {
+    // SAFETY: NUL-terminated wide string.
+    unsafe { DeleteFileW(path.as_ptr()) != 0 }
+}
+
+/// `CreateDirectoryExW` with no security attributes; false on failure.
+pub fn create_directory_ex_w(template: &bun_core::WStr, new_directory: &bun_core::WStr) -> bool {
+    // SAFETY: both are NUL-terminated wide strings; null attributes are allowed.
+    unsafe {
+        CreateDirectoryExW(
+            template.as_ptr(),
+            new_directory.as_ptr(),
+            core::ptr::null_mut(),
+        ) != 0
+    }
+}
+
+/// `GetFinalPathNameByHandleW` into `buf`; the length written, or 0 /
+/// `>= buf.len()` on failure exactly as the Win32 call reports.
+pub fn get_final_path_name_by_handle_w(handle: HANDLE, buf: &mut [u16], flags: DWORD) -> usize {
+    // SAFETY: `buf` is writable for `buf.len()` code units.
+    unsafe {
+        externs::GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), buf.len() as u32, flags)
+            as usize
+    }
+}
+
 /// `bun.windows.Error` — alias for `Win32Error`.
 pub type Error = Win32Error;
 
@@ -542,6 +576,12 @@ pub use bun_windows_sys::externs::GetHostNameW;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
 pub use bun_windows_sys::externs::GetTempPathW;
+
+/// `GetTempPathW` into `buf`; the length written (0 on failure).
+pub fn get_temp_path_w(buf: &mut [u16]) -> usize {
+    // SAFETY: `buf` is writable for `buf.len()` code units.
+    unsafe { GetTempPathW(buf.len() as u32, buf.as_mut_ptr().cast_const()) as usize }
+}
 
 /// `GetCurrentProcessId` (processthreadsapi.h) — current PID. Safe wrapper:
 /// the underlying call has no preconditions and never fails.

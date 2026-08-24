@@ -716,7 +716,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             poll_arm!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>)
         }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            poll_arm!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>)
+            poll_arm!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess>)
         }
         // `bun.shell.Interpreter.IOWriter.Poll`
         poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| {

@@ -311,9 +311,9 @@ fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -
                     "failed to {s} lockfile: {s}",
                     (cause.step.verb(), cause.value.name()),
                 );
-                if manager.log_mut().has_errors() {
+                if manager.log.has_errors() {
                     let _ = manager
-                        .log_mut()
+                        .log
                         .print(std::ptr::from_mut(Output::error_writer()));
                 }
             }

@@ -199,6 +199,9 @@ pub struct Node {
     // cli/) pass string literals; the alternative would be threading a
     // lifetime through `Node`/`Progress`.
     pub name: &'static [u8],
+    /// A name assembled at runtime (see [`Node::set_name_parts`]); shown
+    /// instead of `name` when non-empty.
+    pub name_buf: InlineName,
     pub unit: Unit,
     /// Must be handled atomically to be thread-safe.
     pub(crate) recently_updated_child: AtomicPtr<Node>,
@@ -208,12 +211,43 @@ pub struct Node {
     pub unprotected_completed_items: AtomicUsize,
 }
 
+/// Inline storage for a progress node name built from parts (emoji +
+/// package name); longer names are cut to fit.
+#[derive(Clone, Copy)]
+pub struct InlineName {
+    len: u16,
+    bytes: [u8; InlineName::CAPACITY],
+}
+
+impl InlineName {
+    pub const CAPACITY: usize = 382;
+    pub const EMPTY: InlineName = InlineName {
+        len: 0,
+        bytes: [0; InlineName::CAPACITY],
+    };
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl Default for InlineName {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
 impl Default for Node {
     fn default() -> Self {
         Self {
             context: ptr::null_mut(),
             parent: ptr::null_mut(),
             name: b"",
+            name_buf: InlineName::EMPTY,
             unit: Unit::None,
             recently_updated_child: AtomicPtr::new(ptr::null_mut()),
             unprotected_estimated_total_items: AtomicUsize::new(0),
@@ -256,6 +290,18 @@ impl Node {
         self.parent
     }
 
+    /// Replace the displayed name with the concatenation of `parts`.
+    pub fn set_name_parts(&mut self, parts: &[&[u8]]) {
+        let mut len = 0usize;
+        for part in parts {
+            let take = part.len().min(InlineName::CAPACITY - len);
+            self.name_buf.bytes[len..len + take].copy_from_slice(&part[..take]);
+            len += take;
+        }
+        self.name_buf.len = len as u16;
+        self.name = b"";
+    }
+
     /// Create a new child progress node. Thread-safe.
     /// Call `Node.end` when done.
     /// You probably want to call `activate` on the return value.
@@ -265,6 +311,7 @@ impl Node {
             context: self.context,
             parent: std::ptr::from_mut::<Node>(self),
             name,
+            name_buf: InlineName::EMPTY,
             unit: Unit::None,
             recently_updated_child: AtomicPtr::new(ptr::null_mut()),
             unprotected_estimated_total_items: AtomicUsize::new(estimated_total_items),
@@ -369,6 +416,7 @@ impl Progress {
             context: std::ptr::from_mut::<Progress>(self),
             parent: ptr::null_mut(),
             name,
+            name_buf: InlineName::EMPTY,
             unit: Unit::None,
             recently_updated_child: AtomicPtr::new(ptr::null_mut()),
             unprotected_estimated_total_items: AtomicUsize::new(estimated_total_items),
@@ -531,7 +579,7 @@ impl Progress {
             let mut need_ellipse = false;
             let mut maybe_node: *mut Node = &raw mut self.root;
             while !maybe_node.is_null() {
-                let (name, unit, eti, completed_items);
+                let (name, name_buf, unit, eti, completed_items);
                 // SAFETY: walking the recently_updated_child chain under
                 // update_mutex; nodes are caller-owned and outlive this call
                 // per API contract. Read every field through the raw pointer
@@ -541,6 +589,7 @@ impl Progress {
                 // tag derived from it under Stacked Borrows.
                 unsafe {
                     name = (*maybe_node).name;
+                    name_buf = (*maybe_node).name_buf;
                     unit = (*maybe_node).unit;
                     eti = (*maybe_node)
                         .unprotected_estimated_total_items
@@ -551,6 +600,11 @@ impl Progress {
                     maybe_node = (*maybe_node).recently_updated_child.load(Ordering::Acquire);
                 }
                 let current_item = completed_items + 1;
+                let name: &[u8] = if name_buf.is_empty() {
+                    name
+                } else {
+                    name_buf.as_bytes()
+                };
 
                 if need_ellipse {
                     self.buf_write(&mut end, format_args!("... "));

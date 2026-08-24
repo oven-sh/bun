@@ -243,6 +243,14 @@ impl PosixLoop {
         unsafe { c::us_wakeup_loop(self) };
     }
 
+    /// [`wakeup`](Self::wakeup) from any thread: `us_wakeup_loop` only signals
+    /// the loop's async handle, which libuv/kqueue/epoll allow concurrently.
+    pub fn wakeup_from_any_thread(&self) {
+        // SAFETY: valid loop; the call does not touch loop state beyond the
+        // thread-safe async signal.
+        unsafe { c::us_wakeup_loop(core::ptr::from_ref(self).cast_mut()) };
+    }
+
     pub fn tick(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_run_bun_tick(self, core::ptr::null(), NOW_NS_UNKNOWN) };
@@ -373,6 +381,14 @@ impl WindowsLoop {
     pub fn wakeup(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_wakeup_loop(self) };
+    }
+
+    /// [`wakeup`](Self::wakeup) from any thread: `us_wakeup_loop` only signals
+    /// the loop's async handle, which libuv/kqueue/epoll allow concurrently.
+    pub fn wakeup_from_any_thread(&self) {
+        // SAFETY: valid loop; the call does not touch loop state beyond the
+        // thread-safe async signal.
+        unsafe { c::us_wakeup_loop(core::ptr::from_ref(self).cast_mut()) };
     }
 
     #[inline]

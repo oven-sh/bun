@@ -67,16 +67,12 @@ pub(crate) type NpmVersionInfo = VersionedURLType<u64>;
 
 impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
     fn default() -> Self {
-        Self {
-            tag: Tag::Uninitialized,
-            _padding: [0; 7],
-            value: Value { uninitialized: () },
-        }
+        Self::ZEROED
     }
 }
 
-/// Rust-side equivalent of `bun.meta.Tagged(Value, Tag)` — a tagged view of `Value`
-/// used by [`ResolutionType::init`] / [`value_init`] to construct a zero-padded union.
+/// A tagged view of `Value` used by [`ResolutionType::init`] / [`value_init`]
+/// to construct the zero-padded storage.
 // `Tag` is a `#[repr(transparent)] struct Tag(u8)` with sparse `pub const`
 // associated values; the derive maps `Self::Variant` → `Tag::Variant` by name.
 #[derive(Clone, Copy, bun_core::EnumTag)]
@@ -96,15 +92,11 @@ pub enum TaggedValue<SemverInt: VersionInt> {
 }
 
 impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
-    /// Const-evaluable zeroed sentinel. Mirrors `Default::default()` but usable
-    /// in `const` / `static` position (e.g. dummy `&'static Resolution` returns).
-    /// Only the tag/padding are guaranteed zero — the union payload is the
-    /// `uninitialized` variant, which is the only field a `Tag::Uninitialized`
-    /// reader may legally access.
+    /// Const-evaluable zeroed sentinel; also `Default::default()`.
     pub(crate) const ZEROED: Self = Self {
         tag: Tag::Uninitialized,
         _padding: [0; 7],
-        value: Value { uninitialized: () },
+        value: Value::ZEROED,
     };
 
     /// Construct from a tagged value, e.g. `Resolution::init(TaggedValue::Npm(...))`.
@@ -129,29 +121,74 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         Self::init(TaggedValue::Symlink(s))
     }
 
-    // ── Tag-checked union accessors ────────────────────────────────────────
-    // Every `Value` payload is `Copy` (`String` handles, `Repository`,
-    // `VersionedURLType`) and the union is zero-initialized, so reading the
-    // wrong variant is well-defined garbage — the macro debug-asserts the tag.
-    bun_core::extern_union_accessors! {
-        tag: tag as Tag, value: value;
-        Npm              => npm: VersionedURLType<SemverInt>, mut npm_mut;
-        Folder           => folder: String;
-        LocalTarball     => local_tarball: String;
-        RemoteTarball    => remote_tarball: String;
-        Workspace        => workspace: String;
-        Symlink          => symlink: String;
-        SingleFileModule => single_file_module: String;
-        Git              => git: Repository, mut git_mut;
-        Github           => github: Repository, mut github_mut;
+    // ── Tag-checked accessors ────────────────────────────────────────────────
+    // Every `Value` view is plain data over zeroed storage, so reading the
+    // wrong one is well-defined garbage — these debug-assert the tag.
+    #[inline]
+    pub fn npm(&self) -> &VersionedURLType<SemverInt> {
+        debug_assert!(self.tag == Tag::Npm);
+        self.value.npm()
+    }
+    #[inline]
+    pub fn npm_mut(&mut self) -> &mut VersionedURLType<SemverInt> {
+        debug_assert!(self.tag == Tag::Npm);
+        self.value.npm_mut()
+    }
+    #[inline]
+    pub fn folder(&self) -> &String {
+        debug_assert!(self.tag == Tag::Folder);
+        self.value.string()
+    }
+    #[inline]
+    pub fn local_tarball(&self) -> &String {
+        debug_assert!(self.tag == Tag::LocalTarball);
+        self.value.string()
+    }
+    #[inline]
+    pub fn remote_tarball(&self) -> &String {
+        debug_assert!(self.tag == Tag::RemoteTarball);
+        self.value.string()
+    }
+    #[inline]
+    pub fn workspace(&self) -> &String {
+        debug_assert!(self.tag == Tag::Workspace);
+        self.value.string()
+    }
+    #[inline]
+    pub fn symlink(&self) -> &String {
+        debug_assert!(self.tag == Tag::Symlink);
+        self.value.string()
+    }
+    #[inline]
+    pub fn single_file_module(&self) -> &String {
+        debug_assert!(self.tag == Tag::SingleFileModule);
+        self.value.string()
+    }
+    #[inline]
+    pub fn git(&self) -> &Repository {
+        debug_assert!(self.tag == Tag::Git);
+        self.value.repository()
+    }
+    #[inline]
+    pub fn git_mut(&mut self) -> &mut Repository {
+        debug_assert!(self.tag == Tag::Git);
+        self.value.repository_mut()
+    }
+    #[inline]
+    pub fn github(&self) -> &Repository {
+        debug_assert!(self.tag == Tag::Github);
+        self.value.repository()
+    }
+    #[inline]
+    pub fn github_mut(&mut self) -> &mut Repository {
+        debug_assert!(self.tag == Tag::Github);
+        self.value.repository_mut()
     }
     /// `git` or `github` payload — they share the [`Repository`] shape.
     #[inline]
     pub(crate) fn repository(&self) -> &Repository {
         debug_assert!(self.tag == Tag::Git || self.tag == Tag::Github);
-        // SAFETY: `git` and `github` occupy the same union slot type
-        // (`Repository`); tag asserted to be one of the two.
-        unsafe { &(*core::ptr::from_ref(&self.value)).git }
+        self.value.repository()
     }
 
     pub(crate) fn can_enqueue_install_task(&self) -> bool {
@@ -217,18 +254,11 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                     return Err(FromTextLockfileError::UnexpectedResolution);
                 }
 
-                Ok(Self {
-                    tag: Tag::Npm,
-                    _padding: [0; 7],
-                    value: Value {
-                        npm: VersionedURLType {
-                            version: parsed.version.min(),
-
-                            // will fill this later
-                            url: String::default(),
-                        },
-                    },
-                })
+                Ok(Self::init(TaggedValue::Npm(VersionedURLType {
+                    version: parsed.version.min(),
+                    // will fill this later
+                    url: String::default(),
+                })))
             }
 
             // covered above
@@ -922,36 +952,24 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
 /// [`ResolutionType`] share the SAME nominal `value` type. Sharing the nominal
 /// type (rather than a layout-identical local duplicate) lets
 /// `auto_installer::resolution_from_hooks` copy `value` by plain assignment
-/// instead of `transmute`. Constructors that need the install-side
-/// zero-padded-init contract live below as free fns ([`value_zero`] /
-/// [`value_init`]) since inherent impls on a foreign type are forbidden.
+/// instead of `transmute`. The install-side tagged constructor lives below as
+/// a free fn ([`value_init`]) since inherent impls on a foreign type are forbidden.
 pub type Value<SemverInt> = bun_install_types::resolver_hooks::ResolutionValue<SemverInt>;
 
-#[inline]
-fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
-    // SAFETY: all-zero is a valid Value — every variant is POD with a valid
-    // all-zero representation (Semver String, Repository, VersionedURLType are
-    // all #[repr(C)] with no NonNull/NonZero fields).
-    unsafe { bun_core::ffi::zeroed_unchecked() }
-}
-
-/// To avoid undefined memory between union values, we must zero initialize the union first.
+/// Zeroed storage holding just `field`, so the bytes past it are deterministic.
 fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<SemverInt> {
-    let mut value = value_zero::<SemverInt>();
     match field {
-        TaggedValue::Uninitialized => value.uninitialized = (),
-        TaggedValue::Root => value.root = (),
-        TaggedValue::Npm(v) => value.npm = v,
-        TaggedValue::Folder(v) => value.folder = v,
-        TaggedValue::LocalTarball(v) => value.local_tarball = v,
-        TaggedValue::Github(v) => value.github = v,
-        TaggedValue::Git(v) => value.git = v,
-        TaggedValue::Symlink(v) => value.symlink = v,
-        TaggedValue::Workspace(v) => value.workspace = v,
-        TaggedValue::RemoteTarball(v) => value.remote_tarball = v,
-        TaggedValue::SingleFileModule(v) => value.single_file_module = v,
+        TaggedValue::Uninitialized => Value::uninitialized(),
+        TaggedValue::Root => Value::root(),
+        TaggedValue::Npm(v) => Value::from_npm(&v),
+        TaggedValue::Github(v) | TaggedValue::Git(v) => Value::from_repository(&v),
+        TaggedValue::Folder(v)
+        | TaggedValue::LocalTarball(v)
+        | TaggedValue::Symlink(v)
+        | TaggedValue::Workspace(v)
+        | TaggedValue::RemoteTarball(v)
+        | TaggedValue::SingleFileModule(v) => Value::from_string(v),
     }
-    value
 }
 
 // Tag is non-exhaustive — values outside the named set are valid (lockfile

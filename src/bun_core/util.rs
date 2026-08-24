@@ -717,6 +717,13 @@ pub use bun_alloc::SEP;
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {
     pub const ZEROED: Self = Self([0; MAX_PATH_BYTES]);
+    /// View the first `MAX_PATH_BYTES` of `bytes` as a `PathBuffer`.
+    #[inline]
+    pub fn from_slice_mut(bytes: &mut [u8]) -> Option<&mut Self> {
+        let arr: &mut [u8; MAX_PATH_BYTES] = bytes.get_mut(..MAX_PATH_BYTES)?.try_into().ok()?;
+        // SAFETY: `PathBuffer` is `repr(transparent)` over `[u8; MAX_PATH_BYTES]`.
+        Some(unsafe { &mut *core::ptr::from_mut(arr).cast::<Self>() })
+    }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.0

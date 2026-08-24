@@ -486,30 +486,35 @@ unsafe fn init_runtime_state(
                             handle: (*vm).handle(),
                             kind: (*vm).current_loop_kind(),
                         }));
-                    t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
-                        context: core::ptr::NonNull::new(wake_ctx.cast()),
-                        handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
-                        on_dependency_error: Some({
-                            unsafe fn adapter(
-                                ctx: *mut core::ffi::c_void,
-                                dep: &bun_resolver::install_types::Dependency,
-                                id: bun_resolver::install_types::DependencyID,
-                                err: &'static str,
-                            ) {
-                                // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
-                                unsafe {
-                                    bun_jsc::async_module::Queue::on_dependency_error(
-                                        bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
+                    // `wake_ctx` lives in `state` for the VM's lifetime; the wake
+                    // handler posts through the VM's thread-safe handle.
+                    t.resolver.on_wake_package_manager =
+                        bun_resolver::install_types::WakeHandler::new(
+                            core::ptr::NonNull::new(wake_ctx.cast()).expect("boxed above"),
+                            bun_jsc::async_module::Queue::on_wake_handler,
+                            {
+                                fn adapter(
+                                    ctx: *mut core::ffi::c_void,
+                                    dep: &bun_resolver::install_types::Dependency,
+                                    id: bun_resolver::install_types::DependencyID,
+                                    err: &'static str,
+                                ) {
+                                    // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
+                                    unsafe {
+                                        bun_jsc::async_module::Queue::on_dependency_error(
+                                            bun_jsc::async_module::Queue::queue_from_wake_context(
+                                                ctx,
+                                            )
                                             .cast(),
-                                        dep,
-                                        id,
-                                        err,
-                                    )
+                                            dep,
+                                            id,
+                                            err,
+                                        )
+                                    }
                                 }
-                            }
-                            adapter
-                        }),
-                    };
+                                adapter
+                            },
+                        );
                     // Branch on `opts.graph` here — with a module graph,
                     // auto_jsx=true would
                     // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
@@ -2408,12 +2413,16 @@ fn transpile_source_code_inner(
             let args_log_nn = core::ptr::NonNull::new(args.log).expect("args.log is non-null");
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
             // `args.log` is non-null (checked above) and outlives this call.
+            // The package manager keeps its own log; route what it has so far
+            // to the transpiler log and what it logs during this transpile to
+            // `args.log`.
             unsafe {
                 (*jsc_vm).transpiler.log = args.log;
                 (*jsc_vm).transpiler.resolver.log = args_log_nn;
                 (*jsc_vm).transpiler.linker.log = args.log;
                 if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                    (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = args.log;
+                    (*pm.cast::<bun_install::PackageManager>().as_ptr())
+                        .take_log_into(&mut *old_log);
                 }
             }
             let _log_guard = scopeguard::guard(jsc_vm, move |jsc_vm| {
@@ -2424,7 +2433,8 @@ fn transpile_source_code_inner(
                     (*jsc_vm).transpiler.resolver.log = old_log_nn;
                     (*jsc_vm).transpiler.linker.log = old_log;
                     if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = old_log;
+                        (*pm.cast::<bun_install::PackageManager>().as_ptr())
+                            .take_log_into(&mut *args.log);
                     }
                 }
             });

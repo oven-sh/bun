@@ -210,42 +210,50 @@ use bun_install::{self as install, LogLevel, PackageID};
 
 use crate::event_loop::{ConcurrentTaskItem, Task};
 
-/// `RunTasksCallbacks` impl for the auto-install module queue. `onResolve` /
+/// `RunTasksCtx` for the auto-install module queue. `onResolve` /
 /// `onPackageManifestError` / `onPackageDownloadError` forward to the `Queue`
-/// methods, `progress_bar` selected via const generic to match the
-/// `enable_ansi_colors_stderr` branch.
-struct QueueRunTasksCallbacks<const PROGRESS: bool>;
+/// methods; `progress_bar` matches the `enable_ansi_colors_stderr` branch.
+struct QueueRunTasks<'a> {
+    manager: &'a mut bun_install::PackageManager,
+    queue: &'a mut Queue,
+    progress_bar: bool,
+}
 
-impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbacks<PROGRESS> {
-    type Ctx = Queue;
-
-    const PROGRESS_BAR: bool = PROGRESS;
-    const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = true;
-    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
-    const HAS_ON_RESOLVE: bool = true;
-
-    fn on_resolve(ctx: &mut Queue) {
-        Queue::on_resolve(ctx)
+impl run_tasks::RunTasksCtx for QueueRunTasks<'_> {
+    fn manager(&mut self) -> &mut bun_install::PackageManager {
+        self.manager
+    }
+    fn progress_bar(&self) -> bool {
+        self.progress_bar
+    }
+    fn has_on_package_manifest_error(&self) -> bool {
+        true
+    }
+    fn has_on_package_download_error(&self) -> bool {
+        true
+    }
+    fn has_on_resolve(&self) -> bool {
+        true
     }
 
-    fn on_package_manifest_error(
-        ctx: &mut Queue,
-        name: &[u8],
-        err: bun_install::Error,
-        url: &[u8],
-    ) {
-        ctx.on_package_manifest_error(name, err.name(), url)
+    fn on_resolve(&mut self) {
+        Queue::on_resolve(self.queue)
+    }
+
+    fn on_package_manifest_error(&mut self, name: &[u8], err: bun_install::Error, url: &[u8]) {
+        self.queue.on_package_manifest_error(name, err.name(), url)
     }
 
     fn on_package_download_error_pkg(
-        ctx: &mut Queue,
+        &mut self,
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
         err: bun_install::Error,
         url: &[u8],
     ) {
-        ctx.on_package_download_error(package_id, name, resolution, err.name(), url)
+        self.queue
+            .on_package_download_error(package_id, name, resolution, err.name(), url)
     }
 }
 
@@ -260,6 +268,12 @@ impl Queue {
         // allocator arg dropped (Vec uses global mimalloc).
         self.map.push(module);
         self.vm().package_manager().drain_dependency_list();
+        if let Some(log) = VirtualMachine::get().log_mut() {
+            VirtualMachine::get()
+                .as_mut()
+                .package_manager()
+                .take_log_into(log);
+        }
     }
 
     /// # Safety
@@ -314,7 +328,7 @@ impl Queue {
     }
 
     /// `WakeHandler::handler` — runs on install / HTTP-callback threads
-    /// (`PackageManager::wake_raw`). `ctx` is the [`WakeContext`] registered in
+    /// (`PackageManager`'s `Shared::wake`). `ctx` is the [`WakeContext`] registered in
     /// `runtime/jsc_hooks.rs`; the VM is reached only through its handle.
     pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
         bun_core::scoped_log!(AsyncModule, "onWake");
@@ -352,18 +366,30 @@ impl Queue {
         // `container_of`-derived `*mut` reborrow.
         let pm = VirtualMachine::get().as_mut().package_manager();
 
-        if bun_core::output::enable_ansi_colors_stderr() {
+        let progress_bar = bun_core::output::enable_ansi_colors_stderr();
+        if progress_bar {
             pm.start_progress_bar_if_none();
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, self, true, LogLevel::Default)
-                .expect("unreachable");
-        } else {
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<false>>(
-                pm,
-                self,
-                true,
-                LogLevel::DefaultNoProgress,
-            )
-            .expect("unreachable");
+        }
+        let mut ctx = QueueRunTasks {
+            manager: pm,
+            queue: self,
+            progress_bar,
+        };
+        run_tasks::run_tasks(
+            &mut ctx,
+            true,
+            if progress_bar {
+                LogLevel::Default
+            } else {
+                LogLevel::DefaultNoProgress
+            },
+        )
+        .expect("unreachable");
+        if let Some(log) = VirtualMachine::get().log_mut() {
+            VirtualMachine::get()
+                .as_mut()
+                .package_manager()
+                .take_log_into(log);
         }
     }
 
@@ -463,7 +489,7 @@ impl Queue {
         // `container_of`-derived `*mut` reborrow. The package manager is a
         // separate heap allocation, disjoint from `self` (= `vm.modules`).
         let pm = VirtualMachine::get().as_mut().package_manager();
-        if pm.pending_tasks.load(Ordering::Relaxed) > 0 {
+        if pm.shared.pending_tasks.load(Ordering::Relaxed) > 0 {
             return;
         }
 
@@ -1079,12 +1105,16 @@ impl AsyncModule {
 
         let log_nn = core::ptr::NonNull::new(log).expect("AsyncModule log is non-null");
         let log_ptr: *mut bun_ast::Log = log;
-        // SAFETY: see above — single-thread VM; raw-ptr field stores.
+        // SAFETY: see above — single-thread VM; raw-ptr field stores. The
+        // package manager keeps its own log; route what it has so far to the
+        // VM log and what it logs during the link to this module's log.
         unsafe {
             (*jsc_vm).transpiler.linker.log = log_ptr;
             (*jsc_vm).transpiler.log = log_ptr;
             (*jsc_vm).transpiler.resolver.log = log_nn;
-            (*jsc_vm).package_manager().log = log_ptr;
+            (*jsc_vm)
+                .package_manager()
+                .take_log_into(&mut *old_log.as_ptr());
         }
         let _restore = scopeguard::guard((jsc_vm, old_log), |(jsc_vm, old_log)| {
             // SAFETY: same per-thread VM; restoring the original log pointers
@@ -1094,7 +1124,7 @@ impl AsyncModule {
                 (*jsc_vm).transpiler.linker.log = old_log_ptr;
                 (*jsc_vm).transpiler.log = old_log_ptr;
                 (*jsc_vm).transpiler.resolver.log = old_log;
-                (*jsc_vm).package_manager().log = old_log_ptr;
+                (*jsc_vm).package_manager().take_log_into(&mut *log_ptr);
             }
         });
 

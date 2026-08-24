@@ -564,6 +564,19 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.drop_index();
     }
 
+    /// Resize to `n` entries, filling new slots with `key`/`value`; the
+    /// caller overwrites them (`keys_mut`/`values_mut`) and calls `re_index`.
+    pub fn resize_entries(&mut self, n: usize, key: K, value: V)
+    where
+        K: Clone,
+        V: Clone,
+    {
+        self.keys.resize(n, key);
+        self.values.resize(n, value);
+        self.hashes.resize(n, 0);
+        self.drop_index();
+    }
+
     /// Insert/replace using an externally-supplied
     /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
     /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
@@ -977,6 +990,23 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     pub fn get_ptr_mut(&mut self, key: &K) -> Option<&mut V> {
         let i = self.get_index(key)?;
         Some(&mut self.values[i])
+    }
+
+    /// Replace the contents with `keys`/`values` (equal lengths) and rebuild
+    /// the index.
+    pub fn set_from_slices(&mut self, keys: &[K], values: &[V]) -> Result<(), AllocError>
+    where
+        K: Clone,
+        V: Clone,
+    {
+        assert_eq!(keys.len(), values.len());
+        self.keys.clear();
+        self.values.clear();
+        self.hashes.clear();
+        self.keys.extend_from_slice(keys);
+        self.values.extend_from_slice(values);
+        self.hashes.resize(keys.len(), 0);
+        self.re_index()
     }
 
     /// Recompute every stored hash from the current keys. Call after mutating

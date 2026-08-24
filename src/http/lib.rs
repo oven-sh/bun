@@ -49,7 +49,7 @@ pub mod thread_safe_stream_buffer;
 pub mod websocket;
 
 // ── crate-root re-exports ──
-pub use async_http::AsyncHTTP;
+pub use async_http::{AsyncHTTP, OwnedRequest, OwnedRequestBuffers};
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;
@@ -516,16 +516,10 @@ impl<'a> HTTPClientResult<'a> {
         }
     }
 
-    /// Widen the borrow to `'static` for self-referential storage.
-    ///
-    /// `body` is the only lifetime-carrying field; it borrows the HTTP
-    /// thread's `decoded_body` scratch buffer, which is cleared immediately
-    /// after the callback returns, so the stored form carries `body: &[]`.
-    ///
-    /// # Safety
-    /// Caller must not read `.body` from the returned value.
+    /// This result without the borrowed `body` (see [`body_into`](Self::body_into)
+    /// for taking the bytes first), so it can be stored.
     #[inline]
-    pub unsafe fn detach_lifetime(self) -> HTTPClientResult<'static> {
+    pub fn without_body(self) -> HTTPClientResult<'static> {
         HTTPClientResult {
             body: &[],
             body_owned: self.body_owned,
@@ -594,6 +588,76 @@ impl HTTPClientResultCallback {
         cb.release_at_shutdown = Some(release);
         cb
     }
+}
+
+/// A request context that is boxed on the scheduling thread, owned by the
+/// HTTP thread while the request is in flight, and handed back with the
+/// terminal result. `request_mut` is the [`OwnedRequest`] it embeds.
+pub trait OwnedRequestContext: HttpThreadContext + Sized + 'static {
+    fn request_mut(&mut self) -> &mut OwnedRequest;
+    /// A non-terminal result (`result.has_more`); runs on the HTTP thread.
+    fn on_progress(&mut self, result: HTTPClientResult<'_>);
+    /// The terminal result; runs on the HTTP thread. The request already
+    /// holds its final state.
+    fn on_done(self: Box<Self>, result: HTTPClientResult<'_>);
+}
+
+/// Marker: the type's [`OwnedRequestContext`] callbacks run on the HTTP
+/// thread, so everything they touch is theirs alone or synchronized.
+///
+/// # Safety
+/// That claim; implement through [`http_thread_context!`], which states it
+/// at the type.
+pub unsafe trait HttpThreadContext {}
+
+/// Implements [`HttpThreadContext`]: the type's request callbacks
+/// (`on_progress`/`on_done`) are its HTTP-thread entry points and only touch
+/// state that is theirs alone or synchronized with other threads.
+#[macro_export]
+macro_rules! http_thread_context {
+    ($ty:ty) => {
+        // SAFETY: see the macro doc.
+        unsafe impl $crate::HttpThreadContext for $ty {}
+    };
+}
+
+/// Hand `ctx` to the HTTP thread: its request's result callback is pointed
+/// at `ctx` and the request is added to `batch` (see `HTTPThread::schedule`).
+pub fn schedule_owned_request<T: OwnedRequestContext>(
+    ctx: Box<T>,
+    batch: &mut bun_threading::thread_pool::Batch,
+) {
+    let raw = Box::into_raw(ctx);
+    // SAFETY: `raw` was just leaked and is not shared until `batch` runs.
+    let request = unsafe { (*raw).request_mut() };
+    request.schedule_with(
+        HTTPClientResultCallback::new::<T>(raw, owned_request_callback::<T>),
+        batch,
+    );
+}
+
+fn owned_request_callback<T: OwnedRequestContext>(
+    ctx: *mut T,
+    async_http: *mut AsyncHTTP<'static>,
+    result: HTTPClientResult<'_>,
+) {
+    if result.has_more {
+        // SAFETY: `ctx` is the box `schedule_owned_request` leaked; the HTTP
+        // thread is its only user until the terminal callback.
+        unsafe { &mut *ctx }.on_progress(result);
+        return;
+    }
+    // SAFETY: `async_http` is the HTTP thread's bitwise copy of the request
+    // `schedule_owned_request` scheduled, and `real` points back at that
+    // request (inside `*ctx`, so still alive); its final state goes back the
+    // same way, and the thread frees its copy without dropping it.
+    unsafe {
+        let real = (*async_http).real.expect("set by the HTTP thread");
+        core::ptr::write(real.as_ptr(), core::ptr::read(async_http));
+    }
+    // SAFETY: as above; the terminal callback hands the box back.
+    let ctx = unsafe { Box::from_raw(ctx) };
+    ctx.on_done(result);
 }
 
 // Exists for heap stats reasons.

@@ -33,10 +33,9 @@ pub struct UpdateRequest {
     pub(crate) package_id: PackageID,
     pub(crate) is_aliased: bool,
     pub failed: bool,
-    /// This must be cloned to handle when the AST store resets.
-    /// ARENA-owned (AST `Expr.Data` store) — raw pointer per LIFETIMES.tsv;
-    /// only valid while the store that allocated it is alive.
-    pub(crate) e_string: Option<*mut js_ast::E::String>,
+    /// This must be cloned to handle when the AST store resets: it lives in
+    /// the AST `Expr.Data` store and is only valid while that store is.
+    pub(crate) e_string: Option<bun_ast::StoreRef<js_ast::E::String>>,
 }
 
 impl Default for UpdateRequest {
@@ -70,13 +69,11 @@ pub struct UpdateRequestIndex(
 /// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
 /// `RawSlice` views because they may later be repointed at lockfile buffers.
 fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
-    static ANCHOR: bun_threading::Guarded<Vec<Box<[u8]>>> = bun_threading::Guarded::new(Vec::new());
-    let ptr: *const [u8] = &raw const *b;
-    ANCHOR.lock().push(b);
-    // SAFETY: `b`'s heap allocation is owned by `ANCHOR` for the rest of the
-    // process. `Box<[u8]>` is a fat pointer; pushing it into the Vec moves
-    // only the pointer, not the heap data.
-    unsafe { &*ptr }
+    static ANCHOR: bun_threading::Guarded<Vec<&'static [u8]>> =
+        bun_threading::Guarded::new(Vec::new());
+    let bytes: &'static [u8] = Box::leak(b);
+    ANCHOR.lock().push(bytes);
+    bytes
 }
 
 impl UpdateRequest {
@@ -123,7 +120,7 @@ impl UpdateRequest {
         }
     }
 
-    /// It is incorrect to call this function before Lockfile.cleanWithLogger() because
+    /// It is incorrect to call this function before Lockfile::clean_with_logger() because
     /// resolved_name should be populated if possible.
     ///
     /// `self` needs to be a pointer! If `self` is a copy and the name returned from

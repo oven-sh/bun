@@ -50,7 +50,7 @@ fn print_log_and_crash(
     args: impl bun_core::output::FmtTuple,
 ) -> ! {
     let _ = manager
-        .log_mut()
+        .log
         .print(std::ptr::from_mut(Output::error_writer()));
     Output::err_generic(fmt, args);
     Global::crash();
@@ -66,7 +66,7 @@ pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceM
     let root_path = root_package_json_path();
 
     let (root_expr, root_source, root_name): (bun_ast::Expr, bun_ast::Source, Box<[u8]>) = {
-        let log = manager.log_mut();
+        let log = &mut manager.log;
         match manager.workspace_package_json_cache.get_with_path(
             log,
             &root_path,
@@ -119,7 +119,7 @@ pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceM
         _ => None,
     };
     if let Some((arr, loc)) = names {
-        let log = manager.log_mut();
+        let log = &mut manager.log;
         if let Err(err) = members.process_names_array(
             &mut manager.workspace_package_json_cache,
             log,
@@ -250,8 +250,20 @@ pub(crate) fn fetch_entry<'a>(
     manager: &'a mut PackageManager,
     target: &WorkspaceTarget,
 ) -> &'a mut MapEntry {
-    let log = manager.log_mut();
-    match manager.workspace_package_json_cache.get_with_path(
+    fetch_entry_and_log(manager, target).0
+}
+
+/// [`fetch_entry`], plus the manager's log for reporting on the entry.
+pub(crate) fn fetch_entry_and_log<'a>(
+    manager: &'a mut PackageManager,
+    target: &WorkspaceTarget,
+) -> (&'a mut MapEntry, &'a mut bun_ast::Log) {
+    let PackageManager {
+        log,
+        workspace_package_json_cache,
+        ..
+    } = manager;
+    let entry = match workspace_package_json_cache.get_with_path(
         log,
         &target.package_json_path,
         GetJSONOptions {
@@ -267,7 +279,8 @@ pub(crate) fn fetch_entry<'a>(
             );
             Global::crash();
         }
-    }
+    };
+    (entry, log)
 }
 
 pub(crate) fn fetch_entry_root(
@@ -282,8 +295,7 @@ pub(crate) fn store_entry(
     target: &WorkspaceTarget,
     root: bun_ast::Expr,
 ) {
-    let log = manager.log_mut();
-    let entry = fetch_entry(manager, target);
+    let (entry, log) = fetch_entry_and_log(manager, target);
     print_package_json_into_cache_entry(entry, root);
     if let Err(err) = entry.reparse_root(log) {
         bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
@@ -421,15 +433,10 @@ fn assign_requests(
         .map(Vec::as_slice)
         .collect();
     if !positionals.is_empty() {
-        let log = manager.log_mut();
         let subcommand = manager.subcommand;
-        UpdateRequest::parse(
-            Some(&mut *manager),
-            log,
-            &positionals,
-            &mut requests,
-            subcommand,
-        );
+        manager.with_log(|manager, log| {
+            UpdateRequest::parse(Some(manager), log, &positionals, &mut requests, subcommand)
+        });
     }
 
     let assigned = (0..targets.len())

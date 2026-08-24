@@ -158,7 +158,7 @@ The `replacer` argument works like the `replacer` of `JSON.stringify`.
 
 Pass a function to change or drop values. Bun calls it once for the document, with the key `""`, and once for every property and array element. The holder of the value is `this`. Bun writes what the function returns. The returned value follows the same rules as any other value:
 
-- `undefined` drops the property.
+- `undefined` drops the property. For the document itself, `TOML.stringify` returns `undefined`.
 - `null` throws.
 - A `Date` or a Temporal value becomes a date/time.
 - An array of objects becomes an array of tables.

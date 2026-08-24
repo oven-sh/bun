@@ -140,7 +140,7 @@ Bun.YAML.stringify(config, null, 2);
 
 The `replacer` argument works like the `replacer` of `JSON.stringify`.
 
-Pass a function to change or drop values. Bun calls it once for the root value, with the key `""`, and once for every property and array element. The holder of the value is `this`. Bun writes what the function returns. The returned value follows the same rules as any other value. Bun leaves out `undefined`. Bun calls the function once per key an object appears under, as `JSON.stringify` does, so such an object is written once per key instead of once with an anchor and aliases. A cycle keeps its anchor.
+Pass a function to change or drop values. Bun calls it once for the root value, with the key `""`, and once for every property and array element. The holder of the value is `this`. Bun writes what the function returns. The returned value follows the same rules as any other value. Bun leaves out `undefined`, and returns `undefined` when the function drops the root value. Bun calls the function once per key an object appears under, as `JSON.stringify` does, so such an object is written once per key instead of once with an anchor and aliases. A cycle keeps its anchor.
 
 ```ts
 const data = { id: 1n, token: "secret", tags: ["a", "b"] };

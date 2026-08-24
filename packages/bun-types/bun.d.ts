@@ -1111,7 +1111,7 @@ declare module "bun" {
      * nor an array is ignored.
      * @param space Accepted for signature parity with `YAML.stringify` and
      * `JSON5.stringify`, but ignored: TOML output is line-oriented.
-     * @returns A TOML document string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     * @returns A TOML document string, or `undefined` if the input, or what the replacer returns for it, is `undefined`, a function, or a symbol.
      *
      * @example
      * ```js
@@ -1542,7 +1542,7 @@ declare module "bun" {
      *              Without this parameter, outputs flow-style (single-line) YAML.
      *              With this parameter, outputs block-style (multi-line) YAML.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
-     * @returns A YAML string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     * @returns A YAML string, or `undefined` if the input, or what the replacer returns for it, is `undefined`, a function, or a symbol.
      *
      * @example
      * ```ts
@@ -2138,7 +2138,7 @@ declare module "bun" {
      * array is ignored.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
-     * @returns A JSON5 string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     * @returns A JSON5 string, or `undefined` if the input, or what the replacer returns for it, is `undefined`, a function, or a symbol.
      *
      * @example
      * ```ts

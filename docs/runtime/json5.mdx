@@ -153,7 +153,7 @@ JSON5.stringify({ inf: Infinity, ninf: -Infinity, nan: NaN });
 
 The `replacer` argument works like the `replacer` of `JSON.stringify`.
 
-Pass a function to change or drop values. Bun calls it once for the root value, with the key `""`, and once for every property and array element. The holder of the value is `this`. Bun writes what the function returns. Return `undefined` to drop a property. In an array, `undefined` becomes `null`.
+Pass a function to change or drop values. Bun calls it once for the root value, with the key `""`, and once for every property and array element. The holder of the value is `this`. Bun writes what the function returns. Return `undefined` to drop a property. In an array, `undefined` becomes `null`. If the function returns `undefined` for the root value, `JSON5.stringify` returns `undefined`.
 
 ```ts
 const data = { id: 1n, token: "secret", tags: ["a", "b"] };

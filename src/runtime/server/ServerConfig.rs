@@ -1047,9 +1047,6 @@ impl ServerConfig {
             // lsquic engine is built, so this cannot wait for a route.
             args.webtransport = true;
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(port_) = arg.get_truthy(global, "port")? {
             let number = port_.to_number(global)?;

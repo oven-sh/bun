@@ -303,11 +303,11 @@ impl WebTransportSession {
         if let (Some(this_value), false) = (this_value, cb.is_empty_or_undefined_or_null()) {
             let vm = VirtualMachine::get();
             let _loop_guard = vm.enter_event_loop_scope();
-            // transfer_to_js, not to_js: `clone_utf8` hands over a +1 that
+            // into_js, not to_js: `clone_utf8` hands over a +1 that
             // borrowing would never release.
-            let mut reason_string = bun_core::String::clone_utf8(reason);
-            let reason_js = bun_jsc::StringJsc::transfer_to_js(&mut reason_string, global)
-                .unwrap_or(JSValue::UNDEFINED);
+            let reason_js =
+                bun_jsc::StringJsc::into_js(bun_core::String::clone_utf8(reason), global)
+                    .unwrap_or(JSValue::UNDEFINED);
             let args = [this_value, JSValue::js_number(code as f64), reason_js];
             if let Err(e) = cb.call(global, JSValue::UNDEFINED, &args) {
                 let err = global.take_exception(e);
@@ -346,12 +346,10 @@ impl WebTransportSession {
             return Ok(datagram_result_to_js(session.send_datagram(buffer.slice())));
         }
 
-        let js_string = value.to_js_string(global)?;
-        let view = js_string.view(global);
-        let slice = view.to_slice();
-        let ret = datagram_result_to_js(session.send_datagram(slice.slice()));
-        js_string.ensure_still_alive();
-        Ok(ret)
+        // The view guard keeps the JSString cell alive while its bytes are read.
+        let view = value.to_js_string_view(global)?;
+        let slice = view.to_utf8();
+        Ok(datagram_result_to_js(session.send_datagram(slice.slice())))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -381,11 +379,9 @@ impl WebTransportSession {
         if reason_value.is_empty_or_undefined_or_null() {
             session.close(code, b"");
         } else {
-            let js_string = reason_value.to_js_string(global)?;
-            let view = js_string.view(global);
-            let slice = view.to_slice();
+            let view = reason_value.to_js_string_view(global)?;
+            let slice = view.to_utf8();
             session.close(code, slice.slice());
-            js_string.ensure_still_alive();
         }
         Ok(JSValue::UNDEFINED)
     }

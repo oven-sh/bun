@@ -2007,10 +2007,9 @@ impl Example {
             http_proxy,
             HTTP::FetchRedirect::Follow,
         );
+        progress.maybe_refresh();
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut progress.root));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
-
-        progress.maybe_refresh();
 
         response = async_http.send_sync(mutable)?;
 

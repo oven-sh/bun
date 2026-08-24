@@ -657,6 +657,29 @@ describe("bundler files option", () => {
       });
     });
 
+    test("HTML script and stylesheet references report resolve errors", async () => {
+      const result = await buildInChild(`
+        const long = Buffer.alloc(131072, "A").toString();
+        const result = await Bun.build({
+          entrypoints: ["/index.html"],
+          files: {
+            "/index.html":
+              '<!doctype html><html><head><link rel="stylesheet" href="./' + long + '.css"></head>' +
+              '<body><script src="./' + long + '.js"></script></body></html>',
+          },
+          throw: false,
+        });
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(log => log.message.replace(long, "<long>")).sort(),
+        }));
+      `);
+      expect(result).toEqual({
+        success: false,
+        logs: ['Could not resolve: "./<long>.css"', 'Could not resolve: "./<long>.js"'],
+      });
+    });
+
     test("a relative entry point reports a resolve error", async () => {
       const result = await buildInChild(`
         const entryPoint = Buffer.alloc(131072, "A").toString() + ".js";

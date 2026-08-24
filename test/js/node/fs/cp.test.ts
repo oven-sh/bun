@@ -146,6 +146,76 @@ for (const [name, copy] of impls) {
       assertContent(basename + "/result/a.txt", "win");
     });
 
+    // The destination's missing parent is created on demand. When the parent's
+    // name is held by a dangling symlink that mkdir fails with EEXIST, which
+    // used to be taken for "dest already exists" and reported as success with
+    // nothing copied. node reports ENOENT. Over 128 KB macOS copies with
+    // copyfile() instead of open()+write(), which creates the parent separately.
+    // With a doubled separator the parent is derived as "dangling/", and a
+    // trailing separator makes mkdir follow the link on macOS and FreeBSD.
+    for (const [size, content] of [
+      ["small", "a"],
+      ["over 128 KB", Buffer.alloc(256 * 1024, "x").toString()],
+    ] as const) {
+      for (const dest of ["dangling/a.txt", "dangling//a.txt"]) {
+        test(`${size} file into a dangling symlink parent (${dest}) fails with ENOENT`, async () => {
+          await using basename = tempDir("cp", {
+            "from/a.txt": content,
+          });
+          fs.symlinkSync("missing", basename + "/dangling");
+
+          const e = await copyShouldThrow(basename + "/from/a.txt", basename + "/" + dest);
+          expect(e.code).toBe("ENOENT");
+
+          // Neither the link's target nor anything else was created.
+          expect(fs.readdirSync(String(basename)).sort()).toEqual(["dangling", "from"]);
+        });
+      }
+    }
+
+    // A directory tree goes through the JS port on Linux and Windows, whose
+    // parent mkdir reports EEXIST (as node's cpSync does; node's promises.cp
+    // reports ENOENT), and through the native copy on macOS, which reports
+    // ENOENT. Either way nothing may be created.
+    test("directory into a dangling symlink parent fails", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+        "from/sub/b.txt": "b",
+      });
+      fs.symlinkSync("missing", basename + "/dangling");
+
+      const e = await copyShouldThrow(basename + "/from", basename + "/dangling/out", { recursive: true });
+      expect(["ENOENT", "EEXIST"]).toContain(e.code);
+
+      expect(fs.readdirSync(String(basename)).sort()).toEqual(["dangling", "from"]);
+    });
+
+    test("single file into missing nested directories creates them", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+      });
+
+      await copy(basename + "/from/a.txt", basename + "/to/deeper/a.txt");
+
+      assertContent(basename + "/to/deeper/a.txt", "a");
+    });
+
+    // Once the parent has been created the destination is opened again, and
+    // that attempt's error is the one to report: with a trailing slash Linux
+    // fails it with EISDIR, which is also what node reports. It used to report
+    // the first attempt's ENOENT, and created a directory named x as well.
+    test.skipIf(!isLinux)("single file to a path with a trailing slash reports the retried open's error", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+      });
+
+      const e = await copyShouldThrow(basename + "/from/a.txt", basename + "/newdir/x/");
+      expect(e.code).toBe("EISDIR");
+
+      // The parent was created, as for any destination, but nothing inside it.
+      expect(fs.readdirSync(basename + "/newdir")).toEqual([]);
+    });
+
     test("symlinks - single file", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

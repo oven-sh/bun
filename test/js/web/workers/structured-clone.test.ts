@@ -726,9 +726,9 @@ describe.concurrent("structuredClone with ArrayBuffer larger than serialization 
           Bun.gc(true);
         }
       `);
-      // The host's OOM killer reclaiming the child on a small CI runner is not a
-      // structuredClone failure; any other signal (SIGSEGV/SIGABRT/...) still is.
-      if (result.signalCode === "SIGKILL") continue;
+      // The host's OOM killer reclaiming the child on a small CI runner before it reported
+      // anything is not a structuredClone failure; any other signal (SIGSEGV/SIGABRT/...) still is.
+      if (result.signalCode === "SIGKILL" && result.lines.length === 0) continue;
       expect({ ...result, lines: result.lines.map(line => JSON.parse(line)) }).toEqual({
         lines: batch.map(({ label, type, resizable = false }) => ({
           label,

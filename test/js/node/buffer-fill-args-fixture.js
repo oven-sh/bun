@@ -87,4 +87,7 @@ for (const [name, run] of cases) {
   }
   lines.push(name.padEnd(44) + " " + result);
 }
-process.stdout.write(lines.join("\n") + "\n");
+// console.log rather than process.stdout.write: the first access to
+// process.stdout builds the whole stream stack, which costs ~0.7s on a
+// debug build of Bun.
+console.log(lines.join("\n"));

@@ -553,8 +553,7 @@ function spawnSync(file, args, options) {
     }
   }
 
-  // normalizeSpawnArguments prepended argv0 to its own copy of args; Bun.spawn wants
-  // cmd[0] = file and a separate argv0, so save argv0 and overwrite index 0 in place.
+  // Bun.spawnSync takes the executable as cmd[0] and argv0 separately; options.args is our own copy.
   const cmd = options.args;
   const argv0 = cmd[0];
   cmd[0] = options.file;

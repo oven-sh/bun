@@ -1741,8 +1741,6 @@ impl<'a> Transpiler<'a> {
                             js_ast::AlreadyBundled::BunCjs => AlreadyBundled::SourceCodeCjs,
                             js_ast::AlreadyBundled::BytecodeCjs
                             | js_ast::AlreadyBundled::Bytecode => 'brk: {
-                                // A missing or empty `<path>.jsc` falls back to
-                                // running the module from source.
                                 let is_cjs =
                                     matches!(already_bundled, js_ast::AlreadyBundled::BytecodeCjs);
                                 let default_value = if is_cjs {

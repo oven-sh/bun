@@ -1,8 +1,8 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { realpathSync } from "fs";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
 

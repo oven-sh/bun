@@ -205,6 +205,14 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
+    fn print_powershell_completions_unsupported() {
+        Output::err_generic(
+            "PowerShell completions are not yet written for Bun.",
+            format_args!(""),
+        );
+        Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
+    }
+
     pub(crate) fn exec() -> Result<(), crate::Error> {
         let cwd = bun_core::cwd::get();
 
@@ -215,14 +223,9 @@ impl InstallCompletionsCommand {
             let _ = Self::install_uninstaller_windows();
         }
 
-        // TODO: https://github.com/oven-sh/bun/issues/8939
         #[cfg(windows)]
         {
-            Output::err_generic(
-                "PowerShell completions are not yet written for Bun yet.",
-                format_args!(""),
-            );
-            Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
+            Self::print_powershell_completions_unsupported();
             return Ok(());
         }
 
@@ -242,7 +245,7 @@ impl InstallCompletionsCommand {
                 shell = Shell::from_env(shell_name);
             }
 
-            match shell {
+            let filename: &[u8] = match shell {
                 Shell::Unknown => {
                     Output::err_generic(
                         "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.",
@@ -251,8 +254,14 @@ impl InstallCompletionsCommand {
                     note!("To manually output completions, run 'bun getcompletes'");
                     Global::exit(fail_exit_code);
                 }
-                _ => {}
-            }
+                Shell::Pwsh => {
+                    Self::print_powershell_completions_unsupported();
+                    Global::exit(fail_exit_code);
+                }
+                Shell::Fish => b"bun.fish",
+                Shell::Zsh => b"_bun",
+                Shell::Bash => b"bun.completion.bash",
+            };
 
             if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
                 if !bun_sys::isatty(stdout.handle) {
@@ -478,7 +487,7 @@ impl InstallCompletionsCommand {
                             }
                         }
                     }
-                    _ => unreachable!(),
+                    Shell::Unknown | Shell::Pwsh => unreachable!(),
                 }
 
                 pretty_errorln!(
@@ -495,13 +504,6 @@ impl InstallCompletionsCommand {
                     "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                 );
                 Global::exit(fail_exit_code);
-            };
-
-            let filename: &[u8] = match shell {
-                Shell::Fish => b"bun.fish",
-                Shell::Zsh => b"_bun",
-                Shell::Bash => b"bun.completion.bash",
-                _ => unreachable!(),
             };
 
             debug_assert!(!completions_dir.is_empty());

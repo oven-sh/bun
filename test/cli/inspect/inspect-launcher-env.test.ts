@@ -93,7 +93,11 @@ function printedInspectorUrl(proc: Subprocess<"ignore", "pipe", "pipe">) {
   const stderr = (async () => {
     for await (const chunk of proc.stderr) {
       text += decoder.decode(chunk, { stream: true });
-      const line = text.split("\n").find(line => line.trimStart().startsWith("ws://"));
+      // Only complete lines: the last element is whatever follows the final newline so far.
+      const line = text
+        .split("\n")
+        .slice(0, -1)
+        .find(line => line.trimStart().startsWith("ws://"));
       if (line) url.resolve(line.trim());
     }
     url.reject(new Error(`no inspector URL in stderr:\n${text}`));

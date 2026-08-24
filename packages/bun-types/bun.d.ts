@@ -8855,8 +8855,10 @@ declare module "bun" {
 
   namespace Image {
     /**
-     * Stable `error.code` values set on rejections from `Bun.Image` terminals.
-     * Branch on these instead of parsing the message.
+     * Stable `error.code` values on `Bun.Image` pipeline errors — set on
+     * rejections from the async terminals, and on the same errors thrown
+     * synchronously when a pipeline is used directly as a `Response` /
+     * `Request` body. Branch on these instead of parsing the message.
      *
      * - `ERR_IMAGE_FORMAT_UNSUPPORTED` — the requested format isn't available
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).

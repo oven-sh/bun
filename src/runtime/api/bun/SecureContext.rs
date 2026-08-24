@@ -173,35 +173,43 @@ impl SecureContext {
             };
             return Err(global.throw(format_args!("{message}")));
         }
+        let _free = scopeguard::guard((out_key, out_cert, out_ca), |(key, cert, ca)| {
+            // SAFETY: allocated by the helper with malloc; `ca` may be null.
+            unsafe {
+                free(key.cast());
+                free(cert.cast());
+                if !ca.is_null() {
+                    free(ca.cast());
+                }
+            }
+        });
         let result = JSValue::create_empty_object(global, 0);
         // SAFETY: the helper returned NUL-terminated PEM strings of the given
-        // lengths; `create_utf8_for_js` copies into the JS heap before `free`.
-        unsafe {
-            let key_slice = core::slice::from_raw_parts(out_key.cast::<u8>(), key_len);
+        // lengths; `create_utf8_for_js` copies into the JS heap.
+        let (key_slice, cert_slice, ca_slice) = unsafe {
+            (
+                core::slice::from_raw_parts(out_key.cast::<u8>(), key_len),
+                core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len),
+                (!out_ca.is_null() && ca_len > 0)
+                    .then(|| core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len)),
+            )
+        };
+        result.put(
+            global,
+            b"key",
+            bun_string_jsc::create_utf8_for_js(global, key_slice)?,
+        );
+        result.put(
+            global,
+            b"cert",
+            bun_string_jsc::create_utf8_for_js(global, cert_slice)?,
+        );
+        if let Some(ca_slice) = ca_slice {
             result.put(
                 global,
-                b"key",
-                bun_string_jsc::create_utf8_for_js(global, key_slice)?,
+                b"ca",
+                bun_string_jsc::create_utf8_for_js(global, ca_slice)?,
             );
-            let cert_slice = core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len);
-            result.put(
-                global,
-                b"cert",
-                bun_string_jsc::create_utf8_for_js(global, cert_slice)?,
-            );
-            if !out_ca.is_null() && ca_len > 0 {
-                let ca_slice = core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len);
-                result.put(
-                    global,
-                    b"ca",
-                    bun_string_jsc::create_utf8_for_js(global, ca_slice)?,
-                );
-            }
-            free(out_key.cast());
-            free(out_cert.cast());
-            if !out_ca.is_null() {
-                free(out_ca.cast());
-            }
         }
         Ok(result)
     }

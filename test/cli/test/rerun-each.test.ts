@@ -220,11 +220,12 @@ test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
     cmd: [bunExe(), "test", "counter.test.ts", "--rerun-each=3"],
     env: bunEnv,
     cwd: String(dir),
-    stderr: "ignore",
+    stderr: "pipe",
     stdout: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.match(/Run #\d/g)).toEqual(["Run #1", "Run #2", "Run #3"]);
+  expect(stdout + stderr).toMatch(/3 pass/);
   expect(exitCode).toBe(0);
 });

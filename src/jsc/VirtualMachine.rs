@@ -3736,8 +3736,10 @@ impl VirtualMachine {
                 return;
             }
             Mode::Strict => {
+                // If describing the rejection throws, that is the error reported instead.
                 let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason)
+                        .unwrap_or_else(|e| global_object.take_exception(e));
                 let _ = self.uncaught_exception(global_object, wrapped, true);
                 let handled = handle_unhandled();
                 if !handled {
@@ -3752,7 +3754,8 @@ impl VirtualMachine {
                     return;
                 }
                 let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason)
+                        .unwrap_or_else(|e| global_object.take_exception(e));
                 if self.uncaught_exception(global_object, wrapped, true) {
                     drain(self);
                     return;
@@ -6823,53 +6826,33 @@ fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bo
 fn wrap_unhandled_rejection_error_for_uncaught_exception(
     global_object: &JSGlobalObject,
     reason: JSValue,
-) -> JSValue {
-    let like = is_error_like(global_object, reason).unwrap_or_else(|_| {
-        global_object.clear_exception();
-        false
-    });
-    if like {
-        return reason;
+) -> JsResult<JSValue> {
+    if is_error_like(global_object, reason)? {
+        return Ok(reason);
     }
-    // Open an explicit `TopExceptionScope`
-    // around the call and clear any exception via the scope; the C++ side has a
-    // `DECLARE_THROW_SCOPE`, so under `BUN_JSC_validateExceptionChecks=1` a
-    // post-call `clear_exception()` (whose own scope ctor asserts) would be
-    // wrong without a Rust-side scope live across the call.
-    let reason_str = {
-        crate::top_scope!(scope, global_object);
-        let r = Bun__noSideEffectsToString(global_object.vm(), global_object, reason);
-        if scope.exception().is_some() {
-            scope.clear_exception();
-        }
-        r
-    };
+    let reason_str = jsc::from_js_host_call_generic(global_object, || {
+        Bun__noSideEffectsToString(global_object.vm(), global_object, reason)
+    })?;
     const MSG_1: &str = "This error originated either by throwing inside of an async function \
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";
     if reason_str.is_string() {
         // SAFETY: `as_string()` returns a non-null `*mut JSString` when
         // `is_string()` is true; `view()` borrows it for the `write!` below.
-        match unsafe { (*reason_str.as_string()).view(global_object) } {
-            Ok(view) => {
-                return global_object
-                    .err(
-                        crate::ErrorCode::ERR_UNHANDLED_REJECTION,
-                        format_args!("{MSG_1}{view}\"."),
-                    )
-                    .to_js();
-            }
-            // As with the stringification above: this is already the error-reporting path, so a reason that
-            // cannot be printed degrades to the generic message.
-            Err(_) => global_object.clear_exception(),
-        }
+        let view = unsafe { (*reason_str.as_string()).view(global_object) }?;
+        return Ok(global_object
+            .err(
+                crate::ErrorCode::ERR_UNHANDLED_REJECTION,
+                format_args!("{MSG_1}{view}\"."),
+            )
+            .to_js());
     }
-    global_object
+    Ok(global_object
         .err(
             crate::ErrorCode::ERR_UNHANDLED_REJECTION,
             format_args!("{MSG_1}undefined\"."),
         )
-        .to_js()
+        .to_js())
 }
 
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.

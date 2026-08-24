@@ -1160,11 +1160,7 @@ where
                             }
 
                             if let Some(ws) = this.cpp_websocket() {
-                                let mut protocol_str = BunString::clone_latin1(protocol);
-                                ws.set_protocol(&mut protocol_str);
-                                // `BunString` is `Copy`; explicitly drop the
-                                // ref taken by `clone_latin1`.
-                                protocol_str.deref();
+                                ws.set_protocol(BunString::clone_latin1(protocol));
                             }
                             true
                         };

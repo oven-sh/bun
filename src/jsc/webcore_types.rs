@@ -139,7 +139,7 @@ pub struct Blob {
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
-    pub name: bun_core::OwnedStringCell,
+    pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
 // SAFETY: `Blob` holds a raw `global_this` pointer which defaults to
@@ -165,7 +165,7 @@ impl Default for Blob {
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
-            name: bun_core::OwnedStringCell::new(bun_core::String::dead()),
+            name: bun_ptr::JsCell::new(bun_core::String::dead()),
         }
     }
 }

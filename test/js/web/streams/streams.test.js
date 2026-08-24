@@ -2963,9 +2963,10 @@ describe("iterator result consumers", () => {
       },
     };
     const text = await new Response(iterable).text();
+    // IteratorStepValue: the value of a done result is never read.
     expect({ text, reads }).toEqual({
       text: "chunk0chunk1",
-      reads: ["done0", "value0", "done1", "value1", "done2", "value2"],
+      reads: ["done0", "value0", "done1", "value1", "done2"],
     });
   });
 
@@ -2983,8 +2984,8 @@ describe("iterator result consumers", () => {
         };
       },
     };
-    // A final result that is done still carries its value, like `return v` in a generator.
-    expect(await new Response(iterable).text()).toBe("m0m1");
+    // The value of a done result is the iterator's return value, not a chunk.
+    expect(await new Response(iterable).text()).toBe("m0");
   });
 
   test("ReadableStream.from over generators", async () => {

@@ -2554,7 +2554,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
             WTF::String stackProperty = Bun::formatStackTrace(
                 vm, globalObject, globalObject, name, message,
                 line, column,
-                sourceURL, stackFrames, nullptr);
+                sourceURL, stackFrames, nullptr, Zig::FinalizerSafety::NotInFinalizer);
 
             WTF::String stack;
             // first line after "Error:"

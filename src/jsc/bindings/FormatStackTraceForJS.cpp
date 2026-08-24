@@ -148,9 +148,13 @@ WTF::String formatStackTrace(
     OrdinalNumber& column,
     WTF::String& sourceURL,
     Vector<JSC::StackFrame>& stackTrace,
-    JSC::JSObject* errorInstance)
+    JSC::JSObject* errorInstance,
+    Zig::FinalizerSafety finalizerSafety)
 {
     WTF::StringBuilder sb;
+    // putDirect allocates property storage and structures on the GC heap, which
+    // is not allowed while the GC end phase runs this function.
+    JSC::JSObject* writableErrorInstance = finalizerSafety == Zig::FinalizerSafety::NotInFinalizer ? errorInstance : nullptr;
 
     if (!name.isEmpty()) {
         sb.append(name);
@@ -212,7 +216,8 @@ WTF::String formatStackTrace(
                 sb.append(remappedFrame.source_url.toWTFString());
 
                 if (remappedFrame.remapped) {
-                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
+                    if (writableErrorInstance)
+                        writableErrorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     hasSet = true;
                     line = remappedFrame.position.line();
                 }
@@ -273,8 +278,7 @@ WTF::String formatStackTrace(
         sourceURLs[i] = Zig::sourceURL(vm, frame);
 
         bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
-        bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
-        if (isDefinitelyNotRunninginNodeVMGlobalObject || isDefaultGlobalObjectInAFinalizer) {
+        if (isDefinitelyNotRunninginNodeVMGlobalObject) {
             // https://github.com/oven-sh/bun/issues/3595
             if (!sourceURLs[i].isEmpty()) {
                 remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line).zeroBasedInt();
@@ -305,7 +309,7 @@ WTF::String formatStackTrace(
             }
         }
 
-        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
+        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, finalizerSafety, &flags);
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
         OrdinalNumber displayLine = {};
@@ -331,9 +335,9 @@ WTF::String formatStackTrace(
                 sourceURL = sourceURLForFrame;
 
                 if (remappedFrame.remapped) {
-                    if (errorInstance) {
-                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
-                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
+                    if (writableErrorInstance) {
+                        writableErrorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
+                        writableErrorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     }
                 }
             }
@@ -390,6 +394,44 @@ WTF::String formatStackTrace(
     return sb.toString();
 }
 
+// Reads an own data property the way the GC end phase allows: no getters, no
+// ErrorInstance::materializeErrorInfoIfNeeded, no allocation on the GC heap.
+static JSValue getOwnDataPropertyWithoutGC(JSC::JSObject* object, const JSC::Identifier& propertyName)
+{
+    unsigned attributes;
+    PropertyOffset offset = object->structure()->getConcurrently(propertyName.impl(), attributes);
+    if (offset == invalidOffset || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)))
+        return {};
+    return object->getDirect(offset);
+}
+
+// ErrorInstance::sanitizedNameString without the JSGlobalObject: the own "name",
+// then the prototype's, else "Error". Non-string values fall back to "Error".
+static String errorNameWithoutGC(JSC::VM& vm, JSC::ErrorInstance* instance)
+{
+    JSC::JSObject* object = instance;
+    for (unsigned depth = 0; object && depth < 2; depth++) {
+        JSValue name = getOwnDataPropertyWithoutGC(object, vm.propertyNames->name);
+        if (name) {
+            if (name.isString())
+                return asString(name)->tryGetValueWithoutGC();
+            break;
+        }
+        JSValue prototype = object->getPrototypeDirect();
+        object = prototype.isObject() ? asObject(prototype) : nullptr;
+    }
+    return "Error"_s;
+}
+
+// ErrorInstance::sanitizedMessageString without the JSGlobalObject.
+static String errorMessageWithoutGC(JSC::VM& vm, JSC::ErrorInstance* instance)
+{
+    JSValue message = getOwnDataPropertyWithoutGC(instance, vm.propertyNames->message);
+    if (message && message.isString())
+        return asString(message)->tryGetValueWithoutGC();
+    return {};
+}
+
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(
     JSC::VM& vm,
@@ -399,18 +441,21 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     OrdinalNumber& line,
     OrdinalNumber& column,
     String& sourceURL,
-    JSObject* errorInstance)
+    JSObject* errorInstance,
+    Zig::FinalizerSafety finalizerSafety)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String name = "Error"_s;
     WTF::String message;
 
-    if (errorInstance) {
-        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-        if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
-            if (!lexicalGlobalObject) {
-                lexicalGlobalObject = errorInstance->globalObject();
-            }
+    if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
+        if (!lexicalGlobalObject) {
+            lexicalGlobalObject = errorInstance->globalObject();
+        }
+        if (finalizerSafety == Zig::FinalizerSafety::MustNotTriggerGC) {
+            name = errorNameWithoutGC(vm, instance);
+            message = errorMessageWithoutGC(vm, instance);
+        } else {
             name = instance->sanitizedNameString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             message = instance->sanitizedMessageString(lexicalGlobalObject);
@@ -422,7 +467,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         globalObject = defaultGlobalObject();
     }
 
-    return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
+    return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance, finalizerSafety);
 }
 
 static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
@@ -512,13 +557,16 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
-static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)
+// ErrorInstance::reconcileWeakReferencesAtGCEnd calls this once a frame's callee or
+// CodeBlock is unmarked, so the frames get formatted while they are still readable.
+// errorInstance itself is marked. Its global object is used instead of the thread's
+// default one because this can run on the collector thread, which has none.
+static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
+    JSC::JSGlobalObject* lexicalGlobalObject = errorInstance->globalObject();
+    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
 
-    Zig::GlobalObject* globalObject = nullptr;
-    JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
-
-    return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, nullptr);
+    return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, Zig::FinalizerSafety::MustNotTriggerGC);
 }
 
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
@@ -561,7 +609,7 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         }
     }
 
-    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
+    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, Zig::FinalizerSafety::NotInFinalizer);
     RETURN_IF_EXCEPTION(scope, {});
     return jsString(vm, result);
 }
@@ -571,11 +619,11 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
     return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
 }
 
-WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
+WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);
 
-    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which nulls
+    // ErrorInstance::reconcileWeakReferencesAtGCEnd calls this from Heap::runEndPhase, which nulls
     // the current thread's atom string table and runs on whichever thread conducts the GC.
     // Releasing the last ref of an atom string there crashes in AtomStringImpl::remove(),
     // so install the VM's table for the duration; the mutator is suspended for the whole
@@ -595,7 +643,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
+    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL, errorInstance);
     if (scope.exception()) {
         // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
         // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker

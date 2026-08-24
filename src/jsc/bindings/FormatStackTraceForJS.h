@@ -47,6 +47,7 @@ class OrdinalNumber;
 namespace Zig {
 class GlobalObject;
 class JSCStackTrace;
+enum class FinalizerSafety;
 } // namespace Zig
 
 using JSC::EncodedJSValue;
@@ -57,7 +58,9 @@ namespace Bun {
 // Constants
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
-// Main stack trace formatting function
+// Main stack trace formatting function. With FinalizerSafety::MustNotTriggerGC it
+// runs inside the GC end phase: the frames' callees may be dead, and nothing may
+// allocate on the GC heap or touch errorInstance's properties.
 WTF::String formatStackTrace(
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
@@ -68,7 +71,8 @@ WTF::String formatStackTrace(
     WTF::OrdinalNumber& column,
     WTF::String& sourceURL,
     WTF::Vector<JSC::StackFrame>& stackTrace,
-    JSC::JSObject* errorInstance);
+    JSC::JSObject* errorInstance,
+    Zig::FinalizerSafety finalizerSafety);
 
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
@@ -80,7 +84,7 @@ JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);
 JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 
 // Internal wrapper functions for JSC error info callbacks
-WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, void* bunErrorData);
+WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance, void* bunErrorData);
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance, void* bunErrorData);
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL);
 } // namespace Bun

@@ -4,6 +4,7 @@
 
 #include "BunProcess.h"
 #include "ZigGlobalObject.h"
+#include "ErrorStackTrace.h"
 #include "FormatStackTraceForJS.h"
 #include "headers.h" // For Bun__Process__createExecArgv and other exports
 #include "JavaScriptCore/JSCJSValue.h"
@@ -262,7 +263,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         WTF::String stackProperty = Bun::formatStackTrace(
             vm, globalObject, globalObject, name, message,
             line, column,
-            sourceURL, stackFrames, nullptr);
+            sourceURL, stackFrames, nullptr, Zig::FinalizerSafety::NotInFinalizer);
 
         WTF::String stack;
         size_t firstLine = stackProperty.find('\n');

@@ -1194,3 +1194,56 @@ test("Error.prepareStackTrace call sites keep their own file when a hidden frame
     { showPrivateScriptsInStackTraces: "1", callSites: expected, stderr: "", exitCode: 0 },
   ]);
 });
+
+// https://github.com/oven-sh/bun/issues/34398
+test("error.stack keeps the name and message when a GC materializes it before the first read", async () => {
+  // An async function body runs in a per-call closure. Once the promise rejects, that closure is
+  // garbage, so the next GC finds a dead frame and formats the stack string early. The header
+  // has to come out the same as when .stack is read without a GC in between.
+  const src = `
+    const results = {};
+    async function boom() { throw new Error("the message"); }
+    try { await boom(); } catch (e) {
+      Bun.gc(true);
+      results.asyncFunction = e.stack.split("\\n").slice(0, 2).map(line => line.trim().replace(/ \\(.*\\)$/, ""));
+    }
+    async function boomType() { throw new TypeError("type message"); }
+    try { await boomType(); } catch (e) {
+      Bun.gc(true);
+      results.asyncTypeError = e.stack.split("\\n")[0];
+    }
+    class MyError extends Error { constructor(message) { super(message); this.name = "MyError"; } }
+    async function boomOwnName() { throw new MyError("own name"); }
+    try { await boomOwnName(); } catch (e) {
+      Bun.gc(true);
+      results.asyncOwnName = e.stack.split("\\n")[0];
+    }
+    try { await Promise.reject(new RangeError("rejected")); } catch (e) {
+      Bun.gc(true);
+      results.promiseReject = e.stack.split("\\n")[0];
+    }
+    // Synchronous variant: the callee is an eval'd function that nothing references after the call.
+    const dead = (0, eval)("(function inner() { return new Error('sync message'); })")();
+    Bun.gc(true);
+    results.deadCallee = dead.stack.split("\\n")[0];
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ results: stdout && JSON.parse(stdout), stderr }).toEqual({
+    results: {
+      asyncFunction: ["Error: the message", "at boom"],
+      asyncTypeError: "TypeError: type message",
+      asyncOwnName: "MyError: own name",
+      promiseReject: "RangeError: rejected",
+      deadCallee: "Error: sync message",
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});

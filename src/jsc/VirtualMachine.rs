@@ -2847,6 +2847,8 @@ impl VirtualMachine {
                         return Ok(stored);
                     }
                     let resolved = JSC__JSInternalPromise__resolvedPromise(global_ref, ret);
+                    // Only the caller reports this promise, like the module loader's own.
+                    crate::JSPromise::opaque_mut(resolved).set_handled();
                     self.pending_internal_promise = Some(resolved);
                     self.pending_internal_promise_is_protected = false;
                     return Ok(resolved);

@@ -7,6 +7,7 @@ import {
   isMacOS,
   isMusl,
   isOhos,
+  isOHOS,
   isPosix,
   isWindows,
   nodeExe,
@@ -787,8 +788,11 @@ describe("compiled binary in a deleted cwd", () => {
 // automatically (the compile embeds the running runtime) -- this is the one
 // test that actually proves that, as opposed to every other test in this
 // file running against a plain `bun run`.
-const ohosNode = isOhos ? nodeExe() : null;
-describe.skipIf(!isOhos || !ohosNode)("HarmonyOS: compiled binary's spawned node child", () => {
+// Gated on the platform flag (not the device-detecting isOhos): this port's
+// app sandbox has no passwd entry for the app uid, so a standalone node child
+// reports username "unknown" and the assertion below can never pass here.
+const ohosNode = isOHOS ? nodeExe() : null;
+describe.skipIf(!isOHOS || !ohosNode)("HarmonyOS: compiled binary's spawned node child", () => {
   test("gets a working os.userInfo() with a clean env, simulating a fresh device", async () => {
     using dir = tempDir("build-compile-ohos-node-userinfo", {
       "app.js": `

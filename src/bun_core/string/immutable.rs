@@ -937,13 +937,20 @@ pub fn starts_with(self_: &[u8], str: &[u8]) -> bool {
 /// Strips the `file:` scheme from an absolute file URL: `file:///p` and
 /// `file:/p` both give `/p` (WHATWG). No percent-decoding.
 pub fn strip_file_url_prefix(self_: &[u8]) -> &[u8] {
-    if let Some(rest) = self_.strip_prefix(b"file://".as_slice()) {
-        return rest;
+    let rest = if let Some(rest) = self_.strip_prefix(b"file://".as_slice()) {
+        rest
+    } else if self_.starts_with(b"file:/") {
+        &self_[b"file:".len()..]
+    } else {
+        return self_;
+    };
+    // A drive-letter URL serializes as `file:///C:/x`. Drop the slash before
+    // the drive letter so the result is a native absolute path.
+    #[cfg(windows)]
+    if rest.len() >= 3 && rest[0] == b'/' && rest[1].is_ascii_alphabetic() && rest[2] == b':' {
+        return &rest[1..];
     }
-    if self_.starts_with(b"file:/") {
-        return &self_[b"file:".len()..];
-    }
-    self_
+    rest
 }
 
 /// Transliterated from:

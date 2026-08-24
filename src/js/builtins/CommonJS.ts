@@ -17,8 +17,7 @@ $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
-  // $stringSubstring / $stringIndexOfInternal are the engine's own String
-  // methods; a user-patched String.prototype must not pick the loader.
+  // $stringSubstring / $stringIndexOfInternal: user code can replace String.prototype.*.
   if ($stringSubstring.$call(id, 0, 5) === "node:") {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to

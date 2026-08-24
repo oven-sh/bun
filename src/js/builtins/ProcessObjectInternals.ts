@@ -464,9 +464,7 @@ export function windowsEnv(
   coerceForWrite,
   resetForDelete,
 ) {
-  // Every process.env access on Windows runs these traps, including the env
-  // that child_process hands to a child, so they must not read built-ins that
-  // user code can have patched in the meantime.
+  // Captured once: user code can replace these on the prototypes later.
   const ArrayPrototypeSlice = Array.prototype.slice;
   const ArrayPrototypeIncludes = Array.prototype.includes;
   const ArrayPrototypePush = Array.prototype.push;

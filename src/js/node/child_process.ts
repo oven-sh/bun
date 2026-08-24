@@ -561,9 +561,6 @@ function spawnSync(file, args, options) {
       exitedDueToMaxBuffer,
       pid,
     } = Bun.spawnSync({
-      // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-      // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-      // so we have to set argv0 to spawnargs[0] and cmd[0] to file
       cmd: spawnCommand(options.file, options.args),
       // The normalized env (kBunEnv) is built from the live process.env when
       // options.env is not given, so runtime mutations of process.env reach
@@ -913,8 +910,7 @@ function normalizeExecArgs(command, options, callback) {
   };
 }
 
-// spawnargs carries argv0 at index 0 (normalizeSpawnArguments prepends it);
-// Bun.spawn() wants the program in cmd[0] and takes argv0 separately.
+// spawnargs[0] is argv0 (normalizeSpawnArguments prepends it); Bun.spawn() takes argv0 separately and wants the program in cmd[0].
 function spawnCommand(file, spawnargs) {
   const cmd = ArrayPrototypeSlice.$call(spawnargs);
   cmd[0] = file;
@@ -1418,10 +1414,6 @@ class ChildProcess extends EventEmitter {
       validateArray(options.args, "options.args");
       spawnargs = this.spawnargs = options.args;
     }
-    // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-    // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-    // so we have to set argv0 to spawnargs[0] and cmd[0] to file
-
     try {
       this.#handle = Bun.spawn({
         cmd: spawnCommand(file, spawnargs),

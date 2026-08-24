@@ -2137,7 +2137,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         if let Some(h2a) = server.h2_app.take() {
             // A drain may still be queued for it.
-            server.vm().event_loop_ref().deferred_tasks.unregister_task(core::ptr::NonNull::new(h2a.cast::<c_void>()));
+            server
+                .vm()
+                .event_loop_ref()
+                .deferred_tasks
+                .unregister_task(core::ptr::NonNull::new(h2a.cast::<c_void>()));
             // SAFETY: live h2::App handle owned by this server; detaches from `app`.
             unsafe { uws_sys::h2::App::destroy(h2a) };
         }

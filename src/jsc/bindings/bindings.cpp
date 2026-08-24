@@ -7070,12 +7070,31 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         ? WTF::String::fromUTF8(std::span { prefixPtr, prefixLen })
         : WTF::String();
 
-    // getPropertyNames already walks (and dedups) the prototype chain, throwing past maximumPrototypeChainDepth.
+    // Walk the prototype chain as JSObject::getPropertyNames does (the builder dedups,
+    // the depth cap stops misbehaving proxy chains), but skip own index names where that
+    // is safe: an index name is never an identifier completion (repl.rs filters them),
+    // and collecting one Identifier per element of a large typed array blocks the REPL
+    // for minutes (#40281: `buffer.` on a 1 GiB Buffer builds 2^30 names). Classes that
+    // override getOwnPropertyNames with their own keys logic (Proxy traps, module
+    // namespaces, ...) keep the full hook; their key counts are not element counts.
     JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-    object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
-    if (scope.exception()) [[unlikely]]
-        return clearAndEncode(JSC::jsUndefined());
+    unsigned prototypeCount = 0;
+    for (JSC::JSObject* current = object;;) {
+        if (JSC::isTypedArrayType(current->type()) || !current->structure()->typeInfo().overridesGetOwnPropertyNames())
+            current->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
+        else
+            current->methodTable()->getOwnPropertyNames(current, globalObject, propertyNames, DontEnumPropertiesMode::Include);
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(JSC::jsUndefined());
+
+        JSC::JSValue prototype = current->getPrototype(globalObject);
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(JSC::jsUndefined());
+        if (!prototype.isObject() || ++prototypeCount > JSC::JSObject::maximumPrototypeChainDepth)
+            break;
+        current = JSC::asObject(prototype);
+    }
 
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
     if (scope.exception()) [[unlikely]]

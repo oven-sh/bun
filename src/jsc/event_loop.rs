@@ -74,7 +74,7 @@ pub struct EventLoop {
 
     pub concurrent_tasks: ConcurrentQueue,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
-    /// loop's queue (the VM's handle names only the VM's own two loops).
+    /// loop's queue (the VM's handle names only the VM's own loop).
     pub(crate) isolated_poster: Option<std::sync::Arc<crate::vm_handle::IsolatedPosterInner>>,
     // BACKREF — `*JSGlobalObject` owned by the VM; outlives this EventLoop.
     pub global: Option<NonNull<JSGlobalObject>>,
@@ -1123,7 +1123,7 @@ impl EventLoop {
     }
 
     /// JS thread: the weak poster other threads use to reach the loop this
-    /// `EventLoop` is — the VM's handle for its embedded loops, or the isolated
+    /// `EventLoop` is — the VM's handle for its embedded loop, or the isolated
     /// loop's own poster for a spawnSync loop.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
         match &self.isolated_poster {

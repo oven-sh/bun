@@ -467,7 +467,9 @@ describe("the macro host", () => {
   });
 
   // The worker is parked, natively, on a macro whose promise never settles. terminate() has to reach
-  // that wait (require: the worker thread itself; import: a transpiler-pool job on its behalf).
+  // that wait (require: the worker thread itself; import: a transpiler-pool job on its behalf). The
+  // sleep after "parking" gives the worker time to actually reach the native wait; nothing observable
+  // marks that moment, and terminating earlier still passes but exercises the ordinary path instead.
   test.concurrent.each(["require", "import"])("terminate() interrupts a Worker waiting on a macro (%s)", async how => {
     const load =
       how === "require" ? `try { require("./uses.ts") } catch {}` : `await import("./uses.ts").catch(() => {})`;

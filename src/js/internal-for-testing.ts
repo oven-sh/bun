@@ -749,6 +749,17 @@ export const stringsInternals = {
   toUTF16AllocSentinel: $newRustFunction("string/immutable/unicode.rs", "TestingAPIs.toUTF16AllocSentinel", 1) as (
     bytes: Uint8Array,
   ) => string,
+  /** Appends `units` as UTF-8 to a vector holding `prefix` with exactly `spare` spare bytes (`fallible`: via `toUTF8ListWithType`). */
+  convertUTF16ToUTF8Append: $newRustFunction(
+    "string/immutable/unicode.rs",
+    "TestingAPIs.convertUTF16ToUTF8Append",
+    4,
+  ) as (
+    units: Uint16Array,
+    prefix: Uint8Array,
+    spare: number,
+    fallible: boolean,
+  ) => { bytes: Uint8Array; reallocated: boolean },
 };
 
 /** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */

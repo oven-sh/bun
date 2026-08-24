@@ -41,6 +41,7 @@ pub use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTes
 
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_escape_reg_exp;
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
+pub use bun_jsc::bun_string_jsc::unicode_testing_apis::convert_utf16_to_utf8_append as bun_core_string_immutable_unicode_testing_ap_is_convert_utf16_to_utf8_append;
 pub use bun_jsc::bun_string_jsc::unicode_testing_apis::to_utf16_alloc_sentinel as bun_core_string_immutable_unicode_testing_ap_is_to_utf16_alloc_sentinel;
 
 pub use bun_patch_jsc::testing::patch_apply as patch_patch_testing_ap_is_apply;

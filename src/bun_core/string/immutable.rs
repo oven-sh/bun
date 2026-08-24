@@ -2295,6 +2295,7 @@ pub use crate::strings_impl::{
     allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8, convert_utf16_to_utf8_append,
     encode_wtf8_rune, is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, narrow_ascii_u16,
     to_utf8_alloc, to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
+    try_convert_utf16_to_utf8_append,
 };
 
 #[inline]
@@ -2514,23 +2515,9 @@ fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
     (cp as u32, take)
 }
 
-/// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto
-/// `list` and return the (possibly-reallocated) list. Always uses the simdutf
-/// path; Bun is built with `FeatureFlags.use_simdutf = true`.
+/// `strings.toUTF8ListWithType`: append `utf16` as UTF-8 onto `list` and return it.
 pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8>, AllocError> {
-    if utf16.is_empty() {
-        return Ok(list);
-    }
-    // `convert_utf16_to_utf8_append` writes directly into `spare_capacity_mut()` and
-    // requires the caller to pre-reserve (its doc says so explicitly); without this
-    // reserve a fresh `Vec::new()` has a dangling `0x1` spare pointer and simdutf
-    // segfaults writing to it. The +16 padding gives SIMD over-read slack.
-    let length = simdutf::length::utf8::from::utf16::le(utf16);
-    list.try_reserve(length + 16).map_err(|_| AllocError)?;
-    // Route through
-    // `crate::strings_impl::convert_utf16_to_utf8_append`, which replaces
-    // unpaired surrogates with U+FFFD.
-    crate::strings_impl::convert_utf16_to_utf8_append(&mut list, utf16);
+    try_convert_utf16_to_utf8_append(&mut list, utf16)?;
     Ok(list)
 }
 

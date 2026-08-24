@@ -1859,11 +1859,6 @@ impl StreamBuffer {
     }
 
     pub fn write_utf16(&mut self, buffer: &[u16]) -> Result<(), OOM> {
-        // `ByteVecExt::write_utf16` sizes the spare capacity via
-        // `simdutf.length.utf8.from.utf16.le` *before* the simdutf write;
-        // calling
-        // `convert_utf16_to_utf8_append` directly (its old shortcut) handed
-        // simdutf a `Vec::new()` dangling pointer (`0x1`) and segfaulted.
         ByteVecExt::write_utf16(&mut self.list, buffer)?;
         Ok(())
     }

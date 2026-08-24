@@ -82,6 +82,7 @@
 #include "JavaScriptCore/MapConstructor.h"
 #include "JavaScriptCore/NumberConstructor.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/ObjectPrototypeInlines.h"
 #include "JavaScriptCore/RegExpConstructor.h"
 #include "JavaScriptCore/SetConstructor.h"
 #include "JavaScriptCore/StringConstructor.h"
@@ -877,37 +878,52 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // compares the two "constructor" values with ===, so Object.create({ x: 1 })
     // equals {} (both inherit constructor === Object). Only when v1 has no
     // constructor, or an own non-built-in one, does node compare the
-    // [[Prototype]]s with ===, so Object.create(null) does not equal {}. Only
-    // the node:assert/node:util entry point does this; Bun.deepEquals and
-    // expect() keep their prototype-blind semantics.
-    if constexpr (checkPrototypes && !skipPrototypeIdentity) {
+    // [[Prototype]]s with ===, so Object.create(null) does not equal {}. Every
+    // node mode, including skipPrototype, then requires equal
+    // Object.prototype.toString tags. Only the node:assert/node:util entry
+    // point does this; Bun.deepEquals and expect() keep their prototype-blind
+    // semantics.
+    if constexpr (checkPrototypes) {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
         if (protoCheck1 && protoCheck2) {
-            const auto& constructorName = vm.propertyNames->constructor;
-            JSValue constructor1 = protoCheck1->get(globalObject, constructorName);
-            RETURN_IF_EXCEPTION(scope, false);
-            bool compareConstructors = false;
-            if (!constructor1.isUndefined()) {
-                PropertySlot slot(protoCheck1, PropertySlot::InternalMethodType::GetOwnProperty);
-                bool hasOwnConstructor = protoCheck1->methodTable()->getOwnPropertySlot(protoCheck1, globalObject, constructorName, slot);
+            if constexpr (!skipPrototypeIdentity) {
+                const auto& constructorName = vm.propertyNames->constructor;
+                JSValue constructor1 = protoCheck1->get(globalObject, constructorName);
                 RETURN_IF_EXCEPTION(scope, false);
-                compareConstructors = !hasOwnConstructor || isWellKnownConstructor(globalObject, constructor1);
-            }
-            if (compareConstructors) {
-                JSValue constructor2 = protoCheck2->get(globalObject, constructorName);
-                RETURN_IF_EXCEPTION(scope, false);
-                bool sameConstructor = JSC::JSValue::strictEqual(globalObject, constructor1, constructor2);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (!sameConstructor) {
-                    return false;
+                bool compareConstructors = false;
+                if (!constructor1.isUndefined()) {
+                    PropertySlot slot(protoCheck1, PropertySlot::InternalMethodType::GetOwnProperty);
+                    bool hasOwnConstructor = protoCheck1->methodTable()->getOwnPropertySlot(protoCheck1, globalObject, constructorName, slot);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    compareConstructors = !hasOwnConstructor || isWellKnownConstructor(globalObject, constructor1);
                 }
-            } else {
-                JSValue proto1 = protoCheck1->getPrototype(globalObject);
+                if (compareConstructors) {
+                    JSValue constructor2 = protoCheck2->get(globalObject, constructorName);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    bool sameConstructor = JSC::JSValue::strictEqual(globalObject, constructor1, constructor2);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (!sameConstructor) {
+                        return false;
+                    }
+                } else {
+                    JSValue proto1 = protoCheck1->getPrototype(globalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    JSValue proto2 = protoCheck2->getPrototype(globalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (proto1 != proto2) {
+                        return false;
+                    }
+                }
+            }
+            JSString* tag1 = objectPrototypeToString(globalObject, protoCheck1);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSString* tag2 = objectPrototypeToString(globalObject, protoCheck2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (tag1 != tag2) {
+                bool sameTag = tag1->equal(globalObject, tag2);
                 RETURN_IF_EXCEPTION(scope, false);
-                JSValue proto2 = protoCheck2->getPrototype(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (proto1 != proto2) {
+                if (!sameTag) {
                     return false;
                 }
             }
@@ -1036,7 +1052,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
-    if constexpr (isStrict && !skipPrototypeIdentity) {
+    if constexpr (isStrict && !checkPrototypes) {
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
@@ -1709,7 +1725,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
         }
 
-        if (!mode.skipPrototypeIdentity) {
+        if (!mode.checkPrototypes) {
             if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
                 return false;
             }

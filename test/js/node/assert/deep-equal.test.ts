@@ -335,6 +335,34 @@ const cases: Case[] = [
     strict: true,
     loose: true,
   },
+  {
+    name: "own constructor: different non-enumerable user functions on objects with the same prototype",
+    a: () => Object.create(sharedPrototype, { constructor: { value: function A() {} } }),
+    b: () => Object.create(sharedPrototype, { constructor: { value: function B() {} } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Proxy of {} and {}",
+    a: () => new Proxy({}, {}),
+    b: () => ({}),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Proxy of { a: 1 } and { a: 1 }",
+    a: () => new Proxy({ a: 1 }, {}),
+    b: () => ({ a: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{ a: 1 } and a Proxy of { a: 2 }",
+    a: () => ({ a: 1 }),
+    b: () => new Proxy({ a: 2 }, {}),
+    strict: false,
+    loose: false,
+  },
 
   // Symbol keys: compared in strict mode, ignored in loose mode.
   {

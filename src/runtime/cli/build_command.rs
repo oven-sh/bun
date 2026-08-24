@@ -249,7 +249,8 @@ impl BuildCommand {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
-        this_transpiler.options.compile_target_is_host = ctx.bundler_options.compile_target.is_default();
+        this_transpiler.options.compile_target_is_host =
+            ctx.bundler_options.compile_target.is_default();
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {

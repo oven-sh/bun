@@ -8,7 +8,7 @@ use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::lockfile::{DetachedLoadResult, LoadStep};
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
@@ -83,38 +83,20 @@ impl OutdatedCommand {
     }
 
     fn outdated(
-        ctx: Command::Context,
+        _ctx: Command::Context,
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> crate::Result<()> {
-        // Reshaped for borrowck — `load_from_cwd` would otherwise alias
-        // `PackageManager` with its `lockfile` field. Project disjoint
-        // raw pointers from the singleton first; `load_from_cwd` only reads
-        // `manager.options` / migration helpers and never re-borrows
-        // `manager.lockfile` through the `pm` argument.
-        let pm_ptr: *mut PackageManager = manager;
         let not_silent = manager.options.log_level != LogLevel::Silent;
-        let log_ptr: *mut bun_ast::Log = manager.log;
-
-        // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
-        // no other live `&mut Lockfile` exists at this point.
-        let lockfile: &mut bun_install::lockfile::Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
-        // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
-        let log = unsafe { &mut *log_ptr };
-        match lockfile.load_from_cwd::<true>(
-            // SAFETY: see comment above — `load_from_cwd` accesses `manager`
-            // fields disjoint from `lockfile`.
-            Some(unsafe { &mut *pm_ptr }),
-            log,
-        ) {
-            LoadResult::NotFound => {
+        match manager.load_lockfile_from_cwd_detached::<true>() {
+            DetachedLoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());
                     bun_core::note!("run 'bun install' first");
                 }
                 Global::crash();
             }
-            LoadResult::Err(cause) => {
+            DetachedLoadResult::Err(cause) => {
                 if not_silent
                     && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
                 {
@@ -136,21 +118,15 @@ impl OutdatedCommand {
                             (cause.value.name(),),
                         ),
                     }
-                    if ctx.log_ref().has_errors() {
-                        // SAFETY: `log_ptr` aliases `manager.log` which is the
-                        // `*logger.Log` borrowed from `Command::Context`; no
-                        // other `&mut Log` is live here.
-                        let _ =
-                            unsafe { (*log_ptr).print(std::ptr::from_mut(Output::error_writer())) };
+                    if manager.log.has_errors() {
+                        let _ = manager
+                            .log
+                            .print(std::ptr::from_mut(Output::error_writer()));
                     }
                 }
                 Global::crash();
             }
-            LoadResult::Ok(_) => {
-                // `load_from_cwd(&mut self, ..)` populates the
-                // lockfile in place, so the `ok.lockfile: &mut Lockfile` reborrow
-                // is the same storage and no reassignment is needed.
-            }
+            DetachedLoadResult::Ok(_) => {}
         }
 
         if Output::enable_ansi_colors_stdout() {

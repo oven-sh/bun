@@ -25,9 +25,9 @@ use bun_core::strings;
 use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
 use bun_semver::{self as semver, String as SemverString};
 
-// Serialized padding bytes must be deterministic; the per-field
-// save path zeroes padding explicitly (see the note in `save` and the
-// `assert_no_uninitialized_padding` invariant in `Package::Serializer`).
+// Serialized padding bytes must be deterministic; the per-field save path
+// writes `bytemuck::NoUninit` columns (see `Package::Serializer`), so there
+// are no uninitialized bytes to leak.
 
 const HEADER_BYTES: &[u8] = b"#!/usr/bin/env bun\nbun-lockfile-format-v0\n";
 
@@ -81,7 +81,7 @@ impl<'a> bun_io::Write for StreamType<'a> {
 }
 
 #[inline]
-fn write_array<T>(
+fn write_array<T: bytemuck::NoUninit>(
     stream: &mut StreamType<'_>,
     array: &[T],
     prefix: &'static str,
@@ -123,7 +123,7 @@ const _: () = {
 /// this invariant-free form instead and validate the flag before constructing
 /// the real `PatchedDep`.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct PatchedDepExternal {
     path: SemverString,
     _padding: [u8; 7],
@@ -174,8 +174,7 @@ pub(crate) fn save(
     end_pos: &mut usize,
 ) -> Result<(), Error> {
     // No defensive clone of `packages` is needed for byte-exact serialization:
-    // the per-field writers below already zero-pad via the
-    // `assert_no_uninitialized_padding` invariant.
+    // the per-field writers below only accept `bytemuck::NoUninit` columns.
 
     // `writer` and `stream` roles are collapsed into a single `StreamType`.
     let mut stream = StreamType { bytes };
@@ -422,8 +421,6 @@ pub(crate) fn load(
     }
 
     lockfile.format = FormatVersion::current();
-    // `lockfile.allocator = allocator;` dropped — global mimalloc.
-
     let _ = stream.read_all(&mut lockfile.meta_hash)?;
 
     let total_buffer_size = stream.read_int_le::<u64>()?;
@@ -437,7 +434,7 @@ pub(crate) fn load(
     lockfile.packages = packages_load_result.list;
 
     // `meta.id` is memcpy'd verbatim from disk with no range validation; a
-    // corrupt `bun.lockb` can make it garbage and trip `panic_bounds_check`
+    // corrupt `bun.lockb` can make it garbage and trip a bounds-check panic
     // in `Package::clone` / `preinstall_state` indexing later. Surface it
     // here as a parse error so the installer can warn + re-resolve instead
     // of aborting.
@@ -501,22 +498,10 @@ pub(crate) fn load(
                     lockfile
                         .workspace_versions
                         .ensure_total_capacity(workspace_versions_list.len())?;
-                    // SAFETY: capacity reserved above; both columns are fully
-                    // overwritten by `copy_from_slice` before `re_index` reads them.
-                    unsafe {
-                        lockfile
-                            .workspace_versions
-                            .set_entries_len(workspace_versions_list.len());
-                    }
-                    lockfile
-                        .workspace_versions
-                        .keys_mut()
-                        .copy_from_slice(&workspace_package_name_hashes);
-                    lockfile
-                        .workspace_versions
-                        .values_mut()
-                        .copy_from_slice(&workspace_versions_list);
-                    lockfile.workspace_versions.re_index()?;
+                    lockfile.workspace_versions.set_from_slices(
+                        &workspace_package_name_hashes,
+                        &workspace_versions_list,
+                    )?;
                 }
 
                 {
@@ -530,23 +515,9 @@ pub(crate) fn load(
                     lockfile
                         .workspace_paths
                         .ensure_total_capacity(workspace_paths_strings.len())?;
-
-                    // SAFETY: capacity reserved above; both columns are fully
-                    // overwritten by `copy_from_slice` before `re_index` reads them.
-                    unsafe {
-                        lockfile
-                            .workspace_paths
-                            .set_entries_len(workspace_paths_strings.len());
-                    }
                     lockfile
                         .workspace_paths
-                        .keys_mut()
-                        .copy_from_slice(&workspace_paths_hashes);
-                    lockfile
-                        .workspace_paths
-                        .values_mut()
-                        .copy_from_slice(&workspace_paths_strings);
-                    lockfile.workspace_paths.re_index()?;
+                        .set_from_slices(&workspace_paths_hashes, &workspace_paths_strings)?;
                 }
             } else {
                 stream.pos -= 8;
@@ -557,7 +528,7 @@ pub(crate) fn load(
     {
         let remaining_in_buffer = total_buffer_size.saturating_sub(stream.pos as u64);
 
-        // >= because `has_empty_trusted_dependencies_tag` is tag only
+        // >= because `HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG` is tag only
         if remaining_in_buffer >= 8 && total_buffer_size <= stream.buffer.len() as u64 {
             let next_num = stream.read_int_le::<u64>()?;
             if remaining_in_buffer > 8 && next_num == HAS_TRUSTED_DEPENDENCIES_TAG {
@@ -595,10 +566,8 @@ pub(crate) fn load(
                     .ensure_total_capacity(overrides_name_hashes.len())?;
                 let override_versions_external: Vec<dependency::External> =
                     buffers::read_array(stream)?;
-                // reshaped for borrowck — `Context.buffer` borrows
-                // `lockfile.buffers.string_bytes` while we also need
-                // `&mut lockfile.overrides`. Split the disjoint fields up front so
-                // borrowck sees sibling borrows (no raw-ptr provenance laundering).
+                // Split borrow: `Context.buffer` borrows `buffers.string_bytes`
+                // while `overrides` is mutated.
                 let Lockfile {
                     buffers, overrides, ..
                 } = &mut *lockfile;
@@ -670,11 +639,8 @@ pub(crate) fn load(
 
                 let default_deps: Vec<dependency::External> = buffers::read_array(stream)?;
 
-                // reshaped for borrowck — `dependency::Context` /
-                // `ArrayHashContext` borrow `lockfile.buffers.string_bytes` while
-                // we also need `&mut lockfile.catalogs`. Split the disjoint
-                // fields up front so borrowck sees sibling borrows (no raw-ptr
-                // provenance laundering). `string_bytes` is not reallocated for
+                // Split borrow: the contexts borrow `buffers.string_bytes` while
+                // `catalogs` is mutated. `string_bytes` is not reallocated for
                 // the remainder of this block.
                 let Lockfile {
                     buffers, catalogs, ..
@@ -845,7 +811,6 @@ pub(crate) fn load(
             #[allow(clippy::single_match)]
             match resolution.tag {
                 ResolutionTag::Workspace => {
-                    // SAFETY: tag == Workspace discriminates the active union field.
                     lockfile
                         .workspace_paths
                         .put(name_hash, *resolution.workspace())?;

@@ -683,14 +683,13 @@ fn settle_resolved_positional(
     package_json: &Expr,
     dependency_list: &[u8],
     flag: &[u8],
-    e_string: *mut E::EString,
+    e_string: bun_ast::StoreRef<E::EString>,
     target: &[u8],
     quiet: bool,
 ) -> Decision {
     let name: &[u8] = request.get_resolved_name(lockfile);
     let name_hash = lockfile.packages.items_name_hash()[request.package_id as usize];
-    // SAFETY: same slot `edit` just wrote through; see the write in `edit_target`.
-    let literal: &[u8] = unsafe { (*e_string).data }.slice();
+    let literal: &[u8] = e_string.data.slice();
 
     if keys_named(package_json, dependency_list, name) > 1 {
         refuse_declared(literal, target, name, flag);
@@ -769,7 +768,7 @@ pub(crate) fn edit_target(
     let flag_literal = flag.map(|name| StoreStr::new(reference_literal(arena, name)));
 
     for request in updates.iter_mut() {
-        let Some(e_string) = request.e_string else {
+        let Some(mut e_string) = request.e_string else {
             continue;
         };
         if !request.is_aliased {
@@ -791,8 +790,7 @@ pub(crate) fn edit_target(
                 quiet,
             );
             if decision == Decision::Convert {
-                // SAFETY: see the write at the bottom of this loop.
-                unsafe { (*e_string).data = flag_literal.expect("infallible: flag is Some") };
+                e_string.data = flag_literal.expect("infallible: flag is Some");
             }
             continue;
         }
@@ -828,8 +826,7 @@ pub(crate) fn edit_target(
                         Decision::Convert => flag_literal.expect("infallible: flag is Some"),
                         Decision::Keep => {
                             if let Some(slot) = existing {
-                                // SAFETY: see the write at the bottom of this loop.
-                                unsafe { (*e_string).data = slot };
+                                e_string.data = slot;
                             }
                             request.e_string = None;
                             continue;
@@ -842,8 +839,9 @@ pub(crate) fn edit_target(
                 _ => continue,
             }
         };
-        // SAFETY: same slot `edit` just wrote through (PackageJSONEditor.rs `request.e_string` loop); the tree it points into is still live and no other borrow of it exists here.
-        unsafe { (*e_string).data = literal };
+        // Same slot `edit` just wrote through (PackageJSONEditor.rs
+        // `request.e_string` loop); the tree it points into is still live.
+        e_string.data = literal;
     }
     Ok(())
 }
@@ -979,19 +977,45 @@ fn other_users_of(
 
 pub(crate) fn edit_root_entry_before_install(
     manager: &mut PackageManager,
-    root_package_json: &mut MapEntry,
+    root_package_json_path: &[u8],
 ) -> Result<(), crate::Error> {
     if manager.catalog_add.adds.is_empty() {
         return Ok(());
     }
-    let root = root_package_json.root;
+    let root = cached_root_entry(manager, root_package_json_path).0.root;
     edit_root_before_install(manager, &root)?;
+    let (root_package_json, log) = cached_root_entry(manager, root_package_json_path);
     print_package_json_into_cache_entry(root_package_json, root);
-    if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
+    if let Err(err) = root_package_json.reparse_root(log) {
         bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
         Global::crash();
     }
     Ok(())
+}
+
+/// The root `package.json` cache entry (loaded by the caller already).
+fn cached_root_entry<'m>(
+    manager: &'m mut PackageManager,
+    path: &[u8],
+) -> (&'m mut MapEntry, &'m mut bun_ast::Log) {
+    let PackageManager {
+        log,
+        workspace_package_json_cache,
+        ..
+    } = manager;
+    match workspace_package_json_cache.get_with_path(
+        log,
+        path,
+        crate::package_manager_real::workspace_package_json_cache::GetJSONOptions {
+            guess_indentation: true,
+            ..Default::default()
+        },
+    ) {
+        crate::package_manager_real::workspace_package_json_cache::GetResult::Entry(entry) => {
+            (entry, log)
+        }
+        _ => unreachable!("cached by the caller"),
+    }
 }
 
 /// Runs after `clean_with_logger`: puts moved entries back, replaces dist-tag seeds with the resolved range and writes the entries of nameless positionals; the lockfile catalog is re-derived from the file by `package_json_write_back`.

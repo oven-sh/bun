@@ -508,9 +508,8 @@ pub mod registry {
             let final_href: Box<[u8]> = if needs_normalize {
                 url.href_without_auth()
             } else {
-                // reshaped for borrowck — `url` (borrowing
-                // `registry_url`) is dead on this branch (every path that
-                // mutated `url.pathname` also set `needs_normalize = true`).
+                // `url` is dead on this branch (every path that mutated
+                // `url.pathname` also set `needs_normalize = true`).
                 registry_url
             };
 
@@ -542,7 +541,7 @@ pub mod registry {
         log: &mut bun_ast::Log,
         package_name: &[u8],
         loaded_manifest: Option<PackageManifest>,
-        package_manager: &mut PackageManager,
+        package_manager: &PackageManager,
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
         match response.status_code {
@@ -578,12 +577,7 @@ pub mod registry {
             is_extended_manifest,
         )? {
             if package_manager.options.enable.manifest_cache() {
-                package_manifest::Serializer::save_async(
-                    &package,
-                    scope,
-                    package_manager.get_temporary_directory().handle.fd,
-                    package_manager.get_cache_directory(),
-                );
+                package_manifest::Serializer::save_async(&package, scope, package_manager);
             }
 
             return Ok(PackageVersionResponse::Fresh(package));
@@ -598,7 +592,7 @@ pub use registry as Registry;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct DistTagMap {
     pub(crate) tags: ExternalStringList,
     pub(crate) versions: VersionSlice,
@@ -607,7 +601,7 @@ pub struct DistTagMap {
 pub(crate) type PackageVersionList = ExternalSlice<PackageVersion>;
 
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ExternVersionMap {
     pub(crate) keys: VersionSlice,
     pub(crate) values: PackageVersionList,
@@ -642,8 +636,7 @@ pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result
     let mut this = T::NONE.negatable();
     if let JSON::ExprData::EArray(a) = &expr.data {
         for item in a.items.slice() {
-            // JSON parsed via `parse_utf8` always yields UTF-8 EStrings,
-            // so no transcode allocator is needed.
+            // JSON parsed via `parse_utf8` always yields UTF-8 EStrings.
             if let Some(value) = item.as_utf8_string_literal() {
                 this.apply(value);
             }
@@ -675,7 +668,7 @@ pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonV
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, bytemuck::NoUninit, bytemuck::CheckedBitPattern)]
 pub struct PackageVersion {
     /// `"integrity"` field || `"shasum"` field
     /// https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#dist
@@ -776,7 +769,7 @@ impl PackageVersion {
         self.bundled_dependencies.is_invalid()
     }
 
-    /// Used by `Package.fromNPM` to walk dependency groups by name.
+    /// Used by `Package::from_npm` to walk dependency groups by name.
     pub(crate) fn dep_group(&self, field: &[u8]) -> ExternalStringMap {
         match field {
             b"dependencies" => self.dependencies,
@@ -837,7 +830,7 @@ const _: () = {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, bytemuck::NoUninit, bytemuck::CheckedBitPattern)]
 pub struct NpmPackage {
     /// HTTP response headers
     pub(crate) last_modified: SemverString,
@@ -945,16 +938,39 @@ pub mod package_manifest {
         "header bytes must be exactly 49 bytes long, length is not serialized"
     );
 
+    /// Where manifests are cached: the temporary directory a file is written
+    /// into and the cache directory it is renamed into (plus their absolute
+    /// paths, which Windows needs to reopen by path).
+    pub(crate) struct CacheDirs {
+        pub tmpdir: Fd,
+        pub cache_dir: Fd,
+        #[cfg(windows)]
+        pub tmpdir_path: &'static [u8],
+        #[cfg(windows)]
+        pub cache_dir_path: Box<[u8]>,
+    }
+
+    impl CacheDirs {
+        pub(crate) fn of(manager: &PackageManager) -> CacheDirs {
+            let tmp = manager.temporary_directory();
+            CacheDirs {
+                tmpdir: tmp.handle.fd,
+                cache_dir: manager.cache_directory(),
+                #[cfg(windows)]
+                tmpdir_path: tmp.path.as_bytes(),
+                #[cfg(windows)]
+                cache_dir_path: Box::from(manager.cache_directory_path.as_bytes()),
+            }
+        }
+    }
+
     impl Serializer {
-        pub(crate) fn write_array<W: bun_io::Write, T: Copy>(
+        pub(crate) fn write_array<W: bun_io::Write, T: bytemuck::NoUninit>(
             writer: &mut W,
             array: &[T],
             pos: &mut u64,
         ) -> Result<(), Error> {
-            // SAFETY: T is Copy POD; sliceAsBytes equivalent
-            let bytes = unsafe {
-                bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
-            };
+            let bytes: &[u8] = bytemuck::cast_slice(array);
             if bytes.is_empty() {
                 writer.write_int_le::<u64>(0)?;
                 *pos += 8;
@@ -988,25 +1004,13 @@ pub mod package_manifest {
             Ok(result_bytes)
         }
 
-        fn array_from_bytes<T: Copy>(result_bytes: &[u8]) -> &[T] {
-            if result_bytes.is_empty() {
-                return &[];
-            }
-            // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
-            unsafe {
-                bun_core::ffi::slice(
-                    result_bytes.as_ptr().cast::<T>(),
-                    result_bytes.len() / core::mem::size_of::<T>(),
-                )
-            }
-        }
-
-        pub fn read_array<'a, T: Copy>(
-            stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
-        ) -> Result<&'a [T], Error> {
-            Ok(Self::array_from_bytes::<T>(Self::read_array_bytes::<T>(
-                stream,
-            )?))
+        /// The next array, each element validated (`None` when one is not a
+        /// valid `T`, i.e. the cache file is unusable).
+        pub fn read_array<T: bytemuck::CheckedBitPattern>(
+            stream: &mut bun_io::FixedBufferStream<&[u8]>,
+        ) -> Result<Option<Box<[T]>>, Error> {
+            let bytes = Self::read_array_bytes::<T>(stream)?;
+            Ok(crate::lockfile::buffers::read_elements(bytes).map(Vec::into_boxed_slice))
         }
 
         pub(crate) fn write<W: bun_io::Write>(
@@ -1028,20 +1032,8 @@ pub mod package_manifest {
             // Verify field order matches SIZES_FIELDS (descending alignment)
             // if the layout changes.
             {
-                // "pkg"
-                // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
-                // implicit padding** — the two layout gaps are filled by
-                // explicit `_padding_*: [u8; N]` fields (zero-initialized via
-                // `Default`), and the `const _ = { offset_of!… }` block at the
-                // struct definition statically asserts no gap remains. Every
-                // byte of `this.pkg` is therefore initialized, so viewing it
-                // as `&[u8]` is sound.
-                let bytes = unsafe {
-                    bun_core::ffi::slice(
-                        (&raw const this.pkg).cast::<u8>(),
-                        core::mem::size_of::<NpmPackage>(),
-                    )
-                };
+                // "pkg" (`NoUninit`: explicit `_padding_*` fields, no gaps)
+                let bytes = bytemuck::bytes_of(&this.pkg);
                 pos += Aligner::write::<NpmPackage, W>(writer, pos)? as u64;
                 writer.write_all(bytes)?;
                 pos += bytes.len() as u64;
@@ -1061,10 +1053,10 @@ pub mod package_manifest {
             this: &PackageManifest,
             scope: &registry::Scope,
             tmp_path: &bun_core::ZStr,
-            tmpdir: Fd,
-            cache_dir: Fd,
+            dirs: &CacheDirs,
             outpath: &bun_core::ZStr,
         ) -> Result<(), Error> {
+            let (tmpdir, cache_dir) = (dirs.tmpdir, dirs.cache_dir);
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
             let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(scope) + 64);
             Serializer::write(this, scope, &mut buffer)?;
@@ -1076,15 +1068,10 @@ pub mod package_manifest {
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
             let mut realpath_buf = bun_paths::PathBuffer::uninit();
-            // SAFETY: `crate::package_manager::get()` returns the live
-            // singleton; `get_temporary_directory` only mutates its
-            // lazy-init state and is called from the install thread.
-            #[cfg(windows)]
-            let tmpdir_stub = unsafe { (*crate::package_manager::get()).get_temporary_directory() };
             #[cfg(windows)]
             let path_to_use_for_opening_file =
                 bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-                    &tmpdir_stub.path,
+                    dirs.tmpdir_path,
                     &mut realpath_buf[..],
                     &[tmp_path.as_bytes()],
                 );
@@ -1156,7 +1143,7 @@ pub mod package_manifest {
             #[cfg(windows)]
             {
                 let mut realpath2_buf = bun_paths::PathBuffer::uninit();
-                let cache_dir_abs = &PackageManager::get().cache_directory_path;
+                let cache_dir_abs: &[u8] = &dirs.cache_dir_path;
                 let cache_path_abs =
                     bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
                         cache_dir_abs,
@@ -1250,53 +1237,30 @@ pub mod package_manifest {
         pub(crate) fn save_async(
             this: &PackageManifest,
             scope: &registry::Scope,
-            tmpdir: Fd,
-            cache_dir: Fd,
+            manager: &PackageManager,
         ) {
-            use bun_threading::thread_pool::{
-                Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
-            };
+            use bun_threading::thread_pool::Task as PoolTask;
 
             struct SaveTask {
                 manifest: PackageManifest,
                 // Owned: the thread-pool task can outlive the caller's borrow
                 // of the Registry.Scope, so it owns a clone.
                 scope: registry::Scope,
-                tmpdir: Fd,
-                cache_dir: Fd,
+                dirs: CacheDirs,
 
                 task: PoolTask,
             }
 
-            bun_threading::intrusive_work_task!(SaveTask, task);
+            bun_threading::owned_task!(SaveTask, task);
 
             impl SaveTask {
-                fn new(init: SaveTask) -> Box<SaveTask> {
-                    Box::new(init)
-                }
-
-                // Safe-fn: only ever invoked by `ThreadPool` via the `callback`
-                // fn-pointer with the `*mut PoolTask` we registered below
-                // (`heap::into_raw(SaveTask { task: .. })`). The thread-pool
-                // contract — not the Rust caller — guarantees `task` is live
-                // and points at `SaveTask.task`, so the precondition is
-                // discharged locally (matches `HardLinkWindowsInstallTask::
-                // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
-                // coerces to the `unsafe fn(*mut Task)` field type.
-                fn run(task: *mut PoolTask) {
-                    use bun_threading::IntrusiveWorkTask as _;
+                fn run_owned(self: Box<Self>) {
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
+                    let save_task = self;
 
-                    // SAFETY: thread-pool callback contract — `task` points to
-                    // `SaveTask.task`; allocated via `heap::into_raw` in `save_async`.
-                    let save_task = unsafe { bun_core::heap::take(SaveTask::from_task_ptr(task)) };
-
-                    if let Err(err) = Serializer::save(
-                        &save_task.manifest,
-                        &save_task.scope,
-                        save_task.tmpdir,
-                        save_task.cache_dir,
-                    ) {
+                    if let Err(err) =
+                        Serializer::save(&save_task.manifest, &save_task.scope, &save_task.dirs)
+                    {
                         if PackageManager::verbose_install() {
                             bun_core::warn!(
                                 "Error caching manifest for {}: {}",
@@ -1309,20 +1273,12 @@ pub mod package_manifest {
                 }
             }
 
-            let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
+            manager.thread_pool.schedule_owned(Box::new(SaveTask {
                 manifest: this.clone(),
                 scope: scope.clone(),
-                tmpdir,
-                cache_dir,
-                task: PoolTask {
-                    node: PoolNode::default(),
-                    callback: SaveTask::run,
-                },
+                dirs: CacheDirs::of(manager),
+                task: PoolTask::default(),
             }));
-
-            // SAFETY: task is a valid Box-allocated SaveTask
-            let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
-            PackageManager::get().thread_pool.schedule(batch);
         }
 
         fn manifest_file_name<'b>(
@@ -1351,8 +1307,7 @@ pub mod package_manifest {
         pub(crate) fn save(
             this: &PackageManifest,
             scope: &registry::Scope,
-            tmpdir: Fd,
-            cache_dir: Fd,
+            dirs: &CacheDirs,
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
             let mut tmp_path_buf = [0u8; 64];
@@ -1360,7 +1315,7 @@ pub mod package_manifest {
             let mut out_path_buf =
                 [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
             let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, scope)?;
-            Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
+            Self::write_file(this, scope, tmp_path, dirs, out_path)
         }
 
         pub(crate) fn load_by_file_id(
@@ -1393,7 +1348,6 @@ pub mod package_manifest {
         ) -> Result<Option<PackageManifest>, Error> {
             let _tracer = bun_core::perf::trace("PackageManifest.Serializer.loadByFile");
             let bytes = manifest_file.read_to_end()?;
-            // errdefer allocator.free(bytes) — Vec drops on error path
 
             if bytes.len() < Self::HEADER_BYTES.len() {
                 return Ok(None);
@@ -1435,45 +1389,38 @@ pub mod package_manifest {
             }
 
             // Keep the order in sync with `Serializer::write` and SIZES_FIELDS.
+            // Each `read_array` validates its elements (`Bin.tag`,
+            // `has_install_script`, ...); an invalid one busts the entry.
             {
                 pkg_stream.pos = pkg_stream
                     .pos
                     .next_multiple_of(core::mem::align_of::<NpmPackage>());
-                let flag_at =
-                    pkg_stream.pos + core::mem::offset_of!(NpmPackage, has_extended_manifest);
-                if !matches!(bytes.get(flag_at).copied(), Some(0 | 1)) {
+                let Some(raw) =
+                    bytes.get(pkg_stream.pos..pkg_stream.pos + core::mem::size_of::<NpmPackage>())
+                else {
+                    return Err(bun_core::Error::EndOfStream.into());
+                };
+                let Ok(pkg) = bytemuck::checked::try_pod_read_unaligned::<NpmPackage>(raw) else {
                     return Ok(None);
-                }
-                package_manifest.pkg = pkg_stream.read_struct::<NpmPackage>()?;
+                };
+                package_manifest.pkg = pkg;
+                pkg_stream.pos += core::mem::size_of::<NpmPackage>();
             }
-            package_manifest.string_buf = Self::read_array::<u8>(&mut pkg_stream)?.into();
-            package_manifest.versions =
-                Self::read_array::<Semver::Version>(&mut pkg_stream)?.into();
-            package_manifest.external_strings =
-                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.external_strings_for_versions =
-                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.package_versions = {
-                let raw = Self::read_array_bytes::<PackageVersion>(&mut pkg_stream)?;
-                let bin_tag_at =
-                    core::mem::offset_of!(PackageVersion, bin) + core::mem::offset_of!(Bin, tag);
-                let install_script_at = core::mem::offset_of!(PackageVersion, has_install_script);
-                for raw_pkg in raw
-                    .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
-                    .0
-                {
-                    if !matches!(raw_pkg[bin_tag_at], 0..=4)
-                        || !matches!(raw_pkg[install_script_at], 0 | 1)
-                    {
-                        return Ok(None);
+            macro_rules! read_array {
+                ($ty:ty) => {
+                    match Self::read_array::<$ty>(&mut pkg_stream)? {
+                        Some(array) => array,
+                        None => return Ok(None),
                     }
-                }
-                Self::array_from_bytes::<PackageVersion>(raw).into()
-            };
-            package_manifest.extern_strings_bin_entries =
-                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.bundled_deps_buf =
-                Self::read_array::<PackageNameHash>(&mut pkg_stream)?.into();
+                };
+            }
+            package_manifest.string_buf = read_array!(u8);
+            package_manifest.versions = read_array!(Semver::Version);
+            package_manifest.external_strings = read_array!(ExternalString);
+            package_manifest.external_strings_for_versions = read_array!(ExternalString);
+            package_manifest.package_versions = read_array!(PackageVersion);
+            package_manifest.extern_strings_bin_entries = read_array!(ExternalString);
+            package_manifest.bundled_deps_buf = read_array!(PackageNameHash);
 
             Ok(Some(package_manifest))
         }
@@ -2024,15 +1971,12 @@ impl PackageManifest {
         public_max_age: u32,
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
-        // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
-        // `IntoStr`; the Source only lives for the duration of this function,
-        // so pass the caller's buffers through directly without manufacturing
-        // `'static` references here (PORTING.md §Forbidden lifetime extension).
+        // The Source only lives for the duration of this function and borrows
+        // the caller's buffers.
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
-        // `initialize_mini_store` deliberately keeps the allocator pushed
-        // across calls (the AstAlloc state stays installed for the re-arm) and
-        // bulk-frees via `reset_retain_with_limit` on the next call — see
+        // `initialize_mini_store` keeps the AST store installed across calls
+        // and bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
@@ -2651,7 +2595,6 @@ impl PackageManifest {
                     let has_meta_only_peers =
                         peer_deps_meta.is_some_and(|meta| !meta.properties().is_empty());
                     if items.len() > 0 || has_meta_only_peers {
-                        // reshaped for borrowck — index into all_extern_strings / version_extern_strings
                         let names_base = dependency_names_cursor;
                         let values_base = dependency_values_cursor;
 
@@ -2707,11 +2650,9 @@ impl PackageManifest {
                                 string_builder.append::<ExternalString>(version_str);
 
                             if !bundle_all_deps && bundled_deps_set.swap_remove(name_str) {
-                                // SAFETY: bundled_deps_buf sized in counting pass
-                                unsafe {
-                                    *bundled_deps_buf.as_mut_ptr().add(bundled_deps_offset) =
-                                        all_extern_strings[names_base + i].hash;
-                                }
+                                // sized in the counting pass
+                                bundled_deps_buf[bundled_deps_offset] =
+                                    all_extern_strings[names_base + i].hash;
                                 bundled_deps_offset += 1;
                             }
 

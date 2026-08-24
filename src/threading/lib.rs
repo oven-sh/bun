@@ -13,6 +13,7 @@ pub mod reset_event;
 pub mod rwlock;
 #[path = "Semaphore.rs"]
 pub mod semaphore;
+pub mod task_slots;
 #[path = "ThreadPool.rs"]
 pub mod thread_pool;
 pub mod work_pool;
@@ -34,11 +35,12 @@ pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
 pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
+pub use task_slots::{SharedTask, SlotTask, TaskSlots};
 pub use thread_pool::ThreadPool;
-pub use unbounded_queue::{Link, Linked, UnboundedQueue};
+pub use unbounded_queue::{Link, Linked, OwnedDrain, OwnedQueue, UnboundedQueue};
 pub use wait_group::WaitGroup;
 pub use work_pool::Task as WorkPoolTask;
-pub use work_pool::{IntrusiveWorkTask, OwnedTask, WorkPool};
+pub use work_pool::{ArcTask, IntrusiveWorkTask, OwnedTask, WorkPool};
 
 /// Returns a non-zero OS thread id.
 /// Used by `Mutex` debug deadlock detection and `Condition` (Windows).

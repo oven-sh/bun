@@ -74,17 +74,16 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
             lockfile.init_empty();
 
             let mut resolver: () = ();
-            // `log_mut()` returns a borrow decoupled from `&self`; disjoint
-            // storage from `&mut PackageManager` (owned by the CLI `Context`).
-            let log = manager.log_mut();
-            package.parse::<()>(
-                &mut lockfile,
-                manager,
-                log,
-                &package_json_source,
-                &mut resolver,
-                Features::FOLDER,
-            )?;
+            manager.with_log(|manager, log| {
+                package.parse::<()>(
+                    &mut lockfile,
+                    manager,
+                    log,
+                    &package_json_source,
+                    &mut resolver,
+                    Features::FOLDER,
+                )
+            })?;
             let name = lockfile.str(&package.name);
             if name.is_empty() {
                 if manager.options.log_level != LogLevel::Silent {
@@ -172,21 +171,7 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
-            // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
-            // cannot alias the same value, so resolve the fd path twice
-            // (cheap: one `getFdPath` syscall) into two independent `AbsPath`
-            // buffers.
             let mut node_modules_path =
-                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        if manager.options.log_level != LogLevel::Silent {
-                            Output::err(e, "failed to link binary", ());
-                        }
-                        Global::crash();
-                    }
-                };
-            let target_node_modules_path =
                 match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
                     Ok(p) => p,
                     Err(e) => {
@@ -198,7 +183,7 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
                 };
 
             let mut bin_linker = bin::Linker {
-                target_node_modules_path: &raw const target_node_modules_path,
+                target_node_modules_path: None,
                 target_package_name: strings::StringOrTinyString::init(name),
                 bin: package.bin,
                 node_modules_path: &mut node_modules_path,

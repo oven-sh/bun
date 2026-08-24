@@ -17,7 +17,7 @@ use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, PackageIndexEntry, reachable, tree};
 use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_manager::Options::{Enable, LogLevel};
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
+use crate::package_manager::root_package_json_path;
 use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::{Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
@@ -250,7 +250,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         Err(Some(name)) => {
             if !quiet {
                 Output::err_generic("failed to load lockfile: {s}", (name,));
-                print_log_errors(manager.log_mut());
+                print_log_errors(&manager.log);
             }
             Global::exit(1);
         }
@@ -444,62 +444,63 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     };
     let quiet = manager.options.log_level == LogLevel::Silent;
 
-    let log = manager.log_mut();
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
-    let (source, json) = match manager
-        .workspace_package_json_cache
-        .get_with_path(log, path, Default::default())
-        .unwrap()
-    {
-        Ok(entry) => (entry.source.clone(), entry.root),
-        Err(err) => {
-            if !quiet {
-                print_log_errors(log);
-                Output::err(err, "failed to read {s}", (BStr::new(path),));
+    let path: &[u8] = root_package_json_path().as_bytes();
+    let (source, json) = {
+        let PackageManager {
+            log,
+            workspace_package_json_cache,
+            ..
+        } = &mut *manager;
+        match workspace_package_json_cache
+            .get_with_path(log, path, Default::default())
+            .unwrap()
+        {
+            Ok(entry) => (entry.source.clone(), entry.root),
+            Err(err) => {
+                if !quiet {
+                    print_log_errors(log);
+                    Output::err(err, "failed to read {s}", (BStr::new(path),));
+                }
+                Global::exit(1);
             }
-            Global::exit(1);
         }
     };
 
     let mut to_lockfile = Lockfile::default();
     let mut to_root = Package::default();
     let mut resolver: () = ();
-    let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `hoist_filtered`; neither call reaches `lockfile` through `pm`.
-    let summary = unsafe {
-        let parsed = to_root.parse_with_json::<()>(
+    let parsed = manager.with_log(|manager, log| {
+        to_root.parse_with_json::<()>(
             &mut to_lockfile,
-            &mut *pm,
+            manager,
             log,
             &source,
             json,
             &mut resolver,
             Features::main(),
-        );
-        match parsed {
-            Ok(()) => {
-                let mut mapping = vec![invalid_package_id; to_root.dependencies.len as usize];
-                let from_lockfile: *mut Lockfile = &raw mut *(*pm).lockfile;
-                Diff::generate(
-                    &mut *pm,
-                    log,
-                    &mut *from_lockfile,
-                    &mut to_lockfile,
-                    &root,
-                    &to_root,
-                    None,
-                    Some(&mut mapping[..]),
-                )
-            }
-            Err(err) => Err(err),
-        }
+        )
+    });
+    let summary = match parsed {
+        Ok(()) => manager.with_lockfile_and_log(|from_lockfile, manager, log| {
+            let mut mapping = vec![invalid_package_id; to_root.dependencies.len as usize];
+            Diff::generate(
+                manager,
+                log,
+                from_lockfile,
+                &mut to_lockfile,
+                &root,
+                &to_root,
+                None,
+                Some(&mut mapping[..]),
+            )
+        }),
+        Err(err) => Err(err),
     };
     let summary = match summary {
         Ok(summary) => summary,
         Err(err) => {
             if !quiet {
-                print_log_errors(log);
+                print_log_errors(&manager.log);
             }
             return Err(err);
         }
@@ -622,14 +623,7 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
 }
 
 fn hoist_filtered(manager: &mut PackageManager) {
-    let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box` allocation and the Filter builder only reads `manager.options`/`subcommand`/`summary`.
-    let result = unsafe {
-        let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
-        let log: *mut bun_ast::Log = (*pm).log;
-        (*lf).hoist::<{ tree::BuilderMethod::Filter }>(&mut *log, Some(&*pm), true, &[], None)
-    };
-    if result.is_err() {
+    if Lockfile::filter(manager, true, &[], None).is_err() {
         manager.crash();
     }
 }
@@ -1628,7 +1622,7 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
             pkg_id,
             &[],
             true,
-            manager,
+            crate::lockfile::tree::HoistOptions::from_manager(manager),
             lockfile,
             resolutions,
         ) {

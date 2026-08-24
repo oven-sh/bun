@@ -451,6 +451,38 @@ impl Batch {
         }
     }
 
+    /// Queue a heap-allocated task; the pool owns the `Box` until
+    /// [`OwnedTask::run`](crate::work_pool::OwnedTask::run) receives it back on
+    /// a worker thread.
+    pub fn push_owned<T: crate::work_pool::OwnedTask>(&mut self, mut task: Box<T>) {
+        task.task_mut().callback = T::__callback;
+        let raw = Box::into_raw(task);
+        // SAFETY: `raw` is the live allocation just leaked; `field_of` projects
+        // to its embedded `Task`, which the pool hands to `T::__callback` once.
+        self.push(Batch::from(unsafe {
+            <T as bun_core::IntrusiveField<Task>>::field_of(raw)
+        }));
+    }
+
+    /// One reference to an [`ArcTask`](crate::work_pool::ArcTask); the pool
+    /// gives it back to `T::run` when the task runs. A value that is already
+    /// queued (not yet dequeued by a worker) is not queued again (the
+    /// reference is dropped); one whose `run` is in progress is.
+    pub fn push_arc<T: crate::work_pool::ArcTask>(&mut self, task: std::sync::Arc<T>) {
+        if task.shared_task().try_queue(T::__callback).is_none() {
+            return;
+        }
+        let raw = std::sync::Arc::into_raw(task);
+        // Offset the whole-allocation pointer (rather than reborrow the
+        // field) so the callback's walk back to `T` has provenance over all
+        // of it; the field is a `SharedTask`, which starts with the `Task`.
+        let node = raw
+            .wrapping_byte_add(T::TASK_OFFSET)
+            .cast::<Task>()
+            .cast_mut();
+        self.push(Batch::from(node));
+    }
+
     /// Another batch into this one, taking ownership of its tasks.
     pub fn push(&mut self, batch: Batch) {
         if batch.len == 0 {
@@ -646,6 +678,20 @@ impl ThreadPool {
             self.run_queue.push(&list);
         }
         self.force_spawn();
+    }
+
+    /// [`Batch::push_owned`] + [`schedule`](Self::schedule) for one task.
+    pub fn schedule_owned<T: crate::work_pool::OwnedTask>(&self, task: Box<T>) {
+        let mut batch = Batch::default();
+        batch.push_owned(task);
+        self.schedule(batch);
+    }
+
+    /// Schedule an [`ArcTask`](crate::work_pool::ArcTask); see [`Batch::push_arc`].
+    pub fn schedule_arc<T: crate::work_pool::ArcTask>(&self, task: std::sync::Arc<T>) {
+        let mut batch = Batch::default();
+        batch.push_arc(task);
+        self.schedule(batch);
     }
 
     /// Schedule a batch of tasks to be executed by some thread on the thread pool.

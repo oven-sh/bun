@@ -5,7 +5,7 @@ use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 // macOS clonefileat only
 
 // `cache_dir_subpath` is borrowed mutably (rather than owned) so the caller's
-// path survives a clonefile→hardlink fallback (`continue 'backend` in
+// path survives a clonefile-to-hardlink fallback (`continue 'backend` in
 // `Installer::Task::run`). The borrow must be `&mut` because `Path::slice_z`
 // writes the NUL terminator into the pooled buf.
 #[allow(dead_code)]
@@ -39,7 +39,7 @@ impl FileCloner<'_> {
                     // Stale leftover (an earlier crash, or a re-run after the
                     // global-store staging directory wasn't cleaned). The
                     // global-store entry is published by an entry-level
-                    // rename in `commitGlobalStoreEntry`, so it's always safe
+                    // rename in `commit_global_store_entry`, so it's always safe
                     // to wipe and re-clone here — we're only ever writing
                     // into a per-process staging directory or a project-local
                     // path, never into a published shared directory.

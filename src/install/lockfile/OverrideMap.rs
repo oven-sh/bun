@@ -25,10 +25,9 @@ use super::package::PackageColumns as _;
 use super::package::workspace_map::WorkspaceMap;
 use super::package::{DependencyGroup, value_loc_of};
 use super::{Lockfile, StringBuilder, package::Package};
-// LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
-// produces the T2 value-shaped `bun_ast::Expr` (aliased as
-// `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
-// is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
+// package.json is parsed by `bun_parsers::json` into the value-shaped
+// `bun_ast::Expr` (aliased as `crate::bun_json::Expr`). JSON parse is always
+// UTF-8, so `as_utf8_string_literal()` suffices.
 use crate::bun_json::Expr;
 
 declare_scope!(OverrideMap, visible);

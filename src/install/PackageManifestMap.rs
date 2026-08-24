@@ -42,9 +42,9 @@ type ManifestHashMap =
 pub struct DiskCacheCtx {
     pub(crate) enable_manifest_cache: bool,
     pub(crate) enable_manifest_cache_control: bool,
-    /// `pm.getCacheDirectory()` — pre-opened so the lookup never needs `&mut
-    /// PackageManager`. `None` iff `enable_manifest_cache` is false (the only
-    /// branch that reads it is gated on that flag).
+    /// The package manager's cache directory. `None` iff
+    /// `enable_manifest_cache` is false (the only branch that reads it is
+    /// gated on that flag).
     pub(crate) cache_directory: Option<Fd>,
     pub(crate) timestamp_for_manifest_cache_control: u32,
     /// `--prefer-offline` / `--offline`: a cached manifest counts as fresh regardless of
@@ -91,14 +91,13 @@ impl PackageManifestMap {
         self.by_name_hash_allow_expired(ctx, scope, name, name_hash, None, needs_extended_manifest)
     }
 
-    /// `by_name_hash` without the disk fallback, so callers holding
-    /// `&mut PackageManager` can borrow only `pm.manifests`.
-    pub(crate) fn by_name_hash_in_memory(
-        &mut self,
+    /// A manifest already loaded into memory, without touching the disk cache.
+    pub(crate) fn in_memory(
+        &self,
         name: &[u8],
         name_hash: PackageNameHash,
-    ) -> Option<&mut npm::PackageManifest> {
-        match self.hash_map.get_mut(&name_hash)? {
+    ) -> Option<&npm::PackageManifest> {
+        match self.hash_map.get(&name_hash)? {
             Value::Manifest(m) if m.name() == name => Some(m),
             _ => None,
         }

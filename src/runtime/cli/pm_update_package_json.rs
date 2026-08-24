@@ -15,8 +15,8 @@ use bun_core::{Global, Output};
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
 use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
 
+use crate::Command;
 use crate::build_command::BuildCommand;
-use crate::cli::Cli;
 use crate::command::{self, Context, ContextData};
 
 pub(crate) fn update_package_json_and_install_catch_error(
@@ -28,12 +28,10 @@ pub(crate) fn update_package_json_and_install_catch_error(
         Err(crate::Error::Install(
             bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON,
         )) => {
-            // SAFETY: `Cli::LOG_` is initialised once during single-threaded startup in
-            // `Cli::start()` before any command (including this one) is dispatched; we
-            // are on the single CLI thread in the install error path and no other
-            // `&mut Log` to it is live for the duration of this `print` call.
-            let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            // The command context's log (the package manager's, once it is up).
+            let _ = Command::get()
+                .log_ref()
+                .print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }
         Err(e) => Err(e),

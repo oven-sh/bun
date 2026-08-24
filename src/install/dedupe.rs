@@ -7,9 +7,9 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry};
+use crate::lockfile::{Lockfile, Package, PackageIndexEntry};
 use crate::package_manager::Options::{Enable, LogLevel};
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
+use crate::package_manager::root_package_json_path;
 use crate::{
     Dependency, DependencyID, DependencyVersionTag, Features, GetJsonResult, PackageID,
     PackageManager, ResolutionTag, dependency, invalid_package_id,
@@ -628,19 +628,20 @@ fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> DynamicBitSet {
 
 pub fn dedupe_before_install(
     manager: &mut PackageManager,
-    load_result: &LoadResult<'_>,
+    load_result: &crate::lockfile::DetachedLoadResult,
 ) -> crate::Result<()> {
+    use crate::lockfile::DetachedLoadResult;
     let quiet = manager.options.log_level == LogLevel::Silent;
 
     match load_result {
-        LoadResult::NotFound => {
+        DetachedLoadResult::NotFound => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to dedupe", ());
                 bun_core::note!("run 'bun install' first");
             }
             Global::exit(1);
         }
-        LoadResult::Err(cause) => {
+        DetachedLoadResult::Err(cause) => {
             if crate::migration::reported_unsupported_lockfile_version(cause) {
                 Global::exit(1);
             }
@@ -649,11 +650,11 @@ pub fn dedupe_before_install(
                     "failed to {s} lockfile: {s}",
                     (cause.step.verb(), cause.value.name()),
                 );
-                print_log_errors(manager.log_mut());
+                print_log_errors(&manager.log);
             }
             Global::crash();
         }
-        LoadResult::Ok(_) => {}
+        DetachedLoadResult::Ok(_) => {}
     }
 
     if manager
@@ -683,14 +684,14 @@ fn print_log_errors(log: &bun_ast::Log) {
 
 fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Result<bool> {
     let quiet = manager.options.log_level == LogLevel::Silent;
-    let log = manager.log_mut();
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
-    let (source, json) =
-        match manager
-            .workspace_package_json_cache
-            .get_with_path(log, path, Default::default())
-        {
+    let path: &[u8] = root_package_json_path().as_bytes();
+    let (source, json) = {
+        let PackageManager {
+            log,
+            workspace_package_json_cache,
+            ..
+        } = &mut *manager;
+        match workspace_package_json_cache.get_with_path(log, path, Default::default()) {
             GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
             GetJsonResult::ReadErr(err) | GetJsonResult::ParseErr(err) => {
                 if !quiet {
@@ -699,22 +700,25 @@ fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Re
                 }
                 Global::exit(1);
             }
-        };
+        }
+    };
 
     let mut lockfile = Lockfile::default();
     let mut root = Package::default();
     let mut resolver: () = ();
-    if let Err(err) = root.parse_with_json::<()>(
-        &mut lockfile,
-        manager,
-        log,
-        &source,
-        json,
-        &mut resolver,
-        Features::main(),
-    ) {
+    if let Err(err) = manager.with_log(|manager, log| {
+        root.parse_with_json::<()>(
+            &mut lockfile,
+            manager,
+            log,
+            &source,
+            json,
+            &mut resolver,
+            Features::main(),
+        )
+    }) {
         if !quiet {
-            print_log_errors(log);
+            print_log_errors(&manager.log);
         }
         return Err(err);
     }

@@ -1814,7 +1814,7 @@ impl RunCommand {
     #[inline]
     pub(crate) fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
-        optional_bun_path: &mut &[u8],
+        optional_bun_path: &mut &'static ZStr,
     ) -> crate::Result<()> {
         bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
             .map_err(Into::into)
@@ -1896,7 +1896,7 @@ impl RunCommand {
             .unwrap_or(false);
 
         let mut needs_to_force_bun = force_using_bun || !found_node;
-        let mut optional_bun_self_path: &[u8] = b"";
+        let mut optional_bun_self_path: &'static ZStr = ZStr::EMPTY;
 
         let mut new_path_len: usize = path.len() + 2;
 
@@ -1949,7 +1949,7 @@ impl RunCommand {
                     .unwrap_or_oom();
                 env_mut
                     .map
-                    .put(b"npm_execpath", optional_bun_self_path)
+                    .put(b"npm_execpath", optional_bun_self_path.as_bytes())
                     .unwrap_or_oom();
             }
 

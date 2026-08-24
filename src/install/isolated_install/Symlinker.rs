@@ -79,7 +79,7 @@ impl Symlinker {
                                 // dest exists but isn't a symlink. If it's a real
                                 // directory, leave it: this is the `bun patch <pkg>`
                                 // workspace (a detached copy the user is editing
-                                // before `--commit`), and `deleteTree` here would
+                                // before `--commit`), and `delete_tree` here would
                                 // silently destroy their in-progress edits. If it's
                                 // a regular file, replace it.
                                 _ => {

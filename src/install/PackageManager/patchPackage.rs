@@ -65,8 +65,7 @@ pub fn do_patch_commit(
 ) -> Result<Option<PatchCommitResult>, crate::Error> {
     let mut folder_path_buf = PathBuffer::uninit();
     let mut lockfile: Box<Lockfile> = Box::default();
-    let log = manager.log_mut();
-    match lockfile.load_from_cwd::<true>(Some(manager), log) {
+    match manager.with_log(|manager, log| lockfile.load_from_cwd::<true>(Some(manager), log)) {
         lockfile::LoadResult::NotFound => {
             Output::err_generic(
                 "Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.",
@@ -115,7 +114,6 @@ pub fn do_patch_commit(
         .root_package_id
         .get(&lockfile, manager.workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
-    // reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
     let mut argument_owned: Option<Box<[u8]>> = None;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
@@ -177,7 +175,7 @@ pub fn do_patch_commit(
                 };
 
             initialize_store();
-            let log = manager.log_mut();
+            let log = &mut manager.log;
             let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
                 Ok(p) => p,
                 Err(err) => {
@@ -208,16 +206,17 @@ pub fn do_patch_commit(
 
             let mut resolver: () = ();
             let mut package = Package::default();
-            let log = manager.log_mut();
-            package.parse_with_json::<()>(
-                &mut lockfile,
-                manager,
-                log,
-                &package_json_source,
-                json,
-                &mut resolver,
-                Features::FOLDER,
-            )?;
+            manager.with_log(|manager, log| {
+                package.parse_with_json::<()>(
+                    &mut lockfile,
+                    manager,
+                    log,
+                    &package_json_source,
+                    json,
+                    &mut resolver,
+                    Features::FOLDER,
+                )
+            })?;
 
             let actual_package = match lockfile.package_index.get(&package.name_hash) {
                 None => {
@@ -561,9 +560,9 @@ pub fn do_patch_commit(
 
     let patches_dir: &[u8] = match &manager.options.patch_features {
         PatchFeatures::Commit { patches_dir } => patches_dir,
-        // Reaching `doPatchCommit` implies `Subcommand::PatchCommit`, which always
+        // Reaching `do_patch_commit` implies `Subcommand::PatchCommit`, which always
         // sets `patch_features = .commit` in `Options::load`.
-        _ => unreachable!("patch_features must be Commit in doPatchCommit"),
+        _ => unreachable!("patch_features must be Commit in do_patch_commit"),
     };
 
     let path_in_patches_dir =
@@ -712,7 +711,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         .root_package_id
         .get(&manager.lockfile, workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
-    // reshaped for borrowck — owned buffer kept so `argument` can borrow it.
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
@@ -751,7 +749,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     };
 
                 initialize_store();
-                let log = manager.log_mut();
+                let log = &mut manager.log;
                 let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
                     Ok(p) => p,
                     Err(err) => {
@@ -782,25 +780,17 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 
                 let mut resolver: () = ();
                 let mut package = Package::default();
-                let log = manager.log_mut();
-                // borrowck — `parse_with_json` needs `&mut Lockfile` and
-                // `&mut PackageManager` simultaneously, but the lockfile here is
-                // `manager.lockfile`. Temporarily move the Box out so the two
-                // borrows are disjoint; `parse_with_json` never reads `pm.lockfile`
-                // (it takes the lockfile as its own parameter). Restore before
-                // propagating any error so `manager` is never left half-torn.
-                let mut lockfile: Box<Lockfile> = core::mem::take(&mut manager.lockfile);
-                let parse_result = package.parse_with_json::<()>(
-                    &mut lockfile,
-                    manager,
-                    log,
-                    &package_json_source,
-                    json,
-                    &mut resolver,
-                    Features::FOLDER,
-                );
-                manager.lockfile = lockfile;
-                parse_result?;
+                manager.with_lockfile_and_log(|lockfile, manager, log| {
+                    package.parse_with_json::<()>(
+                        lockfile,
+                        manager,
+                        log,
+                        &package_json_source,
+                        json,
+                        &mut resolver,
+                        Features::FOLDER,
+                    )
+                })?;
                 let lockfile: &Lockfile = &manager.lockfile;
                 let strbuf = lockfile.buffers.string_bytes.as_slice();
 
@@ -948,7 +938,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     //
     // With the isolated linker's global virtual store, `module_folder` is
     // reached *through* a `node_modules/.bun/<storepath>` symlink that points
-    // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
+    // into `<cache>/links/`. `delete_tree(module_folder)` would follow that
     // symlink and wipe the shared global entry (and its dep symlinks)
     // underneath every other project, then FileCopier would write the user's
     // edits into the shared cache. Detach first: walk up `module_folder` to
@@ -1042,9 +1032,9 @@ fn is_real_dir_not_symlink(path: &[u8]) -> bool {
 
 fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     // `module_folder` reaches here normalised to forward slashes on every
-    // platform (see `pathToPosixBuf` in `preparePatch`). Re-normalise to the
+    // platform (see `prepare_patch`). Re-normalise to the
     // platform separator so `undo()`/`basename()` walk the path correctly on
-    // Windows and the lstat/getFileAttributes calls below see a native path.
+    // Windows and the lstat/get_file_attributes calls below see a native path.
     #[cfg(windows)]
     let mut native_buf = PathBuffer::uninit();
     #[cfg(windows)]
@@ -1088,7 +1078,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             // Windows directory symlinks/junctions are removed with rmdir,
             // file symlinks with unlink; on POSIX unlink covers both. If
             // removal fails the symlink is still live, and the caller's
-            // `deleteTree` + `FileCopier` would follow it into the shared
+            // `delete_tree` + `FileCopier` would follow it into the shared
             // global-store entry — so fail loudly here rather than silently
             // corrupting the cache.
             let remove_err: Option<sys::Error> = {
@@ -1211,11 +1201,9 @@ fn overwrite_package_in_node_modules_folder(
 
 type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::NodeModules }>;
 
-// reshaped for borrowck — `tree::Iterator::next` returns an
-// `IteratorNext<'_>` borrowing the iterator's internal `path_buf`, so we
-// cannot return it from inside a `while let` (borrowck rejects the next
-// iteration's reborrow even though it's unreachable). Callers only need
-// `relative_path`, so copy it out into an owned `Vec<u8>`.
+// `tree::Iterator::next` returns an `IteratorNext<'_>` borrowing the
+// iterator's `path_buf`; callers only need `relative_path`, so it is copied
+// out into an owned `Vec<u8>`.
 
 fn node_modules_folder_for_dependency_ids(
     iterator: &mut NodeModulesIterator<'_>,

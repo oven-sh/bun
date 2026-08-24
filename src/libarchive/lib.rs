@@ -888,10 +888,210 @@ pub mod lib {
         }
     }
 
-    // ── Archive::Iterator ──────────────────────────────────────────────────
-    // Thin
-    // wrapper that opens a tarball from memory and yields one
-    // `IteratorEntry` per `next()`, used by `bun publish <tarball>`.
+    // ── StreamingArchive ───────────────────────────────────────────────────
+    // A gzip+tar read archive fed incrementally by a caller-supplied source
+    // (`archive_read_open` with a read callback). With the resumable
+    // ARCHIVE_RETRY patches in vendor/libarchive, `next_header` / `next_block`
+    // return `Retry` when the source has no bytes yet and can be called again
+    // once it does.
+
+    /// What a [`StreamSource`] has for libarchive right now.
+    pub enum StreamRead<'a> {
+        /// The next bytes (see the trait's contract for how long they live).
+        Data(&'a [u8]),
+        /// Nothing yet; more will come.
+        Retry,
+        /// The input is complete.
+        Eof,
+    }
+
+    /// The input side of a [`StreamingArchive`].
+    ///
+    /// # Safety
+    /// libarchive keeps reading the bytes a [`StreamRead::Data`] returned
+    /// after `read` returns — until the next `read` call or until the
+    /// archive is dropped. The implementor must keep them allocated and
+    /// unchanged for that long, including across whatever it does to itself
+    /// through [`StreamingArchive::source_mut`]. Implement through
+    /// [`stream_source!`](crate::stream_source), which states this at the type.
+    pub unsafe trait StreamSource {
+        fn read(&mut self) -> StreamRead<'_>;
+    }
+
+    /// Implements [`StreamSource`] by forwarding to an inherent
+    /// `fn read_for_archive(&mut self) -> StreamRead<'_>`; the type keeps the
+    /// bytes it hands out alive and unchanged until its next
+    /// `read_for_archive` (the trait's contract).
+    #[macro_export]
+    macro_rules! stream_source {
+        ($ty:ty) => {
+            // SAFETY: see the macro doc — the type upholds the `StreamSource` contract.
+            unsafe impl $crate::lib::StreamSource for $ty {
+                #[inline]
+                fn read(&mut self) -> $crate::lib::StreamRead<'_> {
+                    <$ty>::read_for_archive(self)
+                }
+            }
+        };
+    }
+
+    /// What [`StreamingArchive::next_header`] found.
+    pub enum Header<'a> {
+        Entry(&'a mut Entry),
+        /// Out of input for now (see [`StreamRead::Retry`]).
+        Retry,
+        Eof,
+        Failed,
+    }
+
+    /// A read archive whose bytes come from `S`.
+    pub struct StreamingArchive<S: StreamSource> {
+        archive: core::mem::ManuallyDrop<ReadArchive>,
+        /// libarchive's `client_data`: a `Box<S>` we own through this
+        /// pointer (freed in `Drop`) so libarchive's copy stays valid.
+        source: core::ptr::NonNull<S>,
+    }
+
+    impl<S: StreamSource> Drop for StreamingArchive<S> {
+        fn drop(&mut self) {
+            // Close the archive first: it may still read from the source.
+            // SAFETY: dropped exactly once, here; not used afterwards.
+            unsafe { core::mem::ManuallyDrop::drop(&mut self.archive) };
+            // SAFETY: `source` is the `Box::into_raw` from `open_gzip_tar`,
+            // owned by us and no longer referenced by libarchive.
+            drop(unsafe { Box::from_raw(self.source.as_ptr()) });
+        }
+    }
+
+    impl<S: StreamSource> StreamingArchive<S> {
+        /// Open a gzip-compressed tar stream over `source`. On failure the
+        /// error string is returned with the source.
+        pub fn open_gzip_tar(source: S) -> core::result::Result<Self, (S, Vec<u8>)> {
+            let archive = ReadArchive::new();
+            let source = Box::new(source);
+            // Bypass bidding entirely: the stream is always gzip → tar, and
+            // bidding would try to read-ahead before any bytes have arrived.
+            // With patches/libarchive/select-registered-only.patch,
+            // archive_read_append_filter / archive_read_set_format only select a
+            // filter/format that was already registered, so register gzip and tar
+            // first. Tar must also be registered before read_set_options (so the
+            // option has a slot) and set_format must come after it: libarchive's
+            // archive_set_format_option() clobbers `a->format` while dispatching,
+            // and losing the selected format means archive_read_open1() falls
+            // back to bidding, which fails when the first chunk is short.
+            // ARCHIVE_FILTER_GZIP = 1, ARCHIVE_FORMAT_TAR = 0x30000.
+            let _ = archive.read_support_filter_gzip();
+            // SAFETY: `archive` is a live handle.
+            if unsafe { archive_read_append_filter(archive.as_mut_ptr(), 1) } != 0 {
+                let err = archive.error_string().to_vec();
+                return Err((*source, err));
+            }
+            let _ = archive.read_support_format_tar();
+            let _ = archive.read_set_options(c"read_concatenated_archives");
+            // SAFETY: `archive` is a live handle.
+            if unsafe { archive_read_set_format(archive.as_mut_ptr(), 0x30000) } != 0 {
+                let err = archive.error_string().to_vec();
+                return Err((*source, err));
+            }
+            let client_data: *mut S = Box::into_raw(source);
+            // SAFETY: `archive` is live; `client_data` is the boxed source,
+            // which `Self` owns (see `Drop`) for as long as the archive, and
+            // `stream_read_callback::<S>` casts it back to `S`.
+            let rc = unsafe {
+                archive_read_open(
+                    archive.as_mut_ptr(),
+                    client_data.cast::<c_void>(),
+                    None,
+                    Some(stream_read_callback::<S>),
+                    None,
+                )
+            };
+            // SAFETY: just leaked above; non-null.
+            let source = unsafe { core::ptr::NonNull::new_unchecked(client_data) };
+            // open() runs the filter bidder which we bypassed, but the client
+            // open path may still probe; treat ARCHIVE_RETRY as transient.
+            if rc == Result::Ok as c_int
+                || rc == Result::Warn as c_int
+                || rc == Result::Retry as c_int
+            {
+                Ok(Self {
+                    archive: core::mem::ManuallyDrop::new(archive),
+                    source,
+                })
+            } else {
+                let err = archive.error_string().to_vec();
+                drop(archive);
+                // SAFETY: the archive is closed, so nothing else refers to the box.
+                Err((*unsafe { Box::from_raw(source.as_ptr()) }, err))
+            }
+        }
+
+        #[inline]
+        pub fn source(&self) -> &S {
+            // SAFETY: we own the box; libarchive only touches it from inside
+            // our `&mut self` methods.
+            unsafe { self.source.as_ref() }
+        }
+        /// Not callable from inside [`StreamSource::read`] (libarchive holds
+        /// the source then); `&mut self` rules that out.
+        #[inline]
+        pub fn source_mut(&mut self) -> &mut S {
+            // SAFETY: as for `source`; `&mut self` makes this the only borrow.
+            unsafe { self.source.as_mut() }
+        }
+
+        /// `archive_read_next_header`. The entry is libarchive's and stays
+        /// valid until the next call on `self`.
+        pub fn next_header(&mut self) -> (Result, Header<'_>) {
+            let mut entry: *mut Entry = core::ptr::null_mut();
+            let r = self.archive.read_next_header(&mut entry);
+            let header = match r {
+                Result::Retry => Header::Retry,
+                Result::Eof => Header::Eof,
+                // SAFETY: on OK/WARN libarchive returns a valid entry owned by
+                // the archive, live until the next `read_next_header`; `&mut
+                // self` keeps any other borrow of it from existing.
+                Result::Ok | Result::Warn => Header::Entry(unsafe { &mut *entry }),
+                Result::Failed | Result::Fatal => Header::Failed,
+            };
+            (r, header)
+        }
+
+        /// `archive_read_data_block` for the current entry; `None` at its end.
+        #[inline]
+        pub fn next_block(&mut self, offset: &mut i64) -> Option<Block<'_>> {
+            self.archive.next(offset)
+        }
+
+        #[inline]
+        pub fn error_string(&self) -> &[u8] {
+            self.archive.error_string()
+        }
+    }
+
+    extern "C" fn stream_read_callback<S: StreamSource>(
+        _a: *mut Archive,
+        ctx: *mut c_void,
+        out_buffer: *mut *const c_void,
+    ) -> la_ssize_t {
+        // SAFETY: `ctx` is the boxed `S` registered in `open_gzip_tar`; libarchive
+        // calls this from inside a `&mut StreamingArchive<S>` method, so no other
+        // borrow of the source is live.
+        let source = unsafe { &mut *ctx.cast::<S>() };
+        match source.read() {
+            StreamRead::Data(bytes) => {
+                // SAFETY: `out_buffer` is libarchive's out-parameter.
+                unsafe { *out_buffer = bytes.as_ptr().cast() };
+                la_ssize_t::try_from(bytes.len()).expect("int cast")
+            }
+            StreamRead::Retry => Result::Retry as la_ssize_t,
+            StreamRead::Eof => {
+                // SAFETY: as above; the pointer is not read for a length of 0.
+                unsafe { *out_buffer = ctx.cast_const() };
+                0
+            }
+        }
+    }
 }
 
 use lib::Archive;

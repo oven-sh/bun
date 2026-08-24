@@ -32,25 +32,9 @@
 //! a union with unequal size fields.
 
 // Per-field `const _: () = assert!(offset_of!...)` proofs live next to each serialized
-// struct (e.g. `NpmPackage` / `PackageVersion` in npm.rs), and the `layout_asserts`
-// module below pins every serialized type's size/align against the on-disk spec.
-// The free function here is kept as the call-site-compatible entry point.
-
-/// Assertion that `T` has no uninitialized padding. See module docs.
-///
-/// The actual layout checking lives in the per-struct `const` offset asserts
-/// and `layout_asserts` pins; this function is a zero-cost call-site marker that
-/// documents intent. It takes a type-witness value (pass any value of `T` —
-/// or name `T` explicitly via turbofish and reference the fn item without calling).
-///
-/// The trait bound is intentionally *not* applied here: bounding the generic
-/// would force every `write_array<T>` caller to propagate
-/// `T: AssertNoUninitializedPadding`.
-#[inline(always)]
-#[allow(dropping_copy_types, clippy::needless_pass_by_value)]
-pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
-    // Body intentionally empty — the per-type `const` layout asserts are the check.
-}
+// struct (e.g. `NpmPackage` / `PackageVersion` in npm.rs), the `layout_asserts`
+// module below pins every serialized type's size/align against the on-disk spec,
+// and the writers are bounded on `bytemuck::NoUninit`.
 
 // Reference: what a manual padding audit of a serialized type must establish:
 //
@@ -80,9 +64,9 @@ pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
 //   );
 //
 // Recursion rules:
-//   - struct / union field  → require `FieldTy: AssertNoUninitializedPadding`
-//   - [T; N] field          → require `T: AssertNoUninitializedPadding`
-//   - Option<T> field       → require `T: AssertNoUninitializedPadding`
+//   - struct / union field  → require `FieldTy: bytemuck::NoUninit`
+//   - [T; N] field          → require `T: bytemuck::NoUninit`
+//   - Option<T> field       → require `T: bytemuck::NoUninit`
 //   - pointer field         → compile_error!("Expected no pointer types in ...")
 //   - anything else         → ok
 //

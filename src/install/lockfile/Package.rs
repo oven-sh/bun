@@ -15,9 +15,8 @@ use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    Npm, PackageID, PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash,
-    UpdateRequest, bin, default_trusted_dependencies, dependency, initialize_store,
-    invalid_package_id,
+    Npm, PackageID, PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash, bin,
+    default_trusted_dependencies, dependency, initialize_store, invalid_package_id,
 };
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -218,10 +217,8 @@ pub trait ResolverContext {
             false,
             "ResolverContext::resolution called on non-git resolver"
         );
-        // SAFETY: unreachable in practice; never dereferenced when the
-        // `IS_GIT_RESOLVER` gate is false. `ZEROED` is an associated const on a
-        // trait-bounded generic impl, which Rust refuses to evaluate in `const`
-        // position; a `static` (with `Sync` POD payload) sidesteps that.
+        // Unreachable in practice; never read when the `IS_GIT_RESOLVER`
+        // gate is false.
         static EMPTY: ResolutionType<u64> = ResolutionType::<u64>::ZEROED;
         &EMPTY
     }
@@ -259,7 +256,7 @@ impl ResolverContext for () {
 // `R` (six instantiations × ~49kB ≈ 292kB of identical machine code, plus a
 // duplicate `<()>` copy across CGUs). The associated consts become `&self`
 // predicates; everything else forwards 1:1. The generic `parse_with_json<R>`
-// stays as a thin shim that erases `&mut R` → `&mut dyn ResolverContextDyn`
+// stays as a thin shim that erases `&mut R` to `&mut dyn ResolverContextDyn`
 // and delegates to the non-generic `parse_with_json_impl`.
 //
 // `count`/`resolve` keep their `StringBuilder<'_>` borrow — lifetimes are
@@ -545,10 +542,10 @@ impl Package<u64> {
 
         let id = new.packages.len() as PackageID;
 
-        // `appendPackageWithID` borrows `&mut Lockfile` whole, so build the
+        // `append_package_with_id` borrows `&mut Lockfile` whole, so build the
         // `Package` value and clone the dependency strings *first* (only needs
         // disjoint buffer fields), drop the builder, then append, then write
-        // resolutions. `appendPackageWithID` touches `packages` /
+        // resolutions. `append_package_with_id` touches `packages` /
         // `package_index` / `string_bytes` only — none of which the dependency
         // pass mutates — so the reorder is observationally identical.
         let pkg_value = Package {
@@ -633,7 +630,7 @@ impl Package<u64> {
     }
 
     pub(crate) fn from_npm(
-        pm: &mut PackageManager,
+        npm_aliases: &mut dyn crate::dependency::NpmAliasRegistry,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
         manifest: &Npm::PackageManifest,
@@ -809,13 +806,13 @@ impl Package<u64> {
                         name: name.value,
                         name_hash: name.hash,
                         behavior,
-                        version: Dependency::parse(
+                        version: crate::dependency::parse_with_alias_registry(
                             name.value,
                             Some(name.hash),
                             sliced.slice,
                             &sliced,
                             Some(&mut *log),
-                            Some(&mut *pm),
+                            Some(&mut *npm_aliases),
                         )
                         .unwrap_or_default(),
                     };
@@ -950,6 +947,15 @@ impl DiffSummary {
     }
 }
 
+/// What a `bun update` run is updating, for [`Diff::generate`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Updating {
+    /// Bare `bun update`: every dependency.
+    Everything,
+    /// `bun update <names>`: the manager's update requests.
+    Named,
+}
+
 impl Diff {
     // `Package` here is the canonical `Package<u64>` (the only
     // instantiation `Lockfile` ever holds). Dropping the generic avoids a
@@ -962,7 +968,7 @@ impl Diff {
         to_lockfile: &mut Lockfile,
         from: &Package,
         to: &Package,
-        update_requests: Option<&[UpdateRequest]>,
+        updating: Option<Updating>,
         id_mapping: Option<&mut [PackageID]>,
     ) -> crate::Result<DiffSummary> {
         let mut removed_names: Vec<PackageNameHash> = Vec::new();
@@ -973,7 +979,7 @@ impl Diff {
             to_lockfile,
             from,
             to,
-            update_requests,
+            updating,
             id_mapping,
             &mut removed_names,
         )
@@ -987,23 +993,22 @@ impl Diff {
         to_lockfile: &mut Lockfile,
         from: &Package,
         to: &Package,
-        update_requests: Option<&[UpdateRequest]>,
+        updating: Option<Updating>,
         mut id_mapping: Option<&mut [PackageID]>,
         removed_names: &mut Vec<PackageNameHash>,
     ) -> crate::Result<DiffSummary> {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
-        let named_update_here = match update_requests {
-            Some(updates) if !updates.is_empty() => crate::update_scope::UpdateScope::of(&*pm)
-                .contains_workspace(
-                    from.resolution.tag == ResolutionTag::Root,
-                    from.name_hash,
-                    from.name
-                        .slice(from_lockfile.buffers.string_bytes.as_slice()),
-                ),
+        let named_update_here = match updating {
+            Some(Updating::Named) => crate::update_scope::UpdateScope::of(&*pm).contains_workspace(
+                from.resolution.tag == ResolutionTag::Root,
+                from.name_hash,
+                from.name
+                    .slice(from_lockfile.buffers.string_bytes.as_slice()),
+            ),
             _ => true,
         };
-        // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
+        // `parse_with_json` may grow `to_lockfile.buffers.dependencies` and
         // invalidate the old slice, so `to_deps` is re-derived after it. Held as raw fat
         // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
         // (sort, recursive `generate`) don't conflict with these read views; the
@@ -1082,7 +1087,6 @@ impl Diff {
                     break 'catalogs;
                 }
 
-                // Reshaped for borrowck — see `overrides.sort` note above.
                 lockfile::CatalogMap::sort(&mut from_lockfile.catalogs, &from_lockfile.buffers);
                 lockfile::CatalogMap::sort(&mut to_lockfile.catalogs, &to_lockfile.buffers);
 
@@ -1422,8 +1426,8 @@ impl Diff {
                 to_lockfile.buffers.string_bytes.as_slice(),
                 from_lockfile.buffers.string_bytes.as_slice(),
             ) {
-                if let Some(updates) = update_requests {
-                    if updates.is_empty()
+                if let Some(updating) = updating {
+                    if updating == Updating::Everything
                         || (named_update_here
                             && pm.is_update_request(
                                 from_dep.name_hash,
@@ -1460,10 +1464,7 @@ impl Diff {
                         );
                         let _ = package_json_path.append(b"package.json");
 
-                        // `bun.sys.File.toSource` was removed from
-                        // T1 (`bun_sys`) because `bun_ast::Source` lives in T2.
-                        // Route through the workspace cache's path-based getter
-                        // instead, which both reads and parses.
+                        // The workspace cache's path-based getter both reads and parses.
                         let mut workspace_pkg = Package::default();
 
                         // The cache entry borrows `pm.workspace_package_json_cache`;
@@ -1515,7 +1516,7 @@ impl Diff {
                             to_lockfile,
                             &from_pkg,
                             &workspace_pkg,
-                            update_requests,
+                            updating,
                             None,
                             removed_names,
                         )?;
@@ -1552,8 +1553,8 @@ impl Diff {
             }
 
             // Changed literal: keep the locked resolution while it still satisfies the new range (npm's sticky rule), unless this row is being updated.
-            let is_explicit_update_target = matches!(update_requests, Some(updates)
-            if updates.is_empty()
+            let is_explicit_update_target = matches!(updating, Some(updating)
+            if updating == Updating::Everything
                 || (named_update_here
                     && pm.is_update_request(
                         from_dep.name_hash,
@@ -1685,36 +1686,6 @@ impl Package<u64> {
         self.parse_with_json::<R>(lockfile, pm, log, source, parsed.root, resolver, features)
     }
 
-    /// Borrow-splitting bridge for `PackageManager` callers
-    /// (`processDependencyList`, `folder_resolver`). Borrowck rejects passing
-    /// `manager.lockfile`, `manager`, `manager.log` as three separate args
-    /// overlapping `&mut self`, so split via raw
-    /// pointer here once instead of at every call site.
-    ///
-    /// # Safety
-    /// `manager` must point to a live `PackageManager` for the duration of the
-    /// call, and its `lockfile` / `log` fields must point to live allocations
-    /// disjoint from `*manager` itself.
-    pub(crate) unsafe fn parse_from_real_manager<R: ResolverContext>(
-        &mut self,
-        manager: *mut crate::package_manager_real::PackageManager,
-        source: &bun_ast::Source,
-        resolver: &mut R,
-        features: Features,
-    ) -> crate::Result<()> {
-        // SAFETY: `manager` points to a live `PackageManager` for the duration
-        // of this call (caller passes `self as *mut _`); `lockfile` and `log`
-        // are disjoint fields, and `parse_with_json` only reaches `manager`
-        // through the `pm` argument it receives here — no re-entrancy.
-        let (lockfile, pm, log) = unsafe {
-            let m = &mut *manager;
-            let lockfile: *mut Lockfile = &raw mut *m.lockfile;
-            let log: *mut bun_ast::Log = m.log;
-            (&mut *lockfile, &mut *manager, &mut *log)
-        };
-        self.parse(lockfile, pm, log, source, resolver, features)
-    }
-
     // The live `StringBuilder`
     // (also passed) already holds `&mut lockfile.buffers.string_bytes`. The
     // body only otherwise touches `workspace_paths` / `workspace_versions`,
@@ -1765,13 +1736,14 @@ impl Package<u64> {
         #[cfg(not(windows))]
         let external_version = string_builder.append::<String>(version);
 
-        // SAFETY: `buf` aliases `string_builder.string_bytes` while later
-        // `string_builder.append()` calls write into the *pre-reserved* tail
-        // (`allocate()` ran before this fn). No realloc occurs, so the detached
-        // borrow stays valid; a tracked `&[u8]` would needlessly lock the builder.
-        let buf: &[u8] =
-            unsafe { bun_ptr::detach_lifetime(string_builder.string_bytes.as_slice()) };
-        let sliced = external_version.sliced(buf);
+        // The lockfile string bytes as of each use (later `append`s write
+        // into the builder's pre-reserved tail).
+        macro_rules! buf {
+            () => {
+                string_builder.string_bytes.as_slice()
+            };
+        }
+        let sliced = external_version.sliced(buf!());
 
         let mut dependency_version = Dependency::parse_with_optional_tag(
             external_alias.value,
@@ -1784,12 +1756,14 @@ impl Package<u64> {
         )
         .unwrap_or_default();
         let mut workspace_range: Option<semver::query::Group> = None;
+        // Where `workspace_range`'s text starts within `external_version`.
+        let mut workspace_range_at = 0usize;
         #[allow(non_snake_case)]
         let FEATURES = features;
         let name_hash = match dependency_version.tag {
             dependency::version::Tag::Npm => {
                 let npm_name = dependency_version.npm().name;
-                semver::string::Builder::string_hash(npm_name.slice(buf))
+                semver::string::Builder::string_hash(npm_name.slice(buf!()))
             }
             dependency::version::Tag::Workspace => {
                 if strings::has_prefix(sliced.slice, b"workspace:") {
@@ -1805,6 +1779,7 @@ impl Package<u64> {
                                     semver::query::parse(&input[at as usize + 1..], sliced)
                                         .unwrap_or_else(|_| bun_core::out_of_memory()),
                                 );
+                                workspace_range_at = b"workspace:".len() + at as usize + 1;
                                 break 'brk semver::string::Builder::string_hash(
                                     &input[0..at as usize],
                                 );
@@ -1813,6 +1788,7 @@ impl Package<u64> {
                                 semver::query::parse(input, sliced)
                                     .unwrap_or_else(|_| bun_core::out_of_memory()),
                             );
+                            workspace_range_at = b"workspace:".len();
                         }
                         external_alias.hash
                     }
@@ -1844,14 +1820,14 @@ impl Package<u64> {
                 let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
                     &mut folder_buf.0,
-                    &[source.path.name().dir, folder.slice(buf)],
+                    &[source.path.name().dir, folder.slice(buf!())],
                 ) else {
                     log.add_error_fmt(
                         source,
                         value_loc_of(source, key_loc),
                         format_args!(
                             "Dependency \"{}\" has an unsafe folder path",
-                            bstr::BStr::new(external_alias.slice(buf)),
+                            bstr::BStr::new(external_alias.slice(buf!())),
                         ),
                     );
                     return Err(crate::Error::InstallFailed);
@@ -1873,16 +1849,16 @@ impl Package<u64> {
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {
-                    let satisfies =
-                        dependency_version
-                            .npm()
-                            .version
-                            .satisfies(workspace_version, buf, buf);
+                    let satisfies = dependency_version.npm().version.satisfies(
+                        workspace_version,
+                        buf!(),
+                        buf!(),
+                    );
                     if pm.options.link_workspace_packages && satisfies {
                         // `String::sliced` takes `&'a self`; bind the unwrapped
                         // value so the borrow outlives the parse call.
                         let wp = workspace_path.unwrap();
-                        let path = wp.sliced(buf);
+                        let path = wp.sliced(buf!());
                         if let Some(mut dep) = dependency::parse_with_tag(
                             external_alias.value,
                             Some(external_alias.hash),
@@ -1917,17 +1893,18 @@ impl Package<u64> {
                 if let Some(path) = workspace_path {
                     if let Some(range) = &workspace_range {
                         if let Some(ver) = workspace_version {
-                            if range.satisfies(ver, buf, buf) {
+                            if range.satisfies(ver, buf!(), buf!()) {
                                 dependency_version.value.workspace = path;
                                 break 'workspace;
                             }
                         }
 
                         // important to trim before len == 0 check. `workspace:foo@      ` should install successfully
-                        // SAFETY: `range.input` borrows `lockfile.buffers.string_bytes`
-                        // (set by `semver::query::parse` above), which is live here.
-                        let version_literal =
-                            strings::trim(unsafe { &*range.input }, &strings::WHITESPACE_CHARS);
+                        let external_version_text = external_version.slice(buf!());
+                        let version_literal = strings::trim(
+                            &external_version_text[workspace_range_at..],
+                            &strings::WHITESPACE_CHARS,
+                        );
                         if version_literal.is_empty()
                             || range.is_star()
                             || SemverVersion::is_tagged_version_only(version_literal)
@@ -1943,8 +1920,8 @@ impl Package<u64> {
                             bun_ast::Loc::EMPTY,
                             format_args!(
                                 "No matching version for workspace dependency \"{}\". Version: \"{}\"",
-                                bstr::BStr::new(external_alias.slice(buf)),
-                                bstr::BStr::new(dependency_version.literal.slice(buf)),
+                                bstr::BStr::new(external_alias.slice(buf!())),
+                                bstr::BStr::new(dependency_version.literal.slice(buf!())),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -1952,61 +1929,36 @@ impl Package<u64> {
 
                     dependency_version.value.workspace = path;
                 } else if features.is_main || features.is_workspace {
-                    // SAFETY: tag == Workspace selects the `workspace` union member.
-                    // Bind the (Copy) union field first so `slice()`'s `&self`
-                    // borrow has a named place to point at.
                     let workspace_str = *dependency_version.workspace();
-                    let workspace = workspace_str.slice(buf);
-                    let path =
-                        string_builder.append::<String>(if workspace == b"*" {
+                    let mut rel_buf = PathBuffer::uninit();
+                    let rel: &[u8] = {
+                        let workspace = workspace_str.slice(buf!());
+                        if workspace == b"*" {
                             b"*"
                         } else {
-                            'brk: {
-                                let mut buf2 = PathBuffer::uninit();
-                                let rel =
-                                    resolve_path::relative_platform::<path::platform::Auto, false>(
-                                        FileSystem::instance().top_level_dir(),
-                                        resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                                            FileSystem::instance().top_level_dir(),
-                                            &mut buf2.0,
-                                            &[source.path.name().dir, workspace],
-                                        ),
-                                    );
-                                #[cfg(windows)]
-                                {
-                                    // With ALWAYS_COPY=false, `rel` may borrow
-                                    // RELATIVE_TO_BUF (resolve_path.rs early returns at L450/457/500/
-                                    // 522) or be `b""`. Re-deriving a slice of the common-path buf
-                                    // would yield stale bytes in those cases. Copy `rel` into the
-                                    // common-path scratch when it isn't already there, then convert
-                                    // and return that — returning `rel`'s bytes
-                                    // while avoiding aliasing UB.
-                                    let len = rel.len();
-                                    let common_raw = path::relative_to_common_path_buf();
-                                    // `PathBuffer` is `repr(transparent)` over `[u8; N]`, so the
-                                    // struct pointer equals `(&*common_raw).as_ptr()`.
-                                    let rel_is_common =
-                                        core::ptr::eq(rel.as_ptr(), common_raw.cast::<u8>());
-                                    // SAFETY: thread-local scratch; sole live mut borrow on this
-                                    // thread for the remainder of this block. When `rel` aliased
-                                    // it, its last use was the `.as_ptr()` above (NLL-dead);
-                                    // otherwise `rel` borrows a disjoint allocation.
-                                    let common = unsafe { &mut *common_raw };
-                                    if !rel_is_common {
-                                        // `rel` is into a disjoint thread-local (RELATIVE_TO_BUF)
-                                        // or `b""` (len==0 → no read).
-                                        common[..len].copy_from_slice(rel);
-                                    }
-                                    let s: &mut [u8] = &mut common[..len];
-                                    path::dangerously_convert_path_to_posix_in_place::<u8>(s);
-                                    break 'brk &*s;
-                                }
-                                #[cfg(not(windows))]
-                                break 'brk rel;
-                            }
-                        });
+                            let mut buf2 = PathBuffer::uninit();
+                            let abs = resolve_path::join_abs_string_buf::<path::platform::Auto>(
+                                FileSystem::instance().top_level_dir(),
+                                &mut buf2.0,
+                                &[source.path.name().dir, workspace],
+                            );
+                            let len = resolve_path::relative_platform_buf::<
+                                path::platform::Auto,
+                                true,
+                            >(
+                                &mut rel_buf.0, FileSystem::instance().top_level_dir(), abs
+                            )
+                            .len();
+                            #[cfg(windows)]
+                            path::dangerously_convert_path_to_posix_in_place::<u8>(
+                                &mut rel_buf.0[..len],
+                            );
+                            &rel_buf.0[..len]
+                        }
+                    };
+                    let path = string_builder.append::<String>(rel);
                     debug_assert!(path.len() > 0);
-                    debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
+                    debug_assert!(!bun_paths::is_absolute(path.slice(buf!())));
                     dependency_version.value.workspace = path;
 
                     let workspace_entry = workspace_paths.get_or_put(name_hash)?;
@@ -2020,23 +1972,19 @@ impl Package<u64> {
                                 // `dependencies` & `workspaces` defined within the same `package.json`
                                 dependency::version::Tag::Npm => {
                                     semver::string::Builder::string_hash(
-                                        package_dep.realname().slice(buf),
+                                        package_dep.realname().slice(buf!()),
                                     ) == name_hash
-                                        // SAFETY: tag == Npm selects the `npm` union member.
-                                        && unsafe {
-                                            package_dep
-                                                .version
-                                                .value
-                                                .npm
-                                                .version
-                                                .satisfies(ver, buf, buf)
-                                        }
+                                        && package_dep.version.npm().version.satisfies(
+                                            ver,
+                                            buf!(),
+                                            buf!(),
+                                        )
                                 }
                                 // `workspace:*`
                                 dependency::version::Tag::Workspace => {
                                     found_matching_workspace
                                         && semver::string::Builder::string_hash(
-                                            package_dep.realname().slice(buf),
+                                            package_dep.realname().slice(buf!()),
                                         ) == name_hash
                                 }
                                 _ => false,
@@ -2051,7 +1999,7 @@ impl Package<u64> {
                         {
                             if package_dep.version.tag == dependency::version::Tag::Workspace
                                 && semver::string::Builder::string_hash(
-                                    package_dep.realname().slice(buf),
+                                    package_dep.realname().slice(buf!()),
                                 ) == name_hash
                             {
                                 package_dep.version = dependency_version;
@@ -2103,7 +2051,7 @@ impl Package<u64> {
                         let _ = write!(
                             &mut text,
                             "\"{}\" originally specified here",
-                            bstr::BStr::new(external_alias.slice(buf))
+                            bstr::BStr::new(external_alias.slice(buf!()))
                         );
                     }
                     notes.push(bun_ast::Data {
@@ -2121,7 +2069,7 @@ impl Package<u64> {
                         notes.into(),
                         format_args!(
                             "Duplicate dependency: \"{}\" specified in package.json",
-                            bstr::BStr::new(external_alias.slice(buf))
+                            bstr::BStr::new(external_alias.slice(buf!()))
                         ),
                     );
                 }
@@ -2162,9 +2110,28 @@ impl Package<u64> {
     ) -> crate::Result<()> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // Function-local arena for `asString` transcoding (transcoded strings
+        // Function-local arena for `as_string` transcoding (transcoded strings
         // are only borrowed until `string_builder.append` copies them).
         let bump = bun_alloc::Arena::new();
+        // `--frozen-lockfile` tolerates a listed workspace that is missing on
+        // disk if the loaded lockfile knows it. That lockfile is `pm.lockfile`
+        // unless this parse writes straight into it (the caller then moved it
+        // out of the manager and it is `lockfile`): copy its workspace paths
+        // out before the string builder borrows it.
+        let own_workspace_paths: Option<&[&[u8]]> = (FEATURES.workspaces
+            && pm.options.enable.frozen_lockfile()
+            && pm.lockfile.packages.len() == 0
+            && lockfile.workspace_paths.count() != 0)
+            .then(|| {
+                let string_bytes = lockfile.buffers.string_bytes.as_slice();
+                &*bump.alloc_slice_fill_iter(
+                    lockfile
+                        .workspace_paths
+                        .values()
+                        .iter()
+                        .map(|path| &*bump.alloc_slice_copy(path.slice(string_bytes))),
+                )
+            });
         // split-borrow `string_bytes`/`string_pool` so the dozens of
         // disjoint `lockfile.{buffers.*, overrides, catalogs, workspace_*, …}`
         // accesses below pass borrowck. Reads of `lockfile.buffers.string_bytes`
@@ -2325,10 +2292,12 @@ impl Package<u64> {
             }
         }
 
-        let missing_workspace = if pm.options.enable.frozen_lockfile() {
-            workspace_map::MissingWorkspace::SkipIfInLockfile(&pm.lockfile)
-        } else {
+        let missing_workspace = if !pm.options.enable.frozen_lockfile() {
             workspace_map::MissingWorkspace::Error
+        } else if let Some(paths) = own_workspace_paths {
+            workspace_map::MissingWorkspace::SkipIfListed(paths)
+        } else {
+            workspace_map::MissingWorkspace::SkipIfInLockfile(&pm.lockfile)
         };
 
         for group in &dependency_groups {
@@ -2544,7 +2513,7 @@ impl Package<u64> {
                     .parse_count(workspaces_expr, &mut string_builder);
             }
 
-            // Count catalog strings in top-level package.json as well, since parseAppend
+            // Count catalog strings in top-level package.json as well, since parse_append
             // might process them later if no catalogs were found in workspaces
             lockfile.catalogs.parse_count(json, &mut string_builder);
 
@@ -2685,12 +2654,10 @@ impl Package<u64> {
                             debug_assert!(i == extern_strings.len());
                             self.bin = Bin {
                                 tag: bin::Tag::Map,
-                                value: bin::Value {
-                                    map: ExternalStringList::new(
-                                        current_len as u32,
-                                        extern_strings.len() as u32,
-                                    ),
-                                },
+                                value: bin::Value::init_map(ExternalStringList::new(
+                                    current_len as u32,
+                                    extern_strings.len() as u32,
+                                )),
                                 ..Default::default()
                             };
                         }
@@ -2702,9 +2669,9 @@ impl Package<u64> {
                     if !stri.data.is_empty() {
                         self.bin = Bin {
                             tag: bin::Tag::File,
-                            value: bin::Value {
-                                file: string_builder.append::<String>(&stri.data),
-                            },
+                            value: bin::Value::init_file(
+                                string_builder.append::<String>(&stri.data),
+                            ),
                             ..Default::default()
                         };
                         break 'bin;
@@ -2725,9 +2692,7 @@ impl Package<u64> {
                         if !str_.is_empty() {
                             self.bin = Bin {
                                 tag: bin::Tag::Dir,
-                                value: bin::Value {
-                                    dir: string_builder.append::<String>(str_),
-                                },
+                                value: bin::Value::init_dir(string_builder.append::<String>(str_)),
                                 ..Default::default()
                             };
                             break 'bin;
@@ -2912,7 +2877,6 @@ impl Package<u64> {
                         if let Some(version_string) = &entry.version {
                             let external_version =
                                 string_builder.append::<ExternalString>(version_string);
-                            // allocator.free(version_string); — Drop handles it (Box<[u8]>)
                             let sliced = external_version
                                 .value
                                 .sliced(string_builder.string_bytes.as_slice());
@@ -3159,28 +3123,54 @@ pub mod serializer {
         let end_at = stream.get_pos()?;
         stream.write_int_le::<u64>(0)?;
 
-        // `*mut u8` carries the pointer alignment, matching the
-        // `@alignOf(@TypeOf(list.bytes))` value serialized above.
+        // `*mut u8` carries the pointer alignment, matching the value
+        // serialized above.
         let pos = stream.get_pos()? as u64;
         let _ = Aligner::write::<*mut u8, _>(&mut *stream, pos)?;
 
         let really_begin_at = stream.get_pos()?;
-        let mut sliced = list.slice();
+        let sliced = list.slice();
 
         for field in PackageField::ALL {
-            // SAFETY: each `PackageField` discriminant corresponds to a column
-            // whose element size matches `SIZES_BYTES[field as usize]`; we
-            // address the column as raw bytes for serialisation.
-            let bytes: &[u8] = unsafe {
-                let _n = list.len();
-                let sz =
-                    bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
-                        field as usize,
-                    );
-                {
-                    let _ = sz;
-                    &*sliced.column_bytes_mut(field as usize)
+            // No uninitialized padding: `Package`'s field types are all
+            // `#[repr(C)]` with explicit padding zeroed by their
+            // `Default`/`init` paths (`bytemuck::NoUninit`).
+            let bytes: &[u8] = match field {
+                PackageField::Name => bytemuck::cast_slice(sliced.items::<"name", String>()),
+                PackageField::NameHash => {
+                    bytemuck::cast_slice(sliced.items::<"name_hash", PackageNameHash>())
                 }
+                PackageField::Resolution => {
+                    // copy each resolution to make sure the bytes past the
+                    // live payload are zero (deterministic lockfile output).
+                    let resolutions: &[Resolution<SemverIntType>] =
+                        sliced.items::<"resolution", Resolution<SemverIntType>>();
+                    #[cfg(debug_assertions)]
+                    {
+                        bun_output::scoped_log!(
+                            Lockfile,
+                            "save(\"{}\") = {} bytes",
+                            bstr::BStr::new(field.name()),
+                            mem::size_of_val(resolutions),
+                        );
+                    }
+                    for val in resolutions {
+                        let copy = val.copy();
+                        stream.write_all(&[copy.tag.0])?;
+                        stream.write_all(&copy._padding)?;
+                        stream.write_all(bytemuck::bytes_of(&copy.value))?;
+                    }
+                    continue;
+                }
+                PackageField::Dependencies => {
+                    bytemuck::cast_slice(sliced.items::<"dependencies", DependencySlice>())
+                }
+                PackageField::Resolutions => {
+                    bytemuck::cast_slice(sliced.items::<"resolutions", PackageIDSlice>())
+                }
+                PackageField::Meta => bytemuck::cast_slice(sliced.items::<"meta", Meta>()),
+                PackageField::Bin => bytemuck::cast_slice(sliced.items::<"bin", Bin>()),
+                PackageField::Scripts => bytemuck::cast_slice(sliced.items::<"scripts", Scripts>()),
             };
             #[cfg(debug_assertions)]
             {
@@ -3191,31 +3181,7 @@ pub mod serializer {
                     bytes.len(),
                 );
             }
-            // No uninitialized padding: `Package`'s field types are all
-            // `#[repr(C)]` with explicit padding zeroed by their
-            // `Default`/`init` paths.
-            if matches!(field, PackageField::Resolution) {
-                // copy each resolution to make sure the union is zero initialized
-                let resolutions: &[Resolution<SemverIntType>] =
-                    sliced.items::<"resolution", Resolution<SemverIntType>>();
-                for val in resolutions {
-                    // `ResolutionType::copy` builds a fresh zero-initialised
-                    // `Resolution` and writes only the active union member.
-                    // A bare `*val` would serialise
-                    // garbage in the inactive union bytes (non-deterministic
-                    // lockfile output).
-                    let copy = val.copy();
-                    // SAFETY: Resolution is #[repr(C)] POD; reading raw bytes is sound.
-                    stream.write_all(unsafe {
-                        bun_core::ffi::slice(
-                            (&raw const copy).cast::<u8>(),
-                            mem::size_of_val(&copy),
-                        )
-                    })?;
-                }
-            } else {
-                stream.write_all(bytes)?;
-            }
+            stream.write_all(bytes)?;
         }
 
         let really_end_at = stream.get_pos()?;
@@ -3231,10 +3197,9 @@ pub mod serializer {
         pub needs_update: bool,
     }
 
-    // The v2-migration arm
-    // below hard-codes `u32 → u64` (`VersionedURL.migrate()` returns `<u64>`).
-    // The only caller (`bun.lockb.rs`) instantiates at `u64`, so bind concretely
-    // instead of carrying a phantom generic that can't typecheck the migrate arm.
+    // Bound to `u64`: the v2-migration arm below widens `u32` to `u64`
+    // (`VersionedURL::migrate()` returns `<u64>`), and the only caller
+    // (`bun.lockb.rs`) instantiates at `u64`.
     pub(crate) fn load(
         stream: &mut Stream,
         end: usize,
@@ -3284,8 +3249,9 @@ pub mod serializer {
             let mut list_for_migrating_from_v2 = <List<u32>>::default();
 
             list_for_migrating_from_v2.ensure_total_capacity(list_len as usize)?;
-            // SAFETY: capacity reserved above; `load_fields` writes every column.
-            unsafe { list_for_migrating_from_v2.set_len(list_len as usize) };
+            for _ in 0..list_len {
+                list_for_migrating_from_v2.append_assume_capacity(Package::default());
+            }
 
             load_fields::<u32>(
                 stream,
@@ -3345,8 +3311,9 @@ pub mod serializer {
                 list.append(new)?;
             }
         } else {
-            // SAFETY: capacity reserved above; `load_fields` writes every column.
-            unsafe { list.set_len(list_len as usize) };
+            for _ in 0..list_len {
+                list.append_assume_capacity(Package::default());
+            }
             load_fields::<SemverIntType>(stream, end_at as u64, &mut list, &mut needs_update)?;
         }
 
@@ -3359,107 +3326,98 @@ pub mod serializer {
         list: &mut List<SemverIntType>,
         needs_update: &mut bool,
     ) -> crate::Result<()> {
-        let _n = list.len();
+        let n = list.len();
         let mut sliced = list.slice();
 
         for field in PackageField::ALL {
             let sz = bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
                 field as usize,
             );
-            // SAFETY: `items_raw` returns a column pointer with `n` elements of
-            // `sz` bytes each; the byte view is used solely for memcpy from the
-            // serialised lockfile stream.
-            let bytes: &mut [u8] = unsafe {
-                {
-                    let _ = sz;
-                    sliced.column_bytes_mut(field as usize)
+            let byte_len = n * sz;
+            let end_pos = stream.pos + byte_len;
+            if end_pos as u64 > end_at {
+                if matches!(field, PackageField::Scripts) {
+                    sliced
+                        .items_mut::<"scripts", Scripts>()
+                        .fill(Scripts::default());
+                    continue;
                 }
-            };
-            let end_pos = stream.pos + bytes.len();
-            if end_pos as u64 <= end_at {
-                let src = &stream.buffer[stream.pos..stream.pos + bytes.len()];
-                if matches!(field, PackageField::Resolution) {
-                    // Validate the tag discriminant on the *raw stream bytes*
-                    // before they are copied into the typed column. `ResolutionTag`
-                    // is a `#[repr(u8)]` enum with non-contiguous discriminants
-                    // (0,1,2,4,8,16,32,64,72,80,100); copying an out-of-range byte
-                    // into `ResolutionType.tag` and then reading it would be
-                    // immediate UB, and a `matches!` over all 11 typed variants is
-                    // provably exhaustive and would be optimized away. Check the
-                    // raw u8 here. Layout: `ResolutionType` is `#[repr(C)]
-                    // { tag: Tag, _padding: [u8; 7], value: ... }`, so the
-                    // discriminant is the first byte of each element.
-                    let stride = mem::size_of::<ResolutionType<SemverIntType>>();
-                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
-                    for raw in src.chunks_exact(stride) {
+                return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
+            }
+            let src = &stream.buffer[stream.pos..end_pos];
+            match field {
+                // Plain-data columns: every bit pattern is valid, copy the bytes.
+                PackageField::Name => {
+                    bytemuck::cast_slice_mut::<String, u8>(sliced.items_mut::<"name", String>())
+                        .copy_from_slice(src)
+                }
+                PackageField::NameHash => bytemuck::cast_slice_mut::<PackageNameHash, u8>(
+                    sliced.items_mut::<"name_hash", PackageNameHash>(),
+                )
+                .copy_from_slice(src),
+                PackageField::Dependencies => bytemuck::cast_slice_mut::<DependencySlice, u8>(
+                    sliced.items_mut::<"dependencies", DependencySlice>(),
+                )
+                .copy_from_slice(src),
+                PackageField::Resolutions => bytemuck::cast_slice_mut::<PackageIDSlice, u8>(
+                    sliced.items_mut::<"resolutions", PackageIDSlice>(),
+                )
+                .copy_from_slice(src),
+                // Columns with a tag / enum / bool: validate each element.
+                PackageField::Resolution => {
+                    // `Tag` is an open `u8` newtype, but only the known
+                    // discriminants (0,1,2,4,8,16,32,64,72,80,100) are accepted.
+                    // Layout: `{ tag: u8, _padding: [u8; 7], value }`.
+                    let col = sliced.items_mut::<"resolution", Resolution<SemverIntType>>();
+                    for (dst, raw) in col.iter_mut().zip(src.chunks_exact(sz)) {
                         if !matches!(raw[0], 0 | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 72 | 80 | 100) {
                             return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
                         }
+                        *dst = Resolution {
+                            tag: crate::resolution::Tag(raw[0]),
+                            _padding: [0; 7],
+                            value: bytemuck::pod_read_unaligned(&raw[8..]),
+                        };
                     }
                 }
-                if matches!(field, PackageField::Meta) {
-                    // Same hardening as `Resolution` above: `Meta` embeds two
-                    // `#[repr(u8)]` enums (`Origin` = 0..=2 and
-                    // `HasInstallScript` = 0..=2). Copying an out-of-range byte
-                    // into either field and reading it back as the enum would
-                    // be immediate UB, so check the raw stream bytes first.
-                    let stride = mem::size_of::<Meta>();
-                    let origin_at = mem::offset_of!(Meta, origin);
-                    let install_script_at = mem::offset_of!(Meta, has_install_script);
-                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
-                    for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[origin_at], 0..=2)
-                            || !matches!(raw[install_script_at], 0..=2)
-                        {
-                            return Err(crate::Error::LockfileValidationFailedInvalidPackageMeta);
-                        }
+                PackageField::Meta => {
+                    // `Meta` embeds two `#[repr(u8)]` enums (`Origin` = 0..=2 and
+                    // `HasInstallScript` = 0..=2).
+                    let col = sliced.items_mut::<"meta", Meta>();
+                    for (dst, raw) in col.iter_mut().zip(src.chunks_exact(sz)) {
+                        *dst = bytemuck::checked::try_pod_read_unaligned(raw).map_err(|_| {
+                            crate::Error::LockfileValidationFailedInvalidPackageMeta
+                        })?;
                     }
-                }
-                if matches!(field, PackageField::Bin) {
-                    // `Bin.tag` is a `#[repr(u8)]` enum with discriminants
-                    // 0..=4; validate it the same way before the copy.
-                    let stride = mem::size_of::<Bin>();
-                    let tag_at = mem::offset_of!(Bin, tag);
-                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
-                    for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[tag_at], 0..=4) {
-                            return Err(crate::Error::LockfileValidationFailedInvalidBinTag);
-                        }
-                    }
-                }
-                if matches!(field, PackageField::Scripts) {
-                    // `Scripts.filled` is a `bool`; validate the raw byte the
-                    // same way before the copy.
-                    let stride = mem::size_of::<Scripts>();
-                    let filled_at = mem::offset_of!(Scripts, filled);
-                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
-                    for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[filled_at], 0 | 1) {
-                            return Err(
-                                crate::Error::LockfileValidationFailedInvalidPackageScripts,
-                            );
-                        }
-                    }
-                }
-                bytes.copy_from_slice(src);
-                stream.pos = end_pos;
-                if matches!(field, PackageField::Meta) {
                     // need to check if any values were created from an older version of bun
                     // (currently just `has_install_script`). If any are found, the values need
                     // to be updated before saving the lockfile.
-                    let metas: &mut [Meta] = sliced.items_mut::<"meta", Meta>();
-                    for meta in metas {
+                    for meta in col.iter() {
                         if meta.needs_update() {
                             *needs_update = true;
                             break;
                         }
                     }
                 }
-            } else if matches!(field, PackageField::Scripts) {
-                bytes.fill(0);
-            } else {
-                return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
+                PackageField::Bin => {
+                    // `Bin.tag` is a `#[repr(u8)]` enum with discriminants 0..=4.
+                    let col = sliced.items_mut::<"bin", Bin>();
+                    for (dst, raw) in col.iter_mut().zip(src.chunks_exact(sz)) {
+                        *dst = bytemuck::checked::try_pod_read_unaligned(raw)
+                            .map_err(|_| crate::Error::LockfileValidationFailedInvalidBinTag)?;
+                    }
+                }
+                PackageField::Scripts => {
+                    // `Scripts.filled` is a `bool`.
+                    let col = sliced.items_mut::<"scripts", Scripts>();
+                    for (dst, raw) in col.iter_mut().zip(src.chunks_exact(sz)) {
+                        *dst = bytemuck::checked::try_pod_read_unaligned(raw).map_err(|_| {
+                            crate::Error::LockfileValidationFailedInvalidPackageScripts
+                        })?;
+                    }
+                }
             }
+            stream.pos = end_pos;
         }
         Ok(())
     }

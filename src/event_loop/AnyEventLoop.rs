@@ -121,13 +121,13 @@ impl AnyEventLoop {
 
     /// Raw-pointer tick loop for callers whose `is_done`
     /// callback may reborrow the struct that *contains* this `AnyEventLoop`
-    /// (e.g. `bun_install::PackageManager::sleep_until`, where the closure's
-    /// `is_done` does `&mut *closure.manager` and that `PackageManager` owns
-    /// `event_loop` by value). Holding a `&mut Self` across `is_done` in that
+    /// (e.g. `bun_bundler::bundle_v2`, where `is_done` reborrows the context
+    /// that owns the loop). Holding a `&mut Self` across `is_done` in that
     /// case is UB under Stacked Borrows — the callback's whole-struct Unique
     /// retag pops the field borrow. This variant reborrows `*this`
     /// per-iteration *after* `is_done` returns, so no `&mut Self` is live
-    /// while the callback runs.
+    /// while the callback runs. Callers that can restructure should prefer
+    /// [`sleep_tick`](Self::sleep_tick) in their own loop.
     ///
     /// # Safety
     /// `this` must be valid for `&mut` access for the duration of the call,
@@ -144,19 +144,24 @@ impl AnyEventLoop {
             // SAFETY: per fn contract — reborrow strictly after `is_done`
             // returns; the borrow ends at the bottom of this loop body before
             // the next `is_done` call.
-            match unsafe { &mut *this } {
-                AnyEventLoop::Js { owner } => {
-                    owner.tick();
-                    owner.auto_tick();
-                }
-                AnyEventLoop::Mini(mini) => {
-                    // One iteration only — we cannot call the *looping*
-                    // `MiniEventLoop::tick` here because that would hold
-                    // `&mut mini` across `is_done`. A single `tick_once`
-                    // borrow ends at the bottom of this match arm before the
-                    // next `is_done` reborrow.
-                    mini.tick_once(context);
-                }
+            unsafe { &mut *this }.sleep_tick(context);
+        }
+    }
+
+    /// One iteration of the [`tick_raw`](Self::tick_raw) loop body, for
+    /// callers that own the `is_done` loop themselves (e.g.
+    /// `bun_install::PackageManager::sleep_until`). `context` is forwarded to
+    /// mini-loop tasks that carry extra context; pass null when none are queued.
+    pub fn sleep_tick(&mut self, context: *mut core::ffi::c_void) {
+        match self {
+            AnyEventLoop::Js { owner } => {
+                owner.tick();
+                owner.auto_tick();
+            }
+            AnyEventLoop::Mini(mini) => {
+                // One iteration only — the *looping* `MiniEventLoop::tick`
+                // would hold `&mut mini` across the caller's `is_done`.
+                mini.tick_once(context);
             }
         }
     }
@@ -201,6 +206,35 @@ impl AnyEventLoop {
     pub fn wakeup(&mut self) {
         // SAFETY: `r#loop()` returns a valid live loop pointer.
         unsafe { (*self.r#loop()).wakeup() };
+    }
+
+    /// A `Send + Sync` handle other threads use to wake this loop. The holder
+    /// must not outlive the loop (BACKREF): the main-thread and mini loops
+    /// live for the process/thread; a JS worker's loop until its VM is torn
+    /// down.
+    #[inline]
+    pub fn waker(&mut self) -> LoopWaker {
+        // SAFETY: `r#loop()` is this loop's live uws loop.
+        LoopWaker(bun_ptr::BackRef::new(unsafe { &*self.r#loop() }))
+    }
+}
+
+/// Cross-thread wakeup handle for an event loop's uSockets loop
+/// ([`AnyEventLoop::waker`], which states the holder's obligation).
+#[derive(Clone, Copy)]
+pub struct LoopWaker(bun_ptr::BackRef<UwsLoop>);
+
+// SAFETY: the only operation is `us_wakeup_loop`, which uSockets documents as
+// callable from any thread (it signals the loop's async wakeup handle); the
+// pointee is never otherwise read or written through this handle.
+unsafe impl Send for LoopWaker {}
+// SAFETY: as above — `wakeup(&self)` is thread-safe.
+unsafe impl Sync for LoopWaker {}
+
+impl LoopWaker {
+    #[inline]
+    pub fn wakeup(self) {
+        self.0.get().wakeup_from_any_thread();
     }
 }
 
@@ -387,6 +421,17 @@ impl EventLoopHandle {
     pub fn set_as_parent_of(self, uws_loop: &mut UwsLoop) {
         let (tag, ptr) = self.into_tag_ptr();
         uws_loop.internal_loop_data.set_parent_raw(tag, ptr);
+    }
+
+    /// [`set_as_parent_of`](Self::set_as_parent_of) this handle's own uws
+    /// loop ([`EventLoopHandle::r#loop`]).
+    #[inline]
+    pub fn set_as_parent_of_own_loop(self) {
+        let uws_loop = self.r#loop();
+        // SAFETY: `r#loop()` is this handle's live uws loop (per-thread
+        // singleton for mini loops, VM-lifetime for JS loops); the write is a
+        // plain field store on the owning thread.
+        self.set_as_parent_of(unsafe { &mut *uws_loop });
     }
 
     pub fn from_any(any: &mut AnyEventLoop) -> EventLoopHandle {

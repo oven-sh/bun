@@ -562,6 +562,9 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
+        // The resolver reaches the package manager (auto-install) through this.
+        bun_resolver::set_auto_installer_factory(bun_install::auto_installer::init_for_resolver);
+
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
@@ -569,8 +572,13 @@ pub mod cli {
             // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
             // message. The bake production path returns `error.BuildFailed`
-            // with the actual parse/link errors sitting in `ctx.log` (== this
-            // `log`); without this print, users see only the opaque error name.
+            // with the actual parse/link errors sitting in `ctx.log` (this
+            // `log`, or the package manager's once it took over); without this
+            // print, users see only the opaque error name.
+            let log: &bun_ast::Log = match bun_options_types::context::try_get() {
+                Some(ctx) => ctx.log_ref(),
+                None => log,
+            };
             let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
                 bun_core::Output::error_writer(),
             ));

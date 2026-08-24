@@ -30,7 +30,7 @@ pub struct MapEntry {
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
     _path_storage: bun_core::ZBox,
     /// Owns the arena that backs decoded string bytes inside `root`.
-    /// `deepClone` does *not* dupe escape-decoded `E.String.data` slices.
+    /// `deep_clone` does *not* dupe escape-decoded `E.String.data` slices.
     /// The parser takes a `&Arena`, so the arena must outlive the
     /// cached AST — hold it here so it drops with the entry.
     ///
@@ -61,7 +61,7 @@ impl Default for MapEntry {
 impl MapEntry {
     /// Re-parse `self.source.contents` into `self.root`.
     ///
-    /// `updatePackageJSONAndInstall` edits a copy of `root`, prints it, and
+    /// `update_package_json_and_install` edits a copy of `root`, prints it, and
     /// writes the printed JSON back into `source.contents`. The caller then
     /// invokes this to restore the invariant `root == parse(source)`.
     pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
@@ -154,10 +154,8 @@ impl WorkspacePackageJSONCache {
             &buf[..abs_package_json_path.len()]
         };
 
-        // reshaped for borrowck — we cannot hold an entry borrow across
-        // `self.map.remove`, so check
-        // membership up front and only insert into the map after a successful
-        // read+parse. Net map state is identical on every path.
+        // Membership is checked up front and the map only gains an entry after
+        // a successful read+parse.
         if self.map.contains_key(path) {
             let entry = self.map.get_mut(path).unwrap();
             if opts.guess_indentation && !entry.indentation_guessed {
@@ -168,14 +166,12 @@ impl WorkspacePackageJSONCache {
         }
 
         // Owned NUL-terminated copy reused
-        // both as the map key and the path handed to `File.toSource`. The
+        // both as the map key and the path handed to `File.to_source`. The
         // returned `Source` *borrows* its `path` slices from this allocation,
         // so it must outlive the cached `MapEntry` (stored as
         // `value.path_storage` below).
         let key = bun_core::ZBox::from_bytes(path);
 
-        // MOVE_DOWN: `bun.sys.File.toSource` lives in `bun_logger` (T1 → T2
-        // cyclebreak; `bun_sys` cannot name `Source`).
         let source = match bun_ast::to_source(&key, Default::default()) {
             Ok(s) => s,
             Err(err) => {

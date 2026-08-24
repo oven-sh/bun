@@ -4736,9 +4736,15 @@ impl VirtualMachine {
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
         jsc_vm.transpiler.linker.log = &raw mut log;
         if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
+            // The package manager keeps its own log; route what it has so far
+            // to the VM log and (below) what it logs during `_resolve` to `log`.
             // SAFETY: the `dyn AutoInstaller` is always `PackageManager`
-            // (sole impl — see `VirtualMachine::package_manager`).
-            unsafe { (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = &raw mut log };
+            // (sole impl — see `VirtualMachine::package_manager`); `old_log`
+            // is the live VM log.
+            unsafe {
+                (*pm.cast::<bun_install::PackageManager>().as_ptr())
+                    .take_log_into(&mut *old_log.as_ptr())
+            };
         }
         // Note: the restore must fire on every exit
         // (including `?` from `ResolveMessage::create` below), so the VM's
@@ -4758,16 +4764,6 @@ impl VirtualMachine {
                 jsc_vm.log = Some(self.old_log);
                 jsc_vm.transpiler.resolver.log = self.old_log;
                 jsc_vm.transpiler.linker.log = self.old_log.as_ptr();
-                // `_resolve` may have lazily created the PM with
-                // `pm.log = resolver.log` (our stack `log`), so restore even
-                // if it was `None` when we swapped.
-                if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
-                    // SAFETY: sole `dyn AutoInstaller` impl is `PackageManager`.
-                    unsafe {
-                        (*pm.cast::<bun_install::PackageManager>().as_ptr()).log =
-                            self.old_log.as_ptr();
-                    }
-                }
             }
         }
         let _restore = RestoreLog {
@@ -4786,6 +4782,11 @@ impl VirtualMachine {
             mode.is_esm(),
             IS_A_FILE_PATH,
         );
+        // `_resolve` may have lazily created the PM, so check again.
+        if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
+            // SAFETY: sole `dyn AutoInstaller` impl is `PackageManager`.
+            unsafe { (*pm.cast::<bun_install::PackageManager>().as_ptr()).take_log_into(&mut log) };
+        }
         if let Err(err_) = resolve_result {
             let err = err_;
             let import_kind = mode.import_kind();

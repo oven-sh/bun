@@ -10,17 +10,15 @@ const SHA256_DIGEST_LEN: usize = 32;
 const SHA384_DIGEST_LEN: usize = 48;
 const SHA512_DIGEST_LEN: usize = 64;
 
+/// `#[repr(C)]` with a `u8` tag + `[u8; 64]`: size 65, align 1, no padding.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Integrity {
     pub tag: Tag,
     /// Possibly a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value initially
     /// We transform it though.
     pub value: [u8; DIGEST_BUF_LEN],
 }
-// SAFETY: `#[repr(C)]` with a `#[repr(transparent)] u8` tag + `[u8; 64]` →
-// size 65, align 1, no padding bytes, `Copy + 'static`. Every byte initialized.
-unsafe impl bytemuck::NoUninit for Integrity {}
 
 impl Default for Integrity {
     fn default() -> Self {
@@ -175,16 +173,12 @@ impl Integrity {
     pub(crate) fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;
         let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
-        // SAFETY: engine is null (default).
-        unsafe {
-            Crypto::SHA512::hash(
-                bytes,
-                (&mut value[0..LEN])
-                    .try_into()
-                    .expect("infallible: size matches"),
-                core::ptr::null_mut(),
-            )
-        };
+        Crypto::SHA512::hash_with_default_engine(
+            bytes,
+            (&mut value[0..LEN])
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         Integrity {
             tag: Tag::SHA512,
             value,
@@ -205,8 +199,7 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                // SAFETY: engine is null (default).
-                unsafe { Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut()) };
+                Crypto::SHA1::hash_with_default_engine(bytes, ptr);
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA512 => {
@@ -214,8 +207,7 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                // SAFETY: engine is null (default).
-                unsafe { Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut()) };
+                Crypto::SHA512::hash_with_default_engine(bytes, ptr);
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA256 => {
@@ -223,8 +215,7 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                // SAFETY: engine is null (default).
-                unsafe { Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut()) };
+                Crypto::SHA256::hash_with_default_engine(bytes, ptr);
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA384 => {
@@ -232,8 +223,7 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                // SAFETY: engine is null (default).
-                unsafe { Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut()) };
+                Crypto::SHA384::hash_with_default_engine(bytes, ptr);
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             _ => false,
@@ -254,10 +244,11 @@ impl fmt::Display for Integrity {
         let mut base64_buf = [0u8; 512];
         let bytes = self.slice();
 
-        // SAFETY: base64 alphabet is pure ASCII.
-        f.write_str(unsafe {
-            core::str::from_utf8_unchecked(base64.encoder.encode(&mut base64_buf, bytes))
-        })?;
+        // base64 alphabet is pure ASCII.
+        f.write_str(
+            core::str::from_utf8(base64.encoder.encode(&mut base64_buf, bytes))
+                .expect("base64 is ASCII"),
+        )?;
 
         // consistentcy with yarn.lock
         match self.tag {
@@ -271,11 +262,8 @@ impl fmt::Display for Integrity {
 // lockfiles. A `#[repr(u8)] enum` would be UB for unknown discriminants, so we
 // use a transparent newtype with associated consts instead.
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Tag(pub u8);
-// SAFETY: `#[repr(transparent)]` newtype over `u8` — same layout as `u8`,
-// no padding, `Copy + 'static`.
-unsafe impl bytemuck::NoUninit for Tag {}
 
 impl Tag {
     pub(crate) const UNKNOWN: Tag = Tag(0);

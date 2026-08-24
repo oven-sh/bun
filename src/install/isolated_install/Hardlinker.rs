@@ -35,12 +35,7 @@ impl Hardlinker {
             src,
             dest,
             walker: {
-                let mut w = bun_sys::walker_skippable::walk(
-                    folder_dir,
-                    // bun.default_allocator dropped — global mimalloc
-                    &[],
-                    skip_dirnames,
-                )?;
+                let mut w = bun_sys::walker_skippable::walk(folder_dir, &[], skip_dirnames)?;
                 w.resolve_unknown_entry_types = true;
                 w
             },
@@ -77,14 +72,11 @@ impl Hardlinker {
                         )));
                     }
                 };
-                // SAFETY: `dest_cwd` is a sub-slice of `cwd_buf` by contract of
+                // `dest_cwd` is a sub-slice of `cwd_buf` by contract of
                 // `get_fd_path_w` (it returns `&mut out_buffer[off..]`).
-                // NB: capture `len`/`dest_ptr` first so NLL drops the `&mut cwd_buf`
-                // loan (held via `dest_cwd`) before `cwd_buf.as_ptr()` takes `&cwd_buf`
-                // — otherwise E0502 on x86_64-pc-windows-msvc.
                 let len = dest_cwd.len();
-                let dest_ptr = dest_cwd.as_ptr();
-                let off = unsafe { dest_ptr.offset_from(cwd_buf.as_ptr()) } as usize;
+                let dest_addr = dest_cwd.as_ptr() as usize;
+                let off = (dest_addr - cwd_buf.as_ptr() as usize) / core::mem::size_of::<u16>();
                 (off, len)
             };
 

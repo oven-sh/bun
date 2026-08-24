@@ -6762,8 +6762,7 @@ impl NodeFS {
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
         let mut entries: Vec<T> = Vec::new();
-        Self::readdir_with_entries::<T>(args, fd, &mut entries)
-            .map(|()| T::into_readdir(entries))
+        Self::readdir_with_entries::<T>(args, fd, &mut entries).map(|()| T::into_readdir(entries))
     }
 
     /// Caller has already checked `is_bun_standalone_file_path(path)`.

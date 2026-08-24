@@ -65,11 +65,14 @@ test("spawnSync, spawn, and fork pass argv through with patched Array.prototype.
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    sync: '["intended","last"]',
-    async: '["intended","last"]',
-    fork: '["intended","last"]',
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      JSON.stringify({
+        sync: '["intended","last"]',
+        async: '["intended","last"]',
+        fork: '["intended","last"]',
+      }) + "\n",
+    stderr: "",
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });

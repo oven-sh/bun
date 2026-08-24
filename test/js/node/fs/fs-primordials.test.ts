@@ -26,6 +26,9 @@ test.concurrent("fs.cpSync copies every entry when Array.prototype[Symbol.iterat
       for (const f of ["d/1.txt", "d/2.txt", "d/e/3.txt"]) fs.writeFileSync(f, f);
       // Load internal/fs/cp-sync before the patch.
       fs.cpSync("d/1.txt", "warm.txt");
+      // An existing destination keeps macOS off the clonefile fast path, so
+      // the JS directory walker runs on every platform.
+      fs.mkdirSync("d2");
 
       const orig = Array.prototype[Symbol.iterator];
       // A broken iterator polyfill that skips the first element.

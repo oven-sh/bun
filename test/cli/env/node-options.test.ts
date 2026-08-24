@@ -311,6 +311,17 @@ describe("NODE_OPTIONS environment variable", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent("bun pm trust still requires package names", async () => {
+    using dir = tempDir("node-options-trust", {
+      "package.json": `{"name":"x","version":"1.0.0"}`,
+    });
+    // Without the offset fix the empty-args guard is bypassed and the
+    // command proceeds to load the lockfile.
+    const { stderr, exitCode } = await run(String(dir), ["pm", "trust"], "--title=from-env");
+    expect(stderr).toContain("expected package names(s) or --all");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("bun whoami still resolves to whoami", async () => {
     await using server = Bun.serve({
       port: 0,

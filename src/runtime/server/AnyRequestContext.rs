@@ -99,9 +99,6 @@ impl AnyRequestContext {
 ///
 /// Rust closures cannot be generic over
 /// `T`, so a macro is the closest structural equivalent.
-// TODO(refactor): if all ctx types gain a shared `RequestContextLike`
-// trait (with `const IS_MUX: bool` + `type Resp`), this macro can become a
-// method taking `impl FnOnce(&mut dyn RequestContextLike)` for the simple arms.
 macro_rules! dispatch {
     ($self:expr, $default:expr, |$T:ident, $ctx:ident| $body:expr) => {{
         let this = $self;

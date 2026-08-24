@@ -90,10 +90,8 @@ class PerformanceNodeTiming {
     };
   }
 }
-if (PerformanceEntry) {
-  Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
-  Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
-}
+Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
+Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);

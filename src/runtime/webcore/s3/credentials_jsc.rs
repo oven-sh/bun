@@ -48,14 +48,6 @@ pub(crate) fn get_truthy_string_utf8(
     Ok(Some(str.into_utf8()))
 }
 
-// `S3Credentials` fields are owned `Box<[u8]>`, so credential strings are
-// deep-copied into the `Box` directly with no `_*_slice` ownership
-// indirection. For `content_disposition` / `content_type` / `content_encoding`
-// (typed `Option<*const [u8]>` in `S3CredentialsWithOptions`), `_*_slice` owns
-// the bytes and the raw fat-pointer borrows them. The underlying heap
-// allocation does not move when the struct is returned by value, so the
-// pointer remains valid for the struct's lifetime.
-
 const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \"aws-exec-read\", \
 \"authenticated-read\", \"bucket-owner-read\", \"bucket-owner-full-control\", \"log-delivery-write\"";
 

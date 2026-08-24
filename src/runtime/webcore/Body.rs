@@ -394,7 +394,6 @@ impl PendingValue {
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
                         Action::GetFormData(form_data) => 'brk: {
                             let fd = form_data.take().unwrap();
-                            // defer: form_data already taken; action.getFormData = None handled by take()
                             let encoding_js = match &fd.encoding {
                                 bun_core::form_data::Encoding::Multipart(multipart) => {
                                     BunString::init(&multipart[..]).to_js(global_this)?
@@ -1027,22 +1026,7 @@ impl Value {
             ));
         }
 
-        let blob = match Blob::get::<true, false>(global_this, value) {
-            Ok(b) => b,
-            Err(_err) => {
-                if !global_this.has_exception() {
-                    // With `REQUIRE_ARRAY = false` an "Expected an Array" branch is
-                    // unreachable (the only `error.InvalidArguments` producer is gated
-                    // on `require_array`), and every other failure path throws first
-                    // (sets the exception).
-                    return Err(
-                        global_this.throw_invalid_arguments(format_args!("Invalid Body object"))
-                    );
-                }
-                return Err(bun_jsc::JsError::Thrown);
-            }
-        };
-        Ok(Value::Blob(blob))
+        Ok(Value::Blob(Blob::get::<true, false>(global_this, value)?))
     }
 
     pub(crate) fn from_readable_stream_without_lock_check(

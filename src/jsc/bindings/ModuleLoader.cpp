@@ -386,7 +386,7 @@ static JSValue handleVirtualModuleResult(
     const auto rejectOrResolve = [&](JSValue code) -> JSValue {
         if (auto* exception = scope.exception()) {
             if constexpr (allowPromise) {
-                (void)scope.tryClearException();
+                TRY_CLEAR_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
             } else {
                 return exception;
@@ -423,12 +423,12 @@ static JSValue handleVirtualModuleResult(
             const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
             auto esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
             if (scope.exception()) [[unlikely]] {
-                RELEASE_AND_RETURN(scope, reject(scope.exception()));
+                return rejectOrResolve({});
             }
             if (esModuleValue && esModuleValue.toBoolean(globalObject)) {
                 auto defaultValue = object->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
                 if (scope.exception()) [[unlikely]] {
-                    RELEASE_AND_RETURN(scope, reject(scope.exception()));
+                    return rejectOrResolve({});
                 }
                 if (defaultValue && !defaultValue.isUndefined()) {
                     commonJSModule->setExportsObject(defaultValue);
@@ -566,6 +566,11 @@ JSValue fetchBuiltinModuleWithoutResolution(
         case SyntheticModuleType::ESM: {
             res->success = false;
             RELEASE_AND_RETURN(scope, jsNumber(-1));
+        }
+
+        // A text file embedded by `bun build --compile`: the string is `module.exports`.
+        case SyntheticModuleType::ExportDefaultObject: {
+            return JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         }
 
         default: {
@@ -1064,6 +1069,20 @@ static JSValue fetchESMSourceCode(
     }
             BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(LAZY_CASE)
 #undef LAZY_CASE
+
+        // A text file embedded by `bun build --compile`: the string is the default export.
+        case SyntheticModuleType::ExportDefaultObject: {
+            JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+            if (!value) {
+                RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+            }
+            auto function = generateJSValueExportDefaultObjectSourceCode(globalObject, value);
+            auto source = JSC::SourceCode(
+                JSC::SyntheticSourceProvider::create(WTF::move(function),
+                    JSC::SourceOrigin(), WTF::move(moduleKey)));
+            JSC::ensureStillAliveHere(value);
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
+        }
 
         // CommonJS modules from src/js/*
         default: {

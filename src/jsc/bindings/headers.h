@@ -598,10 +598,10 @@ ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
 ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     JSC::JSGlobalObject* globalObject, CppWebSocket* websocket,
     const BunString* host, uint16_t port, const BunString* path, const BunString* protocols,
-    BunString* headerNames, BunString* headerValues, size_t headerCount,
+    const BunString* headerNames, size_t headerNamesCount, const BunString* headerValues, size_t headerValuesCount,
     const BunString* proxyHost, uint16_t proxyPort,
     const BunString* proxyAuthorization,
-    BunString* proxyHeaderNames, BunString* proxyHeaderValues, size_t proxyHeaderCount,
+    const BunString* proxyHeaderNames, size_t proxyHeaderNamesCount, const BunString* proxyHeaderValues, size_t proxyHeaderValuesCount,
     void* sslConfig, bool targetIsSecure,
     const BunString* targetAuthorization,
     const BunString* unixSocketPath,
@@ -615,10 +615,10 @@ ZIG_DECL void Bun__WebSocketHTTPSClient__cancel(WebSocketHTTPSClient* arg0);
 ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     JSC::JSGlobalObject* globalObject, CppWebSocket* websocket,
     const BunString* host, uint16_t port, const BunString* path, const BunString* protocols,
-    BunString* headerNames, BunString* headerValues, size_t headerCount,
+    const BunString* headerNames, size_t headerNamesCount, const BunString* headerValues, size_t headerValuesCount,
     const BunString* proxyHost, uint16_t proxyPort,
     const BunString* proxyAuthorization,
-    BunString* proxyHeaderNames, BunString* proxyHeaderValues, size_t proxyHeaderCount,
+    const BunString* proxyHeaderNames, size_t proxyHeaderNamesCount, const BunString* proxyHeaderValues, size_t proxyHeaderValuesCount,
     void* sslConfig, bool targetIsSecure,
     const BunString* targetAuthorization,
     const BunString* unixSocketPath,
@@ -637,7 +637,7 @@ ZIG_DECL void Bun__WebSocketClient__cancel(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__dropConnectionWithoutCallback(WebSocketClient* arg0);
-ZIG_DECL void* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, unsigned char* arg3, size_t arg4, const PerMessageDeflateParams* arg5, void* customSSLCtx);
+ZIG_DECL WebSocketClient* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx);
 ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const ZigString* arg1, unsigned char arg2);
 ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
@@ -650,7 +650,7 @@ ZIG_DECL void Bun__WebSocketClientTLS__cancel(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__dropConnectionWithoutCallback(WebSocketClientTLS* arg0);
-ZIG_DECL void* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, unsigned char* arg3, size_t arg4, const PerMessageDeflateParams* arg5, void* customSSLCtx);
+ZIG_DECL WebSocketClientTLS* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx);
 ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const ZigString* arg1, unsigned char arg2);
 ZIG_DECL size_t Bun__WebSocketClientTLS__memoryCost(WebSocketClientTLS* arg0);

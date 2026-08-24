@@ -571,8 +571,6 @@ pub mod js_bundler {
 
                     if let Some(err) = plugin_result.to_error() {
                         return Err(global_this.throw_value(err));
-                    } else if global_this.has_exception() {
-                        return Err(JsError::Thrown);
                     }
 
                     onstart_promise_array = plugin_result;
@@ -1374,19 +1372,15 @@ pub mod js_bundler {
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
         // cannot depend on those).
-        let completion =
-            crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
-                config,
-                plugins.and_then(core::ptr::NonNull::new),
-                global_this,
-            )
-            .map_err(|_| JsError::OutOfMemory)?;
-        // SAFETY: `completion` is the freshly-boxed allocation returned above;
-        // sole owner on the JS thread until enqueued task runs.
-        unsafe {
-            (*completion).promise = jsc::JSPromiseStrong::init(global_this);
-            Ok((*completion).promise.value())
-        }
+        let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
+            config,
+            plugins.and_then(core::ptr::NonNull::new),
+            global_this,
+        );
+        completion.promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = completion.promise.value();
+        completion.schedule();
+        Ok(promise)
     }
 
     /// `Bun.build(config)`

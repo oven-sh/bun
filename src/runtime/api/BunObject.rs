@@ -402,9 +402,6 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     }
 
     let bunstr = jsval.to_bun_string(global_this)?;
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
     let bunstr = scopeguard::guard(bunstr, |s| s.deref());
 
     let mut outbuf: Vec<u8> = Vec::new();
@@ -540,9 +537,6 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
     }
 
     let bin_str = path_arg.to_slice(global_this)?;
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     if bin_str.slice().len() >= MAX_PATH_BYTES {
         return Err(global_this.throw(format_args!("bin path is too long")));
@@ -635,16 +629,14 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
     table_printer.value_formatter.single_line = format_options.single_line;
 
-    let print_result = if format_options.enable_colors {
-        table_printer.print_table::<true>(&mut array)
+    if format_options.enable_colors {
+        table_printer.print_table::<true>(&mut array)?;
     } else {
-        table_printer.print_table::<false>(&mut array)
-    };
-    if print_result.is_err() {
-        if !global_this.has_exception() {
-            return Err(global_this.throw_out_of_memory());
-        }
-        return Ok(JSValue::ZERO);
+        table_printer.print_table::<false>(&mut array)?;
+    }
+    // print_table() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
+    if global_this.has_exception() {
+        return Err(jsc::JsError::Thrown);
     }
 
     // writer.flush(): Vec<u8> writer is unbuffered; nothing to flush.
@@ -703,6 +695,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         &mut array,
         format_options,
     )?;
+    // format2() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
     if global_this.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
@@ -1155,12 +1148,30 @@ impl Drop for ResolveDerefOnDrop {
     }
 }
 
+enum Resolved {
+    Found(JSValue),
+    /// The resolver's `ResolveMessage` for a specifier it could not resolve; not thrown yet.
+    NotFound(JSValue),
+}
+
 fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
     specifier: BunString,
     from: BunString,
     mode: ResolveMode,
 ) -> JsResult<JSValue> {
+    match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
+        Resolved::Found(value) => Ok(value),
+        Resolved::NotFound(err) => Err(ctx.throw_value(err)),
+    }
+}
+
+fn resolve_with_args<const IS_FILE_PATH: bool>(
+    ctx: &JSGlobalObject,
+    specifier: BunString,
+    from: BunString,
+    mode: ResolveMode,
+) -> JsResult<Resolved> {
     let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
     let mut owned = ResolveDerefOnDrop {
         query_string: BunString::empty(),
@@ -1189,7 +1200,12 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
 
     if !errorable.success {
         // SAFETY: !success → `err` arm of the #[repr(C)] union is active.
-        return Err(ctx.throw_value(unsafe { errorable.result.err }.value));
+        let err = unsafe { errorable.result.err }.value;
+        if err.as_class_ref::<jsc::ResolveMessage>().is_some() {
+            return Ok(Resolved::NotFound(err));
+        }
+        // e.g. an onResolve plugin returned an invalid result
+        return Err(ctx.throw_value(err));
     }
     // SAFETY: success → `value` arm of the #[repr(C)] union is active.
     owned.result_value = unsafe { errorable.result.value };
@@ -1203,10 +1219,10 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
             owned.result_value, owned.query_string
         );
 
-        return Ok(ZigString::init_utf8(&arraylist).to_js(ctx));
+        return Ok(Resolved::Found(ZigString::init_utf8(&arraylist).to_js(ctx)));
     }
 
-    owned.result_value.to_js(ctx)
+    Ok(Resolved::Found(owned.result_value.to_js(ctx)?))
 }
 
 #[bun_jsc::host_fn]
@@ -1361,34 +1377,32 @@ pub fn bun_resolve_sync_with_strings(
     })
 }
 
-// HOST_EXPORT(Bun__resolveSyncWithSource, c)
-pub fn bun_resolve_sync_with_source(
+/// Resolves `specifier` relative to `source`. A specifier the resolver cannot resolve (the
+/// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
+/// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
+/// that is not a string — is thrown.
+// HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
+pub fn bun_resolve_sync_with_source_if_exists(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: &BunString,
     is_esm: bool,
-    is_user_require_resolve: bool,
 ) -> JSValue {
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
     let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
-    if specifier_str.length() == 0 {
-        let _ = global
-            .err(
-                jsc::ErrCode::INVALID_ARG_VALUE,
-                format_args!("The argument 'id' must be a non-empty string. Received ''"),
-            )
-            .throw();
-        return JSValue::ZERO;
-    }
     jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(
+        resolve_with_args::<true>(
             global,
             *specifier_str,
             *source,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, false),
         )
+        .map(|r| match r {
+            Resolved::Found(value) => value,
+            Resolved::NotFound(_) => JSValue::UNDEFINED,
+        })
     })
 }
 
@@ -1453,11 +1467,6 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 previous_routes: false,
             },
         )?;
-
-        if global_object.has_exception() {
-            drop(config);
-            return Ok(JSValue::ZERO);
-        }
 
         break 'brk config;
     };
@@ -2413,10 +2422,6 @@ pub mod JSZlib {
             }
         }
 
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
 
@@ -2577,14 +2582,7 @@ pub mod JSZlib {
 
             if let Some(level_value) = options_val.get(global_this, "level")? {
                 level = Some(level_value.coerce::<i32>(global_this)?);
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
-        }
-
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
         }
 
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
@@ -2695,9 +2693,6 @@ pub mod JSZstd {
         if let Some(option_obj) = options_val {
             if let Some(level_val) = option_obj.get(global_this, "level")? {
                 let value = level_val.coerce::<i32>(global_this)?;
-                if global_this.has_exception() {
-                    return Err(jsc::JsError::Thrown);
-                }
 
                 if value < 1 || value > 22 {
                     return Err(global_this.throw_invalid_arguments(format_args!(

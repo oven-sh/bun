@@ -110,7 +110,6 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * g
 
     // Convert the certificate to PEM format and return it
     String pemString = thisObject->toPEMString();
-    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsString(vm, pemString));
 }
 

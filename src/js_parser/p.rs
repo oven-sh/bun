@@ -1356,7 +1356,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Bump-allocate a binding payload and wrap it in `Binding`.
     ///
-    /// If a caller needs to wrap an already-stored payload, call `Binding::init` directly.
+    /// If a caller needs to wrap an already-stored payload, construct
+    /// `Binding { loc, data }` directly.
     #[inline]
     pub(crate) fn b<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
     where
@@ -5287,14 +5288,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            // ToPropertyKey on a computed key can run user code unless it's a primitive literal.
-            if property.flags.contains(Flags::Property::IsComputed)
-                && !property
-                    .key
-                    .map(|key| key.unwrap_inlined().is_primitive_literal())
-                    .unwrap_or(false)
-            {
-                return false;
+            // ToPropertyKey on a computed key can run user code (a custom
+            // "toString"), so a non-primitive literal key keeps the class.
+            // A side-effect-free reference (`[TypeId]`, `[Ns.TypeId]`) is
+            // accepted anyway: such keys are almost always string or symbol
+            // constants, and rejecting them blocks tree-shaking of entire
+            // libraries that brand classes with type-id fields (#40114).
+            if property.flags.contains(Flags::Property::IsComputed) {
+                let Some(key) = property.key else {
+                    return false;
+                };
+                let key = key.unwrap_inlined();
+                let is_reference = matches!(
+                    key.data,
+                    js_ast::ExprData::EIdentifier(_)
+                        | js_ast::ExprData::EImportIdentifier(_)
+                        | js_ast::ExprData::ECommonjsExportIdentifier(_)
+                        | js_ast::ExprData::EDot(_)
+                );
+                if !key.is_primitive_literal()
+                    && !(is_reference && self.expr_can_be_removed_if_unused_without_dce_check(&key))
+                {
+                    return false;
+                }
             }
 
             // Non-static values/initializers only run on construction or access, never for an unused class.

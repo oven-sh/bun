@@ -21,9 +21,8 @@ pub trait URLJsc {
         crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
     }
 
-    /// `Bun.fileURLToPath()`: `value` is a `file:` URL string or `URL`. Throws
-    /// Node's errors for anything else (another scheme, a host on POSIX,
-    /// encoded separators), unlike `bun_url::path_from_file_url`.
+    /// `Bun.fileURLToPath()`: throws Node's errors for anything that is not a
+    /// plain `file:` URL, where `bun_url::path_from_file_url` converts blindly.
     #[track_caller]
     fn file_url_to_path_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
         crate::call_check_slow(global, || Bun__fileURLToPath(global, value))

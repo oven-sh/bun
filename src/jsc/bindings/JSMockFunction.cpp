@@ -217,186 +217,253 @@ void JSMockImplementation::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSMockImplementation);
 
+enum class CallbackKind : uint8_t {
+    Call,
+    GetterSetter,
+};
+
 const ClassInfo JSMockImplementation::s_info = { "MockImpl"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockImplementation) };
 
-JSMockFunction::JSMockFunction(JSC::VM& vm, JSC::Structure* structure, CallbackKind wrapKind)
-    : Base(vm, structure, jsMockFunctionCall, jsMockFunctionCall)
-{
-    initMock();
-}
+class JSMockFunction : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-void JSMockFunction::destroy(JSC::JSCell* cell)
-{
-    static_cast<JSMockFunction*>(cell)->~JSMockFunction();
-}
+    static JSMockFunction* create(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::Structure* structure, CallbackKind kind = CallbackKind::Call)
+    {
+        JSMockFunction* function = new (NotNull, JSC::allocateCell<JSMockFunction>(vm)) JSMockFunction(vm, structure, kind);
+        function->finishCreation(vm);
 
-JSMockFunction* JSMockFunction::create(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::Structure* structure, CallbackKind kind)
-{
-    JSMockFunction* function = new (NotNull, JSC::allocateCell<JSMockFunction>(vm)) JSMockFunction(vm, structure, kind);
-    function->finishCreation(vm);
+        // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
+        function->m_originalName.set(vm, function, globalObject->commonStrings().mockedFunctionString(globalObject));
 
-    // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
-    function->m_originalName.set(vm, function, globalObject->commonStrings().mockedFunctionString(globalObject));
-
-    return function;
-}
-
-Structure* JSMockFunction::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-{
-    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(InternalFunctionType, StructureFlags), info());
-}
-
-template<typename, JSC::SubspaceAccess mode>
-JSC::GCClient::IsoSubspace* JSMockFunction::subspaceFor(JSC::VM& vm)
-{
-    if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-        return nullptr;
-    return WebCore::subspaceForImpl<JSMockFunction, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSMockFunction, m_subspaceForJSMockFunction),
-        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSMockFunction; });
-}
-
-void JSMockFunction::setName(const WTF::String& name)
-{
-    auto& vm = this->vm();
-    auto* nameStr = jsString(vm, name);
-
-    // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
-    m_originalName.set(vm, this, nameStr);
-
-    this->putDirect(vm, vm.propertyNames->name, nameStr, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
-}
-
-void JSMockFunction::copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::String nameToUse;
-    if (auto* fn = dynamicDowncast<JSFunction>(value)) {
-        nameToUse = fn->name(vm);
-        JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
-        RETURN_IF_EXCEPTION(scope, );
-        if (lengthJSValue.isNumber()) {
-            this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
-        }
-    } else if (auto* fn = dynamicDowncast<JSMockFunction>(value)) {
-        JSValue nameValue = fn->get(global, vm.propertyNames->name);
-        RETURN_IF_EXCEPTION(scope, );
-        nameToUse = nameValue.toWTFString(global);
-        RETURN_IF_EXCEPTION(scope, );
-    } else if (auto* fn = dynamicDowncast<InternalFunction>(value)) {
-        nameToUse = fn->name();
-    } else {
-        nameToUse = "mockConstructor"_s;
+        return function;
     }
-    this->setName(nameToUse);
-}
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(InternalFunctionType, StructureFlags), info());
+    }
 
-void JSMockFunction::initMock()
-{
-    mock.initLater(
-        [](const JSC::LazyProperty<JSMockFunction, JSObject>::Initializer& init) {
-            JSMockFunction* mock = init.owner;
-            Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(mock->globalObject());
-            auto& vm = JSC::getVM(globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            JSC::Structure* structure = globalObject->mockModule.mockObjectStructure.getInitializedOnMainThread(globalObject);
-            JSObject* object = JSC::constructEmptyObject(init.vm, structure);
-            object->putDirectOffset(init.vm, 0, mock->getCalls());
-            RETURN_IF_EXCEPTION(scope, );
-            object->putDirectOffset(init.vm, 1, mock->getContexts());
-            RETURN_IF_EXCEPTION(scope, );
-            object->putDirectOffset(init.vm, 2, mock->getInstances());
-            RETURN_IF_EXCEPTION(scope, );
-            object->putDirectOffset(init.vm, 3, mock->getReturnValues());
-            RETURN_IF_EXCEPTION(scope, );
-            object->putDirectOffset(init.vm, 4, mock->getInvocationCallOrder());
-            RETURN_IF_EXCEPTION(scope, );
-            init.set(object);
-        });
-}
+    DECLARE_INFO;
 
-void JSMockFunction::clearSpy()
-{
-    this->reset();
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
-    if (auto* target = this->spyTarget.get()) {
-        JSValue implValue = this->spyOriginal.get();
-        if (!implValue) {
-            implValue = jsUndefined();
-        }
+    JSC::LazyProperty<JSMockFunction, JSObject> mock;
+    // three pointers to implementation objects
+    // head of the list, this one is run next
+    mutable JSC::WriteBarrier<JSC::Unknown> implementation;
+    // this contains the non-once implementation. there is only ever one of these
+    mutable JSC::WriteBarrier<JSC::Unknown> fallbackImplmentation;
+    // the last once implementation
+    mutable JSC::WriteBarrier<JSC::Unknown> tail;
+    // original implementation from spy. separate from `implementation` so restoration always works
+    mutable JSC::WriteBarrier<JSC::Unknown> spyOriginal;
+    mutable JSC::WriteBarrier<JSC::JSArray> calls;
+    mutable JSC::WriteBarrier<JSC::JSArray> contexts;
+    mutable JSC::WriteBarrier<JSC::JSArray> invocationCallOrder;
+    mutable JSC::WriteBarrier<JSC::JSArray> instances;
+    mutable JSC::WriteBarrier<JSC::JSArray> returnValues;
 
-        // Reset the spy back to the original value.
-        if (this->spyAttributes & SpyAttributeESModuleNamespace) {
-            if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
-                moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
+    // Both are GC references, not C++ handles, so this cell needs no destructor
+    // and a spy that is collected without mockRestore() leaks nothing.
+    JSC::WriteBarrier<JSObject> spyTarget;
+    // The property name as a JSString, or a Symbol for a symbol key.
+    JSC::WriteBarrier<JSC::Unknown> spyPropertyKey;
+    unsigned spyAttributes = 0;
+
+    static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
+
+    JSString* jsName()
+    {
+        return m_originalName.get();
+    }
+
+    void setName(const WTF::String& name)
+    {
+        auto& vm = this->vm();
+        auto* nameStr = jsString(vm, name);
+
+        // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
+        m_originalName.set(vm, this, nameStr);
+
+        this->putDirect(vm, vm.propertyNames->name, nameStr, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+    }
+
+    void copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        WTF::String nameToUse;
+        if (auto* fn = dynamicDowncast<JSFunction>(value)) {
+            nameToUse = fn->name(vm);
+            JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, );
+            if (lengthJSValue.isNumber()) {
+                this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
             }
-        } else if (auto index = parseIndex(this->spyIdentifier)) {
-            // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
-            target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes, PutDirectIndexLikePutDirect);
+        } else if (auto* fn = dynamicDowncast<JSMockFunction>(value)) {
+            JSValue nameValue = fn->get(global, vm.propertyNames->name);
+            RETURN_IF_EXCEPTION(scope, );
+            nameToUse = nameValue.toWTFString(global);
+            RETURN_IF_EXCEPTION(scope, );
+        } else if (auto* fn = dynamicDowncast<InternalFunction>(value)) {
+            nameToUse = fn->name();
         } else {
-            target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
+            nameToUse = "mockConstructor"_s;
+        }
+        this->setName(nameToUse);
+    }
+
+    void initMock()
+    {
+        mock.initLater(
+            [](const JSC::LazyProperty<JSMockFunction, JSObject>::Initializer& init) {
+                JSMockFunction* mock = init.owner;
+                Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(mock->globalObject());
+                auto& vm = JSC::getVM(globalObject);
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                JSC::Structure* structure = globalObject->mockModule.mockObjectStructure.getInitializedOnMainThread(globalObject);
+                JSObject* object = JSC::constructEmptyObject(init.vm, structure);
+                object->putDirectOffset(init.vm, 0, mock->getCalls());
+                RETURN_IF_EXCEPTION(scope, );
+                object->putDirectOffset(init.vm, 1, mock->getContexts());
+                RETURN_IF_EXCEPTION(scope, );
+                object->putDirectOffset(init.vm, 2, mock->getInstances());
+                RETURN_IF_EXCEPTION(scope, );
+                object->putDirectOffset(init.vm, 3, mock->getReturnValues());
+                RETURN_IF_EXCEPTION(scope, );
+                object->putDirectOffset(init.vm, 4, mock->getInvocationCallOrder());
+                RETURN_IF_EXCEPTION(scope, );
+                init.set(object);
+            });
+    }
+
+    void clear()
+    {
+        this->calls.clear();
+        this->instances.clear();
+        this->returnValues.clear();
+        this->contexts.clear();
+        this->invocationCallOrder.clear();
+
+        if (this->mock.isInitialized()) {
+            this->initMock();
         }
     }
 
-    this->spyTarget.clear();
-    this->spyIdentifier = JSC::Identifier();
-    this->spyAttributes = 0;
-}
+    void reset()
+    {
+        this->clear();
+        this->implementation.clear();
+        this->fallbackImplmentation.clear();
+        this->tail.clear();
+    }
 
-JSArray* JSMockFunction::getCalls() const
-{
-    JSArray* val = calls.get();
-    if (!val) {
-        val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-        if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
-        if (!val) return {};
-        this->calls.set(vm(), this, val);
+    void clearSpy()
+    {
+        this->reset();
+
+        if (auto* target = this->spyTarget.get()) {
+            JSValue implValue = this->spyOriginal.get();
+            if (!implValue) {
+                implValue = jsUndefined();
+            }
+
+            auto& vm = this->vm();
+            JSValue keyValue = this->spyPropertyKey.get();
+            Identifier key = keyValue.isSymbol()
+                ? Identifier::fromUid(asSymbol(keyValue)->privateName())
+                : Identifier::fromString(vm, asString(keyValue)->tryGetValue());
+
+            // Reset the spy back to the original value.
+            if (this->spyAttributes & SpyAttributeESModuleNamespace) {
+                if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
+                    moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), key, implValue);
+                }
+            } else if (auto index = parseIndex(key)) {
+                // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
+                target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes, PutDirectIndexLikePutDirect);
+            } else {
+                target->putDirect(vm, key, implValue, this->spyAttributes);
+            }
+        }
+
+        this->spyTarget.clear();
+        this->spyPropertyKey.clear();
+        this->spyAttributes = 0;
     }
-    return val;
-}
-JSArray* JSMockFunction::getContexts() const
-{
-    JSArray* val = contexts.get();
-    if (!val) {
-        val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-        if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
-        if (!val) return {};
-        this->contexts.set(vm(), this, val);
+
+    JSArray* getCalls() const
+    {
+        JSArray* val = calls.get();
+        if (!val) {
+            val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
+            if (!val) return {};
+            this->calls.set(vm(), this, val);
+        }
+        return val;
     }
-    return val;
-}
-JSArray* JSMockFunction::getInstances() const
-{
-    JSArray* val = instances.get();
-    if (!val) {
-        val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-        if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
-        if (!val) return {};
-        this->instances.set(vm(), this, val);
+    JSArray* getContexts() const
+    {
+        JSArray* val = contexts.get();
+        if (!val) {
+            val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
+            if (!val) return {};
+            this->contexts.set(vm(), this, val);
+        }
+        return val;
     }
-    return val;
-}
-JSArray* JSMockFunction::getReturnValues() const
-{
-    JSArray* val = returnValues.get();
-    if (!val) {
-        val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-        if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
-        if (!val) return {};
-        this->returnValues.set(vm(), this, val);
+    JSArray* getInstances() const
+    {
+        JSArray* val = instances.get();
+        if (!val) {
+            val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
+            if (!val) return {};
+            this->instances.set(vm(), this, val);
+        }
+        return val;
     }
-    return val;
-}
-JSArray* JSMockFunction::getInvocationCallOrder() const
-{
-    JSArray* val = invocationCallOrder.get();
-    if (!val) {
-        val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
-        if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
-        if (!val) return {};
-        this->invocationCallOrder.set(vm(), this, val);
+    JSArray* getReturnValues() const
+    {
+        JSArray* val = returnValues.get();
+        if (!val) {
+            val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
+            if (!val) return {};
+            this->returnValues.set(vm(), this, val);
+        }
+        return val;
     }
-    return val;
-}
+    JSArray* getInvocationCallOrder() const
+    {
+        JSArray* val = invocationCallOrder.get();
+        if (!val) {
+            val = JSC::constructEmptyArray(globalObject(), nullptr, 0);
+            if (!val) ASSERT_PENDING_EXCEPTION(globalObject());
+            if (!val) return {};
+            this->invocationCallOrder.set(vm(), this, val);
+        }
+        return val;
+    }
+
+    template<typename, JSC::SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSMockFunction, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSMockFunction, m_subspaceForJSMockFunction));
+    }
+
+    JSMockFunction(JSC::VM& vm, JSC::Structure* structure, CallbackKind wrapKind)
+        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionCall)
+    {
+        initMock();
+    }
+};
 
 template<typename Visitor>
 void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
@@ -413,6 +480,8 @@ void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
     visitor.append(fn->returnValues);
     visitor.append(fn->invocationCallOrder);
     visitor.append(fn->spyOriginal);
+    visitor.append(fn->spyTarget);
+    visitor.append(fn->spyPropertyKey);
     fn->mock.visit(visitor);
 }
 
@@ -532,17 +601,6 @@ static const HashTableValue JSMockFunctionPrototypeTableValues[] = {
 };
 
 const ClassInfo JSMockFunction::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunction) };
-
-class SpyWeakHandleOwner final : public JSC::WeakHandleOwner {
-public:
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
-};
-
-static SpyWeakHandleOwner& weakValueHandleOwner()
-{
-    static NeverDestroyed<SpyWeakHandleOwner> jscWeakValueHandleOwner;
-    return jscWeakValueHandleOwner;
-}
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
 
@@ -1444,8 +1502,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         }
 
         auto* mock = JSMockFunction::create(vm, globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), CallbackKind::GetterSetter);
-        mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
-        mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
+        mock->spyTarget.set(vm, mock, object);
+        mock->spyPropertyKey.set(vm, mock, propertyKey.isSymbol() ? JSValue(Symbol::create(vm, static_cast<SymbolImpl&>(*propertyKey.uid()))) : JSValue(jsString(vm, String(propertyKey.publicName()))));
         mock->spyAttributes = hasValue ? slot.attributes() : 0;
         unsigned attributes = 0;
 

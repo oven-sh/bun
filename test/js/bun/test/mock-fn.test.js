@@ -1097,6 +1097,35 @@ describe("spyOn", () => {
     expect(fn).not.toBe(_original);
   });
 
+  test("spyOn works with symbol keys", () => {
+    const key = Symbol("original");
+    const registered = Symbol.for("spyOn registered");
+    var obj = {
+      [key]() {
+        return 42;
+      },
+      [registered]() {
+        return 43;
+      },
+    };
+    const original = obj[key];
+    const originalRegistered = obj[registered];
+
+    const fn = spyOn(obj, key).mockReturnValue(1);
+    const fn2 = spyOn(obj, registered).mockReturnValue(2);
+    expect(obj[key]()).toBe(1);
+    expect(obj[registered]()).toBe(2);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn2).toHaveBeenCalledTimes(1);
+
+    fn.mockRestore();
+    fn2.mockRestore();
+    expect(obj[key]).toBe(original);
+    expect(obj[registered]).toBe(originalRegistered);
+    expect(obj[key]()).toBe(42);
+    expect(obj[registered]()).toBe(43);
+  });
+
   if (isBun) {
     // Test for spyOn with numeric/indexed property keys
     test("spyOn works with indexed properties", () => {

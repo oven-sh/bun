@@ -1,10 +1,10 @@
 import { test } from "bun:test";
 import { expectRssDeltaBelow } from "harness";
 
-// A spy that is garbage collected without mockRestore() must release what it
-// holds on its target: a JSC::Weak handle and a ref on the property name atom.
-// The name is 256 KiB and unique per spy so a leaked ref shows up in RSS.
-test.concurrent("spyOn does not leak the target handle and property name of a collected spy", async () => {
+// A spy that is garbage collected without mockRestore() must release its
+// target and its property name. The name is 256 KiB and unique per spy so
+// anything the dead spy still pins shows up in RSS.
+test.concurrent("spyOn does not leak the target and property name of a collected spy", async () => {
   const code = /* js */ `
     const { spyOn } = require("bun:test");
     const base = Buffer.alloc(256 * 1024, "a").toString();

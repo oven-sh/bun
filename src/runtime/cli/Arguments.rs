@@ -2491,8 +2491,7 @@ fn parse_build_command_options(
                 Output::flush();
             }
             options::Format::Cjs => {
-                // `ctx.args` is replaced by the returned `opts` after parsing,
-                // so the target default has to go through `opts`.
+                // `ctx.args` is replaced by the returned `opts`, so defaults go through `opts`.
                 if opts.target.is_none() {
                     opts.target = Some(api::Target::Node);
                 }
@@ -2519,8 +2518,6 @@ fn parse_build_command_options(
         }
     } else if !ctx.bundler_options.bytecode && !ctx.bundler_options.compile {
         // No explicit --format: infer it from the --outfile extension, like esbuild.
-        // Node decides the module format of .cjs/.mjs files from the extension alone,
-        // so an ESM bundle written to a .cjs file can never load.
         let outfile: &[u8] = &ctx.bundler_options.outfile;
         if strings::has_suffix_comptime(outfile, b".cjs") {
             ctx.bundler_options.output_format = options::Format::Cjs;

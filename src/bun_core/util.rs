@@ -3936,6 +3936,15 @@ pub(crate) fn set_node_options_argc(n: usize) {
     NODE_OPTIONS_ARGC.store(n, core::sync::atomic::Ordering::Relaxed);
 }
 
+/// Total env-injected argv tokens. They occupy the contiguous window
+/// `argv[1 .. 1 + injected_argv_argc()]` (NODE_OPTIONS first, then
+/// BUN_OPTIONS). A consumer that locates real CLI arguments by position must
+/// offset by this sum, not by one of the two counters alone.
+#[inline]
+pub fn injected_argv_argc() -> usize {
+    node_options_argc() + bun_options_argc()
+}
+
 /// Trait for arg types accepted by [`append_options_env`].
 /// Impl'd for `bun_core::String`
 /// and `Box<ZStr>` in their owning crates.

@@ -421,36 +421,53 @@ enum Supported {
     OptionalValue,
 }
 
-/// The subset of Node's allowlist that Bun's CLI implements, plus Node's
-/// short forms (`-r`, `-C`) mapped to the long spelling Bun declares.
-fn supported(flag: &[u8]) -> Option<(&'static [u8], Supported)> {
-    Some(match flag {
-        b"--conditions" | b"-C" => (b"--conditions", Supported::Value),
-        b"--require" | b"-r" => (b"--require", Supported::Value),
-        b"--import" => (b"--import", Supported::Value),
-        b"--disable-warning" => (b"--disable-warning", Supported::Value),
-        b"--dns-result-order" => (b"--dns-result-order", Supported::Value),
-        b"--max-http-header-size" => (b"--max-http-header-size", Supported::Value),
-        b"--redirect-warnings" => (b"--redirect-warnings", Supported::Value),
-        b"--title" => (b"--title", Supported::Value),
-        b"--unhandled-rejections" => (b"--unhandled-rejections", Supported::Value),
-        b"--expose-gc" => (b"--expose-gc", Supported::Flag),
-        b"--no-addons" => (b"--no-addons", Supported::Flag),
-        b"--no-deprecation" => (b"--no-deprecation", Supported::Flag),
-        b"--no-warnings" => (b"--no-warnings", Supported::Flag),
-        b"--pending-deprecation" => (b"--pending-deprecation", Supported::Flag),
-        b"--preserve-symlinks" => (b"--preserve-symlinks", Supported::Flag),
-        b"--preserve-symlinks-main" => (b"--preserve-symlinks-main", Supported::Flag),
-        b"--throw-deprecation" => (b"--throw-deprecation", Supported::Flag),
-        b"--trace-deprecation" => (b"--trace-deprecation", Supported::Flag),
-        b"--trace-warnings" => (b"--trace-warnings", Supported::Flag),
-        b"--use-system-ca" => (b"--use-system-ca", Supported::Flag),
-        b"--zero-fill-buffers" => (b"--zero-fill-buffers", Supported::Flag),
-        b"--inspect" => (b"--inspect", Supported::OptionalValue),
-        b"--inspect-brk" => (b"--inspect-brk", Supported::OptionalValue),
-        b"--inspect-wait" => (b"--inspect-wait", Supported::OptionalValue),
-        _ => return None,
-    })
+/// The subset of Node's allowlist that Bun's CLI implements. Each entry maps
+/// the accepted spellings (Node's short forms `-r` / `-C` included) to the
+/// long spelling Bun declares in its param tables.
+struct SplicedFlag {
+    names: &'static [&'static [u8]],
+    canonical: &'static [u8],
+    kind: Supported,
+}
+
+#[rustfmt::skip]
+static SPLICED: &[SplicedFlag] = &[
+    SplicedFlag { names: &[b"--conditions", b"-C"], canonical: b"--conditions", kind: Supported::Value },
+    SplicedFlag { names: &[b"--require", b"-r"], canonical: b"--require", kind: Supported::Value },
+    SplicedFlag { names: &[b"--import"], canonical: b"--import", kind: Supported::Value },
+    SplicedFlag { names: &[b"--disable-warning"], canonical: b"--disable-warning", kind: Supported::Value },
+    SplicedFlag { names: &[b"--dns-result-order"], canonical: b"--dns-result-order", kind: Supported::Value },
+    SplicedFlag { names: &[b"--max-http-header-size"], canonical: b"--max-http-header-size", kind: Supported::Value },
+    SplicedFlag { names: &[b"--redirect-warnings"], canonical: b"--redirect-warnings", kind: Supported::Value },
+    SplicedFlag { names: &[b"--title"], canonical: b"--title", kind: Supported::Value },
+    SplicedFlag { names: &[b"--unhandled-rejections"], canonical: b"--unhandled-rejections", kind: Supported::Value },
+    SplicedFlag { names: &[b"--expose-gc"], canonical: b"--expose-gc", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--no-addons"], canonical: b"--no-addons", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--no-deprecation"], canonical: b"--no-deprecation", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--no-warnings"], canonical: b"--no-warnings", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--pending-deprecation"], canonical: b"--pending-deprecation", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--preserve-symlinks"], canonical: b"--preserve-symlinks", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--preserve-symlinks-main"], canonical: b"--preserve-symlinks-main", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--throw-deprecation"], canonical: b"--throw-deprecation", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--trace-deprecation"], canonical: b"--trace-deprecation", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--trace-warnings"], canonical: b"--trace-warnings", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--use-system-ca"], canonical: b"--use-system-ca", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--zero-fill-buffers"], canonical: b"--zero-fill-buffers", kind: Supported::Flag },
+    SplicedFlag { names: &[b"--inspect"], canonical: b"--inspect", kind: Supported::OptionalValue },
+    SplicedFlag { names: &[b"--inspect-brk"], canonical: b"--inspect-brk", kind: Supported::OptionalValue },
+    SplicedFlag { names: &[b"--inspect-wait"], canonical: b"--inspect-wait", kind: Supported::OptionalValue },
+];
+
+/// Canonical long spellings `filter` can splice into argv. The CLI crate
+/// cross-checks these against its param tables in debug builds, so a flag
+/// that leaves the tables cannot silently become a no-op here.
+pub fn spliced_long_flags() -> impl Iterator<Item = &'static [u8]> {
+    SPLICED.iter().map(|f| f.canonical)
+}
+
+fn supported(flag: &[u8]) -> Option<(&'static [u8], &'static Supported)> {
+    let entry = SPLICED.iter().find(|f| f.names.iter().any(|n| *n == flag))?;
+    Some((entry.canonical, &entry.kind))
 }
 
 #[cold]

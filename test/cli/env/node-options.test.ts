@@ -208,6 +208,56 @@ describe("NODE_OPTIONS environment variable", () => {
     });
   });
 
+  test.concurrent("BUN_OPTIONS wins over NODE_OPTIONS, execArgv hides only NODE_OPTIONS", async () => {
+    using dir = tempDir("node-options-both", {
+      "argv.mjs": `console.log(process.title, JSON.stringify(process.execArgv));\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "argv.mjs"],
+      env: { ...bunEnv, NODE_OPTIONS: "--title=from-node", BUN_OPTIONS: "--title=from-bun" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // BUN_OPTIONS tokens stay visible in execArgv (pre-existing Bun
+    // behavior); NODE_OPTIONS tokens are hidden (Node parity).
+    expect({ stdout, exitCode }).toEqual({ stdout: 'from-bun ["--title=from-bun"]\n', exitCode: 0 });
+  });
+
+  test.concurrent("every applied flag is in process.allowedNodeEnvironmentFlags", () => {
+    const applied = [
+      "--conditions",
+      "-C",
+      "--require",
+      "-r",
+      "--import",
+      "--disable-warning",
+      "--dns-result-order",
+      "--max-http-header-size",
+      "--redirect-warnings",
+      "--title",
+      "--unhandled-rejections",
+      "--expose-gc",
+      "--no-addons",
+      "--no-deprecation",
+      "--no-warnings",
+      "--pending-deprecation",
+      "--preserve-symlinks",
+      "--preserve-symlinks-main",
+      "--throw-deprecation",
+      "--trace-deprecation",
+      "--trace-warnings",
+      "--use-system-ca",
+      "--zero-fill-buffers",
+      "--inspect",
+      "--inspect-brk",
+      "--inspect-wait",
+    ];
+    expect(applied.filter(flag => !process.allowedNodeEnvironmentFlags.has(flag))).toEqual([]);
+  });
+
   test.concurrent("does not break bun install", async () => {
     using dir = tempDir("node-options-install", {
       "package.json": `{"name":"x","version":"1.0.0"}`,

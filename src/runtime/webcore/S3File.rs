@@ -252,7 +252,6 @@ fn construct_s3_file_internal_store(
     construct_s3_file_with_s3_credentials(global, path, options, &existing_credentials)
 }
 
-/// if the credentials have changed, we need to clone it, if not we can just ref/deref it
 pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     global: &JSGlobalObject,
     path: PathLike,
@@ -276,11 +275,6 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     let credentials = if aws_options.changed_credentials {
         std::mem::take(&mut aws_options.credentials)
     } else {
-        // The `Store::S3` field is `Rc<S3Credentials>` (separate rc
-        // layer), so we can't share the existing intrusive allocation —
-        // deep-clone the value instead and let `init_s3` `Rc::new` it.
-        // PERF: profile if hot once Store.rs migrates
-        // `Rc<S3Credentials>` → `IntrusiveRc`.
         default_credentials.clone()
     };
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");

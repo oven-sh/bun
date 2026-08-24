@@ -37,10 +37,6 @@ pub(crate) trait S3CredentialsExt {
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
     #[allow(clippy::too_many_arguments)]
     fn get_credentials_with_options(
-        // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
-        // has a private `ref_count` field and no `Clone`, so callers holding a borrow
-        // (e.g. `&IntrusiveRc<S3Credentials>` deref) cannot produce an owned copy. The
-        // real impl in `s3/credentials_jsc.rs` deep-copies internally.
         this: &S3Credentials,
         default_options: MultiPartUploadOptions,
         options: Option<JSValue>,
@@ -248,21 +244,11 @@ where
 
 #[bun_jsc::JsClass]
 pub struct S3Client {
-    pub(crate) credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub(crate) credentials: Box<S3Credentials>,
     pub(crate) options: MultiPartUploadOptions,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-}
-
-impl Drop for S3Client {
-    fn drop(&mut self) {
-        // `IntrusiveRc<T>` is `bun_ptr::RefPtr<T>`, which has no `Drop` impl
-        // of its own (only `ScopedRef<T>` does), so the +1 taken by
-        // `aws_options.credentials.dupe()` in `constructor` must be released
-        // explicitly.
-        self.credentials.deref();
-    }
 }
 
 impl S3Client {

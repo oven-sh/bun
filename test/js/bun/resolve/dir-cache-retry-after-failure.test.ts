@@ -85,7 +85,7 @@ const files = {
         await t("F2", "p3");
       },
 
-      async packages() {
+      async worker() {
         // A file added to a package that was already resolved, seen by this
         // thread and by a new Worker, which shares the process-wide cache.
         write(nm("pkg", "package.json"), '{"name":"pkg"}');
@@ -104,7 +104,9 @@ const files = {
         });
         console.log("D3", fromWorker);
         await worker.terminate();
+      },
 
+      async reinstall() {
         // The package is replaced with a version whose entry file has another
         // name. The stale listing still names the old file, so the first load
         // fails reading it and drops the directory. The next one resolves again.
@@ -169,14 +171,16 @@ async function runGroup(group: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr.trim()).toBe("");
-  expect(exitCode).toBe(0);
-  return normalizeBunSnapshot(stdout, String(dir));
+  return { stdout: normalizeBunSnapshot(stdout, String(dir)), stderr: stderr.trim(), exitCode };
 }
 
 describe.concurrent("a failed resolution sees files and packages created after the miss", () => {
   test("require and import of a package or directory", async () => {
     expect(await runGroup("require")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
       "A1 ERR Cannot find module 'p1'
       A2 OK 42
       A2sub OK 42
@@ -186,22 +190,45 @@ describe.concurrent("a failed resolution sees files and packages created after t
       C2 OK 42
       F1 ERR Cannot find package 'p3' imported from <dir>/main.mjs
       F2 OK 42"
+      ,
+      }
     `);
   });
 
-  test("a file added to a resolved package, and a package replaced on disk", async () => {
-    expect(await runGroup("packages")).toMatchInlineSnapshot(`
+  test("a file added to a resolved package, from this thread and a Worker", async () => {
+    expect(await runGroup("worker")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
       "D1 OK 1
       D2 OK 2
-      D3 OK 3
-      E1 OK 1.0.0
+      D3 OK 3"
+      ,
+      }
+    `);
+  });
+
+  test("a package replaced on disk with another entry file", async () => {
+    expect(await runGroup("reinstall")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "E1 OK 1.0.0
       E2 ERR ENOENT reading "<dir>/node_modules/pkg2/lib1.js"
       E3 OK 2.0.0"
+      ,
+      }
     `);
   });
 
   test("Bun.build() after the package was installed", async () => {
     expect(await runGroup("build")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
       "G1a ERR Could not resolve: "dpk1". Maybe you need to "bun install"?
       G1b OK 1
       G2a ERR Could not resolve: "dpk2". Maybe you need to "bun install"?
@@ -212,6 +239,8 @@ describe.concurrent("a failed resolution sees files and packages created after t
       G4b OK 1
       G5a ERR ModuleNotFound resolving "dpk5" (entry point)
       G5b OK 1"
+      ,
+      }
     `);
   });
 });

@@ -2533,7 +2533,8 @@ impl<'a> Resolver<'a> {
 
     /// Drop every recorded directory from both caches so a retry reads them
     /// from disk. A miss caches what it did not find, and nothing outside watch
-    /// mode invalidates that. Returns whether anything was cached.
+    /// mode invalidates that. Returns whether any of them was cached, which is
+    /// the case for every lookup that reached an existing directory.
     pub fn bust_touched_dirs(&mut self) -> bool {
         let slot = touched_dirs_get();
         if slot.is_null() {

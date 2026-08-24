@@ -2310,7 +2310,6 @@ pub mod bv2_impl {
                             // Drop what this lookup read from the cache and try once more.
                             if !had_busted_dir_cache {
                                 had_busted_dir_cache = true;
-                                // Only re-query if we previously had something cached.
                                 if resolver.bust_touched_dirs() {
                                     continue;
                                 }
@@ -2336,7 +2335,6 @@ pub mod bv2_impl {
                             }
                         }
 
-                        let handles_import_errors;
                         // reshaped for borrowck — `log_for_resolution_failures` borrows
                         // `&mut self`; the returned log is backed by either a DevServer-owned slot or
                         // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
@@ -2355,9 +2353,6 @@ pub mod bv2_impl {
                                     [import_record.importer_source_index as usize]
                                     .as_mut_slice()
                                     [import_record.import_record_index as usize];
-                            handles_import_errors = record
-                                .flags
-                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
 
                             // Disable failing packages from being printed.
                             // This may cause broken code to write.
@@ -6291,7 +6286,6 @@ pub mod bv2_impl {
                                         bstr::BStr::new(&source.path.text),
                                         bstr::BStr::new(&import_record.path.text)
                                     );
-                                    // Only re-query if we previously had something cached.
                                     if transpiler.resolver.bust_touched_dirs() {
                                         continue 'inner;
                                     }

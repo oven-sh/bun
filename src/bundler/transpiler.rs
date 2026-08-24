@@ -461,7 +461,6 @@ impl<'a> Transpiler<'a> {
         match first {
             Ok(r) => self.reject_disabled_entry_point(r, entry_point),
             Err(err) => {
-                // Only re-query if we previously had something cached.
                 if self.resolver.bust_touched_dirs() {
                     if let Ok(result) = self._resolve_entry_point(entry_point) {
                         return self.reject_disabled_entry_point(result, entry_point);

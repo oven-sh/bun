@@ -414,5 +414,40 @@ describe("bunfig.toml test options", () => {
       expect(stderr).toMatch(/retry.* cannot be used with .*rerun/i);
       expect(exitCode).toBe(1);
     });
+
+    // A --parallel worker loads bunfig.toml again. It must receive the
+    // coordinator's --retry 0, or the bunfig retry would apply in the worker.
+    // Two files: with one file the coordinator runs it in-process, no worker.
+    test.concurrent("--retry 0 wins over [test] retry in --parallel workers", async () => {
+      const failsOnce = (marker: string) => `
+        import { test } from "bun:test";
+        import { existsSync, writeFileSync } from "node:fs";
+        test("fails on the first attempt", () => {
+          const marker = import.meta.dir + "/${marker}";
+          if (!existsSync(marker)) {
+            writeFileSync(marker, "");
+            throw new Error("first attempt");
+          }
+        });
+      `;
+      using dir = tempDir("bunfig-retry-parallel-cli", {
+        "one.test.ts": failsOnce("first-attempt-one"),
+        "two.test.ts": failsOnce("first-attempt-two"),
+        "bunfig.toml": `[test]\nretry = 2`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--parallel=2", "--retry", "0"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const output = stdout + stderr;
+      expect(output).not.toContain("(attempt 2)");
+      expect(output).toContain("2 fail");
+      expect(exitCode).toBe(1);
+    });
   });
 });

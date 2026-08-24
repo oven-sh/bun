@@ -2005,7 +2005,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     // Only a bunfig `seed` can reach this without `randomize`: `--seed` sets both.
     if ctx.test_options.seed.is_some() && !ctx.test_options.randomize {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: \"seed\" can only be used when \"randomize\" is true"
+            "<r><red>error<r>: \"seed\" in bunfig.toml can only be used when \"randomize\" is true or --randomize is passed"
         );
         Output::flush();
         Global::exit(1);

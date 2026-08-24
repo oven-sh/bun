@@ -1456,7 +1456,7 @@ impl Convert<'_> {
             T::Integer => MacroValue::Number(value.to_int32() as f64),
             T::Double => MacroValue::Number(value.as_number()),
             T::String => {
-                let string = bun_core::OwnedString::new(value.to_bun_string(global)?);
+                let string = value.to_bun_string(global)?;
                 // JS-sourced WTF strings are never UTF-8-tagged: two arms suffice.
                 MacroValue::String(if string.is_utf16() {
                     Box::from(string.utf16())
@@ -1487,15 +1487,15 @@ impl Convert<'_> {
                 let object = value.get_object().expect("Tag::Object is an object");
                 // SAFETY: `object` is a live JSC heap cell for the duration of the iteration.
                 let object = unsafe { &*object };
-                let mut iter = JSPropertyIterator::init(
+                let iter = JSPropertyIterator::init(
                     global,
                     object,
                     JSPropertyIteratorOptions::new(false, true),
                 )?;
                 let mut properties = Vec::with_capacity(iter.len);
-                while let Some(key) = iter.next()? {
-                    let value = self.value(iter.value)?;
-                    properties.push((Box::from(key.to_owned_slice()), value));
+                while let Some((key, value)) = iter.next()? {
+                    let value = self.value(value)?;
+                    properties.push((key.to_owned_slice().into_boxed_slice(), value));
                 }
                 MacroValue::Object(properties)
             }

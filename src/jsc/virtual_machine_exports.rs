@@ -65,12 +65,6 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 
-// HOST_EXPORT(Bun__isBunMain, c)
-pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
-    // JSGlobalObject::bun_vm contract.
-    str.eql_utf8(global.bun_vm().as_mut().main())
-}
-
 // HOST_EXPORT(Bun__reportUnhandledError, c)
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     crate::mark_binding!();

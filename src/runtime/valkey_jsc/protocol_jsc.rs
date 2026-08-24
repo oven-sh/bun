@@ -117,9 +117,6 @@ pub(crate) fn resp_value_to_js_with_options(
             for entry in entries.iter_mut() {
                 let js_key =
                     resp_value_to_js_with_options(&mut entry.key, global, ToJSOptions::default())?;
-                // Route through `put_to_property_key`, which performs
-                // index-vs-string property dispatch on the JSValue key.
-                let _ = js_key.to_bun_string(global)?; // preserve toString side-effect/exception path
                 let js_value = resp_value_to_js_with_options(&mut entry.value, global, options)?;
 
                 JSValue::put_to_property_key(js_obj, global, js_key, js_value)?;

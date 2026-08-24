@@ -38,6 +38,7 @@
 #include "SerializedScriptValue.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/JSPromise.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -52,8 +53,8 @@ extern "C" {
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
-    BunString name,
-    BunString url,
+    const BunString* name,
+    const BunString* url,
     BunString* errorMessage,
     uint32_t parentContextId,
     uint32_t contextId,
@@ -141,11 +142,13 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
+    BunString name = Bun::toString(m_options.name);
+    BunString url = Bun::toString(scriptURL);
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
-        Bun::toString(m_options.name),
-        Bun::toString(scriptURL),
+        &name,
+        &url,
         &errorMessage,
         m_loaderContextIdentifier,
         m_workerContextIdentifier,
@@ -165,7 +168,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     if (!m_workerThread) {
         m_state.store(State::Closed);
         deref();
-        return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
+        return Exception { TypeError, errorMessage.transferToWTFString() };
     }
     return {};
 }

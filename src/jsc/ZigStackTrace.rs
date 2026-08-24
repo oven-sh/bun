@@ -29,6 +29,14 @@ pub struct ZigStackTrace {
     pub(crate) referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
+impl Drop for ZigStackTrace {
+    fn drop(&mut self) {
+        if let Some(source) = self.referenced_source_provider.take() {
+            SourceProvider::opaque_mut(source.as_ptr()).deref();
+        }
+    }
+}
+
 impl ZigStackTrace {
     pub fn from_frames(frames_slice: &mut [ZigStackFrame]) -> ZigStackTrace {
         ZigStackTrace {
@@ -77,20 +85,6 @@ impl ZigStackTrace {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements
         // (populated by C++ via FFI).
         unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
-    }
-
-    pub(crate) fn frames_mutable(&mut self) -> &mut [ZigStackFrame] {
-        // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements.
-        unsafe { bun_core::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
-    }
-
-    /// Mutable view of the populated source-line strings (`[0..source_lines_len]`).
-    #[inline]
-    pub(crate) fn source_lines_mut(&mut self) -> &mut [BunString] {
-        // SAFETY: `source_lines_ptr` points to a caller-owned buffer of at least
-        // `source_lines_len` initialized elements (populated by C++ via FFI).
-        // The borrow is tied to `&mut self`.
-        unsafe { bun_core::ffi::slice_mut(self.source_lines_ptr, self.source_lines_len as usize) }
     }
 
     /// Immutable view of the populated source-line numbers (`[0..source_lines_len]`).

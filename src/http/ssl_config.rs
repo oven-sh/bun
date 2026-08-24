@@ -51,10 +51,87 @@ pub struct SSLConfig {
     pub requires_custom_request_ctx: bool,
     pub is_using_default_ciphers: bool,
     pub low_memory_mode: bool,
+    /// ClientHello fingerprint knobs. Only the fetch client applies them
+    /// (`crate::tls_fingerprint`).
+    pub fingerprint: Fingerprint,
     /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
     /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
     /// context.
     pub(crate) cached_hash: AtomicU64,
+}
+
+/// How the fetch client shapes its ClientHello beyond the cipher, group and
+/// signature-algorithm lists. Every field maps to one BoringSSL call; see
+/// `crate::tls_fingerprint::apply_to_ssl_ctx` / `apply_to_ssl`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Fingerprint {
+    /// `SSL_CTX_set_grease_enabled`: RFC 8701 GREASE values in the cipher,
+    /// extension, group and version lists.
+    pub grease: bool,
+    /// `SSL_set_permute_extensions`: shuffle the extension order.
+    pub permute_extensions: bool,
+    /// `SSL_set_enable_ech_grease`: a GREASE `encrypted_client_hello` (65037).
+    pub ech_grease: bool,
+    /// `SSL_enable_ocsp_stapling`: `status_request` (5).
+    pub ocsp_stapling: bool,
+    /// `SSL_enable_signed_cert_timestamps`: `signed_certificate_timestamp` (18).
+    pub signed_cert_timestamps: bool,
+    /// Cleared: `SSL_OP_NO_TICKET`, which drops `session_ticket` (35).
+    pub session_tickets: bool,
+    /// ALPS (`application_settings`) for `h2`: 0 = off, else the extension
+    /// codepoint, 17513 (old) or 17613 (new).
+    pub alps_codepoint: u16,
+    /// `compress_certificate` (27) algorithms in preference order. Values are
+    /// the RFC 8879 ids (1 zlib, 2 brotli, 3 zstd); 0 ends the list.
+    pub cert_compression: [u8; 3],
+    /// Order of the TLS 1.3 suites in the ClientHello. BoringSSL fixes the set
+    /// but lets the client pick which of its two orders to use.
+    pub tls13_cipher_order: Tls13CipherOrder,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[repr(u8)]
+pub enum Tls13CipherOrder {
+    /// Whatever `EVP_has_aes_hardware()` says on this machine.
+    #[default]
+    Default = 0,
+    /// AES_128_GCM, AES_256_GCM, CHACHA20_POLY1305 (Chrome, Safari).
+    AesFirst = 1,
+    /// CHACHA20_POLY1305, AES_128_GCM, AES_256_GCM.
+    ChaChaFirst = 2,
+}
+
+impl Fingerprint {
+    pub const DEFAULT: Fingerprint = Fingerprint {
+        grease: false,
+        permute_extensions: false,
+        ech_grease: false,
+        ocsp_stapling: true,
+        signed_cert_timestamps: true,
+        session_tickets: true,
+        alps_codepoint: 0,
+        cert_compression: [0; 3],
+        tls13_cipher_order: Tls13CipherOrder::Default,
+    };
+
+    /// Algorithms in `cert_compression`, in order.
+    pub fn cert_compression_algs(&self) -> impl Iterator<Item = u8> + '_ {
+        self.cert_compression
+            .iter()
+            .copied()
+            .take_while(|&alg| alg != 0)
+    }
+
+    #[inline]
+    pub fn is_default(&self) -> bool {
+        *self == Self::DEFAULT
+    }
+}
+
+impl Default for Fingerprint {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// Casing alias for callers that snake_cased the type name.
@@ -120,6 +197,7 @@ impl SSLConfig {
         requires_custom_request_ctx: false,
         is_using_default_ciphers: true,
         low_memory_mode: false,
+        fingerprint: Fingerprint::DEFAULT,
         cached_hash: AtomicU64::new(0),
     };
 
@@ -327,6 +405,9 @@ impl SSLConfig {
         if self.low_memory_mode != other.low_memory_mode {
             return false;
         }
+        if self.fingerprint != other.fingerprint {
+            return false;
+        }
         true
     }
 
@@ -384,6 +465,18 @@ impl SSLConfig {
         hasher.update(&[u8::from(self.requires_custom_request_ctx)]);
         hasher.update(&[u8::from(self.is_using_default_ciphers)]);
         hasher.update(&[u8::from(self.low_memory_mode)]);
+        let fp = &self.fingerprint;
+        hasher.update(&[
+            u8::from(fp.grease),
+            u8::from(fp.permute_extensions),
+            u8::from(fp.ech_grease),
+            u8::from(fp.ocsp_stapling),
+            u8::from(fp.signed_cert_timestamps),
+            u8::from(fp.session_tickets),
+            fp.tls13_cipher_order as u8,
+        ]);
+        hasher.update(&fp.alps_codepoint.to_ne_bytes());
+        hasher.update(&fp.cert_compression);
         let hash = hasher.final_();
         // Avoid 0 since it's the sentinel for "not computed"
         let hash = if hash == 0 { 1 } else { hash };
@@ -483,6 +576,7 @@ impl Clone for SSLConfig {
             requires_custom_request_ctx: self.requires_custom_request_ctx,
             is_using_default_ciphers: self.is_using_default_ciphers,
             low_memory_mode: self.low_memory_mode,
+            fingerprint: self.fingerprint,
             cached_hash: AtomicU64::new(0),
         }
     }

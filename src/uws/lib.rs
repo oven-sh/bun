@@ -526,6 +526,13 @@ pub mod ssl_wrapper {
             Ok(this)
         }
 
+        /// The `SSL_CTX` this wrapper's `SSL` was created from. Private to the
+        /// wrapper (not shared with any socket group), so context-wide settings
+        /// that BoringSSL reads at handshake time can still be applied to it.
+        pub fn ssl_ctx(&self) -> Option<NonNull<boring_sys::SSL_CTX>> {
+            self.ctx.get()
+        }
+
         /// Mirror `us_socket_adopt_tls`'s server-side `SSL_set_verify` override.
         ///
         /// `us_ssl_ctx_from_options` turns on `SSL_VERIFY_PEER |

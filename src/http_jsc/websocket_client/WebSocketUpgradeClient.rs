@@ -696,6 +696,7 @@ where
                             hostname.as_ptr()
                         },
                         bun_http::AlpnOffer::H1,
+                        None,
                     );
                 }
             }

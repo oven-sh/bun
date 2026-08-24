@@ -279,7 +279,7 @@ pub fn is_error(code: usize) -> bool {
 }
 
 /// `ZSTD_decompress` into `out`'s spare capacity, which is the output bound; commits the bytes written.
-fn decompress_append(out: &mut Vec<u8>, src: &[u8]) -> core::result::Result<(), ZstdError> {
+pub fn decompress_append(out: &mut Vec<u8>, src: &[u8]) -> core::result::Result<(), ZstdError> {
     let spare = out.spare_capacity_mut();
     // SAFETY: spare/src are valid for their lengths; ZSTD_decompress reads src
     // and writes at most `spare.len()` bytes into spare.

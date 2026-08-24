@@ -134,6 +134,7 @@ fn flat_dir_has_native_addon(cache_dir: Fd, folder_name: &[u8]) -> Option<bool> 
             return None;
         }
     };
+    walker.resolve_unknown_entry_types = true;
     let found = loop {
         match walker.next() {
             Ok(Some(entry)) => {
@@ -218,6 +219,7 @@ fn hardlink_tree(cache_dir: Fd, folder_name: &[u8], dest_dir: &Dir) -> bool {
             return false;
         }
     };
+    walker.resolve_unknown_entry_types = true;
     let ok = loop {
         match walker.next() {
             Ok(Some(entry)) => match entry.kind {

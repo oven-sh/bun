@@ -24,13 +24,14 @@ describe("Bun.write stringifies non-BlobPart values via Bun::toStringRef", () =>
     ["host function", Bun.gc],
     ["plain function", function foo() {}],
     ["plain object", { a: 1 }],
+    ["non-ASCII toString()", { toString: () => "café 🍰" }],
   ] as const)("%s", async (_, value) => {
     using dir = tempDir("blob-fromjs-stringify", {});
     const p = join(dir, "out.txt");
     Bun.gc(true);
     const n = await Bun.write(p, value as any);
     const expected = String(value);
-    expect(n).toBe(expected.length);
+    expect(n).toBe(Buffer.byteLength(expected, "utf8"));
     expect(readFileSync(p, "utf8")).toBe(expected);
   });
 

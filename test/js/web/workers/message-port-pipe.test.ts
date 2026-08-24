@@ -322,7 +322,10 @@ describe("MessagePort pipe", () => {
       expect(stdout.trim()).toBe("OK");
       expect(exitCode).toBe(0);
       // 10000 MessageChannels across 5 threads take 10s+ under a loaded debug
-      // ASAN build; the 5s default flakes.
+      // ASAN build; the 5s default flakes. The iteration count is the
+      // race-detection budget of this sanitizer test, so shrinking the
+      // workload to fit the default would weaken it; raise the ceiling
+      // instead.
     },
     60_000,
   );

@@ -3152,10 +3152,7 @@ static void repointOwnDataProperty(VM& vm, JSObject* object, const Identifier& n
     object->putDirect(vm, name, value, attributes);
 }
 
-// A process property can have copies: process and Bun reify a static table
-// entry into an own data property on first read, and node:process binds the
-// export the first time it is imported. After the canonical value changes,
-// point every copy that exists at the new value. A live accessor needs nothing.
+// process and Bun reify the property into an own value on first read; node:process binds it on first import.
 void repointProcessProperty(Zig::GlobalObject* globalObject, const Identifier& name, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3178,9 +3175,7 @@ void repointProcessProperty(Zig::GlobalObject* globalObject, const Identifier& n
     moduleNamespace->overrideExportValue(globalObject, name, value);
 }
 
-// process.argv[1] is the VM's current entry point. The test runner moves the
-// entry point from file to file, so the cached array is rebuilt and every copy
-// of the old one is repointed.
+// argv[1] is the VM's entry point, which the test runner changes for every file.
 extern "C" void Bun__Process__resetArgv(Zig::GlobalObject* globalObject)
 {
     if (!globalObject->hasProcessObject()) {

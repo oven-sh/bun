@@ -139,8 +139,7 @@ public:
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
-// Points every existing copy of a process property (reified on process or Bun,
-// bound in node:process) at `value` after the canonical one changed.
+// Points every existing copy of a process property (on process, on Bun, in node:process) at `value`.
 void repointProcessProperty(Zig::GlobalObject*, const JSC::Identifier& name, JSC::JSValue value);
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);

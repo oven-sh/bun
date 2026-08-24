@@ -24,8 +24,7 @@ using namespace JSC;
 
 class JSCommonJSModule;
 
-// True once the record has run: a cyclic module evaluated without error, or a
-// synthetic module that has been linked.
+// A cyclic module evaluated without error, or a synthetic module that has been linked.
 bool isModuleEvaluated(JSC::AbstractModuleRecord*);
 
 typedef uint8_t OnLoadResultType;

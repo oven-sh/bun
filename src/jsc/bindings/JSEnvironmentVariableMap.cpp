@@ -959,8 +959,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     auto* shared = createSharedEnvironmentVariablesMap(globalObject).getObject();
     globalObject->m_processEnvObject.set(vm, globalObject, shared);
 
-    // process.env, Bun.env and `import { env } from "node:process"` may already
-    // hold the orphaned pre-swap env. Point each one that exists at the shared variant.
+    // process.env, Bun.env and the node:process env export may still hold the orphaned pre-swap env.
     repointProcessProperty(globalObject, JSC::Identifier::fromString(vm, "env"_s), shared);
     RETURN_IF_EXCEPTION(scope, nullptr);
 

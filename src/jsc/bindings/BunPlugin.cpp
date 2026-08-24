@@ -665,7 +665,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
                         if (object) {
                             JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-                            JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
+                            // Dispatch through the method table: a factory that returns a module
+                            // namespace object (`() => import("./dep.mock")`) keeps its exports in
+                            // JSModuleNamespaceObject's own map, so the static JSObject version
+                            // reports none of them and nothing gets patched.
+                            object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
                             // Read every export before overriding any, so a throwing getter leaves the

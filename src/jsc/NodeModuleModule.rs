@@ -1,7 +1,7 @@
 use crate::resolve_message::esm_package_name;
 use crate::{
     self as jsc, CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
-    VirtualMachineRef as VirtualMachine,
+    URLJsc as _, VirtualMachineRef as VirtualMachine,
 };
 use bstr::BStr;
 use bun_ast::Loader;
@@ -130,10 +130,10 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     };
 
     let specifier = specifier.into_path(global)?;
-    let specifier_utf8 = specifier.get().to_utf8();
+    let specifier_utf8 = specifier.to_utf8();
     let specifier = specifier_utf8.slice();
     let base = base.map(|base| base.into_path(global)).transpose()?;
-    let base_utf8 = base.as_ref().map(|base| base.get().to_utf8());
+    let base_utf8 = base.as_ref().map(BunString::to_utf8);
 
     let top_level_dir = global.bun_vm().top_level_dir();
     let mut base_buf = bun_paths::path_buffer_pool::get();
@@ -175,7 +175,7 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
                 _ => bun_paths::SEP_STR,
             };
             BunString::create_format(format_args!("{}{}package.json", BStr::new(dir), separator))
-                .transfer_to_js(global)
+                .into_js(global)
         }
         Ok(None) => Ok(JSValue::UNDEFINED),
         Err(bun_resolver::Error::ModuleNotFound) => {
@@ -209,7 +209,7 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 enum Location {
     Url(JSValue),
     /// Like Node, any value that is not a `URL` is used as `${value}`.
-    Text(OwnedString),
+    Text(BunString),
 }
 
 impl Location {
@@ -217,22 +217,21 @@ impl Location {
         if jsc::DOMURL::cast_(value, global.vm()).is_some() {
             return Ok(Self::Url(value));
         }
-        Ok(Self::Text(OwnedString::new(value.to_bun_string(global)?)))
+        Ok(Self::Text(value.to_bun_string(global)?))
     }
 
     /// A URL is converted, and rejected, exactly as `Bun.fileURLToPath()` would.
-    fn into_path(self, global: &JSGlobalObject) -> JsResult<OwnedString> {
+    fn into_path(self, global: &JSGlobalObject) -> JsResult<BunString> {
         let url = match self {
             Self::Url(url) => url,
             Self::Text(text) => {
-                if !has_url_scheme(text.get().to_utf8().slice()) {
+                if !has_url_scheme(text.to_utf8().slice()) {
                     return Ok(text);
                 }
-                text.get().to_js(global)?
+                text.to_js(global)?
             }
         };
-        let path = jsc::URL::file_url_to_path_from_js(url, global)?;
-        Ok(OwnedString::new(path))
+        jsc::URL::file_url_to_path_from_js(url, global)
     }
 }
 

@@ -344,8 +344,9 @@ pub(crate) struct CAresRecordKind {
     pub type_name: &'static str,
     /// `"query" + ucfirst(type_name)`, reported as the syscall in errors.
     pub syscall: &'static str,
-    /// Which `pending_*_cache_cares` HiveArray on `Resolver` holds in-flight lookups.
-    pub cache_field: PendingCacheField,
+    /// The `pending_*_cache_cares` HiveArray on `Resolver` that holds this
+    /// type's in-flight lookups.
+    pub pending_cache: fn(&Resolver) -> &JsCell<ResolvePendingCache>,
     /// The DNS RR type passed to `ares_query`.
     pub ns_type: c_ares::NSType,
     /// The `ares_callback` thunk that parses raw reply bytes for this record type
@@ -489,7 +490,7 @@ impl ResolveInfoRequest {
             unsafe {
                 (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
-                    .pending_cache_for(kind.cache_field)
+                    .pending_cache_for(kind)
                     .index_of(new)
                     .unwrap();
                 (*request).pending_slot = Some(pos as u8);
@@ -3233,23 +3234,12 @@ pub use internal::Request as InternalDNSRequest;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Field selector for the `pending_*` cache fields on `Resolver` — Rust
-/// cannot index struct fields by name string.
+/// cannot index struct fields by name string. The `dns.resolve*` record types
+/// select theirs through `CAresRecordKind::pending_cache` instead.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum PendingCacheField {
     PendingHostCacheCares,
     PendingHostCacheNative,
-    PendingSrvCacheCares,
-    PendingSoaCacheCares,
-    PendingTxtCacheCares,
-    PendingNaptrCacheCares,
-    PendingMxCacheCares,
-    PendingCaaCacheCares,
-    PendingNsCacheCares,
-    PendingPtrCacheCares,
-    PendingCnameCacheCares,
-    PendingACacheCares,
-    PendingAaaaCacheCares,
-    PendingAnyCacheCares,
     PendingAddrCacheCares,
     PendingNameinfoCacheCares,
 }
@@ -3325,11 +3315,11 @@ pub(crate) mod record_kind {
     use super::*;
 
     macro_rules! kinds {
-        ($($name:ident: $tag:literal, $syscall:literal, $field:ident, $ns_type:ident, $cb:expr;)*) => {$(
+        ($($name:ident: $tag:literal, $syscall:literal, $cache:ident, $ns_type:ident, $cb:expr;)*) => {$(
             pub(crate) static $name: CAresRecordKind = CAresRecordKind {
                 type_name: $tag,
                 syscall: $syscall,
-                cache_field: PendingCacheField::$field,
+                pending_cache: |resolver| &resolver.$cache,
                 ns_type: c_ares::NSType::$ns_type,
                 raw_callback: $cb,
             };
@@ -3337,29 +3327,29 @@ pub(crate) mod record_kind {
     }
 
     kinds! {
-        SRV: "srv", "querySrv", PendingSrvCacheCares, ns_t_srv,
+        SRV: "srv", "querySrv", pending_srv_cache_cares, ns_t_srv,
             c_ares::ares_reply_callback::<c_ares::struct_ares_srv_reply, ResolveInfoRequest>;
-        SOA: "soa", "querySoa", PendingSoaCacheCares, ns_t_soa,
+        SOA: "soa", "querySoa", pending_soa_cache_cares, ns_t_soa,
             c_ares::ares_reply_callback::<c_ares::struct_ares_soa_reply, ResolveInfoRequest>;
-        TXT: "txt", "queryTxt", PendingTxtCacheCares, ns_t_txt,
+        TXT: "txt", "queryTxt", pending_txt_cache_cares, ns_t_txt,
             c_ares::ares_reply_callback::<c_ares::struct_ares_txt_reply, ResolveInfoRequest>;
-        NAPTR: "naptr", "queryNaptr", PendingNaptrCacheCares, ns_t_naptr,
+        NAPTR: "naptr", "queryNaptr", pending_naptr_cache_cares, ns_t_naptr,
             c_ares::ares_reply_callback::<c_ares::struct_ares_naptr_reply, ResolveInfoRequest>;
-        MX: "mx", "queryMx", PendingMxCacheCares, ns_t_mx,
+        MX: "mx", "queryMx", pending_mx_cache_cares, ns_t_mx,
             c_ares::ares_reply_callback::<c_ares::struct_ares_mx_reply, ResolveInfoRequest>;
-        CAA: "caa", "queryCaa", PendingCaaCacheCares, ns_t_caa,
+        CAA: "caa", "queryCaa", pending_caa_cache_cares, ns_t_caa,
             c_ares::ares_reply_callback::<c_ares::struct_ares_caa_reply, ResolveInfoRequest>;
-        ANY: "any", "queryAny", PendingAnyCacheCares, ns_t_any,
+        ANY: "any", "queryAny", pending_any_cache_cares, ns_t_any,
             c_ares::struct_any_reply::callback_wrapper::<ResolveInfoRequest>;
-        NS: "ns", "queryNs", PendingNsCacheCares, ns_t_ns,
+        NS: "ns", "queryNs", pending_ns_cache_cares, ns_t_ns,
             c_ares::struct_hostent::callback_wrapper_ns::<ResolveInfoRequest>;
-        PTR: "ptr", "queryPtr", PendingPtrCacheCares, ns_t_ptr,
+        PTR: "ptr", "queryPtr", pending_ptr_cache_cares, ns_t_ptr,
             c_ares::struct_hostent::callback_wrapper_ptr::<ResolveInfoRequest>;
-        CNAME: "cname", "queryCname", PendingCnameCacheCares, ns_t_cname,
+        CNAME: "cname", "queryCname", pending_cname_cache_cares, ns_t_cname,
             c_ares::struct_hostent::callback_wrapper_cname::<ResolveInfoRequest>;
-        A: "a", "queryA", PendingACacheCares, ns_t_a,
+        A: "a", "queryA", pending_a_cache_cares, ns_t_a,
             c_ares::hostent_with_ttls::callback_wrapper_a::<ResolveInfoRequest>;
-        AAAA: "aaaa", "queryAaaa", PendingAaaaCacheCares, ns_t_aaaa,
+        AAAA: "aaaa", "queryAaaa", pending_aaaa_cache_cares, ns_t_aaaa,
             c_ares::hostent_with_ttls::callback_wrapper_aaaa::<ResolveInfoRequest>;
     }
 }
@@ -3478,10 +3468,12 @@ impl<R: HasPendingCacheKey> Copy for LookupCacheHit<R> {}
 /// field on `Resolver`.
 pub(crate) trait HasPendingCacheKey {
     type PendingCacheKey;
+    /// What a caller passes to pick the field when the request type has more
+    /// than one pending cache on `Resolver` (one per record type for
+    /// `ResolveInfoRequest`).
+    type CacheSelector: Copy;
 
     /// Return the per-request-type pending HiveArray field on `Resolver`.
-    /// `field` is the runtime tag selecting which field (some request types are reachable
-    /// via more than one field, e.g. `pending_host_cache_{cares,native}`).
     ///
     /// R-2: takes `&Resolver` and projects `&mut` via the field's `JsCell`.
     /// Callers hold the borrow only for a short, non-reentrant window
@@ -3489,7 +3481,7 @@ pub(crate) trait HasPendingCacheKey {
     #[allow(clippy::mut_from_ref)]
     fn pending_cache(
         resolver: &Resolver,
-        field: PendingCacheField,
+        selector: Self::CacheSelector,
     ) -> &mut HiveArray<Self::PendingCacheKey, 32>;
 
     /// `key.hash` — all `PendingCacheKey` shapes carry `{ hash: u64, len: u16, lookup: *mut _ }`.
@@ -3508,13 +3500,14 @@ pub(crate) trait HasPendingCacheKey {
 
 impl HasPendingCacheKey for ResolveInfoRequest {
     type PendingCacheKey = resolve_info_request::PendingCacheKey;
+    type CacheSelector = &'static CAresRecordKind;
 
     #[inline]
-    fn pending_cache(
-        resolver: &Resolver,
-        field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
-        resolver.pending_cache_for(field)
+    fn pending_cache<'r>(
+        resolver: &'r Resolver,
+        kind: &'static CAresRecordKind,
+    ) -> &'r mut HiveArray<Self::PendingCacheKey, 32> {
+        resolver.pending_cache_for(kind)
     }
     #[inline]
     fn key_hash(key: &Self::PendingCacheKey) -> u64 {
@@ -3541,6 +3534,7 @@ impl HasPendingCacheKey for ResolveInfoRequest {
 
 impl HasPendingCacheKey for GetHostByAddrInfoRequest {
     type PendingCacheKey = get_host_by_addr_info_request::PendingCacheKey;
+    type CacheSelector = PendingCacheField;
 
     #[inline]
     fn pending_cache(
@@ -3576,6 +3570,7 @@ impl HasPendingCacheKey for GetHostByAddrInfoRequest {
 
 impl HasPendingCacheKey for GetNameInfoRequest {
     type PendingCacheKey = get_name_info_request::PendingCacheKey;
+    type CacheSelector = PendingCacheField;
 
     #[inline]
     fn pending_cache(
@@ -3938,41 +3933,15 @@ impl Resolver {
         }
     }
 
-    /// Dispatch to a ResolveInfoRequest cache by record type.
+    /// The ResolveInfoRequest cache of one record type.
     ///
     /// R-2: returns `&mut` from `&self` via `JsCell::get_mut`; see
     /// `pending_host_cache` for the borrow discipline.
     #[allow(clippy::mut_from_ref)]
-    fn pending_cache_for(&self, field: PendingCacheField) -> &mut ResolvePendingCache {
+    fn pending_cache_for(&self, kind: &CAresRecordKind) -> &mut ResolvePendingCache {
         // SAFETY: single-JS-thread invariant; caller holds the borrow only for
         // a short, non-reentrant window (see fn doc).
-        unsafe {
-            match field {
-                PendingCacheField::PendingSrvCacheCares => self.pending_srv_cache_cares.get_mut(),
-                PendingCacheField::PendingSoaCacheCares => self.pending_soa_cache_cares.get_mut(),
-                PendingCacheField::PendingTxtCacheCares => self.pending_txt_cache_cares.get_mut(),
-                PendingCacheField::PendingNaptrCacheCares => {
-                    self.pending_naptr_cache_cares.get_mut()
-                }
-                PendingCacheField::PendingMxCacheCares => self.pending_mx_cache_cares.get_mut(),
-                PendingCacheField::PendingCaaCacheCares => self.pending_caa_cache_cares.get_mut(),
-                PendingCacheField::PendingNsCacheCares => self.pending_ns_cache_cares.get_mut(),
-                PendingCacheField::PendingPtrCacheCares => self.pending_ptr_cache_cares.get_mut(),
-                PendingCacheField::PendingCnameCacheCares => {
-                    self.pending_cname_cache_cares.get_mut()
-                }
-                PendingCacheField::PendingACacheCares => self.pending_a_cache_cares.get_mut(),
-                PendingCacheField::PendingAaaaCacheCares => self.pending_aaaa_cache_cares.get_mut(),
-                PendingCacheField::PendingAnyCacheCares => self.pending_any_cache_cares.get_mut(),
-                // host/addr/nameinfo caches use distinct key types and have their own helpers.
-                PendingCacheField::PendingHostCacheCares
-                | PendingCacheField::PendingHostCacheNative
-                | PendingCacheField::PendingAddrCacheCares
-                | PendingCacheField::PendingNameinfoCacheCares => {
-                    unreachable!()
-                }
-            }
-        }
+        unsafe { (kind.pending_cache)(self).get_mut() }
     }
 
     // Monomorphic helpers used by the drain* fns below.
@@ -4016,7 +3985,7 @@ impl Resolver {
         let _guard = self.ref_guard();
 
         let key = {
-            let cache = self.pending_cache_for(kind.cache_field);
+            let cache = self.pending_cache_for(kind);
             // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
             unsafe { cache.box_at(index as usize) }
                 .expect("pending DNS slot")
@@ -4352,11 +4321,11 @@ impl Resolver {
     pub(crate) fn get_or_put_into_resolve_pending_cache<R: HasPendingCacheKey>(
         &self,
         key: &R::PendingCacheKey,
-        field: PendingCacheField,
+        selector: R::CacheSelector,
     ) -> LookupCacheHit<R> {
         // Dispatch via `HasPendingCacheKey::pending_cache`; the body is
         // identical across all `R`.
-        let cache = R::pending_cache(self, field);
+        let cache = R::pending_cache(self, selector);
         let mut inflight_iter = cache.used.iter_set();
 
         while let Some(index) = inflight_iter.next() {
@@ -5079,8 +5048,7 @@ impl Resolver {
 
         let key = resolve_info_request::PendingCacheKey::init(name);
 
-        let cache = self
-            .get_or_put_into_resolve_pending_cache::<ResolveInfoRequest>(&key, kind.cache_field);
+        let cache = self.get_or_put_into_resolve_pending_cache::<ResolveInfoRequest>(&key, kind);
         if let LookupCacheHit::Inflight(inflight) = cache {
             // CAresLookup will have the name ownership
             let cares_lookup = CAresLookup::init(Some(self.as_ctx_ptr()), global_this, name, kind);

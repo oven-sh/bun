@@ -52,7 +52,7 @@ fn high_water_mark_from_js(value: JSValue, min: BlobSizeType) -> BlobSizeType {
 // Compat: `webcore::SinkHandle` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub use StreamResult as Result;
 pub mod result {
-    pub use super::{StreamError, StreamResult, Writable};
+    pub use super::{StreamError, Writable};
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -79,9 +79,6 @@ pub enum Start {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
 pub enum StartTag {
-    Empty,
-    Err,
-    ChunkSize,
     ArrayBufferSink,
     FileSink,
     HTTPSResponseSink,
@@ -90,9 +87,6 @@ pub enum StartTag {
     NetworkSink,
     FetchRequestBodySink,
     HTMLRewriterSink,
-    Ready,
-    OwnedAndDone,
-    Done,
 }
 
 impl Start {
@@ -161,8 +155,6 @@ impl Start {
             StartTag::HTMLRewriterSink => {
                 Self::from_js_with_tag::<{ StartTag::HTMLRewriterSink }>(global_this, value)
             }
-            // No `Start` variant carries these tags from JS.
-            _ => Self::from_js(global_this, value),
         }
     }
 
@@ -182,7 +174,7 @@ impl Start {
                 let mut empty = true;
 
                 if let Some(val) =
-                    value.get_own(global_this, &bun_core::String::static_str("asUint8Array"))?
+                    value.get_own(global_this, &bun_core::String::static_("asUint8Array"))?
                 {
                     if val.is_boolean() {
                         as_uint8array = val.to_boolean();
@@ -281,11 +273,6 @@ impl Start {
                     return Ok(Start::ChunkSize(chunk_size));
                 }
             }
-            _ => {
-                // Dead for every valid TAG; runtime unreachable until
-                // `generic_const_exprs` lets us hoist to a compile error.
-                unreachable!("Unsupported StartTag");
-            }
         }
 
         Ok(Start::Empty)
@@ -378,10 +365,7 @@ pub enum Writable {
     /// awaited via `flush(true)` → `pending_flush`.
     Backpressure(BlobSizeType),
     OwnedAndDone(BlobSizeType),
-    TemporaryAndDone(BlobSizeType),
     Temporary(BlobSizeType),
-    IntoArray(BlobSizeType),
-    IntoArrayAndDone(BlobSizeType),
 }
 
 pub struct WritablePending {
@@ -412,7 +396,6 @@ pub enum WritableFuture {
         // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
         global: BackRef<JSGlobalObject>,
     },
-    Handler(WritableHandler),
 }
 
 impl WritablePending {
@@ -437,13 +420,6 @@ impl WritablePending {
     }
 }
 
-pub struct WritableHandler {
-    pub ctx: *mut c_void,
-    pub(crate) handler: WritableHandlerFn,
-}
-
-type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
-
 impl WritablePending {
     /// Settle the parked write (see [`Pending::run`] for what happens to an
     /// exception the settle leaves).
@@ -462,15 +438,6 @@ impl WritablePending {
                 strong.swap(),
                 &global,
             ),
-            WritableFuture::Handler(h) => {
-                self.future = WritableFuture::Handler(WritableHandler {
-                    ctx: h.ctx,
-                    handler: h.handler,
-                });
-                // Reset self.result to Done here —
-                // verify no caller reads it after run().
-                (h.handler)(h.ctx, core::mem::replace(&mut self.result, Writable::Done));
-            }
             WritableFuture::None => {}
         }
     }
@@ -505,10 +472,7 @@ impl Writable {
             // Negative sentinel; the writer awaits the drain via `flush(true)`.
             Writable::Backpressure(len) => JSValue::js_number(-((len as f64) + 1.0)),
             Writable::OwnedAndDone(len) => JSValue::from(len),
-            Writable::TemporaryAndDone(len) => JSValue::from(len),
             Writable::Temporary(len) => JSValue::from(len),
-            Writable::IntoArray(len) => JSValue::from(len),
-            Writable::IntoArrayAndDone(len) => JSValue::from(len),
             // false == controller.close()
             // undefined == noop, but we probably won't send it
             Writable::Done => JSValue::TRUE,
@@ -529,15 +493,6 @@ impl Writable {
 pub struct IntoArray {
     pub value: JSValue,
     pub(crate) len: BlobSizeType,
-}
-
-impl Default for IntoArray {
-    fn default() -> Self {
-        Self {
-            value: JSValue::default(),
-            len: BlobSizeType::MAX,
-        }
-    }
 }
 
 // ─── Result.Pending ──────────────────────────────────────────────────────

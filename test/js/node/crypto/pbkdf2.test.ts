@@ -2,6 +2,9 @@ const crypto = require("crypto");
 const common = require("../test/common");
 
 import { describe, expect, jest, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { promisify } from "node:util";
 function testPBKDF2_(password, salt, iterations, keylen, expected) {
   async function runPBKDF2(password, salt, iterations, keylen, hash) {
     const syncResult = crypto.pbkdf2Sync(password, salt, iterations, keylen, hash);
@@ -226,4 +229,96 @@ test("pbkdf2Sync reads the salt buffer only after every argument has been coerce
   const key = crypto.pbkdf2Sync(password, salt, 1, 32, "sha256");
   expect(salt.byteLength).toBe(0);
   expect(key).toStrictEqual(crypto.pbkdf2Sync("password", new Uint8Array(0), 1, 32, "sha256"));
+});
+
+test("pbkdf2 callback gets (null, Buffer) and keeps the AsyncLocalStorage context", async () => {
+  const als = new AsyncLocalStorage();
+  const { promise, resolve } = Promise.withResolvers<unknown[]>();
+  const returned = als.run("ctx", () =>
+    crypto.pbkdf2("pw", "salt", 1, 8, "sha256", function (...args) {
+      resolve([args.length, args[0], Buffer.isBuffer(args[1]), args[1].toString("hex"), als.getStore()]);
+    }),
+  );
+  expect(returned).toBeUndefined();
+  expect(await promise).toEqual([2, null, true, "6f4ad8c78ec365c0", "ctx"]);
+});
+
+test("pbkdf2 keeps the callback alive across GC until the job completes", async () => {
+  const expected = crypto.pbkdf2Sync("pw", "salt", 1, 16, "sha256").toString("hex");
+  const count = 200;
+  const results: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  for (let i = 0; i < count; i++) {
+    // Nothing but the pending job references these callbacks.
+    crypto.pbkdf2("pw", "salt", 1, 16, "sha256", (err, key) => {
+      if (err) return reject(err);
+      results.push(key.toString("hex"));
+      if (results.length === count * 2) resolve();
+    });
+    crypto.pbkdf2("pw", "salt", 1, 0, "sha256", err => {
+      results.push(err instanceof Error ? err.message : String(err));
+      if (results.length === count * 2) resolve();
+    });
+    if (i % 50 === 0) Bun.gc(true);
+  }
+  Bun.gc(true);
+  await promise;
+  expect(results.filter(r => r === expected)).toHaveLength(count);
+  expect(results.filter(r => r === "PBKDF2 derivation failed")).toHaveLength(count);
+});
+
+test("pbkdf2 works with util.promisify", async () => {
+  const key = await promisify(crypto.pbkdf2)("pw", "salt", 1, 8, "sha256");
+  expect(Buffer.isBuffer(key)).toBe(true);
+  expect(key.toString("hex")).toBe("6f4ad8c78ec365c0");
+});
+
+test("pbkdf2 has the same arity as Node", () => {
+  expect([crypto.pbkdf2.name, crypto.pbkdf2.length]).toEqual(["pbkdf2", 6]);
+});
+
+test("pbkdf2 validates digest and callback synchronously, like Node", () => {
+  // digest omitted: the callback shifts into the digest slot and digest is reported as undefined
+  expect(() => crypto.pbkdf2("pw", "salt", 1, 8, (() => {}) as any)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "digest" argument must be of type string. Received undefined',
+    }),
+  );
+  expect(() => (crypto.pbkdf2 as any)("pw", "salt", 1, 8, "sha256")).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "callback" argument must be of type function. Received undefined',
+    }),
+  );
+  expect(() => crypto.pbkdf2("pw", "salt", 1, 8, "sha256", "not a function" as any)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "callback" argument must be of type function. Received type string ('not a function')`,
+    }),
+  );
+});
+
+test("a throw inside the pbkdf2 callback is an uncaughtException, not an unhandled rejection", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.on("uncaughtException", err => console.log("uncaughtException:", err.message));
+        process.on("unhandledRejection", err => console.log("unhandledRejection:", err.message));
+        require("crypto").pbkdf2("pw", "salt", 1, 8, "sha256", (err, key) => {
+          console.log("callback:", err, key.toString("hex"));
+          throw new Error("boom");
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("callback: null 6f4ad8c78ec365c0\nuncaughtException: boom\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

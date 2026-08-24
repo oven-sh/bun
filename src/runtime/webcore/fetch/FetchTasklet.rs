@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
+use bun_core::{MutableString, String as BunString, ZigStringSlice};
 use bun_event_loop::{
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
     Task, Taskable,
@@ -18,9 +18,7 @@ use bun_http::{
 };
 use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::{
-    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc, StrongOptional,
-};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
 use bun_sys::FdExt;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
@@ -651,9 +649,8 @@ impl FetchTasklet {
             let err = jsc::SystemError {
                 code: BunString::static_(<&'static str>::from(
                     jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
-                ))
-                .into(),
-                message: BunString::static_("Stream already used, please create a new one").into(),
+                )),
+                message: BunString::static_("Stream already used, please create a new one"),
                 ..Default::default()
             };
             let err_instance = err.to_error_instance(&global_this);
@@ -1150,7 +1147,6 @@ impl FetchTasklet {
 
         let tracker = self.tracker;
         tracker.will_dispatch(&global_this);
-        // defer block:
         let dispatch_cleanup = |_this: &mut FetchTasklet| {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
             tracker.did_dispatch(&global_this);
@@ -1234,9 +1230,10 @@ impl FetchTasklet {
                             return false;
                         }
                     };
-                    let hostname =
-                        OwnedString::new(BunString::clone_utf8(&certificate_info.hostname));
-                    let js_hostname: JSValue = match hostname.to_js(&global_object) {
+                    let js_hostname: JSValue = match bun_jsc::bun_string_jsc::create_utf8_for_js(
+                        &global_object,
+                        &certificate_info.hostname,
+                    ) {
                         Ok(v) => v,
                         Err(e) => {
                             let hostname_err_result = global_object.take_exception(e);
@@ -1369,7 +1366,7 @@ impl FetchTasklet {
                     b"getaddrinfo",
                     hostname,
                 );
-                err.path = path.into();
+                err.path = path;
                 return BodyValueError::SystemTypeError(err);
             }
         }
@@ -1604,9 +1601,9 @@ impl FetchTasklet {
         };
 
         let fetch_error = jsc::SystemError {
-            code: code.into(),
-            message: message.into(),
-            path: path.into(),
+            code,
+            message,
+            path,
             ..Default::default()
         };
 
@@ -1869,13 +1866,35 @@ impl FetchTasklet {
         response
     }
 
+    /// <https://fetch.spec.whatwg.org/#main-fetch>: HEAD responses and null body
+    /// statuses have no body. Not 101: the HTTP client only accepts it for a
+    /// requested upgrade, and the upgraded connection is then the body.
+    fn response_body_is_null(&self, status_code: u16) -> bool {
+        (crate::server::http_status_text::is_null_body(status_code) && status_code != 101)
+            || self
+                .http
+                .as_deref()
+                .is_some_and(|http_| http_.method() == Method::HEAD)
+    }
+
+    /// Content the server frames anyway (a 205 with content) is dropped, and the
+    /// rest of it drained as for a Response collected unread, which keeps the
+    /// connection poolable. No Response is attached yet, so that is all the
+    /// ignore does. `is_waiting_body` stays false: nothing may reach this body.
+    fn null_body_value(&mut self) -> BodyValue {
+        self.scheduled_response_buffer = MutableString::default();
+        if self.result.has_more {
+            self.ignore_remaining_response_body();
+        }
+        BodyValue::Null
+    }
+
     fn to_response(&mut self) -> Response {
         bun_output::scoped_log!(FetchTasklet, "toResponse");
         debug_assert!(self.metadata.is_some());
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
         let http_response = &metadata.response;
-        self.is_waiting_body = self.result.has_more;
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
         let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
@@ -1896,15 +1915,21 @@ impl FetchTasklet {
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
+        let body = if self.response_body_is_null(status_code) {
+            self.null_body_value()
+        } else {
+            self.is_waiting_body = self.result.has_more;
+            self.to_body_value()
+        };
         Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
                 status_code,
-                status_text: status_text.into(),
+                status_text,
                 ..Default::default()
             },
-            Body::new(self.to_body_value()),
+            Body::new(body),
             url,
             redirected,
         )
@@ -2768,41 +2793,6 @@ pub struct FetchOptions {
     pub(crate) forced_protocol: Option<http::Protocol>,
     pub(crate) is_node_http_client: bool,
     pub(crate) compress: Option<http::compress_body::CompressOption>,
-}
-
-impl Default for FetchOptions {
-    fn default() -> Self {
-        // Zero-values for the required fields
-        // (method/headers/body/url/bools/unix_socket_path) so
-        // callers can use `..Default::default()` struct-update syntax while
-        // still overriding the required fields explicitly.
-        Self {
-            method: Method::GET,
-            headers: Headers::default(),
-            body: HTTPRequestBody::default(),
-            disable_timeout: false,
-            idle_timeout_seconds: None,
-            disable_keepalive: false,
-            disable_decompression: false,
-            max_redirects: None,
-            reject_unauthorized: true,
-            url: ZigURL::default(),
-            verbose: http::HTTPVerboseLevel::None,
-            redirect_type: FetchRedirect::Follow,
-            proxy: None,
-            proxy_headers: None,
-            url_proxy_buffer: Box::default(),
-            signal: None,
-            hostname: None,
-            check_server_identity: StrongOptional::empty(),
-            unix_socket_path: ZigStringSlice::EMPTY,
-            ssl_config: None,
-            upgraded_connection: false,
-            forced_protocol: None,
-            is_node_http_client: false,
-            compress: None,
-        }
-    }
 }
 
 pub(crate) struct FetchTaskletPromiseSettle {

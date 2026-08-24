@@ -1,5 +1,3 @@
-const { SafeArrayIterator } = require("internal/primordials");
-
 const ObjectFreeze = Object.freeze;
 
 class NotImplementedError extends Error {
@@ -91,7 +89,7 @@ class ExceptionWithHostPort extends Error {
 
 class NodeAggregateError extends AggregateError {
   constructor(errors, message) {
-    super(new SafeArrayIterator(errors), message);
+    super(new (require("internal/primordials").SafeArrayIterator)(errors), message);
     this.code = errors[0]?.code;
   }
   get ["constructor"]() {
@@ -430,7 +428,7 @@ export default {
   kClusterOwner: Symbol("kClusterOwner"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kWeakHandler: Symbol("kWeak"),
-  kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
+  kCustomPromisifyArgsSymbol: Symbol("customPromisifyArgs"),
   kEmptyObject,
   kInternalSendOptions,
 };

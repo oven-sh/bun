@@ -262,9 +262,9 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
                         }
                     }
                     bun_io::Source::Tty(tty) => {
-                        // SAFETY: `tty` is a live `NonNull<uv_tty_t>` (heap or static stdin tty);
-                        // `uv_tty_t` embeds `uv_stream_t` as its first field, so the cast is the
-                        // libuv handle-subtype downcast.
+                        // SAFETY: `tty` is a live `BackRef<Tty>` (heap or static stdin tty);
+                        // `Tty` (via its first field, `uv::uv_tty_t`) embeds `uv_stream_t` as
+                        // its first member, so the cast is the libuv handle-subtype downcast.
                         let rc = unsafe {
                             uv::uv_stream_set_blocking(tty.as_ptr().cast::<uv::uv_stream_t>(), 1)
                         };
@@ -326,7 +326,7 @@ impl FileSink {
                             );
                             crate::dispatch::fold(stream.cancel(global));
                         } else {
-                            stream.done(global);
+                            stream.done();
                         }
                     }
                 }
@@ -520,11 +520,9 @@ impl FileSink {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
-            if (*this).readable_stream.get_mut().has() {
-                if let Some(global) = (*this).js_global() {
-                    if let Some(stream) = (*this).readable_stream.get().get() {
-                        stream.done(global);
-                    }
+            if (*this).readable_stream.get_mut().has() && (*this).js_global().is_some() {
+                if let Some(stream) = (*this).readable_stream.get().get() {
+                    stream.done();
                 }
             }
 
@@ -1487,9 +1485,9 @@ impl FlushPendingTask {
 
 impl FileSink {
     /// Does not ref or unref.
-    fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
+    fn handle_resolve_stream(&self) {
         if let Some(stream) = self.readable_stream.get().get().as_mut() {
-            stream.done(global_this);
+            stream.done();
         }
 
         if !self.done.get() {
@@ -1512,14 +1510,14 @@ impl FileSink {
     }
 }
 
-fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+fn on_resolve_stream(_global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     bun_core::scoped_log!(FileSink, "onResolveStream");
     let args = callframe.arguments();
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
     let _guard = unsafe { FileSinkRef::adopt(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
-    unsafe { (*this).handle_resolve_stream(global_this) };
+    unsafe { (*this).handle_resolve_stream() };
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1625,7 +1623,7 @@ impl FileSink {
                     }
                     bun_jsc::js_promise::Status::Fulfilled => {
                         // These don't ref().
-                        self.handle_resolve_stream(global_this);
+                        self.handle_resolve_stream();
                     }
                     bun_jsc::js_promise::Status::Rejected => {
                         // These don't ref().

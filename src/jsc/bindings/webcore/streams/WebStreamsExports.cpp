@@ -139,10 +139,8 @@ extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStr
     return stream && isReadableStreamLocked(stream);
 }
 
-// cancel / cancelWithReason / error: an ordinary exception raised while cancelling or erroring is dropped
-// here — the source's own failure is already the cancel promise's rejection (marked handled), and the
-// native caller is tearing the stream down regardless; a TerminationException is left pending for the
-// Rust wrapper (check_slow), like any other call that entered script.
+// cancel / cancelWithReason / error: the source's own cancel failure is the cancel promise's rejection
+// (marked handled); anything thrown synchronously is left pending for the Rust wrapper (check_slow).
 extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
@@ -154,17 +152,11 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancel(JSC::EncodedJS
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue reason = WebCore::createDOMException(globalObject, WebCore::ExceptionCode::AbortError);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     auto* result = readableStreamCancel(globalObject, stream, reason);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     markPromiseAsHandled(vm, result);
 }
 
@@ -175,12 +167,9 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancelWithReason(JSC:
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* result = readableStreamCancel(globalObject, stream, JSValue::decode(reason));
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     markPromiseAsHandled(vm, result);
 }
 
@@ -190,11 +179,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSV
     if (!stream) [[unlikely]]
         return;
 
-    auto& vm = JSC::getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
-    if (catchScope.exception()) [[unlikely]]
-        catchScope.clearExceptionExceptTermination();
 }
 
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)

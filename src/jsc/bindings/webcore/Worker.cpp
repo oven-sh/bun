@@ -188,10 +188,10 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
 // it to the Worker object.
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString* message, JSC::EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSC::JSValue error = JSC::JSValue::decode(errorValue);
-    String messageStr = message->transferToWTFString();
+    String messageStr = message.transferToWTFString();
     ErrorEvent::Init init;
     init.message = messageStr;
     init.error = error;
@@ -250,28 +250,18 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalO
     return JSC::JSValue::encode(jsBoolean(false));
 }
 
-// markAsUncloneable/markAsUntransferable tag objects with a DontEnum JSC private name
-// (node uses a v8 Private): invisible to and unforgeable from user JS, and not removable,
-// so marking cannot be undone. Primitives are a documented no-op.
-static void markObjectWithPrivateName(JSC::VM& vm, JSC::JSValue value, const JSC::Identifier& privateName)
-{
-    JSC::JSObject* object = value.getObject();
-    if (!object || object->getDirect(vm, privateName))
-        return;
-    object->putDirect(vm, privateName, JSC::jsBoolean(true), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-}
-
+// Primitives are a documented no-op for both.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUncloneable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUncloneablePrivateName());
+    if (auto* object = callFrame->argument(0).getObject())
+        markAsUncloneable(lexicalGlobalObject->vm(), *object);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUntransferable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUntransferablePrivateName());
+    if (auto* object = callFrame->argument(0).getObject())
+        markAsUntransferable(lexicalGlobalObject->vm(), *object);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

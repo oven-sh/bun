@@ -1122,6 +1122,18 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_until(promise, || false)
+    }
+
+    /// [`wait_for_promise`](Self::wait_for_promise) with a way out: `give_up` is asked once per
+    /// turn while the promise is still pending, and `Ok(())` with the promise still pending means
+    /// it said yes. A bun:test matcher stops at its test's deadline this way. Nothing below this
+    /// frame can run until it returns, so a wait with no end turns a test timeout into a hang.
+    pub fn wait_for_promise_until(
+        &mut self,
+        promise: jsc::AnyPromise,
+        mut give_up: impl FnMut() -> bool,
+    ) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
@@ -1134,9 +1146,13 @@ impl EventLoop {
                 return Err(jsc::Stopped);
             }
             self.tick();
-            if promise.status() == PromiseStatus::Pending {
-                self.auto_tick();
+            if promise.status() != PromiseStatus::Pending {
+                break;
             }
+            if give_up() {
+                return Ok(());
+            }
+            self.auto_tick();
         }
         Ok(())
     }

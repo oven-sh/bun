@@ -878,6 +878,25 @@ impl BunTest {
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
+                    // A matcher is waiting on a promise by spinning the event loop inside the test
+                    // that just timed out, and this callback runs from inside that spin. The wait
+                    // gives up at the deadline and fails the test through the normal completion
+                    // path. Running the queue from here instead would start the next test inside
+                    // the nested loop, with the timed-out body still parked underneath. Come back
+                    // once it has unwound. (A sibling's timeout in a concurrent group, or one whose
+                    // owner cannot be told, is handled as usual.)
+                    if let Some(runner) = Jest::runner() {
+                        if runner.matcher_waits > 0 {
+                            let now = Timespec::now_force_real_time();
+                            if runner
+                                .get_exclusive_active_timeout()
+                                .is_some_and(|deadline| deadline.order(&now).is_le())
+                            {
+                                (*this).update_min_timeout(global, &now.add_ms(1));
+                                return;
+                            }
+                        }
+                    }
                     if let Err(e) = (*this).execution.handle_timeout(global) {
                         (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
                     }
@@ -976,7 +995,7 @@ impl BunTest {
         Ok(())
     }
 
-    fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
+    pub(crate) fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
         let _g = group_begin!();
         let _ = global_this;
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.

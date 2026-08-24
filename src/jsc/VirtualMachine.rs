@@ -2724,6 +2724,17 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
+    /// See [`crate::event_loop::EventLoop::wait_for_promise_until`].
+    #[inline]
+    pub fn wait_for_promise_until(
+        &mut self,
+        promise: jsc::AnyPromise,
+        give_up: impl FnMut() -> bool,
+    ) -> Result<(), jsc::Stopped> {
+        self.event_loop_mut()
+            .wait_for_promise_until(promise, give_up)
+    }
+
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]

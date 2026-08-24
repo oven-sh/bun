@@ -554,6 +554,97 @@ it("test timeouts when expected", () => {
   expect(err).not.toContain("unreachable code");
 });
 
+// `expect(p).rejects` / `.resolves`, async `toThrow`, and an async `expect.extend` matcher wait for
+// their promise by spinning the event loop inside the matcher call. A promise that never settles
+// used to park the test body there for good: the timeout could not unwind that frame, `finally`
+// never ran, and with an interval (or a Worker) keeping the loop alive `bun test` never exited.
+// The wait now ends at the test's deadline and the matcher fails.
+test("a matcher waiting on a promise that never settles fails at the test timeout", async () => {
+  using dir = tempDir("matcher-wait-timeout", {
+    "matcher-wait.test.js": /*js*/ `
+      import { test, expect } from "bun:test";
+
+      expect.extend({
+        toSettle(received) {
+          return received;
+        },
+      });
+
+      const never = () => new Promise(() => {});
+      const keepAlive = setInterval(() => {}, 100_000);
+
+      // Entered synchronously: the runner's run loop is still on the stack.
+      test("rejects, no prior await", async () => {
+        try {
+          await expect(never()).rejects.toThrow("boom");
+        } finally {
+          console.log("finally 1");
+        }
+      }, 100);
+
+      // Entered from a continuation: the run loop has returned.
+      test("resolves, after an await", async () => {
+        await Bun.sleep(1);
+        try {
+          await expect(never()).resolves.toBe(1);
+        } finally {
+          console.log("finally 2");
+        }
+      }, 100);
+
+      test("async toThrow", async () => {
+        try {
+          await expect(never).toThrow("boom");
+        } finally {
+          console.log("finally 3");
+        }
+      }, 100);
+
+      test("async custom matcher", async () => {
+        try {
+          await expect(never()).toSettle();
+        } finally {
+          console.log("finally 4");
+        }
+      }, 100);
+
+      test("a later test still runs", () => {
+        clearInterval(keepAlive);
+        expect(1).toBe(1);
+      });
+    `,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "matcher-wait.test.js"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    // Without the fix the runner never exits on its own.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.split("\n").filter(line => line.startsWith("finally "))).toEqual([
+    "finally 1",
+    "finally 2",
+    "finally 3",
+    "finally 4",
+  ]);
+  expect(stderr).toContain("(fail) rejects, no prior await");
+  expect(stderr).toContain("(fail) resolves, after an await");
+  expect(stderr).toContain("(fail) async toThrow");
+  expect(stderr).toContain("(fail) async custom matcher");
+  expect(stderr).toContain("(pass) a later test still runs");
+  expect(stderr).toContain("Received promise that was still pending when the test timed out");
+  expect(stderr).toContain("Received function returned a promise that was still pending when the test timed out");
+  expect(stderr).toContain("Matcher `toSettle` returned a promise that was still pending when the test timed out");
+  expect(stderr).toContain("4 fail");
+  expect(exitCode).toBe(1);
+});
+
 test("jest.setTimeout will change default timeout", () => {
   const path = join(tmp, "jest-setTimeout-test.test.js");
   copyFileSync(join(import.meta.dir, "setTimeout-test-fixture.js"), path);

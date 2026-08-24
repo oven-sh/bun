@@ -148,6 +148,13 @@ pub struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
+    /// How many matchers are waiting on a promise by spinning the event loop from inside a test
+    /// body (`Expect::wait_for_promise_within_test`), bounded by the test's deadline. While one
+    /// is on the stack, the file's timeout callback leaves the timeout of the one running test to
+    /// it: the wait gives up at that deadline and fails the test through the normal completion
+    /// path.
+    pub(crate) matcher_waits: u32,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
@@ -191,6 +198,35 @@ impl<'a> TestRunner<'a> {
         bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
     }
 
+    /// The deadline of the one test a synchronous wait on the stack belongs to, when that is
+    /// unambiguous: the entry whose callback is still on the stack, or the only running sequence
+    /// of the active group. `None` (no deadline, or a concurrent group of several tests, whose
+    /// continuations cannot be told apart) means the wait must not hold the file's timeouts.
+    pub(crate) fn get_exclusive_active_timeout(&self) -> Option<bun_core::Timespec> {
+        let active_file = self.bun_test_root.active_file.as_deref()?;
+        let entry = match active_file.execution.on_stack_entry.get() {
+            Some(entry) => entry,
+            None => {
+                if active_file.phase != bun_test::Phase::Execution {
+                    return None;
+                }
+                let group = active_file.execution.active_group_ref()?;
+                let mut running = group
+                    .sequences_const(&active_file.execution)
+                    .iter()
+                    .filter_map(|sequence| sequence.active_entry);
+                let entry = running.next()?;
+                if running.next().is_some() {
+                    return None;
+                }
+                entry
+            }
+        };
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+        let deadline = unsafe { entry.as_ref() }.timespec;
+        (!deadline.eql(&bun_core::Timespec::EPOCH)).then_some(deadline)
+    }
+
     pub(crate) fn remove_active_timeout(&mut self, vm: &mut VirtualMachine) {
         let Some(active_file) = self.bun_test_root.active_file.as_ref() else {
             return;
@@ -207,6 +243,19 @@ impl<'a> TestRunner<'a> {
         }
         let _ = vm;
         bun_test::vm_timer().remove(&raw mut active_file.timer);
+    }
+
+    /// Arms the active file's timeout timer for `deadline` unless it is already due sooner. The
+    /// runner arms it once `run()` returns, which a matcher that waits synchronously inside the
+    /// test body prevents: the wait arms it itself so its poll wakes at the deadline.
+    pub(crate) fn arm_active_timeout(&self, global_this: &JSGlobalObject, deadline: bun_core::Timespec) {
+        let Some(active_file) = self.bun_test_root.active_file.as_ref() else {
+            return;
+        };
+        // SAFETY: single-threaded JS VM; only borrow of this BunTest for the
+        // duration of the timer update below (see `remove_active_timeout`).
+        let active_file = unsafe { bun_test::buntest_as_mut(active_file) };
+        active_file.update_min_timeout(global_this, &deadline);
     }
 
 

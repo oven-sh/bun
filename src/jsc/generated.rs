@@ -129,8 +129,9 @@ pub type GenBlob = *mut core::ffi::c_void;
 
 type RawWTFStringImpl = *mut bun_core::WTFStringImplStruct;
 
-/// `BindgenOptional(BindgenTrivial<T>).ExternType` — `T` has no custom
-/// `OptionalExternType`, so the C++ side wraps it in a 2-arm tagged union
+/// `BindgenOptional<T>::ExternType` for a `T` whose extern and Zig types are
+/// the same — `T` has no custom `OptionalExternType`, so the C++ side wraps
+/// it in a 2-arm tagged union
 /// `{ data: union { _0: u8 /* unused */, _1: T }, tag: u8 }`.
 #[repr(C)]
 #[derive(Clone, Copy)]

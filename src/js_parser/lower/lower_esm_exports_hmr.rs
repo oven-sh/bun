@@ -586,22 +586,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 loc,
             );
 
-            // This is technically incorrect in that we've marked this as a
-            // top level symbol. but all we care about is preventing name
-            // collisions, not necessarily the best minificaiton (dev only)
-            let arg1 = p.generate_temp_ref(Some(original_name.slice()));
-            self.last_part
-                .declared_symbols
-                .append(js_ast::DeclaredSymbol {
-                    ref_: arg1,
-                    is_top_level: true,
-                })?;
-            self.last_part
-                .symbol_uses
-                .put_no_clobber(arg1, js_ast::symbol::Use { count_estimate: 1 })?;
-            // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
-            VecExt::append(&mut p.current_scope_mut().generated, arg1);
-
             // 'get abc() { return abc }'
             self.export_props.push(getter_prop(p.arena, key, id, loc));
             // no setter is added since live bindings are read-only

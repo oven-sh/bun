@@ -192,6 +192,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 stmts: inner,
                                 loc: bun_ast::Loc::EMPTY,
                             },
+                            flags: if two_phase {
+                                G::FnFlags::IsGenerator.into()
+                            } else {
+                                Default::default()
+                            },
                             ..Default::default()
                         },
                     },

@@ -450,12 +450,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     Strong<JSC::JSObject> strongModule = { vm, moduleObject };
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
-
-    if (filename.isEmpty() && !scope.exception()) {
-        JSC::throwTypeError(globalObject, scope, "dlopen requires a non-empty string as the second argument"_s);
-    }
-
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (filename.isEmpty()) {
+        JSC::throwTypeError(globalObject, scope, "dlopen requires a non-empty string as the second argument"_s);
+        return {};
+    }
 
     if (filename.startsWith("file://"_s)) {
         WTF::URL fileURL = WTF::URL(filename);
@@ -4105,9 +4105,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     }
 
     JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure());
-    if (throwScope.exception()) [[unlikely]] {
-        return {};
-    }
 
     // Node.js:
     // {
@@ -4827,11 +4824,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionLoadBuiltinModule, (JSGlobalObject * gl
     BunString idStr = Bun::toString(idWtfStr);
 
     JSValue fetchResult = Bun::resolveAndFetchBuiltinModule(zigGlobalObject, &idStr);
+    RETURN_IF_EXCEPTION(scope, {});
     if (fetchResult) {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(fetchResult));
+        return JSC::JSValue::encode(fetchResult);
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObject, CallFrame* callFrame))

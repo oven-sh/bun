@@ -282,7 +282,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         val = result.transferToWTFString();
     }
 
-    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
 }

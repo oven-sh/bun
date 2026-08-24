@@ -326,8 +326,6 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
         }
     }
 
-    RETURN_IF_EXCEPTION(scope, {});
-
     // This function is not bound with the module object. This is because nearly
     // no one uses this and it is not worth creating an extra bound function for
     // every single module. Instead, we can unwrap the bound function that we

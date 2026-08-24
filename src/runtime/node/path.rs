@@ -370,7 +370,7 @@ fn view_of<'a>(global: &JSGlobalObject, value: JSValue) -> JsResult<Input<'a>> {
     debug_assert!(value.is_string_literal());
     // SAFETY: `is_string_literal` ⇒ the cell is a JSString.
     let string: &JSString = unsafe { &*value.as_string() };
-    let z = string.try_view(global)?;
+    let z = string.view(global)?;
     // SAFETY: the view describes the live JSString's storage (see the doc comment); detach it
     // from the local `ZigString`'s lifetime.
     let chars = unsafe {

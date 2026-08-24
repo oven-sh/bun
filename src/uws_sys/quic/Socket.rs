@@ -51,7 +51,7 @@ impl Socket {
     }
 
     /// `conn_ext_size` bytes of caller storage co-allocated with the socket.
-    /// Unset until the caller writes to it after `connect`/`on_open`; the
+    /// Unset until the caller writes to it after `connect`; the
     /// `Option<NonNull<T>>` slot pattern lets callbacks early-return on a null ext.
     #[inline]
     pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {

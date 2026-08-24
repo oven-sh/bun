@@ -1087,8 +1087,12 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.tree_shaking_override = config.tree_shaking;
         transpiler.options.css_chunking = config.css_chunking;
         transpiler.options.min_chunk_size = config.min_chunk_size;
+<<<<<<< HEAD
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
+=======
+        transpiler.options.css_target = config.css_target;
+>>>>>>> f27492c8a4 (Bun.build: add cssTarget option to set CSS browser targets)
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;

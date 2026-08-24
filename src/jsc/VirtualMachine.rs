@@ -4882,6 +4882,7 @@ impl VirtualMachine {
         self.main_resolved_path = bun_core::String::empty();
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
+        crate::cpp::Bun__Process__resetArgv(self.global());
 
         self.event_loop_mut().ensure_waker();
 

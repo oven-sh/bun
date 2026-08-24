@@ -356,10 +356,11 @@ static char* toFileURI(std::string_view path)
     size_t escape_count = 0;
     for (char ch : path) {
 #if OS(WINDOWS)
-        if (needs_escape(ch) && ch != '\\') {
-#else
-        if (needs_escape(ch)) {
+        if (ch == '\\') {
+            continue;
+        }
 #endif
+        if (needs_escape(ch)) {
             ++escape_count;
         }
     }
@@ -1587,17 +1588,17 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if OS(LINUX)
             // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
             // suspend and resume the JS thread which we must not override.
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
+            bool canHandle = signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume;
 #elif OS(DARWIN) || OS(FREEBSD)
             // these signals cannot be handled
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
+            bool canHandle = signalNumber != SIGKILL && signalNumber != SIGSTOP;
 #elif OS(WINDOWS)
             // windows has no SIGSTOP
-            if (signalNumber != SIGKILL) {
+            bool canHandle = signalNumber != SIGKILL;
 #else
 #error unknown OS
 #endif
-
+            if (canHandle) {
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {
                         SignalHandleValue signal_handle = {
@@ -3137,6 +3138,39 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessArgv, (JSGlobalObject * globalObject, Encoded
     JSValue value = JSValue::decode(encodedValue);
     process->setArgv(globalObject, value);
     return true;
+}
+
+// process.argv[1] is the VM's current entry point. The test runner moves the
+// entry point from file to file, so the cached array must be dropped for the
+// next file. Bun.argv reifies to the same array on first access, so repoint it
+// when it is already an own property.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__Process__resetArgv(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->hasProcessObject()) {
+        return;
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    auto* process = globalObject->processObject();
+    process->clearArgv();
+
+    if (!globalObject->m_bunObject.isInitialized()) {
+        return;
+    }
+    auto* bunObject = globalObject->bunObject();
+    auto argvIdentifier = JSC::Identifier::fromString(vm, "argv"_s);
+    if (!bunObject->getDirect(vm, argvIdentifier)) {
+        return;
+    }
+
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue argv = process->getArgv(globalObject);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        Bun__reportError(globalObject, JSValue::encode(exception));
+        return;
+    }
+    bunObject->putDirect(vm, argvIdentifier, argv, JSC::PropertyAttribute::DontDelete | 0);
 }
 
 extern "C" EncodedJSValue Bun__Process__getExecArgv(JSGlobalObject* lexicalGlobalObject)

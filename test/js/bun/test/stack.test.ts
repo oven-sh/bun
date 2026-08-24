@@ -294,37 +294,6 @@ test("frames stored into an old error are kept alive across an eden collection",
   expect(exitCode).toBe(0);
 });
 
-test("Error.appendStackTrace onto an error whose .stack was already read is a no-op", async () => {
-  // After the first read the destination has no frames left to append to, so the call must not
-  // take the source's frames either.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const dest = new Error("dest message");
-       const before = dest.stack;
-       let src;
-       (function srcFn() { src = new Error("src message"); })();
-       Error.appendStackTrace(src, dest);
-       await 0;
-       Bun.gc(true);
-       console.log(JSON.stringify({
-         destUnchanged: dest.stack === before,
-         src: src.stack.split("\\n").slice(0, 2).map(l => l.trim().split(" (")[0]),
-       }));`,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    destUnchanged: true,
-    src: ["Error: src message", "at srcFn"],
-  });
-  expect(exitCode).toBe(0);
-});
-
 // An error keeps its captured frames alive until the first .stack read, as in V8. JSC used to hold
 // them weakly: once a frame's callee died, the GC rendered the stack string itself, where
 // Error.prepareStackTrace cannot run. A GC between the throw and the first read must not be observable.

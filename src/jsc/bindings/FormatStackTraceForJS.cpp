@@ -668,17 +668,14 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
-    // A materialized destination never renders frames again (same no-op as Bun__attachAsyncStackFromPromise).
-    if (destination->hasMaterializedErrorInfo()) {
-        return JSC::JSValue::encode(jsUndefined());
-    }
-
     if (!destination->stackTrace()) {
         destination->captureStackTrace(vm, globalObject, 1);
     }
 
     if (source->stackTrace()) {
-        // The GC reads these under the cell lock. Sequential scopes: source and destination can be the same error.
+        // ErrorInstance::visitChildren marks the frames under the cell lock, so each vector is
+        // mutated under its owner's lock, one at a time. The barrier re-greys an old destination
+        // that now points at young frames.
         {
             WTF::Locker locker { destination->cellLock() };
             destination->stackTrace()->appendVector(*source->stackTrace());

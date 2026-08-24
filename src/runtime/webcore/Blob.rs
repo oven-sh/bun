@@ -4493,8 +4493,6 @@ fn write_file_with_empty_source_to_destination(
                 s3.path(),
                 b"",
                 destination_blob.content_type_or_mime_type(),
-                // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
-                // on `aws_options`, which outlives this call.
                 aws_options.content_disposition.as_deref(),
                 aws_options.content_encoding.as_deref(),
                 aws_options.acl,
@@ -4701,8 +4699,6 @@ pub(crate) fn write_file_with_source_destination(
                             aws_options.acl,
                             aws_options.storage_class,
                             destination_blob.content_type_or_mime_type(),
-                            // SAFETY: `*const [u8]` borrows from sibling `_*_slice`
-                            // fields on `aws_options`, which outlives this call.
                             aws_options.content_disposition.as_deref(),
                             aws_options.content_encoding.as_deref(),
                             proxy_url,
@@ -4759,8 +4755,6 @@ pub(crate) fn write_file_with_source_destination(
                         s3.path(),
                         bytes.slice(),
                         destination_blob.content_type_or_mime_type(),
-                        // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
-                        // on `aws_options`, which outlives this call.
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
                         aws_options.acl,
@@ -4801,8 +4795,6 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.acl,
                         aws_options.storage_class,
                         destination_blob.content_type_or_mime_type(),
-                        // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
-                        // on `aws_options`, which outlives this call.
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
                         proxy_url,
@@ -5069,9 +5061,6 @@ pub(crate) fn write_file_internal(
                                 aws_options.acl,
                                 aws_options.storage_class,
                                 destination_blob.content_type_or_mime_type(),
-                                // SAFETY: `*const [u8]` borrows from sibling
-                                // `_*_slice` fields on `aws_options`, which
-                                // outlives this call.
                                 aws_options.content_disposition.as_deref(),
                                 aws_options.content_encoding.as_deref(),
                                 proxy_url,

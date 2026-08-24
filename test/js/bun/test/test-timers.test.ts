@@ -105,8 +105,15 @@ test("chainable timer functions return their receiver only when called as a meth
     useRealTimers(),
   ];
   try {
-    expect(jest.useFakeTimers()).toBe(jest);
-    expect(jest.setSystemTime()).toBe(jest);
+    expect([
+      jest.useFakeTimers(),
+      jest.advanceTimersByTime(0),
+      jest.advanceTimersToNextTimer(),
+      jest.runOnlyPendingTimers(),
+      jest.runAllTimers(),
+      jest.clearAllTimers(),
+      jest.setSystemTime(),
+    ]).toEqual(new Array(7).fill(jest));
     expect(bare()).toEqual(new Array(8).fill(undefined));
   } finally {
     expect(jest.useRealTimers()).toBe(jest);

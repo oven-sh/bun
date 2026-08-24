@@ -1110,7 +1110,7 @@ impl Value {
                             // `blob.detach()` below covers the reject error path too.
                             let r = promise.reject(
                                 global,
-                                EncodedSlice::init(
+                                EncodedSlice::latin1(
                                     b"Internal error: task for FormData must not be null",
                                 )
                                 .to_error_instance(global),

@@ -4,14 +4,14 @@ use core::ffi::c_int;
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::{self, EncodedSlice, Utf8Bytes, fmt as bun_fmt};
 use bun_core::{WStr, ZStr};
-use bun_jsc::{EncodedSliceJsc as _, SliceWithUnderlyingStringJsc as _, StringJsc as _};
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, Utf8WithStringJsc as _};
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
 use crate::webcore::{Blob, Request, Response};
 
-pub use bun_core::SliceWithUnderlyingString;
+pub use bun_core::Utf8WithString;
 
 pub use jsc::MarkedArrayBuffer as Buffer;
 
@@ -271,8 +271,8 @@ impl BlobOrStringOrBuffer {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum StringOrBuffer {
-    String(SliceWithUnderlyingString),
-    ThreadsafeString(SliceWithUnderlyingString),
+    String(Utf8WithString),
+    ThreadsafeString(Utf8WithString),
     Utf8(Utf8Bytes<'static>),
     Buffer(Buffer),
 }
@@ -412,17 +412,17 @@ impl StringOrBuffer {
                 }
                 let str = bun_core::String::from_js(value, global)?;
                 if flavor == Flavor::Async {
-                    let mut sliced = str.into_thread_safe_slice();
+                    let mut sliced = str.into_utf8_with_string_thread_safe();
                     sliced.report_extra_memory(global.vm());
 
-                    if sliced.underlying.is_empty() {
+                    if sliced.string.is_empty() {
                         *out = Self::Utf8(sliced.into_utf8());
                         return Ok(true);
                     }
 
                     *out = Self::ThreadsafeString(sliced);
                 } else {
-                    *out = Self::String(str.into_slice());
+                    *out = Self::String(str.into_utf8_with_string());
                 }
                 Ok(true)
             }
@@ -791,7 +791,7 @@ impl Encoding {
             }
             Self::Base64url => {
                 let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(EncodedSlice::init(&buf).to_js(global_object))
+                Ok(EncodedSlice::latin1(&buf).to_js(global_object))
             }
             Self::Hex => {
                 // The byte-by-byte `write!` formatting machinery is pathologically
@@ -1246,7 +1246,7 @@ impl PathLikeExt for PathLike {
         will_be_async: bool,
     ) -> JsResult<PathLike> {
         if will_be_async {
-            let mut sliced = str.into_thread_safe_slice();
+            let mut sliced = str.into_utf8_with_string_thread_safe();
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
@@ -1255,12 +1255,12 @@ impl PathLikeExt for PathLike {
 
             sliced.report_extra_memory(global.vm());
 
-            if sliced.underlying.is_empty() {
+            if sliced.string.is_empty() {
                 return Ok(Self::Utf8(sliced.into_utf8()));
             }
             Ok(Self::ThreadsafeString(sliced))
         } else {
-            let mut sliced = str.into_slice();
+            let mut sliced = str.into_utf8_with_string();
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
@@ -1269,13 +1269,13 @@ impl PathLikeExt for PathLike {
 
             // Costs nothing to keep both around.
             if sliced.is_shared() {
-                return Ok(Self::SliceWithUnderlyingString(sliced));
+                return Ok(Self::Utf8WithString(sliced));
             }
 
             sliced.report_extra_memory(global.vm());
 
             // It is expensive to keep both around: `utf8` here is a transcoded
-            // copy (UTF-16 or non-ASCII Latin-1 input) independent of `underlying`.
+            // copy (UTF-16 or non-ASCII Latin-1 input) independent of `string`.
             Ok(Self::Utf8(sliced.into_utf8()))
         }
     }

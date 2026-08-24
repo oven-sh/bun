@@ -955,7 +955,7 @@ impl<'a> ParseRenderer<'a> {
                 for i in 0..len {
                     let child = entry.children.get_index(g, i as u32)?;
                     if child.is_string() {
-                        let str = child.to_slice(g)?;
+                        let str = child.to_utf8(g)?;
                         let _ = alt_buf.extend_from_slice(str.slice());
                     }
                 }
@@ -1243,7 +1243,7 @@ impl<'a> JsCallbackRenderer<'a> {
         if result.is_undefined_or_null() {
             return Ok(()); // callback returned null/undefined → omit element
         }
-        let slice = result.to_slice(self.global_object)?;
+        let slice = result.to_utf8(self.global_object)?;
         self.append_to_top(slice.slice())?;
         Ok(())
     }
@@ -1391,7 +1391,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 .text
                 .call(self.global_object, JSValue::UNDEFINED, &[text_js])?;
         if !result.is_undefined_or_null() {
-            let slice = result.to_slice(self.global_object)?;
+            let slice = result.to_utf8(self.global_object)?;
             self.append_to_top(slice.slice())?;
         }
         Ok(())

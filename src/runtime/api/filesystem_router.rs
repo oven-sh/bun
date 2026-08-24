@@ -130,10 +130,7 @@ impl FileSystemRouter {
         let mut origin_str: Utf8Bytes = Utf8Bytes::EMPTY;
         let mut asset_prefix_slice: Utf8Bytes = Utf8Bytes::EMPTY;
         if let Some(style_val) = argument.get(global_this, "style")? {
-            if !style_val
-                .to_js_string_view(global_this)?
-                .eql_comptime("nextjs")
-            {
+            if !style_val.to_js_string_view(global_this)?.eq_ascii("nextjs") {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Only 'nextjs' style is currently implemented"
                 )));
@@ -149,7 +146,7 @@ impl FileSystemRouter {
                 return Err(global_this
                     .throw_invalid_arguments(format_args!("Expected dir to be a string")));
             }
-            let root_dir_path_ = dir.to_slice(global_this)?;
+            let root_dir_path_ = dir.to_utf8(global_this)?;
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
                 // resolve relative path if needed
                 let path_ = root_dir_path_.slice();
@@ -193,7 +190,7 @@ impl FileSystemRouter {
                 if val.get_length(global_this)? == 0 {
                     continue;
                 }
-                let bytes = val.to_slice(global_this)?.into_vec();
+                let bytes = val.to_utf8(global_this)?.into_vec();
                 // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`, so the
                 // backing allocation outlives this slice. Cast through raw ptr to detach the
                 // borrow from `arena` so it can be moved below.
@@ -211,7 +208,7 @@ impl FileSystemRouter {
 
             // Copy into the arena so the slice always owns stable bytes (Utf8Bytes
             // has no clone-if-borrowed helper; the copy only happens at construction).
-            let s = asset_prefix.to_slice(global_this)?;
+            let s = asset_prefix.to_utf8(global_this)?;
             // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`; allocation
             // outlives this slice. Detach borrow via raw ptr so `arena` can be moved below.
             let leaked: &'static [u8] =
@@ -290,7 +287,7 @@ impl FileSystemRouter {
                 return Err(global_this
                     .throw_invalid_arguments(format_args!("Expected origin to be a string")));
             }
-            origin_str = origin.to_slice(global_this)?;
+            origin_str = origin.to_utf8(global_this)?;
         }
 
         if log.errors + log.warnings > 0 {
@@ -545,7 +542,7 @@ impl FileSystemRouter {
         let mut path: Utf8Bytes = 'brk: {
             // `path` is moved into the `MatchedRoute`, so every arm must own its bytes.
             if argument.is_string() {
-                break 'brk argument.to_slice(global_this)?;
+                break 'brk argument.to_utf8(global_this)?;
             }
 
             if argument.is_cell() {

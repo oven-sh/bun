@@ -284,7 +284,7 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     input = array_buffer.byte_slice();
                 }
                 _ => {
-                    input_slice = arg.to_slice(global)?;
+                    input_slice = arg.to_utf8(global)?;
                     input = input_slice.slice();
                 }
             }

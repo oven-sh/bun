@@ -864,7 +864,7 @@ impl JSValue {
     }
     /// `toString()` then UTF-8. The slice holds its own ref/allocation, so it
     /// is independent of the `JSString` cell.
-    pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_core::Utf8Bytes<'static>> {
+    pub fn to_utf8(self, global: &JSGlobalObject) -> JsResult<bun_core::Utf8Bytes<'static>> {
         Ok(self.to_bun_string(global)?.into_utf8())
     }
     pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
@@ -1216,7 +1216,7 @@ impl JSValue {
                 if !v.is_string() {
                     return Err(global.throw_invalid_property_type(property, "string", v));
                 }
-                Ok(Some(v.to_slice(global)?))
+                Ok(Some(v.to_utf8(global)?))
             }
             _ => Ok(None),
         }
@@ -1429,7 +1429,7 @@ impl JSValue {
         key: impl AsRef<[u8]>,
         value: JSValue,
     ) {
-        let key = bun_core::EncodedSlice::init(key.as_ref());
+        let key = bun_core::EncodedSlice::latin1(key.as_ref());
         JSC__JSValue__putNonEnumerable(self, global, &key, value)
     }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
@@ -1470,7 +1470,7 @@ impl JSValue {
     }
     /// `JSValue.deleteProperty` — delete an own property by name.
     pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> bool {
-        let key = bun_core::EncodedSlice::init(key.as_ref());
+        let key = bun_core::EncodedSlice::latin1(key.as_ref());
         JSC__JSValue__deleteProperty(self, global, &key)
     }
     /// `JSValue.putMayBeIndex` — same as [`put`] but accepts
@@ -1867,7 +1867,7 @@ impl PutKey for bun_core::String {
 impl PutKey for &[u8] {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        let key = bun_core::EncodedSlice::init(self);
+        let key = bun_core::EncodedSlice::latin1(self);
         (&key).put(target, global, value)
     }
 }

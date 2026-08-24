@@ -275,7 +275,8 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
                 // SAFETY: vm.global is valid; EncodedSlice borrows `tz` for the FFI call duration.
                 // `JSGlobalObject::set_time_zone` isn't exposed on the Rust
                 // wrapper yet — call the underlying C++ export directly.
-                let _ = unsafe { JSGlobalObject__setTimeZone(vm.global, &EncodedSlice::init(tz)) };
+                let _ =
+                    unsafe { JSGlobalObject__setTimeZone(vm.global, &EncodedSlice::latin1(tz)) };
             }
         }
 

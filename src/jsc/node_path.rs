@@ -2,12 +2,12 @@
 //!
 //! LAYERING: defined at the
 //! `bun_jsc` tier because every variant payload (`CowSlice<u8>`, `Buffer` =
-//! `MarkedArrayBuffer`, `SliceWithUnderlyingString`, `Utf8Bytes`, `Fd`)
+//! `MarkedArrayBuffer`, `Utf8WithString`, `Utf8Bytes`, `Fd`)
 //! is already reachable from this crate. `bun_runtime::node::types`
 //! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
 //! `from_js_with_allocator`) on top via inherent impls in that crate.
 
-use bun_core::{SliceWithUnderlyingString, Utf8Bytes};
+use bun_core::{Utf8Bytes, Utf8WithString};
 use bun_ptr::cow_slice::CowSlice;
 use bun_sys::Fd;
 
@@ -28,7 +28,7 @@ use crate::array_buffer::MarkedArrayBuffer;
 /// PathLike::to_thread_safe) (or an `args::*` type's `to_thread_safe`).
 ///
 /// Implementations release **only** the JS-GC protect refcount — owned Rust
-/// payloads (Vec, `SliceWithUnderlyingString`, …) are freed by the type's own
+/// payloads (Vec, `Utf8WithString`, …) are freed by the type's own
 /// `Drop`, which runs immediately after when the value is held in a
 /// [`ThreadSafe<T>`].
 pub trait Unprotect {
@@ -101,8 +101,8 @@ impl<T: Unprotect + Default> Default for ThreadSafe<T> {
 pub enum PathLike {
     String(CowSlice<u8>),
     Buffer(MarkedArrayBuffer),
-    SliceWithUnderlyingString(SliceWithUnderlyingString),
-    ThreadsafeString(SliceWithUnderlyingString),
+    Utf8WithString(Utf8WithString),
+    ThreadsafeString(Utf8WithString),
     Utf8(Utf8Bytes<'static>),
 }
 
@@ -133,7 +133,7 @@ impl Clone for PathLike {
                 owns_buffer: false,
                 pinned: false,
             }),
-            Self::SliceWithUnderlyingString(s) => Self::SliceWithUnderlyingString(s.clone()),
+            Self::Utf8WithString(s) => Self::Utf8WithString(s.clone()),
             Self::ThreadsafeString(s) => Self::ThreadsafeString(s.clone()),
             Self::Utf8(s) => Self::Utf8(s.clone()),
         }
@@ -152,8 +152,8 @@ impl Drop for PathLike {
                     b.buffer.unpin();
                 }
             }
-            // `SliceWithUnderlyingString` derefs `underlying` in its own `Drop`.
-            Self::SliceWithUnderlyingString(_) | Self::ThreadsafeString(_) => {}
+            // `Utf8WithString` derefs `string` in its own `Drop`.
+            Self::Utf8WithString(_) | Self::ThreadsafeString(_) => {}
             // `Utf8Bytes` releases its WTF ref / owned buffer in its own `Drop`.
             Self::Utf8(_) => {}
         }
@@ -171,7 +171,7 @@ impl PathLike {
         match self {
             Self::String(s) => s.slice(),
             Self::Buffer(b) => b.slice(),
-            Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => s.slice(),
+            Self::Utf8WithString(s) | Self::ThreadsafeString(s) => s.slice(),
             Self::Utf8(s) => s.slice(),
         }
     }
@@ -180,7 +180,7 @@ impl PathLike {
         match self {
             Self::String(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),
-            Self::SliceWithUnderlyingString(_) | Self::ThreadsafeString(_) => 0,
+            Self::Utf8WithString(_) | Self::ThreadsafeString(_) => 0,
             Self::Utf8(s) => s.slice().len(),
         }
     }
@@ -196,7 +196,7 @@ impl PathLike {
     /// `to_thread_safe`.
     pub fn to_thread_safe(&mut self) {
         match self {
-            Self::SliceWithUnderlyingString(s) => {
+            Self::Utf8WithString(s) => {
                 s.to_thread_safe();
                 let owned = core::mem::take(s);
                 *self = Self::ThreadsafeString(owned);

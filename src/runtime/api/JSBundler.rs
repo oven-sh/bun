@@ -303,7 +303,7 @@ pub mod js_bundler {
                 let mut iter = exec_argv.array_iterator(global_this)?;
                 let mut is_first = true;
                 while let Some(arg) = iter.next()? {
-                    let slice = arg.to_slice(global_this)?;
+                    let slice = arg.to_utf8(global_this)?;
                     if is_first {
                         is_first = false;
                         this.exec_argv.append_slice(slice.slice())?;
@@ -317,7 +317,7 @@ pub mod js_bundler {
             if let Some(executable_path) =
                 object.get_own(global_this, &BunString::static_("executablePath"))?
             {
-                let slice = executable_path.to_slice(global_this)?;
+                let slice = executable_path.to_utf8(global_this)?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
                 if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                     .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -346,7 +346,7 @@ pub mod js_bundler {
                 if let Some(windows_icon_path) =
                     windows.get_own(global_this, &BunString::static_("icon"))?
                 {
-                    let slice = windows_icon_path.to_slice(global_this)?;
+                    let slice = windows_icon_path.to_utf8(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                         .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -363,48 +363,48 @@ pub mod js_bundler {
                 if let Some(windows_title) =
                     windows.get_own(global_this, &BunString::static_("title"))?
                 {
-                    let slice = windows_title.to_slice(global_this)?;
+                    let slice = windows_title.to_utf8(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_publisher) =
                     windows.get_own(global_this, &BunString::static_("publisher"))?
                 {
-                    let slice = windows_publisher.to_slice(global_this)?;
+                    let slice = windows_publisher.to_utf8(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_version) =
                     windows.get_own(global_this, &BunString::static_("version"))?
                 {
-                    let slice = windows_version.to_slice(global_this)?;
+                    let slice = windows_version.to_utf8(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_description) =
                     windows.get_own(global_this, &BunString::static_("description"))?
                 {
-                    let slice = windows_description.to_slice(global_this)?;
+                    let slice = windows_description.to_utf8(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_copyright) =
                     windows.get_own(global_this, &BunString::static_("copyright"))?
                 {
-                    let slice = windows_copyright.to_slice(global_this)?;
+                    let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
             }
 
             if let Some(outfile) = object.get_own(global_this, &BunString::static_("outfile"))? {
-                let slice = outfile.to_slice(global_this)?;
+                let slice = outfile.to_utf8(global_this)?;
                 this.outfile.append_slice_exact(slice.slice())?;
             }
 
             if let Some(assets) = object.get_own_array(global_this, "assets")? {
                 let mut iter = assets.array_iterator(global_this)?;
                 while let Some(arg) = iter.next()? {
-                    let slice = arg.to_slice(global_this)?;
+                    let slice = arg.to_utf8(global_this)?;
                     this.assets.push(Box::from(slice.slice()));
                 }
             }
@@ -677,7 +677,7 @@ pub mod js_bundler {
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
                         this.env_behavior = api::DotEnvBehavior::LoadAll;
                     } else if env.is_string() {
-                        let slice = env.to_slice(global_this)?;
+                        let slice = env.to_utf8(global_this)?;
                         match api::DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
                                 this.env_behavior = behavior;
@@ -811,7 +811,7 @@ pub mod js_bundler {
             if let Some(entry_points) = entry_points_opt {
                 let mut iter = entry_points.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice(global_this)?;
+                    let slice = entry_point.to_utf8(global_this)?;
                     this.entry_points.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -840,13 +840,13 @@ pub mod js_bundler {
 
             if let Some(conditions_value) = config.get_truthy(global_this, "conditions")? {
                 if conditions_value.is_string() {
-                    let slice = conditions_value.to_slice(global_this)?;
+                    let slice = conditions_value.to_utf8(global_this)?;
                     this.conditions.insert(slice.slice())?;
                     drop(slice);
                 } else if conditions_value.js_type().is_array() {
                     let mut iter = conditions_value.array_iterator(global_this)?;
                     while let Some(entry_point) = iter.next()? {
-                        let slice = entry_point.to_slice(global_this)?;
+                        let slice = entry_point.to_utf8(global_this)?;
                         this.conditions.insert(slice.slice())?;
                         drop(slice);
                     }
@@ -926,7 +926,7 @@ pub mod js_bundler {
             if let Some(externals) = config.get_own_array(global_this, "external")? {
                 let mut iter = externals.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice(global_this)?;
+                    let slice = entry_point.to_utf8(global_this)?;
                     this.external.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -947,7 +947,7 @@ pub mod js_bundler {
                     if allow_unresolved_val.get_length(global_this)? > 0 {
                         let mut iter = allow_unresolved_val.array_iterator(global_this)?;
                         while let Some(entry) = iter.next()? {
-                            let slice = entry.to_slice(global_this)?;
+                            let slice = entry.to_utf8(global_this)?;
                             this.allow_unresolved
                                 .as_mut()
                                 .unwrap()
@@ -961,7 +961,7 @@ pub mod js_bundler {
             if let Some(drops) = config.get_own_array(global_this, "drop")? {
                 let mut iter = drops.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice(global_this)?;
+                    let slice = entry.to_utf8(global_this)?;
                     this.drop.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -970,7 +970,7 @@ pub mod js_bundler {
             if let Some(features) = config.get_own_array(global_this, "features")? {
                 let mut iter = features.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice(global_this)?;
+                    let slice = entry.to_utf8(global_this)?;
                     this.features.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -979,7 +979,7 @@ pub mod js_bundler {
             if let Some(optimize_imports) = config.get_own_array(global_this, "optimizeImports")? {
                 let mut iter = optimize_imports.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice(global_this)?;
+                    let slice = entry.to_utf8(global_this)?;
                     this.optimize_imports.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -1144,7 +1144,7 @@ pub mod js_bundler {
                 } else if metafile_value.is_string() {
                     // metafile: "path/to/meta.json" - shorthand for { json: "..." }
                     this.metafile = true;
-                    let slice = metafile_value.to_slice(global_this)?;
+                    let slice = metafile_value.to_utf8(global_this)?;
                     this.metafile_json_path.append_slice_exact(slice.slice())?;
                     drop(slice);
                 } else if metafile_value.is_object() {

@@ -1709,7 +1709,7 @@ impl BlobExt for Blob {
                                 "string",
                             ));
                         }
-                        Some(v) => Some(v.to_slice(global_this)?),
+                        Some(v) => Some(v.to_utf8(global_this)?),
                         None => None,
                     };
                 let content_encoding_str: Option<Utf8Bytes> =
@@ -1721,7 +1721,7 @@ impl BlobExt for Blob {
                                 "string",
                             ));
                         }
-                        Some(v) => Some(v.to_slice(global_this)?),
+                        Some(v) => Some(v.to_utf8(global_this)?),
                         None => None,
                     };
 
@@ -2025,10 +2025,10 @@ impl BlobExt for Blob {
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
-            return EncodedSlice::init(ct).to_js(global_this);
+            return EncodedSlice::latin1(ct).to_js(global_this);
         }
         if let Some(store) = self.store.get() {
-            return EncodedSlice::init(&store.mime_type.value).to_js(global_this);
+            return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
         }
         JSValue::js_empty_string(global_this)
     }
@@ -2328,7 +2328,7 @@ impl BlobExt for Blob {
                         if let Some(content_type) = options.get(global_this, "type")? {
                             'inner: {
                                 if content_type.is_string() {
-                                    let content_type_str = content_type.to_slice(global_this)?;
+                                    let content_type_str = content_type.to_utf8(global_this)?;
                                     let slice = content_type_str.slice();
                                     if !is_valid_blob_type(slice) {
                                         break 'inner;
@@ -2632,7 +2632,7 @@ impl BlobExt for Blob {
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
                 Ok(unsafe {
-                    EncodedSlice::init(buf).external(
+                    EncodedSlice::latin1(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
@@ -2649,7 +2649,7 @@ impl BlobExt for Blob {
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
                 Ok(unsafe {
-                    EncodedSlice::init(buf).external(
+                    EncodedSlice::latin1(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
@@ -2661,7 +2661,7 @@ impl BlobExt for Blob {
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
                 Ok(unsafe {
-                    EncodedSlice::init(buf).external(
+                    EncodedSlice::latin1(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
@@ -2677,7 +2677,7 @@ impl BlobExt for Blob {
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                     return out.into_js(global);
                 }
-                Ok(EncodedSlice::init(buf).to_external_value(global))
+                Ok(EncodedSlice::latin1(buf).to_external_value(global))
             }
         }
     }
@@ -2830,7 +2830,7 @@ impl BlobExt for Blob {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
                 }
-                let result = EncodedSlice::init_utf16(&external).to_json_object(global);
+                let result = EncodedSlice::utf16(&external).to_json_object(global);
                 drop(external);
                 return result;
             }
@@ -2840,7 +2840,7 @@ impl BlobExt for Blob {
             }
         }
 
-        EncodedSlice::init(buf).to_json_object(global)
+        EncodedSlice::latin1(buf).to_json_object(global)
     }
 
     /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
@@ -2853,7 +2853,7 @@ impl BlobExt for Blob {
         buf: *mut [u8],
     ) -> JSValue {
         let Some(encoder) = self.get_form_data_encoding() else {
-            return EncodedSlice::init(b"Invalid encoding").to_error_instance(global);
+            return EncodedSlice::latin1(b"Invalid encoding").to_error_instance(global);
         };
 
         // `crate::webcore::form_data::Encoding` re-exports
@@ -3303,7 +3303,7 @@ impl BlobExt for Blob {
                 | jsc::JSType::String
                 | jsc::JSType::StringObject
                 | jsc::JSType::DerivedStringObject => {
-                    let sliced = current.to_slice(global)?;
+                    let sliced = current.to_utf8(global)?;
                     could_have_non_ascii = could_have_non_ascii || sliced.is_owned();
                     // Clone into the joiner and let `sliced` drop normally.
                     joiner.push_cloned(sliced.slice());
@@ -3353,7 +3353,7 @@ impl BlobExt for Blob {
                                 | jsc::JSType::String
                                 | jsc::JSType::StringObject
                                 | jsc::JSType::DerivedStringObject => {
-                                    let sliced = item.to_slice(global)?;
+                                    let sliced = item.to_utf8(global)?;
                                     could_have_non_ascii =
                                         could_have_non_ascii || sliced.is_owned();
                                     joiner.push_cloned(sliced.slice());
@@ -3378,7 +3378,7 @@ impl BlobExt for Blob {
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    let sliced = item.to_slice(global)?;
+                                    let sliced = item.to_utf8(global)?;
                                     could_have_non_ascii =
                                         could_have_non_ascii || sliced.is_owned();
                                     joiner.push_cloned(sliced.slice());
@@ -3403,7 +3403,7 @@ impl BlobExt for Blob {
                                         }
                                         continue;
                                     } else {
-                                        let sliced = item.to_slice(global)?;
+                                        let sliced = item.to_utf8(global)?;
                                         could_have_non_ascii =
                                             could_have_non_ascii || sliced.is_owned();
                                         joiner.push_cloned(sliced.slice());
@@ -3411,7 +3411,7 @@ impl BlobExt for Blob {
                                     }
                                 }
                                 _ => {
-                                    let sliced = item.to_slice(global)?;
+                                    let sliced = item.to_utf8(global)?;
                                     could_have_non_ascii =
                                         could_have_non_ascii || sliced.is_owned();
                                     joiner.push_cloned(sliced.slice());
@@ -3430,7 +3430,7 @@ impl BlobExt for Blob {
                         // free this Blob's Store before `done()`, so always copy.
                         joiner.push_cloned(blob.shared_view());
                     } else {
-                        let sliced = current.to_slice(global)?;
+                        let sliced = current.to_utf8(global)?;
                         could_have_non_ascii = could_have_non_ascii || sliced.is_owned();
                         joiner.push_cloned(sliced.slice());
                     }
@@ -3447,7 +3447,7 @@ impl BlobExt for Blob {
                 }
 
                 _ => {
-                    let sliced = current.to_slice(global)?;
+                    let sliced = current.to_utf8(global)?;
                     could_have_non_ascii = could_have_non_ascii || sliced.is_owned();
                     joiner.push_cloned(sliced.slice());
                 }
@@ -5198,7 +5198,7 @@ fn set_content_type_from_js(
     if !content_type.is_string() {
         return Err(global_this.throw_invalid_argument_type("write", "options.type", "string"));
     }
-    let content_type_str = content_type.to_slice(global_this)?;
+    let content_type_str = content_type.to_utf8(global_this)?;
     let slice = content_type_str.slice();
     if is_valid_blob_type(slice) {
         blob.content_type_was_set.set(true);
@@ -5530,7 +5530,7 @@ pub(crate) fn jsdom_file_construct(
             if let Some(content_type) = options.get(global_this, "type")? {
                 'inner: {
                     if content_type.is_string() {
-                        let content_type_str = content_type.to_slice(global_this)?;
+                        let content_type_str = content_type.to_utf8(global_this)?;
                         let slice = content_type_str.slice();
                         if !is_valid_blob_type(slice) {
                             break 'inner;
@@ -5619,7 +5619,7 @@ pub(crate) fn construct_bun_file(
             if let Some(file_type) = opts.get_truthy(global_object, "type")? {
                 'inner: {
                     if file_type.is_string() {
-                        let str = file_type.to_slice(global_object)?;
+                        let str = file_type.to_utf8(global_object)?;
                         let slice = str.slice();
                         if !is_valid_blob_type(slice) {
                             break 'inner;
@@ -6672,7 +6672,7 @@ impl Internal {
                 bun_core::heap::into_raw(self.to_owned_slice().into_boxed_slice());
             // SAFETY: `owned` is a fresh heap allocation released via `into_raw`;
             // EncodedSlice borrows ptr+len, then `to_external_value` adopts it.
-            let mut str = EncodedSlice::init(unsafe { &*owned });
+            let mut str = EncodedSlice::latin1(unsafe { &*owned });
             str.mark_global();
             return Ok(str.to_external_value(global_this));
         }

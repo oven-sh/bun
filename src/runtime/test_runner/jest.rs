@@ -480,7 +480,7 @@ pub mod Jest {
             if arguments.len() < 1 || !arguments[0].is_string() {
                 return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
             }
-            let str = arguments[0].to_slice(global_object)?;
+            let str = arguments[0].to_utf8(global_object)?;
             let slice = str.slice();
 
             if !bun_paths::is_absolute(slice) {
@@ -663,7 +663,7 @@ fn consume_arg(
     fallback: &[u8],
 ) -> JsResult<()> {
     if should_write {
-        let owned_slice = arg.to_slice(global_this)?;
+        let owned_slice = arg.to_utf8(global_this)?;
         array_list.extend_from_slice(owned_slice.slice());
     } else {
         array_list.extend_from_slice(fallback);
@@ -724,7 +724,7 @@ pub(crate) fn format_label(
                     // For primitive strings, use toString() to avoid adding quotes
                     // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
                     if value.is_string() {
-                        let owned_slice = value.to_slice(global_this)?;
+                        let owned_slice = value.to_utf8(global_this)?;
                         list.extend_from_slice(owned_slice.slice());
                     } else {
                         let mut formatter = crate::test_runner::expect::make_formatter(global_this);

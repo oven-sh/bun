@@ -9,7 +9,7 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
     let mut operating_system = npm::OperatingSystem::NONE.negatable();
     let mut iter = arg.array_iterator(global)?;
     while let Some(item) = iter.next()? {
-        let slice = item.to_slice(global)?;
+        let slice = item.to_utf8(global)?;
         operating_system.apply(slice.slice());
     }
     Ok(JSValue::js_boolean(
@@ -25,7 +25,7 @@ pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
     let mut architecture = npm::Architecture::NONE.negatable();
     let mut iter = arg.array_iterator(global)?;
     while let Some(item) = iter.next()? {
-        let slice = item.to_slice(global)?;
+        let slice = item.to_utf8(global)?;
         architecture.apply(slice.slice());
     }
     Ok(JSValue::js_boolean(

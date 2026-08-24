@@ -49,9 +49,9 @@ fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
             // Uint16Array/Int16Array storage is u16-aligned with even byte length;
             // bytemuck checks both at runtime.
             let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
-            Ok(EncodedSlice::init_utf16(utf16).to_js(global))
+            Ok(EncodedSlice::utf16(utf16).to_js(global))
         }
-        _ => Ok(EncodedSlice::init(array_buffer.slice()).to_js(global)),
+        _ => Ok(EncodedSlice::latin1(array_buffer.slice()).to_js(global)),
     }
 }
 

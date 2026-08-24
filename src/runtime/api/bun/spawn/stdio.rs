@@ -429,13 +429,13 @@ impl Stdio {
 
         if value.is_string() {
             let str = value.to_js_string_view(global)?;
-            if str.eql_comptime(b"inherit") {
+            if str.eq_ascii(b"inherit") {
                 *out_stdio = Stdio::Inherit;
-            } else if str.eql_comptime(b"ignore") {
+            } else if str.eq_ascii(b"ignore") {
                 *out_stdio = Stdio::Ignore;
-            } else if str.eql_comptime(b"pipe") || str.eql_comptime(b"overlapped") {
+            } else if str.eq_ascii(b"pipe") || str.eq_ascii(b"overlapped") {
                 *out_stdio = Stdio::Pipe;
-            } else if str.eql_comptime(b"socket-fd") {
+            } else if str.eq_ascii(b"socket-fd") {
                 if i < 3 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "stdio: 'socket-fd' is only supported at indices >= 3"
@@ -449,7 +449,7 @@ impl Stdio {
                     )));
                 }
                 *out_stdio = Stdio::SocketFd;
-            } else if str.eql_comptime(b"ipc") {
+            } else if str.eq_ascii(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
                 return Err(global.throw_invalid_arguments(format_args!(

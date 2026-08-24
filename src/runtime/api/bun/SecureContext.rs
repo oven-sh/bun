@@ -103,7 +103,7 @@ impl SecureContext {
         // before borrowing the pfx ArrayBuffer so a user toString() cannot
         // detach the buffer behind the borrowed slice.
         let pass_owned: Option<Vec<u8>> = if args.len() > 1 && !args[1].is_undefined_or_null() {
-            let p = args[1].to_slice(global)?;
+            let p = args[1].to_utf8(global)?;
             let mut v = p.slice().to_vec();
             v.push(0);
             Some(v)
@@ -121,7 +121,7 @@ impl SecureContext {
                 pfx_view.byte_slice()
             }
             None => {
-                pfx_string = args[0].to_slice(global)?;
+                pfx_string = args[0].to_utf8(global)?;
                 pfx_string.slice()
             }
         };
@@ -178,16 +178,20 @@ impl SecureContext {
         // lengths; EncodedSlice::to_js copies into the JS heap before `free`.
         unsafe {
             let key_slice = core::slice::from_raw_parts(out_key.cast::<u8>(), key_len);
-            result.put(global, b"key", EncodedSlice::init(key_slice).to_js(global));
+            result.put(
+                global,
+                b"key",
+                EncodedSlice::latin1(key_slice).to_js(global),
+            );
             let cert_slice = core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len);
             result.put(
                 global,
                 b"cert",
-                EncodedSlice::init(cert_slice).to_js(global),
+                EncodedSlice::latin1(cert_slice).to_js(global),
             );
             if !out_ca.is_null() && ca_len > 0 {
                 let ca_slice = core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len);
-                result.put(global, b"ca", EncodedSlice::init(ca_slice).to_js(global));
+                result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global));
             }
             free(out_key.cast());
             free(out_cert.cast());
@@ -388,7 +392,7 @@ impl SecureContext {
                 global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
             );
         }
-        let pem = args[0].to_slice(global)?;
+        let pem = args[0].to_utf8(global)?;
         let bytes = pem.slice();
         if bytes.is_empty() {
             return Err(

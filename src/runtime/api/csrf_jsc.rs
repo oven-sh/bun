@@ -17,7 +17,7 @@ fn algorithm_from_js_case_insensitive(
     global: &JSGlobalObject,
     input: JSValue,
 ) -> JsResult<Option<EvpAlgorithm>> {
-    let slice = input.to_slice(global)?;
+    let slice = input.to_utf8(global)?;
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
@@ -92,7 +92,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
                 global.throw_invalid_arguments(format_args!("Secret must be a non-empty string"))
             );
         }
-        secret = Some(js_secret.to_slice(global)?);
+        secret = Some(js_secret.to_utf8(global)?);
     }
     // Default values
     let mut expires_in: u64 = csrf::DEFAULT_EXPIRATION_MS;
@@ -213,7 +213,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             global.throw_invalid_arguments(format_args!("Token must be a non-empty string"))
         );
     }
-    let token = js_token.to_slice(global)?;
+    let token = js_token.to_utf8(global)?;
 
     // Default values
     let mut secret: Option<Utf8Bytes> = None;

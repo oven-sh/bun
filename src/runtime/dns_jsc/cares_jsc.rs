@@ -840,7 +840,7 @@ fn bun_canonicalize_ip(global_this: &JSGlobalObject, callframe: &CallFrame) -> J
         )));
     }
 
-    let addr_arg = arguments[0].to_slice(global_this)?;
+    let addr_arg = arguments[0].to_utf8(global_this)?;
     let addr_str = addr_arg.slice();
 
     // CIDR not allowed

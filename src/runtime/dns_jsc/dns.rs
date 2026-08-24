@@ -2832,7 +2832,7 @@ pub mod internal {
                 "expected (hostname: string, addresses: string[])"
             )));
         }
-        let hostname_slice = args[0].to_slice(global)?;
+        let hostname_slice = args[0].to_utf8(global)?;
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
         let len = args[1].get_length(global)? as usize;
         if len == 0 || len > 64 {
@@ -2844,7 +2844,7 @@ pub mod internal {
         let mut addrs: Vec<SockaddrStorage> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
         let mut nodes: Vec<AddrInfo> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
         for i in 0..len {
-            let addr_slice = args[1].get_index(global, i as u32)?.to_slice(global)?;
+            let addr_slice = args[1].get_index(global, i as u32)?.to_utf8(global)?;
             let addr_z = bun::ZBox::from_bytes(addr_slice.slice());
             let node = &mut nodes[i];
             node.ai_socktype = netc::SOCK_STREAM;
@@ -3048,7 +3048,7 @@ pub mod internal {
         let hostname_or_url = arguments[0];
 
         let hostname_slice = if hostname_or_url.is_string() {
-            hostname_or_url.to_slice(global_this)?
+            hostname_or_url.to_utf8(global_this)?
         } else {
             return Err(
                 global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
@@ -5635,7 +5635,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<c_int> {
-        let str_ = value.to_slice(global_this)?;
+        let str_ = value.to_utf8(global_this)?;
         // Utf8Bytes has no `into_owned_slice_z`; build the
         // NUL-terminated buffer inline.
         let bytes = str_.slice();

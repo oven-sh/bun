@@ -35,7 +35,7 @@ impl AsyncFormDataExt for AsyncFormData {
                 );
                 promise.reject(
                     global,
-                    EncodedSlice::init(b"FormData missing boundary").to_error_instance(global),
+                    EncodedSlice::latin1(b"FormData missing boundary").to_error_instance(global),
                 )?;
                 return Ok(());
             }
@@ -89,7 +89,7 @@ impl FormData {
     ) -> crate::Result<JSValue> {
         match encoding {
             Encoding::URLEncoded => {
-                let str = EncodedSlice::init_utf8(strings::without_utf8_bom(input));
+                let str = EncodedSlice::utf8(strings::without_utf8_bom(input));
                 // C++ may throw (e.g. string too long) — `create_from_url_query`
                 // wraps the FFI in a validation scope and maps zero → JsError.
                 DOMFormData::create_from_url_query(global, &str).map_err(|_| crate::Error::JSError)
@@ -116,7 +116,7 @@ pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) ->
                 encoding = Encoding::Multipart(Box::from(array_buffer.byte_slice()));
             }
         } else if boundary_value.is_string() {
-            boundary_slice = boundary_value.to_slice(global)?;
+            boundary_slice = boundary_value.to_utf8(global)?;
             if !boundary_slice.slice().is_empty() {
                 encoding = Encoding::Multipart(Box::from(boundary_slice.slice()));
             }
@@ -135,7 +135,7 @@ pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) ->
         input_array_buffer = array_buffer;
         input = input_array_buffer.byte_slice();
     } else if input_value.is_string() {
-        input_slice = input_value.to_slice(global)?;
+        input_slice = input_value.to_utf8(global)?;
         input = input_slice.slice();
     } else if let Some(blob) = input_value.as_class_ref::<Blob>() {
         input = blob.shared_view();
@@ -171,13 +171,13 @@ pub(crate) fn to_js_from_multipart_data(
     impl<'a> Wrapper<'a> {
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
             let value_str: &[u8] = field.value;
-            let key = EncodedSlice::init_utf8(name.slice(buf));
+            let key = EncodedSlice::utf8(name.slice(buf));
 
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
                 let mut blob = Blob::create(value_str, wrap.global, false);
-                let filename = EncodedSlice::init_utf8(filename_str);
+                let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
                     let ct = field.content_type.slice(buf);
@@ -214,7 +214,7 @@ pub(crate) fn to_js_from_multipart_data(
                 // `append_blob` dupes the content type; release this stack-local.
                 blob.detach();
             } else {
-                let value = EncodedSlice::init_utf8(
+                let value = EncodedSlice::utf8(
                     // > Each part whose `Content-Disposition` header does not
                     // > contain a `filename` parameter must be parsed into an
                     // > entry whose value is the UTF-8 decoded without BOM

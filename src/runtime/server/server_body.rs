@@ -2261,7 +2261,7 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    EncodedSlice::init(b"fetch() requires the server to have a fetch handler")
+                    EncodedSlice::latin1(b"fetch() requires the server to have a fetch handler")
                         .to_error_instance(ctx),
                 ),
             );
@@ -2273,7 +2273,7 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    EncodedSlice::init(fetch_error.as_bytes()).to_error_instance(ctx),
+                    EncodedSlice::latin1(fetch_error.as_bytes()).to_error_instance(ctx),
                 ),
             );
         }
@@ -2289,7 +2289,7 @@ where
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
         let existing_request: Box<Request> = if first_arg.is_string() {
-            let url_utf8 = arguments[0].to_slice(ctx)?;
+            let url_utf8 = arguments[0].to_utf8(ctx)?;
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
@@ -2297,7 +2297,7 @@ where
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         ctx,
-                        EncodedSlice::init(fetch_error.as_bytes()).to_error_instance(ctx),
+                        EncodedSlice::latin1(fetch_error.as_bytes()).to_error_instance(ctx),
                     ),
                 );
             }
@@ -2320,7 +2320,7 @@ where
             if arguments.len() >= 2 && arguments[1].is_object() {
                 let opts = arguments[1];
                 if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::Method)? {
-                    let slice_ = method_.to_slice(ctx)?;
+                    let slice_ = method_.to_utf8(ctx)?;
                     method = Method::which(slice_.slice()).unwrap_or(method);
                 }
 
@@ -2351,7 +2351,7 @@ where
                         Err(_) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                 ctx,
-                                EncodedSlice::init(b"fetch() received invalid body").to_error_instance(ctx),
+                                EncodedSlice::latin1(b"fetch() received invalid body").to_error_instance(ctx),
                             ));
                         }
                     }
@@ -2413,7 +2413,7 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    EncodedSlice::init(b"fetch() returned an empty value").to_error_instance(ctx),
+                    EncodedSlice::latin1(b"fetch() returned an empty value").to_error_instance(ctx),
                 ),
             );
         }

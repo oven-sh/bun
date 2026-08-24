@@ -566,7 +566,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         );
     }
 
-    if url_str.has_prefix_comptime(b"data:") {
+    if url_str.starts_with_ascii(b"data:") {
         return Ok(data_url_response(url_str, global_this));
     }
 
@@ -741,7 +741,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
                     if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        break 'extract_unix_socket_path socket_path.to_slice(global_this)?;
+                        break 'extract_unix_socket_path socket_path.to_utf8(global_this)?;
                     }
                 }
             }
@@ -760,11 +760,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if let Some(protocol_val) = obj.get(global_this, "protocol")? {
                     if protocol_val.is_string() {
                         let str = protocol_val.to_js_string_view(global_this)?;
-                        if str.eql_comptime(b"http2") || str.eql_comptime(b"h2") {
+                        if str.eq_ascii(b"http2") || str.eq_ascii(b"h2") {
                             forced_protocol = Some(http::Protocol::Http2);
-                        } else if str.eql_comptime(b"http3") || str.eql_comptime(b"h3") {
+                        } else if str.eq_ascii(b"http3") || str.eq_ascii(b"h3") {
                             forced_protocol = Some(http::Protocol::Http3);
-                        } else if str.eql_comptime(b"http1.1") || str.eql_comptime(b"h1") {
+                        } else if str.eq_ascii(b"http1.1") || str.eq_ascii(b"h1") {
                             forced_protocol = Some(http::Protocol::Http1_1);
                         } else {
                             return Err(global_this.throw_invalid_arguments(
@@ -874,7 +874,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(verb) = obj.get(global_this, "verbose")? {
                     if verb.is_string() {
-                        if verb.to_js_string_view(global_this)?.eql_comptime(b"curl") {
+                        if verb.to_js_string_view(global_this)?.eq_ascii(b"curl") {
                             break 'extract_verbose http::HTTPVerboseLevel::Curl;
                         }
                     } else if verb.is_boolean() {

@@ -3028,7 +3028,7 @@ pub fn process_fetch_log(
                     .into_bytes()
                     .into_boxed_slice(),
             );
-            let mut message = bun_core::EncodedSlice::init(message_text);
+            let mut message = bun_core::EncodedSlice::latin1(message_text);
             message.mark_global();
             take(global_this.create_aggregate_error(&errors_stack[..len], &message))
         }
@@ -4556,9 +4556,7 @@ impl VirtualMachine {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
         // filesystem, so the path-length cap does not apply to them.
-        if IS_A_FILE_PATH
-            && specifier.length() > MAX_LEN
-            && !specifier.has_prefix_comptime(b"data:")
+        if IS_A_FILE_PATH && specifier.length() > MAX_LEN && !specifier.starts_with_ascii(b"data:")
         {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
@@ -4829,7 +4827,7 @@ impl VirtualMachine {
         if self.main().is_empty() {
             return Ok(());
         }
-        let str = bun_core::EncodedSlice::init(MAIN_FILE_NAME);
+        let str = bun_core::EncodedSlice::latin1(MAIN_FILE_NAME);
         self.global().delete_module_registry_entry(&str)
     }
 
@@ -5598,17 +5596,17 @@ impl VirtualMachine {
             unsafe { &mut *_tail.source_code_slice.cast_mut() };
 
         fn is_noisy_builtin(name: &bun_core::String) -> bool {
-            name.eql_comptime("asyncModuleEvaluation")
-                || name.eql_comptime("link")
-                || name.eql_comptime("linkAndEvaluateModule")
-                || name.eql_comptime("moduleEvaluation")
-                || name.eql_comptime("processTicksAndRejections")
+            name.eq_ascii("asyncModuleEvaluation")
+                || name.eq_ascii("link")
+                || name.eq_ascii("linkAndEvaluateModule")
+                || name.eq_ascii("moduleEvaluation")
+                || name.eq_ascii("processTicksAndRejections")
         }
         fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
-            f.source_url.eql_comptime("bun:wrap") || f.function_name.eql_comptime("::bunternal::")
+            f.source_url.eq_ascii("bun:wrap") || f.function_name.eq_ascii("::bunternal::")
         }
         fn is_unknown_source(url: &bun_core::String) -> bool {
-            url.is_empty() || url.eql_comptime("[unknown]") || url.has_prefix_comptime(b"[source:")
+            url.is_empty() || url.eq_ascii("[unknown]") || url.starts_with_ascii(b"[source:")
         }
 
         let mut frames_len = exception.stack.frames_len as usize;
@@ -5663,13 +5661,13 @@ impl VirtualMachine {
         let mut top_frame_is_builtin = false;
         if self.hide_bun_stackframes {
             for (i, frame) in frames.iter().enumerate() {
-                if frame.source_url.has_prefix_comptime(b"bun:")
-                    || frame.source_url.has_prefix_comptime(b"node:")
+                if frame.source_url.starts_with_ascii(b"bun:")
+                    || frame.source_url.starts_with_ascii(b"node:")
                     || frame.source_url.is_empty()
-                    || frame.source_url.eql_comptime("native")
-                    || frame.source_url.eql_comptime("unknown")
-                    || frame.source_url.eql_comptime("[unknown]")
-                    || frame.source_url.has_prefix_comptime(b"[source:")
+                    || frame.source_url.eq_ascii("native")
+                    || frame.source_url.eq_ascii("unknown")
+                    || frame.source_url.eq_ascii("[unknown]")
+                    || frame.source_url.starts_with_ascii(b"[source:")
                 {
                     top_frame_is_builtin = true;
                     continue;
@@ -5682,7 +5680,7 @@ impl VirtualMachine {
 
         // Don't show source code preview for REPL frames — it would show the
         // transformed IIFE wrapper code, not what the user typed.
-        if frames[top].source_url.eql_comptime("[repl]") {
+        if frames[top].source_url.eq_ascii("[repl]") {
             enable_source_code_preview.set(false);
         }
 
@@ -6151,8 +6149,8 @@ impl VirtualMachine {
                 if self.hide_bun_stackframes {
                     for frame in frames {
                         if frame.position.is_invalid()
-                            || frame.source_url.has_prefix_comptime(b"bun:")
-                            || frame.source_url.has_prefix_comptime(b"node:")
+                            || frame.source_url.starts_with_ascii(b"bun:")
+                            || frame.source_url.starts_with_ascii(b"node:")
                         {
                             continue;
                         }
@@ -6299,19 +6297,17 @@ impl VirtualMachine {
             let longest_name = iterator.get_longest_property_name().min(10);
             let mut is_first_property = true;
             while let Some((field, value)) = iterator.next()? {
-                if field.eql_comptime(b"message")
-                    || field.eql_comptime(b"name")
-                    || field.eql_comptime(b"stack")
+                if field.eq_ascii(b"message") || field.eq_ascii(b"name") || field.eq_ascii(b"stack")
                 {
                     continue;
                 }
-                if field.eql_comptime(b"code") && code.is_some() {
+                if field.eq_ascii(b"code") && code.is_some() {
                     continue;
                 }
 
                 let kind = value.js_type();
                 if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eql_comptime(b"cause") {
+                    if field.eq_ascii(b"cause") {
                         saw_cause = true;
                     }
                     value.protect();
@@ -6497,7 +6493,7 @@ impl VirtualMachine {
             writer.write_all(bun_core::pretty_fmt!("<red>frontend<r> ", true).as_bytes())?;
         }
         if !name.is_empty() && !message.is_empty() {
-            let (display_name, display_message) = if name.eql_comptime(b"Error") {
+            let (display_name, display_message) = if name.eq_ascii(b"Error") {
                 'brk: {
                     if let Some(code) = optional_code {
                         if bun_core::is_all_ascii(code) {
@@ -6608,7 +6604,7 @@ impl VirtualMachine {
             let _ = writer.write_all(b"\n::error title=");
         }
 
-        if name.is_empty() || name.eql_comptime(b"Error") {
+        if name.is_empty() || name.eq_ascii(b"Error") {
             let _ = writer.write_all(b"error");
         } else {
             let name_utf8 = name.to_utf8();
@@ -6817,7 +6813,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     use crate::StringJsc as _;
     let empty = bun_core::String::EMPTY;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
-        if namespace.length() > 0 && !namespace.eql_comptime(b"file") {
+        if namespace.length() > 0 && !namespace.eq_ascii(b"file") {
             namespace
         } else {
             &empty
@@ -6852,10 +6848,10 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
             b"Expected \"path\" to be a non-empty string in onResolve plugin",
         )
         .to_error_instance(global))));
-    } else if file_path.eql_comptime(b".")
-        || file_path.eql_comptime(b"..")
-        || file_path.eql_comptime(b"...")
-        || file_path.eql_comptime(b" ")
+    } else if file_path.eq_ascii(b".")
+        || file_path.eq_ascii(b"..")
+        || file_path.eq_ascii(b"...")
+        || file_path.eq_ascii(b" ")
     {
         return Ok(Some(Err(bun_core::String::static_(
             b"\"path\" is invalid in onResolve plugin",
@@ -6875,13 +6871,13 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
             if namespace_str.length() == 0 {
                 break 'brk bun_core::String::static_(b"file");
             }
-            if namespace_str.eql_comptime(b"file") {
+            if namespace_str.eq_ascii(b"file") {
                 break 'brk bun_core::String::static_(b"file");
             }
-            if namespace_str.eql_comptime(b"bun") {
+            if namespace_str.eq_ascii(b"bun") {
                 break 'brk bun_core::String::static_(b"bun");
             }
-            if namespace_str.eql_comptime(b"node") {
+            if namespace_str.eq_ascii(b"node") {
                 break 'brk bun_core::String::static_(b"node");
             }
             break 'brk namespace_str;
@@ -6892,7 +6888,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     // A `file`-namespace result (the default) is a filesystem path, not a new
     // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
     // form the module loader dispatches on.
-    if user_namespace.eql_comptime(b"file") {
+    if user_namespace.eq_ascii(b"file") {
         return Ok(Some(Ok(file_path)));
     }
 

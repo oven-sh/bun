@@ -1348,10 +1348,10 @@ impl ServerWebSocket {
             if args[1].is_undefined() {
                 break 'brk Utf8Bytes::EMPTY;
             }
-            break 'brk args[1].to_slice(global_this)?;
+            break 'brk args[1].to_utf8(global_this)?;
         };
 
-        // `to_slice` can run user `toString()`, which may re-entrantly
+        // `to_utf8` can run user `toString()`, which may re-entrantly
         // `ws.close()` and already decrement the count; re-check the guard.
         if self.is_closed() {
             return Ok(JSValue::UNDEFINED);

@@ -1786,7 +1786,7 @@ impl JSFrameworkRouter {
         }
 
         let root: bun_core::Utf8Bytes = match opts.get(global, "root")? {
-            Some(v) if !v.is_undefined_or_null() => v.to_slice(global)?,
+            Some(v) if !v.is_undefined_or_null() => v.to_utf8(global)?,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
@@ -1867,7 +1867,7 @@ impl JSFrameworkRouter {
     #[bun_jsc::host_fn(method)]
     pub fn r#match(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let path_value = callframe.arguments_as_array::<1>()[0];
-        let path = path_value.to_slice(global)?;
+        let path = path_value.to_utf8(global)?;
 
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),
@@ -1995,7 +1995,7 @@ impl JSFrameworkRouter {
         }
 
         let [style_js, filepath_js] = frame.arguments_as_array::<2>();
-        let filepath = filepath_js.to_slice(global)?;
+        let filepath = filepath_js.to_utf8(global)?;
         let style = Style::from_js(style_js, global)?;
         // errdefer style.deinit() — Drop handles this
 

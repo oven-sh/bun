@@ -499,7 +499,7 @@ impl Glob {
             )));
         }
 
-        let str = str_arg.to_slice(global_this)?;
+        let str = str_arg.to_utf8(global_this)?;
         // `str` drops at scope exit.
 
         Ok(JSValue::from(

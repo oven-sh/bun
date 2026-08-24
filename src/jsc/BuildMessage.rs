@@ -46,7 +46,7 @@ impl BuildMessage {
         )
         .expect("infallible: in-memory write");
 
-        let mut str = EncodedSlice::init(&text);
+        let mut str = EncodedSlice::latin1(&text);
         str.set_output_encoding();
         if str.is_utf8() {
             let out = str.to_js(global);
@@ -61,7 +61,7 @@ impl BuildMessage {
         let ptr = bun_core::heap::into_raw(text.into_boxed_slice()).cast::<u8>();
         // SAFETY: ptr/len describe a contiguous mimalloc-owned buffer just
         // released by `heap::alloc`; it stays live until JSC frees it.
-        let mut str = EncodedSlice::init(unsafe { bun_core::ffi::slice(ptr, len) });
+        let mut str = EncodedSlice::latin1(unsafe { bun_core::ffi::slice(ptr, len) });
         str.set_output_encoding();
         str.to_external_value(global)
     }
@@ -104,7 +104,7 @@ impl BuildMessage {
             }
 
             let str = args[0].to_bun_string(global)?;
-            if str.eql_comptime(b"default") || str.eql_comptime(b"string") {
+            if str.eq_ascii(b"default") || str.eq_ascii(b"string") {
                 return Ok(self.to_string_fn(global));
             }
         }
@@ -135,17 +135,17 @@ impl BuildMessage {
         object.put(
             global,
             b"lineText",
-            EncodedSlice::init_utf8(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
+            EncodedSlice::utf8(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
         );
         object.put(
             global,
             b"file",
-            EncodedSlice::init_utf8(&location.file).to_js(global),
+            EncodedSlice::utf8(&location.file).to_js(global),
         );
         object.put(
             global,
             b"namespace",
-            EncodedSlice::init_utf8(location.namespace).to_js(global),
+            EncodedSlice::utf8(location.namespace).to_js(global),
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));
@@ -181,11 +181,11 @@ impl BuildMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_message(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(EncodedSlice::init_utf8(&self.msg.data.text).to_js(global))
+        Ok(EncodedSlice::utf8(&self.msg.data.text).to_js(global))
     }
 
     #[crate::host_fn(getter)]
     pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(EncodedSlice::init(self.msg.kind.string()).to_js(global))
+        Ok(EncodedSlice::latin1(self.msg.kind.string()).to_js(global))
     }
 }

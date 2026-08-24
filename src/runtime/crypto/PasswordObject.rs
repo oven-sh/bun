@@ -190,13 +190,13 @@ impl AlgorithmValue {
 }
 
 fn algorithm_from_string(s: &bun_core::String) -> Option<Algorithm> {
-    if s.eql_comptime(b"argon2i") {
+    if s.eq_ascii(b"argon2i") {
         Some(Algorithm::Argon2i)
-    } else if s.eql_comptime(b"argon2d") {
+    } else if s.eq_ascii(b"argon2d") {
         Some(Algorithm::Argon2d)
-    } else if s.eql_comptime(b"argon2id") {
+    } else if s.eq_ascii(b"argon2id") {
         Some(Algorithm::Argon2id)
-    } else if s.eql_comptime(b"bcrypt") {
+    } else if s.eq_ascii(b"bcrypt") {
         Some(Algorithm::Bcrypt)
     } else {
         None
@@ -490,7 +490,7 @@ impl PasswordOp for HashOp {
         PasswordObject::hash(password, self.algorithm)
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
-        EncodedSlice::init(&value).to_js(g)
+        EncodedSlice::latin1(&value).to_js(g)
         // `value` drops here.
     }
 }
@@ -533,7 +533,7 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
         "Password {verb} failed with error \"{}\"",
         err.name()
     ));
-    instance.put(g, b"code", EncodedSlice::init(&error_code).to_js(g));
+    instance.put(g, b"code", EncodedSlice::latin1(&error_code).to_js(g));
     instance
 }
 

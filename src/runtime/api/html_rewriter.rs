@@ -80,7 +80,7 @@ fn eat_string(
     if value.is_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected string")));
     }
-    value.to_slice(global)
+    value.to_utf8(global)
 }
 
 /// Decode arm for `JSValue` (required) — eat next arg or
@@ -2451,7 +2451,7 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     value.put(
         global,
         b"name",
-        EncodedSlice::init(b"HTMLRewriterError").to_js(global),
+        EncodedSlice::latin1(b"HTMLRewriterError").to_js(global),
     );
     value
 }
@@ -2468,12 +2468,12 @@ fn utf8_or_throw<'a>(global: &JSGlobalObject, bytes: &'a [u8]) -> JsResult<&'a s
     core::str::from_utf8(bytes).map_err(|e| global.throw_value(create_lolhtml_error(global, &e)))
 }
 
-/// Decode a raw-`JSValue` setter argument to owned UTF-8. `to_slice` runs
+/// Decode a raw-`JSValue` setter argument to owned UTF-8. `to_utf8` runs
 /// ToString (user `toString()`/`[Symbol.toPrimitive]`), so callers MUST do
 /// this BEFORE `DetachablePtr::get_mut`: the re-entered JS would alias its
 /// exclusive `&mut`.
 fn setter_utf8_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<String> {
-    let slice = value.to_slice(global)?;
+    let slice = value.to_utf8(global)?;
     Ok(utf8_or_throw(global, slice.slice())?.to_owned())
 }
 
@@ -2879,8 +2879,8 @@ impl AttributeIterator {
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let done_label = bun_core::EncodedSlice::init(b"done");
-        let value_label = bun_core::EncodedSlice::init(b"value");
+        let done_label = bun_core::EncodedSlice::latin1(b"done");
+        let value_label = bun_core::EncodedSlice::latin1(b"value");
 
         // Detached (the handler returned, or an attribute was mutated), the
         // element itself is gone, or we ran off the end of the buffer.

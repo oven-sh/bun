@@ -845,7 +845,7 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
         CodecError::Brotli(detail) => {
             let code = format!("ERR_{detail}");
             let err = global.create_type_error_instance(format_args!("brotli decode failed"));
-            let code_js = EncodedSlice::init(code.as_bytes()).to_js(global);
+            let code_js = EncodedSlice::latin1(code.as_bytes()).to_js(global);
             err.put(global, b"code", code_js);
             let cause = global.create_error_instance(format_args!("{detail}"));
             cause.put(global, b"code", code_js);

@@ -40,7 +40,7 @@ fn get_optional_slice(
     property: &[u8],
 ) -> JsResult<Option<Utf8Bytes<'static>>> {
     match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
+        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_utf8(global)?)),
         _ => Ok(None),
     }
 }
@@ -758,7 +758,7 @@ impl Framework {
             let str = opts.to_bun_string(global)?;
 
             // Deprecated
-            if str.eql_comptime("react-server-components") {
+            if str.eq_ascii("react-server-components") {
                 bun_core::warn!(
                     "deprecation notice: 'react-server-components' will be renamed to 'react'"
                 );
@@ -766,7 +766,7 @@ impl Framework {
                     .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }
 
-            if str.eql_comptime("react") {
+            if str.eq_ascii("react") {
                 return Framework::react(arena)
                     .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }
@@ -992,7 +992,7 @@ impl Framework {
                 {
                     'exts: {
                         if exts_js.is_string() {
-                            let str = exts_js.to_slice(global)?;
+                            let str = exts_js.to_utf8(global)?;
                             if str.slice() == b"*" {
                                 break 'exts &[] as &[&[u8]];
                             }
@@ -1004,7 +1004,7 @@ impl Framework {
                                     arena,
                                 );
                             while let Some(array_item) = it_2.next()? {
-                                let slice = refs.track(array_item.to_slice(global)?);
+                                let slice = refs.track(array_item.to_utf8(global)?);
                                 if slice == b"*" {
                                     return Err(global.throw_invalid_arguments(format_args!(
                                             "'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array."
@@ -1054,7 +1054,7 @@ impl Framework {
                                 arena,
                             );
                             while let Some(array_item) = it_2.next()? {
-                                dirs.push(refs.track(array_item.to_slice(global)?));
+                                dirs.push(refs.track(array_item.to_utf8(global)?));
                             }
                             break 'exts arena_erase(dirs.into_bump_slice());
                         }

@@ -1324,8 +1324,8 @@ impl JSTranspiler {
             return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
         }
 
-        let exports_label = EncodedSlice::init(b"exports");
-        let imports_label = EncodedSlice::init(b"imports");
+        let exports_label = EncodedSlice::latin1(b"exports");
+        let imports_label = EncodedSlice::latin1(b"imports");
         let named_imports_value = named_imports_to_js(
             global,
             parse_result.ast.import_records.as_slice(),
@@ -1542,7 +1542,7 @@ impl JSTranspiler {
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let mut out = EncodedSlice::init(buffer_writer.written());
+        let mut out = EncodedSlice::latin1(buffer_writer.written());
         out.set_output_encoding();
 
         let result = out.to_js(global);
@@ -1577,8 +1577,8 @@ fn named_imports_to_js(
     import_records: &[ImportRecord],
     trim_unused_imports: bool,
 ) -> JsResult<JSValue> {
-    let path_label = EncodedSlice::init(b"path");
-    let kind_label = EncodedSlice::init(b"kind");
+    let path_label = EncodedSlice::latin1(b"path");
+    let kind_label = EncodedSlice::latin1(b"kind");
 
     let mut count: u32 = 0;
     for record in import_records {
@@ -1604,8 +1604,8 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = EncodedSlice::init(record.path.text).to_js(global);
-        let kind = EncodedSlice::init(record.kind.label()).to_js(global);
+        let path = EncodedSlice::latin1(record.path.text).to_js(global);
+        let kind = EncodedSlice::latin1(record.kind.label()).to_js(global);
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
         i += 1;

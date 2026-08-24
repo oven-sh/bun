@@ -168,7 +168,7 @@ pub use super::types::{Flavor, PathOrFileDescriptor};
 mod node {
     pub(super) use super::super::statfs::StatFS;
     pub(super) use super::super::time_like::from_js as time_like_from_js;
-    pub(super) use super::super::types::SliceWithUnderlyingString;
+    pub(super) use super::super::types::Utf8WithString;
     pub(super) use super::super::{gid_t, uid_t};
 
     /// Thin alias to `super::types::mode_from_js` so the dozens of call
@@ -3069,13 +3069,13 @@ pub mod args {
                     if next_val.is_string() {
                         arguments.eat();
                         let str = next_val.to_bun_string(ctx)?;
-                        if str.eql_comptime("dir") {
+                        if str.eq_ascii("dir") {
                             break 'link_type SymlinkLinkType::Dir;
                         }
-                        if str.eql_comptime("file") {
+                        if str.eq_ascii("file") {
                             break 'link_type SymlinkLinkType::File;
                         }
-                        if str.eql_comptime("junction") {
+                        if str.eq_ascii("junction") {
                             break 'link_type SymlinkLinkType::Junction;
                         }
                         return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw());
@@ -4506,8 +4506,12 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
         Encoding::Buffer => {
             StringOrBuffer::Buffer(Buffer::from_string(bytes).expect("unreachable"))
         }
-        Encoding::Utf8 => StringOrBuffer::String(BunString::clone_utf8(bytes).into_slice()),
-        enc => StringOrBuffer::String(webcore::encoding::to_bun_string(bytes, enc).into_slice()),
+        Encoding::Utf8 => {
+            StringOrBuffer::String(BunString::clone_utf8(bytes).into_utf8_with_string())
+        }
+        enc => StringOrBuffer::String(
+            webcore::encoding::to_bun_string(bytes, enc).into_utf8_with_string(),
+        ),
     }
 }
 
@@ -6848,27 +6852,27 @@ impl NodeFS {
                             &args.path,
                         ));
                     }
-                    Ok(StringOrBuffer::String(node::SliceWithUnderlyingString {
-                        underlying: str,
+                    Ok(StringOrBuffer::String(node::Utf8WithString {
+                        string: str,
                         ..Default::default()
                     }))
                 }
                 ret::ReadFileWithOptions::String(s) => {
-                    // `SliceWithUnderlyingString::transcodeFromOwnedSlice` lives in
+                    // `Utf8WithString::transcodeFromOwnedSlice` lives in
                     // bun_string but depends on `webcore::encoding` (higher tier).
                     // Inline its body here to keep the layering clean.
                     let str = if s.is_empty() {
-                        node::SliceWithUnderlyingString::default()
+                        node::Utf8WithString::default()
                     } else {
-                        node::SliceWithUnderlyingString {
-                            underlying: webcore::encoding::to_bun_string_from_owned_slice(
+                        node::Utf8WithString {
+                            string: webcore::encoding::to_bun_string_from_owned_slice(
                                 s.into_vec(),
                                 args.encoding,
                             ),
                             ..Default::default()
                         }
                     };
-                    if str.underlying.is_dead() {
+                    if str.string.is_dead() {
                         return Err(with_path_like(
                             sys::Error::from_code(E::ENOMEM, sys::Tag::read),
                             &args.path,
@@ -7409,7 +7413,7 @@ impl NodeFS {
         };
         let link_path: &[u8] = &outbuf[..link_len];
         if args.encoding == Encoding::Utf8 {
-            if let PathLike::SliceWithUnderlyingString(s) = &args.path {
+            if let PathLike::Utf8WithString(s) = &args.path {
                 if strings::eql_long(s.slice(), link_path, true) {
                     return Ok(StringOrBuffer::String(s.clone()));
                 }
@@ -7499,7 +7503,7 @@ impl NodeFS {
                 }
             }
             if args.encoding == Encoding::Utf8 {
-                if let PathLike::SliceWithUnderlyingString(s) = &args.path {
+                if let PathLike::Utf8WithString(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
                         return Ok(StringOrBuffer::String(s.clone()));
                     }
@@ -7552,7 +7556,7 @@ impl NodeFS {
 
             let _ = variant;
             if args.encoding == Encoding::Utf8 {
-                if let PathLike::SliceWithUnderlyingString(s) = &args.path {
+                if let PathLike::Utf8WithString(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
                         return Ok(StringOrBuffer::String(s.clone()));
                     }

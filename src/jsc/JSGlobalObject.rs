@@ -724,7 +724,7 @@ impl JSGlobalObject {
             if strings::is_all_ascii(fmt.as_bytes()) {
                 return BunString::static_(fmt).to_error_instance(self);
             } else {
-                return EncodedSlice::init_utf8(fmt.as_bytes()).to_error_instance(self);
+                return EncodedSlice::utf8(fmt.as_bytes()).to_error_instance(self);
             }
         }
 
@@ -734,25 +734,25 @@ impl JSGlobalObject {
             // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
             // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
             let _ = self.clear_exception_except_termination();
-            return EncodedSlice::init_utf8(&buf).to_error_instance(self);
+            return EncodedSlice::utf8(&buf).to_error_instance(self);
         }
 
         // Ensure we clone it.
-        let str = EncodedSlice::init_utf8(&buf);
+        let str = EncodedSlice::utf8(&buf);
         str.to_error_instance(self)
     }
 
     pub fn create_type_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
-            return EncodedSlice::init(fmt.as_bytes()).to_type_error_instance(self);
+            return EncodedSlice::latin1(fmt.as_bytes()).to_type_error_instance(self);
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
         if write!(WriteVec(&mut buf), "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
-            return EncodedSlice::init_utf8(&buf).to_type_error_instance(self);
+            return EncodedSlice::utf8(&buf).to_type_error_instance(self);
         }
-        let str = EncodedSlice::init_utf8(&buf);
+        let str = EncodedSlice::utf8(&buf);
         str.to_type_error_instance(self)
     }
 
@@ -762,40 +762,40 @@ impl JSGlobalObject {
         args: Arguments<'_>,
     ) -> JsResult<JSValue> {
         if let Some(fmt) = args.as_str() {
-            return Ok(EncodedSlice::init(fmt.as_bytes()).to_dom_exception_instance(self, code));
+            return Ok(EncodedSlice::latin1(fmt.as_bytes()).to_dom_exception_instance(self, code));
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
         write!(WriteVec(&mut buf), "{}", args).map_err(|_| JsError::Thrown)?;
-        let str = EncodedSlice::init_utf8(&buf);
+        let str = EncodedSlice::utf8(&buf);
         Ok(str.to_dom_exception_instance(self, code))
     }
 
     pub fn create_syntax_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
-            return EncodedSlice::init(fmt.as_bytes()).to_syntax_error_instance(self);
+            return EncodedSlice::latin1(fmt.as_bytes()).to_syntax_error_instance(self);
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
         if write!(WriteVec(&mut buf), "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
-            return EncodedSlice::init_utf8(&buf).to_syntax_error_instance(self);
+            return EncodedSlice::utf8(&buf).to_syntax_error_instance(self);
         }
-        let str = EncodedSlice::init_utf8(&buf);
+        let str = EncodedSlice::utf8(&buf);
         str.to_syntax_error_instance(self)
     }
 
     pub fn create_range_error_instance(&self, args: Arguments<'_>) -> JSValue {
         if let Some(fmt) = args.as_str() {
-            return EncodedSlice::init(fmt.as_bytes()).to_range_error_instance(self);
+            return EncodedSlice::latin1(fmt.as_bytes()).to_range_error_instance(self);
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
         if write!(WriteVec(&mut buf), "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
-            return EncodedSlice::init_utf8(&buf).to_range_error_instance(self);
+            return EncodedSlice::utf8(&buf).to_range_error_instance(self);
         }
-        let str = EncodedSlice::init_utf8(&buf);
+        let str = EncodedSlice::utf8(&buf);
         str.to_range_error_instance(self)
     }
 
@@ -808,10 +808,10 @@ impl JSGlobalObject {
         err.put(
             self,
             b"code",
-            EncodedSlice::init(<&'static str>::from(opts.code).as_bytes()).to_js(self),
+            EncodedSlice::latin1(<&'static str>::from(opts.code).as_bytes()).to_js(self),
         );
         if let Some(name) = opts.name {
-            err.put(self, b"name", EncodedSlice::init(name).to_js(self));
+            err.put(self, b"name", EncodedSlice::latin1(name).to_js(self));
         }
         if let Some(errno) = opts.errno {
             err.put(self, b"errno", JSValue::from(errno));
@@ -933,7 +933,7 @@ impl JSGlobalObject {
         {
             return self.throw_out_of_memory();
         }
-        let str = EncodedSlice::init_utf8(&buffer);
+        let str = EncodedSlice::utf8(&buffer);
         let err_value = str.to_error_instance(self);
         self.throw_value(err_value)
     }

@@ -69,7 +69,7 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
                     }
                 };
             }
-            let out = EncodedSlice::init(message);
+            let out = EncodedSlice::latin1(message);
             let agg = global.create_aggregate_error(&errors_stack[..usize::from(count)], &out)?;
             Ok(agg)
         }

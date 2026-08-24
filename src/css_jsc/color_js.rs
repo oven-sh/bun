@@ -321,7 +321,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             }));
         }
 
-        input = args[0].to_slice(global)?;
+        input = args[0].to_utf8(global)?;
 
         // MimallocArena::new() calls mi_heap_new(), so defer creation to the
         // paths that actually allocate.

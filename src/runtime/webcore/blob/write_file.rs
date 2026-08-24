@@ -1330,7 +1330,7 @@ impl WriteFileWaitFromLockedValueTask {
                 unsafe {
                     (*promise).reject(
                         global_this,
-                        Ok(EncodedSlice::init(b"Body was used after it was consumed")
+                        Ok(EncodedSlice::latin1(b"Body was used after it was consumed")
                             .to_error_instance(global_this)),
                     )?;
                 }

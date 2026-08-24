@@ -314,7 +314,7 @@ pub(crate) fn emit_handle_ipc_message(
             if let Some(cmd) = message.get(global_this, "cmd")? {
                 if cmd.is_string() {
                     let cmd_str = cmd.to_bun_string(global_this)?;
-                    if cmd_str.eql_comptime(b"NODE_CLUSTER") {
+                    if cmd_str.eq_ascii(b"NODE_CLUSTER") {
                         crate::node::node_cluster_binding::handle_internal_message_child(
                             global_this,
                             message,

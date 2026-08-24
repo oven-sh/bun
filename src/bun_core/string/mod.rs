@@ -174,15 +174,15 @@ impl String {
     /// must keep `s` alive for the String's lifetime.
     #[inline]
     pub fn borrow_utf8(s: &[u8]) -> Self {
-        Self::wrap(Tag::EncodedSlice, EncodedSlice::init_utf8(s))
+        Self::wrap(Tag::EncodedSlice, EncodedSlice::utf8(s))
     }
     #[inline]
     pub fn borrow_utf16(s: &[u16]) -> Self {
-        Self::wrap(Tag::EncodedSlice, EncodedSlice::init_utf16(s))
+        Self::wrap(Tag::EncodedSlice, EncodedSlice::utf16(s))
     }
     #[inline]
     pub fn ascii(s: &[u8]) -> Self {
-        Self::wrap(Tag::EncodedSlice, EncodedSlice::init(s))
+        Self::wrap(Tag::EncodedSlice, EncodedSlice::latin1(s))
     }
 
     /// `bun.String.static` — `'static` slice; converted to JS via
@@ -192,7 +192,7 @@ impl String {
     /// static, and `to_utf8`/`into_utf8` borrow the bytes directly.
     #[inline]
     pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
-        Self::wrap(Tag::StaticEncodedSlice, EncodedSlice::init(s.as_ref()))
+        Self::wrap(Tag::StaticEncodedSlice, EncodedSlice::latin1(s.as_ref()))
     }
     /// `clone_utf8(other)`, unless `other` is byte-equal to `self`, in which
     /// case another ref to `self`.
@@ -650,11 +650,11 @@ impl String {
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
                 if w.is_8bit() {
-                    StringView::from_encoded(EncodedSlice::init(
+                    StringView::from_encoded(EncodedSlice::latin1(
                         &w.latin1_slice()[start_index..end_index],
                     ))
                 } else {
-                    StringView::from_encoded(EncodedSlice::init_utf16(
+                    StringView::from_encoded(EncodedSlice::utf16(
                         &w.utf16_slice()[start_index..end_index],
                     ))
                 }
@@ -740,9 +740,9 @@ impl String {
     }
     /// Equality against an ASCII literal. Dispatches on encoding so only
     /// `lit.len()` units are touched; never scans or transcodes `self`.
-    pub fn eql_comptime<S: ?Sized + AsRef<[u8]>>(&self, lit: &S) -> bool {
+    pub fn eq_ascii<S: ?Sized + AsRef<[u8]>>(&self, lit: &S) -> bool {
         let lit = lit.as_ref();
-        debug_assert!(lit.is_ascii(), "eql_comptime expects an ASCII literal");
+        debug_assert!(lit.is_ascii(), "eq_ascii expects an ASCII literal");
         if self.is_utf16() {
             return strings::eql_comptime_utf16(self.utf16(), lit);
         }
@@ -753,8 +753,8 @@ impl String {
     /// `bun.String.hasPrefixComptime` — ASCII prefix check. Dispatches on
     /// encoding so only `prefix.len()` units are touched; never scans or
     /// transcodes `self`.
-    pub fn has_prefix_comptime(&self, prefix: &'static [u8]) -> bool {
-        debug_assert!(prefix.is_ascii(), "has_prefix_comptime expects ASCII");
+    pub fn starts_with_ascii(&self, prefix: &'static [u8]) -> bool {
+        debug_assert!(prefix.is_ascii(), "starts_with_ascii expects ASCII");
         if self.is_utf16() {
             return strings::has_prefix_comptime_utf16(self.utf16(), prefix);
         }
@@ -780,9 +780,9 @@ impl String {
             Tag::WTFStringImpl => {
                 let w = self.as_wtf();
                 if w.is_8bit() {
-                    EncodedSlice::init(w.latin1_slice())
+                    EncodedSlice::latin1(w.latin1_slice())
                 } else {
-                    EncodedSlice::init_utf16(w.utf16_slice())
+                    EncodedSlice::utf16(w.utf16_slice())
                 }
             }
             _ => EncodedSlice::EMPTY,
@@ -914,37 +914,37 @@ impl String {
         self.encoded().slice()
     }
 
-    /// `bun.String.toSlice` — consume `self` into a [`SliceWithUnderlyingString`].
+    /// `bun.String.toSlice` — consume `self` into a [`Utf8WithString`].
     #[inline]
-    pub fn into_slice(self) -> SliceWithUnderlyingString {
+    pub fn into_utf8_with_string(self) -> Utf8WithString {
         let utf8 = match self.to_utf8() {
             Utf8Bytes::Owned(v) => Some(v),
             _ => None,
         };
-        SliceWithUnderlyingString {
+        Utf8WithString {
             utf8,
-            underlying: self,
+            string: self,
             #[cfg(debug_assertions)]
             did_report_extra_memory_debug: false,
         }
     }
 
-    /// `bun.String.toThreadSafeSlice` — like [`into_slice`] but
+    /// `bun.String.toThreadSafeSlice` — like [`into_utf8_with_string`] but
     /// guarantees the resulting buffer is safe to send to another thread.
     ///
-    /// [`into_slice`]: Self::into_slice
-    pub fn into_thread_safe_slice(self) -> SliceWithUnderlyingString {
-        let mut sliced = self.into_slice();
-        if sliced.underlying.0.tag == Tag::WTFStringImpl {
+    /// [`into_utf8_with_string`]: Self::into_utf8_with_string
+    pub fn into_utf8_with_string_thread_safe(self) -> Utf8WithString {
+        let mut sliced = self.into_utf8_with_string();
+        if sliced.string.0.tag == Tag::WTFStringImpl {
             if sliced.utf8.is_none() {
-                // 8-bit all-ASCII: a thread-safe `underlying` keeps backing the bytes.
-                if sliced.underlying.is_thread_safe() {
+                // 8-bit all-ASCII: a thread-safe `string` keeps backing the bytes.
+                if sliced.string.is_thread_safe() {
                     return sliced;
                 }
                 sliced.utf8 = Some(sliced.slice().to_vec());
             }
             // Transcoded or copied; drop the WTF backing to release memory.
-            sliced.underlying = String::EMPTY;
+            sliced.string = String::EMPTY;
         }
         sliced
     }
@@ -1110,12 +1110,12 @@ impl<'a> StringView<'a> {
     /// Borrow `bytes` as UTF-8 (no copy, no scan).
     #[inline]
     pub fn borrow_utf8(bytes: &'a [u8]) -> Self {
-        Self::from_encoded(EncodedSlice::init_utf8(bytes))
+        Self::from_encoded(EncodedSlice::utf8(bytes))
     }
     /// Borrow `units` as UTF-16 (no copy).
     #[inline]
     pub fn borrow_utf16(units: &'a [u16]) -> Self {
-        Self::from_encoded(EncodedSlice::init_utf16(units))
+        Self::from_encoded(EncodedSlice::utf16(units))
     }
     /// `'static` ASCII/Latin-1 literal (no scan).
     #[inline]
@@ -1222,19 +1222,19 @@ impl<'a> EncodedSlice<'a> {
 
     /// Borrow `s` as Latin-1/ASCII (no encoding tag).
     #[inline]
-    pub const fn init(s: &'a [u8]) -> Self {
+    pub const fn latin1(s: &'a [u8]) -> Self {
         Self::from_tagged_ptr(s.as_ptr(), s.len())
     }
     /// Borrow UTF-8 bytes (sets the UTF-8 ptr-tag).
     #[inline]
-    pub fn init_utf8(s: &'a [u8]) -> Self {
-        let mut z = Self::init(s);
+    pub fn utf8(s: &'a [u8]) -> Self {
+        let mut z = Self::latin1(s);
         z.mark_utf8();
         z
     }
     /// Borrow UTF-16 code units (sets the 16-bit ptr-tag).
     #[inline]
-    pub fn init_utf16(s: &'a [u16]) -> Self {
+    pub fn utf16(s: &'a [u16]) -> Self {
         let mut z = Self::from_tagged_ptr(s.as_ptr().cast(), s.len());
         z.mark_utf16();
         z
@@ -1243,8 +1243,8 @@ impl<'a> EncodedSlice<'a> {
     /// Wrap a globally-allocated (mimalloc) UTF-16 buffer whose ownership is
     /// being handed to C++: sets the 16-bit and global ptr-tags.
     #[inline]
-    pub fn init_utf16_global(s: &'a [u16]) -> Self {
-        let mut z = Self::init_utf16(s);
+    pub fn utf16_global(s: &'a [u16]) -> Self {
+        let mut z = Self::utf16(s);
         z.mark_global();
         z
     }
@@ -1254,9 +1254,9 @@ impl<'a> EncodedSlice<'a> {
     #[inline]
     pub fn from_bytes(slice: &'a [u8]) -> Self {
         if !strings::is_all_ascii(slice) {
-            Self::init_utf8(slice)
+            Self::utf8(slice)
         } else {
-            Self::init(slice)
+            Self::latin1(slice)
         }
     }
 
@@ -1376,7 +1376,7 @@ impl<'a> EncodedSlice<'a> {
     }
 
     /// Encoding-aware equality against an ASCII literal.
-    pub fn eql_comptime<S: ?Sized + AsRef<[u8]>>(self, other: &S) -> bool {
+    pub fn eq_ascii<S: ?Sized + AsRef<[u8]>>(self, other: &S) -> bool {
         let other = other.as_ref();
         if self.is_16bit() {
             return strings::eql_comptime_utf16(self.utf16_slice(), other);
@@ -1447,13 +1447,13 @@ impl<'a> EncodedSlice<'a> {
     /// UTF-8/16-bit/global tag bits.
     pub fn substring_with_len(self, start_index: usize, end_index: usize) -> Self {
         if self.is_16bit() {
-            let mut out = Self::init_utf16(&self.utf16_slice()[start_index..end_index]);
+            let mut out = Self::utf16(&self.utf16_slice()[start_index..end_index]);
             if self.is_globally_allocated() {
                 out.mark_global();
             }
             return out;
         }
-        let mut out = Self::init(&self.slice()[start_index..end_index]);
+        let mut out = Self::latin1(&self.slice()[start_index..end_index]);
         if self.is_utf8() {
             out.mark_utf8();
         }
@@ -1599,34 +1599,34 @@ impl AsRef<[u8]> for Utf8Bytes<'_> {
     }
 }
 
-/// A UTF-8 view of `underlying`: `utf8` holds a transcoded copy when
-/// `underlying` is not already UTF-8 (or when there is no `underlying`);
-/// otherwise the bytes are read from `underlying` on demand.
-pub struct SliceWithUnderlyingString {
+/// A UTF-8 view of `string`: `utf8` holds a transcoded copy when
+/// `string` is not already UTF-8 (or when there is no `string`);
+/// otherwise the bytes are read from `string` on demand.
+pub struct Utf8WithString {
     pub utf8: Option<Vec<u8>>,
-    pub underlying: String,
+    pub string: String,
     #[cfg(debug_assertions)]
     pub did_report_extra_memory_debug: bool,
 }
 
-impl Default for SliceWithUnderlyingString {
+impl Default for Utf8WithString {
     #[inline]
     fn default() -> Self {
         Self {
             utf8: None,
-            underlying: String::DEAD,
+            string: String::DEAD,
             #[cfg(debug_assertions)]
             did_report_extra_memory_debug: false,
         }
     }
 }
 
-impl SliceWithUnderlyingString {
+impl Utf8WithString {
     /// True iff the UTF-8 bytes are read straight out of a WTF-backed
-    /// `underlying` (no transcoded copy).
+    /// `string` (no transcoded copy).
     #[inline]
     pub fn is_shared(&self) -> bool {
-        self.utf8.is_none() && self.underlying.0.tag == Tag::WTFStringImpl
+        self.utf8.is_none() && self.string.0.tag == Tag::WTFStringImpl
     }
 
     /// The UTF-8 bytes.
@@ -1635,9 +1635,9 @@ impl SliceWithUnderlyingString {
         if let Some(utf8) = &self.utf8 {
             return utf8;
         }
-        match self.underlying.0.tag {
+        match self.string.0.tag {
             Tag::WTFStringImpl => {
-                let wtf = self.underlying.as_wtf();
+                let wtf = self.string.as_wtf();
                 if wtf.is_8bit() {
                     wtf.latin1_slice()
                 } else {
@@ -1645,7 +1645,7 @@ impl SliceWithUnderlyingString {
                 }
             }
             Tag::EncodedSlice | Tag::StaticEncodedSlice => {
-                let z = self.underlying.encoded();
+                let z = self.string.encoded();
                 if z.is_16bit() { b"" } else { z.slice() }
             }
             Tag::Dead | Tag::Empty => b"",
@@ -1653,32 +1653,32 @@ impl SliceWithUnderlyingString {
     }
 
     /// Detach the UTF-8 bytes for storing: moves the transcoded copy out, or
-    /// moves `underlying`'s ref into a `Shared` slice.
+    /// moves `string`'s ref into a `Shared` slice.
     pub fn into_utf8(self) -> Utf8Bytes<'static> {
         match self.utf8 {
             Some(utf8) => Utf8Bytes::Owned(utf8),
-            None => self.underlying.into_utf8(),
+            None => self.string.into_utf8(),
         }
     }
 
-    /// If `underlying` is WTF-backed, migrate it to a thread-safe impl.
+    /// If `string` is WTF-backed, migrate it to a thread-safe impl.
     pub fn to_thread_safe(&mut self) {
-        self.underlying.to_thread_safe();
+        self.string.to_thread_safe();
     }
 }
 
-impl Clone for SliceWithUnderlyingString {
+impl Clone for Utf8WithString {
     fn clone(&self) -> Self {
         Self {
             utf8: self.utf8.clone(),
-            underlying: self.underlying.clone(),
+            string: self.string.clone(),
             #[cfg(debug_assertions)]
             did_report_extra_memory_debug: self.did_report_extra_memory_debug,
         }
     }
 }
 
-impl core::fmt::Display for SliceWithUnderlyingString {
+impl core::fmt::Display for Utf8WithString {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", crate::fmt::s(self.slice()))
     }

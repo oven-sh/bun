@@ -865,13 +865,13 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if !value.js_type().is_function() {
             let mut writer = WrappedWriter::new(self.writer);
             let name_str = value.get_name_property(global_this)?;
-            if !name_str.is_empty() && !name_str.eql_comptime(b"Object") {
+            if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
                 writer.print(format_args!("{} ", name_str));
             } else {
                 let name_str = value
                     .get_prototype(global_this)?
                     .get_name_property(global_this)?;
-                if !name_str.is_empty() && !name_str.eql_comptime(b"Object") {
+                if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
                     writer.print(format_args!("{} ", name_str));
                 }
             }
@@ -884,7 +884,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             let _ = self.writer.write_all(b"\n");
         }
         let classname = value.get_class_name(global_this)?;
-        if !classname.is_empty() && !classname.eql_comptime(b"Object") {
+        if !classname.is_empty() && !classname.eq_ascii(b"Object") {
             let _ = self.writer.write_fmt(format_args!("{} ", classname));
         }
 
@@ -908,7 +908,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         // SAFETY: key_ is non-null per JSC contract for property iteration.
         let key = unsafe { *key_ };
-        if key.eql_comptime(b"constructor") {
+        if key.eq_ascii(b"constructor") {
             return;
         }
 
@@ -1088,7 +1088,7 @@ impl<'a> Formatter<'a> {
         let result: JsResult<()> = (|| {
             match FORMAT {
                 Tag::StringPossiblyFormatted => {
-                    let str = value.to_slice(self.global_this)?;
+                    let str = value.to_utf8(self.global_this)?;
                     let slice = str.slice();
                     self.add_for_new_line(slice.len());
                     self.write_with_formatting::<W, _, ENABLE_ANSI_COLORS>(
@@ -2068,7 +2068,7 @@ impl<'a> Formatter<'a> {
                                 let mut iter_i: usize = 0;
                                 while let Some((prop, property_value)) = props_iter.next()? {
                                     iter_i += 1;
-                                    if prop.eql_comptime(b"children") {
+                                    if prop.eq_ascii(b"children") {
                                         continue;
                                     }
 
@@ -2333,7 +2333,7 @@ impl<'a> Formatter<'a> {
                     if iter_i == 0 {
                         let object_name = value.get_class_name(self.global_this)?;
 
-                        if !object_name.eql_comptime(b"Object") {
+                        if !object_name.eq_ascii(b"Object") {
                             writer.print(format_args!("{} {{}}", object_name));
                         } else {
                             // don't write "Object"
@@ -2369,7 +2369,7 @@ impl<'a> Formatter<'a> {
 
                     if js_type == JSType::Uint8Array {
                         let buffer_name = value.get_class_name(self.global_this)?;
-                        if buffer_name.eql_comptime(b"Buffer") {
+                        if buffer_name.eq_ascii(b"Buffer") {
                             // special formatting for 'Buffer' snapshots only
                             if slice.is_empty() && self.indent == 0 {
                                 writer.write_all(b"\n");

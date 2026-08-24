@@ -706,7 +706,7 @@ bun_jsc::jsc_abi_extern! {
 
 // HOST_EXPORT(js2native_bindgen_fmt_jsc_fmtString, jsc)
 pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue {
-    let name = bun_core::EncodedSlice::init(b"fmtString");
+    let name = bun_core::EncodedSlice::latin1(b"fmtString");
     bun_jsc::host_fn::new_runtime_function(
         global,
         Some(&name),
@@ -719,7 +719,7 @@ pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue 
 
 // HOST_EXPORT(js2native_bindgen_DevServer_getDeinitCountForTesting, jsc)
 pub fn js2native_bindgen_dev_server_get_deinit_count(global: &JSGlobalObject) -> JSValue {
-    let name = bun_core::EncodedSlice::init(b"getDeinitCountForTesting");
+    let name = bun_core::EncodedSlice::latin1(b"getDeinitCountForTesting");
     bun_jsc::host_fn::new_runtime_function(
         global,
         Some(&name),

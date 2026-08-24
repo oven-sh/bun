@@ -549,7 +549,7 @@ fn get_description(
     }
 
     if description.is_number() || description.is_string() {
-        let slice = description.to_slice(global)?;
+        let slice = description.to_utf8(global)?;
         return Ok(slice.into_vec());
     }
 

@@ -190,7 +190,7 @@ extern "C" fn select_alpn_callback(
             } else {
                 // SAFETY: BoringSSL hands back a NUL-terminated name.
                 let name = unsafe { core::ffi::CStr::from_ptr(servername_ptr) };
-                EncodedSlice::init(name.to_bytes()).to_js(&global)
+                EncodedSlice::latin1(name.to_bytes()).to_js(&global)
             };
             let result =
                 match callback.call(&global, this_value, &[this_value, servername_js, buffer]) {
@@ -207,7 +207,7 @@ extern "C" fn select_alpn_callback(
                 // The server has an ALPNCallback and it answered: a string
                 // selects that protocol for this connection; anything else
                 // refuses it.
-                let chosen = match result.to_slice(&global) {
+                let chosen = match result.to_utf8(&global) {
                     Ok(chosen) => chosen,
                     Err(err) => {
                         // The selection's ToString threw (a Symbol or a throwing
@@ -5112,25 +5112,25 @@ pub mod testing_apis {
                     ));
                 }
             };
-            let syscall: c_int = if syscall_str.eql_comptime(b"recv") {
+            let syscall: c_int = if syscall_str.eq_ascii(b"recv") {
                 fi::RECV
-            } else if syscall_str.eql_comptime(b"send") {
+            } else if syscall_str.eq_ascii(b"send") {
                 fi::SEND
-            } else if syscall_str.eql_comptime(b"writev") {
+            } else if syscall_str.eq_ascii(b"writev") {
                 fi::WRITEV
-            } else if syscall_str.eql_comptime(b"sendmsg") {
+            } else if syscall_str.eq_ascii(b"sendmsg") {
                 fi::SENDMSG
-            } else if syscall_str.eql_comptime(b"recvmsg") {
+            } else if syscall_str.eq_ascii(b"recvmsg") {
                 fi::RECVMSG
-            } else if syscall_str.eql_comptime(b"connect") {
+            } else if syscall_str.eq_ascii(b"connect") {
                 fi::CONNECT
-            } else if syscall_str.eql_comptime(b"accept") {
+            } else if syscall_str.eq_ascii(b"accept") {
                 fi::ACCEPT
-            } else if syscall_str.eql_comptime(b"ssl_loop_buffer") {
+            } else if syscall_str.eq_ascii(b"ssl_loop_buffer") {
                 fi::SSL_LOOP_BUFFER
-            } else if syscall_str.eql_comptime(b"poll_start") {
+            } else if syscall_str.eq_ascii(b"poll_start") {
                 fi::POLL_START
-            } else if syscall_str.eql_comptime(b"session_buffer") {
+            } else if syscall_str.eq_ascii(b"session_buffer") {
                 fi::SESSION_BUFFER
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
@@ -5150,13 +5150,13 @@ pub mod testing_apis {
                     ));
                 }
             };
-            let action: c_int = if action_str.eql_comptime(b"errno") {
+            let action: c_int = if action_str.eq_ascii(b"errno") {
                 fi::ACTION_ERRNO
-            } else if action_str.eql_comptime(b"short") {
+            } else if action_str.eq_ascii(b"short") {
                 fi::ACTION_SHORT
-            } else if action_str.eql_comptime(b"zero") {
+            } else if action_str.eq_ascii(b"zero") {
                 fi::ACTION_ZERO
-            } else if action_str.eql_comptime(b"none") {
+            } else if action_str.eq_ascii(b"none") {
                 fi::ACTION_NONE
             } else {
                 return Err(global.throw(format_args!(
@@ -5255,7 +5255,7 @@ pub mod testing_apis {
     fn parse_errno_name(name: &bun_core::String) -> Option<c_int> {
         macro_rules! map {
             ($($s:literal => $v:expr,)*) => {
-                $(if name.eql_comptime($s) { return Some($v as c_int); })*
+                $(if name.eq_ascii($s) { return Some($v as c_int); })*
             };
         }
         #[cfg(unix)]

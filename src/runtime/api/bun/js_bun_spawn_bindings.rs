@@ -112,7 +112,7 @@ fn get_argv0(
     pretend_argv0: Option<&CStr>,
     first_cmd: JSValue,
 ) -> JsResult<Argv0Result> {
-    let arg0 = first_cmd.to_slice(global_this)?;
+    let arg0 = first_cmd.to_utf8(global_this)?;
     // `arg0` drops at scope exit (was `defer arg0.deinit()`).
 
     // Check for null bytes in command (security: prevent null byte injection)
@@ -2254,7 +2254,7 @@ impl CgroupTarget {
             return Ok(Self::DirFd(Fd::from_native(fd)));
         }
         if value.is_string() {
-            let path = value.to_slice(global)?;
+            let path = value.to_utf8(global)?;
             if strings::contains_char(path.slice(), 0) {
                 return Err(global
                     .err(

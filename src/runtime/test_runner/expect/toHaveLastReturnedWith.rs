@@ -35,14 +35,14 @@ pub(crate) fn to_have_last_returned_with(
             if result_type.is_string() {
                 let type_str = result_type.to_bun_string(global_this)?;
 
-                if type_str.eql_comptime("return") {
+                if type_str.eq_ascii("return") {
                     last_return_value =
                         last_result.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED);
 
                     if last_return_value.jest_deep_equals(expected, global_this)? {
                         pass = true;
                     }
-                } else if type_str.eql_comptime("throw") {
+                } else if type_str.eq_ascii("throw") {
                     last_call_threw = true;
                     last_error_value =
                         last_result.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED);

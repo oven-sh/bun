@@ -1128,7 +1128,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
 
     let mut source_code_slice: Option<bun_core::Utf8Bytes> = None;
 
-    let err = EncodedSlice::init(b"trace output").to_error_instance(global);
+    let err = EncodedSlice::latin1(b"trace output").to_error_instance(global);
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
     // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
     // two simultaneous `&mut` into `holder`. Capture the flag in a local and
@@ -3057,7 +3057,7 @@ pub mod formatter {
         ) -> Option<TagResult> {
             // SAFETY: caller passes a valid `*EncodedSlice`.
             let key = unsafe { &*key };
-            if key.eql_comptime(b"constructor") {
+            if key.eq_ascii(b"constructor") {
                 return None;
             }
             if ctx.formatter.failed {
@@ -3167,7 +3167,7 @@ pub mod formatter {
         value: JSValue,
     ) -> JsResult<Option<bun_core::String>> {
         let name_str = value.get_class_name(global_this)?;
-        if !name_str.eql_comptime(b"Object") {
+        if !name_str.eq_ascii(b"Object") {
             return Ok(Some(name_str));
         } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
             return Ok(Some(bun_core::String::static_("[Object: null prototype]")));
@@ -3504,7 +3504,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let str = value.to_slice(self.global_this)?;
+            let str = value.to_utf8(self.global_this)?;
             let slice = str.slice();
             self.add_for_new_line(slice.len());
             self.write_with_formatting::<C>(writer_, slice, self.global_this)
@@ -3697,7 +3697,7 @@ pub mod formatter {
 
                 let number_value = value.to_js_string_view(self.global_this)?;
 
-                if !number_name.eql_comptime(b"Number") {
+                if !number_name.eq_ascii(b"Number") {
                     writer.add_for_new_line(
                         number_name.length() + number_value.length() + "[Number ():]".len(),
                     );
@@ -4102,7 +4102,7 @@ pub mod formatter {
                 let bool_name = value.get_class_name(self.global_this)?;
                 let bool_value = value.to_js_string_view(self.global_this)?;
 
-                if !bool_name.eql_comptime(b"Boolean") {
+                if !bool_name.eq_ascii(b"Boolean") {
                     writer.add_for_new_line(
                         bool_value.length() + bool_name.length() + "[Boolean (): ]".len(),
                     );
@@ -5086,7 +5086,7 @@ pub mod formatter {
                             props_iter.len - usize::from(children_prop.is_some());
 
                         while let Some((prop, property_value)) = props_iter.next()? {
-                            if prop.eql_comptime("children") {
+                            if prop.eq_ascii("children") {
                                 continue;
                             }
 

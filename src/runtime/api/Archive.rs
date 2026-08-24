@@ -235,7 +235,7 @@ fn parse_compression_options(
             )));
         }
 
-        let compress_str = compress_val.to_slice(global)?;
+        let compress_str = compress_val.to_utf8(global)?;
         // Drop handles compress_str.deinit()
 
         if compress_str.slice() != b"gzip" {
@@ -412,7 +412,7 @@ fn get_entry_data<'a>(
     }
 
     // For strings, convert (allocates)
-    value.to_slice(global)
+    value.to_utf8(global)
 }
 
 /// Static method: Archive.write(path, data, options?)
@@ -436,7 +436,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         )));
     }
 
-    let path_slice = path_arg.to_slice(global)?;
+    let path_slice = path_arg.to_utf8(global)?;
 
     // Parse options for compression override
     let options_compress = parse_compression_options(global, options_arg)?;
@@ -514,7 +514,7 @@ impl Archive {
             )));
         }
 
-        let path_slice = path_arg.to_slice(global)?;
+        let path_slice = path_arg.to_utf8(global)?;
 
         // Parse options
         let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
@@ -547,7 +547,7 @@ fn parse_pattern_arg(
 ) -> JsResult<Option<Vec<Box<[u8]>>>> {
     // Single string
     if arg.is_string() {
-        let str_slice = arg.to_slice(global)?;
+        let str_slice = arg.to_utf8(global)?;
         // Empty string = no filter
         if str_slice.slice().is_empty() {
             return Ok(None);
@@ -580,7 +580,7 @@ fn parse_pattern_arg(
                     bstr::BStr::new(name),
                 )));
             }
-            let str_slice = item.to_slice(global)?;
+            let str_slice = item.to_utf8(global)?;
             // Skip empty strings in array
             if str_slice.slice().is_empty() {
                 i += 1;

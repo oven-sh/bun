@@ -1443,7 +1443,7 @@ impl Subprocess<'_> {
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
                 use bun_jsc::EncodedSliceJsc as _;
-                return bun_core::EncodedSlice::init(name.as_bytes()).to_js(global);
+                return bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);
             }
@@ -1641,9 +1641,9 @@ pub mod testing_apis {
         let subprocess = unsafe { &*subprocess_ptr };
         let kind_str = kind_value.to_bun_string(global_this)?;
 
-        let out: &JsCell<Readable> = if kind_str.eql_comptime(b"stdout") {
+        let out: &JsCell<Readable> = if kind_str.eq_ascii(b"stdout") {
             &subprocess.stdout
-        } else if kind_str.eql_comptime(b"stderr") {
+        } else if kind_str.eq_ascii(b"stderr") {
             &subprocess.stderr
         } else {
             return Err(

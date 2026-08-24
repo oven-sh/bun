@@ -920,7 +920,7 @@ impl FSWatcher {
             if self.encoding == Encoding::Buffer {
                 filename = jsc::ArrayBuffer::create_buffer(&global_object, file_name)?;
             } else if self.encoding == Encoding::Utf8 {
-                filename = EncodedSlice::init_utf8(file_name).to_js(&global_object);
+                filename = EncodedSlice::utf8(file_name).to_js(&global_object);
             } else {
                 // convert to desired encoding
                 filename = Encoder::to_string(file_name, &global_object, self.encoding)?;

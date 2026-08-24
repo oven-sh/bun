@@ -23,7 +23,7 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
         .get(0)
         .map(|z| z.as_bytes())
         .unwrap_or(b"bun");
-    EncodedSlice::init_utf8(argv0).to_js(global_object)
+    EncodedSlice::utf8(argv0).to_js(global_object)
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
@@ -32,7 +32,7 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
     };
-    EncodedSlice::init_utf8(out.as_bytes()).to_js(global_object)
+    EncodedSlice::utf8(out.as_bytes()).to_js(global_object)
 }
 
 /// A worker's `argv`/`execArgv` strings live in its parent-thread

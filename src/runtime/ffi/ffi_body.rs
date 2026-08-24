@@ -1053,7 +1053,7 @@ impl FFI {
                             value,
                         ));
                     }
-                    let slice = value.to_slice(global_this)?;
+                    let slice = value.to_utf8(global_this)?;
                     if slice.slice().is_empty() {
                         continue;
                     }
@@ -1195,7 +1195,7 @@ impl FFI {
             }
             match &function.step {
                 Step::Failed { msg, .. } => {
-                    let res = EncodedSlice::init(msg).to_error_instance(global_this);
+                    let res = EncodedSlice::latin1(msg).to_error_instance(global_this);
                     return Err(global_this.throw_value(res));
                 }
                 Step::Pending => {
@@ -1204,7 +1204,7 @@ impl FFI {
                     );
                 }
                 Step::Compiled(compiled) => {
-                    let str = EncodedSlice::init(function_name.as_bytes());
+                    let str = EncodedSlice::latin1(function_name.as_bytes());
                     let cb = new_runtime_function(
                         global_this,
                         &str,
@@ -1297,9 +1297,8 @@ impl FFI {
             if global_this.has_exception() {
                 return Err(JsError::Thrown);
             }
-            return Ok(
-                EncodedSlice::init(b"Failed to create FFI callback").to_error_instance(global_this)
-            );
+            return Ok(EncodedSlice::latin1(b"Failed to create FFI callback")
+                .to_error_instance(global_this));
         }
         Ok(cb)
     }
@@ -1382,7 +1381,7 @@ impl FFI {
             if function.print_source_code(&mut arraylist).is_err() {
                 // an error while generating source code
                 return Ok(
-                    EncodedSlice::init(b"Error while printing code").to_error_instance(global)
+                    EncodedSlice::latin1(b"Error while printing code").to_error_instance(global)
                 );
             }
             strs.push(bun_core::String::clone_utf8(&arraylist));
@@ -1540,7 +1539,7 @@ impl FFI {
             let target = function
                 .symbol_from_dynamic_library
                 .expect("symbol was resolved above");
-            let str = EncodedSlice::init(function_name.as_bytes());
+            let str = EncodedSlice::latin1(function_name.as_bytes());
             let cb = create_jsc_ffi_function(global, &str, function, target, js_object);
             if cb.is_empty() {
                 // An exception the constructor left pending is the caller's.
@@ -1626,7 +1625,7 @@ impl FFI {
                 return Ok(err);
             }
             let target = function.symbol_from_dynamic_library.expect("checked above");
-            let name = EncodedSlice::init(function_name.as_bytes());
+            let name = EncodedSlice::latin1(function_name.as_bytes());
             let cb = create_jsc_ffi_function(global, &name, function, target, js_object);
             if cb.is_empty() {
                 // An exception the constructor left pending is the caller's.
@@ -1710,7 +1709,7 @@ pub(super) fn generate_symbol_for_function(
     if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(
-                EncodedSlice::init(b"Expected an object with \"args\" as an array")
+                EncodedSlice::latin1(b"Expected an object with \"args\" as an array")
                     .to_error_instance(global),
             ));
         }
@@ -1721,7 +1720,7 @@ pub(super) fn generate_symbol_for_function(
         while let Some(val) = array.next()? {
             if val.is_empty_or_undefined_or_null() {
                 return Ok(Some(
-                    EncodedSlice::init(b"param must be a string (type name) or number")
+                    EncodedSlice::latin1(b"param must be a string (type name) or number")
                         .to_error_instance(global),
                 ));
             }
@@ -1733,19 +1732,19 @@ pub(super) fn generate_symbol_for_function(
                     continue;
                 } else {
                     return Ok(Some(
-                        EncodedSlice::init(b"invalid ABI type").to_error_instance(global),
+                        EncodedSlice::latin1(b"invalid ABI type").to_error_instance(global),
                     ));
                 }
             }
 
             if !val.js_type().is_string_like() {
                 return Ok(Some(
-                    EncodedSlice::init(b"param must be a string (type name) or number")
+                    EncodedSlice::latin1(b"param must be a string (type name) or number")
                         .to_error_instance(global),
                 ));
             }
 
-            let type_name = val.to_slice(global)?;
+            let type_name = val.to_utf8(global)?;
             let Some(abi) = ABIType::LABEL.get(type_name.slice()).copied() else {
                 return Ok(Some(global.to_type_error(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1773,12 +1772,12 @@ pub(super) fn generate_symbol_for_function(
                     break 'brk;
                 } else {
                     return Ok(Some(
-                        EncodedSlice::init(b"invalid ABI type").to_error_instance(global),
+                        EncodedSlice::latin1(b"invalid ABI type").to_error_instance(global),
                     ));
                 }
             }
 
-            let ret_slice = ret_value.to_slice(global)?;
+            let ret_slice = ret_value.to_utf8(global)?;
             return_type = match ABIType::LABEL.get(ret_slice.slice()).copied() {
                 Some(t) => t,
                 None => {
@@ -1793,13 +1792,13 @@ pub(super) fn generate_symbol_for_function(
 
     if return_type == ABIType::NapiEnv {
         return Ok(Some(
-            EncodedSlice::init(b"Cannot return napi_env to JavaScript: a napi_env is an in-parameter for cc()-compiled C, never a return value").to_error_instance(global),
+            EncodedSlice::latin1(b"Cannot return napi_env to JavaScript: a napi_env is an in-parameter for cc()-compiled C, never a return value").to_error_instance(global),
         ));
     }
 
     if return_type == ABIType::Buffer {
         return Ok(Some(
-            EncodedSlice::init(
+            EncodedSlice::latin1(
                 b"Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)",
             )
             .to_error_instance(global),
@@ -1808,7 +1807,7 @@ pub(super) fn generate_symbol_for_function(
 
     if return_type == ABIType::BufferLength {
         return Ok(Some(
-            EncodedSlice::init(
+            EncodedSlice::latin1(
                 b"buffer_length is an argument-only type; it cannot be a return type",
             )
             .to_error_instance(global),

@@ -192,10 +192,10 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
         while let Some(item) = iter.next()? {
             if item.is_string() {
                 let str = item.to_bun_string(global)?;
-                if str.eql_comptime(b"-e")
-                    || str.eql_comptime(b"--eval")
-                    || str.eql_comptime(b"-p")
-                    || str.eql_comptime(b"--print")
+                if str.eq_ascii(b"-e")
+                    || str.eq_ascii(b"--eval")
+                    || str.eq_ascii(b"-p")
+                    || str.eq_ascii(b"--print")
                 {
                     return Ok(ArgsSlice {
                         array: argv,
@@ -226,7 +226,7 @@ fn check_option_like_value(global: &JSGlobalObject, token: &OptionToken) -> JsRe
         let raw_name = RawNameFormatter { token: *token, raw };
 
         // Only show short example if user used short option.
-        let err: JSValue = if raw_name.raw.has_prefix_comptime(b"--") {
+        let err: JSValue = if raw_name.raw.starts_with_ascii(b"--") {
             global.to_type_error(
                 bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                 format_args!(
@@ -357,7 +357,7 @@ fn store_option(
     values: JSValue,
 ) -> JsResult<()> {
     let key = option_name.as_bun_string(global)?;
-    if key.eql_comptime(b"__proto__") {
+    if key.eq_ascii(b"__proto__") {
         return Ok(());
     }
 
@@ -690,7 +690,7 @@ fn tokenize_args(
                 // e.g. '--foo'
                 let mut long_option = arg.substring(2);
 
-                let negative = if ctx.allow_negative && long_option.has_prefix_comptime(b"no-") {
+                let negative = if ctx.allow_negative && long_option.starts_with_ascii(b"no-") {
                     long_option = arg.substring(2 + 3);
                     true
                 } else {
@@ -1018,7 +1018,7 @@ fn parse_args_impl(
 
     for option in &option_defs {
         if let Some(default_value) = option.default_value {
-            if !option.long_name.eql_comptime(b"__proto__") {
+            if !option.long_name.eq_ascii(b"__proto__") {
                 if state.values.get_own(global, &option.long_name)?.is_none() {
                     bun_output::scoped_log!(
                         parseArgs,

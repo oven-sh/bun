@@ -533,7 +533,7 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         return Ok(JSValue::NULL);
     }
 
-    let bin_str = path_arg.to_slice(global_this)?;
+    let bin_str = path_arg.to_utf8(global_this)?;
 
     if bin_str.slice().len() >= MAX_PATH_BYTES {
         return Err(global_this.throw(format_args!("bin path is too long")));
@@ -550,11 +550,11 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
     if let Some(arg) = arguments.next_eat() {
         if !arg.is_empty_or_undefined_or_null() && arg.is_object() {
             if let Some(str_) = arg.get(global_this, "PATH")? {
-                path_str = str_.to_slice(global_this)?;
+                path_str = str_.to_utf8(global_this)?;
             }
 
             if let Some(str_) = arg.get(global_this, "cwd")? {
-                cwd_str = str_.to_slice(global_this)?;
+                cwd_str = str_.to_utf8(global_this)?;
             }
         }
     }
@@ -798,12 +798,12 @@ fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 }
 
 fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    EncodedSlice::init(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
+    EncodedSlice::latin1(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
 }
 
 fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    EncodedSlice::init(VirtualMachine::get().origin.origin).to_js(global_this)
+    EncodedSlice::latin1(VirtualMachine::get().origin.origin).to_js(global_this)
 }
 
 fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -884,7 +884,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             .or_pending_exception();
     }
 
-    EncodedSlice::init(vm.main()).to_js(global_this)
+    EncodedSlice::latin1(vm.main()).to_js(global_this)
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)
@@ -939,7 +939,7 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     let mut column: Option<Utf8Bytes> = None;
 
     if let Some(file_path_) = arguments.next_eat() {
-        path = file_path_.to_slice(global_this)?;
+        path = file_path_.to_utf8(global_this)?;
     }
 
     // Option getters and `toString` run arbitrary user JS that may re-enter
@@ -948,15 +948,15 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     if let Some(opts) = arguments.next_eat() {
         if !opts.is_undefined_or_null() {
             if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
-                editor_name = Some(editor_val.to_slice(global_this)?);
+                editor_name = Some(editor_val.to_utf8(global_this)?);
             }
 
             if let Some(line_) = opts.get_truthy(global_this, "line")? {
-                line = Some(line_.to_slice(global_this)?);
+                line = Some(line_.to_utf8(global_this)?);
             }
 
             if let Some(column_) = opts.get_truthy(global_this, "column")? {
-                column = Some(column_.to_slice(global_this)?);
+                column = Some(column_.to_utf8(global_this)?);
             }
         }
     }
@@ -1145,7 +1145,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     let mut query_string = BunString::empty();
 
     let decoded_specifier;
-    let specifier_for_resolve = if specifier.has_prefix_comptime(b"file://") {
+    let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
         decoded_specifier = bun_url::path_from_file_url(specifier);
         &decoded_specifier
     } else {
@@ -1172,9 +1172,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         // Vec<u8> writes are infallible.
         let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
 
-        return Ok(Resolved::Found(
-            EncodedSlice::init_utf8(&arraylist).to_js(ctx),
-        ));
+        return Ok(Resolved::Found(EncodedSlice::utf8(&arraylist).to_js(ctx)));
     }
 
     Ok(Resolved::Found(result_value.into_js(ctx)?))
@@ -1613,7 +1611,7 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         let path = 'brk: {
             if let Some(path) = args.next_eat() {
                 if path.is_string() {
-                    let path_str = path.to_slice(global_this)?;
+                    let path_str = path.to_utf8(global_this)?;
                     if path_str.slice().len() > MAX_PATH_BYTES {
                         return Err(
                             global_this.throw_invalid_arguments(format_args!("Path too long"))
@@ -2141,7 +2139,7 @@ pub(crate) mod environment_variables {
         let vm = global_object.bun_vm();
         let sliced = name.to_utf8();
         let value = vm.env_loader().get(sliced.slice())?;
-        Some(EncodedSlice::init_utf8(value))
+        Some(EncodedSlice::utf8(value))
     }
 }
 
@@ -2433,8 +2431,9 @@ pub mod JSZlib {
                     }
                     Err(_) => {
                         let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                        return Err(global_this
-                            .throw_value(EncodedSlice::init(msg).to_error_instance(global_this)));
+                        return Err(global_this.throw_value(
+                            EncodedSlice::latin1(msg).to_error_instance(global_this),
+                        ));
                     }
                 }
                 // NOTE: the reader *borrows* `list_ptr`,
@@ -2575,8 +2574,9 @@ pub mod JSZlib {
                     }
                     Err(_) => {
                         let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                        return Err(global_this
-                            .throw_value(EncodedSlice::init(msg).to_error_instance(global_this)));
+                        return Err(global_this.throw_value(
+                            EncodedSlice::latin1(msg).to_error_instance(global_this),
+                        ));
                     }
                 }
                 // NOTE: see gunzip path — reader borrows `list`, so drop

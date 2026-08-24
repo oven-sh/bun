@@ -1412,22 +1412,22 @@ impl StringJsc for bun_core::String {
 }
 
 /// Extension trait providing JSC-aware methods on
-/// `bun_core::SliceWithUnderlyingString` (lower-tier, no JSC dep) —
+/// `bun_core::Utf8WithString` (lower-tier, no JSC dep) —
 /// `to_js`, `into_js`, `report_extra_memory`; the free-function bodies
 /// live in [`bun_string_jsc`].
-pub trait SliceWithUnderlyingStringJsc {
+pub trait Utf8WithStringJsc {
     fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn report_extra_memory(&mut self, vm: &VM);
 }
-impl SliceWithUnderlyingStringJsc for bun_core::SliceWithUnderlyingString {
+impl Utf8WithStringJsc for bun_core::Utf8WithString {
     #[inline]
     fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::slice_with_underlying_string_to_js(self, global)
+        bun_string_jsc::utf8_with_string_to_js(self, global)
     }
     #[inline]
     fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::slice_with_underlying_string_into_js(self, global)
+        bun_string_jsc::utf8_with_string_into_js(self, global)
     }
     /// Account `utf8`'s backing allocation against the GC heap unless it is
     /// already JSC-owned (WTF-backed) or borrowed.
@@ -1615,7 +1615,7 @@ impl LogJsc for bun_ast::Log {
                 for (i, msg) in msgs[0..count].iter().enumerate() {
                     errors_stack[i] = msg_to_js(msg, global)?;
                 }
-                let out = bun_core::EncodedSlice::init(message.as_bytes());
+                let out = bun_core::EncodedSlice::latin1(message.as_bytes());
                 global.create_aggregate_error(&errors_stack[..count], &out)
             }
         }

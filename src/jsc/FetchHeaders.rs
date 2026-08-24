@@ -218,7 +218,7 @@ impl FetchHeaders {
 
     pub fn get(&mut self, name_: &[u8], global: &JSGlobalObject) -> Option<EncodedSlice<'_>> {
         let mut out = EncodedSlice::EMPTY;
-        self.get_(&EncodedSlice::init(name_), &mut out, global);
+        self.get_(&EncodedSlice::latin1(name_), &mut out, global);
         if out.len > 0 {
             // Returns the EncodedSlice view (borrows C++-owned header
             // storage); caller may `.slice()` it. Returning `&[u8]` directly

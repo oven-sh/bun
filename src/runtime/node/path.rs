@@ -1199,7 +1199,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut root: &[u8] = b"";
     let root_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "root")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1209,7 +1209,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut dir: &[u8] = b"";
     let dir_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "dir")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1219,7 +1219,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut base: &[u8] = b"";
     let base_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "base")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1229,7 +1229,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut _name: &[u8] = b"";
     let _name_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "name")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1239,7 +1239,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut ext: &[u8] = b"";
     let ext_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "ext")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };

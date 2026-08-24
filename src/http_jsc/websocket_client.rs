@@ -406,11 +406,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                     // be a UAF + double-free, so `utf16` must never be freed
                     // locally.
                     let utf16 = core::mem::ManuallyDrop::new(utf16);
-                    outstring = EncodedSlice::init_utf16_global(&utf16);
+                    outstring = EncodedSlice::utf16_global(&utf16);
                     jsc::mark_binding!();
                     out.did_receive_text(false, &outstring);
                 } else {
-                    outstring = EncodedSlice::init(data);
+                    outstring = EncodedSlice::latin1(data);
                     jsc::mark_binding!();
                     out.did_receive_text(true, &outstring);
                 }

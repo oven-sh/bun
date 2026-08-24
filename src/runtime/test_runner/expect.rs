@@ -2068,8 +2068,8 @@ impl Expect {
 
         let mut pass = value.is_string();
         if pass {
-            let value_string = value.to_slice(global)?;
-            let expected_string = expected.to_slice(global)?;
+            let value_string = value.to_utf8(global)?;
+            let expected_string = expected.to_utf8(global)?;
             pass = expected_string.slice().is_empty()
                 || pred(value_string.slice(), expected_string.slice());
         }

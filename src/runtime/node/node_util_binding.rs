@@ -237,7 +237,7 @@ pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     for (k, v) in p.map.map.iter() {
         obj.put(
             global,
-            EncodedSlice::init_utf8(k),
+            EncodedSlice::utf8(k),
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         );
     }

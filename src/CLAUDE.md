@@ -102,7 +102,7 @@ let owned: Vec<u8>           = s.to_owned_slice();
 ```
 
 Rule: a `Utf8Bytes<'static>` field/element must come from an owning producer
-(`into_utf8()`, `value.to_slice(global)?`, `x.to_utf8().into_owned()`,
+(`into_utf8()`, `value.to_utf8(global)?`, `x.to_utf8().into_owned()`,
 `Utf8Bytes::Owned(..)`) — never from `to_utf8()` on a `&String`/`StringView`
 reached through a `&'static` accessor.
 
@@ -110,14 +110,14 @@ reached through a `&'static` accessor.
 (`Shared` holds an 8-bit all-ASCII WTF-backed `String` and reads its buffer);
 it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
-borrowed view: `EncodedSlice::init(bytes)` (Latin-1/ASCII, also for `'static`
-literals), `init_utf8(bytes)`, `init_utf16(units)`, `from_bytes(bytes)` (scans;
+borrowed view: `EncodedSlice::latin1(bytes)` (Latin-1/ASCII, also for `'static`
+literals), `utf8(bytes)`, `utf16(units)`, `from_bytes(bytes)` (scans;
 tags UTF-8 if non-ASCII), `String::to_encoded_slice()`,
 `StringView::from_encoded(..)`, `EncodedSlice::to_utf8() -> Utf8Bytes<'a>`;
 `bun_jsc::EncodedSliceJsc` adds `to_js`/`to_error_instance`/….
 
 JSValue → string: `value.to_bun_string(global)?` (owned `String`),
-`value.to_slice(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or
+`value.to_utf8(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or
 `value.to_js_string_view(global)?` (borrowed `JSStringView` guard; derefs to
 `&String` and keeps the `JSString` cell alive while it is in scope; its
 `to_utf8()` is tied to the guard).

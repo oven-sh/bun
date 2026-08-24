@@ -2335,7 +2335,7 @@ impl TestCommand {
         }
 
         if !tz_name.is_empty() {
-            _ = vm.global().set_time_zone(&EncodedSlice::init(tz_name));
+            _ = vm.global().set_time_zone(&EncodedSlice::latin1(tz_name));
         }
 
         if ctx.test_options.test_worker {
@@ -3216,7 +3216,7 @@ impl TestCommand {
             // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
                 vm.clear_entry_point()?;
-                let entry = EncodedSlice::init(file_path);
+                let entry = EncodedSlice::latin1(file_path);
                 vm.global().delete_module_registry_entry(&entry)?;
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.

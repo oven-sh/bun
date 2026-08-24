@@ -2086,11 +2086,11 @@ fn handle_ipc_message(
                         break 'handle_message;
                     }
                     let cmd_str = bun_jsc::bun_string_jsc::from_js(cmd, global_this)?;
-                    if cmd_str.eql_comptime(b"NODE_HANDLE") {
+                    if cmd_str.eq_ascii(b"NODE_HANDLE") {
                         internal_command = Some(IPCCommand::Handle(msg_data));
-                    } else if cmd_str.eql_comptime(b"NODE_HANDLE_ACK") {
+                    } else if cmd_str.eq_ascii(b"NODE_HANDLE_ACK") {
                         internal_command = Some(IPCCommand::Ack);
-                    } else if cmd_str.eql_comptime(b"NODE_HANDLE_NACK") {
+                    } else if cmd_str.eq_ascii(b"NODE_HANDLE_NACK") {
                         internal_command = Some(IPCCommand::Nack);
                     }
                 }

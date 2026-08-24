@@ -1,8 +1,8 @@
-//! JSC bridges for `bun.String` and `SliceWithUnderlyingString`. Keeps
+//! JSC bridges for `bun.String` and `Utf8WithString`. Keeps
 //! `src/string/` free of `JSValue`/`JSGlobalObject`/`CallFrame` types — the
 //! original methods are aliased to the free fns here.
 
-use bun_core::{EncodedSlice, SliceWithUnderlyingString, String, Tag, strings};
+use bun_core::{EncodedSlice, String, Tag, Utf8WithString, strings};
 
 use crate::encoded_slice;
 use crate::{CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
@@ -130,27 +130,27 @@ pub fn parse_date(this: &String, global_object: &JSGlobalObject) -> JsResult<f64
     unsafe { crate::cpp::Bun__parseDate(global_object, this) }
 }
 
-// ── SliceWithUnderlyingString methods ───────────────────────────────────────
-pub(crate) fn slice_with_underlying_string_to_js(
-    this: &mut SliceWithUnderlyingString,
+// ── Utf8WithString methods ───────────────────────────────────────
+pub(crate) fn utf8_with_string_to_js(
+    this: &mut Utf8WithString,
     global_object: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    slice_with_underlying_string_to_js_with_options(this, global_object, false)
+    utf8_with_string_to_js_with_options(this, global_object, false)
 }
 
-pub(crate) fn slice_with_underlying_string_into_js(
-    mut this: SliceWithUnderlyingString,
+pub(crate) fn utf8_with_string_into_js(
+    mut this: Utf8WithString,
     global_object: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    slice_with_underlying_string_to_js_with_options(&mut this, global_object, true)
+    utf8_with_string_to_js_with_options(&mut this, global_object, true)
 }
 
-fn slice_with_underlying_string_to_js_with_options(
-    this: &mut SliceWithUnderlyingString,
+fn utf8_with_string_to_js_with_options(
+    this: &mut Utf8WithString,
     global_object: &JSGlobalObject,
     transfer: bool,
 ) -> JsResult<JSValue> {
-    if this.underlying.tag() == Tag::Dead || this.underlying.tag() == Tag::Empty {
+    if this.string.tag() == Tag::Dead || this.string.tag() == Tag::Empty {
         if let Some(utf8) = this.utf8.take_if(|v| !v.is_empty()) {
             if let Some(utf16) = strings::to_utf16_alloc(&utf8, false, false)
                 .map_err(|_| global_object.throw_out_of_memory())?
@@ -178,9 +178,9 @@ fn slice_with_underlying_string_to_js_with_options(
 
     if transfer {
         this.utf8 = None;
-        into_js(core::mem::take(&mut this.underlying), global_object)
+        into_js(core::mem::take(&mut this.string), global_object)
     } else {
-        to_js(&this.underlying, global_object)
+        to_js(&this.string, global_object)
     }
 }
 
@@ -193,7 +193,7 @@ pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
         return Err(global.throw(format_args!("expected string argument")));
     }
 
-    let input = input_value.to_slice(global)?;
+    let input = input_value.to_utf8(global)?;
 
     let mut buf: Vec<u8> = Vec::new();
 
@@ -216,7 +216,7 @@ pub fn js_escape_reg_exp_for_package_name_matching(
         return Err(global.throw(format_args!("expected string argument")));
     }
 
-    let input = input_value.to_slice(global)?;
+    let input = input_value.to_utf8(global)?;
 
     let mut buf: Vec<u8> = Vec::new();
 

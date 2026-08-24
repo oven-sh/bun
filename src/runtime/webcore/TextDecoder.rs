@@ -96,7 +96,7 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
-        EncodedSlice::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
+        EncodedSlice::latin1(EncodingLabel::get_label(self.encoding)).to_js(global_this)
     }
 
     #[inline(always)]
@@ -342,7 +342,7 @@ impl TextDecoder {
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
-                    return Ok(EncodedSlice::init(buffer_slice).to_js(global_this));
+                    return Ok(EncodedSlice::latin1(buffer_slice).to_js(global_this));
                 }
 
                 // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -470,10 +470,10 @@ impl TextDecoder {
                     });
                 }
 
-                // All-ASCII input needed no conversion. `EncodedSlice::init(..).to_js`
+                // All-ASCII input needed no conversion. `EncodedSlice::latin1(..).to_js`
                 // copies, so `input` may borrow the caller's buffer or `joined_owned`.
                 // Experiment: using mimalloc directly is slightly slower
-                Ok(EncodedSlice::init(input).to_js(global_this))
+                Ok(EncodedSlice::latin1(input).to_js(global_this))
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
@@ -609,7 +609,7 @@ impl TextDecoder {
         let mut decoder = TextDecoder::default();
 
         if encoding_value.is_string() {
-            let str = encoding_value.to_slice(global_this)?;
+            let str = encoding_value.to_utf8(global_this)?;
             // `str` drops at scope exit (matches `defer str.deinit()`).
 
             match EncodingLabel::which(str.slice()) {

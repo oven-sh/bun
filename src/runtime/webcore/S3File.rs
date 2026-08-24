@@ -327,7 +327,7 @@ fn finish_s3_blob(
         if opts.is_object() {
             if let Some(file_type) = opts.get_truthy(global, "type")? {
                 if file_type.is_string() {
-                    let str = file_type.to_slice(global)?;
+                    let str = file_type.to_utf8(global)?;
                     let slice = str.slice();
                     if blob::is_valid_blob_type(slice) {
                         blob.content_type_was_set.set(true);

@@ -193,7 +193,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 loc: bun_ast::Loc::EMPTY,
                             },
                             flags: if two_phase {
-                                G::FnFlags::IsGenerator.into()
+                                if ast.top_level_await_keyword.is_empty() {
+                                    G::FnFlags::IsGenerator.into()
+                                } else {
+                                    G::FnFlags::IsGenerator | G::FnFlags::IsAsync
+                                }
                             } else {
                                 Default::default()
                             },

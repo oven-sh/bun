@@ -825,8 +825,8 @@ devTest("import cycle: a read of a binding before its declaration throws", {
     await c.expectMessage("PASS");
   },
 });
-// A module with top level await keeps the single phase form: its namespace
-// object exists only after its body. Its partner reads it after both evaluate.
+// A module with top level await is an async generator with the same two
+// phases. Its partner reads it after both evaluate.
 devTest("import cycle through a module with top level await: a deferred read", {
   files: {
     "index.html": emptyHtmlFile({
@@ -855,13 +855,10 @@ devTest("import cycle through a module with top level await: a deferred read", {
     await c.expectMessage("PASS");
   },
 });
-// A module with top level await keeps the single phase form, so its namespace
-// object stays empty until its body ends. A top level read of it from inside
-// the cycle answers `undefined`. `bun run` throws
-// `ReferenceError: Cannot access 'value' before initialization` for the same
-// files, and the dev server of 1.4.0 threw `TypeError: null is not an
-// object`. This test documents the middle state, which no longer stops the
-// page.
+// The namespace object of a module with top level await exists before its body
+// runs, so its partner reads the binding through a live getter after the
+// `await` settled. `bun run` and Node print the same value. The dev server of
+// 1.4.0 threw `TypeError: null is not an object` here.
 devTest("import cycle through a module with top level await: a top level read", {
   files: {
     "index.html": emptyHtmlFile({
@@ -883,7 +880,38 @@ devTest("import cycle through a module with top level await: a top level read", 
   },
   async test(dev) {
     await using c = await dev.client();
-    await c.expectMessage("seen: undefined");
+    await c.expectMessage("seen: waited");
+  },
+});
+// The partner of a module with top level await waits for that module, as with
+// `bun run` and Node: the cycle is entered through the partner here, so the
+// module with the `await` evaluates first and the partner reads the settled
+// value.
+devTest("import cycle through a module with top level await: the partner waits for the await", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { seen } from './partner';
+      import { value } from './waiter';
+      console.log(seen + ' then ' + value);
+    `,
+    "partner.ts": `
+      import { value, tag } from './waiter';
+      let valueSeen;
+      try { valueSeen = typeof value; } catch (error) { valueSeen = error.constructor.name; }
+      export const seen = tag() + ':' + valueSeen;
+    `,
+    "waiter.ts": `
+      import './partner';
+      export function tag() { return 'waiter'; }
+      export const value = await Promise.resolve('waited');
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("waiter:string then waited");
   },
 });
 // The partner of an `export * from` barrel reads a re-exported name through

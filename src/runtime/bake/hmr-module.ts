@@ -288,10 +288,7 @@ export function loadModuleSync(
   if (mod) {
     if (mod.state === State.Error) throw mod.failure;
     if (mod.state === State.Stale) {
-      mod.state = State.Pending;
-      // The bindings of the previous evaluation take no part in this one.
-      mod.imports = null;
-      mod.updateImport = null;
+      beginEvaluation(mod);
       isUserDynamic = false;
     } else {
       if (importer) {
@@ -366,36 +363,20 @@ export function loadModuleSync(
       mod.importers.add(importer);
     }
 
-    // Two-phase load. The load function is a generator: the first resume
-    // instantiates the module (hoisted function declarations, `hmr.updateImport`
-    // and the `hmr.exports` object exist after it), the second resume evaluates
-    // the body. Instantiation happens before the dependencies load, so a module
-    // in an import cycle reads this module's namespace object, not `null`.
+    const link = instantiateEsm(mod, load, stars, importer, importIndex);
+    let depsList: HMRModule[];
     try {
-      const gen = load(mod) as ModuleLoadGenerator;
-      const exportsBefore = mod.exports;
-      gen.next();
-      if (mod.exports === exportsBefore) mod.exports = {};
-      const lateStars = mergeStarExports(mod, stars);
-      bindImportOfImporterOnStack(importer, importIndex, mod);
-      const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
-      if (lateStars) mergeLateStarExports(mod, lateStars);
-      mod.imports = depsList.map(getEsmExports);
-      gen.next();
-      mod.imports = depsList;
-      mod.cjs = null;
-      mod.state = State.Loaded;
+      ({ list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync));
     } catch (e) {
       if (e instanceof AsyncImportError) {
         // A dependency needs top-level await, so this module cannot be
         // required. Its body did not run; a dynamic import can retry it.
         mod.state = State.Stale;
-      } else {
-        mod.state = State.Error;
-        mod.failure = e;
+        throw e;
       }
-      throw e;
+      throwLoadFailure(mod, e);
     }
+    evaluateEsm(mod, link, depsList);
   }
 
   return mod;
@@ -418,10 +399,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     const { state } = mod;
     if (state === State.Error) throw mod.failure;
     if (state === State.Stale) {
-      mod.state = State.Pending;
-      // The bindings of the previous evaluation take no part in this one.
-      mod.imports = null;
-      mod.updateImport = null;
+      beginEvaluation(mod);
       isUserDynamic = false as IsUserDynamic;
     } else {
       if (importer) {
@@ -498,65 +476,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
 
-    if (selfIsAsync) {
-      // Top-level await keeps the one-phase form: an async load function,
-      // because a generator cannot suspend on `await`. Its namespace object
-      // exists only after its body ends. Until then a module in an import
-      // cycle with it reads an empty object, not `null`, and `patchImporters`
-      // rebinds that importer once this module loads.
-      let list: (HMRModule | Promise<HMRModule>)[];
-      let isAsync: boolean;
-      try {
-        mod.exports = {};
-        bindImportOfImporterOnStack(importer, importIndex, mod);
-        ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
-      } catch (e) {
-        mod.state = State.Error;
-        mod.failure = e;
-        throw e;
-      }
-      DEBUG.ASSERT(
-        isAsync //
-          ? list.some(x => x instanceof Promise)
-          : list.every(x => x instanceof HMRModule),
-      );
-
-      // Running finishLoadModuleAsync synchronously when there are no promises is
-      // not a performance optimization but a behavioral correctness issue.
-      return isAsync
-        ? Promise.all(list).then(
-            list => finishLoadModuleAsync(mod, load, stars, list),
-            e => {
-              mod.state = State.Error;
-              mod.failure = e;
-              throw e;
-            },
-          )
-        : finishLoadModuleAsync(
-            mod,
-            load,
-            stars,
-            list as HMRModule[], // no promises as by assert above
-          );
-    }
-
-    // Two-phase load. See the comment in `loadModuleSync`.
-    let gen: ModuleLoadGenerator;
-    let lateStars: Id[] | null;
+    const link = instantiateEsm(mod, load, stars, importer, importIndex);
     let list: (HMRModule | Promise<HMRModule>)[];
     let isAsync: boolean;
     try {
-      gen = load(mod) as ModuleLoadGenerator;
-      const exportsBefore = mod.exports;
-      gen.next();
-      if (mod.exports === exportsBefore) mod.exports = {};
-      lateStars = mergeStarExports(mod, stars);
-      bindImportOfImporterOnStack(importer, importIndex, mod);
       ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
     } catch (e) {
-      mod.state = State.Error;
-      mod.failure = e;
-      throw e;
+      throwLoadFailure(mod, e);
     }
     DEBUG.ASSERT(
       isAsync //
@@ -564,64 +490,97 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         : list.every(x => x instanceof HMRModule),
     );
 
+    // Evaluating synchronously when there are no promises is not a
+    // performance optimization but a behavioral correctness issue.
     return isAsync
       ? Promise.all(list).then(
-          list => finishTwoPhaseLoad(mod, gen, lateStars, list),
-          e => {
-            mod.state = State.Error;
-            mod.failure = e;
-            throw e;
-          },
+          list => evaluateEsm(mod, link, list, selfIsAsync),
+          e => throwLoadFailure(mod, e),
         )
-      : finishTwoPhaseLoad(
+      : evaluateEsm(
           mod,
-          gen,
-          lateStars,
+          link,
           list as HMRModule[], // no promises as by assert above
+          selfIsAsync,
         );
   }
 }
 
-/** One-phase load of a module with top-level await. The star re-exports
- * merge after the body assigns the exports object. The dependencies are
- * loaded by then, so both merge halves run back to back. A body without
- * exports leaves the empty object that `loadModuleAsync` installed. */
-function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], stars: Id[], modules: HMRModule[]) {
+/** Stale -> Pending: the bindings of the previous evaluation take no part in
+ * this one. */
+function beginEvaluation(mod: HMRModule) {
+  mod.imports = null;
+  mod.updateImport = null;
+  mod.state = State.Pending;
+}
+
+/** Records the failure, so that the next import of this id throws it again
+ * instead of handing out a module that never finished. */
+function throwLoadFailure(mod: HMRModule, e: unknown): never {
+  mod.state = State.Error;
+  mod.failure = e;
+  throw e;
+}
+
+/** The state of an ESM module between its two link phases. */
+interface EsmLink {
+  gen: ModuleLoadGenerator;
+  /** The promise of the first resume of an async generator (a module with
+   * top-level await). It settles after the instantiate statements ran, and
+   * the body may only be resumed after it. `null` for a sync generator. */
+  instantiated: Promise<unknown> | null;
+  /** Star re-exports whose names are only known after the dependencies load. */
+  lateStars: Id[] | null;
+}
+
+/** Phase one of the ESM link. The load function is a generator: the first
+ * resume instantiates the module (hoisted function declarations, the import
+ * variables, `hmr.updateImport` and the `hmr.exports` object exist after it),
+ * and no statement of the body runs. Instantiation happens before the
+ * dependencies load, so a module in an import cycle reads this module's
+ * namespace object, not `null`.
+ *
+ * A module with top-level await is an async generator. Its first resume still
+ * runs the instantiate statements synchronously; only the promise settles
+ * later. */
+function instantiateEsm(
+  mod: HMRModule,
+  load: UnloadedESM[ESMProps.load],
+  stars: Id[],
+  importer: HMRModule | null,
+  importIndex: number | undefined,
+): EsmLink {
   try {
-    mod.imports = modules.map(getEsmExports);
-    const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
-    // An async function always returns a promise.
-    const p = load(mod) as Promise<void>;
-    mod.imports = modules;
-    return p.then(
-      () => {
-        mod.state = State.Loaded;
-        const lateStars = mergeStarExports(mod, stars);
-        if (lateStars) mergeLateStarExports(mod, lateStars);
-        mod.cjs = null;
-        if (shouldPatchImporters) patchImporters(mod);
-        return mod;
-      },
-      e => {
-        mod.state = State.Error;
-        mod.failure = e;
-        throw e;
-      },
-    );
+    const gen = load(mod);
+    const exportsBefore = mod.exports;
+    const first = gen.next();
+    let instantiated: Promise<unknown> | null = null;
+    if (first instanceof Promise) {
+      // A module with top-level await. A rejection surfaces through
+      // `evaluateEsm`; this handler only keeps it from being reported as
+      // unhandled before then.
+      first.catch(noop);
+      instantiated = first;
+    }
+    if (mod.exports === exportsBefore) mod.exports = {};
+    const lateStars = mergeStarExports(mod, stars);
+    bindImportOfImporterOnStack(importer, importIndex, mod);
+    return { gen, instantiated, lateStars };
   } catch (e) {
-    mod.state = State.Error;
-    mod.failure = e;
-    throw e;
+    throwLoadFailure(mod, e);
   }
 }
 
 /** The importer is on the stack while its dependency loads: the body of the
  * importer has not bound its imports yet. A function of the importer that
  * the body of a later dependency calls, as happens in an import cycle, must
- * already see the namespace object. So the binding is made here, the way the
- * ESM link binds every import before any module evaluates. An importer with
- * top-level await, or a CommonJS importer, has no `updateImport` yet and
- * binds its imports itself. */
+ * already see the namespace object. So the binding is made here, as soon as
+ * the dependency instantiates or, for a dependency that is already in the
+ * registry, as soon as the importer requests it. An import later in the list
+ * of the importer binds when its own module instantiates, after this
+ * dependency evaluated; webpack and the Vite module runner behave the same
+ * way. A CommonJS importer has no `updateImport` and binds its imports
+ * itself. */
 function bindImportOfImporterOnStack(
   importer: HMRModule | null,
   importIndex: number | undefined,
@@ -636,25 +595,53 @@ function bindImportOfImporterOnStack(
   if (exports) importer.updateImport?.[importIndex](exports);
 }
 
-/** Evaluation half of a two-phase load. The generator was already resumed
- * once (instantiation), and the dependencies finished loading. */
-function finishTwoPhaseLoad(mod: HMRModule, gen: ModuleLoadGenerator, lateStars: Id[] | null, modules: HMRModule[]) {
-  try {
-    if (lateStars) mergeLateStarExports(mod, lateStars);
-    const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
+/** Phase two of the ESM link, after the dependencies loaded: the second
+ * resume runs the body. A module with top-level await settles later, so this
+ * returns a promise for it. */
+function evaluateEsm(mod: HMRModule, link: EsmLink, modules: HMRModule[], isAsync: true): Promise<HMRModule>;
+function evaluateEsm(mod: HMRModule, link: EsmLink, modules: HMRModule[], isAsync?: false): HMRModule;
+function evaluateEsm(
+  mod: HMRModule,
+  link: EsmLink,
+  modules: HMRModule[],
+  isAsync?: boolean,
+): HMRModule | Promise<HMRModule>;
+function evaluateEsm(
+  mod: HMRModule,
+  link: EsmLink,
+  modules: HMRModule[],
+  isAsync?: boolean,
+): HMRModule | Promise<HMRModule> {
+  const { gen, instantiated, lateStars } = link;
+  const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
+  // The body reads `hmr.imports` as its first statement, synchronously within
+  // the resume, so the list of modules can replace the namespaces right after.
+  const resume = () => {
     mod.imports = modules.map(getEsmExports);
-    gen.next();
+    const step = gen.next();
     mod.imports = modules;
+    return step;
+  };
+  const finish = () => {
     mod.cjs = null;
     mod.state = State.Loaded;
     if (shouldPatchImporters) patchImporters(mod);
     return mod;
+  };
+  try {
+    if (lateStars) mergeLateStarExports(mod, lateStars);
+    if (isAsync) {
+      DEBUG.ASSERT(instantiated !== null);
+      return instantiated!.then(resume).then(finish, e => throwLoadFailure(mod, e));
+    }
+    resume();
+    return finish();
   } catch (e) {
-    mod.state = State.Error;
-    mod.failure = e;
-    throw e;
+    throwLoadFailure(mod, e);
   }
 }
+
+function noop() {}
 
 /** Implements `export * from`, from the star-import list of the module
  * tuple. Runs in the instantiate phase, before the dependencies load, so a

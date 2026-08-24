@@ -6737,28 +6737,23 @@ pub(crate) mod __gated_printer {
                 }
                 self.print(b"], ");
 
-                // Print the code. A module without top-level await is a
-                // generator for the two-phase link (see the doc comment on
-                // `convert_stmts_for_chunk_for_dev_server`). A generator
-                // cannot suspend on `await`, so top-level await keeps the
-                // one-phase async form.
+                // Print the code. The module is a generator for the two-phase
+                // link (see the doc comment on
+                // `convert_stmts_for_chunk_for_dev_server`). A module with
+                // top-level await is an async generator, so its body can
+                // suspend on `await` after the `yield`.
                 let is_async = !ast.top_level_await_keyword.is_empty();
                 if is_async {
-                    self.print(b"async");
-                } else {
-                    self.print(b"function*");
+                    self.print(b"async ");
                 }
+                self.print(b"function*");
                 self.print_fn_args(
                     Some(func.open_parens_loc),
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
                 );
-                self.print(if is_async {
-                    b" => {\n".as_slice()
-                } else {
-                    b" {\n".as_slice()
-                });
+                self.print(b" {\n");
                 self.indent();
                 self.print_block_body(slice_of(func.body.stmts));
                 self.unindent();

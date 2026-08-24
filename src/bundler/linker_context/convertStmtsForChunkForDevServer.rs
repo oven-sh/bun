@@ -24,17 +24,16 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 /// that the HMR runtime can decode. This encoding is low on JS objects and
 /// indentation.
 ///
-/// An ESM module without top-level await is printed as a generator function
-/// so that the HMR runtime can link it in the two phases of the ECMAScript
-/// module link. Everything the module needs before any module of its import
-/// cycle evaluates goes into `instantiate_stmts`, and the caller prints it
-/// before a `yield`: the import variables, `hmr.updateImport` and the
-/// `hmr.exports = { ... }` assignment. The first resume instantiates the
-/// module (hoisted function declarations and the exports object with its
-/// getters exist after it), and the second resume evaluates the body. This
-/// way a module in an import cycle reads a live namespace object instead of
-/// `null`, and the runtime can bind an import of a module that is still on the
-/// stack as soon as the dependency instantiates.
+/// An ESM module is printed as a generator function so that the HMR runtime
+/// can link it in the two phases of the ECMAScript module link. Everything the
+/// module needs before any module of its import cycle evaluates goes into
+/// `instantiate_stmts`, and the caller prints it before a `yield`: the import
+/// variables, `hmr.updateImport` and the `hmr.exports = { ... }` assignment.
+/// The first resume instantiates the module (hoisted function declarations and
+/// the exports object with its getters exist after it), and the second resume
+/// evaluates the body. This way a module in an import cycle reads a live
+/// namespace object instead of `null`, and the runtime can bind an import of a
+/// module that is still on the stack as soon as the dependency instantiates.
 ///
 /// 1 ┃ "module/esm": [ [
 ///   ┃   'module_1', 1, "add",
@@ -55,10 +54,8 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///     }, false ],
 ///        ----- "is the module async?"
 ///
-/// A module with top-level await keeps the one-phase form, `async (hmr) =>
-/// {...}` with `var [module_1, ...] = hmr.imports` at the start and the
-/// exports assignment at the end of the body, because a generator cannot
-/// suspend on `await`.
+/// A module with top-level await is an `async function*` with the same layout,
+/// so that its body can suspend on `await` after the `yield`.
 pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     c: &mut LinkerContext,
     stmts: &mut StmtList,
@@ -412,12 +409,11 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     Ok(())
 }
 
-/// An ESM module without top-level await is printed as a generator and linked
-/// in two phases. Lazy-export ASTs are excluded: the dev server's incremental
-/// graph prints them through the CommonJS-shaped `SLazyExport` special case.
+/// An ESM module is printed as a generator and linked in two phases.
+/// Lazy-export ASTs are excluded: the dev server's incremental graph prints
+/// them through the CommonJS-shaped `SLazyExport` special case.
 pub(crate) fn is_two_phase_esm(ast: &JSAst<'_>) -> bool {
     ast.exports_kind == bun_ast::ExportsKind::Esm
-        && ast.top_level_await_keyword.is_empty()
         && !ast
             .flags
             .contains(crate::bundled_ast::Flags::HAS_LAZY_EXPORT)

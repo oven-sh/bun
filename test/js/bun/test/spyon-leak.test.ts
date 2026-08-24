@@ -6,7 +6,7 @@ import { expectRssDeltaBelow } from "harness";
 // anything the dead spy still pins shows up in RSS.
 test.concurrent("spyOn does not leak the target and property name of a collected spy", async () => {
   const code = /* js */ `
-    const { spyOn } = require("bun:test");
+    import { spyOn } from "bun:test";
     const base = Buffer.alloc(256 * 1024, "a").toString();
     function spy(i) {
       const name = base + i;

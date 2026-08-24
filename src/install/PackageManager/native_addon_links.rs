@@ -232,6 +232,21 @@ fn hardlink_tree(cache_dir: Fd, folder_name: &[u8], dest_dir: &Dir) -> bool {
                         break false;
                     }
                 }
+                // Recreate symlinks verbatim. Dropping one would rename an
+                // incomplete view into place, and the view is never rebuilt.
+                sys::EntryKind::SymLink => {
+                    let mut link_target_buf = PathBuffer::uninit();
+                    let Ok(n) =
+                        sys::readlinkat(entry.dir, entry.basename, &mut link_target_buf.0[..])
+                    else {
+                        break false;
+                    };
+                    link_target_buf.0[n] = 0;
+                    let link_target_z = ZStr::from_buf(&link_target_buf.0, n);
+                    if sys::symlinkat(link_target_z, dest_dir.fd(), entry.path).is_err() {
+                        break false;
+                    }
+                }
                 _ => {}
             },
             Ok(None) => break true,

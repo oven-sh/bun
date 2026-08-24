@@ -37,11 +37,9 @@ use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Respo
 // ConcurrentTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
-/// Receive backpressure high-water mark (`BodyReceiveMode`). Bytes no consumer has taken sit in
-/// `scheduled_response_buffer` (checked by `callback`, HTTP thread) or in the body's ByteStream
-/// (checked by `after_body_chunk_delivered`, JS thread); either side pauses the transport once
-/// its share reaches this. A body shorter than this completes unread, which frees its connection.
-const BODY_HIGH_WATER_MARK: usize = 256 * 1024;
+/// Checked against `scheduled_response_buffer` (`callback`, HTTP thread) and the body
+/// ByteStream's buffer (`after_body_chunk_delivered`, JS thread).
+use http::signals::BODY_HIGH_WATER_MARK;
 
 use boringssl::c::{X509_free, d2i_X509};
 

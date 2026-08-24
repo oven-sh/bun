@@ -1,9 +1,11 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
 import { describe, expect, test } from "bun:test";
+import { S3Client } from "bun";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { statSync } from "node:fs";
 import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
@@ -881,6 +883,78 @@ describe("fetch() receive backpressure — a Response whose body nothing touches
       });
     }, 30_000);
   }
+});
+
+// S3 downloads go through the same HTTP client with their own body producer
+// (S3DownloadStreamWrapper). The same rule applies: a reader that stalls pauses the transport,
+// an unread stream does not hold the process, and a collected one aborts the download.
+describe("S3 receive backpressure", () => {
+  // A GET-only fake bucket: every object is BODY bytes written as fast as the socket takes them.
+  async function fakeBucket() {
+    const server = await serveUntilBlocked();
+    const s3 = new S3Client({ accessKeyId: "test", secretAccessKey: "test", endpoint: server.url, bucket: "b" });
+    return Object.assign(server, { s3 });
+  }
+
+  test("a stalled reader pauses the download, then drains it", async () => {
+    await using bucket = await fakeBucket();
+    const reader = bucket.s3.file("big").stream().getReader();
+    const first = await reader.read();
+    expect(await bucket.settled()).toBeLessThan(BODY);
+    let got = first.value!.byteLength;
+    while (got < 64 * CHUNK) got += (await reader.read()).value!.byteLength;
+    await reader.cancel();
+    await bucket.untilClosed();
+  }, 60_000);
+
+  test("Bun.write(file, s3file) streams to disk with the byte count", async () => {
+    using dir = tempDir("s3-to-file", {});
+    await using server = await serve("h1");
+    const s3 = new S3Client({ accessKeyId: "test", secretAccessKey: "test", endpoint: server.url, bucket: "b" });
+    const dest = join(String(dir), "out.bin");
+    expect(await Bun.write(dest, s3.file("k"))).toBe(TOTAL);
+    expect(statSync(dest).size).toBe(TOTAL);
+  });
+
+  test("an unread S3 stream does not hold the process", async () => {
+    await using bucket = await fakeBucket();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const s3 = new Bun.S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint: ${JSON.stringify(bucket.url)}, bucket: "b" });
+         globalThis.keep = s3.file("k").stream();
+         const r = globalThis.keep.getReader(); await r.read(); r.releaseLock();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const deadline = performance.now() + 10_000;
+    let outcome: { exitCode: number } | { stillAlive: true } | undefined;
+    const exited = proc.exited.then(exitCode => ({ exitCode }));
+    while (outcome === undefined) {
+      outcome = await Promise.race([exited, Bun.sleep(20).then(() => undefined)]);
+      if (outcome === undefined && (bucket.sent() >= BODY || performance.now() >= deadline)) {
+        outcome = { stillAlive: true };
+        proc.kill();
+      }
+    }
+    expect({ outcome, stderr: await proc.stderr.text() }).toEqual({ outcome: { exitCode: 0 }, stderr: "" });
+  }, 30_000);
+
+  test("a collected S3 stream aborts the download", async () => {
+    await using bucket = await fakeBucket();
+    // Its own frame: after it returns nothing refers to the stream.
+    await (async () => {
+      const r = bucket.s3.file("k").stream().getReader();
+      await r.read();
+      r.releaseLock();
+    })();
+    expect(await bucket.settled()).toBeLessThan(BODY);
+    const closed = bucket.untilClosed().then(() => true);
+    while (!(await Promise.race([closed, Bun.sleep(10).then(() => false)]))) Bun.gc(true);
+  }, 30_000);
 });
 
 describe.concurrent("fetch() receive backpressure — a body nothing waits for does not hold the process", () => {

@@ -247,6 +247,11 @@ impl S3HttpDownloadStreamingTask {
         );
 
         result.body_into(&mut self.reported_response_buffer.list);
+        if !is_done
+            && self.reported_response_buffer.list.len() >= bun_http::signals::BODY_HIGH_WATER_MARK
+        {
+            self.signal_store.pause_receive();
+        }
         if should_enqueue {
             if self.reported_response_buffer.list.is_empty() && !is_done {
                 return false;
@@ -351,6 +356,13 @@ impl S3HttpDownloadStreamingTask {
         unsafe {
             (*this).signal_store.aborted.store(true, Ordering::Relaxed);
             bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+        }
+    }
+
+    /// A consumer took bytes: undo a pause from either side of the hop.
+    pub(crate) fn resume_receive(&self) {
+        if self.signal_store.unpause_receive() {
+            bun_http::http_thread().schedule_receive_resume(self.async_http_id);
         }
     }
 

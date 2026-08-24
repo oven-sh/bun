@@ -939,13 +939,13 @@ impl SourceHandle {
             SourceHandle::FetchResponseBody(p) => p.on_ready(),
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
             SourceHandle::HTMLRewriter(p) => p.on_ready(),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_drained(),
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
             }
             // Remaining variants leave `on_ready` at the trait default (no-op).
-            SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_) => {}
+            SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
         }
     }
 
@@ -955,6 +955,8 @@ impl SourceHandle {
     pub fn consumer_collected(self) {
         match self {
             SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_collected(),
             SourceHandle::None
             | SourceHandle::JSController(_)
             | SourceHandle::ServerRequestBody(_)
@@ -962,7 +964,6 @@ impl SourceHandle {
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }
@@ -971,6 +972,8 @@ impl SourceHandle {
     pub fn start(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_consumer_attached(),
             // Remaining variants leave `on_start` at the trait default (no-op).
             SourceHandle::None
             | SourceHandle::JSController(_)
@@ -979,7 +982,6 @@ impl SourceHandle {
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }

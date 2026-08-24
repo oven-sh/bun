@@ -12,6 +12,10 @@ pub struct Signals {
     pub body_receive_mode: Option<NonNull<AtomicU8>>,
 }
 
+/// Receive backpressure high-water mark: bytes no consumer has taken, on either side of the
+/// HTTP→JS hop. A body shorter than this completes unread, which frees its connection.
+pub const BODY_HIGH_WATER_MARK: usize = 256 * 1024;
+
 /// Receive backpressure for a body handed to JS. Whichever side holds bytes no consumer has
 /// taken moves `Flowing -> Paused` once they reach the high-water mark; whoever takes them
 /// moves `Paused -> Flowing` and schedules a resume. The transport applies `Paused` after the

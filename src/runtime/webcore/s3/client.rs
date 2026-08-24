@@ -1279,7 +1279,7 @@ fn download_stream(
         None
     };
 
-    task.signals = task.signal_store.to();
+    task.signals = task.signal_store.to_with_backpressure();
 
     let vm = VirtualMachine::get();
     let verbose = vm.get_verbose_fetch();
@@ -1326,18 +1326,30 @@ fn download_stream(
 }
 
 pub struct S3DownloadStreamWrapper {
-    pub readable_stream_ref: ReadableStreamStrong,
+    /// A counted ref on the stream's source for as long as this wrapper is its producer (as
+    /// `FetchTasklet::response_stream_source`): delivery goes through memory we keep alive, and the
+    /// ref roots the JS wrapper except while parked.
+    source: Option<NonNull<crate::webcore::byte_stream::Source>>,
     pub path: Box<[u8]>,
     pub global: GlobalRef, // JSC_BORROW
     /// Non-owning. The task frees itself on the main thread once `has_more == false`,
     /// which first drops this wrapper (clearing the stream's producer handle), so this
     /// pointer is never observed dangling from `on_stream_cancelled`.
     pub task: *mut S3HttpDownloadStreamingTask,
+    /// As `FetchTasklet::body_stream_parked`: the stream holds `BODY_HIGH_WATER_MARK` unread bytes,
+    /// so the transport is paused, the loop released and the stream left collectable.
+    parked: bool,
 }
 
 impl S3DownloadStreamWrapper {
     fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
+    }
+
+    fn bytes(&self) -> Option<bun_ptr::BackRef<ByteStream>> {
+        // SAFETY: pinned by our ref; ByteStream is `&self`-only.
+        self.source
+            .map(|source| bun_ptr::BackRef::new(unsafe { &(*source.as_ptr()).context }))
     }
 
     fn callback(
@@ -1355,50 +1367,123 @@ impl S3DownloadStreamWrapper {
             }
         });
 
-        if let Some(readable) = self_.readable_stream_ref.get() {
-            // BACKREF: see `Source::bytes()` — payload live while the
-            // readable stream is rooted. R-2: `&` — `on_data` re-enters JS.
-            if let Some(bytes) = readable.ptr.bytes() {
-                if let Some(err) = request_err {
-                    bytes.on_data(crate::webcore::streams::StreamResult::Err(
-                        crate::webcore::streams::StreamError::JSValue(
-                            bun_jsc::strong::Optional::create(
-                                s3_error_to_js(&err, &self_.global, Some(&self_.path)),
-                                &self_.global,
-                            ),
-                        ),
-                    ));
-                    return;
-                }
-                if has_more {
-                    bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
-                        // chunk.list is borrowed for the duration of on_data.
-                        bun_ptr::RawSlice::new(chunk.list.as_slice()),
-                    ));
-                    return;
-                }
-
-                bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
-                    // chunk.list is borrowed for the duration of on_data.
-                    bun_ptr::RawSlice::new(chunk.list.as_slice()),
-                ));
-                return;
+        let Some(bytes) = self_.bytes() else {
+            return;
+        };
+        if let Some(err) = request_err {
+            self_.release_source();
+            bytes.on_data(crate::webcore::streams::StreamResult::Err(
+                crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
+                    s3_error_to_js(&err, &self_.global, Some(&self_.path)),
+                    &self_.global,
+                )),
+            ));
+            return;
+        }
+        if has_more {
+            bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
+                // chunk.list is borrowed for the duration of on_data.
+                bun_ptr::RawSlice::new(chunk.list.as_slice()),
+            ));
+            // `on_data` can cancel us, which releases the source.
+            if self_.source.is_some() {
+                self_.after_chunk_delivered(&bytes);
             }
+            return;
+        }
+        self_.release_source();
+        bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
+            // chunk.list is borrowed for the duration of on_data.
+            bun_ptr::RawSlice::new(chunk.list.as_slice()),
+        ));
+    }
+
+    /// The JS-thread half of the receive backpressure (`S3HttpDownloadStreamingTask::
+    /// process_http_callback` is the other): as `FetchTasklet::after_body_chunk_delivered`.
+    fn after_chunk_delivered(&mut self, bytes: &ByteStream) {
+        if self.task.is_null() {
+            return;
+        }
+        if bytes.buffered_len() < bun_http::signals::BODY_HIGH_WATER_MARK
+            || bytes.buffer_action.get().is_some()
+        {
+            // SAFETY: see `task`.
+            unsafe { (*self.task).resume_receive() };
+            return;
+        }
+        // SAFETY: see `task`.
+        unsafe { (*self.task).signal_store.pause_receive() };
+        if bytes.sink.get().is_none() {
+            self.park();
+        }
+    }
+
+    fn park(&mut self) {
+        if core::mem::replace(&mut self.parked, true) {
+            return;
+        }
+        // SAFETY: see `task`.
+        unsafe { (*self.task).poll_ref.unref(bun_io::js_vm_ctx()) };
+        if let Some(source) = self.source {
+            // SAFETY: live through our ref.
+            unsafe { (*source.as_ptr()).unroot_wrapper() };
+        }
+    }
+
+    fn unpark(&mut self) {
+        if !core::mem::replace(&mut self.parked, false) {
+            return;
+        }
+        // SAFETY: see `task`; reached from a consumer, so the task is still live.
+        unsafe { (*self.task).poll_ref.ref_(bun_io::js_vm_ctx()) };
+        if let Some(source) = self.source {
+            // SAFETY: as in `park`.
+            unsafe { (*source.as_ptr()).root_wrapper() };
+        }
+    }
+
+    pub(crate) fn on_stream_drained(&mut self) {
+        self.unpark();
+        if !self.task.is_null() {
+            // SAFETY: see `task`.
+            unsafe { (*self.task).resume_receive() };
+        }
+    }
+
+    pub(crate) fn on_consumer_attached(&mut self) {
+        self.unpark();
+    }
+
+    /// The parked stream's wrapper was collected: nothing can read the rest. Inside a GC sweep;
+    /// touches no JS cell.
+    pub(crate) fn on_stream_collected(&mut self) {
+        self.on_stream_cancelled();
+    }
+
+    /// Stop being the producer and drop our ref. Can free the source.
+    fn release_source(&mut self) {
+        let Some(source) = self.source.take() else {
+            return;
+        };
+        self.parked = false;
+        // SAFETY: pinned by our ref until `decrement_count`; not used after.
+        unsafe {
+            (*source.as_ptr())
+                .producer
+                .set(crate::webcore::streams::SourceHandle::None);
+            (*source.as_ptr()).wrapper_unrooted.set(false);
+            crate::webcore::byte_stream::Source::decrement_count(source.as_ptr());
         }
     }
 
     pub(crate) fn on_stream_cancelled(&mut self) {
-        let self_ = self;
-        // Release the Strong ref so the ReadableStream can be GC'd.
-        // The download may still be in progress, but the callback will
-        // see readable_stream_ref.get() return null and skip data delivery.
-        // When the download finishes (has_more == false), deinit() will
-        // clean up the remaining resources.
-        self_.readable_stream_ref.deinit();
+        // The download may still be in progress, but the callback will see no source and skip
+        // delivery. When the download finishes (has_more == false) the task frees this wrapper.
+        self.release_source();
         // Abort the in-flight HTTP request so the HTTP thread delivers a final
         // callback with `has_more == false`, which frees the task and this wrapper.
         // Without this, a server that never sends the terminal chunk would leak both.
-        let task = core::mem::replace(&mut self_.task, core::ptr::null_mut());
+        let task = core::mem::replace(&mut self.task, core::ptr::null_mut());
         if !task.is_null() {
             // SAFETY: task is live until its own `on_response` frees it on this thread,
             // which has not happened yet (it would have dropped this wrapper first).
@@ -1407,6 +1492,7 @@ impl S3DownloadStreamWrapper {
                     .signal_store
                     .aborted
                     .store(true, core::sync::atomic::Ordering::Relaxed);
+                (*task).poll_ref.unref(bun_io::js_vm_ctx());
                 // Wake the HTTP thread so it observes the abort even when the
                 // socket is idle; otherwise the final `has_more == false`
                 // callback never fires and both the task and wrapper leak.
@@ -1428,18 +1514,8 @@ impl S3DownloadStreamWrapper {
 }
 
 impl Drop for S3DownloadStreamWrapper {
-    /// readable_stream_ref / path are freed by their own field Drop.
     fn drop(&mut self) {
-        // Clear the ByteStream's producer handle before `readable_stream_ref`
-        // drops so the stream never calls back into a freed wrapper.
-        if let Some(readable) = self.readable_stream_ref.get() {
-            if let Some(bytes) = readable.ptr.bytes() {
-                bytes
-                    .parent_const()
-                    .producer
-                    .set(crate::webcore::streams::SourceHandle::None);
-            }
-        }
+        self.release_source();
     }
 }
 
@@ -1472,17 +1548,14 @@ pub(crate) fn readable_stream(
     reader_mut.context.setup();
     let readable_value = reader_mut.to_readable_stream(global_this)?;
 
+    // The wrapper's ref: pins the source and roots the JS stream until released or parked.
+    reader_mut.increment_count();
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
-        readable_stream_ref: ReadableStreamStrong::init(
-            ReadableStream {
-                ptr: ReadableStreamPtr::Bytes(&raw mut reader_mut.context),
-                value: readable_value,
-            },
-            global_this,
-        ),
+        source: NonNull::new(reader),
         path: Box::<[u8]>::from(path),
         global: global_static,
         task: core::ptr::null_mut(),
+        parked: false,
     });
 
     reader_mut

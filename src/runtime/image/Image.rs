@@ -129,9 +129,9 @@ pub enum Source {
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
-    /// helper adopts the storage in-place (createAdopted — no byte copy) and
-    /// pins; once adopted it's detachable, so it MUST be pinned, not borrowed.
+    /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
+    /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
+    /// caller roots the value as it does for 2).
     fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
         out_ptr: *mut *const u8,
@@ -364,7 +364,7 @@ fn source_from_js(
 ) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
-        let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
+        let str = value.to_bun_string(global)?;
         let utf8 = str.to_utf8();
         let s = utf8.slice();
         // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
@@ -758,11 +758,8 @@ impl Image {
                             ))
                         }
                     }
-                    // Oversize/Wasteful/DataView/JSArrayBuffer: pinned by the
-                    // helper. For Oversize, possiblySharedBuffer() adopts the
-                    // existing fastMalloc storage in-place (zero byte copy);
-                    // pinning then keeps it alive even if JS does `.buffer` →
-                    // `transfer()` while the worker reads.
+                    // 2: Wasteful/DataView/JSArrayBuffer, pinned by the helper (unpin when done).
+                    // 3: OversizeTypedArray held without adopting an ArrayBuffer; nothing to unpin.
                     kind @ (2 | 3) => {
                         if len == 0 {
                             if kind == 2 {
@@ -1053,7 +1050,7 @@ impl Image {
         // `"color"` without growing methods. Anything else throws so the
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
-            let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+            let s = args[0].to_bun_string(global)?;
             if !s.eql_comptime(b"dataurl") {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
@@ -1083,7 +1080,7 @@ impl Image {
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
         if output.is_none() && args[0].is_string() {
-            let str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+            let str = args[0].to_bun_string(global)?;
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {
@@ -1899,12 +1896,12 @@ impl PipelineTask {
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];
                         let mut arg_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &args);
-                        let mut path_or_blob = match crate::node::PathOrBlob::from_js_no_copy(
+                        let mut path_or_blob = match crate::webcore::blob::write_destination_from_js(
                             global,
                             &mut arg_slice,
                         ) {
                             Ok(p) => p,
-                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                            Err(e) => return promise.reject(global, Err(e)),
                         };
                         // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
                         // and frees on Drop — no explicit `path.deinit()` needed.

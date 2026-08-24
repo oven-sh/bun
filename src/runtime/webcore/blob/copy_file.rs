@@ -136,11 +136,11 @@ impl CopyFile {
         ) && system_error.path.is_empty()
         {
             system_error.path =
-                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice()).into();
+                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice());
         }
 
         if system_error.message.is_empty() {
-            system_error.message = bun_core::String::static_("Failed to copy file").into();
+            system_error.message = bun_core::String::static_("Failed to copy file");
         }
 
         let instance = jsc::SystemError::from(system_error)
@@ -365,7 +365,6 @@ impl CopyFile {
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
 
-        // defer { this.read_len = @truncate(total_written); }
         let read_len_slot: *mut SizeType = &raw mut self.read_len;
         let total_written_slot: *const u64 = core::ptr::addr_of!(total_written);
         scopeguard::defer! {
@@ -626,8 +625,6 @@ impl CopyFile {
         }
         #[cfg(not(windows))]
         {
-            // defer task.onFinish();
-
             #[cfg(target_os = "macos")]
             let mut stat_: Option<Stat> = None;
             #[cfg(not(target_os = "macos"))]
@@ -988,7 +985,9 @@ fn read_write_loop_capped(
     cap: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
-    let mut buf = [0u8; 64 * 1024];
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
+    // SAFETY: `read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut remaining = cap;
     while remaining > 0 {
         let want = (buf.len() as SizeType).min(remaining) as usize;
@@ -1945,8 +1944,8 @@ pub enum IOWhich {
 fn unsupported_directory_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::EISDIR as i32,
-        message: bun_core::String::static_("That doesn't work on folders").into(),
-        syscall: bun_core::String::static_("fstat").into(),
+        message: bun_core::String::static_("That doesn't work on folders"),
+        syscall: bun_core::String::static_("fstat"),
         ..SystemError::default()
     }
 }
@@ -1955,8 +1954,8 @@ fn unsupported_directory_error() -> SystemError {
 fn unsupported_non_regular_file_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::ENOTSUP as i32,
-        message: bun_core::String::static_("Non-regular files aren't supported yet").into(),
-        syscall: bun_core::String::static_("fstat").into(),
+        message: bun_core::String::static_("Non-regular files aren't supported yet"),
+        syscall: bun_core::String::static_("fstat"),
         ..SystemError::default()
     }
 }

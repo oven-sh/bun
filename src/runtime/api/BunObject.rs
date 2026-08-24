@@ -76,8 +76,8 @@ use std::io::Write as _;
 
 use bun_core::Output;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, ConsoleObject, ErrorableString, JSFunction,
-    JSGlobalObject, JSObject, JSPromise, JSValue, JsResult,
+    self as jsc, ArrayBuffer, CallFrame, ConsoleObject, JSFunction, JSGlobalObject, JSObject,
+    JSPromise, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
@@ -98,6 +98,7 @@ use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
+use bun_collections::index_sort;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_jsc::ZigStringJsc as _; // to_error_instance / to_type_error_instance
 use bun_jsc::call_frame::ArgumentsSlice;
@@ -292,7 +293,6 @@ pub mod bun_object {
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
         BunObject_callback_mmap => super::mmap_file,
-        BunObject_callback_nanoseconds => super::nanoseconds,
         BunObject_callback_openInEditor => super::open_in_editor,
         BunObject_callback_registerMacro => super::register_macro,
         BunObject_callback_resolve => super::resolve,
@@ -395,30 +395,24 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    use bun_jsc::StringJsc as _;
     let [jsval] = callframe.arguments_as_array::<1>();
     if callframe.arguments_count() < 1 {
         return Err(global_this.throw(format_args!("shell escape expected at least 1 argument")));
     }
 
     let bunstr = jsval.to_bun_string(global_this)?;
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-    let bunstr = scopeguard::guard(bunstr, |s| s.deref());
 
     let mut outbuf: Vec<u8> = Vec::new();
 
-    if bun_shell_parser::needs_escape_bunstr(*bunstr) {
-        let result = bun_shell_parser::escape_bun_str::<true>(*bunstr, &mut outbuf)?;
+    if bun_shell_parser::needs_escape_bunstr(&bunstr) {
+        let result = bun_shell_parser::escape_bun_str::<true>(&bunstr, &mut outbuf)?;
         if !result {
             return Err(global_this.throw(format_args!(
                 "String has invalid utf-16: {}",
                 bstr::BStr::new(bunstr.byte_slice()),
             )));
         }
-        let mut str = BunString::clone_utf8(&outbuf[..]);
-        return str.transfer_to_js(global_this);
+        return bun_string_jsc::create_utf8_for_js(global_this, &outbuf);
     }
 
     Ok(jsval)
@@ -426,7 +420,7 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 pub(crate) fn braces(
     global: &JSGlobalObject,
-    brace_str: BunString,
+    brace_str: &BunString,
     opts: r#gen::BracesOptions,
 ) -> JsResult<JSValue> {
     let brace_slice = brace_str.to_utf8();
@@ -481,7 +475,7 @@ pub(crate) fn braces(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, &[brace_str]);
+        return bun_string_jsc::to_js_array(global, core::slice::from_ref(brace_str));
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -540,9 +534,6 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
     }
 
     let bin_str = path_arg.to_slice(global_this)?;
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     if bin_str.slice().len() >= MAX_PATH_BYTES {
         return Err(global_this.throw(format_args!("bin path is too long")));
@@ -635,16 +626,14 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
     table_printer.value_formatter.single_line = format_options.single_line;
 
-    let print_result = if format_options.enable_colors {
-        table_printer.print_table::<true>(&mut array)
+    if format_options.enable_colors {
+        table_printer.print_table::<true>(&mut array)?;
     } else {
-        table_printer.print_table::<false>(&mut array)
-    };
-    if print_result.is_err() {
-        if !global_this.has_exception() {
-            return Err(global_this.throw_out_of_memory());
-        }
-        return Ok(JSValue::ZERO);
+        table_printer.print_table::<false>(&mut array)?;
+    }
+    // print_table() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
+    if global_this.has_exception() {
+        return Err(jsc::JsError::Thrown);
     }
 
     // writer.flush(): Vec<u8> writer is unbuffered; nothing to flush.
@@ -703,6 +692,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         &mut array,
         format_options,
     )?;
+    // format2() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
     if global_this.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
@@ -753,11 +743,10 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
         2,
         Default::default(),
     );
-    let mut str = bun_core::ZigString::init(b"nodejs.util.inspect.custom");
     fun.put(
         global_object,
         b"custom",
-        JSValue::symbol_for(global_object, &mut str),
+        JSValue::symbol_for(global_object, b"nodejs.util.inspect.custom"),
     );
     fun.put(
         global_object,
@@ -1126,87 +1115,68 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     }
 
     let specifier_str = specifier.to_bun_string(global_this)?;
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
     let from_str = from.to_bun_string(global_this)?;
-    let from_str = scopeguard::guard(from_str, |s| s.deref());
-    do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, mode)
+    do_resolve_with_args::<false>(global_this, &specifier_str, &from_str, mode)
 }
 
-/// Single Drop point for the three `BunString`s `do_resolve_with_args` may own.
-/// Replaces three separate `scopeguard::guard(_, |s| s.deref())` closures —
-/// each of which generated its own drop frame and landing pad — with one
-/// contiguous cleanup. Fields default to `BunString::empty()`, whose `deref()`
-/// is a single tag-compare no-op, so unused slots cost effectively nothing.
-struct ResolveDerefOnDrop {
-    query_string: BunString,
-    /// Only set when the specifier had a `file://` prefix and we allocated a
-    /// decoded copy. On the fast path the caller's `specifier` is borrowed
-    /// directly and this stays empty (no refcount traffic).
-    decoded_specifier: BunString,
-    result_value: BunString,
-}
-impl Drop for ResolveDerefOnDrop {
-    #[inline]
-    fn drop(&mut self) {
-        // LIFO relative to original declaration order.
-        self.result_value.deref();
-        self.decoded_specifier.deref();
-        self.query_string.deref();
-    }
+enum Resolved {
+    Found(JSValue),
+    /// The resolver's `ResolveMessage` for a specifier it could not resolve; not thrown yet.
+    NotFound(JSValue),
 }
 
 fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
-    specifier: BunString,
-    from: BunString,
+    specifier: &BunString,
+    from: &BunString,
     mode: ResolveMode,
 ) -> JsResult<JSValue> {
-    let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
-    let mut owned = ResolveDerefOnDrop {
-        query_string: BunString::empty(),
-        decoded_specifier: BunString::empty(),
-        result_value: BunString::empty(),
-    };
+    match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
+        Resolved::Found(value) => Ok(value),
+        Resolved::NotFound(err) => Err(ctx.throw_value(err)),
+    }
+}
 
-    // Fast path: no `file://` prefix → forward the caller-owned `specifier`
-    // by value without `dupe_ref()`/`deref()` refcount churn. Only the
-    // URL-decoded branch produces a string we must release.
+fn resolve_with_args<const IS_FILE_PATH: bool>(
+    ctx: &JSGlobalObject,
+    specifier: &BunString,
+    from: &BunString,
+    mode: ResolveMode,
+) -> JsResult<Resolved> {
+    let mut query_string = BunString::empty();
+
+    let decoded_specifier;
     let specifier_for_resolve = if specifier.has_prefix_comptime(b"file://") {
-        owned.decoded_specifier = jsc::URL::path_from_file_url(specifier);
-        owned.decoded_specifier
+        decoded_specifier = bun_url::path_from_file_url(specifier);
+        &decoded_specifier
     } else {
         specifier
     };
 
-    VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
-        &mut errorable,
+    let result_value = match VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
         ctx,
         specifier_for_resolve,
         from,
-        Some(&mut owned.query_string),
+        Some(&mut query_string),
         mode,
-    )?;
+    )? {
+        Ok(path) => path,
+        Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
+            return Ok(Resolved::NotFound(err));
+        }
+        // e.g. an onResolve plugin returned an invalid result
+        Err(err) => return Err(ctx.throw_value(err)),
+    };
 
-    if !errorable.success {
-        // SAFETY: !success → `err` arm of the #[repr(C)] union is active.
-        return Err(ctx.throw_value(unsafe { errorable.result.err }.value));
-    }
-    // SAFETY: success → `value` arm of the #[repr(C)] union is active.
-    owned.result_value = unsafe { errorable.result.value };
-
-    if !owned.query_string.is_empty() {
+    if !query_string.is_empty() {
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
         // Vec<u8> writes are infallible.
-        let _ = write!(
-            &mut arraylist,
-            "{}{}",
-            owned.result_value, owned.query_string
-        );
+        let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
 
-        return Ok(ZigString::init_utf8(&arraylist).to_js(ctx));
+        return Ok(Resolved::Found(ZigString::init_utf8(&arraylist).to_js(ctx)));
     }
 
-    owned.result_value.to_js(ctx)
+    Ok(Resolved::Found(result_value.into_js(ctx)?))
 }
 
 #[bun_jsc::host_fn]
@@ -1242,7 +1212,6 @@ pub fn bun_resolve_sync(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
 
     if specifier_str.length() == 0 {
         let _ = global
@@ -1257,13 +1226,12 @@ pub fn bun_resolve_sync(
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let source_str = scopeguard::guard(source_str, |s| s.deref());
 
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
             global,
-            *specifier_str,
-            *source_str,
+            &specifier_str,
+            &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
@@ -1298,7 +1266,6 @@ pub fn bun_resolve_sync_with_paths(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
 
     if specifier_str.length() == 0 {
         let _ = global
@@ -1313,7 +1280,6 @@ pub fn bun_resolve_sync_with_paths(
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let source_str = scopeguard::guard(source_str, |s| s.deref());
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let bun_vm = global.bun_vm().as_mut();
@@ -1329,8 +1295,8 @@ pub fn bun_resolve_sync_with_paths(
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
             global,
-            *specifier_str,
-            *source_str,
+            &specifier_str,
+            &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
@@ -1354,41 +1320,38 @@ pub fn bun_resolve_sync_with_strings(
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
             global,
-            *specifier,
-            *source,
+            specifier,
+            source,
             ResolveMode::from_ffi_bools(is_esm, false),
         )
     })
 }
 
-// HOST_EXPORT(Bun__resolveSyncWithSource, c)
-pub fn bun_resolve_sync_with_source(
+/// Resolves `specifier` relative to `source`. A specifier the resolver cannot resolve (the
+/// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
+/// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
+/// that is not a string — is thrown.
+// HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
+pub fn bun_resolve_sync_with_source_if_exists(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: &BunString,
     is_esm: bool,
-    is_user_require_resolve: bool,
 ) -> JSValue {
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
-    if specifier_str.length() == 0 {
-        let _ = global
-            .err(
-                jsc::ErrCode::INVALID_ARG_VALUE,
-                format_args!("The argument 'id' must be a non-empty string. Received ''"),
-            )
-            .throw();
-        return JSValue::ZERO;
-    }
     jsc::to_js_host_call(global, || {
-        do_resolve_with_args::<true>(
+        resolve_with_args::<true>(
             global,
-            *specifier_str,
-            *source,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            &specifier_str,
+            source,
+            ResolveMode::from_ffi_bools(is_esm, false),
         )
+        .map(|r| match r {
+            Resolved::Found(value) => value,
+            Resolved::NotFound(_) => JSValue::UNDEFINED,
+        })
     })
 }
 
@@ -1436,18 +1399,6 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 }
 
 #[bun_jsc::host_fn]
-fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let ns = global_this
-        .bun_vm()
-        .as_mut()
-        .origin_timer
-        .elapsed()
-        .as_nanos() as u64;
-    Ok(JSValue::js_number_from_uint64(ns))
-}
-
-#[bun_jsc::host_fn]
 fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
@@ -1465,11 +1416,6 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 previous_routes: false,
             },
         )?;
-
-        if global_object.has_exception() {
-            drop(config);
-            return Ok(JSValue::ZERO);
-        }
 
         break 'brk config;
     };
@@ -1970,10 +1916,10 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
     }
 
     let array = JSValue::create_empty_array(global_this, sort_indices.len())?;
-    sort_indices.sort_by(|a, b| {
-        if GraphFile::less_than_by_index(unsorted_files, *a, *b) {
+    index_sort::sort_indices(&mut sort_indices, &mut |a, b| {
+        if GraphFile::less_than_by_index(unsorted_files, a, b) {
             core::cmp::Ordering::Less
-        } else if GraphFile::less_than_by_index(unsorted_files, *b, *a) {
+        } else if GraphFile::less_than_by_index(unsorted_files, b, a) {
             core::cmp::Ordering::Greater
         } else {
             core::cmp::Ordering::Equal
@@ -1988,7 +1934,7 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         let blob = Blob::new(input_blob.dupe_with_content_type(true));
         // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set(input_blob.name.get().dupe_ref()) };
+        unsafe { (*blob).name.set(input_blob.name.get().clone()) };
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
         array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
     }
@@ -2117,21 +2063,19 @@ pub(crate) mod environment_variables {
         false
     }
 
-    /// BunString variant of Bun__getEnvValue. The returned value borrows from
-    /// the env map; caller must copy before the map can mutate.
+    /// The value borrows the env map; the caller copies before the map can
+    /// mutate. `Dead` when absent.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValueBunString(
-        global_object: &JSGlobalObject,
+    extern "C" fn Bun__getEnvValueBunString<'a>(
+        global_object: &'a JSGlobalObject,
         name: &BunString,
-        value: &mut core::mem::MaybeUninit<BunString>,
-    ) -> bool {
+    ) -> bun_core::StringView<'a> {
         let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
-        let Some(val) = vm.env_loader().get(name_slice.slice()) else {
-            return false;
-        };
-        value.write(BunString::borrow_utf8(val));
-        true
+        match vm.env_loader().get(name_slice.slice()) {
+            Some(val) => bun_core::StringView::borrow_utf8(val),
+            None => bun_core::StringView::DEAD,
+        }
     }
 
     /// Sync a process.env write back to the native env map so that native
@@ -2425,36 +2369,34 @@ pub mod JSZlib {
             }
         }
 
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
 
-        let mut list: Vec<u8> = 'brk: {
-            if is_gzip && compressed.len() > 64 {
-                //   0   1   2   3   4   5   6   7
-                //  +---+---+---+---+---+---+---+---+
-                //  |     CRC32     |     ISIZE     |
-                //  +---+---+---+---+---+---+---+---+
-                let estimated_size: u32 = u32::from_le_bytes(
-                    compressed[compressed.len() - 4..][..4]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
-                if estimated_size > 0 && estimated_size < 256 * 1024 * 1024 {
-                    break 'brk Vec::with_capacity((estimated_size as usize).max(64));
-                }
+        let mut list: Vec<u8> = Vec::new();
+        let mut reserved = false;
+        if is_gzip && compressed.len() > 64 {
+            // The gzip trailer is CRC32 then ISIZE, the uncompressed size mod 2^32 (RFC 1952 2.3.1).
+            let estimated_size: u32 = u32::from_le_bytes(
+                compressed[compressed.len() - 4..][..4]
+                    .try_into()
+                    .expect("infallible: size matches"),
+            );
+            // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
+            if estimated_size > 0 && estimated_size < 256 * 1024 * 1024 {
+                // The trailer is untrusted; if its size cannot be reserved, start small and grow.
+                reserved = list
+                    .try_reserve_exact((estimated_size as usize).max(64))
+                    .is_ok();
             }
-
-            break 'brk Vec::with_capacity(if compressed.len() > 512 {
+        }
+        if !reserved {
+            list.try_reserve_exact(if compressed.len() > 512 {
                 compressed.len()
             } else {
                 32
-            });
-        };
+            })
+            .map_err(|_| global_this.throw_out_of_memory())?;
+        }
 
         match library {
             Library::Zlib => {
@@ -2480,10 +2422,16 @@ pub mod JSZlib {
                     }
                 };
 
-                if reader.read_all(true).is_err() {
-                    let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                    return Err(global_this
-                        .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                match reader.read_all(true) {
+                    Ok(()) => {}
+                    Err(zlib::ZlibError::OutOfMemory) => {
+                        return Err(global_this.throw_out_of_memory());
+                    }
+                    Err(_) => {
+                        let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
+                        return Err(global_this
+                            .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                    }
                 }
                 // NOTE: the reader *borrows* `list_ptr`,
                 // so drop the reader to release the borrow, then leak the owned
@@ -2504,7 +2452,8 @@ pub mod JSZlib {
                 };
                 let max_output = ArrayBuffer::MAX_SIZE as usize;
                 let result = decompressor
-                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output);
+                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output)
+                    .map_err(|_| global_this.throw_out_of_memory())?;
                 match result.status {
                     bun_libdeflate::Status::Success if list.len() <= max_output => {}
                     bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
@@ -2580,14 +2529,7 @@ pub mod JSZlib {
 
             if let Some(level_value) = options_val.get(global_this, "level")? {
                 level = Some(level_value.coerce::<i32>(global_this)?);
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
-        }
-
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
         }
 
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
@@ -2596,11 +2538,8 @@ pub mod JSZlib {
 
         match library {
             Library::Zlib => {
-                let mut list: Vec<u8> = Vec::with_capacity(if compressed.len() > 512 {
-                    compressed.len()
-                } else {
-                    32
-                });
+                // `init` reserves `deflateBound` of the input.
+                let mut list: Vec<u8> = Vec::new();
 
                 let mut reader = match zlib::ZlibCompressorArrayList::init(
                     compressed,
@@ -2625,10 +2564,16 @@ pub mod JSZlib {
                     }
                 };
 
-                if reader.read_all().is_err() {
-                    let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                    return Err(global_this
-                        .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                match reader.read_all() {
+                    Ok(()) => {}
+                    Err(zlib::ZlibError::OutOfMemory) => {
+                        return Err(global_this.throw_out_of_memory());
+                    }
+                    Err(_) => {
+                        let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
+                        return Err(global_this
+                            .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                    }
                 }
                 // NOTE: see gunzip path — reader borrows `list`, so drop
                 // it before leaking `list` into the ArrayBuffer.
@@ -2655,12 +2600,10 @@ pub mod JSZlib {
                     bun_libdeflate::Encoding::Deflate
                 };
 
-                let mut list: Vec<u8> = Vec::with_capacity(
-                    // This allocation size is unfortunate, but it's not clear how to avoid it with libdeflate.
-                    compressor.max_bytes_needed(compressed, encoding),
-                );
-
-                let result = compressor.compress_to_vec(compressed, &mut list, encoding);
+                let mut list: Vec<u8> = Vec::new();
+                let result = compressor
+                    .compress_to_vec(compressed, &mut list, encoding)
+                    .map_err(|_| global_this.throw_out_of_memory())?;
                 if result.status != bun_libdeflate::Status::Success {
                     drop(list);
                     return Err(global_this.throw(format_args!(
@@ -2693,16 +2636,10 @@ pub mod JSZlib {
 pub mod JSZstd {
     use super::*;
 
-    // `no_mangle` dropped: 0 C++ refs, 0 Rust refs.
-    pub use bun_alloc::c_thunks::mi_free_ctx as deallocator;
-
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
         if let Some(option_obj) = options_val {
             if let Some(level_val) = option_obj.get(global_this, "level")? {
                 let value = level_val.coerce::<i32>(global_this)?;
-                if global_this.has_exception() {
-                    return Err(jsc::JsError::Thrown);
-                }
 
                 if value < 1 || value > 22 {
                     return Err(global_this.throw_invalid_arguments(format_args!(
@@ -2726,18 +2663,92 @@ pub mod JSZstd {
 
         let level = get_level(global_this, options_val)?;
 
-        let allow_string_object = true;
         if let Some(buffer) = node::StringOrBuffer::from_js_maybe_async(
             global_this,
             buffer_value,
-            true,
-            allow_string_object,
+            node::Flavor::Async,
+            node::StringObjects::Allow,
         )? {
             return Ok((buffer, options_val, level));
         }
 
         Err(global_this
             .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
+    }
+
+    /// Error of a `Bun.zstd*` call: thrown by the sync functions, rejected by [`ZstdJob`].
+    pub(crate) enum Failure {
+        /// The output, whose size the input decides, or zstd's own state for it could not be allocated.
+        OutOfMemory,
+        /// An `ERR_ZSTD` with this message.
+        Compression(&'static [u8]),
+        /// An `ERR_ZSTD` naming the error.
+        Decompression(bun_zstd::ZstdError),
+    }
+
+    impl Failure {
+        fn throw(self, global_this: &JSGlobalObject) -> jsc::JsError {
+            match self {
+                Failure::OutOfMemory => global_this.throw_out_of_memory(),
+                failure => global_this.throw_value(failure.to_js(global_this)),
+            }
+        }
+
+        fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
+            match self {
+                Failure::OutOfMemory => global_this.create_out_of_memory_error(),
+                Failure::Compression(message) => global_this
+                    .err(
+                        jsc::ErrCode::ZSTD,
+                        format_args!("{}", bstr::BStr::new(message)),
+                    )
+                    .to_js(),
+                Failure::Decompression(err) => global_this
+                    .err(
+                        jsc::ErrCode::ZSTD,
+                        format_args!("Decompression failed: {}", err),
+                    )
+                    .to_js(),
+            }
+        }
+    }
+
+    impl From<bun_zstd::ZstdError> for Failure {
+        fn from(err: bun_zstd::ZstdError) -> Self {
+            match err {
+                bun_zstd::ZstdError::OutOfMemory => Failure::OutOfMemory,
+                err => Failure::Decompression(err),
+            }
+        }
+    }
+
+    /// Boxed (trimmed to the bytes produced) so an empty result owns no memory, as `create_buffer_from_box` requires.
+    fn compress_to_box(input: &[u8], level: i32) -> Result<Box<[u8]>, Failure> {
+        let max_size = bun_zstd::compress_bound(input.len());
+        // `ZSTD_compressBound` returns an error code for inputs over `ZSTD_MAX_INPUT_SIZE`.
+        if bun_zstd::is_error(max_size) {
+            return Err(Failure::Compression(b"Input is too large to compress"));
+        }
+
+        // Reserved, not zero-filled: zstd initializes exactly the bytes it reports.
+        let mut output: Vec<u8> = Vec::new();
+        output
+            .try_reserve_exact(max_size)
+            .map_err(|_| Failure::OutOfMemory)?;
+
+        if let bun_zstd::Result::Err(err) =
+            bun_zstd::compress_append(&mut output, input, Some(level))
+        {
+            return Err(Failure::Compression(err.as_bytes()));
+        }
+
+        Ok(output.into_boxed_slice())
+    }
+
+    fn decompress_to_box(input: &[u8]) -> Result<Box<[u8]>, Failure> {
+        bun_zstd::decompress_alloc(input)
+            .map(Vec::into_boxed_slice)
+            .map_err(Failure::from)
     }
 
     #[bun_jsc::host_fn]
@@ -2750,33 +2761,11 @@ pub mod JSZstd {
         let level = get_level(global_this, options_val)?;
 
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
-        let input = buffer.slice();
 
-        // Calculate max compressed size
-        let max_size = bun_zstd::compress_bound(input.len());
-        // The zero-fill
-        // here is output-irrelevant (zstd overwrites the prefix it reports).
-        // PERF: use Box::new_uninit_slice — profile if hot.
-        let mut output = vec![0u8; max_size];
+        let output =
+            compress_to_box(buffer.slice(), level).map_err(|failure| failure.throw(global_this))?;
 
-        // Perform compression with context
-        let compressed_size = match bun_zstd::compress(&mut output, input, Some(level)) {
-            bun_zstd::Result::Success(size) => size,
-            bun_zstd::Result::Err(err) => {
-                drop(output);
-                return Err(global_this
-                    .err(jsc::ErrCode::ZSTD, format_args!("{}", bstr::BStr::new(err)))
-                    .throw());
-            }
-        };
-
-        // Resize to actual compressed size
-        if compressed_size < output.len() {
-            output.truncate(compressed_size);
-            output.shrink_to_fit();
-        }
-
-        JSValue::create_buffer(global_this, output.leak())
+        JSValue::create_buffer_from_box(global_this, output)
     }
 
     #[bun_jsc::host_fn]
@@ -2786,34 +2775,23 @@ pub mod JSZstd {
     ) -> JsResult<JSValue> {
         let (buffer, _) = parse_compress_buffer_and_options(global_this, callframe)?;
 
-        let input = buffer.slice();
+        let output =
+            decompress_to_box(buffer.slice()).map_err(|failure| failure.throw(global_this))?;
 
-        let output = match bun_zstd::decompress_alloc(input) {
-            Ok(v) => v,
-            Err(err) => {
-                return Err(global_this
-                    .err(
-                        jsc::ErrCode::ZSTD,
-                        format_args!("Decompression failed: {}", err),
-                    )
-                    .throw());
-            }
-        };
-
-        JSValue::create_buffer(global_this, output.leak())
+        JSValue::create_buffer_from_box(global_this, output)
     }
 
     // --- Async versions ---
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        /// Created with `is_async=true` (JS-backed buffer protected); the
+        /// Created with `Flavor::Async` (JS-backed buffer protected); the
         /// [`bun_jsc::ThreadSafe`] releases that with the job.
         pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
         pub is_compress: bool,
         pub level: i32,
-        pub output: Vec<u8>,
-        pub error_message: Option<&'static [u8]>,
+        /// Filled in by `run`.
+        pub result: Result<Box<[u8]>, Failure>,
     }
 
     impl jsc::JobContext for ZstdJob {
@@ -2826,71 +2804,31 @@ pub mod JSZstd {
         ) -> Option<bun_jsc::Completion<Self>> {
             let input = this.buffer.slice();
 
-            if this.is_compress {
-                let max_size = bun_zstd::compress_bound(input.len());
-                // Surface OOM as a rejected promise instead of aborting. The
-                // zero-fill is output-irrelevant (zstd overwrites the prefix it reports).
-                let mut output: Vec<u8> = Vec::new();
-                if output.try_reserve_exact(max_size).is_err() {
-                    this.error_message = Some(b"Out of memory");
-                    return Some(done);
-                }
-                output.resize(max_size, 0);
-                this.output = output;
-
-                this.output = match bun_zstd::compress(&mut this.output, input, Some(this.level)) {
-                    bun_zstd::Result::Success(size) => 'blk: {
-                        if size < this.output.len() {
-                            let mut out = core::mem::take(&mut this.output);
-                            out.truncate(size);
-                            out.shrink_to_fit();
-                            break 'blk out;
-                        }
-                        break 'blk core::mem::take(&mut this.output);
-                    }
-                    bun_zstd::Result::Err(err) => {
-                        this.output = Vec::new();
-                        this.error_message = Some(err);
-                        return Some(done);
-                    }
-                };
+            this.result = if this.is_compress {
+                compress_to_box(input, this.level)
             } else {
-                this.output = match bun_zstd::decompress_alloc(input) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        this.error_message = Some(b"Decompression failed");
-                        return Some(done);
-                    }
-                };
-            }
+                decompress_to_box(input)
+            };
             Some(done)
         }
 
         fn then(
-            mut this: Self,
+            this: Self,
             mut promise: jsc::JSPromiseStrong,
             cx: &jsc::JsThread<'_>,
         ) -> JsResult<()> {
             let global_this = cx.global();
             let promise = promise.swap();
 
-            if let Some(err_msg) = this.error_message {
-                promise.reject_with_async_stack(
+            match this.result {
+                Ok(output) => promise.settle(
                     global_this,
-                    Ok(global_this
-                        .err(
-                            jsc::ErrCode::ZSTD,
-                            format_args!("{}", bstr::BStr::new(err_msg)),
-                        )
-                        .to_js()),
-                )?;
-                return Ok(());
+                    JSValue::create_buffer_from_box(global_this, output),
+                ),
+                Err(failure) => {
+                    promise.reject_with_async_stack(global_this, Ok(failure.to_js(global_this)))
+                }
             }
-
-            let output_slice = core::mem::take(&mut this.output);
-            let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
-            promise.settle(global_this, buffer_value)?;
-            Ok(())
         }
     }
 
@@ -2909,8 +2847,7 @@ pub mod JSZstd {
                 buffer: bun_jsc::ThreadSafe::adopt(buffer),
                 is_compress,
                 level,
-                output: Vec::new(),
-                error_message: None,
+                result: Ok(Box::default()),
             },
             promise,
         );

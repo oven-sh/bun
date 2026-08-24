@@ -19,7 +19,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSSecretKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
@@ -34,12 +34,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSSecretKeyObject, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSSecretKeyObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSecretKeyObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSSecretKeyObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSecretKeyObject = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSSecretKeyObject, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSSecretKeyObject, m_subspaceForJSSecretKeyObject));
     }
 
     DECLARE_INFO;

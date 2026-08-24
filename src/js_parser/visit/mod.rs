@@ -11,7 +11,7 @@ use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
     Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    is_eval_or_arguments,
+    VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -77,8 +77,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
-        // FnOnlyDataVisit holds `Option<&'a Cell<Ref>>`; save/restore via
-        // `take` so the old value is moved out before we overwrite the field.
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
         let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
@@ -358,11 +356,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let ref_ = id.r#ref;
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
-                                    if req.unwrapped_id != u32::MAX {
-                                        self.imports_to_convert_from_require
-                                            [req.unwrapped_id as usize]
-                                            .namespace
-                                            .ref_ = ref_;
+                                    if let Some(unwrapped_id) = req.unwrapped_id.get() {
+                                        let deferred = &mut self.imports_to_convert_from_require
+                                            [unwrapped_id.get_usize()];
+                                        deferred.namespace.ref_ = ref_;
                                         self.import_items_for_namespace
                                             .insert(ref_, ImportItemForNamespaceMap::default());
                                         continue 'outer;
@@ -390,12 +387,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
-                    was_anonymous_named_expr,
-                    was_const && !is_after,
-                    if Self::ALLOW_MACROS {
-                        prev_macro_call_count != self.macro_call_count
-                    } else {
-                        false
+                    VisitDeclOpts {
+                        was_anonymous_named_expr,
+                        could_be_const_value: was_const && !is_after,
+                        could_be_macro: if Self::ALLOW_MACROS {
+                            prev_macro_call_count != self.macro_call_count
+                        } else {
+                            false
+                        },
                     },
                 );
             } else if IS_POSSIBLY_DECL_TO_REMOVE {
@@ -414,7 +413,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
                             let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(decl, false, was_const && !is_after, false);
+                            self.visit_decl(
+                                decl,
+                                VisitDeclOpts {
+                                    was_anonymous_named_expr: false,
+                                    could_be_const_value: was_const && !is_after,
+                                    could_be_macro: false,
+                                },
+                            );
                         } else {
                             continue 'outer;
                         }
@@ -514,13 +520,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn visit_decl(
-        &mut self,
-        decl: &mut G::Decl,
-        was_anonymous_named_expr: bool,
-        could_be_const_value: bool,
-        could_be_macro: bool,
-    ) {
+    pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl, opts: VisitDeclOpts) {
+        let VisitDeclOpts {
+            was_anonymous_named_expr,
+            could_be_const_value,
+            could_be_macro,
+        } = opts;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
@@ -794,12 +799,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.enclosing_class_keyword = class.class_keyword;
         self.vis_scope()
             .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass);
-        // `FnOnlyDataVisit::class_name_ref` is `Option<&'a Cell<Ref>>`, so the
-        // shadow ref must outlive the parser borrow. Allocate it in the bump arena.
-        // `Cell` lets us hand out a shared `&'a Cell<Ref>` to nested frames while
-        // still reading/writing it here, with no raw-pointer `unsafe`.
-        let shadow_ref: &'a core::cell::Cell<Ref> =
-            core::cell::Cell::from_mut(self.arena.alloc(Ref::NONE));
 
         // Insert a shadowing name that spans the whole class, which matches
         // JavaScript's semantics. The class body (and extends clause) "captures" the
@@ -808,9 +807,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // must be the original value of the name, not the re-assigned value.
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
-        if let Some(name) = class.class_name {
+        let mut shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
-            shadow_ref.set(name_ref);
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
@@ -824,17 +822,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 )
                 .expect("oom");
+            name_ref
         } else {
             let name_str: &'a [u8] = if default_name_ref.is_empty() {
                 b"_this"
             } else {
                 b"_default"
             };
-            let new_ref = self.new_symbol(SymbolKind::Constant, name_str);
-            shadow_ref.set(new_ref);
-        }
+            self.new_symbol(SymbolKind::Constant, name_str)
+        };
 
-        self.record_declared_symbol(shadow_ref.get());
+        self.record_declared_symbol(shadow_ref);
 
         if let Some(extends) = class.extends.as_mut() {
             self.visit_expr(extends);
@@ -843,8 +841,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
-            // defer { p.pop_scope(); p.enclosing_class_keyword = old_enclosing_class_keyword; }
-            // — manual restore at block end below; no early returns in this block.
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
             let properties: &mut [G::Property] = class.properties.slice_mut();
@@ -855,10 +851,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
-                        class_name_ref: Some(shadow_ref),
-
-                        // TODO: down transpilation
-                        should_replace_this_with_class_name_ref: false,
                         ..Default::default()
                     };
                     // PropertyKind::ClassStaticBlock guarantees `Some`; arena-owned for 'a.
@@ -904,16 +896,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Make it an error to use "arguments" in a class body
                 self.vis_scope().forbid_arguments = true;
-                // defer p.current_scope.forbid_arguments = false;
 
                 // The value of "this" is shadowed inside property values
                 let old_is_this_captured = self.fn_only_data_visit.is_this_nested;
-                let old_class_name_ref = self.fn_only_data_visit.class_name_ref.take();
                 self.fn_only_data_visit.is_this_nested = true;
-                self.fn_only_data_visit.class_name_ref = Some(shadow_ref);
-                // defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
-                // defer p.fn_only_data_visit.class_name_ref = old_class_name_ref;
-                // — manual restore at end of loop body; no `continue` after this point.
 
                 // We need to explicitly assign the name to the property initializer if it
                 // will be transformed such that it is no longer an inline initializer.
@@ -1005,10 +991,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                // manual restore for the three `defer`s above
+                // manual restore for the two `defer`s above
                 self.vis_scope().forbid_arguments = false;
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
-                self.fn_only_data_visit.class_name_ref = old_class_name_ref;
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
@@ -1253,24 +1238,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.enclosing_class_keyword = old_enclosing_class_keyword;
         }
 
-        if self.symbols[shadow_ref.get().inner_index() as usize].use_count_estimate == 0 {
+        if self.symbols[shadow_ref.inner_index() as usize].use_count_estimate == 0 {
             // If there was originally no class name but something inside needed one
             // (e.g. there was a static property initializer that referenced "this"),
             // store our generated name so the class expression ends up with a name.
-            shadow_ref.set(Ref::NONE);
+            shadow_ref = Ref::NONE;
         } else if class.class_name.is_none() {
-            let sr = shadow_ref.get();
             class.class_name = Some(LocRef {
-                ref_: sr,
+                ref_: shadow_ref,
                 loc: name_scope_loc,
             });
-            self.record_declared_symbol(sr);
+            self.record_declared_symbol(shadow_ref);
         }
 
         // class name scope
         self.pop_scope();
 
-        shadow_ref.get()
+        shadow_ref
     }
 
     // Try separating the list for appending, so that it's not a pointer.

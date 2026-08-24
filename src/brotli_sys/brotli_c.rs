@@ -160,6 +160,21 @@ pub enum BrotliDecoderErrorCode2 {
     ERROR_UNREACHABLE = -31,
 }
 
+impl BrotliDecoderErrorCode2 {
+    /// The decoder's allocator (its `alloc_func`) returned null.
+    pub fn is_alloc_failure(self) -> bool {
+        matches!(
+            self,
+            Self::ERROR_ALLOC_CONTEXT_MODES
+                | Self::ERROR_ALLOC_TREE_GROUPS
+                | Self::ERROR_ALLOC_CONTEXT_MAP
+                | Self::ERROR_ALLOC_RING_BUFFER_1
+                | Self::ERROR_ALLOC_RING_BUFFER_2
+                | Self::ERROR_ALLOC_BLOCK_TYPE_TREES
+        )
+    }
+}
+
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderParameter {

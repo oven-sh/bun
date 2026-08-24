@@ -1,8 +1,16 @@
 import { $ } from "bun";
-import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  normalizeBunSnapshot as normalizeBunSnapshot_,
+  runBunInstall,
+  tempDir,
+  VerdaccioRegistry,
+} from "harness";
 import { join } from "path";
+import { pathToFileURL } from "url";
 
 const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
@@ -1117,5 +1125,162 @@ describe("patchedDependencies contents_hash", () => {
     const mB = await installedMjs(String(projB));
     // Compare just the tail so a failure doesn't dump the 80 KiB padding.
     expect({ hasB: mB.includes("TAIL_BBBB"), hasA: mB.includes("TAIL_AAAA") }).toEqual({ hasB: true, hasA: false });
+  });
+});
+
+// `patchedDependencies` is only read from the root package.json. The entries a
+// dependency's own package.json declared (a `file:` folder, a tarball, a
+// workspace member) used to be merged into the consumer's lockfile without a
+// patch hash. If the patched package was already resolved, the installer
+// panicked with `called Option::unwrap() on a None value`. Otherwise the
+// install failed with "Couldn't find patch file" because the dependency's patch
+// path was resolved against the consumer's root (#13531).
+describe("patchedDependencies declared by a dependency", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // Adds a file, so it applies to any version of the package.
+  const noDepsPatch = `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+
+  // A package that patches its own `no-deps` dependency.
+  const patchingDep = {
+    "package.json": JSON.stringify({
+      name: "patching-dep",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0" },
+      patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+    }),
+    patches: { "no-deps@1.0.0.patch": noDepsPatch },
+  };
+
+  // A consumer that installs the same `no-deps` that `patching-dep` patches.
+  const consumerPackageJson = (dependencies: Record<string, string>, rest: Record<string, unknown> = {}) =>
+    JSON.stringify({ name: "consumer", dependencies: { "no-deps": "1.0.0", ...dependencies }, ...rest });
+
+  const gitEnv = {
+    ...bunEnv,
+    // Set on the asan lanes, where it makes `bun install` kill its own git clones (#33982).
+    BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the per-directory cache
+  // in bunfig.toml. The tests below run concurrently, and two cold installs of
+  // the same package into one cache replace each other's cache directory.
+  const install = (packageDir: string, env = bunEnv) =>
+    runBunInstall({ ...env, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") }, packageDir);
+
+  const lockfileHasPatches = async (packageDir: string) =>
+    (await Bun.file(join(packageDir, "bun.lock")).text()).includes("patchedDependencies");
+
+  const noDepsFile = (packageDir: string, name: string) => Bun.file(join(packageDir, "node_modules", "no-deps", name));
+
+  async function installUnpatched(packageDir: string, env = bunEnv) {
+    await install(packageDir, env);
+    expect({
+      noDeps: await noDepsFile(packageDir, "package.json").json(),
+      patched: await noDepsFile(packageDir, "patched.txt").exists(),
+      lockfileHasPatches: await lockfileHasPatches(packageDir),
+    }).toEqual({
+      noDeps: { name: "no-deps", version: "1.0.0" },
+      patched: false,
+      lockfileHasPatches: false,
+    });
+  }
+
+  test.concurrent("apply when the declaring package is the install root", async () => {
+    const { packageDir } = await registry.createTestDir({ files: patchingDep });
+    await install(packageDir);
+    expect({
+      patched: await noDepsFile(packageDir, "patched.txt").text(),
+      lockfileHasPatches: await lockfileHasPatches(packageDir),
+    }).toEqual({ patched: "hello world\n", lockfileHasPatches: true });
+  });
+
+  describe.each(["hoisted", "isolated"] as const)("are ignored by the consumer (%s linker)", linker => {
+    // A consumer with `no-deps` installed, plus `dep/` that is not a dependency yet.
+    async function installedConsumer() {
+      const dir = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: { "package.json": consumerPackageJson({}), dep: patchingDep },
+      });
+      await install(dir.packageDir);
+      return dir;
+    }
+
+    test.concurrent("file: dependency added to an existing install", async () => {
+      const { packageDir, packageJson } = await installedConsumer();
+
+      await Bun.write(packageJson, consumerPackageJson({ "patching-dep": "file:./dep" }));
+      await installUnpatched(packageDir);
+    });
+
+    // A tarball or a git checkout is extracted after `no-deps` was taken from
+    // the lockfile, so the entry it used to add reached the installer without a
+    // patch hash. These are the installs that panicked.
+    test.concurrent("tarball dependency added to an existing install", async () => {
+      const { packageDir, packageJson } = await installedConsumer();
+
+      await using pack = Bun.spawn({
+        cmd: [bunExe(), "pm", "pack", "--quiet"],
+        cwd: join(packageDir, "dep"),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([pack.stdout.text(), pack.stderr.text(), pack.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "patching-dep-1.0.0.tgz\n", stderr: "", exitCode: 0 });
+
+      await Bun.write(packageJson, consumerPackageJson({ "patching-dep": "./dep/patching-dep-1.0.0.tgz" }));
+      await installUnpatched(packageDir);
+    });
+
+    test.concurrent("git dependency added to an existing install", async () => {
+      const { packageDir, packageJson } = await installedConsumer();
+
+      const repo = join(packageDir, "dep");
+      await $`git init -q && git add -A && git commit -q -m init --no-gpg-sign`.cwd(repo).env(gitEnv).quiet();
+
+      await Bun.write(packageJson, consumerPackageJson({ "patching-dep": `git+${pathToFileURL(repo)}` }));
+      await installUnpatched(packageDir, gitEnv);
+    });
+
+    // https://github.com/oven-sh/bun/issues/13531
+    test.concurrent("file: dependency on a fresh install", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: { "package.json": consumerPackageJson({ "patching-dep": "file:./dep" }), dep: patchingDep },
+      });
+      await installUnpatched(packageDir);
+    });
+
+    test.concurrent("workspace member", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": consumerPackageJson({}, { workspaces: ["packages/*"] }),
+          packages: { dep: patchingDep },
+        },
+      });
+      await installUnpatched(packageDir);
+    });
   });
 });

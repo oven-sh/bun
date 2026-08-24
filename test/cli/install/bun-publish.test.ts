@@ -808,7 +808,7 @@ describe("--dry-run", async () => {
 });
 
 describe.concurrent("credentials in the registry url", () => {
-  // Records every request; `bun publish` against it must send exactly one authenticated PUT.
+  // Records every request, so a test can assert exactly what `bun publish` sent (one authenticated PUT, or nothing).
   function registryMock() {
     const requests: { method: string; pathname: string; authorization: string | null }[] = [];
     const server = Bun.serve({
@@ -894,6 +894,33 @@ describe.concurrent("credentials in the registry url", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  test("no credentials at all fails before sending a request", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("no-credentials-pkg");
+
+    const { err, exitCode } = await publish(env, packageDir, "--registry", `http://localhost:${mock.port}/`);
+    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("no credentials at all fails before sending a request (tarball path)", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("no-credentials-tarball-pkg");
+    await pack(packageDir, env);
+
+    const { err, exitCode } = await publish(
+      env,
+      packageDir,
+      "./no-credentials-tarball-pkg-1.0.0.tgz",
+      "--registry",
+      `http://localhost:${mock.port}/`,
+    );
+    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe("lifecycle scripts", async () => {

@@ -29,7 +29,7 @@ fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResu
 #[inline]
 fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
     match e {
-        bun_jsc::JsError::Thrown => ParserError::JSError,
+        bun_jsc::JsError::Thrown | bun_jsc::JsError::Terminated => ParserError::JSError,
         bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
     }
 }

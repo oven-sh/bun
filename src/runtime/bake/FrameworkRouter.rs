@@ -70,11 +70,11 @@ pub struct FrameworkRouter {
     pub(crate) pattern_string_arena: Arena,
 }
 
-pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
-pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
+pub(crate) type StaticRouteMap = StringArrayHashMap<RouteIndex>;
+pub(crate) type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
 
 /// A logical route, for which layouts are looked up on after resolving a route.
-pub struct Route {
+pub(crate) struct Route {
     // Payload bytes borrow from the sibling `pattern_string_arena` field — a
     // self-referential borrow Rust lifetimes cannot express, so it is detached
     // to `'static` via `to_owned_part()` at insertion. See `to_owned_part` for
@@ -114,6 +114,16 @@ pub enum FileKind {
     #[strum(serialize = "layout")]
     Layout,
     // NotFound,
+}
+
+impl FileKind {
+    /// The noun in "Multiple {} matching the same route pattern is ambiguous".
+    pub(crate) fn collision_noun(self) -> &'static str {
+        match self {
+            FileKind::Page => "pages",
+            FileKind::Layout => "layout",
+        }
+    }
 }
 
 pub enum RouteMarker {}
@@ -229,7 +239,7 @@ impl FrameworkRouter {
 /// as a string, while easily decodable as []Part.
 // Copy: bitwise OK — `data` borrows from `pattern_string_arena`; the arena owns it.
 #[derive(Copy, Clone)]
-pub struct EncodedPattern {
+pub(crate) struct EncodedPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `EncodedPattern` — see `RawSlice` invariant in `bun_ptr`).
     pub(crate) data: bun_ptr::RawSlice<u8>,
@@ -418,7 +428,7 @@ impl<'a> Iterator for EncodedPatternIterator<'a> {
 
 /// Hash context for DynamicRouteMap — hashes/compares by effective URL.
 #[derive(Default, Clone, Copy)]
-pub struct EffectiveUrlContext;
+pub(crate) struct EffectiveUrlContext;
 impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
     fn hash(&self, p: &EncodedPattern) -> u32 {
         p.effective_url_hash() as u32 // @truncate
@@ -639,7 +649,7 @@ const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"ne
 impl Style {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
-            let bun_string = bun_core::OwnedString::new(value.to_bun_string(global)?);
+            let bun_string = value.to_bun_string(global)?;
             let utf8 = bun_string.to_utf8();
             if let Some(style) = STYLE_MAP.get(utf8.slice()) {
                 return Ok(style());
@@ -1226,7 +1236,7 @@ impl MatchedParams {
             obj.put_bun_string_one_or_array(
                 global,
                 &key_str,
-                value_str.to_js(global).expect("unreachable"),
+                value_str.into_js(global).expect("unreachable"),
             )
             .expect("unreachable");
         }
@@ -1846,7 +1856,7 @@ impl JSFrameworkRouter {
                     )))
                 })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
-                bun_core::String::static_str("Errors scanning routes"),
+                &bun_core::String::static_("Errors scanning routes"),
                 arr,
             )?));
         }
@@ -1872,8 +1882,14 @@ impl JSFrameworkRouter {
                         JSValue::create_empty_object(global, params_out.params.len() as usize);
                     for param in params_out.params.slice() {
                         // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        let value_str = bun_core::String::clone_utf8(param.value.slice());
-                        params_obj.put(global, param.key.slice(), value_str.to_js(global)?);
+                        params_obj.put(
+                            global,
+                            param.key.slice(),
+                            bun_jsc::bun_string_jsc::create_utf8_for_js(
+                                global,
+                                param.value.slice(),
+                            )?,
+                        );
                     }
                     params_obj
                 } else {
@@ -2010,14 +2026,14 @@ impl JSFrameworkRouter {
                 .expect("ByteFmtWriter is infallible");
         }
 
-        let mut out = bun_core::String::clone_utf8(&rendered);
+        let out = bun_core::String::clone_utf8(&rendered);
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
             b"kind",
-            bun_core::String::static_str(<&'static str>::from(parsed.kind)).to_js(global)?,
+            bun_core::String::static_(<&'static str>::from(parsed.kind)).to_js(global)?,
         );
-        obj.put(global, b"pattern", out.transfer_to_js(global)?);
+        obj.put(global, b"pattern", out.into_js(global)?);
         Ok(obj)
     }
 
@@ -2025,8 +2041,7 @@ impl JSFrameworkRouter {
         let mut rendered: Vec<u8> = Vec::new();
         part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
             .expect("ByteFmtWriter is infallible");
-        let mut str = bun_core::String::clone_utf8(&rendered);
-        str.transfer_to_js(global)
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &rendered)
     }
 
     pub(crate) fn file_id_to_js(

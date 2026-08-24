@@ -116,7 +116,7 @@ impl BunFrontendDevServerAgent {
     pub(crate) fn notify_bundle_failed(
         &self,
         dev_server_id: DebuggerId,
-        build_errors_payload_base64: &mut BunString,
+        build_errors_payload_base64: BunString,
     ) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyBundleFailed(
@@ -134,7 +134,7 @@ impl BunFrontendDevServerAgent {
         &self,
         dev_server_id: DebuggerId,
         connection_id: i32,
-        url: &mut BunString,
+        url: &BunString,
         route_bundle_id: i32,
     ) {
         if let Some(handle) = self.handle_mut() {
@@ -150,12 +150,7 @@ impl BunFrontendDevServerAgent {
 
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller does `kind as u8`.
-    pub(crate) fn notify_console_log(
-        &self,
-        dev_server_id: DebuggerId,
-        kind: u8,
-        data: &mut BunString,
-    ) {
+    pub(crate) fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &BunString) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
                 handle,
@@ -180,8 +175,8 @@ mod ffi {
     use super::{BunString, InspectorBunFrontendDevServerAgentHandle};
     // SAFETY (safe fn): `InspectorBunFrontendDevServerAgentHandle` is an
     // `opaque_ffi!` ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a
-    // `#[repr(C)]` in-param the C++ side reads/consumes in-place. `&mut T` is
-    // ABI-identical to a non-null `*mut T`. `notifyBundleStart` keeps a raw
+    // `#[repr(C)]` in-param the C++ side reads in-place (`&`) or consumes
+    // (by value). `notifyBundleStart` keeps a raw
     // `(ptr, len)` pair (slice not FFI-safe) and stays `unsafe`.
     unsafe extern "C" {
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientConnected(
@@ -208,20 +203,20 @@ mod ffi {
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
-            build_errors_payload_base64: &mut BunString,
+            build_errors_payload_base64: BunString,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
-            url: &mut BunString,
+            url: &BunString,
             route_bundle_id: i32,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             kind: u8,
-            data: &mut BunString,
+            data: &BunString,
         );
     }
 }

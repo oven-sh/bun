@@ -1111,6 +1111,7 @@ install_build_essentials() {
 	brew)
 		install_packages \
 			ninja \
+			nasm \
 			pkg-config \
 			golang
 		;;
@@ -1344,7 +1345,7 @@ install_rust() {
 		# x86_64-unknown-freebsd is Tier 2 (prebuilt std). aarch64 is Tier 3
 		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that.
 		execute_as_user "$rustup" target add x86_64-unknown-freebsd
-		# macOS cross-compile lanes build libbun_rust.a for darwin on the
+		# macOS cross-compile lanes build libbun_runtime.a for darwin on the
 		# shared Linux rust box (Tier 2, prebuilt std). The ninja rule
 		# self-heals with `rustup target add` if these are missing, but
 		# preinstalling keeps that step off the network.
@@ -2199,7 +2200,9 @@ prefetch_build_deps() {
 	fi
 
 	# Warm a shared `bun install` download cache so every test shard's
-	# `bun install` (root + test/) hits disk instead of npm. Keyed by
+	# `bun install` (root + test/ + scripts/ci-remap-server, whose only
+	# dependency is a github: package that runner.node.mjs would otherwise
+	# fetch from GitHub on every shard) hits disk instead of npm. Keyed by
 	# name@version, so a test/package.json bump after the bake just misses for
 	# that one package. Left writable and owned by the buildkite user: bun
 	# install extracts new tarballs into the cache dir itself, so a read-only
@@ -2208,8 +2211,8 @@ prefetch_build_deps() {
 	create_directory "$install_cache_dir"
 	if ( cd "$clone_dir/bun" && \
 		BUN_INSTALL_CACHE_DIR="$install_cache_dir" "$bun_path" install --ignore-scripts && \
-		cd test && \
-		BUN_INSTALL_CACHE_DIR="$install_cache_dir" "$bun_path" install --ignore-scripts ); then
+		( cd test && BUN_INSTALL_CACHE_DIR="$install_cache_dir" "$bun_path" install --ignore-scripts ) && \
+		( cd scripts/ci-remap-server && BUN_INSTALL_CACHE_DIR="$install_cache_dir" "$bun_path" install --ignore-scripts ) ); then
 		# Re-chown after populating: the install ran as the bootstrap user, and
 		# buildkite-agent needs to write new entries alongside the baked ones.
 		grant_to_user "$install_cache_dir"

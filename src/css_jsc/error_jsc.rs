@@ -17,9 +17,6 @@ where
     T: Display,
 {
     let str = BunString::create_format(format_args!("{}", this.kind));
-    // `to_error_instance` consumes the caller's reference (it derefs the string
-    // itself), so the `+1` from `create_format` must not be dropped again here —
-    // an extra deref frees the WTFStringImpl while the error still uses it.
     let js = bun_jsc::bun_string_jsc::to_error_instance(&str, global_this);
     Ok(js)
 }

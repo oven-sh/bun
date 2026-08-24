@@ -162,6 +162,7 @@ impl TOML {
         bump: &'a Bump,
         redact_logs: bool,
     ) -> crate::Result<Expr> {
+        source.check_parseable_len(log, "TOML document")?;
         let mut parser = Parser {
             scanner: Scanner {
                 src: source.contents.as_ref(),

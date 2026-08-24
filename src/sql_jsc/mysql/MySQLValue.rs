@@ -3,11 +3,11 @@
 //! `JSValue` references.
 
 use crate::jsc::{
-    IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
+    IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult,
     MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
 };
+use bun_core::String as BunString;
 use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_core::{OwnedString, String as BunString};
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
@@ -54,10 +54,6 @@ pub(crate) fn field_type_from_js(
                     u64::MAX
                 ))
                 .throw());
-        }
-
-        if global_object.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         // Ban these types:
@@ -394,9 +390,8 @@ impl Value {
                 }
 
                 if value.is_string() {
-                    let str = OwnedString::new(
-                        BunString::from_js(value, global_object).map_err(js_error_to_mysql)?,
-                    );
+                    let str =
+                        BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
                     return Ok(Value::String(str.to_utf8()));
                 }
 
@@ -406,19 +401,16 @@ impl Value {
             }
 
             FieldType::MYSQL_TYPE_JSON => {
-                let mut str = OwnedString::new(BunString::empty());
                 // Use jsonStringifyFast for SIMD-optimized serialization
-                value
-                    .json_stringify_fast(global_object, &mut str)
+                let str = value
+                    .json_stringify_fast(global_object)
                     .map_err(js_error_to_mysql)?;
                 Ok(Value::String(str.to_utf8()))
             }
 
             //   FieldType::MYSQL_TYPE_VARCHAR | FieldType::MYSQL_TYPE_VAR_STRING | FieldType::MYSQL_TYPE_STRING => {
             _ => {
-                let str = OwnedString::new(
-                    BunString::from_js(value, global_object).map_err(js_error_to_mysql)?,
-                );
+                let str = BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
                 Ok(Value::String(str.to_utf8()))
             }
         }
@@ -823,7 +815,8 @@ unsafe extern "C" {
     /// No caller-side preconditions → `safe fn`.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
-    /// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
+    /// no unpin needed), 2 = pinned an existing ArrayBuffer (caller must
+    /// `unpinArrayBuffer`), 3 = held a bufferless OversizeTypedArray (nothing to unpin; root it as for 2).
     /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
     /// is on the *returned* slice, not the call itself → `safe fn`.
     safe fn JSC__JSValue__borrowBytesForOffThread(

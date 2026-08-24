@@ -284,7 +284,7 @@ JSMIMEType* JSMIMEType::create(VM& vm, Structure* structure, String type, String
 
 Structure* JSMIMEType::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSMIMEType::JSMIMEType(VM& vm, Structure* structure)
@@ -326,7 +326,7 @@ JSMIMETypePrototype* JSMIMETypePrototype::create(VM& vm, JSGlobalObject* globalO
 
 Structure* JSMIMETypePrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSMIMETypePrototype::JSMIMETypePrototype(VM& vm, Structure* structure)
@@ -491,12 +491,12 @@ void JSMIMETypePrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
 
     // Add regular methods
-    reifyStaticProperties(vm, JSMIMEType::info(), JSMIMETypePrototypeValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSMIMEType::info(), JSMIMETypePrototypeValues, *this);
 
     // Set toJSON to toString
     putDirectWithoutTransition(vm, vm.propertyNames->toJSON, getDirect(vm, vm.propertyNames->toString), PropertyAttribute::Function | 0);
 
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 //-- JSMIMETypeConstructor Implementation --
@@ -512,7 +512,7 @@ JSMIMETypeConstructor* JSMIMETypeConstructor::create(VM& vm, Structure* structur
 
 Structure* JSMIMETypeConstructor::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(InternalFunctionType, StructureFlags), info());
 }
 
 JSC_DECLARE_HOST_FUNCTION(callMIMEType);

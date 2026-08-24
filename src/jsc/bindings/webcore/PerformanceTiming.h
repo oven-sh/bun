@@ -67,8 +67,6 @@ public:
 
 private:
     explicit PerformanceTiming();
-
-    unsigned long long monotonicTimeToIntegerMilliseconds(MonotonicTime) const;
 };
 
 } // namespace WebCore

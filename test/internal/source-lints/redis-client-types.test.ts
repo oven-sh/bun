@@ -18,7 +18,6 @@ import valkeyClasses from "../../../src/runtime/valkey_jsc/valkey.classes.ts";
 const pendingDeclarations: Record<string, string> = {
   pubsub: "#39208",
   select: "#39208",
-  script: "#29339",
   // Not usable until #35521 lands: psubscribe() takes no listener today, so
   // every pmessage the server sends is dropped.
   psubscribe: "#35521",

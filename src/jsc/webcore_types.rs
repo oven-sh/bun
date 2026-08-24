@@ -139,7 +139,7 @@ pub struct Blob {
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
-    pub name: bun_core::OwnedStringCell,
+    pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
 // SAFETY: `Blob` holds a raw `global_this` pointer which defaults to
@@ -165,7 +165,7 @@ impl Default for Blob {
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
-            name: bun_core::OwnedStringCell::new(bun_core::String::dead()),
+            name: bun_ptr::JsCell::new(bun_core::String::dead()),
         }
     }
 }
@@ -538,17 +538,6 @@ pub mod store {
         pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: Option<bool>,
-    }
-
-    impl Default for Store {
-        fn default() -> Self {
-            Self {
-                data: Data::Bytes(Bytes::default()),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: None,
-            }
-        }
     }
 
     /// Backing data for a `Store`.

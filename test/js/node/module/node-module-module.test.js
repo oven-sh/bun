@@ -29,6 +29,83 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("Module._findPath propagates an error thrown by an onResolve plugin", async () => {
+    // Plugins are process-global; run in a child so the throwing resolver can't affect other tests.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.plugin({ name: "throws", setup(b) { b.onResolve({ filter: /\\.findpathprobe$/ }, () => { throw new Error("onResolve threw"); }); } });
+        try {
+          console.log("returned", require("module")._findPath("thing.findpathprobe", [process.cwd()]));
+        } catch (e) {
+          console.log("threw", e.message);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("threw onResolve threw");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Module.prototype is not enumerable", async () => {
+    const Module = require("module");
+    const { value, ...descriptor } = Object.getOwnPropertyDescriptor(Module, "prototype");
+    expect(descriptor).toEqual({ writable: true, enumerable: false, configurable: false });
+    expect(value).toBe(Module.prototype);
+    expect(Object.keys(Module)).not.toContain("prototype");
+    // and so, as in Node, it is not a named export of the ES module either
+    const ns = await import("node:module");
+    expect(Object.keys(ns)).not.toContain("prototype");
+    expect(ns.default.prototype).toBe(Module.prototype);
+  });
+
+  // jest-runtime builds the `Module` it hands to tests this way. Assigning a class's `prototype` throws, so this
+  // needs `prototype` to be non-enumerable; and the copy goes through the inherited `wrapper` / `_resolveFilename`
+  // / `runMain` setters with their current values, which must not count as overriding them (an overridden wrapper
+  // re-wraps every CommonJS module from source and bypasses the --isolate SourceProvider cache).
+  test("Module's enumerable statics can be copied onto a subclass without overriding the CJS wrapper", async () => {
+    using dir = tempDir("module-statics-copy", {
+      "dep.cjs": `module.exports = "dep";`,
+      "dep2.cjs": `module.exports = "dep2";`,
+      "copy.test.js": `
+        const { test, expect } = require("bun:test");
+        const { isolatedModuleCacheSourceType } = require("bun:internal-for-testing");
+        const Module = require("node:module");
+        test("copy statics", () => {
+          class Sub extends Module.Module {}
+          for (const [key, value] of Object.entries(Module.Module)) Sub[key] = value;
+          expect(Sub.prototype).toBeInstanceOf(Module);
+          expect(Sub._extensions).toBe(Module._extensions);
+          expect(Sub.wrapper[0]).toBe(Module.wrapper[0]);
+
+          expect(require("./dep.cjs")).toBe("dep");
+          expect(isolatedModuleCacheSourceType(require.resolve("./dep.cjs"))).toBe("Program");
+
+          // A real override still takes effect (and such modules are not cached).
+          Module.wrapper = ["(function(exports,require,module,__filename,__dirname){module.wrapped = true;", "})"];
+          expect(require("./dep2.cjs")).toBe("dep2");
+          expect(require.cache[require.resolve("./dep2.cjs")].wrapped).toBe(true);
+          expect(isolatedModuleCacheSourceType(require.resolve("./dep2.cjs"))).toBe(null);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./copy.test.js"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("module.enableCompileCache validates its argument", () => {
     expect(Module.enableCompileCache.length).toBe(1);
     for (const invalid of [0, null, false, 1, NaN, true, Symbol(0)]) {
@@ -328,6 +405,26 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveFilename("fs")).toBe("fs");
   });
 
+  test("Module.runMain propagates an error from stringifying its argument", () => {
+    const boom = new Error("boom");
+    expect(() =>
+      Module.runMain({
+        toString() {
+          throw boom;
+        },
+      }),
+    ).toThrow(boom);
+  });
+
+  test("module.filename/id/path setters propagate a failed string conversion", () => {
+    const m = new Module("x");
+    for (const key of ["filename", "id", "path"]) {
+      expect(() => {
+        m[key] = Symbol("s");
+      }).toThrow(TypeError);
+    }
+  });
+
   test("Module._resolveFilename accepts an options object without paths", () => {
     // An options object without .paths used to segfault on the isArray() check.
     expect(Module._resolveFilename("fs", null, false, {})).toBe("fs");
@@ -476,6 +573,177 @@ console.log("survived", require("./late.js"));`,
     const stdout = await proc.stdout.text();
     expect(stdout.trim().endsWith("--pass--")).toBe(true);
     expect(await proc.exited).toBe(0);
+  });
+
+  test("Overridden _resolveFilename receives Node-compatible arguments from a CJS entry", async () => {
+    using dir = tempDir("resolve-filename-args-cjs", {
+      "real.cjs": "module.exports = 'REAL';",
+      "lvl2.cjs": "module.exports = require('./real.cjs');",
+      "main.cjs": `
+        const path = require("node:path");
+        const { Module } = require("node:module");
+        const oR = Module._resolveFilename;
+        const rows = [];
+        Module._resolveFilename = function (request, parent, isMain, options) {
+          if (request.startsWith("./")) {
+            rows.push({
+              request,
+              parentType: typeof parent,
+              parentFilename: path.basename(String(parent && parent.filename)),
+              isMain,
+              options,
+              argc: arguments.length,
+              thisIsModule: this === Module,
+            });
+          }
+          return oR.apply(this, arguments);
+        };
+        require("./lvl2.cjs");
+        require.resolve("./real.cjs");
+        const userOptions = { paths: [__dirname], conditions: ["custom"], extra: 1 };
+        require.resolve("./real.cjs", userOptions);
+        rows[rows.length - 1].optionsIsUserObject = rows[rows.length - 1].options === userOptions;
+        rows[rows.length - 1].options = Object.keys(userOptions);
+        console.log(JSON.stringify(rows));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      {
+        request: "./lvl2.cjs",
+        parentType: "object",
+        parentFilename: "main.cjs",
+        isMain: false,
+        argc: 4,
+        thisIsModule: true,
+      },
+      {
+        request: "./real.cjs",
+        parentType: "object",
+        parentFilename: "lvl2.cjs",
+        isMain: false,
+        argc: 4,
+        thisIsModule: true,
+      },
+      {
+        request: "./real.cjs",
+        parentType: "object",
+        parentFilename: "main.cjs",
+        isMain: false,
+        options: {},
+        argc: 4,
+        thisIsModule: true,
+      },
+      {
+        request: "./real.cjs",
+        parentType: "object",
+        parentFilename: "main.cjs",
+        isMain: false,
+        options: ["paths", "conditions", "extra"],
+        optionsIsUserObject: true,
+        argc: 4,
+        thisIsModule: true,
+      },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("Overridden _resolveFilename receives a parent Module for createRequire from ESM", async () => {
+    using dir = tempDir("resolve-filename-args-esm", {
+      "real.cjs": "module.exports = 'REAL';",
+      "main.mjs": `
+        import path from "node:path";
+        import { Module, createRequire } from "node:module";
+        const req = createRequire(import.meta.url);
+        const oR = Module._resolveFilename;
+        const rows = [];
+        const parents = [];
+        Module._resolveFilename = function (request, parent, isMain, options) {
+          if (request.endsWith("real.cjs")) {
+            parents.push(parent);
+            rows.push({
+              parentType: typeof parent,
+              parentFilename: path.basename(String(parent && parent.filename)),
+              isMain,
+              options,
+              argc: arguments.length,
+              thisIsModule: this === Module,
+            });
+          }
+          return oR.apply(this, arguments);
+        };
+        req("./real.cjs");
+        req.resolve("./real.cjs");
+        req.resolve("./real.cjs");
+        Module._resolveFilename = oR;
+        console.log(JSON.stringify({
+          rows,
+          sameParentAcrossRequireAndResolve: parents[0] === parents[1] && parents[1] === parents[2],
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.mjs")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      rows: [
+        { parentType: "object", parentFilename: "main.mjs", isMain: false, argc: 4, thisIsModule: true },
+        { parentType: "object", parentFilename: "main.mjs", isMain: false, options: {}, argc: 4, thisIsModule: true },
+        { parentType: "object", parentFilename: "main.mjs", isMain: false, options: {}, argc: 4, thisIsModule: true },
+      ],
+      sameParentAcrossRequireAndResolve: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("require and require.resolve inside new Module(id)._compile() both resolve from cwd", async () => {
+    using dir = tempDir("resolve-filename-compile", {
+      "sib.cjs": "module.exports = 'ROOT';",
+      "sub/sib.cjs": "module.exports = 'SUB';",
+      "main.cjs": `
+        const path = require("node:path");
+        const { Module } = require("node:module");
+        function run() {
+          const m = new Module(path.join(__dirname, "sub", "a.cjs"));
+          m._compile(
+            'module.exports = { req: require("./sib.cjs"), res: require.resolve("./sib.cjs") };',
+            path.join(__dirname, "sub", "a.cjs"),
+          );
+          return { req: m.exports.req, res: path.relative(__dirname, m.exports.res) };
+        }
+        const noHook = run();
+        const oR = Module._resolveFilename;
+        Module._resolveFilename = function () {
+          return oR.apply(this, arguments);
+        };
+        const withHook = run();
+        Module._resolveFilename = oR;
+        console.log(JSON.stringify({ noHook, withHook }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      noHook: { req: "ROOT", res: "sib.cjs" },
+      withHook: { req: "ROOT", res: "sib.cjs" },
+    });
+    expect(exitCode).toBe(0);
   });
 
   test("Overwriting Module.prototype.require", async () => {

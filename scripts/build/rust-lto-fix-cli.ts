@@ -22,7 +22,7 @@
  * rustc has no option to emit a regular-LTO summary, so this step bolts
  * one on:
  *
- *   1. extract the bitcode member(s) from `libbun_rust.a`,
+ *   1. extract the bitcode member(s) from `libbun_runtime.a`,
  *   2. `llvm-link` in a stub that adds the `ThinLTO=0` module flag — that
  *      flag is what makes the bitcode writer emit a FULL_LTO summary block
  *      instead of a ThinLTO one,
@@ -39,7 +39,7 @@
  * `rust_build_cross` rule self-heals missing `rust-std` targets on CI
  * agents that pin the toolchain via `RUSTUP_TOOLCHAIN`.
  *
- * argv: [node, rust-lto-fix-cli.ts, <libbun_rust.a>, <out.o>, <llvm-bin-dir>, <ar>]
+ * argv: [node, rust-lto-fix-cli.ts, <libbun_runtime.a>, <out.o>, <llvm-bin-dir>, <ar>]
  */
 
 import { spawnSync } from "node:child_process";
@@ -103,7 +103,7 @@ function main(): void {
   const argv = process.argv.slice(2);
   assert(
     argv[0] !== undefined && argv[1] !== undefined && argv[2] !== undefined && argv[3] !== undefined,
-    "usage: rust-lto-fix-cli.ts <libbun_rust.a> <out.o> <llvm-bin-dir> <ar>",
+    "usage: rust-lto-fix-cli.ts <libbun_runtime.a> <out.o> <llvm-bin-dir> <ar>",
   );
   // Ninja passes buildDir-relative $in/$out and runs us with cwd=buildDir,
   // but the archive is extracted with cwd set to the scratch dir below —

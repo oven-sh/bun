@@ -573,9 +573,8 @@ impl ReadFile {
                                         BunString::clone_utf8(
                                             self.file_store.pathlike.path().slice(),
                                         )
-                                        .into()
                                     } else {
-                                        BunString::EMPTY.into()
+                                        BunString::EMPTY
                                     };
                             }
                             return false;
@@ -606,9 +605,9 @@ impl ReadFile {
                 panic!("assertion failure - store should not be null");
             }
             return completion.complete(ReadFileResultType::Err(SystemError {
-                code: BunString::static_("INTERNAL_ERROR").into(),
-                message: BunString::static_("assertion failure - store should not be null").into(),
-                syscall: BunString::static_("read").into(),
+                code: BunString::static_("INTERNAL_ERROR"),
+                message: BunString::static_("assertion failure - store should not be null"),
+                syscall: BunString::static_("read"),
                 ..Default::default()
             }));
         }
@@ -701,14 +700,14 @@ impl ReadFile {
         if bun_sys::S::ISDIR(stat.st_mode as _) {
             self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             self.system_error = Some(SystemError {
-                code: BunString::static_("EISDIR").into(),
+                code: BunString::static_("EISDIR"),
                 path: if self.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(self.file_store.pathlike.path().slice()).into()
+                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
                 } else {
-                    BunString::EMPTY.into()
+                    BunString::EMPTY
                 },
-                message: BunString::static_("Directories cannot be read like files").into(),
-                syscall: BunString::static_("read").into(),
+                message: BunString::static_("Directories cannot be read like files"),
+                syscall: BunString::static_("read"),
                 ..Default::default()
             });
             return;
@@ -814,11 +813,9 @@ impl ReadFile {
             //
             // 64 KB is large, but since this is running in a thread
             // with it's own stack, it should have sufficient space.
-            // hoisted out of the loop and zero-initialized once — the
-            // one-time 64 KB memset is negligible next to the per-iteration
-            // syscall, and avoids the `MaybeUninit<u8>` → `&mut [u8]` cast (uninit
-            // bytes behind a `&[u8]` is technically UB even when never read).
-            let mut stack_buffer = [0u8; 64 * 1024];
+            let mut stack_storage = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
+            // SAFETY: only `do_read` writes into it and only `stack_buffer[..read_amount]` is read back.
+            let stack_buffer = unsafe { stack_storage.as_bytes_mut() };
             // `do_read` never touches `self.buffer`; move it out so the read
             // target slice (which may point into its spare capacity) can be
             // held as a safe `&mut [u8]` across the `&mut self` call.
@@ -826,7 +823,7 @@ impl ReadFile {
             while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
                 let (use_stack, buf) = Self::remaining_buffer(
                     &mut buffer,
-                    &mut stack_buffer,
+                    stack_buffer,
                     self.max_length,
                     self.read_off,
                 );
@@ -838,9 +835,7 @@ impl ReadFile {
 
                     // We might read into the stack buffer, so we need to copy it into the heap.
                     if use_stack {
-                        // `do_read` wrote `read_amount` initialized bytes at
-                        // `stack_buffer[..read_amount]`; the stack array is live
-                        // for this iteration.
+                        // `do_read` initialized exactly `stack_buffer[..read_amount]` (0 on error/retry).
                         let read = &stack_buffer[..read_amount];
                         if buffer.capacity() == 0 {
                             // We need to allocate a new buffer
@@ -1021,9 +1016,6 @@ impl<'a> FileCloser for ReadFileUV<'a> {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
-        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
-    }
-    fn update(&mut self) {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn schedule_close(_: &mut bun_io::Request) -> bun_io::Action<'_> {

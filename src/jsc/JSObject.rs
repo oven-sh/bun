@@ -234,20 +234,11 @@ impl Default for ExternColumnIdentifier {
     }
 }
 
-impl ExternColumnIdentifier {
-    pub(crate) fn string(&mut self) -> Option<&mut BunString> {
-        match self.tag {
-            // SAFETY: tag == 2 means `value.name` is the active union field.
-            2 => Some(unsafe { &mut *self.value.name }),
-            _ => None,
-        }
-    }
-}
-
 impl Drop for ExternColumnIdentifier {
     fn drop(&mut self) {
-        if let Some(str) = self.string() {
-            str.deref();
+        if self.tag == 2 {
+            // SAFETY: tag == 2 means `value.name` is the active union field.
+            unsafe { core::mem::ManuallyDrop::drop(&mut self.value.name) };
         }
     }
 }

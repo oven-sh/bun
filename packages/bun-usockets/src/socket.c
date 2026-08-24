@@ -89,10 +89,6 @@ void us_socket_set_ssl_raw_tap(struct us_socket_t *s, int enabled) {
     s->ssl_raw_tap = !!enabled;
 }
 
-__attribute__((always_inline)) int us_socket_is_tls(struct us_socket_t *s) {
-    return s->ssl != NULL;
-}
-
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) {
     return c->group;
 }
@@ -268,12 +264,6 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
  * handshake/secureConnection event. openssl.c re-enters here once that
  * graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
-#ifdef LIBUS_USE_LIBUV
-    if (s->fin_deferred) {
-        s->fin_deferred = 0;
-        s->group->loop->data.fin_deferred_count--;
-    }
-#endif
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Closing now frees the SSL and
@@ -469,7 +459,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
-    s->fin_deferred = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -731,13 +720,6 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
-#ifdef LIBUS_USE_KQUEUE
-        if (!(us_poll_events(&s->p) & LIBUS_SOCKET_READABLE)) {
-            /* Shut down with reads off: no filter remains, so a peer FIN/RST
-             * would never be delivered (epoll still reports HUP/ERR). */
-            us_internal_kqueue_socket_arm_read_sentinel(s);
-        }
-#endif
     }
 }
 
@@ -860,10 +842,6 @@ void us_socket_unref(struct us_socket_t *s) {
     // do nothing if not using libuv
 }
 
-struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) {
-    return c->loop;
-}
-
 void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
@@ -871,24 +849,9 @@ void us_socket_pause(struct us_socket_t *s) {
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;
-#ifdef LIBUS_USE_KQUEUE
-    if (us_socket_is_shut_down(s)) {
-        /* Pausing dropped a shut-down socket's read filter; same as
-         * us_internal_socket_raw_shutdown. */
-        us_internal_kqueue_socket_arm_read_sentinel(s);
-    }
-#endif
 }
 
 void us_socket_resume(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
-    /* Reads flow again: normal delivery discovers the deferred FIN (and any
-     * reset behind it), so the sweep no longer owns this socket. */
-    if (s->fin_deferred) {
-        s->fin_deferred = 0;
-        s->group->loop->data.fin_deferred_count--;
-    }
-#endif
     if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;
     // closed cannot be resumed
@@ -903,7 +866,7 @@ void us_socket_resume(struct us_socket_t *s) {
         /* The dispatcher parked this socket while it was paused (loop.c) and the
          * kernel refused to take it back: nothing would ever deliver its tail,
          * end or close again, so fail it now like a failed first registration. */
-        int err = errno;
-        us_internal_socket_close_raw(s, err > 2 ? err : ECONNRESET, NULL);
+        int err = LIBUS_ERR;
+        us_internal_socket_close_raw(s, err > 2 ? err : LIBUS_ECONNRESET, NULL);
     }
 }

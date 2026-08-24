@@ -530,7 +530,7 @@ impl SocketConfig {
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
-        } else if let Some(unix) = generated.unix_.get() {
+        } else if let Some(unix) = generated.unix_.as_ref() {
             if unix.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
@@ -544,7 +544,7 @@ impl SocketConfig {
                 let without_prefix = slice[7..].to_vec();
                 result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
             }
-        } else if let Some(hostname) = generated.hostname.get() {
+        } else if let Some(hostname) = generated.hostname.as_ref() {
             if hostname.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));

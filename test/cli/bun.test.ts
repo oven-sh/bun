@@ -327,9 +327,9 @@ describe("bun", () => {
       // directory search and its `unreachable!()`.
       expect(await run({ SHELL: "/usr/local/bin/pwsh", IS_BUN_AUTO_UPDATE: "true" })).toBe(0);
 
-      // When getcwd fails, the "stdout is a pipe" shortcut runs before the shell check. For a shell
-      // without a script it must report the failure instead of writing nothing and exiting 0. The cwd
-      // has to go away after the process starts, so a shell wrapper removes it and then execs bun.
+      // From a removed working directory it must still report the missing script instead of writing
+      // nothing and exiting 0. The cwd has to go away after the process starts, so a shell wrapper
+      // removes it and then execs bun.
       using cwdDir = tempDir("completions-pwsh-gone-cwd", {});
       const gone = String(cwdDir);
       await using proc = Bun.spawn({
@@ -340,7 +340,7 @@ describe("bun", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toBe("");
-      expect(stderr).toContain("Could not get current working directory");
+      expect(stderr).toContain("PowerShell completions are not yet written for Bun.");
       expect(exitCode).toBe(1);
     });
   });

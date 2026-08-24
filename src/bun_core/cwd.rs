@@ -24,7 +24,7 @@ impl PartialEq for Entry {
 impl Eq for Entry {}
 impl Hash for Entry {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write(self.0.as_bytes());
+        self.0.as_bytes().hash(state);
     }
 }
 impl hashbrown::Equivalent<&'static Entry> for [u8] {
@@ -103,7 +103,8 @@ pub fn set(path: &[u8]) -> &'static ZStr {
                 Box::leak(crate::ZBox::from_bytes(path).into_boxed_slice_with_nul());
             let entry: &'static Entry =
                 Box::leak(Box::new(Entry(ZStr::from_slice_with_nul(bytes))));
-            visited.insert(entry);
+            let inserted = visited.insert(entry);
+            debug_assert!(inserted, "cwd entry lookup and insert disagree");
             entry
         }
     };

@@ -4124,8 +4124,7 @@ pub fn getcwd_len(buf: &mut [u8]) -> crate::CrateResult<usize> {
     }
     #[cfg(windows)]
     {
-        // Windows: wrap
-        // `kernel32.GetCurrentDirectoryW` and transcode WTF-16 → WTF-8.
+        // Windows: `kernel32.GetCurrentDirectoryW`, transcoded to UTF-8.
         unsafe extern "system" {
             fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
         }

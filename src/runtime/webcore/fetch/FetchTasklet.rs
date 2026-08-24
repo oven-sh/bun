@@ -2738,8 +2738,10 @@ impl FetchTasklet {
             //
             // 1. We are streaming, in which case we should not ignore the body.
             // 2. We were buffering, in which case
-            //    2a. if we have no promise, we should ignore the body.
-            //    2b. if we have a promise, we should keep loading the body.
+            //    2a. if nothing waits for the body, we should ignore the body.
+            //    2b. if a consumer waits for the whole body (`.text()` and friends hold
+            //        a promise, `Bun.write()` an `on_receive_value`), we should keep
+            //        loading the body.
             // 3. We never started buffering, in which case we should ignore the body.
             //
             // Inside a finalizer: decide from native state only.
@@ -2752,13 +2754,12 @@ impl FetchTasklet {
             }
 
             if let BodyValue::Locked(locked) = body {
-                if let Some(promise) = locked.promise {
-                    if promise.is_empty_or_undefined_or_null() {
-                        // Scenario 2b.
-                        this.ignore_remaining_response_body();
-                    }
-                } else {
-                    // Scenario 3.
+                let has_consumer = locked.on_receive_value.is_some()
+                    || locked
+                        .promise
+                        .is_some_and(|promise| !promise.is_empty_or_undefined_or_null());
+                if !has_consumer {
+                    // Scenario 2a or 3.
                     this.ignore_remaining_response_body();
                 }
             }

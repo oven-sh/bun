@@ -874,6 +874,59 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     },
   );
 
+  // Bun.write registers `on_receive_value` on the Locked body and holds no
+  // reference to the Response. The fetch Response finalizer only counted a
+  // promise (`.text()` and friends) as a consumer, so a Response collected
+  // while its body was still arriving had its body discarded and the write
+  // never settled.
+  it("Bun.write(path, fetch()) settles when the Response is collected mid-download", async () => {
+    using dir = tempDir("bun-write-fetch-collected-response", {});
+    const dest = join(String(dir), "out.bin");
+    const CHUNK = 64 * 1024;
+    const { promise: gate, resolve: openGate } = Promise.withResolvers();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(new Uint8Array(CHUNK));
+              // Hold the rest of the body until the client's Response is gone.
+              await gate;
+              controller.enqueue(new Uint8Array(CHUNK));
+              controller.close();
+            },
+          }),
+        ),
+    });
+
+    let collected = false;
+    const registry = new FinalizationRegistry(() => (collected = true));
+    // Its own frame: once it returns, only the write promise is held.
+    async function start() {
+      const resp = await fetch(server.url);
+      registry.register(resp, null);
+      return Bun.write(dest, resp);
+    }
+    const written = start();
+    for (const until = performance.now() + 20_000; !collected && performance.now() < until; ) {
+      Bun.gc(true);
+      await Bun.sleep(10);
+    }
+    Bun.gc(true);
+    openGate();
+
+    // A write that never settles fails here instead of hanging the test.
+    let watchdog;
+    const neverSettled = new Promise(resolve => (watchdog = setTimeout(resolve, 5_000, "never settled")));
+    try {
+      const outcome = await Promise.race([written, neverSettled]);
+      expect({ collected, outcome }).toEqual({ collected: true, outcome: 2 * CHUNK });
+    } finally {
+      clearTimeout(watchdog);
+    }
+  }, 30_000);
+
   it("Bun.write(path, HTMLRewriter.transform(resp)) still resolves after out.body is touched", async () => {
     using dir = tempDir("bun-write-htmlrewriter-body", {});
     const dest = join(String(dir), "out.html");

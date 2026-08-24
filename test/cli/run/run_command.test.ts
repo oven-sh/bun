@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { join } from "path";
 
 let cwd: string;
@@ -84,22 +84,48 @@ const raiseCtrlC = `
   };
 `;
 
-async function runInTerminal(cmd: string[], cwd: string) {
+// POSIX signal mask of this thread, through libc. `pthread_sigmask` takes a
+// `sigset_t*`; SIGINT is signal 2, bit 1 of the set's first byte on every libc
+// we run on. The `how` constants differ: Linux 0/1/2, Darwin 1/2/3.
+const SIG_BLOCK = isMacOS ? 1 : 0;
+const SIG_UNBLOCK = isMacOS ? 2 : 1;
+const SIGINT_SET_BYTE0 = 1 << (2 - 1);
+function sigmaskSymbols() {
+  return dlopen(libcPathForDlopen(), {
+    pthread_sigmask: { args: ["i32", "ptr", "ptr"], returns: "i32" },
+  }).symbols;
+}
+// A child spawned while SIGINT is blocked here starts with SIGINT blocked too.
+function withSigintBlocked<T>(f: () => T): T {
+  const { pthread_sigmask } = sigmaskSymbols();
+  const set = new Uint8Array(128);
+  set[0] = SIGINT_SET_BYTE0;
+  if (pthread_sigmask(SIG_BLOCK, set, null) !== 0) throw new Error("pthread_sigmask(SIG_BLOCK) failed");
+  try {
+    return f();
+  } finally {
+    if (pthread_sigmask(SIG_UNBLOCK, set, null) !== 0) throw new Error("pthread_sigmask(SIG_UNBLOCK) failed");
+  }
+}
+
+async function runInTerminal(cmd: string[], cwd: string, { blockSigint = false } = {}) {
   let output = "";
   const decoder = new TextDecoder();
-  await using proc = Bun.spawn({
-    cmd,
-    cwd,
-    env: bunEnv,
-    // Own session / pseudoconsole, so the Ctrl+C stays between `bun run` and the script.
-    terminal: {
-      cols: 200,
-      rows: 24,
-      data(_t, chunk: Uint8Array) {
-        output += decoder.decode(chunk, { stream: true });
+  const spawn = () =>
+    Bun.spawn({
+      cmd,
+      cwd,
+      env: bunEnv,
+      // Own session / pseudoconsole, so the Ctrl+C stays between `bun run` and the script.
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+        },
       },
-    },
-  });
+    });
+  await using proc = blockSigint ? withSigintBlocked(spawn) : spawn();
   const exitCode = await proc.exited;
   proc.terminal?.close();
   output += decoder.decode();
@@ -179,3 +205,72 @@ for (const mode of ctrlCModes) {
     }
   });
 }
+
+// `bun run --shell=system` forwards the signals it gets to the script. A signal
+// that lands between the install of the forwarding handler and the moment the
+// script's pid is known is recorded and forwarded once the pid is known. That
+// forward runs on the waiting thread (not in the handler) and used to leave the
+// signal blocked there for good, so the final `raise(SIGINT)` that ends `bun run`
+// like its script never arrived and `bun run` fell through to `abort()`.
+//
+// SIGINT is ignored from before exec (`trap '' INT`): a SIGINT before the
+// handler is installed is dropped, one during the spawn takes the recorded
+// path, one after it is forwarded right away. Flooding SIGINT for the whole
+// life of `bun run` therefore exercises the recorded path without a sleep.
+// A flood that misses the spawn window makes this test pass, never fail.
+test.concurrent.skipIf(isWindows)(
+  "a Ctrl+C that lands while bun run spawns the script still ends bun run like the script",
+  async () => {
+    using dir = tempDir("run-ctrl-c-spawn-window", {
+      "package.json": JSON.stringify({ name: "t", scripts: { go: "kill -INT $$" } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'trap "" INT; exec "$0" "$@"', bunExe(), "run", "--shell=system", "go"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await using flooder = Bun.spawn({
+      cmd: ["sh", "-c", "while kill -INT $1 2>/dev/null; do :; done", "_", String(proc.pid)],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    flooder.kill();
+    await flooder.exited;
+    expect(stdout).toBe("");
+    expect(stderr).toContain("$ kill -INT $$");
+    expect(proc.signalCode).toBe("SIGINT");
+  },
+);
+
+// The end of `bun run` must not depend on its signal mask either: with SIGINT
+// blocked in the mask it inherited, `raise(SIGINT)` alone would stay pending and
+// `bun run` would die of SIGABRT. The script unblocks SIGINT for itself, then dies of it.
+test.concurrent.skipIf(isWindows)(
+  "bun run ends like its script when SIGINT is blocked in the mask it inherited",
+  async () => {
+    using dir = tempDir("run-ctrl-c-blocked-mask", {
+      "package.json": JSON.stringify({ name: "t", scripts: { go: "bun child.js" } }),
+      "child.js": `
+      const { dlopen } = require("bun:ffi");
+      const { pthread_sigmask } = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+        pthread_sigmask: { args: ["i32", "ptr", "ptr"], returns: "i32" },
+      }).symbols;
+      const set = new Uint8Array(128);
+      set[0] = ${SIGINT_SET_BYTE0};
+      if (pthread_sigmask(${SIG_UNBLOCK}, set, null) !== 0) throw new Error("pthread_sigmask failed");
+      process.kill(process.pid, "SIGINT");
+      console.log("still alive");
+    `,
+    });
+
+    const { text, signalCode } = await runInTerminal([bunExe(), "run", "--shell=system", "go"], String(dir), {
+      blockSigint: true,
+    });
+    expect(text).not.toContain("still alive");
+    expect(signalCode).toBe("SIGINT");
+  },
+);

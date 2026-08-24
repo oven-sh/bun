@@ -800,6 +800,17 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             sa.sa_flags = libc::SA_RESETHAND;
             let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
         }
+
+        // `sig` may be blocked on this thread (inherited mask, or a handler for
+        // it is running). A blocked `raise` only leaves it pending and we would
+        // fall through to `abort()` and die of SIGABRT instead of `sig`.
+        // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
+        unsafe {
+            let mut set: libc::sigset_t = crate::ffi::zeroed();
+            libc::sigemptyset(&raw mut set);
+            libc::sigaddset(&raw mut set, sig);
+            let _ = libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
+        }
     }
 
     // kill self — `raise`/`abort` have no preconditions (see `safe fn` decls above).

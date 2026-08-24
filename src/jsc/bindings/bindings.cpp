@@ -3333,21 +3333,24 @@ JSC::JSObject* JSC__JSCell__toObject(JSC::JSCell* cell, JSC::JSGlobalObject* glo
 
 #pragma mark - JSC::JSString
 
-// Throws (and leaves *arg2 empty) when resolving a rope runs out of memory.
-[[ZIG_EXPORT(check_slow)]] void JSC__JSString__toZigString(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, ZigString* arg2)
+// Throws (and returns empty) when resolving a rope runs out of memory.
+// `JSString::view`: a substring rope is viewed in place; other ropes resolve
+// (and can throw on OOM). The characters belong to `str` (or its base), which
+// the caller keeps alive.
+BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global)
 {
-    auto& vm = JSC::getVM(arg1);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto value = arg0->value(arg1);
-    RETURN_IF_EXCEPTION(scope, void());
-    // ->value returns a reference to the same string as the one owned by the JSString.
-    *arg2 = Zig::toZigString(value.data.impl());
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
+    auto view = str->view(global);
+    RETURN_IF_EXCEPTION(scope, BunStringEmpty);
+    return Bun::toStringView(view.data);
 }
 
-// StringPrototypeSlice on a string that has already been resolved (JSString::value()/view()):
-// a substring cell sharing the original's buffer.
+// StringPrototypeSlice on a string `JSString::view()` has been called on, as a substring cell
+// sharing the characters. view() resolves every rope except a substring of a resolved base, which
+// jsSubstringOfResolved slices through that base; so nothing here can throw.
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSString__substring(JSC::JSString* string, JSC::JSGlobalObject* globalObject, uint32_t offset, uint32_t length)
 {
+    ASSERT(!string->isNonSubstringRope());
     return JSC::JSValue::encode(JSC::jsSubstringOfResolved(globalObject->vm(), string, offset, length));
 }
 
@@ -3718,8 +3721,7 @@ CPP_DECL void JSC__JSValue__putIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
-    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(value);
-    array->putDirectIndex(arg1, arg2, value2);
+    asObject(value)->putDirectIndex(arg1, arg2, value2);
 }
 
 CPP_DECL void JSC__JSValue__push(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue3)
@@ -3761,11 +3763,11 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, message, cause, nullptr, JSC::TypeNothing, false)));
 }
-JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, BunString message, JSValue cause)
+JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, const BunString* message, JSValue cause)
 {
     auto& vm = JSC::getVM(global);
     JSC::Structure* errorStructure = global->errorStructure(JSC::ErrorType::AggregateError);
-    WTF::String messageString = message.toWTFString();
+    WTF::String messageString = message->toWTFString();
     return JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, messageString, cause, nullptr, JSC::TypeNothing, false));
 }
 
@@ -3829,35 +3831,6 @@ __attribute__((__always_inline__)) VirtualMachine* JSC__JSGlobalObject__bunVM(JS
 JSC::EncodedJSValue ZigString__toValueGC(const ZigString* arg0, JSC::JSGlobalObject* arg1)
 {
     return JSC::JSValue::encode(JSC::jsString(arg1->vm(), Zig::toStringCopy(*arg0)));
-}
-
-void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, ZigString* arg1, JSC::JSGlobalObject* arg2)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-
-    // if (!value.isString()) {
-    //   arg1->len = 0;
-    //   arg1->ptr = nullptr;
-    //   return;
-    // }
-
-    auto* strValue = value.toStringOrNull(arg2);
-
-    if (!strValue) [[unlikely]] {
-        arg1->len = 0;
-        arg1->ptr = nullptr;
-        return;
-    }
-
-    auto str = strValue->value(arg2);
-
-    if (str->is8Bit()) {
-        arg1->ptr = str->span8().data();
-    } else {
-        arg1->ptr = Zig::taggedUTF16Ptr(str->span16().data());
-    }
-
-    arg1->len = str->length();
 }
 
 JSC::EncodedJSValue ZigString__external(const ZigString* arg0, JSC::JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))
@@ -4900,29 +4873,26 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
     return {};
 }
 
-void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::JSGlobalObject* arg1, ZigString* arg2)
-
+BunString JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::JSGlobalObject* arg1)
 {
     JSC::JSValue symbolValue = JSC::JSValue::decode(symbolValue_);
 
     if (!symbolValue.isSymbol())
-        return;
+        return BunStringEmpty;
 
     JSC::Symbol* symbol = JSC::asSymbol(symbolValue);
 
     auto& uid = symbol->uid();
     if (!uid.isNullSymbol() && !uid.isEmpty()) {
-        *arg2 = Zig::toZigString(static_cast<WTF::StringImpl&>(uid));
-    } else {
-        *arg2 = ZigStringEmpty;
+        return Bun::toString(&static_cast<WTF::StringImpl&>(uid));
     }
+    return BunStringEmpty;
 }
 
-JSC::EncodedJSValue JSC__JSValue__symbolFor(JSC::JSGlobalObject* globalObject, ZigString* arg2)
+JSC::EncodedJSValue JSC__JSValue__symbolFor(JSC::JSGlobalObject* globalObject, const BunString* key)
 {
-
     auto& vm = JSC::getVM(globalObject);
-    WTF::String string = Zig::toString(*arg2);
+    WTF::String string = key->toWTFString(BunString::ZeroCopy);
     return JSC::JSValue::encode(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(string)));
 }
 
@@ -5003,6 +4973,18 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     return value.toStringOrNull(arg1);
 }
 
+/// `toStringOrNull` + `JSString::view` in one call.
+JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
+    auto* str = JSC::JSValue::decode(JSValue0).toStringOrNull(global);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto data = str->view(global);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    *view = Bun::toStringView(data.data);
+    return str;
+}
+
 [[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__toMatch(JSC::EncodedJSValue regexValue, JSC::JSGlobalObject* global, JSC::EncodedJSValue value)
 {
     ASSERT_NO_PENDING_EXCEPTION(global);
@@ -5040,13 +5022,19 @@ void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
     arg0->finalizeSynchronousJSExecution();
 }
 
-void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2)
+static BunString toStringAdopt(WTF::String&& s)
+{
+    if (s.isEmpty())
+        return BunStringEmpty;
+    return { BunStringTag::WTFStringImpl, { .wtf = s.releaseImpl().leakRef() } };
+}
+
+BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSValue value = JSValue::decode(JSValue0);
     JSC::JSCell* cell = value.asCell();
     if (cell == nullptr || !cell->isObject()) {
-        arg2->len = 0;
-        return;
+        return BunStringEmpty;
     }
 
     const char* ptr = cell->className();
@@ -5054,19 +5042,18 @@ void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObjec
 
     // Fallback to .name if className is empty
     if (view.length() == 0 || StringView("Function"_s) == view) {
-        JSC__JSValue__getNameProperty(JSValue0, arg1, arg2);
-        return;
+        return JSC__JSValue__getNameProperty(JSValue0, arg1);
     }
 
     JSObject* obj = value.toObject(arg1);
 
     auto calculated = JSObject::calculatedClassName(obj);
     if (calculated.length() > 0) {
-        *arg2 = Zig::toZigString(calculated);
-        return;
+        return toStringAdopt(WTF::move(calculated));
     }
 
-    *arg2 = Zig::toZigString(view);
+    // `className()` is a static C string.
+    return { BunStringTag::StaticZigString, { .zig = { reinterpret_cast<const unsigned char*>(ptr), view.length() } } };
 }
 
 bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)
@@ -5079,25 +5066,23 @@ bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_
     return false;
 }
 
-void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2)
+BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
     JSC::VM& vm = arg1->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (obj == nullptr) {
-        arg2->len = 0;
-        return;
+        return BunStringEmpty;
     }
 
     JSC::JSValue name = obj->getIfPropertyExists(arg1, vm.propertyNames->toStringTagSymbol);
-    RETURN_IF_EXCEPTION(scope, );
+    RETURN_IF_EXCEPTION(scope, BunStringEmpty);
 
     if (name && name.isString()) {
         auto str = name.toWTFString(arg1);
         if (!str.isEmpty()) {
-            *arg2 = Zig::toZigString(str);
-            return;
+            return toStringAdopt(WTF::move(str));
         }
     }
 
@@ -5105,22 +5090,17 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
 
         WTF::String actualName = function->name(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
-            *arg2 = Zig::toZigString(actualName);
-            return;
+            return toStringAdopt(WTF::move(actualName));
         }
 
-        actualName = function->jsExecutable()->name().string();
-
-        *arg2 = Zig::toZigString(actualName);
-        return;
+        return Bun::toStringRef(function->jsExecutable()->name().string());
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {
-        *arg2 = Zig::toZigString(function->name());
-        return;
+        return Bun::toStringRef(function->name());
     }
 
-    arg2->len = 0;
+    return BunStringEmpty;
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__getName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, BunString* arg2)
@@ -6219,7 +6199,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue v
     }
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject* globalObject, BunString* str)
+extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
     auto& vm = JSC::getVM(globalObject);
     return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
@@ -6662,7 +6642,7 @@ extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* global
 
 extern "C" EncodedJSValue JSFunction__createFromZig(
     JSC::JSGlobalObject* global,
-    BunString fn_name,
+    const BunString* fn_name,
     NativeFunction implementation,
     unsigned arg_count,
     ImplementationVisibility implementation_visibility,
@@ -6670,7 +6650,7 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
     NativeFunction constructorOrNull)
 {
     VM& vm = global->vm();
-    auto name = fn_name.toWTFString();
+    auto name = fn_name->toWTFString();
     return JSValue::encode(JSFunction::create(
         vm,
         global,
@@ -7109,12 +7089,31 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         ? WTF::String::fromUTF8(std::span { prefixPtr, prefixLen })
         : WTF::String();
 
-    // getPropertyNames already walks (and dedups) the prototype chain, throwing past maximumPrototypeChainDepth.
+    // Walk the prototype chain as JSObject::getPropertyNames does (the builder dedups,
+    // the depth cap stops misbehaving proxy chains), but skip own index names where that
+    // is safe: an index name is never an identifier completion (repl.rs filters them),
+    // and collecting one Identifier per element of a large typed array blocks the REPL
+    // for minutes (#40281: `buffer.` on a 1 GiB Buffer builds 2^30 names). Classes that
+    // override getOwnPropertyNames with their own keys logic (Proxy traps, module
+    // namespaces, ...) keep the full hook; their key counts are not element counts.
     JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-    object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
-    if (scope.exception()) [[unlikely]]
-        return clearAndEncode(JSC::jsUndefined());
+    unsigned prototypeCount = 0;
+    for (JSC::JSObject* current = object;;) {
+        if (JSC::isTypedArrayType(current->type()) || !current->structure()->typeInfo().overridesGetOwnPropertyNames())
+            current->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
+        else
+            current->methodTable()->getOwnPropertyNames(current, globalObject, propertyNames, DontEnumPropertiesMode::Include);
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(JSC::jsUndefined());
+
+        JSC::JSValue prototype = current->getPrototype(globalObject);
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(JSC::jsUndefined());
+        if (!prototype.isObject() || ++prototypeCount > JSC::JSObject::maximumPrototypeChainDepth)
+            break;
+        current = JSC::asObject(prototype);
+    }
 
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
     if (scope.exception()) [[unlikely]]

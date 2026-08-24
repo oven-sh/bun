@@ -233,6 +233,34 @@ test("String objects are rejected like any other non-string", () => {
   }
 });
 
+// Inputs that are ropes (a concatenation, or a slice of a longer string, which JSC keeps as a
+// substring rope) and results that are slices of such inputs.
+test("rope inputs", () => {
+  const long = Buffer.alloc(64, "x").toString();
+  // A slice of a flat string is a substring rope; a slice of a rope can resolve to one fiber.
+  const sliced = Buffer.from(`${long}/dir/base.ext`).toString().slice(long.length); // "/dir/base.ext"
+  const concat = `${long}/dir/` + "base.ext".slice(0, 4) + ".ext"; // a concatenation rope
+  for (const ns of [path.posix, path.win32]) {
+    expect([
+      ns.dirname(sliced),
+      ns.basename(sliced),
+      ns.basename(sliced, ".ext"),
+      ns.extname(sliced),
+      ns.parse(sliced),
+      ns.basename(concat),
+      ns.dirname(sliced).slice(1),
+    ]).toEqual([
+      "/dir",
+      "base.ext",
+      "base",
+      ".ext",
+      { root: "/", dir: "/dir", base: "base.ext", ext: ".ext", name: "base" },
+      "base.ext",
+      "dir",
+    ]);
+  }
+});
+
 test("matchesGlob compiles patterns per platform", () => {
   // Same pattern string, different glob: `\\` is a separator for win32 only, so a
   // matcher cached by the posix call must not be reused by the win32 one.

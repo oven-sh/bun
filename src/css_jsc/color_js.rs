@@ -365,7 +365,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             };
 
             'formatted: {
-                let mut str: BunString = 'color: {
+                let str: BunString = 'color: {
                     match format {
                         // resolved above.
                         OutputColorFormat::Ansi => unreachable!(),
@@ -594,7 +594,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                     }
                 };
 
-                return str.transfer_to_js(global);
+                return str.into_js(global);
             }
 
             // Fallback to CSS string output

@@ -1534,6 +1534,25 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       );
     });
 
+    test("completion on a large Buffer does not enumerate index properties", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // Every element of a typed array is an own property name, so a
+          // completer that collects index names builds 2^26 identifiers here
+          // and blocks the REPL for minutes (issue #40281 used 1 << 30).
+          send('globalThis.__big = Buffer.allocUnsafe(1 << 26); "big" + "Ready"\n');
+          await waitFor("bigReady");
+          // Typing the `.` computes completions for `__big` with an empty
+          // prefix; the named properties must still complete afterwards.
+          send("__big.byteLen");
+          await waitFor(`${DIM}gth`);
+          send("\t\n");
+          await waitFor("67108864");
+        },
+        { env: colorEnv },
+      );
+    });
+
     test("tab completes properties on an object (no ghost)", async () => {
       // Tab completion resolves `obj.prefix` chains even when ghost text is
       // disabled (NO_COLOR), so this covers parse_completion_context + resolve.

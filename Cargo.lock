@@ -1462,6 +1462,7 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_sourcemap",
+ "bun_url",
  "bun_wyhash",
 ]
 
@@ -1659,6 +1660,7 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
+ "bun_opaque",
  "bun_paths",
  "bun_wyhash",
  "thiserror",

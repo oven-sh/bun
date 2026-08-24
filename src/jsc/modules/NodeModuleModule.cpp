@@ -531,7 +531,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             auto filenameValue = parent.filename->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             auto filename = Bun::toString(filenameValue);
-            auto paths = JSValue::decode(Resolver__nodeModulePathsJSValue(filename, globalObject, true));
+            auto paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filename, globalObject, true));
             RELEASE_AND_RETURN(scope, paths);
         } else {
             auto array = JSC::constructEmptyArray(globalObject, nullptr, 0);
@@ -555,7 +555,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 }
 
 extern "C" JSC::EncodedJSValue NodeModuleModule__findPath(JSGlobalObject*,
-    BunString, JSArray*);
+    const BunString*, JSArray*);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -571,7 +571,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
 
     JSArray* paths = paths_value.isCell() ? dynamicDowncast<JSArray>(paths_value) : nullptr;
 
-    return NodeModuleModule__findPath(globalObject, request_bun_str, paths);
+    return NodeModuleModule__findPath(globalObject, &request_bun_str, paths);
 }
 
 // These two setters are only used if you directly hit

@@ -1093,9 +1093,9 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let options: bun_ptr::RawSlice<u8>;
     let path: bun_ptr::RawSlice<u8>;
 
-    let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
+    let options_str = arguments[7].to_bun_string(global_object)?;
 
-    let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
+    let path_str = arguments[8].to_bun_string(global_object)?;
 
     let options_buf: Box<[u8]> = 'brk: {
         let mut b = bun_core::StringBuilder::default();

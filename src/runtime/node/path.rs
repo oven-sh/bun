@@ -368,17 +368,16 @@ unsafe extern "C" {
 #[inline]
 fn view_of<'a>(global: &JSGlobalObject, value: JSValue) -> JsResult<Input<'a>> {
     debug_assert!(value.is_string_literal());
-    // SAFETY: `is_string_literal` ⇒ the cell is a JSString.
-    let string: &JSString = unsafe { &*value.as_string() };
-    let z = string.view(global)?;
+    let string: &JSString = value.as_string();
+    let view = string.view(global)?;
     // SAFETY: the view describes the live JSString's storage (see the doc comment); detach it
-    // from the local `ZigString`'s lifetime.
+    // from the local `JSStringView` guard's lifetime.
     let chars = unsafe {
-        if z.is_16bit() {
-            let s = z.utf16_slice_aligned();
+        if view.is_utf16() {
+            let s = view.utf16();
             Chars::Utf16(core::slice::from_raw_parts(s.as_ptr(), s.len()))
         } else {
-            let s = z.slice();
+            let s = view.latin1();
             Chars::Latin1(core::slice::from_raw_parts(s.as_ptr(), s.len()))
         }
     };
@@ -435,8 +434,7 @@ fn validate_string(global: &JSGlobalObject, value: JSValue, name: &str) -> JsRes
 fn substring(global: &JSGlobalObject, input: &Input<'_>, start: Index, end: Index) -> JSValue {
     debug_assert!(input.string.is_string_literal());
     debug_assert!(start >= 0 && end >= start && end as usize <= input.len());
-    // SAFETY: `input.string` came through `view_of`, so it is a resolved JSString.
-    let string: &JSString = unsafe { &*input.string.as_string() };
+    let string: &JSString = input.string.as_string();
     string.substring(global, start as u32, (end - start) as u32)
 }
 
@@ -1354,12 +1352,6 @@ mod win32 {
         }
     }
 
-    impl<C: Unit> Drop for Lowered<C> {
-        fn drop(&mut self) {
-            self.wtf.deref();
-        }
-    }
-
     /// `StringPrototypeToLowerCase(s)`, materialized in `into`.
     pub(super) fn to_lower_case<'s, C: Unit>(s: &[C], into: &'s mut Lowered<C>) -> &'s [C] {
         if C::IS_U16 && !all_ascii(s) {
@@ -1387,7 +1379,6 @@ mod win32 {
     #[inline(never)]
     fn to_lower_case_full<'s, C: Unit>(s: &[C], into: &'s mut Lowered<C>) -> &'s [C] {
         debug_assert!(C::IS_U16);
-        into.wtf.deref();
         into.wtf = bun_core::String::borrow_utf16(bytemuck::cast_slice(s)).to_lower_case();
         if into.wtf.is_utf16() {
             return bytemuck::cast_slice(into.wtf.utf16());

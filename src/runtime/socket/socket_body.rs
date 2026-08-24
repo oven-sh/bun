@@ -443,7 +443,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
-    fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
+    pub(crate) fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
         let mut v = self.flags.get();
         f(&mut v);
         self.flags.set(v);
@@ -667,6 +667,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 self.socket.set(SocketHandler::<SSL>::from(s));
             }
             Some(UnixOrHost::Fd(f)) => {
+                // The fd is connected, so it is registered paused outright; a dial is paused in on_open.
+                let flags = if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
+                    flags | uws::LIBUS_SOCKET_OPEN_PAUSED
+                } else {
+                    flags
+                };
                 // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET`
                 // (`usize`) on Windows; `Fd::native()` is `c_int` / HANDLE
                 // (`*mut c_void`) respectively; cast to bridge the Rust-side `usize` alias.
@@ -729,11 +735,23 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.flags.get().contains(Flags::BYPASS_TLS) {
             return Ok(JSValue::UNDEFINED);
         }
-        if !this.flags.get().contains(Flags::IS_PAUSED) {
-            let paused = this.socket.get().pause_stream();
-            this.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
-        }
+        this.pause_reads();
         Ok(JSValue::UNDEFINED)
+    }
+
+    fn pause_reads(&self) {
+        if !self.flags.get().contains(Flags::IS_PAUSED) {
+            let paused = self.socket.get().pause_stream();
+            self.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
+        }
+    }
+
+    /// Consumes `PAUSE_ON_CONNECT`: a TLS client dispatches another handshake after a renegotiation.
+    fn pause_on_connect_once(&self) {
+        if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
+            self.update_flags(|f| f.remove(Flags::PAUSE_ON_CONNECT));
+            self.pause_reads();
+        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1204,9 +1222,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);
             SystemError {
                 errno: -errno_,
-                message: BunString::static_("Failed to connect").into(),
-                syscall: BunString::static_("connect").into(),
-                code: code_.into(),
+                message: BunString::static_("Failed to connect"),
+                syscall: BunString::static_("connect"),
+                code: code_,
                 ..Default::default()
             }
         };
@@ -1427,6 +1445,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.update_flags(|f| f.remove(Flags::IS_PAUSED));
         if !this.ref_pollref_on_connect.replace(true) {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        }
+        if !SSL {
+            this.pause_on_connect_once();
         }
         jsc::mark_binding!();
 
@@ -1823,6 +1844,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             if let Some(twin) = this.twin.get().as_ref() {
                 twin.update_flags(|f| f.insert(Flags::REJECTED));
             }
+        } else if SSL {
+            this.pause_on_connect_once();
         }
 
         let mut callback = handlers.on_handshake();
@@ -2304,8 +2327,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     fn stored_verify_error_to_js(&self, global: &JSGlobalObject) -> Option<JSValue> {
         self.verify_error.get().as_ref().map(|stored| {
             let err = SystemError {
-                code: BunString::clone_utf8(&stored.code).into(),
-                message: BunString::clone_utf8(&stored.reason).into(),
+                code: BunString::clone_utf8(&stored.code),
+                message: BunString::clone_utf8(&stored.reason),
                 ..Default::default()
             };
             err.to_error_instance(global)
@@ -2340,8 +2363,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let reason: &[u8] = ssl_error.reason_bytes();
 
         let fallback = SystemError {
-            code: BunString::clone_utf8(code).into(),
-            message: BunString::clone_utf8(reason).into(),
+            code: BunString::clone_utf8(code),
+            message: BunString::clone_utf8(reason),
             ..Default::default()
         };
 
@@ -4141,6 +4164,8 @@ bitflags::bitflags! {
         /// even though its `Handlers` mode is `Client` (no listener), so the
         /// client-only server-identity check must not run against its peer.
         const TLS_SERVER_ROLE      = 1 << 14;
+        /// node:net's `pauseOnConnect`: paused in `on_open` (plain; free for a socket that was registered with `LIBUS_SOCKET_OPEN_PAUSED`) or after the handshake (TLS).
+        const PAUSE_ON_CONNECT     = 1 << 15;
     }
 }
 
@@ -5077,17 +5102,16 @@ pub mod testing_apis {
                 return Err(global.throw_invalid_argument_type_value("rule", "object", opts));
             }
 
-            let syscall_str =
-                bun_core::OwnedString::new(match opts.get_truthy(global, "syscall")? {
-                    Some(v) => v.to_bun_string(global)?,
-                    None => {
-                        return Err(global.throw_invalid_argument_type_value(
-                            "rule.syscall",
-                            "string",
-                            JSValue::UNDEFINED,
-                        ));
-                    }
-                });
+            let syscall_str = match opts.get_truthy(global, "syscall")? {
+                Some(v) => v.to_bun_string(global)?,
+                None => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "rule.syscall",
+                        "string",
+                        JSValue::UNDEFINED,
+                    ));
+                }
+            };
             let syscall: c_int = if syscall_str.eql_comptime(b"recv") {
                 fi::RECV
             } else if syscall_str.eql_comptime(b"send") {
@@ -5116,17 +5140,16 @@ pub mod testing_apis {
                 )));
             };
 
-            let action_str =
-                bun_core::OwnedString::new(match opts.get_truthy(global, "action")? {
-                    Some(v) => v.to_bun_string(global)?,
-                    None => {
-                        return Err(global.throw_invalid_argument_type_value(
-                            "rule.action",
-                            "string",
-                            JSValue::UNDEFINED,
-                        ));
-                    }
-                });
+            let action_str = match opts.get_truthy(global, "action")? {
+                Some(v) => v.to_bun_string(global)?,
+                None => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "rule.action",
+                        "string",
+                        JSValue::UNDEFINED,
+                    ));
+                }
+            };
             let action: c_int = if action_str.eql_comptime(b"errno") {
                 fi::ACTION_ERRNO
             } else if action_str.eql_comptime(b"short") {
@@ -5172,7 +5195,7 @@ pub mod testing_apis {
                 None => 0,
                 Some(v) if v.is_number() => v.coerce_to_i32(global)?,
                 Some(v) => {
-                    let name = bun_core::OwnedString::new(v.to_bun_string(global)?);
+                    let name = v.to_bun_string(global)?;
                     parse_errno_name(&name).ok_or_else(|| {
                         global.throw(format_args!(
                             "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH, EPROTOTYPE)"
@@ -5229,7 +5252,7 @@ pub mod testing_apis {
     }
 
     #[cfg(socket_fault_injection)]
-    fn parse_errno_name(name: &bun_core::OwnedString) -> Option<c_int> {
+    fn parse_errno_name(name: &bun_core::String) -> Option<c_int> {
         macro_rules! map {
             ($($s:literal => $v:expr,)*) => {
                 $(if name.eql_comptime($s) { return Some($v as c_int); })*

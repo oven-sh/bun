@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "fs";
-import { gzipSync } from "zlib";
 import { bunEnv, bunExe, tempDir } from "harness";
 import vm from "node:vm";
 import { basename, join } from "path";
+import { gzipSync } from "zlib";
 
 // `bun build --compile --bytecode --target=<other platform>` embeds bytecode produced by this machine's JSC into an
 // executable that another OS/CPU will decode. JSC's cache format is the in-memory image of C++ objects, so it is only

@@ -11,8 +11,6 @@ const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = re
 
 if (process.env.NODE_DEBUG) require("node:util").debuglog("http");
 
-const { WebSocket, CloseEvent, MessageEvent } = globalThis;
-
 function createServer(options, callback) {
   return new Server(options, callback);
 }

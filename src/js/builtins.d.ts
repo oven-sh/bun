@@ -341,6 +341,10 @@ declare class ReadableStreamBYOBReader {
   constructor(stream: ReadableStream);
 }
 
+// Globals the runtime creates (see intrinsicGlobals in codegen/replacements.ts)
+// are rewritten to $Name automatically; spell $Name only where a local shadows it.
+declare const $Worker: typeof Worker;
+
 // Inlining our enum types
 declare const $ImportKindIdToLabel: Array<import("bun").ImportKind>;
 declare const $ImportKindLabelToId: Record<import("bun").ImportKind, number>;

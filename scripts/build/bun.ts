@@ -262,9 +262,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const flags = computeFlags(cfg);
 
   // Full include set: bun's own + all dep includes + buildDir (for the
-  // generated versions header).
+  // generated versions header). Dirs under buildDir are spelled relative so
+  // the compiler's depfile names generated headers the way their codegen
+  // edge declares them (`codegen/X.h`); an absolute spelling is a different
+  // ninja node, and a header regenerated mid-run would then only invalidate
+  // its includers (notably the PCH) one build later.
   const allIncludes = [...bunIncludes(cfg), cfg.buildDir, ...depIncludes];
-  const includeFlags = allIncludes.map(inc => `-I${inc}`);
+  const includeFlags = allIncludes.map(
+    inc => `-I${inc === cfg.buildDir || inc.startsWith(cfg.buildDir + sep) ? n.rel(inc) || "." : inc}`,
+  );
   const defineFlags = flags.defines.map(d => `-D${d}`);
 
   // Final flag arrays for compile.
@@ -286,12 +292,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // modified since PCH was built". As implicit inputs, restat sees the .a
     // changed → PCH rebuilds → one-build convergence. See the pch() docstring.
     //
-    // Codegen stays order-only: those outputs only change if inputs change,
-    // and inputs don't change mid-build. cppAll (not all) — bake/.rs outputs
-    // are rust-only; pulling them here would run bake-codegen in cpp-only CI
-    // mode where it fails on the pinned bun version (see cppAll docstring).
-    // Scripts that emit undeclared .h also emit a .cpp/.h in cppAll, so they
-    // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
+    // Codegen stays order-only: the depfile names exactly the generated
+    // headers the PCH reaches, as the nodes their codegen edge declares (see
+    // includeFlags), so a regenerated one rebuilds the PCH in the same run and
+    // an unrelated one doesn't. cppAll (not all) — bake/.rs outputs are
+    // rust-only; pulling them here would run bake-codegen in cpp-only CI mode
+    // where it fails on the pinned bun version (see cppAll docstring). cxx
+    // transitively waits: cxx → PCH → deps+cppAll.
     pchOut = pch(n, cfg, "src/jsc/bindings/root-pch.h", {
       flags: cxxFlagsFull,
       implicitInputs: depHeaderSignal,

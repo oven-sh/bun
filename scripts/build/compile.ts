@@ -373,9 +373,10 @@ export function pch(
      */
     implicitInputs?: string[];
     /**
-     * Must exist before PCH compiles; changes don't invalidate it.
-     * Codegen outputs go here — they only change when inputs change,
-     * and inputs don't change mid-build.
+     * Must exist before PCH compiles; the depfile decides which of them
+     * invalidate it. Codegen outputs go here — that only works because their
+     * -I dir is buildDir-relative, so depfile entries name the declared
+     * output nodes.
      */
     orderOnlyInputs?: string[];
   },

@@ -22,9 +22,6 @@ const messageTypes = {
 // Set once via initThreadInfo() when worker_threads.ts loads.
 let currentThreadId = 0;
 let isMainThread = true;
-// The intrinsic constructor from worker_threads' native binding, not
-// globalThis.MessageChannel, which user code can replace (#40268).
-let MessageChannel: typeof globalThis.MessageChannel;
 
 // Only populated on the main thread (the hub); always empty elsewhere.
 // SafeMap: its prototype is a frozen null-proto snapshot taken at bootstrap, so the
@@ -45,10 +42,9 @@ const WORKER_MESSAGING_RESULT_DELIVERED = 0;
 const WORKER_MESSAGING_RESULT_NO_LISTENERS = 1;
 const WORKER_MESSAGING_RESULT_LISTENER_ERROR = 2;
 
-function initThreadInfo(threadId: number, mainThread: boolean, MessageChannelCtor: typeof globalThis.MessageChannel) {
+function initThreadInfo(threadId: number, mainThread: boolean) {
   currentThreadId = threadId;
   isMainThread = mainThread;
-  MessageChannel = MessageChannelCtor;
 }
 
 // This event handler is always executed on the main thread only.

@@ -206,6 +206,24 @@ it("globals are deletable", () => {
   expect(exitCode).toBe(0);
 });
 
+// Builtin modules take runtime-created globals (MessagePort, Blob, URL, crypto, ...)
+// from the intrinsic, like Node's lib/ takes them from internalBinding(), so user
+// code that replaces or deletes the global (e.g. happy-dom's registrator) cannot
+// break or hijack them. https://github.com/oven-sh/bun/issues/40268
+it("builtin modules do not read replaceable globals", () => {
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "builtin-intrinsic-globals-fixture.js")],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("self is a getter", () => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
   expect(descriptor.get).toBeInstanceOf(Function);

@@ -52,6 +52,12 @@ function validateWorkerFilename(filename) {
   throw $ERR_WORKER_PATH(message);
 }
 
+// The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+// instance. This is so that it can emit the `worker` event on the process with the
+// node:worker_threads instance instead of the Web Worker instance.
+const WebWorker = $Worker as unknown as new (
+  ...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]
+) => WebWorker;
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
@@ -69,13 +75,6 @@ const {
   10: _isNodeWorker,
   11: _setParentPort,
   12: _setStdioPorts,
-  // The intrinsic web constructors, captured natively so user code replacing the
-  // globals (e.g. happy-dom's registrator) before this module loads cannot break
-  // worker_threads (#40268).
-  13: _MessagePort,
-  14: MessageChannel,
-  15: BroadcastChannel,
-  16: WebWorker,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -90,13 +89,6 @@ const {
   boolean,
   (port: MessagePort) => void,
   (ports: object) => void,
-  typeof globalThis.MessagePort,
-  typeof globalThis.MessageChannel,
-  typeof globalThis.BroadcastChannel,
-  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-  // instance. This is so that it can emit the `worker` event on the process with the
-  // node:worker_threads instance instead of the Web Worker instance.
-  new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -285,9 +277,7 @@ function injectFakeEmitter(Class) {
   Object.setPrototypeOf(proto, inherited);
 }
 
-injectFakeEmitter(_MessagePort);
-
-const MessagePort = _MessagePort;
+injectFakeEmitter(MessagePort);
 
 // node's close(cb) registers cb as a one-time "close" listener before the native close.
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
@@ -445,7 +435,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
       item !== null &&
       typeof item === "object" &&
       !(item instanceof ArrayBuffer) &&
-      !(item instanceof _MessagePort) &&
+      !(item instanceof MessagePort) &&
       !$isTypedArrayView(item)
     ) {
       hasCandidate = true;
@@ -594,7 +584,7 @@ let parentPort: MessagePort | null = null;
 // postMessageToThread (Node 22+): the Worker ctor always smuggles a control
 // MessagePort to the worker by wrapping workerData; unwrap it here.
 const messaging = require("internal/worker/messaging");
-messaging.initThreadInfo(threadId, isMainThread, MessageChannel);
+messaging.initThreadInfo(threadId, isMainThread);
 // Captured stdio + the messaging control port ride inside workerData (wrapped;
 // ports transferred). Unwrap and bind the worker's stdio / messaging hub.
 // Gate on _isNodeWorker so a raw `new globalThis.Worker` that loads this module

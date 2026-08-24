@@ -866,16 +866,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     return JSValue::encode(ns);
 }
 
-#define WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                                                                                            \
-    JSValue ConstructorName##ConstructorCallback(VM& vm, JSObject* lexicalGlobalObject)                                                                                  \
-    {                                                                                                                                                                    \
-        return WebCore::JS##ConstructorName::getConstructor(vm, uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject));                                              \
-    }                                                                                                                                                                    \
-    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                                                                                                   \
-        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                                                                                       \
-            JSC::PropertyName))                                                                                                                                          \
-    {                                                                                                                                                                    \
-        return JSC::JSValue::encode(WebCore::JS##ConstructorName::getConstructor(lexicalGlobalObject->vm(), uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject))); \
+#define WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                                               \
+    JSValue ConstructorName##ConstructorCallback(VM& vm, JSObject* lexicalGlobalObject)                                     \
+    {                                                                                                                       \
+        return WebCore::JS##ConstructorName::getConstructor(vm, uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject)); \
     }
 
 String GlobalObject::defaultAgentClusterID()
@@ -1161,16 +1155,7 @@ WebCore::EventTarget& GlobalObject::eventTarget()
     return globalEventScope;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    return JSC::JSValue::encode(uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject)->JSBufferConstructor());
-}
-
-// This macro defines the getter needed for ZigGlobalObject.lut.h
-// "<ClassName>ConstructorCallback" is a PropertyCallback
-// it also defines "<ClassName>_getter" which is the getter for a JSC::CustomGetterSetter
+// Defines the "<ClassName>ConstructorCallback" PropertyCallback for ZigGlobalObject.lut.h
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(AbortController);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(AbortSignal);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(BroadcastChannel);
@@ -2877,20 +2862,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         NoIntrinsic,
         PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
 
-    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.TransformStreamPrivateName(), CustomGetterSetter::create(vm, TransformStream_getter, nullptr), attributesForStructure(static_cast<unsigned>(PropertyAttribute::DontEnum)) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.TransformStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, TransformStreamDefaultController_getter, nullptr), attributesForStructure(static_cast<unsigned>(PropertyAttribute::DontEnum)) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableByteStreamControllerPrivateName(), CustomGetterSetter::create(vm, ReadableByteStreamController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamPrivateName(), CustomGetterSetter::create(vm, ReadableStream_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBReaderPrivateName(), CustomGetterSetter::create(vm, ReadableStreamBYOBReader_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamBYOBRequestPrivateName(), CustomGetterSetter::create(vm, ReadableStreamBYOBRequest_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, ReadableStreamDefaultController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.ReadableStreamDefaultReaderPrivateName(), CustomGetterSetter::create(vm, ReadableStreamDefaultReader_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamPrivateName(), CustomGetterSetter::create(vm, WritableStream_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultWriterPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultWriter_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.AbortSignalPrivateName(), CustomGetterSetter::create(vm, AbortSignal_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
-
     // ----- Public Properties -----
 
     // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
@@ -4096,5 +4067,36 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
 const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &bunGlobalObjectTable, nullptr,
     CREATE_METHOD_TABLE(GlobalObject) };
+
+// Builtin modules reference the globals in bunGlobalObjectTable as @Name (see
+// intrinsicGlobals in src/codegen/replacements.ts). @Name resolves here to the
+// table entry that globalThis.Name was initialized from, reified under the
+// private name, so a replaced or deleted globalThis.Name never reaches builtins.
+bool GlobalObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* lexicalGlobalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    if (Base::getOwnPropertySlot(object, lexicalGlobalObject, propertyName, slot))
+        return true;
+    if (!propertyName.isPrivateName())
+        return false;
+
+    VM& vm = lexicalGlobalObject->vm();
+    auto* uid = propertyName.uid();
+    auto* entry = bunGlobalObjectTable.entry(uid->is8Bit() ? Identifier::fromString(vm, uid->span8()) : Identifier::fromString(vm, uid->span16()));
+    if (!entry || !(entry->attributes() & (PropertyAttribute::CellProperty | PropertyAttribute::ClassStructure | PropertyAttribute::PropertyCallback)))
+        return false;
+
+    {
+        DeferTerminationForAWhile deferScope(vm);
+        reifyStaticProperty(vm, info(), propertyName, *entry, *object);
+    }
+    if (vm.exceptionForInspection()) [[unlikely]]
+        return false;
+
+    unsigned attributes;
+    PropertyOffset offset = object->getDirectOffset(vm, propertyName, attributes);
+    ASSERT(isValidOffset(offset));
+    slot.setValue(object, attributes, object->getDirect(offset), offset);
+    return true;
+}
 
 } // namespace Zig

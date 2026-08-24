@@ -47,8 +47,6 @@
 #include "JSDOMConvertObject.h"
 #include "JSDOMConvertSequences.h"
 #include "JSMessagePort.h"
-#include "JSMessageChannel.h"
-#include "JSWorker.h"
 #include "MessagePortPipe.h"
 #include "JSBroadcastChannel.h"
 #include "JSStructuredSerializeOptions.h"
@@ -337,7 +335,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 17);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 13);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -352,12 +350,6 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 1, "setStdioPorts"_s, jsFunctionSetNodeWorkerStdioPorts, ImplementationVisibility::Public, NoIntrinsic));
-    // The intrinsic constructors, so worker_threads keeps working when user code
-    // replaces globalThis.MessagePort etc. before the module loads (#40268).
-    array->putDirectIndex(globalObject, 13, JSMessagePort::getConstructor(vm, globalObject));
-    array->putDirectIndex(globalObject, 14, JSMessageChannel::getConstructor(vm, globalObject));
-    array->putDirectIndex(globalObject, 15, JSBroadcastChannel::getConstructor(vm, globalObject));
-    array->putDirectIndex(globalObject, 16, JSWorker::getConstructor(vm, globalObject));
     return array;
 }
 

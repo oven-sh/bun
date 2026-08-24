@@ -23,20 +23,8 @@ using namespace JSC;
 // Keep this list sorted.
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro($$typeof) \
-    macro(AbortSignal) \
     macro(Buffer) \
-    macro(ReadableByteStreamController) \
-    macro(ReadableStream) \
-    macro(ReadableStreamBYOBReader) \
-    macro(ReadableStreamBYOBRequest) \
-    macro(ReadableStreamDefaultController) \
-    macro(ReadableStreamDefaultReader) \
     macro(SQL) \
-    macro(TransformStream) \
-    macro(TransformStreamDefaultController) \
-    macro(WritableStream) \
-    macro(WritableStreamDefaultController) \
-    macro(WritableStreamDefaultWriter) \
     macro(_debugInfo) \
     macro(_debugStack) \
     macro(_debugTask) \

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { symlinkSync } from "node:fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
 
 async function run(
   dir: string,

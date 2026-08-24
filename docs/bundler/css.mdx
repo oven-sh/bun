@@ -28,6 +28,16 @@ By default, Bun's CSS bundler targets the following browsers:
 - Safari 14+
 - Opera 67+
 
+To change this, pass [`cssTarget`](/bundler#csstarget) to `Bun.build` (or `--css-target` to `bun build`) with the oldest browsers you support. Syntax those browsers understand is emitted as written, without the fallbacks described below.
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./app.css"],
+  outdir: "./out",
+  cssTarget: ["chrome120", "safari17", "firefox120"],
+});
+```
+
 ## Syntax Lowering
 
 ### Nesting

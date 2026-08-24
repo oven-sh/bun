@@ -1209,6 +1209,9 @@ pub struct BundleOptions<'a> {
 
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
+    /// Explicit browser targets for CSS downleveling (the `cssTarget` build
+    /// option). `None` means derive the CSS targets from `target`.
+    pub css_target: Option<bun_css::Browsers>,
     pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
@@ -1433,6 +1436,7 @@ impl<'a> BundleOptions<'a> {
             output_format: self.output_format,
             tsconfig_override: self.tsconfig_override.clone(),
             target: self.target,
+            css_target: self.css_target,
             main_fields: self.main_fields.clone(),
             log: self.log,
             external: self.external.clone(),
@@ -1655,6 +1659,7 @@ impl<'a> BundleOptions<'a> {
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
+            css_target: None,
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),

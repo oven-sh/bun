@@ -1270,6 +1270,9 @@ pub struct LinkerOptions {
     pub(crate) min_chunk_size: u64,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
+    /// Explicit browser targets for CSS downleveling (the `cssTarget` build
+    /// option). `None` means derive the CSS targets from `target`.
+    pub(crate) css_target: Option<bun_css::Browsers>,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
@@ -1312,6 +1315,7 @@ impl Default for LinkerOptions {
             min_chunk_size: 0,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
+            css_target: None,
             compile_mode: CompileMode::None,
             metafile: false,
             metafile_json_path: b"",

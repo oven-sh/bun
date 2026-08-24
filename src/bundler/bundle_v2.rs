@@ -2929,6 +2929,7 @@ pub mod bv2_impl {
             this.linker.options.target = this.transpiler.options.target;
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
+            this.linker.options.generate_internal_module_bytecode = this.transpiler.options.bytecode && this.transpiler.options.compile_target_is_host;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.

@@ -784,8 +784,8 @@ export const byteStreamInternals = {
   ) => void,
 };
 
-/// How many internal modules (node:fs etc.) this process created from bytecode embedded by `bun build --compile
-/// --bytecode` instead of parsing their source.
+// How many internal modules (node:fs etc.) this process created from bytecode embedded by `bun build --compile
+// --bytecode` instead of parsing their source.
 export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "InternalModuleRegistry.cpp",
   "jsInternalModulesLoadedFromBytecode",

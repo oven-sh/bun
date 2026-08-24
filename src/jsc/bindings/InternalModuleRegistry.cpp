@@ -147,10 +147,7 @@ static WTF::String internalModuleSourceFromDisk(const WTF::String& moduleName, W
 
 JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString, uint32_t id)
 {
-    {
-        auto string = internalModuleSourceFromDisk(moduleName, WTF::move(fileBase));
-        return generateModule(globalObject, vm, string, moduleName, urlString, id);
-    }
+    return generateModule(globalObject, vm, internalModuleSourceFromDisk(moduleName, WTF::move(fileBase)), moduleName, urlString, id);
 }
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString, ID) \
     return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString, ID)

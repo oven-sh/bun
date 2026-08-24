@@ -96,7 +96,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       using dir = tempDir("build-compile-builtin-bytecode", {
         "app.js": `import { join } from "node:path";
 import http from "node:http";
-const { internalModulesLoadedFromBytecode } = require("bun:internal-for-testing");
+import { internalModulesLoadedFromBytecode } from "bun:internal-for-testing";
 const server = http.createServer(() => {});
 console.log(JSON.stringify({ joined: join("a", "b"), fromBytecode: internalModulesLoadedFromBytecode() }));
 server.close();`,

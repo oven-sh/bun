@@ -666,7 +666,7 @@ bitflags::bitflags! {
         /// After the source hashes: `u32 count`, then `count` × `{ u32 id, StringPointer bytes }` — ahead-of-time
         /// bytecode for internal modules (InternalModuleRegistry ids), read by InternalModuleRegistry::generateModule.
         const HAS_BUILTIN_BYTECODE          = 1 << 6;
-        // _padding: u26
+        // _padding: u25
     }
 }
 
@@ -762,12 +762,7 @@ impl StandaloneModuleGraph {
                     length: read_u32(record + 8),
                 };
                 // SAFETY: same provenance rules as `File::bytecode`: a writable subrange JSC may patch in place.
-                let bytes = unsafe {
-                    core::ptr::slice_from_raw_parts_mut(
-                        raw_ptr.add(pointer.offset as usize),
-                        pointer.length as usize,
-                    )
-                };
+                let bytes = unsafe { slice_to_mut(raw_ptr, raw_len, pointer) };
                 builtin_bytecode.push((id, bytes));
             }
         }

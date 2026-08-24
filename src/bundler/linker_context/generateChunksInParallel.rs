@@ -1338,7 +1338,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     let mut result = output_files.take();
-    if c.options.generate_bytecode_cache && c.options.compile_mode.is_executable() {
+    if c.options.generate_internal_module_bytecode && c.options.compile_mode.is_executable() {
         append_internal_module_bytecode(c, &mut result);
     }
     Ok(result)

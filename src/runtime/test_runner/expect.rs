@@ -699,11 +699,7 @@ impl Expect {
         let mut custom_label = bun_core::String::empty();
         if arguments.len() > 1 {
             if arguments[1].is_string() || arguments[1].implements_to_string(global_this)? {
-                let label = arguments[1].to_bun_string(global_this)?;
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
-                custom_label = label;
+                custom_label = arguments[1].to_bun_string(global_this)?;
             }
         }
 
@@ -1392,7 +1388,7 @@ impl Expect {
                     let type_name = if matcher_fn.is_null() {
                         bun_core::String::static_("null")
                     } else {
-                        bun_core::String::init(matcher_fn.js_type_string(global_this).get_zig_string(global_this))
+                        bun_core::String::init(matcher_fn.js_type_string(global_this).get_zig_string(global_this)?)
                     };
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "expect.extend: `{}` is not a valid matcher. Must be a function, is \"{}\"",
@@ -1927,7 +1923,7 @@ impl ExpectStatic {
     ) -> JsResult<JSValue> {
         //const this: *ExpectStatic = ExpectStatic.fromJS(callFrame.this());
         let instance_jsvalue = T::invoke(global_this, call_frame)?;
-        if !instance_jsvalue.is_empty() && !instance_jsvalue.is_any_error() {
+        if !instance_jsvalue.is_any_error() {
             let Some(instance) = T::from_js_ptr(instance_jsvalue) else {
                 return Err(global_this.throw_out_of_memory());
             };
@@ -2503,11 +2499,6 @@ impl ExpectAny {
         }
 
         let asymmetric_matcher_constructor_type = AsymmetricMatcherConstructorType::from_js(global_this, constructor)?;
-
-        // I don't think this case is possible, but just in case!
-        if global_this.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         let mut flags = Flags::default();
         flags.set_asymmetric_matcher_constructor_type(asymmetric_matcher_constructor_type);

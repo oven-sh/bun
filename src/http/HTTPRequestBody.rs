@@ -1,77 +1,100 @@
 use crate::SendFile;
 use crate::ThreadSafeStreamBuffer;
 
-/// Request body payload. Parameterized over `'a` so callers can hand in
-/// stack-/arena-borrowed bytes without erasing the lifetime to `&'static`
-/// at every `AsyncHTTP::init` call site.
-// No `Owned(Vec<u8>)` variant — the body is bitwise-copied across threads via
-// `core::ptr::read` in `start_queued_task`, so every arm must be
-// trivially-droppable.
+/// A request body as the caller supplies it: bytes it keeps alive for `'a`
+/// (the request's lifetime, see [`crate::AsyncHTTP`]), a file to send, or a
+/// stream it feeds.
 pub enum HTTPRequestBody<'a> {
-    /// Borrowed bytes — caller guarantees they outlive the request.
     Bytes(&'a [u8]),
     Sendfile(SendFile),
     Stream(Stream),
 }
 
+impl Default for HTTPRequestBody<'_> {
+    fn default() -> Self {
+        HTTPRequestBody::Bytes(b"")
+    }
+}
+
+impl HTTPRequestBody<'_> {
+    /// This body with the caller's `'a` erased into the promise every queued
+    /// request makes: the caller keeps the bytes alive until the terminal
+    /// result.
+    pub(crate) fn erase(self) -> Body {
+        match self {
+            HTTPRequestBody::Bytes(bytes) => Body::Bytes(bun_ptr::RawSlice::new(bytes)),
+            HTTPRequestBody::Sendfile(sendfile) => Body::Sendfile(sendfile),
+            HTTPRequestBody::Stream(stream) => Body::Stream(stream),
+        }
+    }
+}
+
+/// The HTTP thread's working copy of a request body (lifetime-erased: the
+/// caller keeps `Bytes` alive until the terminal result).
+pub(crate) enum Body {
+    Bytes(bun_ptr::RawSlice<u8>),
+    Sendfile(SendFile),
+    Stream(Stream),
+}
+
+impl Default for Body {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+/// The HTTP side's handle on a streamed request body: one counted reference
+/// on the shared buffer, released on drop / [`Stream::detach`].
 pub struct Stream {
-    // ThreadSafeStreamBuffer carries an *intrusive* atomic refcount and is
-    // round-tripped as a raw pointer between the main thread and the HTTP
-    // thread, so we keep the intrusive form (raw pointer + manual ref/deref)
-    // instead of `Arc<T>`.
-    pub buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
+    pub buffer: Option<bun_ptr::RefPtr<ThreadSafeStreamBuffer>>,
     pub ended: bool,
 }
 
 impl Stream {
-    /// The HTTP side of `buffer`: takes its own reference, released in
-    /// [`detach`](Self::detach).
+    /// Another handle on `buffer`, holding its own reference.
     pub fn attach(buffer: &bun_ptr::RefPtr<ThreadSafeStreamBuffer>) -> Stream {
         Stream {
-            buffer: core::ptr::NonNull::new(buffer.clone().into_raw()),
+            buffer: Some(buffer.dupe_ref()),
             ended: false,
         }
     }
 
-    /// Mutable access to the JS-side `ThreadSafeStreamBuffer` while attached.
-    ///
-    /// INVARIANT: while `buffer` is `Some`, this `Stream` holds an intrusive
-    /// ref on the `ThreadSafeStreamBuffer` (taken on attach, released in
-    /// `detach`); the buffer is a separate heap allocation that outlives the
-    /// returned borrow. HTTP-thread-only at the call sites, so the `&mut` is
-    /// the sole live borrow on this side of the lock.
     #[inline]
-    pub(crate) fn buffer_mut(&mut self) -> Option<&mut ThreadSafeStreamBuffer> {
-        // Route through the shared `from_attached` accessor (one centralised
-        // unsafe); see INVARIANT above.
-        self.buffer.map(ThreadSafeStreamBuffer::from_attached)
+    pub(crate) fn buffer(&self) -> Option<&ThreadSafeStreamBuffer> {
+        self.buffer.as_deref()
     }
 
     pub(crate) fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
-            // Intrusive refcount decrement.
-            // `buffer` is a live `ThreadSafeStreamBuffer::create` heap allocation;
-            // this side holds the intrusive ref taken at attach, released here.
-            ThreadSafeStreamBuffer::deref(buffer);
+            buffer.deref();
         }
     }
 }
 
-// No `Drop` for `Stream`: the body is bitwise-copied across threads
-// (`core::ptr::read` in `start_queued_task`), so auto-dropping the
-// JS-thread original would over-deref the shared buffer;
-// `HTTPRequestBody::deinit()` is explicit instead.
+impl Drop for Stream {
+    fn drop(&mut self) {
+        self.detach();
+    }
+}
 
-impl<'a> HTTPRequestBody<'a> {
-    /// `HTTPRequestBody.deinit()` — only the `Stream` arm owns a ref.
-    pub(crate) fn deinit(&mut self) {
-        if let HTTPRequestBody::Stream(stream) = self {
-            stream.detach();
+impl Body {
+    pub(crate) const EMPTY: Self = Body::Bytes(bun_ptr::RawSlice::EMPTY);
+
+    /// The HTTP thread's own handle on this body: the same bytes / file, or
+    /// another reference on the stream buffer.
+    pub(crate) fn clone_for_thread(&self) -> Self {
+        match self {
+            Body::Bytes(bytes) => Body::Bytes(*bytes),
+            Body::Sendfile(sendfile) => Body::Sendfile(*sendfile),
+            Body::Stream(stream) => Body::Stream(Stream {
+                buffer: stream.buffer.as_ref().map(|b| b.dupe_ref()),
+                ended: stream.ended,
+            }),
         }
     }
 
     pub(crate) fn is_stream(&self) -> bool {
-        matches!(self, HTTPRequestBody::Stream(_))
+        matches!(self, Body::Stream(_))
     }
 
     /// Borrow the in-memory byte payload, if any. `Sendfile` / `Stream` have no
@@ -79,17 +102,17 @@ impl<'a> HTTPRequestBody<'a> {
     /// reaching for this).
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
-            HTTPRequestBody::Bytes(bytes) => bytes,
+            Body::Bytes(bytes) => bytes.slice(),
             _ => b"",
         }
     }
 
     pub(crate) fn len(&self) -> usize {
         match self {
-            HTTPRequestBody::Bytes(bytes) => bytes.len(),
-            HTTPRequestBody::Sendfile(sendfile) => sendfile.content_size,
+            Body::Bytes(bytes) => bytes.len(),
+            Body::Sendfile(sendfile) => sendfile.content_size,
             // unknown amounts
-            HTTPRequestBody::Stream(_) => usize::MAX,
+            Body::Stream(_) => usize::MAX,
         }
     }
 }

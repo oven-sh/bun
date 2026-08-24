@@ -557,6 +557,90 @@ impl SSL {
             sk_X509_value(cert_chain, 0).as_mut()
         }
     }
+
+    /// Whether the handshake has completed.
+    pub fn is_init_finished(&self) -> bool {
+        // SAFETY: `self` is a live SSL.
+        unsafe { SSL_is_init_finished(self) != 0 }
+    }
+
+    /// Client-side connection setup: SNI (if given), the legacy-server-connect
+    /// option, the ALPN protocol list (wire format), and SCT/OCSP requests.
+    pub fn configure_client(&mut self, sni: Option<&core::ffi::CStr>, alpn_protos: &[u8]) {
+        // SAFETY: `self` is a live SSL; `sni` is NUL-terminated and copied by
+        // BoringSSL; `alpn_protos` is read for `len` bytes and copied.
+        unsafe {
+            if let Some(sni) = sni {
+                SSL_set_tlsext_host_name(self, sni.as_ptr());
+            }
+            SSL_clear_options(self, SSL_OP_LEGACY_SERVER_CONNECT);
+            SSL_set_options(self, SSL_OP_LEGACY_SERVER_CONNECT);
+            let rc = SSL_set_alpn_protos(self, alpn_protos.as_ptr(), alpn_protos.len());
+            debug_assert_eq!(rc, 0);
+            SSL_enable_signed_cert_timestamps(self);
+            SSL_enable_ocsp_stapling(self);
+        }
+    }
+
+    /// The ALPN protocol the handshake selected (empty if none).
+    pub fn alpn_selected(&self) -> &[u8] {
+        let mut proto: *const u8 = core::ptr::null();
+        let mut len: c_uint = 0;
+        // SAFETY: `self` is a live SSL; the out-params are locals; the result
+        // borrows the SSL's handshake state, which outlives `&self`.
+        unsafe {
+            SSL_get0_alpn_selected(self, &raw mut proto, &raw mut len);
+            bun_core::ffi::slice(proto, len as usize)
+        }
+    }
+
+    /// Offer `session` for resumption on this (pre-handshake) connection.
+    /// BoringSSL takes its own reference.
+    pub fn set_session(&mut self, session: &SslSession) {
+        // SAFETY: both are live; `SSL_set_session` up-refs `session`.
+        unsafe { SSL_set_session(self, session.0.as_ptr()) };
+    }
+}
+
+impl X509 {
+    /// This certificate, DER-encoded.
+    pub fn to_der(&mut self) -> Vec<u8> {
+        // SAFETY: `self` is a live X509; a null out-pointer asks for the size,
+        // then `i2d_X509` writes exactly that many bytes into `out`.
+        unsafe {
+            let size = i2d_X509(self, core::ptr::null_mut());
+            let Ok(len) = usize::try_from(size) else {
+                return Vec::new();
+            };
+            let mut out = vec![0u8; len];
+            let mut p = out.as_mut_ptr();
+            let written = i2d_X509(self, &raw mut p);
+            debug_assert_eq!(written, size);
+            out
+        }
+    }
+}
+
+/// One owned reference to an `SSL_SESSION`; `SSL_SESSION_free` on drop.
+#[repr(transparent)]
+pub struct SslSession(core::ptr::NonNull<SSL_SESSION>);
+
+impl SslSession {
+    /// Takes over the reference `raw` carries (e.g. the +1 a new-session
+    /// callback hands out); `None` when `raw` is null.
+    ///
+    /// # Safety
+    /// `raw` must be null or an `SSL_SESSION*` whose reference the caller gives up.
+    pub unsafe fn from_raw(raw: *mut SSL_SESSION) -> Option<Self> {
+        core::ptr::NonNull::new(raw).map(Self)
+    }
+}
+
+impl Drop for SslSession {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { SSL_SESSION_free(self.0.as_ptr()) }
+    }
 }
 
 impl Drop for GeneralNames {

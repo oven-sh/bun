@@ -176,7 +176,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_finish, (JSGlobalObject * globalObject, Ca
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+extern "C" size_t Bun__defaultMaxHttpHeaderSize();
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -200,7 +200,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
     }
 
     if (maxHttpHeaderSize == 0) {
-        maxHttpHeaderSize = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+        maxHttpHeaderSize = Bun__defaultMaxHttpHeaderSize();
     }
 
     if (callFrame->argumentCount() > 3) {

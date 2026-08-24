@@ -654,6 +654,109 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// The pointer-sized word at the start of the ext storage (what
+    /// [`connect_group`](Self::connect_group) and friends stamp the owner
+    /// into; every socket Bun creates carries at least that much ext). `None`
+    /// for transports without uSockets ext storage.
+    pub fn ext_word(&self) -> Option<*mut c_void> {
+        match self.socket {
+            InternalSocket::Connected(s) => Some(*sock(s).ext::<*mut c_void>()),
+            InternalSocket::Connecting(s) => Some(*conn(s).ext::<*mut c_void>()),
+            _ => None,
+        }
+    }
+
+    /// Overwrite the word [`ext_word`](Self::ext_word) reads. No-op for
+    /// transports without ext storage.
+    pub fn set_ext_word(&self, word: *mut c_void) {
+        match self.socket {
+            InternalSocket::Connected(s) => *sock(s).ext::<*mut c_void>() = word,
+            InternalSocket::Connecting(s) => *conn(s).ext::<*mut c_void>() = word,
+            _ => {}
+        }
+    }
+
+    /// [`connect_group`](Self::connect_group) through a [`SocketGroupCell`],
+    /// stamping the raw ext word `owner` (a pointer or tagged pointer the
+    /// caller's dispatcher decodes).
+    pub fn connect_group_tagged(
+        g: &crate::SocketGroupCell,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        raw_host: &[u8],
+        port: c_int,
+        owner: *mut c_void,
+        allow_half_open: bool,
+    ) -> Result<Self, ConnectError> {
+        let opts: c_int = if allow_half_open {
+            LIBUS_SOCKET_ALLOW_HALF_OPEN
+        } else {
+            0
+        };
+        // getaddrinfo doesn't understand bracketed IPv6 literals; URL parsing
+        // leaves them in (`[::1]`), so strip here like the old connectAnon did.
+        let host =
+            if raw_host.len() > 1 && raw_host[0] == b'[' && raw_host[raw_host.len() - 1] == b']' {
+                &raw_host[1..raw_host.len() - 1]
+            } else {
+                raw_host
+            };
+        let mut stack = [0u8; 256];
+        let heap: Vec<u8>;
+        let host_z: &core::ffi::CStr = if host.len() < stack.len() {
+            stack[..host.len()].copy_from_slice(host);
+            stack[host.len()] = 0;
+            ZStr::from_buf(&stack, host.len()).as_cstr()
+        } else {
+            heap = {
+                let mut v = Vec::with_capacity(host.len() + 1);
+                v.extend_from_slice(host);
+                v.push(0);
+                v
+            };
+            ZStr::from_slice_with_nul(&heap).as_cstr()
+        };
+        let ext_size = size_of::<*mut c_void>() as c_int;
+        let this = match g.connect(kind, ssl_ctx, host_z, port, opts, ext_size) {
+            ConnectResult::Failed => return Err(ConnectError::FailedToOpenSocket),
+            ConnectResult::Socket(s) => Self {
+                socket: InternalSocket::Connected(s),
+            },
+            ConnectResult::Connecting(cs) => Self {
+                socket: InternalSocket::Connecting(cs),
+            },
+        };
+        this.set_ext_word(owner);
+        Ok(this)
+    }
+
+    /// [`connect_unix_group`](Self::connect_unix_group) through a
+    /// [`SocketGroupCell`], stamping the raw ext word `owner`.
+    pub fn connect_unix_group_tagged(
+        g: &crate::SocketGroupCell,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        path: &[u8],
+        owner: *mut c_void,
+        allow_half_open: bool,
+    ) -> Result<Self, ConnectError> {
+        let opts: c_int = if allow_half_open {
+            LIBUS_SOCKET_ALLOW_HALF_OPEN
+        } else {
+            0
+        };
+        let ext_size = size_of::<*mut c_void>() as c_int;
+        let s = g.connect_unix(kind, ssl_ctx, path, opts, ext_size);
+        if s.is_null() {
+            return Err(ConnectError::FailedToOpenSocket);
+        }
+        let this = Self {
+            socket: InternalSocket::Connected(s),
+        };
+        this.set_ext_word(owner);
+        Ok(this)
+    }
+
     /// Underlying fd. Same fd regardless of TLS — read directly off the poll.
     #[inline]
     pub fn fd(&self) -> Fd {

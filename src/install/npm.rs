@@ -249,7 +249,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             ""
         },
         bstr::BStr::new(res.status_text()),
-        bun_fmt::redacted_npm_url(req.url.href),
+        bun_fmt::redacted_npm_url(req.url.href()),
     );
 
     if res.status_code() == 404

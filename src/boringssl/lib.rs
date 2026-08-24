@@ -56,6 +56,12 @@ std::thread_local! {
         const { Cell::new(ptr::null_mut()) };
 }
 
+/// Install the per-thread `CRYPTO_BUFFER_POOL` on an owned context.
+pub fn ssl_ctx_setup_owned(ctx: &boring::OwnedSslCtx) {
+    // SAFETY: `ctx` holds a live reference.
+    unsafe { ssl_ctx_setup(ctx.as_ptr()) }
+}
+
 /// Install the per-thread `CRYPTO_BUFFER_POOL`.
 ///
 /// # Safety

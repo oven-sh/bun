@@ -472,12 +472,6 @@ impl Order {
 pub mod internal {
     use core::ffi::c_void;
 
-    unsafe extern "C" {
-        // Defined in `bun_runtime::dns_jsc::internal` alongside the other
-        // `Bun__addrinfo_*` exports; resolved at link time.
-        fn Bun__addrinfo_registerQuic(request: *mut c_void, pc: *mut c_void);
-    }
-
     unsafe extern "Rust" {
         /// `bun.dns.internal.prefetch` — kick off an async DNS resolution for
         /// `(hostname, port)` so the result is cached by the time the connect
@@ -501,20 +495,5 @@ pub mod internal {
                 port,
             )
         }
-    }
-
-    /// Register `pc` to be notified when the addrinfo `request` resolves.
-    /// Mirrors `us_getaddrinfo_set` for the QUIC client connect path, which
-    /// has no `us_connecting_socket_t` to hang the callback on.
-    ///
-    /// SAFETY: `request` must be the live addrinfo request handle returned by
-    /// `us_quic_pending_connect_addrinfo`; `pc` must be a live
-    /// `bun_http::H3::PendingConnect` that stays valid until its
-    /// `on_dns_resolved[_threadsafe]` fires.
-    #[inline]
-    pub unsafe fn register_quic(request: *mut c_void, pc: *mut c_void) {
-        // SAFETY: forwarded to the runtime export; both pointers are opaque on
-        // this side of the crate boundary and re-typed by the callee.
-        unsafe { Bun__addrinfo_registerQuic(request, pc) }
     }
 }

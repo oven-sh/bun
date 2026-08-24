@@ -406,6 +406,7 @@ pub mod socket_context;
 pub mod socket_group;
 #[path = "SocketKind.rs"]
 pub mod socket_kind;
+pub mod ssl_session_sink;
 #[path = "thunk.rs"]
 pub mod thunk;
 // libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
@@ -478,7 +479,7 @@ pub use socket::{
 pub use internal_loop_data::InternalLoopData;
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
-pub use loop_::{Loop, NOW_NS_UNKNOWN, PosixLoop};
+pub use loop_::{Loop, LoopWaker, NOW_NS_UNKNOWN, PosixLoop};
 pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;
@@ -491,7 +492,8 @@ pub use response::c::uws_res;
 pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
-pub use socket_group::SocketGroup;
+pub use socket_group::{SocketGroup, SocketGroupCell};
+pub use ssl_session_sink::{SslSessionSink, set_session_sink};
 pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 

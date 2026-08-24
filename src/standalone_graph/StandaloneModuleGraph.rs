@@ -2240,8 +2240,7 @@ pub(crate) fn download_to_path(
                 http_proxy,
                 bun_http::FetchRedirect::Follow,
             ));
-            async_http.client.progress_node =
-                core::ptr::NonNull::new(core::ptr::from_mut(progress));
+            async_http.client.progress_node = Some(bun_http::ProgressRef::new(&*progress));
             async_http.client.flags.reject_unauthorized = reject_unauthorized;
             let send_result = async_http.send_sync(&mut compressed_archive_bytes);
 

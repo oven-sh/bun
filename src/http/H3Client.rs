@@ -10,7 +10,7 @@
 //! Layout mirrors `h2_client/`:
 //!   - `Stream`         — one in-flight request
 //!   - `ClientSession`  — one QUIC connection (pooled per origin)
-//!   - `ClientContext`  — process-global lsquic engine + session registry
+//!   - `ClientContext`  — per-thread lsquic engine + session registry
 //!   - `encode`         — request header/body framing onto a quic.Stream
 //!   - `callbacks`      — lsquic → Rust glue (on_hsk_done / on_stream_* / …)
 //!   - `PendingConnect` — DNS-pending connect resolution
@@ -39,11 +39,12 @@ bun_core::declare_scope!(h3_client, hidden);
 
 pub(crate) use client_context::ClientContext;
 pub use client_session::ClientSession;
+pub(crate) use pending_connect::DnsTicket;
 pub use pending_connect::PendingConnect;
 pub use stream::Stream;
 
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
-/// Incremented at allocation, decremented in deinit. Read from the JS thread
+/// Incremented at allocation, decremented on drop. Read from the JS thread
 /// via TestingAPIs.quicLiveCounts so they must be atomic.
 // Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
 // submodules share one identifier; SCREAMING_SNAKE aliases preserved for the

@@ -44,7 +44,7 @@
 #define strncasecmp _strnicmp
 #endif
 
-extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+extern "C" size_t Bun__defaultMaxHttpHeaderSize();
 extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS
@@ -608,7 +608,7 @@ struct HttpResponseData;
          * (llhttp parses nothing after such a message: HPE_CLOSED_CONNECTION). */
         bool nodeHttpSawConnectionClose = false;
 
-        const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+        const size_t MAX_FALLBACK_SIZE = Bun__defaultMaxHttpHeaderSize();
         /* maxHeaderSize bounds what llhttp counts (URL + field names/values), not framing
          * (method, " HTTP/1.1\r\n", ": ", "\r\n"). Raw bounds get that framing as slack so
          * we don't reject requests Node accepts. Finite: ≤UWS_HTTP_MAX_HEADERS_COUNT*4 + 64. */

@@ -5140,6 +5140,27 @@ pub mod c {
     ) -> c_int {
         unsafe { libc::sendfile(fd, s, off, nbytes, hdtr.cast(), sbytes, flags) }
     }
+    /// Darwin `sendfile` without header/trailer vectors: send up to `*len`
+    /// bytes of `file` starting at `off` to `socket`; `*len` is set to the
+    /// bytes sent even on `EINTR`/`EAGAIN`. Returns the raw `-1`/`0`.
+    #[cfg(target_os = "macos")]
+    pub fn sendfile_plain(file: c_int, socket: c_int, off: i64, len: &mut i64) -> c_int {
+        // SAFETY: `len` is a live local; no header/trailer struct is passed.
+        unsafe { libc::sendfile(file, socket, off, len, core::ptr::null_mut(), 0) }
+    }
+    /// FreeBSD `sendfile` without header/trailer vectors; `*sbytes` receives
+    /// the bytes sent. Returns the raw `-1`/`0`.
+    #[cfg(target_os = "freebsd")]
+    pub fn sendfile_plain(
+        file: c_int,
+        socket: c_int,
+        off: i64,
+        nbytes: usize,
+        sbytes: &mut i64,
+    ) -> c_int {
+        // SAFETY: `sbytes` is a live local; no header/trailer struct is passed.
+        unsafe { libc::sendfile(file, socket, off, nbytes, core::ptr::null_mut(), sbytes, 0) }
+    }
 
     // ── Darwin libproc — process introspection (`<libproc.h>`). ──
     /// `struct proc_bsdinfo` (PROC_PIDTBSDINFO flavour). Fields match the SDK
@@ -5404,6 +5425,14 @@ pub mod linux {
     pub unsafe fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut i64, count: usize) -> isize {
         // SAFETY: caller contract — `offset` is null or points to a live `i64`
         // the kernel may read and update.
+        unsafe { super::linux_syscall::sendfile(out_fd, in_fd, offset, count) }
+    }
+    /// `sendfile(out, in, &offset, count)`: reads `in_fd` from `*offset`
+    /// (updated to the new position) rather than its file offset. Raw
+    /// libc-convention return.
+    #[inline]
+    pub fn sendfile_at(out_fd: c_int, in_fd: c_int, offset: &mut i64, count: usize) -> isize {
+        // SAFETY: `offset` is a live exclusive `i64`.
         unsafe { super::linux_syscall::sendfile(out_fd, in_fd, offset, count) }
     }
     /// Raw `ppoll(fds, nfds, *timeout, *sigmask)`.

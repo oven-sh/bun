@@ -32,6 +32,17 @@ pub fn alloc<T>(value: T) -> *mut T {
     Box::into_raw(Box::new(value))
 }
 
+/// `Box::new(init())`, but with the heap slot allocated *before* `init` runs
+/// so its (large) result is written straight into place instead of being
+/// built on the stack and copied. `init` must be small enough to inline.
+#[inline(always)]
+pub fn new_with<T>(init: impl FnOnce() -> T) -> Box<T> {
+    let mut slot = Box::<T>::new_uninit();
+    slot.write(init());
+    // SAFETY: `write` just initialized the slot.
+    unsafe { slot.assume_init() }
+}
+
 /// Hand off an existing `Box<T>` as its raw pointer. Type-preserving — works
 /// for `Box<[T]>`, `Box<dyn Trait>`, etc. Pair with [`take`] or [`destroy`].
 ///

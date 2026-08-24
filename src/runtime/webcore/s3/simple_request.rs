@@ -204,6 +204,15 @@ enum ErrorType {
     Failure,
 }
 
+impl bun_http::RawResultCallback for S3HttpSimpleTask {
+    fn on_result(this: *mut Self, result: HTTPClientResult<'_>) {
+        Self::http_callback(this, result)
+    }
+    fn release_at_shutdown(this: *mut Self) {
+        Self::release_at_shutdown(this)
+    }
+}
+
 impl S3HttpSimpleTask {
     const HOLDS_TICKET: &str = "S3 request on the HTTP thread holds a ticket";
 
@@ -298,7 +307,7 @@ impl S3HttpSimpleTask {
         }
         debug_assert!(this.result.metadata.is_some());
         // reshaped for borrowck — borrow response once, dispatch on a copy of `callback`.
-        let response = &this.result.metadata.as_ref().unwrap().response;
+        let response = &this.result.metadata.as_ref().unwrap().response();
         match this.callback {
             Callback::Stat(callback) => match response.status_code {
                 200 => {
@@ -370,7 +379,7 @@ impl S3HttpSimpleTask {
             Callback::Part(callback) => {
                 let status = response.status_code;
                 if !this.fail_if_contains_error(status)? {
-                    let response = &this.result.metadata.as_ref().unwrap().response;
+                    let response = &this.result.metadata.as_ref().unwrap().response();
                     if let Some(etag) = response.headers.get(b"etag") {
                         callback(S3PartResult::Etag(etag), this.callback_context)?;
                     } else {
@@ -382,28 +391,13 @@ impl S3HttpSimpleTask {
         Ok(())
     }
 
-    fn stage_http_result(
-        &mut self,
-        async_http: *mut AsyncHTTP<'static>,
-        mut result: HTTPClientResult<'_>,
-    ) {
+    fn stage_http_result(&mut self, mut result: HTTPClientResult<'_>) {
         let previous_metadata = self.result.metadata.take();
         result.body_into(&mut self.response_buffer.list);
         self.result = result.into_owned();
         if self.result.metadata.is_none() {
             self.result.metadata = previous_metadata;
         }
-        // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
-        // `EntryList`s), so a plain `=` here would (a) drop the old `self.http`, freeing heap
-        // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still
-        // aliases, and (b) leave the http-thread side to drop them again → double-free. We
-        // instead write through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct
-        // overwrite with no destructor on either side. Ownership of the inner heap data
-        // conceptually transfers here; the http-thread side must free only its outer
-        // allocation (TrivialDeinit).
-        // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
-        // `self.http` was previously initialised in `execute_simple_s3_request`.
-        unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
     }
 
     /// this is the AsyncHTTP callback and is always called from the HTTPThread
@@ -416,15 +410,11 @@ impl S3HttpSimpleTask {
     // `HTTPClientResultCallback` entrypoint: invoked by the HTTP thread with the raw task and
     // request pointers it captured at schedule time, both non-null by construction.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn http_callback(
-        this: *mut Self,
-        async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult<'_>,
-    ) {
+    pub(crate) fn http_callback(this: *mut Self, result: HTTPClientResult<'_>) {
         let is_done = !result.has_more;
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned
         // by the HTTP thread until the handoff below; this borrow is scoped to the call.
-        unsafe { (*this).stage_http_result(async_http, result) };
+        unsafe { (*this).stage_http_result(result) };
         if is_done {
             // SAFETY: same exclusivity as above; the queue takes ownership of the inline
             // `concurrent_task` field's `next` link. The ticket is moved out first: the
@@ -445,8 +435,7 @@ impl S3HttpSimpleTask {
     ///
     /// # Safety
     /// `this` is the live task registered with the callback; HTTP thread parked.
-    pub(crate) unsafe fn release_at_shutdown(this: *mut ()) {
-        let this = this.cast::<Self>();
+    pub(crate) fn release_at_shutdown(this: *mut Self) {
         // SAFETY: fn contract — nothing else touches the task now.
         unsafe {
             (*this).result.fail = Some(bun_http::Error::Aborted);
@@ -478,7 +467,9 @@ impl S3HttpSimpleTask {
         let http = unsafe { self.http.assume_init_mut() };
         http.clear_data();
         http.request_headers = Default::default();
-        http.client.header_entries = Default::default();
+        if http.client.is_present() {
+            http.client.header_entries = Default::default();
+        }
     }
 }
 
@@ -672,13 +663,7 @@ pub(crate) fn execute_simple_s3_request(
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
         body,
-        HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
-            // the HTTP thread as a live pointer for the duration of the callback.
-            S3HttpSimpleTask::http_callback,
-            S3HttpSimpleTask::release_at_shutdown,
-        ),
+        HTTPClientResultCallback::new::<S3HttpSimpleTask>(task_ptr),
         FetchRedirect::Follow,
         HttpOptions {
             http_proxy,

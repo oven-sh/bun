@@ -2,32 +2,31 @@
 //! JSC-dependent constructors (from_js / from_generated / read_from_blob /
 //! handle_path / handle_file*) stay in bun_runtime (tier-6, Pass C).
 
-use core::ffi::{CStr, c_char};
+use core::ffi::CStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
+use bun_core::SecretCString;
 use bun_uws as uws;
 // Wyhash final4 variant. NOT `Wyhash11`.
 use bun_threading::Guarded as Mutex;
 use bun_wyhash::Wyhash;
 
-/// Owned, NUL-terminated C-string slice. The
-/// pointer is heap-owned (allocated via `dupeZ`); freed via
-/// `free_sensitive` in `deinit`.
-type CStrPtr = *const c_char;
-/// Owned slice of owned C strings.
-type CStrSlice = Option<Box<[CStrPtr]>>;
+/// An owned, zeroed-on-free C string field (`None` = unset).
+pub type CStrField = Option<SecretCString>;
+/// An owned list of owned C strings (`None` = unset).
+pub type CStrSlice = Option<Box<[SecretCString]>>;
 
 pub struct SSLConfig {
-    pub server_name: CStrPtr,
+    pub server_name: CStrField,
 
-    pub key_file_name: CStrPtr,
-    pub cert_file_name: CStrPtr,
+    pub key_file_name: CStrField,
+    pub cert_file_name: CStrField,
 
-    pub ca_file_name: CStrPtr,
-    pub dh_params_file_name: CStrPtr,
+    pub ca_file_name: CStrField,
+    pub dh_params_file_name: CStrField,
 
-    pub passphrase: CStrPtr,
+    pub passphrase: CStrField,
 
     pub key: CStrSlice,
     pub cert: CStrSlice,
@@ -37,15 +36,15 @@ pub struct SSLConfig {
     pub secure_options: u32,
     pub session_timeout: i32,
     pub allow_partial_trust_chain: bool,
-    pub sigalgs: CStrPtr,
-    pub ecdh_curve: CStrPtr,
+    pub sigalgs: CStrField,
+    pub ecdh_curve: CStrField,
     /// Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
     pub ssl_min_version: i32,
     pub ssl_max_version: i32,
     pub request_cert: i32,
     pub reject_unauthorized: i32,
-    pub ssl_ciphers: CStrPtr,
-    pub protos: CStrPtr,
+    pub ssl_ciphers: CStrField,
+    pub protos: CStrField,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
     pub requires_custom_request_ctx: bool,
@@ -92,14 +91,26 @@ impl core::ops::Deref for SharedPtr {
     }
 }
 
+#[inline]
+fn field_ptr(field: &CStrField) -> *const core::ffi::c_char {
+    field
+        .as_ref()
+        .map_or(core::ptr::null(), SecretCString::as_ptr)
+}
+
+#[inline]
+fn field_bytes(field: &CStrField) -> Option<&[u8]> {
+    field.as_ref().map(SecretCString::as_bytes)
+}
+
 impl SSLConfig {
     pub(crate) const ZERO: SSLConfig = SSLConfig {
-        server_name: core::ptr::null(),
-        key_file_name: core::ptr::null(),
-        cert_file_name: core::ptr::null(),
-        ca_file_name: core::ptr::null(),
-        dh_params_file_name: core::ptr::null(),
-        passphrase: core::ptr::null(),
+        server_name: None,
+        key_file_name: None,
+        cert_file_name: None,
+        ca_file_name: None,
+        dh_params_file_name: None,
+        passphrase: None,
         key: None,
         cert: None,
         ca: None,
@@ -107,14 +118,14 @@ impl SSLConfig {
         secure_options: 0,
         session_timeout: 0,
         allow_partial_trust_chain: false,
-        sigalgs: core::ptr::null(),
-        ecdh_curve: core::ptr::null(),
+        sigalgs: None,
+        ecdh_curve: None,
         ssl_min_version: 0,
         ssl_max_version: 0,
         request_cert: 0,
         reject_unauthorized: 0,
-        ssl_ciphers: core::ptr::null(),
-        protos: core::ptr::null(),
+        ssl_ciphers: None,
+        protos: None,
         client_renegotiation_limit: 0,
         client_renegotiation_window: 0,
         requires_custom_request_ctx: false,
@@ -128,36 +139,22 @@ impl SSLConfig {
         Self::default()
     }
 
-    /// Borrow `server_name` as a `&CStr` (None if null). Convenience accessor
-    /// for callers that previously pattern-matched `Option<CString>`.
+    /// Borrow `server_name` as a `&CStr` (None if unset).
     #[inline]
     pub fn server_name_cstr(&self) -> Option<&CStr> {
-        if self.server_name.is_null() {
-            None
-        } else {
-            // SAFETY: see `cstr_bytes` invariant — heap-owned, NUL-terminated.
-            Some(unsafe { CStr::from_ptr(self.server_name) })
-        }
+        self.server_name.as_ref().map(SecretCString::as_cstr)
     }
 
-    /// Borrow `server_name` as bytes (no trailing NUL). None if null.
+    /// Borrow `server_name` as bytes (no trailing NUL). None if unset.
     #[inline]
     pub fn server_name_bytes(&self) -> Option<&[u8]> {
-        if self.server_name.is_null() {
-            None
-        } else {
-            Some(cstr_bytes(self.server_name))
-        }
+        field_bytes(&self.server_name)
     }
 
-    /// Borrow `protos` as bytes (no trailing NUL). None if null.
+    /// Borrow `protos` as bytes (no trailing NUL). None if unset.
     #[inline]
     pub fn protos_bytes(&self) -> Option<&[u8]> {
-        if self.protos.is_null() {
-            None
-        } else {
-            Some(cstr_bytes(self.protos))
-        }
+        field_bytes(&self.protos)
     }
 
     /// Extract the raw `*const SSLConfig` from an optional shared handle for
@@ -170,42 +167,32 @@ impl SSLConfig {
         maybe_shared.map(|s| &raw const **s)
     }
 
+    /// The uSockets view of this config. Every pointer in it borrows `self`.
     pub fn as_usockets(&self) -> uws::socket_context::BunSocketContextOptions {
-        let mut ctx_opts = uws::socket_context::BunSocketContextOptions::default();
-
-        if !self.key_file_name.is_null() {
-            ctx_opts.key_file_name = self.key_file_name;
-        }
-        if !self.cert_file_name.is_null() {
-            ctx_opts.cert_file_name = self.cert_file_name;
-        }
-        if !self.ca_file_name.is_null() {
-            ctx_opts.ca_file_name = self.ca_file_name;
-        }
-        if !self.dh_params_file_name.is_null() {
-            ctx_opts.dh_params_file_name = self.dh_params_file_name;
-        }
-        if !self.passphrase.is_null() {
-            ctx_opts.passphrase = self.passphrase;
-        }
-        ctx_opts.ssl_prefer_low_memory_usage = i32::from(self.low_memory_mode);
+        let mut ctx_opts = uws::socket_context::BunSocketContextOptions {
+            key_file_name: field_ptr(&self.key_file_name),
+            cert_file_name: field_ptr(&self.cert_file_name),
+            ca_file_name: field_ptr(&self.ca_file_name),
+            dh_params_file_name: field_ptr(&self.dh_params_file_name),
+            passphrase: field_ptr(&self.passphrase),
+            ssl_prefer_low_memory_usage: i32::from(self.low_memory_mode),
+            ..Default::default()
+        };
 
         if let Some(key) = &self.key {
-            ctx_opts.key = key.as_ptr();
+            ctx_opts.key = SecretCString::slice_as_ptr(key);
             ctx_opts.key_count = key.len() as u32;
         }
         if let Some(cert) = &self.cert {
-            ctx_opts.cert = cert.as_ptr();
+            ctx_opts.cert = SecretCString::slice_as_ptr(cert);
             ctx_opts.cert_count = cert.len() as u32;
         }
         if let Some(ca) = &self.ca {
-            ctx_opts.ca = ca.as_ptr();
+            ctx_opts.ca = SecretCString::slice_as_ptr(ca);
             ctx_opts.ca_count = ca.len() as u32;
         }
 
-        if !self.ssl_ciphers.is_null() {
-            ctx_opts.ssl_ciphers = self.ssl_ciphers;
-        }
+        ctx_opts.ssl_ciphers = field_ptr(&self.ssl_ciphers);
         ctx_opts.request_cert = self.request_cert;
         ctx_opts.reject_unauthorized = self.reject_unauthorized;
         ctx_opts.ssl_min_version = self.ssl_min_version;
@@ -215,14 +202,10 @@ impl SSLConfig {
         ctx_opts.client_renegotiation_window = self.client_renegotiation_window;
         ctx_opts.session_timeout = self.session_timeout;
         ctx_opts.allow_partial_trust_chain = i32::from(self.allow_partial_trust_chain);
-        if !self.sigalgs.is_null() {
-            ctx_opts.sigalgs = self.sigalgs;
-        }
-        if !self.ecdh_curve.is_null() {
-            ctx_opts.ecdh_curve = self.ecdh_curve;
-        }
+        ctx_opts.sigalgs = field_ptr(&self.sigalgs);
+        ctx_opts.ecdh_curve = field_ptr(&self.ecdh_curve);
         if let Some(crl) = &self.crl {
-            ctx_opts.crl = crl.as_ptr();
+            ctx_opts.crl = SecretCString::slice_as_ptr(crl);
             ctx_opts.crl_count = crl.len() as u32;
         }
 
@@ -254,7 +237,7 @@ impl SSLConfig {
     pub(crate) fn is_same(&self, other: &SSLConfig) -> bool {
         macro_rules! eq_cstr {
             ($f:ident) => {
-                if !cstr_eq(self.$f, other.$f) {
+                if !cstr_eq(&self.$f, &other.$f) {
                     return false;
                 }
             };
@@ -267,7 +250,7 @@ impl SSLConfig {
                             return false;
                         }
                         for (x, y) in a.iter().zip(b.iter()) {
-                            if !cstr_eq(*x, *y) {
+                            if !bun_core::strings::eql_long(x.as_bytes(), y.as_bytes(), true) {
                                 return false;
                             }
                         }
@@ -341,8 +324,8 @@ impl SSLConfig {
         let mut hasher = Wyhash::init(0);
         macro_rules! hash_cstr {
             ($f:ident) => {
-                if !self.$f.is_null() {
-                    hasher.update(cstr_bytes(self.$f));
+                if let Some(s) = &self.$f {
+                    hasher.update(s.as_bytes());
                 }
                 hasher.update(&[0]);
             };
@@ -351,7 +334,7 @@ impl SSLConfig {
             ($f:ident) => {
                 if let Some(slice) = &self.$f {
                     for s in slice.iter() {
-                        hasher.update(cstr_bytes(*s));
+                        hasher.update(s.as_bytes());
                         hasher.update(&[0]);
                     }
                 }
@@ -402,49 +385,32 @@ impl SSLConfig {
     /// check fails).
     pub(crate) fn deinit(&mut self) {
         global_registry::remove(self);
-        free_string(&mut self.server_name);
-        free_string(&mut self.key_file_name);
-        free_string(&mut self.cert_file_name);
-        free_string(&mut self.ca_file_name);
-        free_string(&mut self.dh_params_file_name);
-        free_string(&mut self.passphrase);
-        free_strings(&mut self.key);
-        free_strings(&mut self.cert);
-        free_strings(&mut self.ca);
-        free_strings(&mut self.crl);
-        free_string(&mut self.sigalgs);
-        free_string(&mut self.ecdh_curve);
-        free_string(&mut self.ssl_ciphers);
-        free_string(&mut self.protos);
+        self.server_name = None;
+        self.key_file_name = None;
+        self.cert_file_name = None;
+        self.ca_file_name = None;
+        self.dh_params_file_name = None;
+        self.passphrase = None;
+        self.key = None;
+        self.cert = None;
+        self.ca = None;
+        self.crl = None;
+        self.sigalgs = None;
+        self.ecdh_curve = None;
+        self.ssl_ciphers = None;
+        self.protos = None;
     }
 
     pub fn take_protos(&mut self) -> Option<Box<[u8]>> {
-        if self.protos.is_null() {
-            return None;
-        }
-        let p = core::mem::replace(&mut self.protos, core::ptr::null());
-        let bytes = cstr_bytes(p);
-        // Copy rather than reuse the allocation in place:
-        // `Box<[u8]>` must own a global-allocator allocation of exactly `len`
-        // bytes, which the NUL-terminated `dupe_z` allocation is not.
-        let owned = bytes.to_vec().into_boxed_slice();
-        // SAFETY: `p` was `dupe_z`-allocated when this config was built and
-        // taken (replaced with null) above — sole owner, NUL-terminated.
-        unsafe { bun_core::free_sensitive(p) };
-        Some(owned)
+        self.protos
+            .take()
+            .map(|p| p.as_bytes().to_vec().into_boxed_slice())
     }
 
     pub fn take_server_name(&mut self) -> Option<Box<[u8]>> {
-        if self.server_name.is_null() {
-            return None;
-        }
-        let p = core::mem::replace(&mut self.server_name, core::ptr::null());
-        let bytes = cstr_bytes(p);
-        let owned = bytes.to_vec().into_boxed_slice();
-        // SAFETY: `p` was `dupe_z`-allocated when this config was built and
-        // taken (replaced with null) above — sole owner, NUL-terminated.
-        unsafe { bun_core::free_sensitive(p) };
-        Some(owned)
+        self.server_name
+            .take()
+            .map(|p| p.as_bytes().to_vec().into_boxed_slice())
     }
 }
 
@@ -457,27 +423,27 @@ impl Default for SSLConfig {
 impl Clone for SSLConfig {
     fn clone(&self) -> Self {
         Self {
-            server_name: clone_string(self.server_name),
-            key_file_name: clone_string(self.key_file_name),
-            cert_file_name: clone_string(self.cert_file_name),
-            ca_file_name: clone_string(self.ca_file_name),
-            dh_params_file_name: clone_string(self.dh_params_file_name),
-            passphrase: clone_string(self.passphrase),
-            key: clone_strings(&self.key),
-            cert: clone_strings(&self.cert),
-            ca: clone_strings(&self.ca),
-            crl: clone_strings(&self.crl),
+            server_name: self.server_name.clone(),
+            key_file_name: self.key_file_name.clone(),
+            cert_file_name: self.cert_file_name.clone(),
+            ca_file_name: self.ca_file_name.clone(),
+            dh_params_file_name: self.dh_params_file_name.clone(),
+            passphrase: self.passphrase.clone(),
+            key: self.key.clone(),
+            cert: self.cert.clone(),
+            ca: self.ca.clone(),
+            crl: self.crl.clone(),
             secure_options: self.secure_options,
             session_timeout: self.session_timeout,
             allow_partial_trust_chain: self.allow_partial_trust_chain,
-            sigalgs: clone_string(self.sigalgs),
-            ecdh_curve: clone_string(self.ecdh_curve),
+            sigalgs: self.sigalgs.clone(),
+            ecdh_curve: self.ecdh_curve.clone(),
             ssl_min_version: self.ssl_min_version,
             ssl_max_version: self.ssl_max_version,
             request_cert: self.request_cert,
             reject_unauthorized: self.reject_unauthorized,
-            ssl_ciphers: clone_string(self.ssl_ciphers),
-            protos: clone_string(self.protos),
+            ssl_ciphers: self.ssl_ciphers.clone(),
+            protos: self.protos.clone(),
             client_renegotiation_limit: self.client_renegotiation_limit,
             client_renegotiation_window: self.client_renegotiation_window,
             requires_custom_request_ctx: self.requires_custom_request_ctx,
@@ -494,71 +460,13 @@ impl Drop for SSLConfig {
     }
 }
 
-// SAFETY: all raw pointers are heap-owned C strings with no interior
-// shared mutable state; cross-thread transfer is safe.
-unsafe impl Send for SSLConfig {}
-// SAFETY: the raw-pointer fields are only read (never written) through `&self`
-// and point to heap-owned immutable C strings; the sole interior-mutable field
-// (`cached_hash`) is an `AtomicU64`, which is itself `Sync`.
-unsafe impl Sync for SSLConfig {}
-
-/// Borrow a non-null, heap-owned, NUL-terminated C string field as bytes.
-///
-/// INVARIANT: every `CStrPtr` stored on an `SSLConfig` (or in a `CStrSlice`)
-/// was produced by `clone_string` / `dupe_z` / `bun_core::dupe_z` (the TLS
-/// option parser) — all NUL-terminate — and remains valid for as long as the
-/// owning `SSLConfig` is alive. Centralises the `unsafe { ffi::cstr(..) }`
-/// upgrade so the SAFETY argument lives in one place.
-#[inline]
-fn cstr_bytes<'a>(p: CStrPtr) -> &'a [u8] {
-    debug_assert!(!p.is_null());
-    // SAFETY: see fn doc — `p` is a live, NUL-terminated, owned C string.
-    unsafe { bun_core::ffi::cstr(p) }.to_bytes()
-}
-
-fn cstr_eq(a: CStrPtr, b: CStrPtr) -> bool {
-    match (a.is_null(), b.is_null()) {
-        (true, true) => true,
-        (false, false) => bun_core::strings::eql_long(cstr_bytes(a), cstr_bytes(b), true),
+fn cstr_eq(a: &CStrField, b: &CStrField) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => bun_core::strings::eql_long(a.as_bytes(), b.as_bytes(), true),
         _ => false,
     }
 }
-
-fn free_strings(slice: &mut CStrSlice) {
-    if let Some(inner) = slice.take() {
-        for s in inner.iter() {
-            // SAFETY: each entry is a `dupe_z` allocation owned by this config;
-            // the slice was `take`n so this is the final owner.
-            unsafe { bun_core::free_sensitive(*s) };
-        }
-    }
-}
-
-fn free_string(s: &mut CStrPtr) {
-    if s.is_null() {
-        return;
-    }
-    // SAFETY: `*s` is a `dupe_z` allocation owned by this config; replaced with
-    // null so no alias remains.
-    unsafe { bun_core::free_sensitive(core::mem::replace(s, core::ptr::null())) };
-}
-
-fn clone_strings(slice: &CStrSlice) -> CStrSlice {
-    let inner = slice.as_ref()?;
-    let mut out = Vec::with_capacity(inner.len());
-    for s in inner.iter() {
-        out.push(clone_string(*s));
-    }
-    Some(out.into_boxed_slice())
-}
-
-fn clone_string(s: CStrPtr) -> CStrPtr {
-    if s.is_null() {
-        return core::ptr::null();
-    }
-    bun_core::dupe_z(cstr_bytes(s))
-}
-
 /// Weak dedup cache. Each map entry stores a weak pointer on its key's
 /// backing allocation. `upgrade()` on that weak pointer is memory-safe
 /// because the weak ref keeps the allocation alive (even if strong==0 and

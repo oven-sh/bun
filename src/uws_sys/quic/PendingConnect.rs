@@ -19,11 +19,24 @@ unsafe extern "C" {
     safe fn us_quic_pending_connect_addrinfo(pc: &mut PendingConnect) -> *mut c_void;
     safe fn us_quic_pending_connect_resolved(pc: &mut PendingConnect) -> *mut Socket;
     safe fn us_quic_pending_connect_cancel(pc: &mut PendingConnect);
+    /// `bun_runtime`'s DNS cache: call `bun_http`'s
+    /// `H3::PendingConnect::on_dns_resolved[_threadsafe](token)` once
+    /// `request` resolves. `token` is opaque to both sides in between.
+    fn Bun__addrinfo_registerQuic(request: *mut c_void, token: *mut c_void);
 }
 
 impl PendingConnect {
     pub fn addrinfo(&mut self) -> *mut c_void {
         us_quic_pending_connect_addrinfo(self)
+    }
+
+    /// Have the DNS layer report this connect's resolution with `token` (an
+    /// opaque value it hands back verbatim, never dereferenced).
+    pub fn notify_on_resolve(&mut self, token: *mut c_void) {
+        let request = self.addrinfo();
+        // SAFETY: `request` is this pending connect's live addrinfo request;
+        // `token` is only ever passed back, not dereferenced.
+        unsafe { Bun__addrinfo_registerQuic(request, token) }
     }
 
     pub fn resolved(&mut self) -> Option<&mut Socket> {

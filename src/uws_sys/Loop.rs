@@ -531,6 +531,39 @@ mod c {
 // receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
 
+/// Wakes one thread's uSockets loop from any thread (`us_wakeup_loop` signals
+/// an eventfd / kqueue user event / `uv_async_t`, all thread-safe). Holds the
+/// loop's address only: a thread's loop is freed solely by
+/// [`free_thread_loop`], whose caller must first make sure no `LoopWaker` for
+/// it is still held; a thread that parks or exits without calling it leaves
+/// its loop allocated.
+#[derive(Clone, Copy)]
+pub struct LoopWaker(core::ptr::NonNull<Loop>);
+
+// SAFETY: the only operation is `us_wakeup_loop`, which is thread-safe; the
+// pointee's lifetime is the `free_thread_loop` contract above.
+unsafe impl Send for LoopWaker {}
+// SAFETY: as above.
+unsafe impl Sync for LoopWaker {}
+
+impl LoopWaker {
+    /// A waker for the calling thread's loop (created on first use).
+    pub fn for_current_thread() -> Self {
+        Self(core::ptr::NonNull::new(Loop::get()).expect("uws_get_loop"))
+    }
+
+    /// The loop this wakes, for same-thread APIs that take the raw loop
+    /// (`SocketGroup::init`, the QUIC client context).
+    pub fn loop_ptr(&self) -> *mut Loop {
+        self.0.as_ptr()
+    }
+
+    pub fn wake(&self) {
+        // SAFETY: see the type-level contract; no `&`/`&mut Loop` is formed.
+        unsafe { us_wakeup_loop(self.0.as_ptr()) }
+    }
+}
+
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.
     safe fn bun_free_loop_at_thread_exit();
@@ -538,8 +571,9 @@ unsafe extern "C" {
 
 /// Frees this thread's uws loop (its socket groups, timers and — where uSockets
 /// created it — the native loop). Call when a thread that ran a uws loop (a
-/// Worker) exits, after everything registered on the loop is gone. On Windows
-/// the loop borrows the thread's libuv loop; close that afterwards.
+/// Worker) exits, after everything registered on the loop is gone and no
+/// [`LoopWaker`] for it remains. On Windows the loop borrows the thread's
+/// libuv loop; close that afterwards.
 pub fn free_thread_loop() {
     bun_free_loop_at_thread_exit()
 }

@@ -83,7 +83,10 @@ impl Bytecode {
     /// Borrowed from memory the caller guarantees is never freed or unmapped for the rest of the process
     /// (the executable's module graph section, NodeCompileCache's retired blobs).
     pub fn persistent(bytes: &[u8]) -> Self {
-        Self { persistent: !bytes.is_empty(), ..Self::borrowed(bytes) }
+        Self {
+            persistent: !bytes.is_empty(),
+            ..Self::borrowed(bytes)
+        }
     }
     pub fn owned(bytes: Box<[u8]>) -> Self {
         if bytes.is_empty() {

@@ -526,9 +526,7 @@ pub mod ssl_wrapper {
             Ok(this)
         }
 
-        /// The `SSL_CTX` this wrapper's `SSL` was created from. Private to the
-        /// wrapper (not shared with any socket group), so context-wide settings
-        /// that BoringSSL reads at handshake time can still be applied to it.
+        /// The wrapper-private `SSL_CTX` its `SSL` was created from.
         pub fn ssl_ctx(&self) -> Option<NonNull<boring_sys::SSL_CTX>> {
             self.ctx.get()
         }

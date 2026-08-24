@@ -1,6 +1,4 @@
-//! ClientHello fingerprint control for the fetch client: [`Ja3`] parses a JA3
-//! string into BoringSSL terms (strictly: what BoringSSL cannot send is an
-//! error), and [`apply_to_ssl_ctx`] / [`apply_to_ssl`] make the calls.
+//! ClientHello fingerprint control for the fetch client: JA3 parsing and the BoringSSL calls.
 
 use core::ffi::c_int;
 use core::fmt;
@@ -73,11 +71,14 @@ impl fmt::Display for Ja3Error {
                     "{field} must be dash-separated decimal numbers in 0..65535"
                 )
             }
-            Self::Version(v) => write!(f, "unsupported TLS version {v} (expected 769 to 772)"),
+            Self::Version(v) => write!(
+                f,
+                "unsupported TLS version {v} (the ClientHello version field is 771 for TLS 1.2 and 1.3 clients)"
+            ),
             Self::NoCiphers => f.write_str("the cipher list is empty"),
             Self::Cipher(id) => write!(f, "cipher suite {id} is not supported by BoringSSL"),
             Self::Tls13Ciphers => f.write_str(
-                "TLS 1.3 cipher suites must be listed as 4865-4866-4867 or 4867-4865-4866",
+                "TLS 1.3 cipher suites must lead the list as 4865-4866-4867 or 4867-4865-4866",
             ),
             Self::Extension(id) => {
                 write!(f, "extension {id} cannot be sent by BoringSSL")
@@ -88,8 +89,7 @@ impl fmt::Display for Ja3Error {
     }
 }
 
-/// A JA3 string in BoringSSL terms. Versions are 0 when the string leaves
-/// them to the default; the lists are colon-separated names, empty when unset.
+/// A JA3 string in BoringSSL terms: 0 versions and empty lists mean "default".
 #[derive(Debug, Default)]
 pub struct Ja3 {
     pub min_version: u16,
@@ -145,7 +145,8 @@ impl Ja3 {
         let [version] = ids[..] else {
             return Err(Ja3Error::Number { field: "version" });
         };
-        if !(ssl::TLS1_VERSION..=ssl::TLS1_3_VERSION).contains(&version) {
+        // BoringSSL always writes 0x0303 as the legacy version, so only 771 can be reproduced.
+        if version != ssl::TLS1_2_VERSION {
             return Err(Ja3Error::Version(version));
         }
 
@@ -165,6 +166,10 @@ impl Ja3 {
                 id,
                 TLS_AES_128_GCM_SHA256 | TLS_AES_256_GCM_SHA384 | TLS_CHACHA20_POLY1305_SHA256
             ) {
+                // BoringSSL writes the TLS 1.3 suites before the configured list.
+                if has_tls12 {
+                    return Err(Ja3Error::Tls13Ciphers);
+                }
                 tls13.push(id);
                 continue;
             }
@@ -201,10 +206,6 @@ impl Ja3 {
             (false, false) => this.min_version = ssl::TLS1_3_VERSION,
             (true, true) => this.max_version = ssl::TLS1_2_VERSION,
             (true, false) => {}
-        }
-        // legacy_version is 771 for every TLS 1.2+ client; only lower values carry information.
-        if has_tls12 && version < ssl::TLS1_2_VERSION {
-            this.min_version = version;
         }
 
         // Extensions: toggles set a flag, the ones BoringSSL always sends pass through.
@@ -275,8 +276,7 @@ impl Ja3 {
     }
 }
 
-/// The settings BoringSSL only exposes on the `SSL_CTX`. Both are read at
-/// handshake time, so an `SSL` may already exist on `ctx`.
+/// The `SSL_CTX`-only settings; both are read at handshake time.
 ///
 /// # Safety
 /// `ctx` must be a live `SSL_CTX*` on which no handshake has started.
@@ -338,8 +338,7 @@ pub unsafe fn apply_to_ssl(ssl_ptr: *mut ssl::SSL, fp: &Fingerprint) {
     }
 }
 
-// ── compress_certificate (RFC 8879) decompression callbacks ──────────────
-// Each decoder writes into a buffer bounded by the announced `uncompressed_len`.
+// ── compress_certificate (RFC 8879) decompression callbacks, output bounded by `uncompressed_len` ──
 
 /// Wraps `out` in a `CRYPTO_BUFFER` when it is exactly `uncompressed_len` bytes.
 ///

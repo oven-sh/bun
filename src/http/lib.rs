@@ -1145,9 +1145,7 @@ pub enum AlpnOffer {
     H1OrH2,
 }
 
-/// Sets SNI (when `hostname` is non-empty), the ALPN list for `offer` and the
-/// per-connection ClientHello knobs from `fingerprint`. Called from `on_open`
-/// for every TLS socket, IP literals included (null SNI, ALPN still advertised).
+/// SNI (null for IP literals), the ALPN list for `offer` and the ClientHello knobs from `fingerprint`.
 ///
 // `ssl` is the live SSL handle for a just-opened socket (BoringSSL never
 // returns null); `hostname` is null (no SNI for IP literals) or a

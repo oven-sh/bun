@@ -966,7 +966,6 @@ unsafe extern "C" {
     pub safe fn SSL_get_cipher_by_value(value: u16) -> *const SSL_CIPHER;
     /// The IETF name, e.g. `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`. Static storage.
     pub fn SSL_CIPHER_standard_name(cipher: *const SSL_CIPHER) -> *const c_char;
-    pub fn SSL_CIPHER_get_kx_nid(cipher: *const SSL_CIPHER) -> c_int;
     /// Copies `data`; `pool` may be null.
     pub fn CRYPTO_BUFFER_new(
         data: *const u8,

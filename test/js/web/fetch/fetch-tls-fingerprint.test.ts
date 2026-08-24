@@ -294,11 +294,14 @@ describe("fetch TLS fingerprint options", () => {
     const fixed = await Promise.all([captureClientHello({}), captureClientHello({})]);
     expect(fixed[0].extensionTypes).toEqual(fixed[1].extensionTypes);
 
+    // BoringSSL appends a padding extension (21) whenever the shuffle leaves an
+    // empty-bodied extension last, so compare the sets without it.
+    const withoutPadding = (types: number[]) => types.filter(t => t !== EXT.padding).sort((a, b) => a - b);
     const orders = new Set<string>();
     for (let i = 0; i < 4; i++) {
       const hello = await captureClientHello({ permuteExtensions: true });
       orders.add(hello.extensionTypes.join("-"));
-      expect(hello.extensionTypes.sort((a, b) => a - b)).toEqual(fixed[0].extensionTypes.slice().sort((a, b) => a - b));
+      expect(withoutPadding(hello.extensionTypes)).toEqual(withoutPadding(fixed[0].extensionTypes));
     }
     expect(orders.size).toBeGreaterThan(1);
   });
@@ -367,17 +370,16 @@ describe("fetch TLS fingerprint options", () => {
   });
 
   test("the ClientHello inside a CONNECT tunnel carries the fingerprint", async () => {
-    const { promise, resolve } = Promise.withResolvers<Uint8Array>();
-    let sawConnect = false;
+    const { promise, resolve, reject } = Promise.withResolvers<Uint8Array>();
+    let connectRequest: string | null = null;
     let received = new Uint8Array(0);
     using proxy = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
         data(socket, chunk) {
-          if (!sawConnect) {
-            expect(new TextDecoder().decode(chunk)).toStartWith("CONNECT ");
-            sawConnect = true;
+          if (connectRequest === null) {
+            connectRequest = new TextDecoder().decode(chunk);
             socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
             return;
           }
@@ -391,6 +393,9 @@ describe("fetch TLS fingerprint options", () => {
           resolve(received.subarray(0, recordLength));
           socket.end();
         },
+        error(_socket, error) {
+          reject(error);
+        },
       },
     });
     const request = fetch("https://example.invalid/", {
@@ -400,6 +405,7 @@ describe("fetch TLS fingerprint options", () => {
     const hello = parseClientHello(await promise);
     await request;
 
+    expect(connectRequest).toStartWith("CONNECT example.invalid:443 ");
     expect(hello.ciphers.filter(c => !isGrease(c)).join("-")).toBe(CHROME_JA3.split(",")[1]);
     expect(hello.ciphers.filter(isGrease)).toHaveLength(1);
     expect(hello.groups.filter(g => !isGrease(g))).toEqual([4588, 29, 23, 24]);
@@ -435,11 +441,14 @@ describe("fetch TLS fingerprint options", () => {
       ["771,4865-x,0,29,0", "ciphers must be dash-separated decimal numbers"],
       ["771,4865-4866-4867,0,70000,0", "groups must be dash-separated decimal numbers"],
       ["768,4865-4866-4867,0,29,0", "unsupported TLS version 768"],
+      ["772,4865-4866-4867,0,29,0", "unsupported TLS version 772"],
       ["771,,0-10,29,0", "the cipher list is empty"],
       ["771,255-4865-4866-4867,0,29,0", "cipher suite 255 is not supported"],
       ["771,4865-4866-4867-52396,0,29,0", "cipher suite 52396 is not supported"],
-      ["771,4865-4866,0,29,0", "TLS 1.3 cipher suites must be listed as"],
-      ["771,4865-4867-4866,0,29,0", "TLS 1.3 cipher suites must be listed as"],
+      ["771,4865-4866,0,29,0", "TLS 1.3 cipher suites must lead the list as"],
+      ["771,4865-4867-4866,0,29,0", "TLS 1.3 cipher suites must lead the list as"],
+      ["771,49195-4865-4866-4867,0,29,0", "TLS 1.3 cipher suites must lead the list as"],
+      ["771,4865-49195-4866-4867,0,29,0", "TLS 1.3 cipher suites must lead the list as"],
       ["771,4865-4866-4867,0-34,29,0", "extension 34 cannot be sent"],
       ["771,4865-4866-4867,0-28,29,0", "extension 28 cannot be sent"],
       ["771,4865-4866-4867,0,256-29,0", "supported group 256 is not supported"],

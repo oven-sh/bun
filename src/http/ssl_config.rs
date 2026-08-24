@@ -59,8 +59,7 @@ pub struct SSLConfig {
     pub(crate) cached_hash: AtomicU64,
 }
 
-/// ClientHello knobs beyond the cipher, group and sigalg lists. One BoringSSL
-/// call each; see `crate::tls_fingerprint`.
+/// ClientHello knobs, one BoringSSL call each (`crate::tls_fingerprint`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Fingerprint {
     /// RFC 8701 GREASE values (`SSL_CTX_set_grease_enabled`).

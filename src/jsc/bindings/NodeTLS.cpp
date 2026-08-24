@@ -288,8 +288,7 @@ JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject,
 
 } // namespace Bun
 
-// C++-linkage-only in ssl.h, and hidden entirely under BORINGSSL_NO_CXX (the
-// Windows build), so Rust gets it through this shim.
+// ssl.h declares this with C++ linkage only, and not at all under BORINGSSL_NO_CXX (Windows).
 #if defined(BORINGSSL_NO_CXX)
 namespace bssl {
 void SSL_set_aes_hw_override_for_testing(SSL* ssl, bool override_value);

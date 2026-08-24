@@ -84,7 +84,10 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
 function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void) {
   $assert(this[kFd] == fd, "fd mismatch");
   this[kUnref]();
-  this.close().then(() => cb(), cb);
+  const closed = this.close();
+  // Only a FileHandle whose close() the user replaced can hand back a thenable.
+  if ($isPromise(closed)) closed.$then(() => cb(), cb);
+  else closed.then(() => cb(), cb);
 }
 
 function getValidatedPath(p: any) {

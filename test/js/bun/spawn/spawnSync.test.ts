@@ -92,7 +92,7 @@ describe("spawnSync", () => {
     const { stdout, stderr, exitCode, signalCode } = await bunRun(
       join(import.meta.dir, "spawnSync-counters-fixture.ts"),
     );
-    expect({ counters: JSON.parse(stdout), stderr, exitCode, signalCode }).toEqual({
+    expect({ counters: JSON.parse(stdout || "null"), stderr, exitCode, signalCode }).toEqual({
       counters: {
         inherit: { exitCode: 0, spawnSync_blocking: 1, spawn_memfd: 0 },
         bufferStdin: isLinux
@@ -158,6 +158,9 @@ describe("spawnSync", () => {
 });
 
 const GiB = 1024 ** 3;
+// os.totalmem() is the host's memory. Inside a container with a cgroup memory
+// limit, process.constrainedMemory() is that limit.
+const memoryBudget = Math.min(totalmem(), process.constrainedMemory());
 
 // A Buffer holds at most kMaxLength (2^32) bytes. spawnSync hands the captured
 // output to JSC without a copy, and a larger output used to kill the process at
@@ -165,11 +168,12 @@ const GiB = 1024 ** 3;
 // throws. An output of exactly 2^32 bytes used to die in a length cast on the
 // same path. Each case makes the child hold 4 GiB of zeros (the read buffer
 // doubles to 8 GiB on the way, for a peak RSS near 8.5 GiB), so the cases run
-// in a child process, with a long timeout, and only on machines with room.
+// in a child process, only on machines with room, and the child has its own
+// timeout so that the memory is reclaimed even when the test times out.
 // Most of the time goes to page faults in that child, so the two cases run at
 // the same time when there is room for both.
-const describeAtLimit = totalmem() >= 32 * GiB ? describe.concurrent : describe;
-describeAtLimit.skipIf(!isPosix || totalmem() < 16 * GiB)("spawnSync output at the Buffer length limit", () => {
+const describeAtLimit = memoryBudget >= 32 * GiB ? describe.concurrent : describe;
+describeAtLimit.skipIf(!isPosix || memoryBudget < 16 * GiB)("spawnSync output at the Buffer length limit", () => {
   async function captureZeros(size: number) {
     await using proc = Bun.spawn({
       cmd: [
@@ -193,6 +197,10 @@ describeAtLimit.skipIf(!isPosix || totalmem() < 16 * GiB)("spawnSync output at t
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
+      // Under the 120 s test timeout below. A child that is still running then
+      // shows up as signalCode "SIGKILL" instead of living on after the test.
+      timeout: 100_000,
+      killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { result: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode };

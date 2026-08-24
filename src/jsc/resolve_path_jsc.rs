@@ -1,21 +1,17 @@
-//! C++ export that joins a path against the VM's cwd. Lives in `jsc/` because
-//! it reaches into `globalObject.bunVM().transpiler.fs`; `paths/` is JSC-free.
-//! Referenced from `PathInlines.h`.
+//! C++ export that joins a path against the working directory. Referenced
+//! from `PathInlines.h`.
 
-use crate::JSGlobalObject;
 use bun_core::String as BunString;
 use bun_paths::resolve_path;
 
 /// The C++ caller `transferToWTFString()`s the result.
 #[unsafe(no_mangle)]
 extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
-    global_object: &JSGlobalObject,
     input: &BunString,
 ) -> BunString {
     let str = input.to_utf8_without_ref();
 
     let cwd: &[u8] = bun_core::cwd::get();
-    let _ = global_object; // bun_vm() retained for future direct field access
 
     // The input is user-controlled and may be arbitrarily long. The
     // threadlocal `join_buf` is only 4096 bytes, so allocate a buffer sized

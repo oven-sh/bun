@@ -5665,8 +5665,9 @@ pub(crate) fn construct_blob_for_open_as_blob(
     let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
 
     let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
-        return Err(global_object
-            .throw_invalid_arguments(format_args!("Expected file path string")));
+        return Err(
+            global_object.throw_invalid_arguments(format_args!("Expected file path string"))
+        );
     };
 
     let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);

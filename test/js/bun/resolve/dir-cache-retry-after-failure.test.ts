@@ -101,6 +101,7 @@ const files = {
         const fromWorker = await new Promise((resolve, reject) => {
           worker.on("message", resolve);
           worker.on("error", reject);
+          worker.on("exit", code => reject(new Error("worker exited with " + code + " before posting")));
         });
         console.log("D3", fromWorker);
         await worker.terminate();

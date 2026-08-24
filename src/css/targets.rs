@@ -407,7 +407,9 @@ impl Browsers {
                 let mut components: [u32; 3] = [0; 3];
                 let mut count: usize = 0;
                 for part in strings::split(version_str, b".") {
-                    let Ok(component) = strings::parse_int::<u16>(part, 10) else {
+                    // u8: a component over 255 does not fit its byte and
+                    // would spill into the neighbor.
+                    let Ok(component) = strings::parse_int::<u8>(part, 10) else {
                         return Err(crate::CrateError::UnsupportedCSSTarget);
                     };
                     if count == 3 {

@@ -1860,7 +1860,11 @@ impl PackageManifest {
             .find_by_dist_tag(b"latest")
             .is_some_and(|result| result.package.deprecated);
         if !latest_is_deprecated {
-            return self.find_by_dist_tag_with_filter(b"latest", minimum_release_age_ms, exclusions);
+            return self.find_by_dist_tag_with_filter(
+                b"latest",
+                minimum_release_age_ms,
+                exclusions,
+            );
         }
 
         let releases = self.pkg.releases.keys.get(&self.versions);

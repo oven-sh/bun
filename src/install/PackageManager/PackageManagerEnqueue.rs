@@ -944,8 +944,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         // A bare specifier has an empty version
                                         // literal and resolves as `latest`.
                                         let literal = this.lockfile.str(&version.literal);
-                                        let literal: &[u8] =
-                                            if literal.is_empty() { b"latest" } else { literal };
+                                        let literal: &[u8] = if literal.is_empty() {
+                                            b"latest"
+                                        } else {
+                                            literal
+                                        };
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
                                             None,

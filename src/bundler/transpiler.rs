@@ -840,9 +840,7 @@ impl<'a> Transpiler<'a> {
             return None;
         }
         self.resolver
-            .read_dir_info(dir)
-            .ok()
-            .flatten()?
+            .read_dir_info_ignore_error(dir)?
             .enclosing_tsconfig_json
     }
 

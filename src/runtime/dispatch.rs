@@ -275,13 +275,6 @@ pub(crate) fn run_task(
             // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
             unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
         }
-        task_tag::ValkeyDeferredClose => {
-            // SAFETY: boxed at the enqueue site; the arm consumes it.
-            unsafe {
-                bun_core::heap::take(cast_ptr!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose))
-            }
-            .run();
-        }
         task_tag::StatWatcherTimerUpdate => {
             // SAFETY: boxed in `schedule_timer_update`; the arm consumes it.
             unsafe {
@@ -589,7 +582,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 60,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1037,44 +1030,38 @@ pub(crate) fn fire_timer(t: TimerRef, now: &ElTimespec, vm: &VirtualMachine) -> 
             }
         }
         EventLoopTimerTag::PostgresSQLConnectionTimeout => {
-            // SAFETY: §Dispatch — tag set together with the container at
-            // construction; `t` is the connection's `timer` field.
-            let container = unsafe { PostgresSQLConnection::from_timer_ptr(t.as_ptr()) };
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() };
+            PostgresSQLConnection::on_connection_timeout(&*timer_owner_this!(
+                PostgresSQLConnection,
+                timer,
+                t
+            ));
             Ok(())
         }
         EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
-            // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
-            let container =
-                unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t.as_ptr()) };
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_max_lifetime_timeout() };
+            PostgresSQLConnection::on_max_lifetime_timeout(&*timer_owner_this!(
+                PostgresSQLConnection,
+                max_lifetime_timer,
+                t
+            ));
             Ok(())
         }
         EventLoopTimerTag::MySQLConnectionTimeout => {
-            // SAFETY: §Dispatch — `t` is the connection's `timer` field.
-            let container = unsafe { MySQLConnection::from_timer_ptr(t.as_ptr()) };
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() };
+            MySQLConnection::on_connection_timeout(&*timer_owner_this!(MySQLConnection, timer, t));
             Ok(())
         }
         EventLoopTimerTag::MySQLConnectionMaxLifetime => {
-            // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
-            let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t.as_ptr()) };
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_max_lifetime_timeout() };
+            MySQLConnection::on_max_lifetime_timeout(&*timer_owner_this!(
+                MySQLConnection,
+                max_lifetime_timer,
+                t
+            ));
             Ok(())
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
-            let container = owner!(Valkey, timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() }
+            Valkey::on_connection_timeout(timer_owner_this!(Valkey, timer, t))
         }
         EventLoopTimerTag::ValkeyConnectionReconnect => {
-            let container = owner!(Valkey, reconnect_timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_reconnect_timer() }
+            Valkey::on_reconnect_timer(timer_owner_this!(Valkey, reconnect_timer, t))
         }
         EventLoopTimerTag::SubprocessTimeout => {
             timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c)
@@ -1396,9 +1383,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release!(StreamPending),
         task_tag::ThreadSafeFunction => release!(ThreadSafeFunction),
-        task_tag::ValkeyDeferredClose => {
-            release!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
-        }
         // ── Windows-only producers ───────────────────────────────────────
         task_tag::GetAddrInfoLibuvComplete => {
             #[cfg(windows)]

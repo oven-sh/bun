@@ -32,3 +32,41 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     // SAFETY: both pointers are valid for `a.len()` bytes; lengths verified equal above.
     unsafe { boringssl::CRYPTO_memcmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 }
 }
+
+/// `PKCS5_PBKDF2_HMAC` with SHA-256 into `out` (the derived key length is
+/// `out.len()`). Returns whether BoringSSL succeeded.
+pub fn pbkdf2_hmac_sha256(password: &[u8], salt: &[u8], iterations: u32, out: &mut [u8]) -> bool {
+    // SAFETY: each pointer is readable/writable for the length passed with it
+    // (an empty password is passed as null/0); `EVP_sha256` is a static digest.
+    unsafe {
+        boringssl::PKCS5_PBKDF2_HMAC(
+            if password.is_empty() {
+                core::ptr::null()
+            } else {
+                password.as_ptr()
+            },
+            password.len(),
+            salt.as_ptr(),
+            salt.len(),
+            iterations,
+            boringssl::EVP_sha256(),
+            out.len(),
+            out.as_mut_ptr(),
+        ) > 0
+    }
+}
+
+/// `ERR_error_string_n`: the human-readable string for `packed_error`, written
+/// into `buf` and returned up to (not including) its NUL terminator.
+pub fn err_error_string_n(packed_error: u32, buf: &mut [u8]) -> &[u8] {
+    if buf.is_empty() {
+        return buf;
+    }
+    // SAFETY: `buf` is writable for `buf.len()` bytes; BoringSSL NUL-terminates
+    // within that length.
+    unsafe {
+        boringssl::ERR_error_string_n(packed_error, buf.as_mut_ptr().cast(), buf.len());
+    }
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    &buf[..end]
+}

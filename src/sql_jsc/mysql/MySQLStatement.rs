@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, JsCell};
 
 use crate::mysql::protocol::Signature;
 use crate::shared::CachedStructure;
@@ -13,43 +13,47 @@ pub use bun_sql::mysql::mysql_param::Param;
 
 bun_core::declare_scope!(MySQLStatement, hidden);
 
+// Intrusive single-thread refcount (`CellRefCounted`). Shared between the owning query and the connection's prepared-statement map
+// (each holds a `RefPtr`), so every field written after construction is
+// interior-mutable and the statement is only ever reached as `&Self`.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MySQLStatement {
-    pub(crate) cached_structure: CachedStructure,
+    pub(crate) cached_structure: JsCell<CachedStructure>,
     ref_count: Cell<u32>,
-    pub(crate) statement_id: u32,
-    pub(crate) params: Vec<Param>,
-    pub(crate) params_received: u32,
+    pub(crate) statement_id: Cell<u32>,
+    pub(crate) params: JsCell<Vec<Param>>,
+    pub(crate) params_received: Cell<u32>,
 
-    pub(crate) columns: Vec<ColumnDefinition41>,
-    pub(crate) columns_received: u32,
+    pub(crate) columns: JsCell<Vec<ColumnDefinition41>>,
+    pub(crate) columns_received: Cell<u32>,
 
     pub(crate) signature: Signature,
-    pub(crate) status: Status,
-    pub(crate) error_response: ErrorPacket,
-    pub(crate) execution_flags: ExecutionFlags,
-    pub(crate) fields_flags: DataCellFlags,
-    pub(crate) result_count: u64,
+    pub(crate) status: Cell<Status>,
+    pub(crate) error_response: JsCell<ErrorPacket>,
+    pub(crate) execution_flags: Cell<ExecutionFlags>,
+    pub(crate) fields_flags: Cell<DataCellFlags>,
+    pub(crate) result_count: Cell<u64>,
 }
 
 impl MySQLStatement {
-    /// Callers supply the signature and status; every other field takes its default.
-    pub(crate) fn new(signature: Signature, status: Status) -> Self {
-        Self {
-            cached_structure: CachedStructure::default(),
+    /// A new statement with one ref, owned by the returned handle; every other
+    /// field takes its default.
+    pub(crate) fn new(signature: Signature, status: Status) -> bun_ptr::RefPtr<Self> {
+        bun_ptr::RefPtr::new(Self {
+            cached_structure: JsCell::new(CachedStructure::default()),
             ref_count: Cell::new(1),
-            statement_id: 0,
-            params: Vec::new(),
-            params_received: 0,
-            columns: Vec::new(),
-            columns_received: 0,
+            statement_id: Cell::new(0),
+            params: JsCell::new(Vec::new()),
+            params_received: Cell::new(0),
+            columns: JsCell::new(Vec::new()),
+            columns_received: Cell::new(0),
             signature,
-            status,
-            error_response: ErrorPacket::default(),
-            execution_flags: ExecutionFlags::default(),
-            fields_flags: DataCellFlags::default(),
-            result_count: 0,
-        }
+            status: Cell::new(status),
+            error_response: JsCell::new(ErrorPacket::default()),
+            execution_flags: Cell::new(ExecutionFlags::default()),
+            fields_flags: Cell::new(DataCellFlags::default()),
+            result_count: Cell::new(0),
+        })
     }
 }
 
@@ -77,44 +81,62 @@ impl Default for ExecutionFlags {
 pub use bun_sql::shared::statement_status::Status;
 
 impl MySQLStatement {
-    pub(crate) fn reset(&mut self) {
-        self.result_count = 0;
-        self.columns_received = 0;
-        self.execution_flags = ExecutionFlags::default();
+    #[inline]
+    pub(crate) fn has_execution_flag(&self, flag: ExecutionFlags) -> bool {
+        self.execution_flags.get().contains(flag)
     }
 
-    fn check_for_duplicate_fields(&mut self) {
-        if !self
-            .execution_flags
-            .contains(ExecutionFlags::NEEDS_DUPLICATE_CHECK)
-        {
+    #[inline]
+    pub(crate) fn insert_execution_flag(&self, flag: ExecutionFlags) {
+        let mut flags = self.execution_flags.get();
+        flags.insert(flag);
+        self.execution_flags.set(flags);
+    }
+
+    #[inline]
+    pub(crate) fn remove_execution_flag(&self, flag: ExecutionFlags) {
+        let mut flags = self.execution_flags.get();
+        flags.remove(flag);
+        self.execution_flags.set(flags);
+    }
+
+    pub(crate) fn reset(&self) {
+        self.result_count.set(0);
+        self.columns_received.set(0);
+        self.execution_flags.set(ExecutionFlags::default());
+    }
+
+    fn check_for_duplicate_fields(&self) {
+        if !self.has_execution_flag(ExecutionFlags::NEEDS_DUPLICATE_CHECK) {
             return;
         }
-        self.execution_flags
-            .remove(ExecutionFlags::NEEDS_DUPLICATE_CHECK);
+        self.remove_execution_flag(ExecutionFlags::NEEDS_DUPLICATE_CHECK);
 
-        self.fields_flags =
-            dedupe_columns(self.columns.iter_mut().rev().map(|c| &mut c.name_or_index));
+        let flags = self.columns.with_mut(|columns| {
+            dedupe_columns(columns.iter_mut().rev().map(|c| &mut c.name_or_index))
+        });
+        self.fields_flags.set(flags);
     }
 
-    // Returning `&CachedStructure`
-    // to avoid moving out of `self`; callers may need `.clone()` if they require
-    // an owned copy.
+    /// The cached JSC structure for this statement's columns, building it on
+    /// first use.
     pub(crate) fn structure(
-        &mut self,
+        &self,
         owner: JSValue,
         global_object: &JSGlobalObject,
     ) -> &CachedStructure {
-        if self.cached_structure.has() {
-            return &self.cached_structure;
+        if !self.cached_structure.get().has() {
+            self.check_for_duplicate_fields();
+            let columns = self.columns.get();
+            self.cached_structure.with_mut(|cs| {
+                cs.build_from_columns(
+                    global_object,
+                    owner,
+                    columns.iter().map(|c| &c.name_or_index),
+                )
+            });
         }
-        self.check_for_duplicate_fields();
-        self.cached_structure.build_from_columns(
-            global_object,
-            owner,
-            self.columns.iter().map(|c| &c.name_or_index),
-        );
-        &self.cached_structure
+        self.cached_structure.get()
     }
 }
 

@@ -1,14 +1,13 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
 use crate::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
-    VirtualMachine, VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine,
+    VirtualMachineSqlExt as _,
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
+use bun_ptr::{BackRef, RefPtr, ThisPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::postgres::command_tag::CommandTag;
@@ -45,14 +44,28 @@ pub struct JSMySQLQuery {
     vm: BackRef<VirtualMachine>,
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
+    /// This allocation's root pointer, for the `&self` paths that take refs
+    /// on it (`ref_guard`, the connection's request queue).
+    this_ptr: Cell<Option<BackRef<JSMySQLQuery, bun_ptr::Root>>>,
 }
 
+// Intrusive refcount (`CellRefCounted`): held as `RefPtr` (request queue, JS
+// wrapper) / `ref_guard()`; the last release drops the box (`Drop` below).
+
 impl JSMySQLQuery {
-    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
+    /// This allocation's root pointer (see the `this_ptr` field).
     #[inline]
-    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
-        // SAFETY: `self` is the live heap allocation.
-        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
+    pub(crate) fn this_ptr(&self) -> ThisPtr<Self> {
+        self.this_ptr
+            .get()
+            .expect("JSMySQLQuery used before create_instance")
+            .this_ptr()
+    }
+
+    /// Holds a ref on `self` for the guard's scope.
+    #[inline]
+    pub(crate) fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
+        bun_ptr::RefPtr::from_this(self.this_ptr())
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -68,6 +81,7 @@ impl JSMySQLQuery {
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
     }
 
+    /// Runs before the JS wrapper's ref is dropped.
     pub fn finalize(&self) {
         debug!("MySQLQuery finalize");
         self.this_value.with_mut(|v| v.finalize());
@@ -87,26 +101,23 @@ impl JSMySQLQuery {
             simple,
         } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
 
-        let this_ptr = bun_core::heap::into_raw(Box::new(Self {
+        // The initial ref is the one the JS wrapper adopts below.
+        let this: ThisPtr<Self> = RefPtr::new(Self {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
-            // Stored with full write provenance for later `&mut *p` at use sites.
-            vm: BackRef::from(
-                NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null"),
-            ),
+            vm: BackRef::new(global_this.bun_vm()),
             global_object: BackRef::new(global_this),
             query: JsCell::new(MySQLQuery::init(
                 query.to_bun_string(global_this)?,
                 bigint,
                 simple,
             )),
-        }));
-        // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
-        // until handed to the JS wrapper. R-2: every field is interior-mutable,
-        // so a shared `ParentRef` deref is sufficient even for the writes below.
-        let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
+            this_ptr: Cell::new(None),
+        })
+        .into_this_ptr();
+        this.this_ptr.set(Some(this.into()));
 
-        let this_value = js::to_js(this_ptr, global_this);
+        let this_value = js::to_js(this.as_ptr(), global_this);
         this_value.ensure_still_alive();
         this.this_value.with_mut(|v| v.set_weak(this_value));
 
@@ -156,7 +167,7 @@ impl JSMySQLQuery {
             }
             return Err(jsc::JsError::Thrown);
         }
-        connection.enqueue_request(this.ref_guard());
+        connection.enqueue_request(this.this_ptr());
         Ok(JSValue::UNDEFINED)
     }
 
@@ -248,11 +259,8 @@ impl JSMySQLQuery {
         js_tag.ensure_still_alive();
 
         let Some(function) = self
-            .vm_mut()
-            .sql_state()
-            .mysql_context
-            .on_query_resolve_fn
-            .get()
+            .vm()
+            .with_sql_state(|s| s.mysql_context.on_query_resolve_fn.get())
         else {
             return;
         };
@@ -336,11 +344,8 @@ impl JSMySQLQuery {
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
         let Some(function) = self
-            .vm_mut()
-            .sql_state()
-            .mysql_context
-            .on_query_reject_fn
-            .get()
+            .vm()
+            .with_sql_state(|s| s.mysql_context.on_query_reject_fn.get())
         else {
             return;
         };
@@ -446,12 +451,12 @@ impl JSMySQLQuery {
         self.query.get().get_result_mode()
     }
     // TODO: isolate statement modification away from the connection
-    pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
+    pub(crate) fn get_statement(&self) -> Option<&MySQLStatement> {
         self.query.get().get_statement()
     }
 
     pub(crate) fn mark_as_prepared(&self) {
-        self.query.with_mut(|q| q.mark_as_prepared());
+        self.query.get().mark_as_prepared();
     }
 
     #[inline]
@@ -514,10 +519,6 @@ impl JSMySQLQuery {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
-    #[inline]
-    fn vm_mut(&self) -> &'static mut VirtualMachine {
-        VirtualMachine::get_mut()
-    }
     /// `&mut EventLoop` for `run_callback`. Routes through the inherent safe
     /// `VirtualMachine::event_loop_mut` accessor — the loop is a disjoint heap
     /// allocation owned by the JS-thread VM singleton stored in `self.vm`;
@@ -529,6 +530,14 @@ impl JSMySQLQuery {
     #[inline]
     fn global_object(&self) -> &JSGlobalObject {
         self.global_object.get()
+    }
+}
+
+/// Runs when the last ref is released (`CellRefCounted` reclaims the box).
+impl Drop for JSMySQLQuery {
+    fn drop(&mut self) {
+        self.this_ptr.set(None);
+        self.query.get_mut_unique().cleanup();
     }
 }
 

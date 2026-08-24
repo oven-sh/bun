@@ -11,7 +11,7 @@ use bun_sql::shared::Data;
 use bun_sql::shared::SQLQueryResultMode;
 
 use crate::shared::CachedStructure;
-use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell};
+use crate::shared::sql_data_cell::{CellStorage, Flags as SQLDataCellFlags, SQLDataCell};
 
 use super::decode_binary_value::{self, decode_binary_value};
 
@@ -21,7 +21,9 @@ bun_core::declare_scope!(MySQLResultSet, visible);
 
 pub(crate) struct Row<'a> {
     pub values: Box<[SQLDataCell]>,
-    // `columns` is borrowed from the connection's column-definition buffer; see deinit note below.
+    /// Owns what `values` point at; see [`CellStorage`].
+    pub storage: CellStorage,
+    // `columns` is borrowed from the connection's column-definition buffer.
     pub columns: &'a [ColumnDefinition41],
     pub binary: bool,
     pub raw: bool,
@@ -64,6 +66,7 @@ impl<'a> Row<'a> {
 
     fn parse_value_and_set_cell(
         &self,
+        storage: &mut CellStorage,
         cell: &mut SQLDataCell,
         column: &ColumnDefinition41,
         value: &Data,
@@ -133,16 +136,16 @@ impl<'a> Row<'a> {
                     }
                 }
 
-                *cell = SQLDataCell::string(value.slice());
+                *cell = SQLDataCell::string(storage, value.slice());
             }
             MYSQL_TYPE_JSON => {
-                *cell = SQLDataCell::json(value.slice());
+                *cell = SQLDataCell::json(storage, value.slice());
             }
 
             MYSQL_TYPE_TIME => {
                 // lets handle TIME special case as string
                 // -838:59:50 to 838:59:59 is valid
-                *cell = SQLDataCell::string(value.slice());
+                *cell = SQLDataCell::string(storage, value.slice());
             }
             MYSQL_TYPE_DATE | MYSQL_TYPE_DATETIME | MYSQL_TYPE_TIMESTAMP => {
                 // MySQL's DATE/DATETIME/TIMESTAMP text has no timezone, so parse
@@ -162,7 +165,7 @@ impl<'a> Row<'a> {
             // carry the BINARY flag and charset 63, so the catch-all arm's binary-charset
             // heuristic would wrongly return them as a Buffer.
             MYSQL_TYPE_NEWDECIMAL => {
-                *cell = SQLDataCell::string(value.slice());
+                *cell = SQLDataCell::string(storage, value.slice());
             }
             MYSQL_TYPE_BIT => {
                 // BIT(1) is a special case, it's a boolean
@@ -183,7 +186,7 @@ impl<'a> Row<'a> {
                 {
                     *cell = SQLDataCell::raw(value);
                 } else {
-                    *cell = SQLDataCell::string(value.slice());
+                    *cell = SQLDataCell::string(storage, value.slice());
                 }
             }
         }
@@ -193,12 +196,8 @@ impl<'a> Row<'a> {
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {
-        let cells = vec![SQLDataCell::null(); self.columns.len()].into_boxed_slice();
-        let mut cells = scopeguard::guard(cells, |mut cells| {
-            for value in cells.iter_mut() {
-                value.deinit();
-            }
-        });
+        let mut cells = vec![SQLDataCell::null(); self.columns.len()].into_boxed_slice();
+        let mut storage = CellStorage::default();
 
         for (index, value) in cells.iter_mut().enumerate() {
             if let Some(result) = decode_length_int(reader.peek()) {
@@ -220,7 +219,7 @@ impl<'a> Row<'a> {
                         reader.skip(result.bytes_read);
                         let string_data =
                             reader.read(usize::try_from(result.value).expect("int cast"))?;
-                        self.parse_value_and_set_cell(value, column, &string_data);
+                        self.parse_value_and_set_cell(&mut storage, value, column, &string_data);
                     }
                 }
                 value.set_column(
@@ -232,7 +231,8 @@ impl<'a> Row<'a> {
             }
         }
 
-        self.values = scopeguard::ScopeGuard::into_inner(cells);
+        self.values = cells;
+        self.storage = storage;
         Ok(())
     }
 
@@ -247,12 +247,8 @@ impl<'a> Row<'a> {
         let bitmap_bytes = (self.columns.len() + 7 + 2) / 8;
         let null_bitmap = reader.read(bitmap_bytes)?;
 
-        let cells = vec![SQLDataCell::null(); self.columns.len()].into_boxed_slice();
-        let mut cells = scopeguard::guard(cells, |mut cells| {
-            for value in cells.iter_mut() {
-                value.deinit();
-            }
-        });
+        let mut cells = vec![SQLDataCell::null(); self.columns.len()].into_boxed_slice();
+        let mut storage = CellStorage::default();
         // Skip first 2 bits of null bitmap (reserved)
         let bitmap_offset: usize = 2;
 
@@ -266,6 +262,7 @@ impl<'a> Row<'a> {
                 *value = SQLDataCell::null();
             } else {
                 *value = decode_binary_value(
+                    &mut storage,
                     self.global_object,
                     column.column_type,
                     column.column_length,
@@ -287,7 +284,8 @@ impl<'a> Row<'a> {
             value.set_column(u32::try_from(i).expect("int cast"), &column.name_or_index);
         }
 
-        self.values = scopeguard::ScopeGuard::into_inner(cells);
+        self.values = cells;
+        self.storage = storage;
         Ok(())
     }
 
@@ -297,17 +295,5 @@ impl<'a> Row<'a> {
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {
         self.decode_internal(reader)
-    }
-}
-
-impl<'a> Drop for Row<'a> {
-    fn drop(&mut self) {
-        for value in self.values.iter_mut() {
-            // SQLDataCell deliberately has no `impl Drop` — it is an FFI struct
-            // whose ownership is normally transferred to C++ — so the cells
-            // still owned by this row must be freed manually here.
-            value.deinit();
-        }
-        // self.columns is intentionally left out.
     }
 }

@@ -188,6 +188,21 @@ pub(crate) fn timer_all() -> &'static timer::All {
     unsafe { &*ptr::addr_of!((*state).timer) }
 }
 
+/// Runs `f` against this thread's SQL per-VM state (`RareData` of
+/// `bun_sql_jsc`). A callback rather than a `&'static mut`, which two callers
+/// could hold at once; `f` must not re-enter anything that reaches it.
+#[inline]
+pub(crate) fn with_sql_state<R>(f: impl FnOnce(&mut bun_sql_jsc::jsc::RareData) -> R) -> R {
+    let state = runtime_state();
+    debug_assert!(
+        !state.is_null(),
+        "runtime_state() before init_runtime_state"
+    );
+    // SAFETY: live boxed per-thread `RuntimeState`; single JS thread; the
+    // borrow ends when `f` returns.
+    f(unsafe { &mut (*state).sql_rare })
+}
+
 /// Runs `f` against this thread's in-process cron job list (`None` before the
 /// runtime state exists). A callback rather than a `&'static mut`, which two
 /// callers could hold at once; `f` must not re-enter anything that reaches the

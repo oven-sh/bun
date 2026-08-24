@@ -1747,7 +1747,8 @@ fn codegen_instruction_value(
                             loc: None,
                             suggestions: None,
                         })?;
-                        expressions.push(string_expr("TODO handle declaration", None));
+                        expressions
+                            .push(string_expr("unsupported declaration in value block", None));
                     }
                     _ => {
                         cx.record_error(CompilerErrorDetail {
@@ -1757,7 +1758,7 @@ fn codegen_instruction_value(
                             loc: None,
                             suggestions: None,
                         })?;
-                        expressions.push(string_expr("TODO handle statement", None));
+                        expressions.push(string_expr("unsupported statement in value block", None));
                     }
                 }
             }

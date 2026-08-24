@@ -2220,10 +2220,12 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect(upgradeResult).toBe(false);
   });
 
-  it("survives an async upgrade of a connection marked Connection: close", async () => {
+  it("returns false for an async upgrade of a connection marked Connection: close", async () => {
     // Uncorked, the 101's internalEnd() runs the close gate and closes a
-    // connection marked to close on the spot. upgrade() must then stop rather
-    // than adopt a socket us_socket_adopt refuses.
+    // connection marked to close on the spot. uWS then refuses the upgrade
+    // instead of adopting a socket us_socket_adopt rejects, and upgrade()
+    // must report that: no ServerWebSocket ever opens.
+    opened = 0;
     let upgradeResult: boolean | undefined;
     server = serve({
       port: 0,
@@ -2243,13 +2245,70 @@ describe("server.upgrade() validates the opening handshake", () => {
       },
     });
 
+    // The 101 is on the wire before the close gate runs.
     expect((await rawHandshake([U, "Connection: close", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
-    expect(upgradeResult).toBe(true);
+    expect({ upgradeResult, opened }).toEqual({ upgradeResult: false, opened: 0 });
 
     // The server is intact: a regular handshake on a new connection upgrades.
-    opened = 0;
     expect((await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
-    expect(opened).toBe(1);
+    expect({ upgradeResult, opened }).toEqual({ upgradeResult: true, opened: 1 });
+  });
+
+  it("releases the ServerWebSocket of a refused upgrade", async () => {
+    // A refused upgrade used to leave its ServerWebSocket rooted by the strong
+    // self-reference init() takes, one per request. A subprocess keeps the
+    // heap count free of the other tests' sockets.
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { heapStats } = require("bun:jsc");
+        let refused = 0;
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          async fetch(req, server) {
+            await new Promise(resolve => setImmediate(resolve));
+            if (server.upgrade(req)) return;
+            refused++;
+            return new Response("no", { status: 400 });
+          },
+          websocket: { open() {}, message() {} },
+        });
+        const handshake =
+          "GET /ws HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: close\\r\\n" +
+          "Sec-WebSocket-Key: ${K}\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n";
+        const one = () =>
+          new Promise(resolve => {
+            Bun.connect({
+              hostname: "127.0.0.1",
+              port: server.port,
+              socket: { open(s) { s.write(handshake); }, data() {}, close: resolve, error: resolve },
+            });
+          });
+        const total = 40;
+        for (let i = 0; i < total; i += 8) await Promise.all(Array.from({ length: 8 }, one));
+        let alive = Infinity;
+        for (let i = 0; i < 50 && alive > 4; i++) {
+          Bun.gc(true);
+          alive = heapStats().objectTypeCounts.ServerWebSocket ?? 0;
+          if (alive > 4) await Bun.sleep(20);
+        }
+        server.stop(true);
+        console.log(JSON.stringify({ refused, alive }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { refused, alive } = JSON.parse(stdout);
+    expect(refused).toBe(40);
+    expect(alive).toBeLessThanOrEqual(4);
+    expect(exitCode).toBe(0);
   });
 });
 

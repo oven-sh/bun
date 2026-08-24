@@ -2547,6 +2547,13 @@ function advanceResponsePipeline(server, socket) {
   // Replay the writes buffered while the response was queued.
   // The buffered bytes are handed to the native handle below, so they no
   // longer count as pending output (Node's _flush does the same).
+  // The replay calls the prototype write/end directly: the ops were buffered
+  // by the prototype methods, so going through res.write/res.end would
+  // re-enter middleware that monkey-patched them as own properties
+  // (compression middleware feeds the already-compressed replay bytes back
+  // into its ended gzip stream and dies with ERR_STREAM_WRITE_AFTER_END).
+  // Node never re-enters user patches either: it flushes outputData through
+  // internal machinery on assignSocket.
   res.outputSize = 0;
   const ops = queued.ops;
   const opsLength = ops.length;
@@ -2569,9 +2576,9 @@ function advanceResponsePipeline(server, socket) {
           handle.writeInformational(op[1], op[2]);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
-          lastWriteResult = res.write(op[1], op[2], op[3]);
+          lastWriteResult = ServerResponsePrototypeWrite.$call(res, op[1], op[2], op[3]);
         } else {
-          res.end(op[1], op[2], op[3]);
+          ServerResponsePrototypeEnd.$call(res, op[1], op[2], op[3]);
         }
       }
     } finally {
@@ -3360,6 +3367,11 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   return true;
 };
+
+// Captured for advanceResponsePipeline's replay loop, which must call these
+// implementations and not whatever res.write/res.end resolve to at replay time.
+const ServerResponsePrototypeWrite = ServerResponse.prototype.write;
+const ServerResponsePrototypeEnd = ServerResponse.prototype.end;
 
 const kBytesBuffered = Symbol("kBytesBuffered");
 const kAccountingFlushScheduled = Symbol("kAccountingFlushScheduled");

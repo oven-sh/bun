@@ -1103,7 +1103,8 @@ export function dockerExe(): string | null {
 
 // OpenHarmony never ships docker; treat it as permanently docker-less so the
 // CI docker-required throw below doesn't fire on OHOS runners.
-const isOhos =
+// Exported for test files that need to skip OHOS-incompatible cases.
+export const isOhos =
   Bun.env.BUN_OHOS === "1" ||
   (isLinux && process.arch === "arm64" && fs.existsSync("/system/lib/ld-musl-aarch64.so.1"));
 export function isDockerEnabled(): boolean {

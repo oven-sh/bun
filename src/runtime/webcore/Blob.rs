@@ -4354,7 +4354,7 @@ fn write_file_with_empty_source_to_destination(
                 &node::fs::args::Truncate {
                     path: file.pathlike.clone(),
                     len: 0,
-                    flags: bun_sys::O::CREAT,
+                    flags: bun_sys::O::WRONLY | bun_sys::O::CREAT,
                 },
                 node::fs::Flavor::Sync,
             );

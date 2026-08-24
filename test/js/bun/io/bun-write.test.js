@@ -725,6 +725,20 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     );
   }
 
+  // The empty-source path truncates through open + ftruncate. The open must
+  // ask for write access only, so a mode-0o222 file stays truncatable.
+  it("an empty Blob source truncates a write-only file", async () => {
+    using dir = tempDir("write-only-truncate", { "wo.txt": "hello" });
+    const file = join(String(dir), "wo.txt");
+    fs.chmodSync(file, 0o222);
+    try {
+      expect(await Bun.write(file, new Blob([]))).toBe(0);
+    } finally {
+      fs.chmodSync(file, 0o644);
+    }
+    expect(fs.readFileSync(file, "utf8")).toBe("");
+  });
+
   describe("ENOENT", () => {
     const creates = (...opts) => {
       it("creates the directory", async () => {

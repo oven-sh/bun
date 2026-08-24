@@ -944,6 +944,22 @@ describe("truncate", () => {
     expect(err.message).toContain(`open '${missing}'`);
   }
 
+  // Node opens with 'r+', so a write-only file fails EACCES at the open.
+  it.skipIf(isWindows || process.getuid?.() === 0)(
+    "truncateSync on a write-only file reports EACCES from open, like Node",
+    () => {
+      const file = join(tmpdirSync(), "write-only.txt");
+      writeFileSync(file, "hello");
+      fs.chmodSync(file, 0o222);
+      try {
+        fs.truncateSync(file);
+        expect.unreachable();
+      } catch (err: any) {
+        expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EACCES", syscall: "open" });
+      }
+    },
+  );
+
   it("truncateSync on a missing path reports syscall open", () => {
     const missing = join(tmpdirSync(), "does-not-exist.txt");
     try {

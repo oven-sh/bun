@@ -2289,13 +2289,7 @@ pub mod bv2_impl {
                 }
             }
 
-            // A miss inside try/catch is expected and not worth a cache drop.
-            let handles_import_errors = self.graph.ast.items_import_records()
-                [import_record.importer_source_index as usize]
-                .as_slice()[import_record.import_record_index as usize]
-                .flags
-                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
-            let mut had_busted_dir_cache = handles_import_errors;
+            let mut had_busted_dir_cache = false;
             let resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
                 let resolver = &mut unsafe { &mut *transpiler }.resolver;
@@ -2307,7 +2301,8 @@ pub mod bv2_impl {
                     Ok(r) => break r,
                     Err(err) => {
                         if err == _resolver::Error::ModuleNotFound {
-                            // Drop what this lookup read from the cache and try once more.
+                            // The miss may be the cache's, not the disk's: drop
+                            // what changed on disk and try once more.
                             if !had_busted_dir_cache {
                                 had_busted_dir_cache = true;
                                 if resolver.bust_touched_dirs() {
@@ -2335,6 +2330,7 @@ pub mod bv2_impl {
                             }
                         }
 
+                        let handles_import_errors;
                         // reshaped for borrowck — `log_for_resolution_failures` borrows
                         // `&mut self`; the returned log is backed by either a DevServer-owned slot or
                         // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
@@ -2353,6 +2349,9 @@ pub mod bv2_impl {
                                     [import_record.importer_source_index as usize]
                                     .as_mut_slice()
                                     [import_record.import_record_index as usize];
+                            handles_import_errors = record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
 
                             // Disable failing packages from being printed.
                             // This may cause broken code to write.
@@ -6249,10 +6248,7 @@ pub mod bv2_impl {
                     }
                 }
 
-                // A miss inside try/catch is expected and not worth a cache drop.
-                let mut had_busted_dir_cache = import_record
-                    .flags
-                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
                     transpiler.resolver.start_recording_touched_dirs();
                     let resolved = transpiler.resolver.resolve_with_framework(
@@ -6277,7 +6273,8 @@ pub mod bv2_impl {
 
                             if err == _resolver::Error::ModuleNotFound {
                                 // Every build in the process shares the directory
-                                // cache; drop what this lookup read and try once more.
+                                // cache. The miss may be the cache's, not the
+                                // disk's: drop what changed on disk and try once more.
                                 if !had_busted_dir_cache {
                                     had_busted_dir_cache = true;
                                     bun_core::scoped_log!(

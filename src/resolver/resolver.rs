@@ -562,43 +562,76 @@ pub struct Resolver<'a> {
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 }
 
-/// Cache keys of the directories the resolution in progress on this thread
-/// read; see `Resolver::bust_touched_dirs`. Thread-local, not a `Resolver`
-/// field: the runtime copies its `Transpiler` bytewise into every transpiler
-/// job, and a `Vec` must have one owner.
+/// What the resolution in progress on this thread looked for in the directory
+/// caches and did not find; see `Resolver::bust_touched_dirs`. Thread-local,
+/// not a `Resolver` field: the runtime copies its `Transpiler` bytewise into
+/// every transpiler job, and a `Vec` must have one owner.
+#[derive(Default)]
 struct TouchedDirs {
     recording: bool,
-    hashes: Vec<u64>,
+    records: Vec<TouchedDir>,
+    /// Path bytes the records index into.
+    bytes: Vec<u8>,
 }
 
-struct TouchedDirsSlot(core::cell::Cell<*mut TouchedDirs>);
-impl Drop for TouchedDirsSlot {
-    fn drop(&mut self) {
-        let p = self.0.get();
-        if !p.is_null() {
-            // SAFETY: from `heap::into_raw` in `touched_dirs_init`; the thread is exiting.
-            unsafe { bun_core::heap::destroy(p) };
-        }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TouchedKind {
+    /// The directory did not exist (a NOT_FOUND sentinel or a failed open).
+    MissingDir,
+    /// The directory exists and its cached listing has no entry `name`.
+    MissingEntry,
+    /// A `node_modules` search level whose cached listing has no `node_modules`.
+    NoNodeModules,
+}
+
+#[derive(Clone, Copy)]
+struct TouchedDir {
+    kind: TouchedKind,
+    dir: (u32, u32),
+    name: (u32, u32),
+}
+
+impl TouchedDir {
+    fn dir<'b>(&self, bytes: &'b [u8]) -> &'b [u8] {
+        &bytes[self.dir.0 as usize..(self.dir.0 + self.dir.1) as usize]
+    }
+    fn name<'b>(&self, bytes: &'b [u8]) -> &'b [u8] {
+        &bytes[self.name.0 as usize..(self.name.0 + self.name.1) as usize]
     }
 }
+
+impl TouchedDirs {
+    fn push(&mut self, kind: TouchedKind, dir: &[u8], name: &[u8]) {
+        let dir_start = self.bytes.len();
+        self.bytes.extend_from_slice(dir);
+        let name_start = self.bytes.len();
+        self.bytes.extend_from_slice(name);
+        self.records.push(TouchedDir {
+            kind,
+            dir: (dir_start as u32, dir.len() as u32),
+            name: (name_start as u32, name.len() as u32),
+        });
+    }
+}
+
 thread_local! {
-    static TOUCHED_DIRS: TouchedDirsSlot = const { TouchedDirsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
+    static TOUCHED_DIRS: core::cell::RefCell<Option<Box<TouchedDirs>>> =
+        const { core::cell::RefCell::new(None) };
 }
 
-/// Null until this thread records for the first time.
-#[inline(always)]
-fn touched_dirs_get() -> *mut TouchedDirs {
-    TOUCHED_DIRS.with(|s| s.0.get())
-}
-
-#[cold]
-fn touched_dirs_init() -> *mut TouchedDirs {
-    let p: *mut TouchedDirs = bun_core::heap::into_raw(Box::new(TouchedDirs {
-        recording: false,
-        hashes: Vec::new(),
-    }));
-    TOUCHED_DIRS.with(|s| s.0.set(p));
-    p
+#[inline]
+fn record_touched(kind: TouchedKind, dir: &[u8], name: &[u8]) {
+    TOUCHED_DIRS.with(|slot| {
+        if let Some(touched) = slot.borrow_mut().as_deref_mut() {
+            if touched.recording {
+                touched.push(
+                    kind,
+                    strings::without_trailing_slash_windows_path(dir),
+                    name,
+                );
+            }
+        }
+    });
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -2481,87 +2514,155 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
-    /// Record the directory cache keys the next resolution on this thread reads.
+    /// Record what the next resolution on this thread looks for and does not
+    /// find, for `bust_touched_dirs`.
     pub fn start_recording_touched_dirs(&mut self) {
-        let mut slot = touched_dirs_get();
-        if slot.is_null() {
-            slot = touched_dirs_init();
-        }
-        // SAFETY: thread-local; no reference into it outlives this statement.
-        unsafe {
-            (*slot).hashes.clear();
-            (*slot).recording = true;
-        }
+        TOUCHED_DIRS.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let touched = slot.get_or_insert_with(Default::default);
+            touched.records.clear();
+            touched.bytes.clear();
+            touched.recording = true;
+        });
     }
 
-    /// Keeps the recorded keys for `bust_touched_dirs`.
+    /// Keeps the records for `bust_touched_dirs`.
     pub fn stop_recording_touched_dirs(&mut self) {
-        let slot = touched_dirs_get();
-        if !slot.is_null() {
-            // SAFETY: thread-local; no reference into it outlives this statement.
-            unsafe { (*slot).recording = false };
-        }
-    }
-
-    #[inline]
-    fn record_touched_dir_hash(&self, hash: u64) {
-        let slot = touched_dirs_get();
-        if slot.is_null() {
-            return;
-        }
-        // SAFETY: thread-local; no reference into it outlives this statement.
-        unsafe {
-            if (*slot).recording {
-                (*slot).hashes.push(hash);
+        TOUCHED_DIRS.with(|slot| {
+            if let Some(touched) = slot.borrow_mut().as_deref_mut() {
+                touched.recording = false;
             }
-        }
+        });
     }
 
+    /// `dir` was looked up and did not exist.
     #[inline]
-    fn record_touched_dir(&self, dir: &[u8]) {
-        let slot = touched_dirs_get();
-        if slot.is_null() {
-            return;
-        }
-        // SAFETY: thread-local; no reference into it outlives this statement.
-        unsafe {
-            if (*slot).recording {
-                (*slot).hashes.push(DirInfo::HashMap::key_hash(dir));
-            }
-        }
+    fn record_missing_dir(&self, dir: &[u8]) {
+        record_touched(TouchedKind::MissingDir, dir, b"");
     }
 
-    /// Drop every recorded directory from both caches so a retry reads them
-    /// from disk. A miss caches what it did not find, and nothing outside watch
-    /// mode invalidates that. Returns whether any of them was cached, which is
-    /// the case for every lookup that reached an existing directory.
+    /// The cached listing of `dir` was probed for `name` and had no such entry.
+    #[inline]
+    fn record_missing_entry(&self, dir: &[u8], name: &[u8]) {
+        record_touched(TouchedKind::MissingEntry, dir, name);
+    }
+
+    /// `dir` was a `node_modules` search level that the cache says has none.
+    #[inline]
+    fn record_no_node_modules(&self, dir: &[u8]) {
+        record_touched(TouchedKind::NoNodeModules, dir, b"");
+    }
+
+    /// After a miss, check on disk each thing the lookup did not find and drop
+    /// the cached directories that disagree with the disk, so a retry reads
+    /// them again. Returns whether anything was dropped. A lookup that still
+    /// fails for the same reasons costs one `access()` per record and keeps
+    /// every cache entry.
     pub fn bust_touched_dirs(&mut self) -> bool {
-        let slot = touched_dirs_get();
-        if slot.is_null() {
+        let Some(mut touched) = TOUCHED_DIRS.with(|slot| slot.borrow_mut().take()) else {
             return false;
-        }
-        // SAFETY: thread-local; no reference into it outlives this statement.
-        let mut hashes = unsafe {
-            (*slot).recording = false;
-            core::mem::take(&mut (*slot).hashes)
         };
-        hashes.sort_unstable();
-        hashes.dedup();
+        touched.recording = false;
+
         let mut busted = false;
-        for &hash in &hashes {
-            let first_bust = self.fs_mut().fs.bust_entries_cache_hash(hash);
-            let second_bust = self.dir_cache_mut().remove_hash(hash);
-            busted |= first_bust || second_bust;
+        let mut node_modules_appeared = false;
+        {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut seen: Vec<u64> = Vec::with_capacity(touched.records.len());
+            for record in &touched.records {
+                let dir = record.dir(&touched.bytes);
+                let name = record.name(&touched.bytes);
+                let key =
+                    bun_wyhash::hash_with_seed(record.kind as u64 ^ bun_wyhash::hash(name), dir);
+                if seen.contains(&key) {
+                    continue;
+                }
+                seen.push(key);
+                match record.kind {
+                    TouchedKind::MissingDir => {
+                        if Self::path_exists(&mut buf, &[dir]) {
+                            busted |= self.bust_dir_and_stale_parents(dir);
+                        }
+                    }
+                    TouchedKind::MissingEntry => {
+                        if Self::path_exists(&mut buf, &[dir, name]) {
+                            busted |= self.bust_dir_cache(dir);
+                        }
+                    }
+                    TouchedKind::NoNodeModules => {
+                        if Self::path_exists(&mut buf, &[dir, b"node_modules"]) {
+                            node_modules_appeared = true;
+                        }
+                    }
+                }
+            }
+        }
+        if node_modules_appeared {
+            // `load_node_modules` reaches each level through the cached parent
+            // link of the level below it, so the whole chain is rebuilt.
+            for record in &touched.records {
+                if record.kind == TouchedKind::NoNodeModules {
+                    busted |= self.bust_dir_cache(record.dir(&touched.bytes));
+                }
+            }
         }
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} touched dirs = {}",
-            hashes.len(),
+            touched.records.len(),
             busted
         );
-        hashes.clear();
-        // SAFETY: thread-local; keeps the allocation for the next recording.
-        unsafe { (*slot).hashes = hashes };
+
+        touched.records.clear();
+        touched.bytes.clear();
+        TOUCHED_DIRS.with(|slot| *slot.borrow_mut() = Some(touched));
+        busted
+    }
+
+    /// One `access()` on the joined `parts`.
+    fn path_exists(buf: &mut bun_paths::PathBuffer, parts: &[&[u8]]) -> bool {
+        let mut len = 0usize;
+        for (i, part) in parts.iter().enumerate() {
+            let needs_sep = i > 0 && len > 0 && !ResolvePath::is_sep_any(buf[len - 1]);
+            if len + usize::from(needs_sep) + part.len() >= buf.len() {
+                return false;
+            }
+            if needs_sep {
+                buf[len] = SEP;
+                len += 1;
+            }
+            buf[len..len + part.len()].copy_from_slice(part);
+            len += part.len();
+        }
+        buf[len] = 0;
+        bun_sys::exists_z(bun_core::ZStr::from_buf(&buf[..], len))
+    }
+
+    /// `dir` exists now but was cached as missing. Drop it, then walk up and
+    /// drop every ancestor whose cached listing does not know the child below
+    /// it: that listing predates the child and is where the child's entry
+    /// (and a symlink's target) is read from.
+    fn bust_dir_and_stale_parents(&mut self, dir: &[u8]) -> bool {
+        let mut busted = self.bust_dir_cache(dir);
+        let mut child = dir;
+        while let Some(parent) = bun_paths::dirname(child) {
+            let parent = strings::without_trailing_slash_windows_path(parent);
+            if parent.len() >= child.len() {
+                break;
+            }
+            let base = bun_paths::basename(child);
+            let listed = self
+                .fs_mut()
+                .fs
+                .entries
+                .get(parent)
+                .is_some_and(|entries| entries.lookup(base).0.is_some());
+            if listed {
+                break;
+            }
+            busted |= self.bust_dir_cache(parent);
+            child = parent;
+        }
         busted
     }
 
@@ -2679,12 +2780,13 @@ impl<'a> Resolver<'a> {
         // or in the package root directory if it's a self-reference
         if use_node_module_resolver {
             loop {
-                // Its cached has_node_modules bit decides whether it is searched.
-                self.record_touched_dir(dir_info.abs_path);
                 // Skip directories that are themselves called "node_modules", since we
                 // don't ever want to search for "node_modules/node_modules"
                 'node_modules: {
                     if !(dir_info.has_node_modules() || is_self_reference) {
+                        if !dir_info.is_node_modules() {
+                            self.record_no_node_modules(dir_info.abs_path);
+                        }
                         break 'node_modules;
                     }
                     any_node_modules_folder = true;
@@ -3402,7 +3504,6 @@ impl<'a> Resolver<'a> {
 
         Self::assert_valid_cache_key(dir_path);
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
-        self.record_touched_dir_hash(dir_cache_info_result.hash);
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
             // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
@@ -3773,6 +3874,7 @@ impl<'a> Resolver<'a> {
                 let entry_query = match entry_lookup {
                     Some(q) => q,
                     None => {
+                        self.record_missing_entry(resolved_dir_info.abs_path, base);
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
@@ -4320,15 +4422,22 @@ impl<'a> Resolver<'a> {
         let top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
-        self.record_touched_dir_hash(top_result.hash);
         if top_result.status != allocators::ItemStatus::Unknown {
-            return Ok(self
+            let cached = self
                 .dir_cache_mut()
                 .at_index(top_result.index)
-                .map(DirInfoRef::from_slot));
+                .map(DirInfoRef::from_slot);
+            if cached.is_none() {
+                self.record_missing_dir(path_without_trailing_slash);
+            }
+            return Ok(cached);
         }
 
-        self.dir_info_cached_miss(enable_logging, input_path, top_result)
+        let result = self.dir_info_cached_miss(enable_logging, input_path, top_result);
+        if matches!(result, Ok(None)) {
+            self.record_missing_dir(path_without_trailing_slash);
+        }
+        result
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
@@ -4401,7 +4510,6 @@ impl<'a> Resolver<'a> {
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
             let result = self.dir_cache_mut().get_or_put(top)?;
-            self.record_touched_dir_hash(result.hash);
 
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
@@ -4445,7 +4553,6 @@ impl<'a> Resolver<'a> {
 
         if top == root_path {
             let result = self.dir_cache_mut().get_or_put(root_path)?;
-            self.record_touched_dir_hash(result.hash);
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {
@@ -5438,6 +5545,9 @@ impl<'a> Resolver<'a> {
                     )
                 })
         };
+        if !matches!(looked_up, Some((Some(_), _))) {
+            self.record_missing_entry(dir_info.abs_path, &base[..]);
+        }
         if let Some((Some(lookup), dirname_fd)) = looked_up {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -5679,6 +5789,10 @@ impl<'a> Resolver<'a> {
         let mut package_json: Option<*const PackageJSON> = None;
 
         // Try using the main field(s) from "package.json"
+        if dir_info.package_json().is_none() {
+            // Absent, or present but unparseable when the directory was read.
+            self.record_missing_entry(dir_info.abs_path, b"package.json");
+        }
         if let Some(pkg_json) = dir_info.package_json() {
             package_json = Some(std::ptr::from_ref(pkg_json));
             if pkg_json.main_fields.count() > 0 {
@@ -5874,7 +5988,6 @@ impl<'a> Resolver<'a> {
         }
 
         let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
-        self.record_touched_dir(dir_path);
 
         // PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
         // LIFETIMES.tsv); wrap in `BackRef` so later `&mut self` calls
@@ -5890,13 +6003,18 @@ impl<'a> Resolver<'a> {
                 self.store_fd,
             ) {
                 Ok(e) => bun_ptr::BackRef::new(&*e),
-                Err(_) => dec_ret!(None),
+                Err(_) => {
+                    self.record_missing_dir(dir_path);
+                    dec_ret!(None)
+                }
             };
 
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {
+                    self.record_missing_dir(dir_path);
+                }
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -5926,6 +6044,9 @@ impl<'a> Resolver<'a> {
         // single `entries_mutex` critical section (see its doc for the
         // in-place rewrite this guards against).
         let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
+        if plain_query.is_none() {
+            self.record_missing_entry(dir_path, base);
+        }
         if let Some(query) = plain_query {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -6027,6 +6148,9 @@ impl<'a> Resolver<'a> {
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
+                    if ts_query.is_none() {
+                        self.record_missing_entry(dir_path, &buffer[..]);
+                    }
                     if let Some(query) = ts_query {
                         // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                         // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -6131,6 +6255,12 @@ impl<'a> Resolver<'a> {
         }
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
+        if ext_query.is_none() {
+            self.record_missing_entry(
+                strings::without_trailing_slash_windows_path(Dirname::dirname(path)),
+                file_name,
+            );
+        }
         if let Some(query) = ext_query {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.

@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 
 // The resolver caches every directory it reads, including the ones it did not
 // find, for the life of the process and shares that cache between the runtime,
 // every Worker, and every Bun.build() call. A lookup that failed because a
 // file was not written yet used to stay failed after the file appeared: the
-// retry only dropped the importer's own directory. Now a miss drops every
-// directory the lookup read and resolves once more, and a module file that
+// retry only dropped the importer's own directory. Now a miss checks on disk
+// each directory and entry the lookup did not find, drops the cached
+// directories that changed, and resolves once more. A module file that
 // disappeared from a cached listing drops its directory when the read fails.
 //
 // Each test runs one group of the fixture in its own process.
@@ -55,8 +57,77 @@ const files = {
         console.log(label, "ERR", (e.errors || []).map(x => x.message).join("|"));
       }
     };
+    // Prints the resolved path relative to the fixture root, or the error code.
+    const root = fs.realpathSync(process.cwd());
+    const res = (label, fn) => {
+      try {
+        console.log(label, "OK", path.relative(root, fn()).split(path.sep).join("/"));
+      } catch (e) {
+        console.log(label, "ERR", e.code);
+      }
+    };
+    // A require() whose lookups start from a directory other than this file's.
+    const requireFrom = dir => createRequire(path.resolve(dir, "x.cjs"));
 
     const groups = {
+      async search() {
+        // A scoped subpath: two directory levels that did not exist.
+        res("H1", () => require.resolve("@later/pkg/bin/tool.js"));
+        write(nm("@later", "pkg", "bin", "tool.js"), "");
+        res("H2", () => require.resolve("@later/pkg/bin/tool.js"));
+
+        // The importing directory gains a node_modules of its own. This is the
+        // shape of the bun npm package's postinstall: it runs from
+        // node_modules/bun, downloads the platform package next to itself, and
+        // resolves it again.
+        fs.mkdirSync(nm("tool"));
+        const toolRequire = requireFrom(nm("tool"));
+        res("I1", () => toolRequire.resolve("@tool-platform/linux-x64/bin/tool.js"));
+        write(nm("tool", "node_modules", "@tool-platform", "linux-x64", "bin", "tool.js"), "");
+        res("I2", () => toolRequire.resolve("@tool-platform/linux-x64/bin/tool.js"));
+
+        // An ancestor of the importing directory gains a node_modules.
+        fs.mkdirSync(path.join("packages", "app", "scripts"), { recursive: true });
+        const appRequire = requireFrom(path.join("packages", "app", "scripts"));
+        res("J1", () => appRequire.resolve("app-dep/lib/entry.js"));
+        write(path.join("packages", "app", "node_modules", "app-dep", "lib", "entry.js"), "");
+        res("J2", () => appRequire.resolve("app-dep/lib/entry.js"));
+
+        // A relative specifier naming a directory that did not exist.
+        res("K1", () => require.resolve("./lib"));
+        write(path.join("lib", "index.js"), "");
+        res("K2", () => require.resolve("./lib"));
+
+        // A package created under a require.resolve() "paths" root.
+        fs.mkdirSync(path.join("other", "node_modules"), { recursive: true });
+        const opts = { paths: [path.resolve("other")] };
+        res("L1", () => require.resolve("other-pkg", opts));
+        write(path.join("other", "node_modules", "other-pkg", "index.js"), "");
+        res("L2", () => require.resolve("other-pkg", opts));
+
+        // What stays missing keeps failing, and what resolved keeps resolving.
+        res("M1", () => require.resolve("never-installed"));
+        res("M2", () => require.resolve("never-installed"));
+        res("M3", () => require.resolve("@later/pkg/missing.js"));
+        res("M4", () => require.resolve("@later/pkg/missing.js"));
+        res("M5", () => require.resolve("@later/pkg/bin/tool.js"));
+      },
+
+      async symlink() {
+        // A package symlinked in after the miss resolves to its real path.
+        write(path.join("vendor", "linked-pkg", "index.js"), "");
+        res("N1", () => require.resolve("linked-pkg"));
+        fs.symlinkSync(path.resolve("vendor", "linked-pkg"), nm("linked-pkg"));
+        res("N2", () => require.resolve("linked-pkg"));
+      },
+
+      async nodepath() {
+        // A package created in a NODE_PATH directory (the env var names ./global).
+        res("O1", () => require.resolve("global-pkg"));
+        write(path.join("global", "global-pkg", "index.js"), "");
+        res("O2", () => require.resolve("global-pkg"));
+      },
+
       async require() {
         // "main" target written after the miss.
         write(nm("p1", "package.json"), '{"name":"p1","main":"./i.js"}');
@@ -162,11 +233,11 @@ const files = {
   `,
 };
 
-async function runGroup(group: string) {
+async function runGroup(group: string, env: (dir: string) => Record<string, string> = () => ({})) {
   using dir = tempDir("dir-cache-retry", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "main.mjs", group],
-    env: bunEnv,
+    env: { ...bunEnv, ...env(String(dir)) },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -176,6 +247,58 @@ async function runGroup(group: string) {
 }
 
 describe.concurrent("a failed resolution sees files and packages created after the miss", () => {
+  test("packages and directories created in the node_modules search path", async () => {
+    expect(await runGroup("search")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "H1 ERR MODULE_NOT_FOUND
+      H2 OK node_modules/@later/pkg/bin/tool.js
+      I1 ERR MODULE_NOT_FOUND
+      I2 OK node_modules/tool/node_modules/@tool-platform/linux-x64/bin/tool.js
+      J1 ERR MODULE_NOT_FOUND
+      J2 OK packages/app/node_modules/app-dep/lib/entry.js
+      K1 ERR MODULE_NOT_FOUND
+      K2 OK lib/index.js
+      L1 ERR MODULE_NOT_FOUND
+      L2 OK other/node_modules/other-pkg/index.js
+      M1 ERR MODULE_NOT_FOUND
+      M2 ERR MODULE_NOT_FOUND
+      M3 ERR MODULE_NOT_FOUND
+      M4 ERR MODULE_NOT_FOUND
+      M5 OK node_modules/@later/pkg/bin/tool.js"
+      ,
+      }
+    `);
+  });
+
+  test.skipIf(isWindows)("a package symlinked in after the miss", async () => {
+    expect(await runGroup("symlink")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "N1 ERR MODULE_NOT_FOUND
+      N2 OK vendor/linked-pkg/index.js"
+      ,
+      }
+    `);
+  });
+
+  test("a package created in a NODE_PATH directory", async () => {
+    expect(await runGroup("nodepath", dir => ({ NODE_PATH: join(dir, "global") }))).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "O1 ERR MODULE_NOT_FOUND
+      O2 OK global/global-pkg/index.js"
+      ,
+      }
+    `);
+  });
+
   test("require and import of a package or directory", async () => {
     expect(await runGroup("require")).toMatchInlineSnapshot(`
       {

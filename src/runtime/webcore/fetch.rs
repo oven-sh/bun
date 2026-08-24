@@ -1,12 +1,3 @@
-// ──────────────────────────────────────────────────────────────────────────
-// Error message constants
-// ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
-pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
-const FETCH_ERROR_UNEXPECTED_BODY: &str = "fetch() request with GET/HEAD method cannot have body.";
-const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
-
 pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
     if value.is_undefined() {
         "fetch() expects a string, but received Undefined"
@@ -262,7 +253,7 @@ fn bun_fetch_preconnect(
         return Err(global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("{}", FETCH_ERROR_BLANK_URL),
+                format_args!("fetch() URL must not be a blank string."),
             )
             .throw());
     }
@@ -297,7 +288,7 @@ fn bun_fetch_preconnect(
         return Err(global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("{}", FETCH_ERROR_BLANK_URL),
+                format_args!("fetch() URL must not be a blank string."),
             )
             .throw());
     }
@@ -408,7 +399,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if callframe.arguments_count() == 0 {
         let err = ctx.to_type_error(
             jsc::ErrorCode::MISSING_ARGS,
-            format_args!("{FETCH_ERROR_NO_ARGS}"),
+            format_args!("fetch() expects a string but received no arguments."),
         );
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -553,7 +544,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if url_str.is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_URL,
-            format_args!("{FETCH_ERROR_BLANK_URL}"),
+            format_args!("fetch() URL must not be a blank string."),
         );
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1264,7 +1255,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if proxy.is_some() && !unix_socket_path.slice().is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
-            format_args!("{FETCH_ERROR_PROXY_UNIX}"),
+            format_args!("fetch() cannot use a proxy with a unix socket."),
         );
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1451,7 +1442,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
-            format_args!("{FETCH_ERROR_UNEXPECTED_BODY}"),
+            format_args!("fetch() request with GET/HEAD method cannot have body."),
         );
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(

@@ -221,7 +221,7 @@ fn testing_impl(
         }
         Err(err) => {
             if log.has_errors() {
-                return log.to_js(global, "parsing failed:");
+                return log.to_js(global, format_args!("parsing failed:"));
             }
             Err(global.throw(format_args!("parsing failed: {}", err.kind)))
         }
@@ -366,7 +366,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         }
         Err(err) => {
             if log.has_any() {
-                return log.to_js(global, "parsing failed:");
+                return log.to_js(global, format_args!("parsing failed:"));
             }
             Err(global.throw(format_args!("parsing failed: {}", err.kind)))
         }

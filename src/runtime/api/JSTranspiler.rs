@@ -858,7 +858,7 @@ impl TransformTask {
                     }
                 }
 
-                break 'brk self.log.to_js(global, "Transform failed");
+                break 'brk self.log.to_js(global, format_args!("Transform failed"));
             };
 
             promise.reject_with_async_stack(global, error_value)?;
@@ -966,9 +966,11 @@ impl JSTranspiler {
         config.from_js(global, config_arg, arena_ref)?;
 
         if (config.log.warnings + config.log.errors) > 0 {
-            return Err(
-                global.throw_value(config.log.to_js(global, "Failed to create transpiler")?)
-            );
+            return Err(global.throw_value(
+                config
+                    .log
+                    .to_js(global, format_args!("Failed to create transpiler"))?,
+            ));
         }
 
         // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
@@ -983,9 +985,9 @@ impl JSTranspiler {
             Err(err) => {
                 let log = &mut config.log;
                 if (log.warnings + log.errors) > 0 {
-                    return Err(
-                        global.throw_value(log.to_js(global, "Failed to create transpiler")?)
-                    );
+                    return Err(global.throw_value(
+                        log.to_js(global, format_args!("Failed to create transpiler"))?,
+                    ));
                 }
                 return Err(global.throw_error(err, "Error creating transpiler"));
             }
@@ -1019,7 +1021,9 @@ impl JSTranspiler {
         if let Err(err) = transpiler.configure_defines() {
             let log = &mut config.log;
             if (log.warnings + log.errors) > 0 {
-                return Err(global.throw_value(log.to_js(global, "Failed to load define")?));
+                return Err(
+                    global.throw_value(log.to_js(global, format_args!("Failed to load define"))?)
+                );
             }
             return Err(global.throw_error(err, "Failed to load define"));
         }
@@ -1315,13 +1319,13 @@ impl JSTranspiler {
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
             }
             return Err(global.throw(format_args!("Failed to parse")));
         };
 
         if (log_ref.warnings + log_ref.errors) > 0 {
-            return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
         }
 
         let exports_label = EncodedSlice::latin1(b"exports");
@@ -1511,13 +1515,13 @@ impl JSTranspiler {
         let log_ref = self.transpiler.get().log_mut();
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
             }
             return Err(global.throw(format_args!("Failed to parse code")));
         };
 
         if (log_ref.warnings + log_ref.errors) > 0 {
-            return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
         }
 
         let mut buffer_writer = self.buffer_writer.replace(None).unwrap_or_else(|| {
@@ -1720,13 +1724,16 @@ impl JSTranspiler {
         let result = (|| -> JsResult<JSValue> {
             if let Err(err) = scan_result {
                 if (log.warnings + log.errors) > 0 {
-                    return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
+                    return Err(global
+                        .throw_value(log.to_js(global, format_args!("Failed to scan imports"))?));
                 }
                 return Err(global.throw_error(err, "Failed to scan imports"));
             }
 
             if (log.warnings + log.errors) > 0 {
-                return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
+                return Err(
+                    global.throw_value(log.to_js(global, format_args!("Failed to scan imports"))?)
+                );
             }
 
             named_imports_to_js(

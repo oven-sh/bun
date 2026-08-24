@@ -2272,7 +2272,9 @@ where
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    ctx.create_error_instance(format_args!("{}", Fetch::FETCH_ERROR_NO_ARGS)),
+                    ctx.create_error_instance(format_args!(
+                        "fetch() expects a string but received no arguments."
+                    )),
                 ),
             );
         }
@@ -2295,7 +2297,9 @@ where
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         ctx,
-                        ctx.create_error_instance(format_args!("{}", Fetch::FETCH_ERROR_BLANK_URL)),
+                        ctx.create_error_instance(format_args!(
+                            "fetch() URL must not be a blank string."
+                        )),
                     ),
                 );
             }

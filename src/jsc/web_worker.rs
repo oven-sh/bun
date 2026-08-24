@@ -1147,7 +1147,7 @@ impl WebWorker {
         }
         let global = vm.global();
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
-            let err = vm_log.to_js(global, "Error in worker")?;
+            let err = vm_log.to_js(global, format_args!("Error in worker"))?;
             let str = err.to_bun_string(global)?;
             Ok((err, str))
         })();
@@ -1395,7 +1395,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
             let global = JSGlobalObject::opaque_ref(global);
             let out: jsc::JsResult<BunString> = (|| {
-                let out = log.to_js(global, "Error resolving Worker entry point")?;
+                let out = log.to_js(global, format_args!("Error resolving Worker entry point"))?;
                 out.to_bun_string(global)
             })();
             match out {

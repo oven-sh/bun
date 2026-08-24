@@ -237,7 +237,7 @@ impl FileSystemRouter {
                 )));
             }
             Err(_) => {
-                let err_value = log.to_js(global_this, "reading root directory");
+                let err_value = log.to_js(global_this, format_args!("reading root directory"));
                 return Err(global_this.throw_value(err_value?));
             }
         };
@@ -268,7 +268,7 @@ impl FileSystemRouter {
                 )
                 .is_err()
             {
-                let err_value = log.to_js(global_this, "loading routes");
+                let err_value = log.to_js(global_this, format_args!("loading routes"));
                 return Err(global_this.throw_value(err_value?));
             }
         }
@@ -282,7 +282,7 @@ impl FileSystemRouter {
         }
 
         if log.errors + log.warnings > 0 {
-            let err_value = log.to_js(global_this, "loading routes");
+            let err_value = log.to_js(global_this, format_args!("loading routes"));
             return Err(global_this.throw_value(err_value?));
         }
 
@@ -475,7 +475,7 @@ impl FileSystemRouter {
                 )));
             }
             Err(_) => {
-                let err_value = log.to_js(global_this, "reading root directory");
+                let err_value = log.to_js(global_this, format_args!("reading root directory"));
                 return Err(global_this.throw_value(err_value?));
             }
         };
@@ -498,7 +498,7 @@ impl FileSystemRouter {
                 )
                 .is_err()
             {
-                let err_value = log.to_js(global_this, "loading routes");
+                let err_value = log.to_js(global_this, format_args!("loading routes"));
                 return Err(global_this.throw_value(err_value?));
             }
         }

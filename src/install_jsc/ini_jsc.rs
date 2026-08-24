@@ -82,7 +82,7 @@ impl IniTestingAPIs {
         let mut install = Box::new(BunInstall::default());
         let mut configs: Vec<RegistryAuth> = Vec::new();
         if load_npmrc(&mut install, env, &mut log, &source, &mut configs).is_err() {
-            return log.to_js(global, "error");
+            return log.to_js(global, format_args!("error"));
         }
 
         let (

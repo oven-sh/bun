@@ -375,9 +375,8 @@ impl String {
     /// fresh WTF-backed string.
     pub fn create_format(args: core::fmt::Arguments<'_>) -> Self {
         use core::fmt::Write;
-        // Cold path (error messages), so a heap buffer is fine.
         if let Some(s) = args.as_str() {
-            return Self::clone_utf8(s.as_bytes());
+            return Self::static_(s);
         }
         let mut buf = std::string::String::with_capacity(128);
         let _ = buf.write_fmt(args);

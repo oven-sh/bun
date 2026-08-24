@@ -20,6 +20,7 @@ use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
+use bun_jsc::StringJsc as _;
 use bun_jsc::bun_string_jsc;
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
@@ -612,12 +613,8 @@ impl ValueError {
             ValueError::SystemTypeError(system_error) => {
                 core::mem::take(system_error).to_type_error_instance(global_object)
             }
-            ValueError::Message(message) => {
-                global_object.create_error_instance(format_args!("{message}"))
-            }
-            ValueError::TypeError(message) => {
-                global_object.create_type_error_instance(format_args!("{message}"))
-            }
+            ValueError::Message(message) => message.to_error_instance(global_object),
+            ValueError::TypeError(message) => message.to_type_error_instance(global_object),
             // do an early return in this case we don't need to create a new Strong
             ValueError::JSValue(js_value) => {
                 return js_value.get().unwrap_or(JSValue::UNDEFINED);

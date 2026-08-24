@@ -1760,8 +1760,7 @@ impl Expect {
         }
 
         if arg.is_string() {
-            let error_value = global_this
-                .create_error_instance(format_args!("{}", arg.to_bun_string(global_this)?));
+            let error_value = arg.to_bun_string(global_this)?.to_error_instance(global_this);
             error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
         }

@@ -1339,8 +1339,17 @@ pub trait StringJsc {
     /// Consume: the +1 moves into the `JSString`.
     fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    /// `new Error(self)` — the message is copied (16-bit stays 16-bit).
+    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for bun_core::String {
+    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        self.to_encoded_slice().to_error_instance(global)
+    }
+    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        self.to_encoded_slice().to_type_error_instance(global)
+    }
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         bun_string_jsc::from_js(value, global)
     }
@@ -1388,7 +1397,11 @@ impl SysErrorJsc for bun_sys::Error {
 
 /// Extension trait providing JSC-aware methods on `bun_ast::Log`.
 pub trait LogJsc {
-    fn to_js(&self, global: &JSGlobalObject, message: &'static str) -> JsResult<JSValue>;
+    fn to_js(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<JSValue>;
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// Unlike `to_js`, always produces an `AggregateError`.
     fn to_js_aggregate_error(
@@ -1406,7 +1419,11 @@ fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
     }
 }
 impl LogJsc for bun_ast::Log {
-    fn to_js(&self, global: &JSGlobalObject, message: &'static str) -> JsResult<JSValue> {
+    fn to_js(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<JSValue> {
         let msgs = &self.msgs;
         // Cap at 256 — the consumer's stack buffer holds at most 256 JSValues.
         let count = msgs.len().min(256);
@@ -1422,7 +1439,7 @@ impl LogJsc for bun_ast::Log {
                 for (i, msg) in msgs[0..count].iter().enumerate() {
                     errors_stack[i] = msg_to_js(msg, global)?;
                 }
-                global.create_aggregate_error(&errors_stack[..count], format_args!("{message}"))
+                global.create_aggregate_error(&errors_stack[..count], message)
             }
         }
     }

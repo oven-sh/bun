@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync } from "fs";
+import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
@@ -204,25 +204,9 @@ test.skipIf(isWindows)("auto-install native addon packages resolve $ORIGIN-shape
     BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
   };
 
-  // First run populates the cache through the local registry.
-  {
+  async function runCheck(script: string): Promise<{ found: boolean; shaped: boolean }> {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "check.js"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
-  }
-
-  // Second run resolves from the warm cache (cached manifests, no lockfile
-  // edge for lib-pkg), which is the layout every pre-existing cache has.
-  {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "check.js"],
+      cmd: [bunExe(), script],
       cwd: String(dir),
       env,
       stdout: "pipe",
@@ -230,9 +214,25 @@ test.skipIf(isWindows)("auto-install native addon packages resolve $ORIGIN-shape
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
-    expect(JSON.parse(stdout)).toEqual({ found: true, shaped: true });
     expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
   }
+
+  // First run populates the cache through the local registry. The addon view
+  // is built during addon-pkg's own resolve, so `shaped` is deterministic.
+  // `found` is not asserted here: lib-pkg's extraction is asynchronous and
+  // nothing in check.js awaits it.
+  expect((await runCheck("check.js")).shaped).toBe(true);
+
+  // Second run resolves from the warm cache with no lockfile edge for
+  // lib-pkg (the layout every pre-existing cache has), which exercises the
+  // disk-cache fallback for the sibling symlink.
+  expect(await runCheck("check.js")).toEqual({ found: true, shaped: true });
+
+  // Third run: drop the view. A warm cache must rebuild it and recreate the
+  // sibling symlink from scratch, with no leftover state from the first run.
+  rmSync(join(String(dir), ".bun-cache", ".addon-links"), { recursive: true, force: true });
+  expect(await runCheck("check.js")).toEqual({ found: true, shaped: true });
 });
 
 test("--install=fallback to install missing packages", async () => {

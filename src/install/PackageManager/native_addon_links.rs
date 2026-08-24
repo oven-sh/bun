@@ -394,6 +394,12 @@ fn ensure_dependency_links(
             &mut link_buf,
             &[STORE_DIR, b"/", folder_name, b"/node_modules/", &link.alias],
         );
+        bun_core::scoped_log!(
+            addon_links,
+            "link {} -> {}",
+            bun_fmt::s(link_z.as_bytes()),
+            bun_fmt::s(target_z.as_bytes())
+        );
 
         let mut read_buf = PathBuffer::uninit();
         match sys::readlinkat(cache_dir, link_z, &mut read_buf.0[..]) {
@@ -429,10 +435,10 @@ fn cached_dep_path_from_disk(
 
     struct Candidate {
         version: Semver::Version,
+        /// Owns the bytes the version's tag offsets point into.
         entry_name: Vec<u8>,
     }
     let mut candidates: Vec<Candidate> = Vec::new();
-    let mut tags_buf: Vec<u8> = Vec::new();
     {
         let index_dir = Dir::borrow(&cache_dir).open_at(npm_name).ok()?;
         let mut iter = sys::iterate_dir(index_dir.fd);
@@ -440,29 +446,27 @@ fn cached_dep_path_from_disk(
             if entry.kind != sys::EntryKind::Directory && entry.kind != sys::EntryKind::SymLink {
                 continue;
             }
-            let entry_name: &[u8] = entry.name.slice_u8();
-            // Index entries carry the cache-version suffix (`1.3.2@@@1`,
-            // possibly followed by `_patch_hash=...`); strip it before the
-            // semver parse.
-            let version_part = match strings::index_of(entry_name, b"@@@") {
+            let entry_name: Vec<u8> = entry.name.slice_u8().to_vec();
+            // Index entries append suffixes to the version: `@@@N` (cache
+            // version, maybe with `_patch_hash=...`) and `@@<host>@@@N` for a
+            // non-default registry. A semver version cannot contain `@`, so
+            // cut at the first `@@`. Parse from the owned copy: the version's
+            // tag offsets then stay valid against `entry_name` (the cut is a
+            // prefix, so offsets match the full buffer too). A shared tag
+            // buffer would not work here: `clone_into` stores offsets
+            // relative to the sub-slice it is given.
+            let version_part = match strings::index_of(&entry_name, b"@@") {
                 Some(at) => &entry_name[..at],
-                None => entry_name,
+                None => &entry_name[..],
             };
             let parsed = Semver::Version::parse(SlicedString::init(version_part, version_part));
             if !parsed.valid || parsed.wildcard != Semver::query::Wildcard::None {
                 continue;
             }
-            let mut version = parsed.version.min();
-            let total = (version.tag.build.len() + version.tag.pre.len()) as usize;
-            if total > 0 {
-                let len_before = tags_buf.len();
-                tags_buf.resize(len_before + total, 0);
-                let mut available = &mut tags_buf[len_before..];
-                version = version.clone_into(version_part, &mut available);
-            }
+            let version = parsed.version.min();
             candidates.push(Candidate {
                 version,
-                entry_name: entry_name.to_vec(),
+                entry_name,
             });
         }
     }
@@ -480,15 +484,15 @@ fn cached_dep_path_from_disk(
 
         let mut best: Option<&Candidate> = None;
         for candidate in &candidates {
-            if !query.satisfies(candidate.version, string_buf, tags_buf.as_slice()) {
+            if !query.satisfies(candidate.version, string_buf, &candidate.entry_name) {
                 continue;
             }
             match best {
                 Some(current)
-                    if Semver::Version::order_fn(
-                        tags_buf.as_slice(),
-                        candidate.version,
+                    if candidate.version.order(
                         current.version,
+                        &candidate.entry_name,
+                        &current.entry_name,
                     ) != core::cmp::Ordering::Greater => {}
                 _ => best = Some(candidate),
             }

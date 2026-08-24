@@ -499,6 +499,7 @@ it("native inspect.custom functions do not return the scope object of a bare cal
     ByteLengthQueuingStrategy,
     CountQueuingStrategy,
     CryptoKey,
+    PerformanceEntry,
     ReadableByteStreamController,
     ReadableStream,
     ReadableStreamBYOBReader,
@@ -516,7 +517,8 @@ it("native inspect.custom functions do not return the scope object of a bare cal
   const results = classes.map(klass => {
     const inspectCustom = klass.prototype[util.inspect.custom];
     // Closing over the binding makes the bare call below pass a scope object as `this`.
-    const bare = () => inspectCustom(2, {});
+    // A negative depth takes the early-return path in every one of these functions.
+    const bare = () => inspectCustom(-1, {});
     return [klass.name, typeof inspectCustom, bare()];
   });
   expect(results).toEqual(classes.map(klass => [klass.name, "function", undefined]));

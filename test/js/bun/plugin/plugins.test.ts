@@ -1080,16 +1080,23 @@ it.concurrent("onLoad loader: 'object' provides a default export when exports ha
             exports: { default: "EXPLICIT", named: "NAMED" },
             loader: "object",
           }));
+          build.onLoad({ filter: /\\.asyncnodef$/ }, async () => {
+            await Promise.resolve();
+            return { exports: { kind: "async" }, loader: "object" };
+          });
         },
       });
     `,
     "data.nodef": ``,
     "data.withdef": ``,
+    "data.asyncnodef": ``,
     "entry.ts": `
       import data from "./data.nodef";
       import { name, age } from "./data.nodef";
       import * as ns from "./data.nodef";
       import explicit, { named } from "./data.withdef";
+      import asyncData, { kind } from "./data.asyncnodef";
+      const required = require("./data.nodef");
       console.log(
         JSON.stringify({
           data,
@@ -1099,6 +1106,10 @@ it.concurrent("onLoad loader: 'object' provides a default export when exports ha
           nsKeys: Object.keys(ns).sort(),
           explicit,
           named,
+          asyncData,
+          kind,
+          requiredName: required.name,
+          requiredDefault: required.default,
         }),
       );
     `,
@@ -1120,6 +1131,10 @@ it.concurrent("onLoad loader: 'object' provides a default export when exports ha
     nsKeys: ["age", "default", "name"],
     explicit: "EXPLICIT",
     named: "NAMED",
+    asyncData: { kind: "async" },
+    kind: "async",
+    requiredName: "Tom",
+    requiredDefault: { name: "Tom", age: 10 },
   });
   expect(exitCode).toBe(0);
 });

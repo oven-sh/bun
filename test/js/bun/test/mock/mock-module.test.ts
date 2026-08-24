@@ -156,6 +156,17 @@ test("mocking a package", async () => {
   expect(require("ha-ha-ha").wow()).toBe(43);
 });
 
+// https://github.com/oven-sh/bun/issues/9987
+test("a factory without a default key exports the returned object as default", async () => {
+  const exports = { wow: () => 42 };
+  mock.module("mock-module-no-default", () => exports);
+  const ns = await import("mock-module-no-default");
+  expect(ns.default).toBe(exports);
+  expect(ns.wow).toBe(exports.wow);
+  expect(Object.keys(ns).sort()).toEqual(["default", "wow"]);
+  expect(require("mock-module-no-default").default).toBe(exports);
+});
+
 test("mocking a builtin", async () => {
   mock.module("fs/promises", () => {
     return {

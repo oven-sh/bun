@@ -2370,9 +2370,8 @@ impl JSValue {
             _ => Ok(None),
         }
     }
-    /// `JSValue.getOwnNonObservable` — own-property lookup that never runs
-    /// user code. A Proxy trap or module namespace is not consulted, and an
-    /// accessor or custom property yields `None` instead of a getter call.
+    /// `JSValue.getOwnNonObservable` — own data property lookup that never runs
+    /// user code: an accessor, a Proxy trap or a module namespace yields `None`.
     /// Like `get` and `get_own_truthy`, an `undefined` value is `None`.
     pub fn get_own_non_observable(
         self,

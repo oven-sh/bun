@@ -496,8 +496,7 @@ impl Tag {
             return Tag::get(value.get_proxy_target(), global_this);
         }
 
-        // Is this a react element? The check and the `Tag::JSX` printer read the
-        // element's own data properties only, so a user getter never runs.
+        // Is this a react element? Own data property only: a user getter never runs here.
         if js_type.is_object() && js_type != JSType::ProxyObject {
             if let Some(typeof_symbol) = value.get_own_non_observable(global_this, "$$typeof") {
                 if typeof_symbol

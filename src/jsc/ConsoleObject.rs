@@ -2189,8 +2189,7 @@ pub mod formatter {
                 });
             }
 
-            // Is this a react element? The check and `print_jsx` read the
-            // element's own data properties only, so a user getter never runs.
+            // Is this a react element? Own data property only: a user getter never runs here.
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
                 if let Some(typeof_symbol) = value.get_own_non_observable(global_this, "$$typeof") {
                     // React 18 and below

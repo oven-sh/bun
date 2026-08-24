@@ -4695,9 +4695,8 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     return JSValue::encode(slotValue);
 }
 
-// Own-property lookup that never runs user code. The slot is a VM inquiry, so a
-// Proxy trap or a module namespace evaluation is skipped, and an accessor or
-// custom property yields empty instead of a getter call.
+// Own data property lookup that never runs user code: an accessor, a Proxy trap
+// or a module namespace export yields empty.
 extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnNonObservable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, BunString* propertyName)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);

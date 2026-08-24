@@ -1641,7 +1641,7 @@ impl BlobExt for Blob {
                     }
                     jsc::js_promise::Status::Fulfilled => {
                         // SAFETY: live until the deref below.
-                        let written = unsafe { (*file_sink).stream_bytes.get() };
+                        let written = unsafe { (*file_sink).stream_bytes.get().unwrap_or(0) };
                         // SAFETY: release our +1 ref on the sink; not used after this.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done();
@@ -1674,7 +1674,7 @@ impl BlobExt for Blob {
             }
         }
         // SAFETY: live until the deref below.
-        let written = unsafe { (*file_sink).stream_bytes.get() };
+        let written = unsafe { (*file_sink).stream_bytes.get().unwrap_or(0) };
         // SAFETY: release our +1 ref on the sink; not used after this.
         unsafe { webcore::FileSink::deref(file_sink) };
 
@@ -4307,7 +4307,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
-        if bun_core::dirname(path_string.as_bytes()).is_some() {
+        {
             match mkdirp_parent(path_string.as_bytes()) {
                 bun_sys::Result::Ok(()) => {
                     this.set_mkdirp_if_not_exists(false);
@@ -4353,6 +4353,18 @@ pub trait MkdirpTarget {
 // ──────────────────────────────────────────────────────────────────────────
 // writeFileWithEmptySourceToDestination / writeFileWithSourceDestination
 // ──────────────────────────────────────────────────────────────────────────
+
+fn body_used_rejection(global: &JSGlobalObject) -> JSValue {
+    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+        global,
+        global
+            .err(
+                jsc::ErrorCode::BODY_ALREADY_USED,
+                format_args!("Body already used"),
+            )
+            .to_js(),
+    )
+}
 
 #[derive(Default, Clone, Copy)]
 pub struct WriteFileOptions {
@@ -5050,17 +5062,7 @@ pub(crate) fn write_file_internal(
                 BodyValue::Locked(_) => BodyTag::Locked,
                 BodyValue::Used => {
                     destination_blob.detach();
-                    return Ok(ControlFlow::Break(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            global_this
-                                .err(
-                                    jsc::ErrorCode::BODY_ALREADY_USED,
-                                    format_args!("Body already used"),
-                                )
-                                .to_js(),
-                        ),
-                    ));
+                    return Ok(ControlFlow::Break(body_used_rejection(global_this)));
                 }
                 _ => BodyTag::Use,
             };
@@ -5170,17 +5172,7 @@ pub(crate) fn write_file_internal(
                             if readable.is_locked(global_this) || readable.is_disturbed(global_this)
                             {
                                 destination_blob.detach();
-                                return Ok(ControlFlow::Break(
-                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                                        global_this,
-                                        global_this
-                                            .err(
-                                                jsc::ErrorCode::BODY_ALREADY_USED,
-                                                format_args!("Body already used"),
-                                            )
-                                            .to_js(),
-                                    ),
-                                ));
+                                return Ok(ControlFlow::Break(body_used_rejection(global_this)));
                             }
                             let promise = destination_blob.pipe_readable_stream_to_blob(
                                 global_this,
@@ -5269,17 +5261,7 @@ pub(crate) fn write_file_internal(
         if let Some(readable) = ReadableStream::from_js_direct(data) {
             if readable.is_locked(global_this) || readable.is_disturbed(global_this) {
                 destination_blob.detach();
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global_this,
-                        global_this
-                            .err(
-                                jsc::ErrorCode::BODY_ALREADY_USED,
-                                format_args!("ReadableStream has already been used"),
-                            )
-                            .to_js(),
-                    ),
-                );
+                return Ok(body_used_rejection(global_this));
             }
             return destination_blob.pipe_readable_stream_to_blob(global_this, readable, &options);
         }
@@ -5995,7 +5977,7 @@ pub(crate) fn on_file_stream_resolve_request_stream(
         stream.done();
     }
     // SAFETY: the wrapper holds a ref on `sink` until it is dropped below.
-    let written = unsafe { (*this.sink).stream_bytes.get() };
+    let written = unsafe { (*this.sink).stream_bytes.get().unwrap_or(0) };
     this.promise
         .resolve(global_this, JSValue::js_number(written as f64))?;
     Ok(JSValue::UNDEFINED)

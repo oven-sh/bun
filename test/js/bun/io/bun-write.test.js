@@ -975,7 +975,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       // The first half is on disk before the second half is sent. Before, nothing was written
       // until the whole body had been collected in memory.
       while (!(fs.existsSync(dest) && fs.statSync(dest).size > 0)) await Bun.sleep(5);
-      for (let i = 0; i < 50 && !collected; i++) {
+      while (!collected) {
         Bun.gc(true);
         await Bun.sleep(5);
       }

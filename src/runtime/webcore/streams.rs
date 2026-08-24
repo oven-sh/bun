@@ -873,7 +873,7 @@ pub enum SourceHandle {
     ShellWritable(BackRef<crate::shell::subproc::Writable, bun_ptr::Mut>),
     FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet, bun_ptr::Mut>),
     ServerRequestBody(crate::server::AnyRequestContext),
-    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper, bun_ptr::Mut>),
+    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
     /// `bun:internal-for-testing` only: `ready()` re-enters the stream's
     /// `on_cancel`, making consumed-during-`signal_drained` re-entrancy
@@ -914,8 +914,7 @@ impl SourceHandle {
             SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
             // SAFETY: live backref; cleared before the pointee is freed.
             SourceHandle::FetchResponseBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
             SourceHandle::TestingCancelOnDrain(_) => {}
@@ -939,8 +938,7 @@ impl SourceHandle {
             SourceHandle::FetchResponseBody(p) => p.on_ready(),
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
             SourceHandle::HTMLRewriter(p) => p.on_ready(),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_drained(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_drained(),
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
             }
@@ -955,8 +953,7 @@ impl SourceHandle {
     pub fn consumer_collected(self) {
         match self {
             SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_collected(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_collected(),
             SourceHandle::None
             | SourceHandle::JSController(_)
             | SourceHandle::ServerRequestBody(_)
@@ -972,8 +969,7 @@ impl SourceHandle {
     pub fn start(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_consumer_attached(),
+            SourceHandle::S3DownloadBody(p) => p.on_consumer_attached(),
             // Remaining variants leave `on_start` at the trait default (no-op).
             SourceHandle::None
             | SourceHandle::JSController(_)

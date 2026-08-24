@@ -61,8 +61,8 @@ pub struct FileSink {
     /// the stream or the write.
     stream_done: JsCell<bun_jsc::JSPromiseStrong>,
     stream_error: JsCell<Option<streams::StreamError>>,
-    /// Bytes accepted from a wired stream (`written` counts buffered bytes again when flushed).
-    pub(crate) stream_bytes: Cell<u64>,
+    /// Bytes accepted since `pipe_stream` (`written` counts buffered bytes again when flushed).
+    pub(crate) stream_bytes: Cell<Option<u64>>,
 
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
     /// while an async operation is pending. This is set when endFromJS returns a
@@ -567,7 +567,10 @@ impl FileSink {
         };
         let result = match self.stream_error.replace(None) {
             Some(err) => promise.reject(global, Ok(err.to_js(global))),
-            None => promise.resolve(global, JSValue::js_number(self.stream_bytes.get() as f64)),
+            None => promise.resolve(
+                global,
+                JSValue::js_number(self.stream_bytes.get().unwrap_or(0) as f64),
+            ),
         };
         crate::dispatch::fold(result);
     }
@@ -1096,21 +1099,27 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(|w| w.write(data.slice()));
-        self.count_stream_bytes(&rc, data.slice().len());
+        if self.counting_stream_bytes() {
+            self.count_stream_bytes(&rc, data.slice().len());
+        }
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
 
     fn count_stream_bytes(&self, rc: &WriteResult, encoded_len: usize) {
+        let counted = self.stream_bytes.get().unwrap_or(0);
         match rc {
             WriteResult::Err(err) => {
                 self.record_stream_error(streams::StreamError::Error(err.clone()))
             }
-            WriteResult::Done(n) => self.stream_bytes.set(self.stream_bytes.get() + *n as u64),
-            _ => self
-                .stream_bytes
-                .set(self.stream_bytes.get() + encoded_len as u64),
+            WriteResult::Done(n) => self.stream_bytes.set(Some(counted + *n as u64)),
+            _ => self.stream_bytes.set(Some(counted + encoded_len as u64)),
         }
+    }
+
+    /// Only `Bun.write(dest, stream)` reads the count; nothing else pays for the encoded length.
+    fn counting_stream_bytes(&self) -> bool {
+        self.stream_bytes.get().is_some()
     }
 
     fn record_stream_error(&self, err: streams::StreamError) {
@@ -1126,10 +1135,12 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
-        self.count_stream_bytes(
-            &rc,
-            bun_core::strings::element_length_latin1_into_utf8(data.slice()),
-        );
+        if self.counting_stream_bytes() {
+            self.count_stream_bytes(
+                &rc,
+                bun_core::strings::element_length_latin1_into_utf8(data.slice()),
+            );
+        }
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -1141,10 +1152,12 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
-        self.count_stream_bytes(
-            &rc,
-            bun_core::strings::element_length_utf16_into_utf8(data.slice16()),
-        );
+        if self.counting_stream_bytes() {
+            self.count_stream_bytes(
+                &rc,
+                bun_core::strings::element_length_utf16_into_utf8(data.slice16()),
+            );
+        }
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -1541,7 +1554,7 @@ impl FileSink {
             readable_stream: JsCell::new(readable_stream::Strong::default()),
             stream_done: JsCell::new(bun_jsc::JSPromiseStrong::empty()),
             stream_error: JsCell::new(None),
-            stream_bytes: Cell::new(0),
+            stream_bytes: Cell::new(None),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
         }
     }
@@ -1654,6 +1667,7 @@ impl FileSink {
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
         let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
+        self.stream_bytes.set(Some(0));
         self.stream_done
             .set(bun_jsc::JSPromiseStrong::init(global_this));
         let promise = self.stream_done.get().value();

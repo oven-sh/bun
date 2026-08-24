@@ -900,9 +900,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(await Bun.file(dest).text()).toBe("<html><body><p>hi</p></body></html>");
   });
 
-  // Bun.write owns the Locked body (on_receive_value + retargeted task);
-  // clone()'s tee must see that and yield a used body instead of dispatching
-  // the producer callbacks with Bun.write's task as ctx.
+  // Bun.write is reading the body, so it is used: clone() throws (as it does after .text()), and
+  // the write is unaffected.
   it("Bun.write(path, HTMLRewriter.transform(resp)) survives clone() while a handler is suspended", async () => {
     using dir = tempDir("bun-write-htmlrewriter-clone", {});
     const dest = join(String(dir), "out.html");
@@ -919,11 +918,150 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       .transform(new Response("<p>y</p>"));
     const write = Bun.write(dest, out);
     await suspended;
-    const clone = out.clone();
-    expect(clone).toBeInstanceOf(Response);
+    expect(out.bodyUsed).toBe(true);
+    expect(() => out.clone()).toThrow(expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }));
     openGate();
-    await write;
+    expect(await write).toBe(8);
     expect(await Bun.file(dest).text()).toBe("<p>x</p>");
+  });
+
+  describe("Bun.write(path, response) streams the body to the file", () => {
+    const CHUNK = 64 * 1024;
+    const COUNT = 64; // 4 MiB
+    // Serves COUNT chunks; with `gate`, the second half only once it opens.
+    async function origin(gate) {
+      const payload = Buffer.alloc(CHUNK, "a");
+      return Bun.serve({
+        port: 0,
+        fetch() {
+          let i = 0;
+          return new Response(
+            new ReadableStream({
+              async pull(ctrl) {
+                if (gate && i === COUNT / 2) await gate;
+                if (i++ < COUNT) ctrl.enqueue(payload);
+                else ctrl.close();
+              },
+            }),
+            { headers: { "content-length": String(CHUNK * COUNT) } },
+          );
+        },
+      });
+    }
+
+    it("resolves with the byte count and replaces a longer existing file", async () => {
+      using dir = tempDir("bun-write-response-stream", { "out.bin": Buffer.alloc(CHUNK * COUNT + 12345, "z") });
+      await using server = await origin();
+      const dest = join(String(dir), "out.bin");
+      expect(await Bun.write(dest, await fetch(server.url))).toBe(CHUNK * COUNT);
+      expect(fs.statSync(dest).size).toBe(CHUNK * COUNT);
+    });
+
+    it("writes as the body arrives, and a collected Response does not stop it", async () => {
+      using dir = tempDir("bun-write-response-collected", {});
+      const dest = join(String(dir), "deep", "er", "out.bin");
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      await using server = await origin(gate);
+      let collected = false;
+      const registry = new FinalizationRegistry(() => (collected = true));
+      // Its own frame: after it returns only Bun.write refers to the body.
+      async function start() {
+        const res = await fetch(server.url);
+        registry.register(res, null);
+        return Bun.write(dest, res);
+      }
+      const written = start();
+      // The first half is on disk before the second half is sent. Before, nothing was written
+      // until the whole body had been collected in memory.
+      while (!(fs.existsSync(dest) && fs.statSync(dest).size > 0)) await Bun.sleep(5);
+      for (let i = 0; i < 50 && !collected; i++) {
+        Bun.gc(true);
+        await Bun.sleep(5);
+      }
+      openGate();
+      // Before #40278 was fixed this never settled once the Response had been collected.
+      expect(await written).toBe(CHUNK * COUNT);
+      expect(fs.statSync(dest).size).toBe(CHUNK * COUNT);
+    });
+
+    it("a body whose stream was already touched", async () => {
+      using dir = tempDir("bun-write-response-touched", {});
+      await using server = await origin();
+      const res = await fetch(server.url);
+      expect(res.body).toBeInstanceOf(ReadableStream);
+      expect(await Bun.write(join(String(dir), "out.bin"), res)).toBe(CHUNK * COUNT);
+      expect(res.bodyUsed).toBe(true);
+    });
+
+    // https://github.com/oven-sh/bun/issues/13237: this never settled.
+    it("a Response around a JS ReadableStream", async () => {
+      using dir = tempDir("bun-write-response-js-stream", {});
+      const dest = join(String(dir), "out.txt");
+      const stream = new ReadableStream({
+        start(ctrl) {
+          ctrl.enqueue(new TextEncoder().encode("hello "));
+          ctrl.enqueue(new TextEncoder().encode("stream"));
+          ctrl.close();
+        },
+      });
+      expect(await Bun.write(dest, new Response(stream))).toBe(12);
+      expect(await Bun.file(dest).text()).toBe("hello stream");
+    });
+
+    it("a Request body inside Bun.serve", async () => {
+      using dir = tempDir("bun-write-request-stream", {});
+      const dest = join(String(dir), "upload.bin");
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return new Response(String(await Bun.write(dest, req)));
+        },
+      });
+      const body = Buffer.alloc(3 * CHUNK * COUNT, "b");
+      const res = await fetch(server.url, { method: "POST", body });
+      expect({ written: Number(await res.text()), size: fs.statSync(dest).size }).toEqual({
+        written: body.length,
+        size: body.length,
+      });
+    });
+
+    it("rejects with the network error when the body is cut short", async () => {
+      using dir = tempDir("bun-write-response-truncated", {});
+      using listener = Bun.listen({
+        port: 0,
+        hostname: "127.0.0.1",
+        socket: {
+          data(socket) {
+            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n" + Buffer.alloc(1000, "a").toString());
+            socket.flush();
+            socket.end();
+          },
+        },
+      });
+      const res = await fetch(`http://127.0.0.1:${listener.port}/`);
+      expect(Bun.write(join(String(dir), "out.bin"), res)).rejects.toThrow(
+        expect.objectContaining({ code: "ECONNRESET" }),
+      );
+    });
+
+    it("rejects a body that was already used, and createPath: false into a missing directory", async () => {
+      using dir = tempDir("bun-write-response-rejects", {});
+      await using server = await origin();
+      const used = await fetch(server.url);
+      await used.arrayBuffer();
+      expect(Bun.write(join(String(dir), "a"), used)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      const reading = await fetch(server.url);
+      const reader = reading.body.getReader();
+      expect(Bun.write(join(String(dir), "b"), reading)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      reader.releaseLock();
+      expect(
+        Bun.write(join(String(dir), "missing", "c"), await fetch(server.url), { createPath: false }),
+      ).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));
+    });
   });
 
   it("BunFile.name survives concurrent write() calls + GC", async () => {

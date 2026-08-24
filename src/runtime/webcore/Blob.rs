@@ -234,7 +234,7 @@ pub trait BlobExt {
         &self,
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
-        extra_options: Option<JSValue>,
+        options: &WriteFileOptions,
     ) -> JsResult<JSValue>;
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_slice_from(
@@ -1360,8 +1360,9 @@ impl BlobExt for Blob {
         &self,
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
-        extra_options: Option<JSValue>,
+        options: &WriteFileOptions,
     ) -> JsResult<JSValue> {
+        let extra_options = options.extra_options;
         let Some(store) = self.store.get().clone() else {
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1441,11 +1442,21 @@ impl BlobExt for Blob {
                 } else {
                     let mut file_path = bun_paths::PathBuffer::uninit();
                     let path = pathlike.path().slice_z(&mut file_path);
-                    match bun_sys::open(
-                        path,
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
-                        WRITE_PERMISSIONS,
-                    ) {
+                    let flags = bun_sys::O::WRONLY
+                        | bun_sys::O::CREAT
+                        | bun_sys::O::TRUNC
+                        | bun_sys::O::NONBLOCK;
+                    let mode = options.mode.unwrap_or(WRITE_PERMISSIONS);
+                    let mut result = bun_sys::open(path, flags, mode);
+                    if let bun_sys::Result::Err(err) = &result {
+                        if err.get_errno() == bun_sys::E::ENOENT
+                            && options.mkdirp_if_not_exists.unwrap_or(true)
+                            && mkdirp_parent(path.as_bytes())
+                        {
+                            result = bun_sys::open(path, flags, mode);
+                        }
+                    }
+                    match result {
                         bun_sys::Result::Ok(result) => result,
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1550,6 +1561,9 @@ impl BlobExt for Blob {
                 // input_path drops at scope exit.
 
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
+                    truncate: matches!(input_path, webcore::PathOrFileDescriptor::Path(_)),
+                    mkdirp: options.mkdirp_if_not_exists.unwrap_or(true),
+                    mode: options.mode.unwrap_or(WRITE_PERMISSIONS),
                     input_path,
                     ..Default::default()
                 });
@@ -1569,8 +1583,13 @@ impl BlobExt for Blob {
             }
         };
 
-        // Stay on the JS pump here: the native ByteStream path returns UNDEFINED before
-        // completion, which would resolve-0 early.
+        // SAFETY: file_sink is a live +1 *mut FileSink; `pipe_stream` takes its own refs.
+        if let Some(promise) = unsafe { (*file_sink).pipe_stream(&readable_stream, global_this) } {
+            // SAFETY: release our +1 ref on the sink.
+            unsafe { webcore::FileSink::deref(file_sink) };
+            return Ok(promise);
+        }
+
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
@@ -1619,12 +1638,13 @@ impl BlobExt for Blob {
                         return Ok(promise_value);
                     }
                     jsc::js_promise::Status::Fulfilled => {
-                        // SAFETY: release our +1 ref on the sink.
+                        // SAFETY: live until the deref below.
+                        let written = unsafe { (*file_sink).stream_bytes.get() };
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done();
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
-                            JSValue::js_number(0.0),
+                            JSValue::js_number(written as f64),
                         ));
                     }
                     jsc::js_promise::Status::Rejected => {
@@ -1649,12 +1669,13 @@ impl BlobExt for Blob {
                 );
             }
         }
-        // SAFETY: release our +1 ref on the sink.
+        // SAFETY: live until the deref below.
+        let written = unsafe { (*file_sink).stream_bytes.get() };
         unsafe { webcore::FileSink::deref(file_sink) };
 
         Ok(JSPromise::resolved_promise_value(
             global_this,
-            JSValue::js_number(0.0),
+            JSValue::js_number(written as f64),
         ))
     }
 
@@ -4253,6 +4274,23 @@ pub enum Retry {
 // TODO: move this to bun_sys?
 // we choose not to inline this so that the path buffer is not on the stack unless necessary.
 #[inline(never)]
+/// Create the parent directories of `path`. Returns whether they now exist.
+pub(crate) fn mkdirp_parent(path: &[u8]) -> bool {
+    let Some(dirname) = bun_core::dirname(path) else {
+        return false;
+    };
+    node::fs::NodeFS::default()
+        .mkdir_recursive(&node::fs::args::Mkdir {
+            path: node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                dirname, false,
+            )),
+            recursive: true,
+            always_return_none: true,
+            ..Default::default()
+        })
+        .is_ok()
+}
+
 pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
     err: &bun_sys::Error,
@@ -4638,11 +4676,7 @@ pub(crate) fn write_file_with_source_destination(
             )?,
             ctx,
         )? {
-            return destination_blob.pipe_readable_stream_to_blob(
-                ctx,
-                stream,
-                options.extra_options,
-            );
+            return destination_blob.pipe_readable_stream_to_blob(ctx, stream, &options);
         } else {
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5010,6 +5044,20 @@ pub(crate) fn write_file_internal(
             let tag = match unsafe { &*body_value } {
                 BodyValue::Error(_) => BodyTag::Error,
                 BodyValue::Locked(_) => BodyTag::Locked,
+                BodyValue::Used => {
+                    destination_blob.detach();
+                    return Ok(ControlFlow::Break(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            global_this
+                                .err(
+                                    jsc::ErrorCode::BODY_ALREADY_USED,
+                                    format_args!("Body already used"),
+                                )
+                                .to_js(),
+                        ),
+                    ));
+                }
                 _ => BodyTag::Use,
             };
             match tag {
@@ -5091,6 +5139,72 @@ pub(crate) fn write_file_internal(
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "ReadableStream has already been used"
                         )));
+                    }
+                    // A body that is a stream, or that its producer can stream (fetch, the
+                    // server, HTMLRewriter): pipe it into the file instead of collecting it in
+                    // memory first. The stream also outlives the Response it came from.
+                    let streamable = get_stream().is_some() || {
+                        // SAFETY: scoped exclusive borrow; runs no JS.
+                        let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                            unreachable!()
+                        };
+                        locked.readable.has() || locked.on_start_streaming.is_some()
+                    };
+                    if streamable {
+                        // SAFETY: exclusive borrow scoped to the call (may run JS).
+                        let _ = unsafe { (*body_value).to_readable_stream(global_this) }?;
+                        let readable = get_stream().or_else(|| {
+                            // SAFETY: re-borrow after `to_readable_stream`.
+                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                                return None;
+                            };
+                            locked.readable.get()
+                        });
+                        // SAFETY: scoped; `to_readable_stream` may have replaced the value.
+                        if let (Some(readable), BodyValue::Locked(_)) =
+                            (readable, unsafe { &*body_value })
+                        {
+                            if readable.is_locked(global_this) || readable.is_disturbed(global_this)
+                            {
+                                destination_blob.detach();
+                                return Ok(ControlFlow::Break(
+                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                        global_this,
+                                        global_this
+                                            .err(
+                                                jsc::ErrorCode::BODY_ALREADY_USED,
+                                                format_args!("Body already used"),
+                                            )
+                                            .to_js(),
+                                    ),
+                                ));
+                            }
+                            let promise = destination_blob.pipe_readable_stream_to_blob(
+                                global_this,
+                                readable,
+                                &options,
+                            )?;
+                            // SAFETY: exclusive borrow scoped to the call; runs no JS.
+                            let _ = unsafe { (*body_value).use_() };
+                            return Ok(ControlFlow::Break(promise));
+                        }
+                        // The producer settled the body while the stream was being made.
+                        // SAFETY: scoped borrows, as in the arms above.
+                        match unsafe { &mut *body_value } {
+                            BodyValue::Locked(_) => {}
+                            BodyValue::Error(err) => {
+                                let err_js = err.to_js(global_this);
+                                destination_blob.detach();
+                                let _ = unsafe { (*body_value).use_() };
+                                return Ok(ControlFlow::Break(
+                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                        global_this,
+                                        err_js,
+                                    ),
+                                ));
+                            }
+                            _ => return Ok(ControlFlow::Continue(unsafe { (*body_value).use_() })),
+                        }
                     }
                     let task =
                         bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
@@ -5856,7 +5970,10 @@ pub(crate) fn on_file_stream_resolve_request_stream(
     if let Some(stream) = strong.get() {
         stream.done();
     }
-    this.promise.resolve(global_this, JSValue::js_number(0.0))?;
+    // SAFETY: the wrapper holds a ref on `sink` until it is dropped below.
+    let written = unsafe { (*this.sink).stream_bytes.get() };
+    this.promise
+        .resolve(global_this, JSValue::js_number(written as f64))?;
     Ok(JSValue::UNDEFINED)
 }
 

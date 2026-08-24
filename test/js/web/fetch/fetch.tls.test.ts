@@ -1258,6 +1258,10 @@ describe("fetch TLS fingerprint options", () => {
     expect(hello.ciphers).toEqual([...TLS13_SUITES, 49199]);
     expect(hello.groups).toEqual([29]);
 
+    // `ecdhCurve: "auto"` asks for BoringSSL's default groups and also wins.
+    const autoGroups = await captureClientHello({ ja3: CHROME_JA3, ecdhCurve: "auto" });
+    expect(autoGroups.groups).toEqual([29, 23, 24]);
+
     // The other direction: an extension ja3 leaves out can be added back.
     const withTickets = await captureClientHello({
       ja3: "771,4865-4866-4867-49195,0-10-11-13-16-23-43-45-51-65281,29,0",

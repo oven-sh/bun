@@ -1200,9 +1200,8 @@ impl Pipe {
         // SAFETY: pipe was `init`ed.
         unsafe { uv_pipe_open(self, file) }
     }
-    /// [`open`](Self::open) for a pipe that will read. A stdio fd (0, 1, 2)
-    /// takes one reader at a time: `UV_EBUSY` while another pipe reads it
-    /// (see `stdio_readers`). The claim ends with this pipe's `uv_close`.
+    /// [`open`](Self::open) for a reader: `UV_EBUSY` while another reader's
+    /// pipe is open over the same stdio fd (`stdio_readers`).
     pub fn open_for_reading(&mut self, file: uv_file) -> ReturnCode {
         if !stdio_readers::claim(file, ptr::from_mut(self)) {
             return ReturnCode(UV_EBUSY);

@@ -440,9 +440,8 @@ impl Source {
         Self::open_with(loop_, fd, false)
     }
 
-    /// Open `fd` for a reader. A stdio pipe takes one reader at a time:
-    /// `EBUSY` while another reader's pipe is open over the same fd
-    /// (`uv::Pipe::open_for_reading`).
+    /// Open `fd` for a reader: `EBUSY` while another reader's pipe is open
+    /// over the same stdio fd (`uv::Pipe::open_for_reading`).
     pub(crate) fn open_for_reading(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Source> {
         Self::open_with(loop_, fd, true)
     }

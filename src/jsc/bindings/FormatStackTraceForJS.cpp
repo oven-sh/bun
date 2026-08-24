@@ -673,9 +673,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (source->stackTrace()) {
-        // ErrorInstance::visitChildren marks the frames under the cell lock, so each vector is
-        // mutated under its owner's lock, one at a time. The barrier re-greys an old destination
-        // that now points at young frames.
+        // The GC marks these under the cell lock; the barrier re-greys an old destination that now holds young frames.
         {
             WTF::Locker locker { destination->cellLock() };
             destination->stackTrace()->appendVector(*source->stackTrace());

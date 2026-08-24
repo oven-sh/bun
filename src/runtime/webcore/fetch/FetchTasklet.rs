@@ -1743,14 +1743,10 @@ impl FetchTasklet {
             "afterBodyChunkDelivered buffered={}",
             buffered
         );
-        // `readableStreamTo*(res.body)`: a whole-body consumer, like `on_start_buffering_callback`.
-        if bytes.buffer_action.get().is_some() {
-            if self.signal_store.receive_all() {
-                self.schedule_receive_resume();
-            }
-            return;
-        }
-        if buffered < BODY_HIGH_WATER_MARK {
+        // `readableStreamTo*(res.body)` collects the whole body in the stream's buffer. Not
+        // `BufferAll`: that would also pre-reserve Content-Length in `scheduled_response_buffer`,
+        // which this path empties every cycle.
+        if buffered < BODY_HIGH_WATER_MARK || bytes.buffer_action.get().is_some() {
             self.resume_receive();
             return;
         }

@@ -738,8 +738,7 @@ pub struct PackageVersion {
     /// `hasInstallScript` field in registry API.
     pub(crate) has_install_script: bool,
 
-    /// `"deprecated"` field in registry API (true when the version carries a
-    /// non-empty deprecation message).
+    /// `"deprecated"` field in registry API (a non-empty deprecation message).
     pub(crate) deprecated: bool,
     pub(crate) _padding_tail: [u8; 1],
 
@@ -1844,13 +1843,9 @@ impl PackageManifest {
         FindVersionResult::Err(FindVersionError::AllVersionsTooRecent)
     }
 
-    /// Resolution for the `latest` dist-tag, matching how npm resolves a bare
-    /// specifier (`npm install pkg` resolves the range `*` with a preference
-    /// for the `latest` tag): the tagged version wins, even when it is a
-    /// prerelease, unless that version is deprecated. When `latest` points at
-    /// a deprecated version, npm skips the tag and takes the highest release
-    /// that satisfies `*`, sorting deprecated versions last. `*` never matches
-    /// a prerelease, so the fallback fails when only prereleases exist.
+    /// The `latest` tag wins, prerelease or not, unless that version is
+    /// deprecated. Then, like npm's `*` range: highest release, non-deprecated
+    /// preferred, prereleases excluded (so only-prerelease packuments fail).
     pub fn find_by_latest_tag_with_filter(
         &self,
         minimum_release_age_ms: Option<f64>,
@@ -2536,8 +2531,7 @@ impl PackageManifest {
                     package_version.has_install_script = *val;
                 }
 
-                // The registry stores the deprecation message as a string. An
-                // empty string means the version was un-deprecated.
+                // An empty message means the version was un-deprecated.
                 if let Some(deprecated) = version_obj.and_then(|o| o.get(b"deprecated")) {
                     package_version.deprecated = match deprecated {
                         JSON::E::JsonValue::String(str) => !str.slice().is_empty(),

@@ -941,8 +941,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     } else if dependency.behavior.is_peer() {
                                         warn_unmet_peer_dependency(this, name, &version);
                                     } else {
-                                        // A bare specifier has an empty version
-                                        // literal and resolves as `latest`.
+                                        // A bare specifier has an empty literal.
                                         let literal = this.lockfile.str(&version.literal);
                                         let literal: &[u8] = if literal.is_empty() {
                                             b"latest"
@@ -2663,8 +2662,6 @@ fn get_or_put_resolved_package(
                         .is_dependency_of_workspace_in(t, dependency_id)
                 });
 
-            // Set when the `latest` tag points at a deprecated version, so the
-            // resolution ran with npm's `*`-range fallback instead of the tag.
             let mut deprecated_latest_fallback = false;
             let version_result: Npm::FindVersionResult = match version.tag {
                 _ if latest_for_target => manifest.find_by_dist_tag_with_filter(
@@ -2791,9 +2788,7 @@ fn get_or_put_resolved_package(
 
                     return match version.tag {
                         dependency::version::Tag::Npm => Err(crate::Error::NoMatchingVersion),
-                        // A deprecated `latest` resolves like the range `*`
-                        // (npm parity), so report a version mismatch, not a
-                        // missing tag.
+                        // The `latest` tag exists but resolved as the range `*`.
                         dependency::version::Tag::DistTag if deprecated_latest_fallback => {
                             Err(crate::Error::NoMatchingVersion)
                         }

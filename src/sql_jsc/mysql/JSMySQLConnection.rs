@@ -461,7 +461,7 @@ impl JSMySQLConnection {
         // Frees `secure` / drops `tls_config` on every early return until `into_inner` below.
         let tls_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
 
-        let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
+        let path_str = arguments[8].to_bun_string(global_object)?;
 
         // `init` takes `Box<[u8]>` per field (each separately owned), so we
         // copy each string into its own allocation.
@@ -713,8 +713,6 @@ impl JSMySQLConnection {
         };
         on_close.ensure_still_alive();
         let loop_ = self.event_loop();
-        // loop.enter();
-        // defer loop.exit();
         self.ensure_js_value_is_alive();
         let mut js_error = value.to_error().unwrap_or(value);
         if js_error.is_empty() {
@@ -793,7 +791,6 @@ impl JSMySQLConnection {
             bigint: request.is_bigint_supported(),
             values: Box::default(),
         };
-        // defer row.deinit(allocator) — Drop on ResultSet::Row
         if let Err(e) = row.decode(reader) {
             if e == AnyMySQLErrorT::ShortRead {
                 return Err(OnResultRowError::ShortRead);

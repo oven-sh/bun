@@ -18,7 +18,7 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc 
 // `Bun__parseDate`) are NOT redeclared here — route through `crate::cpp::*`,
 // which owns the canonical extern decl + per-mode exception scope.
 unsafe extern "C" {
-    safe fn BunString__toJSDOMURL(global_object: &JSGlobalObject, in_: &mut String) -> JSValue;
+    safe fn BunString__toJSDOMURL(global_object: &JSGlobalObject, in_: &String) -> JSValue;
     fn BunString__createArray(
         global_object: &JSGlobalObject,
         ptr: *const String,
@@ -30,29 +30,25 @@ unsafe extern "C" {
 }
 
 // ── bun.String methods ──────────────────────────────────────────────────────
+/// Consume `this`: the +1 moves into the resulting `JSString` (no ref/deref
+/// pair). Borrowed (`ZigString`) contents are copied.
 #[track_caller]
-pub fn transfer_to_js(this: &mut String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-    // SAFETY: `this` is a live `&mut String`; the cppbind wrapper opens its own
-    // validation scope and converts `.zero` to `Err(JsError::Thrown)`.
-    unsafe { crate::cpp::BunString__transferToJS(this, global_this) }
+pub(crate) fn into_js(mut this: String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    // SAFETY: C++ moves the ref out of `this` (leaving it Dead) and the cppbind
+    // wrapper opens its own validation scope.
+    unsafe { crate::cpp::BunString__transferToJS(&raw mut this, global_this) }
 }
 
 pub fn to_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
-    let result = JSC__createError(global_object, this);
-    this.deref();
-    result
+    JSC__createError(global_object, this)
 }
 
 pub(crate) fn to_type_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
-    let result = JSC__createTypeError(global_object, this);
-    this.deref();
-    result
+    JSC__createTypeError(global_object, this)
 }
 
 pub(crate) fn to_range_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
-    let result = JSC__createRangeError(global_object, this);
-    this.deref();
-    result
+    JSC__createRangeError(global_object, this)
 }
 
 #[inline]
@@ -89,7 +85,7 @@ pub fn to_js(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue>
 
 /// `BunString__toJSDOMURL` opens a `DECLARE_THROW_SCOPE` and throws (returning
 /// encoded `0`) when the string is not a valid URL, so wrap it in a validation
-/// scope exactly like `to_js`/`transfer_to_js` above. Without this, under
+/// scope exactly like `to_js`/`into_js` above. Without this, under
 /// `BUN_JSC_validateExceptionChecks=1` the C++ ThrowScope's destructor
 /// `simulateThrow()` leaves `m_needExceptionCheck` set and the caller's
 /// `to_js_host_call` scope dtor asserts "unchecked exception".
@@ -97,7 +93,7 @@ pub fn to_js(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue>
 /// Routing the FFI through `from_js_host_call` observes the exception at the
 /// call site and surfaces it as `Err(JsError::Thrown)`.
 #[track_caller]
-pub fn to_jsdomurl(this: &mut String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub fn to_jsdomurl(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     crate::from_js_host_call(global_object, || BunString__toJSDOMURL(global_object, this))
 }
 
@@ -111,11 +107,8 @@ pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult
 }
 
 #[track_caller]
-pub fn to_js_by_parse_json(
-    self_: &mut String,
-    global_object: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    // SAFETY: `self_` is a live `&mut String`.
+pub fn to_js_by_parse_json(self_: &String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    // SAFETY: `self_` is a live `&String`.
     unsafe { crate::cpp::BunString__toJSON(global_object, self_) }
 }
 
@@ -132,8 +125,8 @@ pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> 
 }
 
 #[track_caller]
-pub fn parse_date(this: &mut String, global_object: &JSGlobalObject) -> JsResult<f64> {
-    // SAFETY: `this` is a live `&mut String`; cppbind wrapper opens its own scope.
+pub fn parse_date(this: &String, global_object: &JSGlobalObject) -> JsResult<f64> {
+    // SAFETY: `this` is a live `&String`; cppbind wrapper opens its own scope.
     unsafe { crate::cpp::Bun__parseDate(global_object, this) }
 }
 
@@ -145,11 +138,11 @@ pub(crate) fn slice_with_underlying_string_to_js(
     slice_with_underlying_string_to_js_with_options(this, global_object, false)
 }
 
-pub(crate) fn slice_with_underlying_string_transfer_to_js(
-    this: &mut SliceWithUnderlyingString,
+pub(crate) fn slice_with_underlying_string_into_js(
+    mut this: SliceWithUnderlyingString,
     global_object: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    slice_with_underlying_string_to_js_with_options(this, global_object, true)
+    slice_with_underlying_string_to_js_with_options(&mut this, global_object, true)
 }
 
 fn slice_with_underlying_string_to_js_with_options(
@@ -208,7 +201,7 @@ fn slice_with_underlying_string_to_js_with_options(
 
     if transfer {
         this.utf8 = ZigStringSlice::default();
-        transfer_to_js(&mut this.underlying, global_object)
+        into_js(core::mem::take(&mut this.underlying), global_object)
     } else {
         to_js(&this.underlying, global_object)
     }
@@ -232,10 +225,7 @@ pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
         return Err(JsError::OutOfMemory);
     }
 
-    let output = String::clone_utf8(&buf);
-    let js = to_js(&output, global);
-    output.deref();
-    js
+    create_utf8_for_js(global, &buf)
 }
 
 #[bun_jsc::host_fn]
@@ -260,10 +250,7 @@ pub fn js_escape_reg_exp_for_package_name_matching(
         return Err(JsError::OutOfMemory);
     }
 
-    let output = String::clone_utf8(&buf);
-    let js = to_js(&output, global);
-    output.deref();
-    js
+    create_utf8_for_js(global, &buf)
 }
 
 // ── unicode TestingAPIs ─────────────────────────────────────────────────────
@@ -303,9 +290,9 @@ pub mod unicode_testing_apis {
         // NUL **in** `result.len()`, so slice it off before handing to JSC.
         debug_assert_eq!(result.last().copied(), Some(0));
 
-        let out = String::clone_utf16(&result[..result.len() - 1]);
-        let js = to_js(&out, global_this);
-        out.deref();
-        js
+        into_js(
+            String::clone_utf16(&result[..result.len() - 1]),
+            global_this,
+        )
     }
 }

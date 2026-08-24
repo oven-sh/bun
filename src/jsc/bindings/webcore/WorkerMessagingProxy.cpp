@@ -38,6 +38,7 @@
 #include "SerializedScriptValue.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/JSPromise.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -52,8 +53,8 @@ extern "C" {
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
-    BunString name,
-    BunString url,
+    const BunString* name,
+    const BunString* url,
     BunString* errorMessage,
     uint32_t parentContextId,
     uint32_t contextId,
@@ -86,6 +87,7 @@ WorkerMessagingProxy::WorkerMessagingProxy(Worker& workerObject, ScriptExecution
     : m_scriptExecutionContext(&parentContext)
     , m_workerObject(&workerObject)
     , m_loaderContextIdentifier(parentContext.identifier())
+    , m_loaderLoopKind(parentContext.currentLoopKind())
     , m_workerContextIdentifier(ScriptExecutionContext::generateIdentifier())
     , m_options(WTF::move(options))
 {
@@ -141,11 +143,13 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
+    BunString name = Bun::toString(m_options.name);
+    BunString url = Bun::toString(scriptURL);
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
-        Bun::toString(m_options.name),
-        Bun::toString(scriptURL),
+        &name,
+        &url,
         &errorMessage,
         m_loaderContextIdentifier,
         m_workerContextIdentifier,
@@ -165,7 +169,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     if (!m_workerThread) {
         m_state.store(State::Closed);
         deref();
-        return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
+        return Exception { TypeError, errorMessage.transferToWTFString() };
     }
     return {};
 }
@@ -208,7 +212,7 @@ void WorkerMessagingProxy::postMessageToWorkerGlobalScope(MessageWithMessagePort
             return;
         m_toWorker.drainScheduled = true;
     }
-    bool posted = ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    bool posted = ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->drainMessagesToWorkerGlobalScope(context);
     });
     if (!posted) {
@@ -232,7 +236,7 @@ bool WorkerMessagingProxy::postTaskToWorkerGlobalScope(Function<void(ScriptExecu
             return false;
         }
     }
-    return ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, WTF::move(task));
+    return ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, WTF::move(task));
 }
 
 uint64_t WorkerMessagingProxy::registerCrossVMRequest(JSC::VM& vm, JSC::JSPromise* promise)
@@ -377,7 +381,7 @@ void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlo
         pendingTasks = std::exchange(m_pendingTasks, {});
     }
 
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject || !workerObject->hasEventListeners(eventNames().openEvent))
             return;
@@ -413,7 +417,7 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
             return;
         m_toParent.drainScheduled = true;
     }
-    bool posted = ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    bool posted = ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->drainMessagesToWorkerObject(context, DrainBudget::Bounded);
     });
     if (!posted) {
@@ -424,7 +428,7 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
 
 void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)
 {
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy()](ScriptExecutionContext&) {
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy()](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
@@ -456,7 +460,7 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
         CLEAR_IF_EXCEPTION(scope);
     }
 
-    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
+    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
@@ -493,7 +497,7 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyed(int32_t exitCode, bool sto
     // Last thing the worker thread does with this object. If the parent context is gone the task is
     // dropped and the proxy (with the thread's ref on it) leaks; the parent's own exit path
     // (parentContextWillDestroy) is what normally prevents that.
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, [protectedThis = Ref { *this }, exitCode, stoppedByParent](ScriptExecutionContext&) {
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, exitCode, stoppedByParent](ScriptExecutionContext&) {
         protectedThis->workerGlobalScopeDestroyedInternal(exitCode, stoppedByParent);
     });
 }

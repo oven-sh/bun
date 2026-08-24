@@ -1756,9 +1756,7 @@ const rustModuleResolver = (() => {
         const asMatch = item.match(/^(\S+)\s+as\s+(\w+)$/);
         const source = asMatch ? asMatch[1] : item;
         const exported = asMatch ? asMatch[2] : item;
-        // Skip module re-exports: `pub use foo::glob as Glob` re-exports a
-        // *module* (lowercase source leaf), not a type — `crate::api::Glob`
-        // wouldn't name a struct.
+        // A module re-export (lowercase source leaf) does not name a type.
         const sourceLeaf = source.split("::").pop()!;
         if (!/^[A-Z]/.test(sourceLeaf)) continue;
         if (!/^[A-Z]\w*$/.test(exported)) continue;
@@ -2327,10 +2325,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include <JavaScriptCore/FunctionPrototype.h>
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 #include "JSDOMConvertBufferSource.h"

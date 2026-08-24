@@ -37,7 +37,6 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     for (const auto& [key, value] : m_importAttributes) {
         attributes->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), key), JSC::jsString(globalObject->vm(), value),
             PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
-        RETURN_IF_EXCEPTION(scope, {});
     }
     array->putDirectIndex(globalObject, 1, attributes);
     RETURN_IF_EXCEPTION(scope, {});
@@ -542,10 +541,12 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // vm.ts validated the timeout by value (or passes -1 for none); the number may still be boxed
+    // as a double, which isUInt32() rejects.
     JSValue timeoutValue = callFrame->argument(0);
     uint32_t timeout = 0;
-    if (timeoutValue.isUInt32()) {
-        timeout = timeoutValue.asUInt32();
+    if (timeoutValue.isUInt32AsAnyInt()) {
+        timeout = timeoutValue.asUInt32AsAnyInt();
     }
 
     JSValue breakOnSigintValue = callFrame->argument(1);

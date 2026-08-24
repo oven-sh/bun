@@ -51,7 +51,9 @@ const featuresOutput = [
 // 64 KB (32-bit offsets), forward jumps too long for their operand (out-of-line jump targets), a 300-case string switch,
 // a string constant bigger than an encoder page, and a payload spanning several encoder pages.
 function bigSource() {
-  const locals = 300, calls = 600, cases = 300;
+  const locals = 300,
+    calls = 600,
+    cases = 300;
   const lines = [
     "var o = {};",
     `for (var i = 0; i < ${calls}; i++) o["m" + i] = function (x) { return x + 1; };`,

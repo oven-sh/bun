@@ -471,7 +471,12 @@ fn cached_dep_path_from_disk(
         let index_dir = Dir::borrow(&cache_dir).open_at(npm_name).ok()?;
         let mut iter = sys::iterate_dir(index_dir.fd);
         while let Ok(Some(entry)) = iter.next() {
-            if entry.kind != sys::EntryKind::Directory && entry.kind != sys::EntryKind::SymLink {
+            // Accept Unknown: filesystems without d_type report every entry
+            // as Unknown, and the semver parse below rejects non-index names.
+            if !matches!(
+                entry.kind,
+                sys::EntryKind::Directory | sys::EntryKind::SymLink | sys::EntryKind::Unknown
+            ) {
                 continue;
             }
             let entry_name: Vec<u8> = entry.name.slice_u8().to_vec();

@@ -1349,7 +1349,9 @@ pub mod command {
             // standalone executable silently drops `BUN_OPTIONS` flags.
             let original_argv_len = bun::argv().len();
             let bun_options_argc = bun::bun_options_argc();
-            if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
+            let node_options_argc = bun::node_options_argc();
+            if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 || node_options_argc > 0
+            {
                 let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
                 if !graph.compile_exec_argv.is_empty() {
                     bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
@@ -1359,8 +1361,9 @@ pub mod command {
                 let full_argv: &'static [&'static bun_core::ZStr] = bun::intern_argv(argv_list);
                 let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
 
-                // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
-                let num_parsed_options = num_exec_argv_options + bun_options_argc;
+                // Calculate offset: skip executable name + all exec argv
+                // options + BUN_OPTIONS / NODE_OPTIONS args
+                let num_parsed_options = num_exec_argv_options + bun_options_argc + node_options_argc;
                 offset_for_passthrough = if full_argv.len() > 1 {
                     1 + num_parsed_options
                 } else {

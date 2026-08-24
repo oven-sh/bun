@@ -1,0 +1,226 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+
+async function run(
+  dir: string,
+  cmd: string[],
+  NODE_OPTIONS: string | undefined,
+): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+  const env: Record<string, string | undefined> = { ...bunEnv, NODE_OPTIONS };
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    env,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+describe("NODE_OPTIONS environment variable", () => {
+  // The repro from issue #40316: a package.json `imports` map with a
+  // `development` condition. react-router dev 8.3+ relaunches itself with
+  // NODE_OPTIONS=--conditions=development and breaks when it is ignored.
+  const conditionsFixtures = {
+    "package.json": `{"name":"cond","type":"module","imports":{"#c":{"development":"./true.mjs","default":"./false.mjs"}}}`,
+    "true.mjs": `export default true;\n`,
+    "false.mjs": `export default false;\n`,
+    "probe.mjs": `import v from "#c"; console.log(v);\n`,
+  };
+
+  describe.each([
+    ["--conditions=development"],
+    ["--conditions development"],
+    ["-C development"],
+    [`--conditions "development"`],
+  ])("applies --conditions via %s", opts => {
+    test.concurrent("bun <file>", async () => {
+      using dir = tempDir("node-options-cond", conditionsFixtures);
+      const { stdout, stderr, exitCode } = await run(String(dir), ["probe.mjs"], opts);
+      expect(stderr).not.toContain("not allowed");
+      expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+    });
+
+    test.concurrent("bun run <file>", async () => {
+      using dir = tempDir("node-options-cond-run", conditionsFixtures);
+      const { stdout, exitCode } = await run(String(dir), ["run", "probe.mjs"], opts);
+      expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+    });
+  });
+
+  const preloadFixtures = {
+    "pre.mjs": `globalThis.__PRELOADED = true;\n`,
+    "app.mjs": `console.log(globalThis.__PRELOADED === true ? "PRELOADED" : "NOT_PRELOADED");\n`,
+  };
+
+  describe.each([
+    ["--import", "--import ./pre.mjs"],
+    ["--import=", "--import=./pre.mjs"],
+    ["--require", "--require ./pre.mjs"],
+    ["--require=", "--require=./pre.mjs"],
+    ["-r", "-r ./pre.mjs"],
+  ])("preloads via %s", (_name, opts) => {
+    test.concurrent("bun <file>", async () => {
+      using dir = tempDir("node-options-preload", preloadFixtures);
+      const { stdout, exitCode } = await run(String(dir), ["app.mjs"], opts);
+      expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
+    });
+  });
+
+  test.concurrent("applies --title", async () => {
+    using dir = tempDir("node-options-title", {});
+    const { stdout, exitCode } = await run(String(dir), ["-e", "console.log(process.title)"], "--title=from-env");
+    expect({ stdout, exitCode }).toEqual({ stdout: "from-env\n", exitCode: 0 });
+  });
+
+  test.concurrent("applies --dns-result-order (issue #28817)", async () => {
+    using dir = tempDir("node-options-dns", {});
+    const { stdout, exitCode } = await run(
+      String(dir),
+      ["-e", `import dns from "node:dns"; console.log(dns.getDefaultResultOrder())`],
+      "--dns-result-order=ipv4first",
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "ipv4first\n", exitCode: 0 });
+  });
+
+  test.concurrent("command-line flags win over NODE_OPTIONS", async () => {
+    using dir = tempDir("node-options-precedence", {});
+    const { stdout, exitCode } = await run(
+      String(dir),
+      ["--title=from-cli", "-e", "console.log(process.title)"],
+      "--title=from-env",
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "from-cli\n", exitCode: 0 });
+  });
+
+  test.concurrent("NODE_OPTIONS flags are not reported in process.execArgv", async () => {
+    using dir = tempDir("node-options-execargv", {
+      "argv.mjs": `console.log(JSON.stringify(process.execArgv));\n`,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["--conditions=cli", "argv.mjs"], "--conditions=development");
+    expect({ stdout, exitCode }).toEqual({ stdout: '["--conditions=cli"]\n', exitCode: 0 });
+  });
+
+  test.concurrent("double-quoted values may contain spaces", async () => {
+    using dir = tempDir("node-options-quotes", {
+      "with space": { "sp.mjs": `console.log("SP");\n` },
+    });
+    const { stdout, exitCode } = await run(
+      String(dir),
+      ["-e", "console.log('main')"],
+      `--import "./with space/sp.mjs"`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "SP\nmain\n", exitCode: 0 });
+  });
+
+  test.concurrent("unknown flag warns but does not exit", async () => {
+    using dir = tempDir("node-options-unknown", preloadFixtures);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], "--definitely-not-a-real-flag");
+    expect(stderr).toContain("--definitely-not-a-real-flag is not allowed in NODE_OPTIONS");
+    expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
+  });
+
+  test.concurrent("disallowed flag (--eval) warns and does not evaluate", async () => {
+    using dir = tempDir("node-options-eval", preloadFixtures);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], `--eval "console.log('HIJACK')"`);
+    expect(stderr).toContain("--eval is not allowed in NODE_OPTIONS");
+    expect(stdout).not.toContain("HIJACK");
+    expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
+  });
+
+  test.concurrent("positional tokens cannot change the entrypoint", async () => {
+    using dir = tempDir("node-options-positional", {
+      ...preloadFixtures,
+      "evil.mjs": `console.log("EVIL");\n`,
+    });
+    const { stdout, exitCode } = await run(String(dir), ["app.mjs"], "./evil.mjs");
+    expect(stdout).not.toContain("EVIL");
+    expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
+  });
+
+  test.concurrent("unknown flag after a preload still preloads and warns once", async () => {
+    using dir = tempDir("node-options-mixed", preloadFixtures);
+    const { stdout, stderr, exitCode } = await run(
+      String(dir),
+      ["app.mjs"],
+      "--import ./pre.mjs --definitely-not-a-real-flag --also-junk",
+    );
+    expect(stderr).toContain("--definitely-not-a-real-flag is not allowed in NODE_OPTIONS");
+    expect(stderr).not.toContain("--also-junk");
+    expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
+  });
+
+  test.concurrent("Bun-specific flags forwarded via execArgv are accepted silently", async () => {
+    using dir = tempDir("node-options-bunflag", preloadFixtures);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], "--bun --import ./pre.mjs");
+    expect(stderr).not.toContain("is not allowed in NODE_OPTIONS");
+    expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
+  });
+
+  test.each([
+    ["--import", "--import"],
+    ["--import=", "--import="],
+    ["--require=", "--require="],
+    ["-r", "-r"],
+    ["--conditions", "--conditions"],
+  ])("required value missing for %s is rejected with exit code 9", async (_name, opts) => {
+    using dir = tempDir("node-options-noval", preloadFixtures);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], opts);
+    expect(stderr).toContain("requires an argument");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  test.concurrent("unterminated double quote is rejected with exit code 9", async () => {
+    using dir = tempDir("node-options-badquote", preloadFixtures);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], `--import "foo`);
+    expect(stderr).toContain("invalid value for NODE_OPTIONS (unterminated string)");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  describe.each([
+    ["V8 flag (= form)", "--max-old-space-size=4096"],
+    ["V8 flag (underscore form)", "--max_old_space_size=4096"],
+    ["V8 flag (space form)", "--max-old-space-size 4096"],
+    ["experimental flag", "--experimental-vm-modules"],
+    ["--enable-source-maps", "--enable-source-maps"],
+    ["bare -", "-"],
+  ])("ignores allowed Node flag silently: %s", (_name, opts) => {
+    test.concurrent("does not warn", async () => {
+      using dir = tempDir("node-options-allowed", preloadFixtures);
+      const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], opts);
+      expect(stderr).not.toContain("is not allowed in NODE_OPTIONS");
+      expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
+    });
+  });
+
+  describe.each([
+    ["unset", undefined],
+    ["empty string", ""],
+    ["whitespace only", "   "],
+  ])("no-op when NODE_OPTIONS is %s", (_name, opts) => {
+    test.concurrent("runs normally", async () => {
+      using dir = tempDir("node-options-empty", preloadFixtures);
+      const { stdout, exitCode } = await run(String(dir), ["app.mjs"], opts);
+      expect({ stdout, exitCode }).toEqual({ stdout: "NOT_PRELOADED\n", exitCode: 0 });
+    });
+  });
+
+  test.concurrent("does not break bun install", async () => {
+    using dir = tempDir("node-options-install", {
+      "package.json": `{"name":"x","version":"1.0.0"}`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: { ...bunEnv, NODE_OPTIONS: "--conditions=development --max-old-space-size=4096" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("not allowed");
+    expect(exitCode).toBe(0);
+  });
+});

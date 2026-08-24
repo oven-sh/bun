@@ -276,6 +276,11 @@ mod _impl {
         // it isn't worth doing this as a part of the CLI
         let mut iter = argv.iter();
         let _ = iter.next(); // skip argv[0]
+        // NODE_OPTIONS-injected tokens occupy argv[1 .. 1 + node_options_argc].
+        // Node does not report env-derived options in process.execArgv.
+        for _ in 0..bun_core::node_options_argc() {
+            let _ = iter.next();
+        }
         for arg in iter {
             // emulate `defer prev = arg` by setting at end of each iteration body
             let arg: &[u8] = arg;

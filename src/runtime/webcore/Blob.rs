@@ -1916,8 +1916,6 @@ impl BlobExt for Blob {
             if let streams::Start::FileSink(ref mut opts) = stream_start {
                 opts.input_path = input_path;
             }
-            // A non-FileSink variant here is `Start::Err` from invalid options;
-            // `FileSink::start` rejects it below.
 
             // SAFETY: sink is live (guard holds init's ref); exclusive borrow
             // scoped to the call.

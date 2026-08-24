@@ -53,6 +53,8 @@ describe("NODE_OPTIONS environment variable", () => {
   const preloadFixtures = {
     "pre.mjs": `globalThis.__PRELOADED = true;\n`,
     "app.mjs": `console.log(globalThis.__PRELOADED === true ? "PRELOADED" : "NOT_PRELOADED");\n`,
+    "A.mjs": `console.log("A");\n`,
+    "B.mjs": `console.log("B");\n`,
   };
 
   describe.each([
@@ -67,6 +69,45 @@ describe("NODE_OPTIONS environment variable", () => {
       const { stdout, exitCode } = await run(String(dir), ["app.mjs"], opts);
       expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
     });
+
+    test.concurrent("bun run <file>", async () => {
+      using dir = tempDir("node-options-preload-run", preloadFixtures);
+      const { stdout, exitCode } = await run(String(dir), ["run", "app.mjs"], opts);
+      expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
+    });
+  });
+
+  test.concurrent("NODE_OPTIONS preloads run before command-line preloads", async () => {
+    using dir = tempDir("node-options-order", preloadFixtures);
+    const { stdout, exitCode } = await run(
+      String(dir),
+      ["--import", "./B.mjs", "-e", "console.log('main')"],
+      "--import ./A.mjs",
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "A\nB\nmain\n", exitCode: 0 });
+  });
+
+  test.concurrent("--require entries run before --import entries (Node parity)", async () => {
+    using dir = tempDir("node-options-multi", preloadFixtures);
+    // --import is declared first but --require runs first, as in Node and
+    // in `bun --import ... --require ...`.
+    const { stdout, exitCode } = await run(
+      String(dir),
+      ["-e", "console.log('main')"],
+      "--import ./B.mjs --require ./A.mjs",
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "A\nB\nmain\n", exitCode: 0 });
+  });
+
+  test.concurrent("applies --no-warnings", async () => {
+    using dir = tempDir("node-options-no-warnings", {});
+    const { stdout, stderr, exitCode } = await run(
+      String(dir),
+      ["-e", `process.emitWarning("from-test"); console.log("ok")`],
+      "--no-warnings",
+    );
+    expect(stderr).not.toContain("from-test");
+    expect({ stdout, exitCode }).toEqual({ stdout: "ok\n", exitCode: 0 });
   });
 
   test.concurrent("applies --title", async () => {
@@ -83,6 +124,12 @@ describe("NODE_OPTIONS environment variable", () => {
       "--dns-result-order=ipv4first",
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "ipv4first\n", exitCode: 0 });
+  });
+
+  test.concurrent("a space-separated value may start with a dash only when escaped as \\-", async () => {
+    using dir = tempDir("node-options-escaped-dash", {});
+    const { stdout, exitCode } = await run(String(dir), ["-e", "console.log(process.title)"], "--title \\-from-env");
+    expect({ stdout, exitCode }).toEqual({ stdout: "-from-env\n", exitCode: 0 });
   });
 
   test.concurrent("command-line flags win over NODE_OPTIONS", async () => {
@@ -159,16 +206,22 @@ describe("NODE_OPTIONS environment variable", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
   });
 
+  // Node names the flag as typed. A space-separated value that starts with a
+  // dash is the next flag, not a value: `--require --import` must not try to
+  // load a module named "--import".
   test.each([
     ["--import", "--import"],
     ["--import=", "--import="],
     ["--require=", "--require="],
     ["-r", "-r"],
     ["--conditions", "--conditions"],
-  ])("required value missing for %s is rejected with exit code 9", async (_name, opts) => {
+    ["--require --import ./pre.mjs", "--require"],
+    ["--conditions -C development", "--conditions"],
+    ["--title --", "--title"],
+  ])("required value missing for %s is rejected with exit code 9", async (opts, flag) => {
     using dir = tempDir("node-options-noval", preloadFixtures);
     const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], opts);
-    expect(stderr).toContain("requires an argument");
+    expect(stderr).toContain(`${flag} requires an argument`);
     expect(stdout).toBe("");
     expect(exitCode).toBe(9);
   });

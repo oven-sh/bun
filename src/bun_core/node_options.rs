@@ -553,17 +553,24 @@ pub fn filter(raw: &[u8]) -> Vec<Vec<u8>> {
                 out.push(arg);
             }
             Some((canonical, Supported::Value)) => {
+                // Errors name the flag as typed (`--import=`, `-r`), like Node.
                 let value: &[u8] = match inline_value {
                     Some(v) if !v.is_empty() => v,
-                    Some(_) => fail_requires_argument(&normalized),
-                    // Node's option parser takes the next token as the value
-                    // unconditionally, even when it starts with a dash.
+                    Some(_) => fail_requires_argument(&tok[..name.len() + 1]),
+                    // Node's option parser refuses a space-separated value
+                    // that starts with a dash (`--require --import` is a
+                    // missing argument, not a module named "--import") and
+                    // strips one leading backslash so `\-x` passes `-x`.
                     None => match tokens.get(i) {
-                        Some(next) => {
+                        Some(next) if next.first() != Some(&b'-') => {
                             i += 1;
-                            next
+                            if next.starts_with(b"\\-") {
+                                &next[1..]
+                            } else {
+                                next
+                            }
                         }
-                        None => fail_requires_argument(&normalized),
+                        _ => fail_requires_argument(name),
                     },
                 };
                 let mut arg = canonical.to_vec();
@@ -656,6 +663,11 @@ mod tests {
             toks(b"--max_http_header_size=65536"),
             vec![b"--max-http-header-size=65536".to_vec()],
         );
+        // Inline values may start with a dash; a space-separated `\-x` is
+        // Node's escape for a literal `-x`.
+        assert_eq!(toks(b"--title=-x"), vec![b"--title=-x".to_vec()]);
+        assert_eq!(toks(br"--title \-x"), vec![b"--title=-x".to_vec()]);
+        assert_eq!(toks(br"--title \x"), vec![br"--title=\x".to_vec()]);
     }
 
     #[test]

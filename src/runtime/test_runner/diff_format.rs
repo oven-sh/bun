@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{js_error_to_write_error, JSGlobalObject, JSValue};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
@@ -44,23 +44,25 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 flush: false,
                 quote_strings: true,
             };
-            let _ = JestPrettyFormat::format(
+            JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&received),
                 1,
                 &mut received_buf,
                 fmt_options,
-            ); // TODO:
+            )
+            .map_err(js_error_to_write_error)?;
 
-            let _ = JestPrettyFormat::format(
+            JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&expected),
                 1,
                 &mut expected_buf,
                 fmt_options,
-            ); // TODO:
+            )
+            .map_err(js_error_to_write_error)?;
         }
 
         let mut received_slice: &[u8] = received_buf.as_slice();

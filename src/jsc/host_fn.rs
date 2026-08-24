@@ -698,34 +698,6 @@ pub fn to_js_host_call(
     normal
 }
 
-/// The `onStructuredCloneDeserialize` hook: `Ok(None)` means the record was malformed — the C++
-/// deserializer turns an empty result with no exception pending into its `ValidationError`; `Err`
-/// leaves the exception for it to propagate.
-#[track_caller]
-pub fn structured_clone_deserialize_result(
-    global_this: &JSGlobalObject,
-    f: impl FnOnce() -> JsResult<Option<JSValue>>,
-) -> JSValue {
-    let mut scope_storage = core::mem::MaybeUninit::uninit();
-    let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global_this);
-    match f() {
-        Ok(Some(v)) => {
-            scope.assert_no_exception();
-            debug_assert!(!v.is_empty());
-            v
-        }
-        Ok(None) => {
-            scope.assert_no_exception();
-            JSValue::ZERO
-        }
-        Err(e) => {
-            let v = host_call_error_value(global_this, e);
-            scope.assert_exception_presence_matches(v.is_empty());
-            v
-        }
-    }
-}
-
 /// Convert the return value of a function returning a maybe-empty `JSValue` into an error union.
 /// The wrapped function must return an empty `JSValue` if and only if it has thrown an exception.
 /// If your function does not follow this pattern (if it can return empty without an exception, or

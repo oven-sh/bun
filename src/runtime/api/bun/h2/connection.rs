@@ -759,10 +759,8 @@ impl Connection {
                 }
             }
         }
-        // §6.5.3: the ACK must precede the embedder callback. on_remote_settings flushes
-        // DATA that an enlarged INITIAL_WINDOW_SIZE just unblocked, and the peer enforces
-        // its old receive window until it processes this ACK, so DATA ahead of the ACK is
-        // a flow-control overrun (nghttp2 and grpc-go reset the stream).
+        // §6.5.3: ACK first. on_remote_settings flushes DATA the enlarged window
+        // unblocked, and the peer enforces its old receive window until it sees the ACK.
         self.send_settings_ack(sink);
         if self.note_outbound_ack(sink) {
             return true;

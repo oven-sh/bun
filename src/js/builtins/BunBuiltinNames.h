@@ -90,6 +90,8 @@ using namespace JSC;
     macro(filename) \
     macro(flush) \
     macro(format) \
+    macro(globScan) \
+    macro(globScanSync) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \

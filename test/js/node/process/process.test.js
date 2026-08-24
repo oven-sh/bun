@@ -2062,17 +2062,20 @@ it("should handle user assigned `default` properties", async () => {
   await promise;
 });
 
-it.each(["stdin", "stdout", "stderr"])("%s stream accessor works after globalThis.process is replaced", async stream => {
-  await runInlineFixture(
-    /* js */ `
+it.each(["stdin", "stdout", "stderr"])(
+  "%s stream accessor works after globalThis.process is replaced",
+  async stream => {
+    await runInlineFixture(
+      /* js */ `
       const old = process;
       process = null;
       const stream = old.${stream};
       old.stdout.write(typeof stream + " " + stream.fd + "\\n");
     `,
-    `object ${{ stdin: 0, stdout: 1, stderr: 2 }[stream]}\n`,
-  );
-});
+      `object ${{ stdin: 0, stdout: 1, stderr: 2 }[stream]}\n`,
+    );
+  },
+);
 
 it("process.versions", () => {
   expect(process.versions.node).toEqual("26.3.0");

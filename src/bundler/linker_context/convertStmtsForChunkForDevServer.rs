@@ -173,25 +173,32 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         );
 
                         // var namespace = ...;
-                        stmts
-                            .inside_wrapper_prefix
-                            .append_non_dependency(Stmt::alloc(
-                                S::Local {
-                                    kind: js_ast::LocalKind::KVar, // remove a tdz
-                                    decls: G::DeclList::from_slice(&[G::Decl {
-                                        binding: Binding::alloc(
-                                            bump,
-                                            b::Identifier {
-                                                r#ref: st.namespace_ref,
-                                            },
-                                            st.star_name_loc.to_nullable().unwrap_or(stmt.loc),
-                                        ),
-                                        value: Some(call),
-                                    }]),
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ))?;
+                        let decl = Stmt::alloc(
+                            S::Local {
+                                kind: js_ast::LocalKind::KVar, // remove a tdz
+                                decls: G::DeclList::from_slice(&[G::Decl {
+                                    binding: Binding::alloc(
+                                        bump,
+                                        b::Identifier {
+                                            r#ref: st.namespace_ref,
+                                        },
+                                        st.star_name_loc.to_nullable().unwrap_or(stmt.loc),
+                                    ),
+                                    value: Some(call),
+                                }]),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        );
+                        if two_phase {
+                            // The builtin namespace is read by the hoisted
+                            // exports getters, so it must exist before the
+                            // yield. `hmr.builtin` is synchronous and does not
+                            // depend on `hmr.imports`.
+                            instantiate_stmts.push(decl);
+                        } else {
+                            stmts.inside_wrapper_prefix.append_non_dependency(decl)?;
+                        }
                     }
                 } else {
                     let loc = st.star_name_loc.to_nullable().unwrap_or(stmt.loc);

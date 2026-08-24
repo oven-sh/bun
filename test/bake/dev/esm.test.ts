@@ -333,6 +333,33 @@ devTest("export star from a builtin module on the server", {
     await dev.fetch("/").equals("name: b.txt");
   },
 });
+devTest("cyclic read of a named builtin re-export on the server", {
+  // B evaluates while A is still on the stack and calls A's hoisted getter
+  // for a builtin re-export, so the builtin namespace must be assigned in
+  // the instantiate phase, before the yield.
+  framework: minimalFramework,
+  files: {
+    "A.ts": `
+      export { basename } from 'node:path';
+      import './B';
+      export function tag() { return 'A'; }
+    `,
+    "B.ts": `
+      import { basename } from './A';
+      export const eager = basename('/x/y.txt');
+    `,
+    "routes/index.ts": `
+      import { tag } from '../A';
+      import { eager } from '../B';
+      export default function(req, meta) {
+        return new Response('eager: ' + eager + ' from ' + tag());
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("eager: y.txt from A");
+  },
+});
 devTest("export star through a CommonJS module", {
   files: {
     "index.html": emptyHtmlFile({
@@ -959,7 +986,8 @@ devTest("dynamic import of a throwing module rejects again on retry", {
     `,
   },
   async test(dev) {
-    await using c = await dev.client({ errors: ["error: boom"] });
+    // The throws are caught in user code, so no error overlay appears.
+    await using c = await dev.client("/");
     await c.expectMessage("first: boom", "second: boom");
   },
 });

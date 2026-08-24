@@ -1093,11 +1093,17 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     JSValue value = JSValue::decode(encodedValue);
-    if (value == thisObject->m_errorConstructorPrepareStackTraceInternalValue.get(thisObject)) {
+    bool isUserValue = value != thisObject->m_errorConstructorPrepareStackTraceInternalValue.get(thisObject);
+    if (!isUserValue) {
         thisObject->m_errorConstructorPrepareStackTraceValue.clear();
     } else {
         thisObject->m_errorConstructorPrepareStackTraceValue.set(vm, thisObject, value);
     }
+
+    // The callback runs at the first .stack read and needs the error's frames. JSC holds them
+    // weakly and renders the stack string in the GC end phase once one dies, where no JS can run.
+    // Keep them alive while a user formatter is installed, as V8 does.
+    vm.setKeepsErrorStackFramesAlive(isUserValue && value.isCallable());
 
     return true;
 }

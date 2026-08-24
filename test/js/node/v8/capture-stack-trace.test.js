@@ -1,6 +1,6 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
@@ -1193,4 +1193,105 @@ test("Error.prepareStackTrace call sites keep their own file when a hidden frame
     { showPrivateScriptsInStackTraces: "0", callSites: expected, stderr: "", exitCode: 0 },
     { showPrivateScriptsInStackTraces: "1", callSites: expected, stderr: "", exitCode: 0 },
   ]);
+});
+
+// JSC holds an error's stack frames weakly. Once a frame's callee dies, the GC renders the stack
+// string itself, where Error.prepareStackTrace cannot run. While a user formatter is installed, the
+// frames must stay alive until the first .stack read, so that a GC in between is not observable.
+describe("Error.prepareStackTrace when a GC runs before the first .stack read", () => {
+  async function runFixture(dir, args) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs", ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  test("the formatter runs and receives the call sites", async () => {
+    // Each error's frames hold a callee that is garbage right after the call: the per-call closure
+    // of an async function body, and a `new Function` callee. Error.captureStackTrace goes through
+    // Bun's lazy .stack getter over the same frames.
+    using dir = tempDir("prepare-stack-trace-gc", {
+      "fixture.mjs": [
+        `import { basename } from "node:path";`,
+        `const callSites = {};`,
+        `Error.prepareStackTrace = (error, sites) => {`,
+        `  callSites[error.message] = sites.map(site => site.getFunctionName() + "@" + basename(site.getFileName()));`,
+        `  return "custom:" + error.message;`,
+        `};`,
+        `async function boom() {`,
+        `  throw new Error("async");`,
+        `}`,
+        `const fromAsync = await boom().catch(error => error);`,
+        `const fromNewFunction = new Function("return new Error('new-function')")();`,
+        `const fromCaptureStackTrace = new Function(`,
+        `  "const error = new Error('capture'); Error.captureStackTrace(error); return error;",`,
+        `)();`,
+        `if (process.argv[2] === "gc") Bun.gc(true);`,
+        `const stacks = {`,
+        `  async: fromAsync.stack,`,
+        `  newFunction: fromNewFunction.stack,`,
+        `  captureStackTrace: fromCaptureStackTrace.stack,`,
+        `};`,
+        `console.log(JSON.stringify({ stacks, callSites }));`,
+      ].join("\n"),
+    });
+
+    const [withoutGC, withGC] = await Promise.all([runFixture(dir, []), runFixture(dir, ["gc"])]);
+    expect(withoutGC).toEqual({
+      result: {
+        stacks: { async: "custom:async", newFunction: "custom:new-function", captureStackTrace: "custom:capture" },
+        callSites: {
+          "async": expect.arrayContaining(["boom@fixture.mjs"]),
+          "new-function": expect.arrayContaining(["anonymous@fixture.mjs"]),
+          "capture": expect.arrayContaining(["anonymous@fixture.mjs"]),
+        },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    // The GC must not be observable.
+    expect(withGC).toEqual(withoutGC);
+  });
+
+  test("a live error keeps its frames' callee alive until the first .stack read", async () => {
+    // Like V8: the frames are released when .stack is materialized. Whether a released callee is
+    // collected by a given GC is not asserted (it depends on the build), only that an unread error
+    // still holds it and that a formatter installed later is not used once it is reset.
+    using dir = tempDir("prepare-stack-trace-gc-frames", {
+      "fixture.mjs": [
+        `Error.prepareStackTrace = (error, sites) => "custom:" + error.message;`,
+        `function make(message) {`,
+        `  const callee = new Function("return new Error(" + JSON.stringify(message) + ")");`,
+        `  return { error: callee(), callee: new WeakRef(callee) };`,
+        `}`,
+        `const unread = make("unread");`,
+        `const read = make("read");`,
+        `const readStack = read.error.stack;`,
+        `Bun.gc(true);`,
+        `const unreadCalleeAlive = unread.callee.deref() !== undefined;`,
+        `const unreadStack = unread.error.stack;`,
+        `Error.prepareStackTrace = undefined;`,
+        `const afterReset = make("after-reset");`,
+        `Bun.gc(true);`,
+        `const afterResetFormatter = afterReset.error.stack.startsWith("custom:") ? "user" : "default";`,
+        `console.log(JSON.stringify({ unreadCalleeAlive, readStack, unreadStack, afterResetFormatter }));`,
+      ].join("\n"),
+    });
+
+    expect(await runFixture(dir, [])).toEqual({
+      result: {
+        unreadCalleeAlive: true,
+        readStack: "custom:read",
+        unreadStack: "custom:unread",
+        afterResetFormatter: "default",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

@@ -862,16 +862,12 @@ pub enum AlreadyBundled {
     BytecodeCjs(BytecodeFiles),
 }
 
-/// What a `// @bun @bytecode` module is loaded from. JSC decodes the bytecode
-/// lazily and keeps the module text for as long as the module exists, so both
-/// are mapped rather than copied: untouched pages never become resident, and
-/// the page cache is shared between processes running the same build.
+/// The files behind a `// @bun @bytecode` module. JSC keeps both for the
+/// module's lifetime and decodes the bytecode lazily, so they are mapped.
 pub struct BytecodeFiles {
-    /// The `<module>.jsc` sidecar; never empty. A heap copy where the file
-    /// could not be mapped (Windows).
+    /// The `<module>.jsc` sidecar, never empty.
     pub bytecode: bun_sys::MappedFile,
-    /// The module text, `None` where it could not be mapped; the consumer then
-    /// copies `Source.contents` as it would for a module without bytecode.
+    /// The module text; `None` when it could not be mapped.
     pub source: Option<bun_sys::MappedFile>,
 }
 
@@ -1745,8 +1741,7 @@ impl<'a> Transpiler<'a> {
                             js_ast::AlreadyBundled::BunCjs => AlreadyBundled::SourceCodeCjs,
                             js_ast::AlreadyBundled::BytecodeCjs
                             | js_ast::AlreadyBundled::Bytecode => 'brk: {
-                                // `// @bun @bytecode` promises a `<path>.jsc`
-                                // sidecar; a missing or empty one degrades to
+                                // A missing or empty `<path>.jsc` falls back to
                                 // running the module from source.
                                 let is_cjs =
                                     matches!(already_bundled, js_ast::AlreadyBundled::BytecodeCjs);

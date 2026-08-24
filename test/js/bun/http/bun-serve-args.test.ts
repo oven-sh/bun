@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { expectRssDeltaBelow, isWindows, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -661,6 +661,26 @@ describe("Bun.serve unix socket validation", () => {
         },
       }),
     ).toThrow();
+  });
+
+  test("unix option does not leak the string", async () => {
+    // The hostname + unix combination throws before any socket is bound, so
+    // this drives the option parsing alone.
+    const code = /* js */ `
+      const base = Buffer.alloc(512 * 1024, "x").toString();
+      function once(i) {
+        try { Bun.serve({ hostname: "127.0.0.1", unix: "/tmp/" + i + base, fetch() {} }); } catch {}
+      }
+      for (let i = 0; i < 20; i++) once(i);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 200; i++) once(i);
+      Bun.gc(true);
+      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    `;
+
+    // Unfixed: ~100 MiB. Fixed: allocator slack only.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
   });
 
   describe("invalid unix socket paths should throw", () => {

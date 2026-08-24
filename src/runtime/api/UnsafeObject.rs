@@ -137,10 +137,10 @@ fn link_napi_module(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         )));
     }
     let [exe_arg, addon_arg, vpath_arg, out_arg] = frame.arguments_as_array::<4>();
-    let exe_path = exe_arg.to_slice_or_null(global)?;
-    let addon_path = addon_arg.to_slice_or_null(global)?;
-    let virtual_path = vpath_arg.to_slice_or_null(global)?;
-    let out_path = out_arg.to_slice_or_null(global)?;
+    let exe_path = exe_arg.to_slice(global)?;
+    let addon_path = addon_arg.to_slice(global)?;
+    let virtual_path = vpath_arg.to_slice(global)?;
+    let out_path = out_arg.to_slice(global)?;
 
     let exe_bytes = match bun_sys::File::openat(Fd::cwd(), exe_path.slice(), bun_sys::O::RDONLY, 0)
         .and_then(|f| f.read_to_end())

@@ -23,7 +23,7 @@ impl EncoderStringTable {
         unsafe extern "C" fn append(ctx: *mut core::ffi::c_void, bytes: *const u8, len: usize) {
             // SAFETY: `ctx` is `&mut Vec<u8>`; `bytes` valid for `len`.
             unsafe {
-                (*(ctx as *mut Vec<u8>)).extend_from_slice(core::slice::from_raw_parts(bytes, len))
+                (*ctx.cast::<Vec<u8>>()).extend_from_slice(core::slice::from_raw_parts(bytes, len))
             };
         }
         // SAFETY: `this` is a valid table; callback receives our `&mut out`.

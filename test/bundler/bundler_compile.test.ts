@@ -174,9 +174,17 @@ describe("bundler", () => {
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
   // With --compile, static imports are inlined into one chunk, but dynamic imports
   // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
+  function serializedHelloDatabase() {
+    const db = new Database(":memory:");
+    db.exec("create table messages (message text)");
+    db.exec("insert into messages values ('Hello, world!')");
+    return db.serialize();
+  }
   const esmBytecodeScenarios: Array<{
     name: string;
-    files: Record<string, string>;
+    files: BundlerTestInput["files"];
+    /** Written next to the binary after bundling; the binary runs with that directory as cwd. */
+    runtimeFiles?: BundlerTestInput["runtimeFiles"];
     stdout: string;
   }> = [
     {
@@ -306,6 +314,48 @@ describe("bundler", () => {
       },
       stdout: "function",
     },
+    {
+      // An embedded database becomes a module whose body is synthesized by the
+      // bundler (`import.meta.require(...)`) rather than parsed, so the chunk's
+      // import.meta flag has to be derived from what is printed. Without it the
+      // binary used to segfault on startup.
+      name: "EmbeddedSqlite",
+      files: {
+        "/entry.ts": `
+          import db from "./db.sqlite" with { type: "sqlite", embed: "true" };
+          console.log(db.query("select message from messages limit 1").get().message);
+        `,
+        "/db.sqlite": serializedHelloDatabase(),
+      },
+      stdout: "Hello, world!",
+    },
+    {
+      // A database loaded at runtime stays an import statement with its attribute
+      // in the chunk. The module record has to carry the attribute as well (the
+      // extension alone does not select the sqlite loader); without it the binary
+      // tried to parse the database file as JavaScript. helper.ts is printed
+      // before the entry, so the entry's strings get different ids in the chunk's
+      // record than they had while printing the entry on its own.
+      name: "ImportAttributeOnRuntimeFile",
+      files: {
+        "/entry.ts": `
+          import { locate } from "./helper.ts";
+          import db from "./data.db" with { type: "sqlite" };
+          console.log(locate(), db.query("select message from messages limit 1").get().message);
+        `,
+        "/helper.ts": `
+          import { basename } from "node:path";
+          import { existsSync } from "node:fs";
+          export function locate() {
+            return basename("/some/where/data.db") + ":" + existsSync("data.db");
+          }
+        `,
+      },
+      runtimeFiles: {
+        "/data.db": serializedHelloDatabase(),
+      },
+      stdout: "data.db:true Hello, world!",
+    },
   ];
 
   for (const scenario of esmBytecodeScenarios) {
@@ -320,7 +370,8 @@ describe("bundler", () => {
           minifyWhitespace: true,
         }),
         files: scenario.files,
-        run: { stdout: scenario.stdout },
+        runtimeFiles: scenario.runtimeFiles,
+        run: { stdout: scenario.stdout, setCwd: scenario.runtimeFiles !== undefined },
       });
     }
   }

@@ -868,7 +868,6 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
 pub enum AtRulePrelude<T> {
     FontFace,
-    FontFeatureValues,
     FontPaletteValues(DashedIdent),
     CounterStyle(CustomIdent),
     Import {
@@ -1894,7 +1893,6 @@ mod rule_parsers {
                         }));
                     Ok(())
                 }
-                AtRulePrelude::FontFeatureValues => unreachable!(),
                 AtRulePrelude::Unknown { name, tokens } => {
                     this.rules.v.push(CssRule::Unknown(UnknownAtRule {
                         name,
@@ -2472,9 +2470,6 @@ mod stylesheet_impl {
             printer: &mut Printer<'a>,
             project_root: Option<&[u8]>,
         ) -> Result<(), PrintErr> {
-            // #[cfg(feature = "sourcemap")] { printer.sources = Some(&self.sources); }
-            // #[cfg(feature = "sourcemap")] if printer.source_map.is_some() { ... }
-
             for comment in &self.license_comments {
                 printer.write_str("/*")?;
                 printer.write_comment(comment)?;
@@ -2716,12 +2711,6 @@ mod stylesheet_impl {
             options: &PrinterOptions<'a>,
             import_info: Option<ImportInfo<'a>>,
         ) -> Result<ToCssResult, PrintErr> {
-            // #[cfg(feature = "sourcemap")]
-            // assert!(
-            //   options.source_map.is_none(),
-            //   "Source maps are not supported for style attributes"
-            // );
-
             let symbols = bun_ast::symbol::Map::init_list(Default::default());
             let mut dest: Vec<u8> = Vec::new();
             let mut printer = Printer::new(

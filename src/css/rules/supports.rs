@@ -438,9 +438,6 @@ impl<R> SupportsRule<R> {
 
 impl<R> SupportsRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
         dest.write_str(b"@supports ")?;
         self.condition.to_css(dest)?;
         dest.block(|d| {

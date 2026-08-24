@@ -215,9 +215,6 @@ pub struct KeyframesRule {
 
 impl KeyframesRule {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
         let mut first_rule = true;
 
         // VendorPrefix is `bitflags!`, so iterate the flag constants directly

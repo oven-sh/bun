@@ -31,20 +31,6 @@ pub trait Bindgen {
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType;
 }
 
-pub struct BindgenTrivial<T>(PhantomData<T>);
-
-impl<T> Bindgen for BindgenTrivial<T> {
-    type ZigType = T;
-    type ExternType = T;
-    const SAME_REPR: bool = true;
-
-    fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
-        extern_value
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
 pub struct BindgenStrongAny;
 
 impl Bindgen for BindgenStrongAny {

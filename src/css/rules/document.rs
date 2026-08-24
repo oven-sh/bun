@@ -14,8 +14,6 @@ pub struct MozDocumentRule<R> {
 
 impl<R> MozDocumentRule<R> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
         dest.write_str("@-moz-document url-prefix()")?;
         dest.block(|d| {
             d.newline()?;

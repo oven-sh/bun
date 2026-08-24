@@ -471,39 +471,4 @@ void setupJSVerifyClassStructure(LazyClassStructure::Initializer& init)
     init.setConstructor(constructor);
 }
 
-std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView)
-{
-    ncrypto::EVPKeyPointer::PublicKeyEncodingConfig publicConfig;
-    publicConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-
-    UTF8View keyUtf8(keyView);
-    auto keySpan = keyUtf8.span();
-
-    ncrypto::Buffer<const unsigned char> ncryptoBuf {
-        .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
-        .len = keySpan.size(),
-    };
-
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-
-    auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
-    if (publicRes) {
-        ncrypto::EVPKeyPointer keyPtr(WTF::move(publicRes.value));
-        return keyPtr;
-    }
-
-    if (publicRes.error.value() == ncrypto::EVPKeyPointer::PKParseError::NOT_RECOGNIZED) {
-        ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig privateConfig;
-        privateConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-        auto privateRes = ncrypto::EVPKeyPointer::TryParsePrivateKey(privateConfig, ncryptoBuf);
-        if (privateRes) {
-            ncrypto::EVPKeyPointer keyPtr(WTF::move(privateRes.value));
-            return keyPtr;
-        }
-    }
-
-    throwCryptoError(lexicalGlobalObject, scope, publicRes.openssl_error.value_or(0), "Failed to read public key"_s);
-    return std::nullopt;
-}
-
 } // namespace Bun

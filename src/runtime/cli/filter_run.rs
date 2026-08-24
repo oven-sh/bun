@@ -843,7 +843,12 @@ pub(crate) fn run_scripts_with_filter(
                 continue;
             };
 
-            let passthrough = RunCommand::passthrough_for_script(&ctx.passthrough);
+            // npm appends the user's args to the main script only, not pre/post.
+            let passthrough: &[Box<[u8]>] = if i == 1 {
+                RunCommand::passthrough_for_script(&ctx.passthrough)
+            } else {
+                &[]
+            };
             let mut copy_script_capacity: usize = original_content.len();
             for part in passthrough {
                 copy_script_capacity += 1 + part.len();

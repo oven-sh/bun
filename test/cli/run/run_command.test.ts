@@ -121,16 +121,47 @@ describe.concurrent("process.argv passthrough", () => {
     });
   });
 
-  test("bun-shell script: $N positionals are the stripped passthrough", async () => {
+  test("bun-shell script: $N positionals are the stripped passthrough, main script only", async () => {
     using dir = tempDir("argv-shell-positional", {
-      "package.json": JSON.stringify({ scripts: { go: "echo $1.$2" } }),
+      "package.json": JSON.stringify({
+        scripts: { prego: "echo pre:$1", go: "echo $1.$2", postgo: "echo post:$1" },
+      }),
     });
     const { stdout, stderr, exitCode } = await spawnArgv(
       [bunExe(), "--silent", "--shell=bun", "run", "go", "--", "foo", "bar"],
       String(dir),
     );
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: "foo.bar foo bar",
+    expect({ stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode }).toEqual({
+      stdout: "pre:\nfoo.bar foo bar\npost:\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("--filter appends passthrough to the main script only, not pre/post", async () => {
+    using dir = tempDir("argv-filter-lifecycle", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["pkg"] }),
+      pkg: {
+        "package.json": JSON.stringify({
+          name: "pkg",
+          scripts: { prego: "echo pre", go: "echo main", postgo: "echo post" },
+        }),
+      },
+    });
+    const { stdout, stderr, exitCode } = await spawnArgv(
+      [bunExe(), "run", "--filter", "pkg", "go", "--", "x", "y"],
+      String(dir),
+    );
+    expect({ stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "pkg prego: pre",
+        "pkg prego: Exited with code 0",
+        "pkg go: main x y",
+        "pkg go: Exited with code 0",
+        "pkg postgo: post",
+        "pkg postgo: Exited with code 0",
+        "",
+      ].join("\n"),
       stderr: "",
       exitCode: 0,
     });

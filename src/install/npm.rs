@@ -1902,9 +1902,6 @@ impl PackageManifest {
         ) {
             return result;
         }
-        if newest_filtered.is_some() {
-            return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent);
-        }
         if let Some(result) = self.search_version_list(
             releases,
             packages,
@@ -1915,6 +1912,9 @@ impl PackageManifest {
             false,
         ) {
             return result;
+        }
+        if newest_filtered.is_some() {
+            return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent);
         }
         FindVersionResult::Err(FindVersionError::NotFound)
     }

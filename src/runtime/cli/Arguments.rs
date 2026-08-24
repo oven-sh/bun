@@ -888,15 +888,16 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    if cmd == CommandTag::TestCommand {
-        parse_test_command_options(&args, ctx);
-    }
-
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
 
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;
+    }
+
+    // After the config load, so a `bun test` flag overrides its `[test]` key.
+    if cmd == CommandTag::TestCommand {
+        parse_test_command_options(&args, ctx);
     }
 
     let mut opts: api::TransformOptions = ctx.args.clone();
@@ -1799,7 +1800,6 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if !args.options(b"--path-ignore-patterns").is_empty() {
         ctx.test_options.path_ignore_patterns =
             slice_to_owned(args.options(b"--path-ignore-patterns"));
-        ctx.test_options.path_ignore_patterns_from_cli = true;
     }
 
     if let Some(bail) = args.option(b"--bail") {
@@ -1939,12 +1939,13 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         );
         Global::exit(1);
     }
-    ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
-    ctx.test_options.run_todo = args.flag(b"--todo");
-    ctx.test_options.only = args.flag(b"--only");
-    ctx.test_options.pass_with_no_tests = args.flag(b"--pass-with-no-tests");
-    ctx.test_options.concurrent = args.flag(b"--concurrent");
-    ctx.test_options.randomize = args.flag(b"--randomize");
+    // `|=`: bunfig.toml is already applied, and an absent flag must not reset its key.
+    ctx.test_options.update_snapshots |= args.flag(b"--update-snapshots");
+    ctx.test_options.run_todo |= args.flag(b"--todo");
+    ctx.test_options.only |= args.flag(b"--only");
+    ctx.test_options.pass_with_no_tests |= args.flag(b"--pass-with-no-tests");
+    ctx.test_options.concurrent |= args.flag(b"--concurrent");
+    ctx.test_options.randomize |= args.flag(b"--randomize");
     let no_isolate = args.flag(b"--no-isolate");
     ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
     ctx.test_options.test_worker = args.flag(b"--test-worker");
@@ -1999,6 +2000,15 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
                 Global::exit(1);
             }
         };
+    }
+
+    // Only a bunfig `seed` can reach this without `randomize`: `--seed` sets both.
+    if ctx.test_options.seed.is_some() && !ctx.test_options.randomize {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: \"seed\" can only be used when \"randomize\" is true"
+        );
+        Output::flush();
+        Global::exit(1);
     }
 }
 

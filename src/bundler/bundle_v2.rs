@@ -6257,11 +6257,14 @@ pub mod bv2_impl {
 
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
-                    match transpiler.resolver.resolve_with_framework(
+                    transpiler.resolver.start_recording_touched_dirs();
+                    let resolved = transpiler.resolver.resolve_with_framework(
                         source_dir,
                         import_record.path.text,
                         import_record.kind,
-                    ) {
+                    );
+                    transpiler.resolver.stop_recording_touched_dirs();
+                    match resolved {
                         Ok(r) => break r,
                         Err(err) => {
                             // borrowck — `log_for_resolution_failures` returns
@@ -6275,25 +6278,25 @@ pub mod bv2_impl {
                                 )
                             };
 
-                            // Only perform directory busting when hot-reloading is enabled
                             if err == _resolver::Error::ModuleNotFound {
-                                if self.bun_watcher.is_some() {
-                                    if !had_busted_dir_cache {
-                                        bun_core::scoped_log!(
-                                            watcher,
-                                            "busting dir cache {} -> {}",
-                                            bstr::BStr::new(&source.path.text),
-                                            bstr::BStr::new(&import_record.path.text)
-                                        );
-                                        // Only re-query if we previously had something cached.
-                                        if transpiler.resolver.bust_dir_cache_from_specifier(
-                                            source.path.text,
-                                            import_record.path.text,
-                                        ) {
-                                            had_busted_dir_cache = true;
-                                            continue 'inner;
-                                        }
+                                // The directory cache is shared by every build in
+                                // the process, so a package installed after an
+                                // earlier build failed is still "missing" here.
+                                // Drop what this lookup read and try once more.
+                                if !had_busted_dir_cache {
+                                    had_busted_dir_cache = true;
+                                    bun_core::scoped_log!(
+                                        watcher,
+                                        "busting dir cache {} -> {}",
+                                        bstr::BStr::new(&source.path.text),
+                                        bstr::BStr::new(&import_record.path.text)
+                                    );
+                                    // Only re-query if we previously had something cached.
+                                    if transpiler.resolver.bust_touched_dirs() {
+                                        continue 'inner;
                                     }
+                                }
+                                if self.bun_watcher.is_some() {
                                     if let Some(dev) = self.dev_server {
                                         // Tell DevServer about the resolution failure.
                                         dev.track_resolution_failure(

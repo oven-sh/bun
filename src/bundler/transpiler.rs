@@ -1471,6 +1471,21 @@ impl<'a> Transpiler<'a> {
             ) {
                 Ok(e) => e,
                 Err(err) => {
+                    // The resolver found this path in a cached directory listing
+                    // that is now stale: the file was removed, or the package was
+                    // reinstalled with another entry file. Drop that directory so
+                    // the next resolution reads it again.
+                    if matches!(
+                        err,
+                        resolver::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                            | resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                    ) {
+                        if let Some(dir) = bun_paths::dirname(path.text) {
+                            self.resolver.bust_dir_cache(
+                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
+                            );
+                        }
+                    }
                     let _ = log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,

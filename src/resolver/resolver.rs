@@ -577,6 +577,51 @@ pub struct Resolver<'a> {
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 }
 
+/// Cache keys (`BSSMapInner::key_hash`) of every directory the resolution in
+/// progress on this thread read from `dir_cache` or `fs.entries`. Filled only
+/// between `Resolver::start_recording_touched_dirs` and
+/// `stop_recording_touched_dirs`, so a caller that got `NotFound` can drop
+/// exactly the cached state the lookup depended on (`bust_touched_dirs`) and
+/// resolve again. Thread-local rather than a `Resolver` field: the runtime
+/// copies its `Transpiler`, `Resolver` included, bytewise into every
+/// transpiler job, and a `Vec` must have one owner.
+struct TouchedDirs {
+    recording: bool,
+    hashes: Vec<u64>,
+}
+
+struct TouchedDirsSlot(core::cell::Cell<*mut TouchedDirs>);
+impl Drop for TouchedDirsSlot {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: produced by `Box::leak` in `touched_dirs_init`; the thread
+            // is exiting, so no resolver call frame uses it.
+            drop(unsafe { Box::from_raw(p) });
+        }
+    }
+}
+thread_local! {
+    static TOUCHED_DIRS: TouchedDirsSlot = const { TouchedDirsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
+}
+
+/// Null until this thread records for the first time, so threads that never
+/// retry a resolution pay one TLS load per lookup.
+#[inline(always)]
+fn touched_dirs_get() -> *mut TouchedDirs {
+    TOUCHED_DIRS.with(|s| s.0.get())
+}
+
+#[cold]
+fn touched_dirs_init() -> *mut TouchedDirs {
+    let p: *mut TouchedDirs = Box::leak(Box::new(TouchedDirs {
+        recording: false,
+        hashes: Vec::new(),
+    }));
+    TOUCHED_DIRS.with(|s| s.0.set(p));
+    p
+}
+
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
 /// `Resolver::log` pointer on drop.
 pub struct ResolverLogScope {
@@ -2457,6 +2502,98 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
+    /// Record the directory cache keys that the following resolution on this
+    /// thread reads. Pair with `stop_recording_touched_dirs`, then
+    /// `bust_touched_dirs` on a miss.
+    pub fn start_recording_touched_dirs(&mut self) {
+        let mut p = touched_dirs_get();
+        if p.is_null() {
+            p = touched_dirs_init();
+        }
+        // SAFETY: thread-local, and no reference into it outlives a single
+        // `Resolver` method.
+        let touched = unsafe { &mut *p };
+        touched.hashes.clear();
+        touched.recording = true;
+    }
+
+    /// Keeps the recorded keys for `bust_touched_dirs`.
+    pub fn stop_recording_touched_dirs(&mut self) {
+        let p = touched_dirs_get();
+        if !p.is_null() {
+            // SAFETY: see `start_recording_touched_dirs`.
+            unsafe { (*p).recording = false };
+        }
+    }
+
+    #[inline]
+    fn record_touched_dir_hash(&self, hash: u64) {
+        let p = touched_dirs_get();
+        if p.is_null() {
+            return;
+        }
+        // SAFETY: see `start_recording_touched_dirs`.
+        let touched = unsafe { &mut *p };
+        if touched.recording {
+            touched.hashes.push(hash);
+        }
+    }
+
+    #[inline]
+    fn record_touched_dir(&self, dir: &[u8]) {
+        let p = touched_dirs_get();
+        if p.is_null() {
+            return;
+        }
+        // SAFETY: see `start_recording_touched_dirs`.
+        let touched = unsafe { &mut *p };
+        if touched.recording {
+            touched.hashes.push(DirInfo::HashMap::key_hash(dir));
+        }
+    }
+
+    /// Drop every directory recorded since `start_recording_touched_dirs` from
+    /// both caches, so the next lookup reads them from disk again. Returns
+    /// whether any of them was cached, that is whether a retry can see
+    /// something new.
+    ///
+    /// A resolution caches what it finds, including a directory or a file
+    /// that does not exist, and nothing outside watch mode invalidates it. A
+    /// package installed, a build output written, or a `package.json` fixed
+    /// after a failed lookup would otherwise stay invisible for the life of
+    /// the process.
+    pub fn bust_touched_dirs(&mut self) -> bool {
+        let p = touched_dirs_get();
+        if p.is_null() {
+            return false;
+        }
+        // SAFETY: see `start_recording_touched_dirs`. The borrow ends before
+        // the cache calls below.
+        let mut hashes = {
+            let touched = unsafe { &mut *p };
+            touched.recording = false;
+            core::mem::take(&mut touched.hashes)
+        };
+        hashes.sort_unstable();
+        hashes.dedup();
+        let mut busted = false;
+        for &hash in &hashes {
+            let first_bust = self.fs_mut().fs.bust_entries_cache_hash(hash);
+            let second_bust = self.dir_cache_mut().remove_hash(hash);
+            busted |= first_bust || second_bust;
+        }
+        bun_core::scoped_log!(
+            ResolverDev,
+            "Bust {} touched dirs = {}",
+            hashes.len(),
+            busted
+        );
+        hashes.clear();
+        // SAFETY: see above; keep the allocation for the next recording.
+        unsafe { (*p).hashes = hashes };
+        busted
+    }
+
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
     pub fn bust_dir_cache_from_specifier(
@@ -2604,6 +2741,9 @@ impl<'a> Resolver<'a> {
         // or in the package root directory if it's a self-reference
         if use_node_module_resolver {
             loop {
+                // The cached "has a node_modules folder" bit decides whether
+                // this directory is searched at all.
+                self.record_touched_dir(dir_info.abs_path);
                 // Skip directories that are themselves called "node_modules", since we
                 // don't ever want to search for "node_modules/node_modules"
                 'node_modules: {
@@ -4242,6 +4382,7 @@ impl<'a> Resolver<'a> {
         let top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
+        self.record_touched_dir_hash(top_result.hash);
         if top_result.status != allocators::ItemStatus::Unknown {
             return Ok(self
                 .dir_cache_mut()
@@ -5793,6 +5934,7 @@ impl<'a> Resolver<'a> {
         }
 
         let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
+        self.record_touched_dir(dir_path);
 
         // PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
         // LIFETIMES.tsv); wrap in `BackRef` so later `&mut self` calls

@@ -2566,7 +2566,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// is never needed by callers, only the hash. `#[inline(always)]` + the
     /// const-generic branch fold to identical codegen at each monomorphization.
     #[inline(always)]
-    fn key_hash(denormalized_key: &[u8]) -> u64 {
+    pub fn key_hash(denormalized_key: &[u8]) -> u64 {
         let key = if REMOVE_TRAILING_SLASHES {
             trim_right(denormalized_key, SEP_STR.as_bytes())
         } else {
@@ -2678,9 +2678,14 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     /// Returns true if the entry was removed.
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
+        self.remove_hash(Self::key_hash(denormalized_key))
+    }
+
+    /// `remove` for a key already hashed with `key_hash`. Returns true if the
+    /// entry was removed.
+    pub fn remove_hash(&mut self, hash: u64) -> bool {
         let _guard = self.mutex.lock();
-        let _key = Self::key_hash(denormalized_key);
-        self.index.remove(&_key).is_some()
+        self.index.remove(&hash).is_some()
     }
 }
 

@@ -3298,21 +3298,6 @@ fn normalize_specifier_for_resolution<'a>(
     }
 }
 
-/// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.
-#[thread_local]
-static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_paths::PathBuffer> =
-    core::cell::Cell::new(core::ptr::null_mut());
-
-#[inline]
-fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
-    let mut p = SPECIFIER_CACHE_RESOLVER_BUF.get();
-    if p.is_null() {
-        p = bun_core::heap::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
-        SPECIFIER_CACHE_RESOLVER_BUF.set(p);
-    }
-    p
-}
-
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
         let writer = bun_js_printer::BufferWriter::init();
@@ -4415,13 +4400,17 @@ impl VirtualMachine {
             } else {
                 bun_ast::ImportKind::Require
             };
-            let global_cache = self.transpiler.resolver.opts.global_cache;
-            match self.transpiler.resolver.resolve_and_auto_install(
+            let resolver = &mut self.transpiler.resolver;
+            let global_cache = resolver.opts.global_cache;
+            resolver.start_recording_touched_dirs();
+            let resolved = resolver.resolve_and_auto_install(
                 source_to_use,
                 normalized_specifier,
                 import_kind,
                 global_cache,
-            ) {
+            );
+            resolver.stop_recording_touched_dirs();
+            match resolved {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
@@ -4430,50 +4419,13 @@ impl VirtualMachine {
                     }
                     retry_on_not_found = false;
 
-                    // SAFETY: thread-local heap allocation; sole `&mut` on the JS
-                    // thread for the duration of the bust below.
-                    let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
-                    let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_paths::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::CrateError::ModuleNotFound);
-                            }
-                            // Normalized without trailing slash.
-                            bun_paths::string_paths::normalize_slashes_only(
-                                buf,
-                                dir,
-                                bun_paths::SEP,
-                            )
-                        } else {
-                            // Absolute but root — fall through to join.
-                            &b""[..]
-                        }
-                    } else {
-                        &b""[..]
-                    };
-                    let buster_name: &[u8] = if !buster_name.is_empty() {
-                        buster_name
-                    } else {
-                        // If the specifier is too long to join, it can't name
-                        // a real directory — skip the cache bust and fail.
-                        if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                            return Err(crate::CrateError::ModuleNotFound);
-                        }
-                        let parts: [&[u8]; 3] = [
-                            source_to_use,
-                            normalized_specifier,
-                            bun_paths::path_literal!("..").as_bytes(),
-                        ];
-                        bun_paths::resolve_path::join_abs_string_buf_z::<
-                            bun_paths::resolve_path::platform::Auto,
-                        >(top_level_dir, buf, &parts)
-                        .as_bytes()
-                    };
-
+                    // The miss may have come from the directory cache rather
+                    // than from disk: a package dir listed before its entry file
+                    // was written, a package.json parsed while half written, a
+                    // `node_modules` created after its parent was read. Drop
+                    // every directory this lookup consulted and try once more.
                     // Only re-query if we previously had something cached.
-                    if self.transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) {
+                    if self.transpiler.resolver.bust_touched_dirs() {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);

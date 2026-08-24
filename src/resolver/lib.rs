@@ -1010,6 +1010,9 @@ pub mod fs {
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
             self.inner().remove(key)
         }
+        pub(crate) fn remove_hash(&mut self, hash: u64) -> bool {
+            self.inner().remove_hash(hash)
+        }
     }
 
     /// The active filesystem backend (always the real filesystem).
@@ -1353,6 +1356,13 @@ pub mod fs {
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
             self.entries.remove(file_path)
+        }
+
+        /// `bust_entries_cache` for a key already hashed with
+        /// `EntriesOptionMap::key_hash`.
+        pub(crate) fn bust_entries_cache_hash(&mut self, hash: u64) -> bool {
+            let _g = self.entries_mutex.lock_guard();
+            self.entries.remove_hash(hash)
         }
 
         /// lstat + (if symlink) open + fstat +

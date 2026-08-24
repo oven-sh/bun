@@ -233,9 +233,10 @@ impl InstallCompletionsCommand {
             Ok(len) => len,
             Err(_) => {
                 // don't fail on this if we don't actually need to
-                if fail_exit_code == 1 {
-                    if !bun_sys::isatty(stdout.handle) {
-                        if let Err(err) = stdout.write_all(shell.completions()) {
+                if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
+                    let completions = shell.completions();
+                    if !completions.is_empty() {
+                        if let Err(err) = stdout.write_all(completions) {
                             if err.get_errno() == E::EPIPE {
                                 Global::exit(0);
                             } else {

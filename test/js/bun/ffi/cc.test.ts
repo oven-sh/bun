@@ -1069,7 +1069,7 @@ describe("double <-> JSValue conversions", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ out: JSON.parse(stdout.trim().split("\n").at(-1) || "null"), exitCode }).toEqual({
+      expect({ out: JSON.parse(stdout.trim().split("\n").at(-1) || "null"), stderr, exitCode }).toMatchObject({
         out: { callCb: true, throwIt: "ERR_FROM_CC: thrown from cc", after: 7 },
         exitCode: 0,
       });

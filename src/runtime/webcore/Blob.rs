@@ -5266,6 +5266,24 @@ pub(crate) fn write_file_internal(
             break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
         }
 
+        if let Some(readable) = ReadableStream::from_js_direct(data) {
+            if readable.is_locked(global_this) || readable.is_disturbed(global_this) {
+                destination_blob.detach();
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        global_this
+                            .err(
+                                jsc::ErrorCode::BODY_ALREADY_USED,
+                                format_args!("ReadableStream has already been used"),
+                            )
+                            .to_js(),
+                    ),
+                );
+            }
+            return destination_blob.pipe_readable_stream_to_blob(global_this, readable, &options);
+        }
+
         break 'brk Blob::get::<false, false>(global_this, data)?;
     };
     // Detach the source blob on scope exit.

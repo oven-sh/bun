@@ -1032,6 +1032,34 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       }
     });
 
+    // https://github.com/oven-sh/bun/issues/31681: these wrote "[object ReadableStream]".
+    it("a bare ReadableStream: res.body, a JS stream, file.write(stream)", async () => {
+      using dir = tempDir("bun-write-readable-stream", {});
+      await using server = await origin();
+      const viaBody = join(String(dir), "body.bin");
+      expect(await Bun.write(viaBody, (await fetch(server.url)).body)).toBe(CHUNK * COUNT);
+      expect(fs.statSync(viaBody).size).toBe(CHUNK * COUNT);
+
+      const viaJs = join(String(dir), "js.txt");
+      const js = () =>
+        new ReadableStream({
+          start(ctrl) {
+            ctrl.enqueue("one ");
+            ctrl.enqueue(new TextEncoder().encode("two"));
+            ctrl.close();
+          },
+        });
+      expect(await Bun.write(viaJs, js())).toBe(7);
+      expect(await Bun.file(viaJs).text()).toBe("one two");
+      expect(await Bun.file(join(String(dir), "file-write.txt")).write(js())).toBe(7);
+      expect(await Bun.file(join(String(dir), "file-write.txt")).text()).toBe("one two");
+
+      const locked = js();
+      locked.getReader();
+      expect(Bun.write(viaJs, locked)).rejects.toThrow(expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }));
+      expect(await Bun.file(viaJs).text()).toBe("one two");
+    });
+
     it("a Request body inside Bun.serve", async () => {
       using dir = tempDir("bun-write-request-stream", {});
       const dest = join(String(dir), "upload.bin");

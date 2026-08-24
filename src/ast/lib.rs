@@ -1786,8 +1786,6 @@ impl Log {
     }
 
     /// `add_warning` with `AddErrorOptions`, formatted, plus a free-standing `note:` line.
-    /// `redact_sensitive_information` masks a credential value in the warned line's
-    /// source frame; the note carries no frame.
     #[cold]
     pub fn add_warning_fmt_opts_with_note(
         &mut self,

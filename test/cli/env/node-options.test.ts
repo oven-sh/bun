@@ -246,10 +246,7 @@ describe("NODE_OPTIONS environment variable", () => {
     using dir = tempDir("node-options-info", {
       "package.json": `{"name":"x","version":"1.0.0"}`,
     });
-    await Bun.write(
-      `${String(dir)}/bunfig.toml`,
-      `[install]\nregistry = "http://localhost:${server.port}/"\n`,
-    );
+    await Bun.write(`${String(dir)}/bunfig.toml`, `[install]\nregistry = "http://localhost:${server.port}/"\n`);
     await run(String(dir), ["info", "react"], "--title=from-env");
     expect(requested[0]).toBe("/react");
   });

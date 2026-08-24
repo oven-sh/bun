@@ -519,8 +519,8 @@ it.concurrent.skipIf(!isWindows)("bunx --bun in-process launch can fork children
   using dir = tempDir("bunx-bun-fork", {
     "package.json": JSON.stringify({ name: "repro", dependencies: { showexec: "file:./showexec" } }),
     "showexec/package.json": JSON.stringify({ name: "showexec", version: "1.0.0", bin: { showexec: "cli.js" } }),
-    "showexec/cli.js": `
-      console.log(JSON.stringify({ execPath: process.execPath, execArgv: process.execArgv }));
+    "showexec/cli.js": `#!/usr/bin/env node
+      console.log(JSON.stringify({ argv0: process.argv[0], execPath: process.execPath, execArgv: process.execArgv }));
       const { fork } = require("node:child_process");
       const cp = fork(require("node:path").join(__dirname, "child.js"));
       cp.on("exit", code => console.log("child exit", code));
@@ -541,7 +541,13 @@ it.concurrent.skipIf(!isWindows)("bunx --bun in-process launch can fork children
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await install.exited).toBe(0);
+  const [installOut, installErr, installExit] = await Promise.all([
+    install.stdout.text(),
+    install.stderr.text(),
+    install.exited,
+  ]);
+  expect(installErr).not.toContain("error:");
+  expect(installExit).toBe(0);
 
   await using proc = spawn({
     cmd: [join(exeDir, "bunx.exe"), "--bun", "--no-install", "showexec"],
@@ -550,13 +556,16 @@ it.concurrent.skipIf(!isWindows)("bunx --bun in-process launch can fork children
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [out, exited] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const state = JSON.parse(out.slice(0, out.indexOf("\n")));
-  expect(realpathSync(state.execPath).toLowerCase()).toBe(realpathSync(join(exeDir, "bun.exe")).toLowerCase());
+  const bunExePath = realpathSync(join(exeDir, "bun.exe")).toLowerCase();
+  expect(realpathSync(state.execPath).toLowerCase()).toBe(bunExePath);
+  expect(realpathSync(state.argv0).toLowerCase()).toBe(bunExePath);
   expect(state.execArgv).toEqual([]);
   expect(out).toContain("CHILD OK");
   expect(out).toContain("child exit 0");
+  expect(err).not.toContain("error:");
   expect(exited).toBe(0);
 });
 

@@ -1,23 +1,26 @@
 /**
- * scripts/runner.node.mjs sets USER and HOME for every test process it spawns
- * from os.userInfo(), the passwd entry of the user that runs the runner. It
- * used to call os.userInfo() in spawnBun, once per test file, with no handler
- * for a failed lookup. On macOS the lookup goes through opendirectoryd, which
- * can answer ENOENT for the running user while the host is in a bad state. One
- * such answer threw out of runTests() and ended the shard between two test
- * files with no test failure to report.
+ * scripts/runner.node.mjs runs one step per test file through runTest(), which
+ * retries and reports a step whose result says it failed. An exception thrown
+ * from the step path is not a result: it left runTests() and ended the shard
+ * with no summary for the files that had run. Two per-file sync calls in that
+ * path threw when a macOS agent wiped its checkout under a live job:
  *
- * The runner now resolves the user once per process, through getUserInfo() in
- * scripts/utils.mjs, and falls back to the environment when the lookup fails.
+ * - spawnBun called os.userInfo() for every test file to set USER and HOME for
+ *   the child. The lookup goes through opendirectoryd, which answered ENOENT.
+ *   The runner now resolves the user once per process, through getUserInfo()
+ *   in scripts/utils.mjs, and falls back to the environment when the lookup
+ *   fails.
+ * - runOneTest read a node test file (test/js/node/test/parallel/...) before
+ *   its step began. A file that is gone by then is now a failed step.
  *
- * Each case runs a copy of the runner from a temporary repository layout with
- * two test files. The copy runs under node, as in CI, with bunExe() as the bun
- * under test. A module preloaded with --import replaces os.userInfo: it counts
- * the calls, writes the count to a file when the process exits, and either
- * throws the ENOENT error or forwards to the real function.
+ * Each case runs a copy of the runner from a temporary repository layout. The
+ * copy runs under node, as in CI, with bunExe() as the bun under test. A module
+ * preloaded with --import replaces os.userInfo: it counts the calls, writes the
+ * count to a file when the process exits, and either throws the ENOENT error
+ * or forwards to the real function.
  */
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir, type DirectoryTree } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -87,17 +90,16 @@ async function nodeUserInfo(): Promise<UserInfo> {
 }
 
 /**
- * Runs a copy of the runner over two test files that expect `expected(repo)`
- * as their USER and HOME. Returns the steps the runner logged, its exit code,
- * the number of os.userInfo() calls it made, and its stderr.
+ * Runs a copy of the runner over the test files in `files`, with os.userInfo
+ * failing or working. Returns the steps the runner logged, its exit code, the
+ * number of os.userInfo() calls it made, and its stderr.
  */
-async function runRunner(fails: boolean, expected: (repo: string) => UserInfo) {
-  using repo = tempDir("runner-user-info", {
+async function runRunner(fails: boolean, files: DirectoryTree) {
+  using repo = tempDir("runner-step-errors", {
     ...Object.fromEntries(runnerFiles.map(file => [file, readFileSync(join(repoRoot, file))])),
     "preload.mjs": preload(fails),
-    "test/first.test.ts": ({ root }) => testFile(expected(root)),
-    "test/second.test.ts": ({ root }) => testFile(expected(root)),
     "home": {},
+    ...files,
   });
   const callsPath = join(String(repo), "userinfo-calls.txt");
   await using proc = Bun.spawn({
@@ -134,11 +136,17 @@ async function runRunner(fails: boolean, expected: (repo: string) => UserInfo) {
   return { steps, exitCode, userInfoCalls: Number(readFileSync(callsPath, "utf8")), stderr };
 }
 
-describe.skipIf(!node)("runner.node.mjs os.userInfo()", () => {
+/** Two test files that expect `expected(repo)` as their USER and HOME. */
+const userInfoFiles = (expected: (repo: string) => UserInfo): DirectoryTree => ({
+  "test/first.test.ts": ({ root }) => testFile(expected(root)),
+  "test/second.test.ts": ({ root }) => testFile(expected(root)),
+});
+
+describe.skipIf(!node)("runner.node.mjs step errors", () => {
   test.concurrent(
     "a failed passwd lookup does not end the shard: the test files run with USER and HOME from the environment",
     async () => {
-      const { steps, exitCode, userInfoCalls, stderr } = await runRunner(true, environmentUser);
+      const { steps, exitCode, userInfoCalls, stderr } = await runRunner(true, userInfoFiles(environmentUser));
 
       expect(stderr).toContain("os.userInfo() failed, using the environment instead");
       expect({ steps, exitCode, userInfoCalls }).toEqual({
@@ -151,7 +159,10 @@ describe.skipIf(!node)("runner.node.mjs os.userInfo()", () => {
 
   test.concurrent("the passwd lookup runs once per process, not once per test file", async () => {
     const passwd = await nodeUserInfo();
-    const { steps, exitCode, userInfoCalls, stderr } = await runRunner(false, () => passwd);
+    const { steps, exitCode, userInfoCalls, stderr } = await runRunner(
+      false,
+      userInfoFiles(() => passwd),
+    );
 
     expect(stderr).not.toContain("os.userInfo() failed");
     expect({ steps, exitCode, userInfoCalls }).toEqual({
@@ -160,4 +171,26 @@ describe.skipIf(!node)("runner.node.mjs os.userInfo()", () => {
       userInfoCalls: 1,
     });
   });
+
+  test.concurrent(
+    "a node test file that is gone by the time its step starts is a failed step, not the end of the run",
+    async () => {
+      // The runner lists the node test at startup. The bun test runs first (node
+      // tests run in a later phase) and removes it before the runner reads it.
+      const nodeTest = "test/js/node/test/parallel/test-gone.js";
+      const { steps, exitCode } = await runRunner(false, {
+        "test/first.test.ts": ({ root }) => `
+        import { test } from "bun:test";
+        import { unlinkSync } from "node:fs";
+        test("removes the node test file", () => unlinkSync(${JSON.stringify(join(root, nodeTest))}));
+      `,
+        [nodeTest]: `console.log("never runs");`,
+      });
+
+      expect({ steps, exitCode }).toEqual({
+        steps: ["test/first.test.ts", nodeTest, `${nodeTest} - read error: ENOENT`],
+        exitCode: 1,
+      });
+    },
+  );
 });

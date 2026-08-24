@@ -55,6 +55,7 @@ pub enum Ja3Error {
     Cipher(u16),
     Tls13Ciphers,
     Extension(u16),
+    MissingExtension(u16),
     Group(u16),
     PointFormats,
 }
@@ -82,6 +83,12 @@ impl fmt::Display for Ja3Error {
             ),
             Self::Extension(id) => {
                 write!(f, "extension {id} cannot be sent by BoringSSL")
+            }
+            Self::MissingExtension(id) => {
+                write!(
+                    f,
+                    "extension {id} is always sent by BoringSSL and must be listed"
+                )
             }
             Self::Group(id) => write!(f, "supported group {id} is not supported by BoringSSL"),
             Self::PointFormats => f.write_str("only point format 0 (uncompressed) is supported"),
@@ -243,6 +250,25 @@ impl Ja3 {
                 | EXT_RENEGOTIATION_INFO => {}
                 _ => return Err(Ja3Error::Extension(id)),
             }
+        }
+        // The converse check: what BoringSSL sends unconditionally has to be in the list.
+        let mut required = vec![EXT_SUPPORTED_GROUPS, EXT_SIGNATURE_ALGORITHMS, EXT_ALPN];
+        if has_tls12 {
+            required.extend([
+                EXT_EC_POINT_FORMATS,
+                EXT_EXTENDED_MASTER_SECRET,
+                EXT_RENEGOTIATION_INFO,
+            ]);
+        }
+        if !tls13.is_empty() {
+            required.extend([
+                EXT_SUPPORTED_VERSIONS,
+                EXT_PSK_KEY_EXCHANGE_MODES,
+                EXT_KEY_SHARE,
+            ]);
+        }
+        if let Some(&missing) = required.iter().find(|ext| !ids.contains(ext)) {
+            return Err(Ja3Error::MissingExtension(missing));
         }
 
         // Supported groups.

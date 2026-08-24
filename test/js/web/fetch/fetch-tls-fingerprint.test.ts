@@ -439,7 +439,7 @@ describe("fetch TLS fingerprint options", () => {
       ["771,4865", "expected 5 comma-separated fields"],
       ["771,4865-4866-4867,0,29", "expected 5 comma-separated fields"],
       ["771,4865-x,0,29,0", "ciphers must be dash-separated decimal numbers"],
-      ["771,4865-4866-4867,0,70000,0", "groups must be dash-separated decimal numbers"],
+      ["771,4865-4866-4867,0-10-13-16-43-45-51,70000,0", "groups must be dash-separated decimal numbers"],
       ["768,4865-4866-4867,0,29,0", "unsupported TLS version 768"],
       ["772,4865-4866-4867,0,29,0", "unsupported TLS version 772"],
       ["771,,0-10,29,0", "the cipher list is empty"],
@@ -451,8 +451,11 @@ describe("fetch TLS fingerprint options", () => {
       ["771,4865-49195-4866-4867,0,29,0", "TLS 1.3 cipher suites must lead the list as"],
       ["771,4865-4866-4867,0-34,29,0", "extension 34 cannot be sent"],
       ["771,4865-4866-4867,0-28,29,0", "extension 28 cannot be sent"],
-      ["771,4865-4866-4867,0,256-29,0", "supported group 256 is not supported"],
-      ["771,4865-4866-4867,0,29,1", "only point format 0"],
+      ["771,4865-4866-4867-49195,0-5-10-11-13-18-35-43-45-51-65281,29,0", "extension 16 is always sent"],
+      ["771,4865-4866-4867-49195,0-10-11-13-16-43-45-51-65281,29,0", "extension 23 is always sent"],
+      ["771,4865-4866-4867,0-10-13-16,29,0", "extension 43 is always sent"],
+      ["771,4865-4866-4867,0-10-13-16-43-45-51,256-29,0", "supported group 256 is not supported"],
+      ["771,4865-4866-4867,0-10-13-16-43-45-51,29,1", "only point format 0"],
     ])("ja3 %s", async (ja3, message) => {
       await expect(attempt({ ja3 })).rejects.toThrow(message);
     });

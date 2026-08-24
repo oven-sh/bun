@@ -276,7 +276,7 @@ Each part of the ClientHello can also be set on its own. An explicit option take
 | `signedCertificateTimestamps` | `true`  | Request signed certificate timestamps (extension 18)                                                                              |
 | `sessionTickets`              | `true`  | Offer the `session_ticket` extension (35)                                                                                         |
 
-Bun uses BoringSSL, the same TLS library as Chrome, so a Chrome fingerprint is reproduced in full. Two things are outside of what BoringSSL lets a client configure: the order of the extensions (BoringSSL uses its own fixed order, or a random one with `permuteExtensions`) and the three TLS 1.3 cipher suites, which always come first, either as `4865-4866-4867` or as `4867-4865-4866`. A JA3 string that names a cipher suite, group or extension BoringSSL cannot send (for example Firefox's `delegated_credentials` extension 34) throws a `TypeError`.
+Bun uses BoringSSL, the same TLS library as Chrome, so a Chrome fingerprint is reproduced in full. Two things are outside of what BoringSSL lets a client configure: the order of the extensions (BoringSSL uses its own fixed order, or a random one with `permuteExtensions`) and the three TLS 1.3 cipher suites, which always come first, either as `4865-4866-4867` or as `4867-4865-4866`. A JA3 string whose cipher suites, groups or extension set BoringSSL cannot reproduce throws a `TypeError`: for example one that names Firefox's `delegated_credentials` extension (34), or one that leaves out an extension BoringSSL always sends, such as `signature_algorithms` (13).
 
 These options apply to `fetch`. The HTTP/2 part of a browser fingerprint (SETTINGS values, header order) is not covered.
 

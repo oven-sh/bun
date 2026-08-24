@@ -764,7 +764,6 @@ dependencies = [
  "bun_alloc",
  "bun_api",
  "bun_ast",
- "bun_ast_jsc",
  "bun_core",
  "bun_dotenv",
  "bun_ini",

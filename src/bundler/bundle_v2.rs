@@ -2289,7 +2289,13 @@ pub mod bv2_impl {
                 }
             }
 
-            let mut had_busted_dir_cache = false;
+            // A miss inside try/catch is expected and not worth a cache drop.
+            let handles_import_errors = self.graph.ast.items_import_records()
+                [import_record.importer_source_index as usize]
+                .as_slice()[import_record.import_record_index as usize]
+                .flags
+                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+            let mut had_busted_dir_cache = handles_import_errors;
             let resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
                 let resolver = &mut unsafe { &mut *transpiler }.resolver;
@@ -6248,7 +6254,10 @@ pub mod bv2_impl {
                     }
                 }
 
-                let mut had_busted_dir_cache = false;
+                // A miss inside try/catch is expected and not worth a cache drop.
+                let mut had_busted_dir_cache = import_record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
                 let resolve_result: _resolver::Result = 'inner: loop {
                     transpiler.resolver.start_recording_touched_dirs();
                     let resolved = transpiler.resolver.resolve_with_framework(

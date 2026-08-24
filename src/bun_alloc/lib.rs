@@ -2681,10 +2681,13 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         self.remove_hash(Self::key_hash(denormalized_key))
     }
 
-    /// `remove` for a key already hashed with `key_hash`.
+    /// `remove` for a key already hashed with `key_hash`. A key that only held
+    /// the `get_or_put` placeholder was never cached and does not count.
     pub fn remove_hash(&mut self, hash: u64) -> bool {
         let _guard = self.mutex.lock();
-        self.index.remove(&hash).is_some()
+        self.index
+            .remove(&hash)
+            .is_some_and(|v| v.index() != UNASSIGNED.index())
     }
 }
 

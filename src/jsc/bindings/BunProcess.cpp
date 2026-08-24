@@ -782,9 +782,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     return JSValue::encode(resultValue);
 }
 
+// A read is umask(0) then umask(old); a worker's read must not interleave with the main thread's set.
+static WTF::Lock umaskLock;
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
+        Locker locker { umaskLock };
         mode_t currentMask = umask(0);
         umask(currentMask);
         return JSValue::encode(jsNumber(currentMask));
@@ -810,6 +814,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
         newUmask = value.toUInt32(globalObject);
     }
 
+    Locker locker { umaskLock };
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
 }
 

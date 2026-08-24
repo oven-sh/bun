@@ -867,37 +867,43 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
-  test("require.cache first accessed near the stack limit does not crash", async () => {
+  test("require.cache first accessed near the stack limit throws, and the next access builds it", async () => {
     // Building the cache can fail for reasons that have nothing to do with user
     // code, such as a stack overflow inside the builtin. The failure must throw,
-    // and a later access at normal depth must build the cache.
+    // nothing may be cached, and a later access at normal depth must build the
+    // real cache, not a stand-in object.
     const code = `
       const Module = require("node:module");
       // The deepest frame probes require.cache, then rethrows so the next frame
       // up probes Module._cache. Every frame above that returns normally.
-      let attempts = 0;
+      const probes = [];
       function recurse() {
         try {
           recurse();
         } catch (e) {
-          if (attempts === 0) {
-            attempts++;
-            try {
-              require.cache;
-            } catch {}
-          } else if (attempts === 1) {
-            attempts++;
-            try {
-              Module._cache;
-            } catch {}
-          } else {
-            return;
+          if (probes.length === 2) return;
+          try {
+            probes.push(typeof (probes.length === 0 ? require.cache : Module._cache));
+          } catch (err) {
+            probes.push(err.constructor.name);
           }
           throw e;
         }
       }
       recurse();
-      console.log(JSON.stringify([attempts, typeof require.cache, Module._cache === require.cache]));
+      const cache = require.cache;
+      const hasEvalEntry = Object.keys(cache).some(key => key.endsWith("[eval]"));
+      const marker = {};
+      cache.fs = { exports: marker };
+      console.log(
+        JSON.stringify([
+          probes,
+          Object.getPrototypeOf(cache),
+          Module._cache === cache,
+          hasEvalEntry,
+          require("fs") === marker,
+        ]),
+      );
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
@@ -905,7 +911,7 @@ console.log("survived", require("./late.js"));`,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(JSON.stringify([2, "object", true]));
+    expect(stdout.trim()).toBe(JSON.stringify([["RangeError", "RangeError"], null, true, true, true]));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

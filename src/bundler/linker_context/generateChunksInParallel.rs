@@ -364,6 +364,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
 
         let mut chunk_visit_map = AutoBitSet::init_empty(chunks.len())?;
+        let mut compact_chunk_index: usize = 0;
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk. This can technically be done in parallel but it
@@ -383,16 +384,38 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             chunk.template.placeholder.hash = Some(hash.digest());
 
             let mut rel_path: Vec<u8> = Vec::new();
-            // Use the byte-writer (`PathTemplate::print`) directly —
-            // routing through `Display`/`write!` goes via `from_utf8_lossy`,
-            // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
-            // the output path.
-            // Disk output sanitizes leading `..`; `--compile` keeps it so
-            // runtime bunfs references to out-of-root entrypoints resolve.
-            chunk
-                .template
-                .print(&mut rel_path, !c.options.compile_mode.is_executable())
+            // Inside an executable nobody sees chunk file names, and every importer embeds them: number them instead of
+            // `chunk-<hash>` when the default naming is in effect.
+            if c.options.compile_mode.is_executable()
+                && !chunk.entry_point.is_entry_point()
+                && matches!(
+                    &*chunk.template.data,
+                    b"./chunk-[hash].[ext]"
+                        | b"./[name]-[hash].[ext]"
+                        | b"[name]-[hash].[ext]"
+                        | b"chunk-[hash].[ext]"
+                )
+            {
+                write!(
+                    &mut rel_path,
+                    "./_{}.{}",
+                    compact_chunk_index,
+                    bstr::BStr::new(&chunk.template.placeholder.ext)
+                )
                 .expect("write to Vec<u8>");
+                compact_chunk_index += 1;
+            } else {
+                // Use the byte-writer (`PathTemplate::print`) directly —
+                // routing through `Display`/`write!` goes via `from_utf8_lossy`,
+                // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
+                // the output path.
+                // Disk output sanitizes leading `..`; `--compile` keeps it so
+                // runtime bunfs references to out-of-root entrypoints resolve.
+                chunk
+                    .template
+                    .print(&mut rel_path, !c.options.compile_mode.is_executable())
+                    .expect("write to Vec<u8>");
+            }
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
             if path_names_map.get_or_put(&rel_path)?.found_existing {
@@ -596,6 +619,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let resolver = c.resolver.expect("resolver set in load()");
     let root_path: &[u8] = &resolver.opts.output_dir;
     let is_standalone = c.options.compile_mode.is_standalone_html();
+    let external_string_table = (c.options.generate_bytecode_cache
+        && c.options.compile_mode.is_executable())
+    .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
             || c.options.generate_bytecode_cache
@@ -1058,6 +1084,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             c.options.output_format,
                             &code_result.buffer,
                             &source_provider_url,
+                            external_string_table.as_ref().and_then(|table| table.get()),
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
@@ -1316,7 +1343,93 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         return Ok(result);
     }
 
-    Ok(output_files.take())
+    let mut result = output_files.take();
+    if c.options.generate_internal_module_bytecode && c.options.compile_mode.is_executable() {
+        append_internal_module_bytecode(
+            c,
+            &mut result,
+            external_string_table.as_ref().and_then(|t| t.get()),
+        );
+    }
+    if let Some(table) = external_string_table {
+        let bytes = table.take();
+        debug!("Bytecode external string table: {} bytes", bytes.len());
+        result.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: b".bytecode-strings".to_vec().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::File,
+            hash: None,
+            output_kind: options::OutputKind::BytecodeStringTable,
+            loader: Loader::File,
+            size: Some(bytes.len()),
+            display_size: bytes.len() as u32,
+            data: options::OutputFileData::Buffer { data: bytes },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
+    }
+    Ok(result)
+}
+
+/// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
+/// bundle imports, so their first `require` decodes instead of parsing. One `OutputKind::BuiltinBytecode` per module;
+/// StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry picks them up by id.
+fn append_internal_module_bytecode(
+    c: &LinkerContext,
+    output_files: &mut Vec<options::OutputFile>,
+    external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
+) {
+    let import_records = c.graph.ast.items_import_records();
+    let mut specifiers: Vec<&[u8]> = Vec::new();
+    for source_index in &c.graph.reachable_files {
+        let Some(records) = import_records.get(source_index.get() as usize) else {
+            continue;
+        };
+        for record in records.as_slice() {
+            if record.source_index.is_valid() || record.path.text.is_empty() {
+                continue;
+            }
+            let text: &[u8] = record.path.text;
+            let is_builtin = record.tag == bun_ast::ImportRecordTag::Builtin
+                || text.starts_with(b"node:")
+                || text.starts_with(b"bun:")
+                || bun_resolve_builtins::HardcodedModule::Alias::has(
+                    text,
+                    crate::options::Target::Bun,
+                    Default::default(),
+                );
+            if is_builtin && !specifiers.contains(&text) {
+                specifiers.push(text);
+            }
+        }
+    }
+    if specifiers.is_empty() {
+        return;
+    }
+    for (id, bytecode) in crate::bundle_v2::dispatch::generate_internal_module_bytecode(
+        &specifiers,
+        u32::MAX,
+        external_strings,
+    ) {
+        debug!("Internal module bytecode {}: {} bytes", id, bytecode.len());
+        output_files.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: id.to_string().into_bytes().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::Js,
+            hash: None,
+            output_kind: options::OutputKind::BuiltinBytecode,
+            loader: Loader::File,
+            size: Some(bytecode.len()),
+            display_size: bytecode.len() as u32,
+            data: options::OutputFileData::Buffer { data: bytecode },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
+    }
 }
 
 /// Position of each chunk in the order a `--compile` executable is expected to

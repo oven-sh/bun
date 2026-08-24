@@ -329,7 +329,7 @@ static EncodedJSValue tracedEnter(JSGlobalObject* lexicalGlobalObject, CallFrame
         if (!second.isCallable())
             attributes = second;
         JSValue last = callFrame->argumentCount() ? callFrame->uncheckedArgument(callFrame->argumentCount() - 1) : jsUndefined();
-        if (callFrame->argumentCount() >= 2 && !last.isUndefined() && !last.isCallable()) {
+        if (callFrame->argumentCount() >= 2 && !last.isUndefinedOrNull() && !last.isCallable()) {
             if (callFrame->argumentCount() > 2 || !last.isObject())
                 return throwVMTypeError(globalObject, scope, "Bun.otel.span: the last argument must be a function"_s);
         }

@@ -93,6 +93,9 @@ describe("Bun.otel", () => {
   });
 
   test("span(name) with no callback: end() also stops it being the active span", async () => {
+    // null attributes behave like undefined (2- and 3-argument forms)
+    Bun.otel.span("nul", null as any).end();
+    expect(Bun.otel.span("nul3", null as any, () => 3)).toBe(3);
     const s = Bun.otel.span("dangling");
     expect(Bun.otel.activeSpan()).toBe(s);
     s.end();

@@ -7,21 +7,24 @@ import { expectRssDeltaBelow } from "harness";
 test("transform() reject path does not leak the printed output", async () => {
   const code = /* js */ `
     const t = new Bun.Transpiler({ loader: "js" });
-    const payload = Buffer.alloc(256 * 1024, "a").toString();
     // "-->" at the start of a line is the legacy HTML close comment. The lexer
     // logs a warning, so parse and print succeed and transform() rejects.
-    const src = 'var big = "' + payload + '";\\n--> trailing\\nbig;\\n';
+    const source = kib => 'var big = "' + Buffer.alloc(kib * 1024, "a").toString() + '";\\n--> trailing\\nbig;\\n';
+    const warm = source(4), src = source(256);
+    const warmups = 100, iterations = 128;
     let rejected = 0;
-    async function once() { try { await t.transform(src); } catch { rejected++; } }
-    for (let i = 0; i < 20; i++) await once();
+    async function once(s) { try { await t.transform(s); } catch { rejected++; } }
+    // A small source warms the JIT and the work pool without the lexing cost.
+    for (let i = 0; i < warmups; i++) await once(warm);
     Bun.gc(true);
     const before = process.memoryUsage.rss();
-    for (let i = 0; i < 400; i++) await once();
+    for (let i = 0; i < iterations; i++) await once(src);
     Bun.gc(true);
-    if (rejected !== 420) throw new Error("expected every transform() to reject, got " + rejected);
+    if (rejected !== warmups + iterations) throw new Error("expected every transform() to reject, got " + rejected);
     console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
   `;
 
-  // Unfixed: ~100 MiB. Fixed: allocator slack only.
-  await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
+  // Unfixed: at least 32 MiB (128 resident copies of the 256 KiB output).
+  // Fixed: under 3 MiB of allocator slack.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 16, debug: 20 });
 });

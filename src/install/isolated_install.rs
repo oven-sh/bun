@@ -942,6 +942,27 @@ pub(crate) fn build_store(
                 if info.peers.eql(curr_peers, &eql_ctx) {
                     // dedupe! depend on the already created entry
 
+                    // The fallback-link claim follows the first dependency
+                    // whose name matches the package name, including one that
+                    // dedupes into an existing entry (#40355).
+                    if manager.options.hoist && curr_dep_id != invalid_dependency_id {
+                        let pkg_name = pkg_names[pkg_id as usize].slice(string_buf);
+                        let dep_name = dependencies[curr_dep_id as usize].name.slice(string_buf);
+                        if dep_name == pkg_name {
+                            if let Some(claim) = hidden_hoisted.get_mut(pkg_name) {
+                                if claim.aliased {
+                                    let entry_hoisted = store_entries.items_hoisted_mut();
+                                    entry_hoisted[claim.entry_id.get() as usize] = false;
+                                    entry_hoisted[info.entry_id.get() as usize] = true;
+                                    *claim = HiddenHoistClaim {
+                                        entry_id: info.entry_id,
+                                        aliased: false,
+                                    };
+                                }
+                            }
+                        }
+                    }
+
                     let mut entries = store_entries.slice();
                     // disjoint-column views via `split_mut`.
                     let store::entry::EntryColumnsMut {

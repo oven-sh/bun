@@ -3655,6 +3655,37 @@ describe("hoist", () => {
     }
   });
 
+  test("fallback link follows the real name when it dedupes into an alias's store entry", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-alias-dedupe",
+        dependencies: {
+          // same version as the real name, so the real name dedupes into the
+          // store entry the alias created instead of creating its own
+          "an-alias": "npm:no-deps@1.0.0",
+          "no-deps": "1.0.0",
+          // brings in transitive no-deps@2.0.0, which must not take the
+          // fallback link from the root's no-deps@1.0.0
+          "one-fixed-dep": "2.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"))).toBe(
+      join("..", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+  });
+
   test("package reachable only through an npm: alias gets a fallback link", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
@@ -3675,6 +3706,32 @@ describe("hoist", () => {
     expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"))).toBe(
       join("..", "no-deps@2.0.0", "node_modules", "no-deps"),
     );
+  });
+
+  test("hoistPattern matches the package name, not the alias name", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", hoistPattern: "no-deps" },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "hoist-pattern-alias",
+        dependencies: {
+          // the alias name does not match the pattern, the package name does
+          "an-alias": "npm:no-deps@2.0.0",
+          // the package name does not match the pattern
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"))).toBe(
+      join("..", "no-deps@2.0.0", "node_modules", "no-deps"),
+    );
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "node_modules", "a-dep"))).toBeFalse();
   });
 
   test("npmrc hoist=false", async () => {

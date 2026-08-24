@@ -789,7 +789,15 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput, globalObjectTableInput, builtinNamesInput],
+    inputs: [
+      script,
+      ...sources.js,
+      ...sources.jsCodegen,
+      extraInput,
+      errorCodeInput,
+      globalObjectTableInput,
+      builtinNamesInput,
+    ],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

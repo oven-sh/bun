@@ -1451,9 +1451,11 @@ impl BlobExt for Blob {
                     if let bun_sys::Result::Err(err) = &result {
                         if err.get_errno() == bun_sys::E::ENOENT
                             && options.mkdirp_if_not_exists.unwrap_or(true)
-                            && mkdirp_parent(path.as_bytes())
                         {
-                            result = bun_sys::open(path, flags, mode);
+                            result = match mkdirp_parent(path.as_bytes()) {
+                                Ok(()) => bun_sys::open(path, flags, mode),
+                                Err(err) => Err(err),
+                            };
                         }
                     }
                     match result {
@@ -1651,6 +1653,7 @@ impl BlobExt for Blob {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this)?;
+                        promise.set_handled(global_this.vm());
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             promise.result(global_this.vm()),
@@ -4271,13 +4274,14 @@ pub enum Retry {
     No,
 }
 
-// TODO: move this to bun_sys?
-// we choose not to inline this so that the path buffer is not on the stack unless necessary.
+/// Create the parent directories of `path`.
 #[inline(never)]
-/// Create the parent directories of `path`. Returns whether they now exist.
-pub(crate) fn mkdirp_parent(path: &[u8]) -> bool {
+pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
     let Some(dirname) = bun_core::dirname(path) else {
-        return false;
+        return Err(bun_sys::Error::from_code(
+            bun_sys::E::ENOENT,
+            bun_sys::Tag::mkdir,
+        ));
     };
     node::fs::NodeFS::default()
         .mkdir_recursive(&node::fs::args::Mkdir {
@@ -4288,9 +4292,12 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bool {
             always_return_none: true,
             ..Default::default()
         })
-        .is_ok()
+        .map(|_| ())
 }
 
+// TODO: move this to bun_sys?
+// we choose not to inline this so that the path buffer is not on the stack unless necessary.
+#[inline(never)]
 pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
     err: &bun_sys::Error,
@@ -4298,17 +4305,9 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
-        if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
-            let mut node_fs = node::fs::NodeFS::default();
-            match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                path: node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                    dirname, false,
-                )),
-                recursive: true,
-                always_return_none: true,
-                ..Default::default()
-            }) {
-                bun_sys::Result::Ok(_) => {
+        if bun_core::dirname(path_string.as_bytes()).is_some() {
+            match mkdirp_parent(path_string.as_bytes()) {
+                bun_sys::Result::Ok(()) => {
                     this.set_mkdirp_if_not_exists(false);
                     return Retry::Continue;
                 }
@@ -5040,6 +5039,9 @@ pub(crate) fn write_file_internal(
             // `body_value` is `&mut Body::Value` from a live JS heap
             // Response/Request `m_ctx`, held raw so every borrow below is
             // scoped and none spans the JS-running calls in the arms.
+            // A body that is all here (also behind an untouched `.body` stream) is written as a blob.
+            // SAFETY: scoped exclusive borrow; runs no JS.
+            unsafe { (*body_value).to_blob_if_possible() };
             // SAFETY: scoped shared read of the variant tag.
             let tag = match unsafe { &*body_value } {
                 BodyValue::Error(_) => BodyTag::Error,
@@ -5184,8 +5186,8 @@ pub(crate) fn write_file_internal(
                                 readable,
                                 &options,
                             )?;
-                            // SAFETY: exclusive borrow scoped to the call; runs no JS.
-                            let _ = unsafe { (*body_value).use_() };
+                            // SAFETY: scoped exclusive write; the stream now belongs to the sink.
+                            unsafe { *body_value = BodyValue::Used };
                             return Ok(ControlFlow::Break(promise));
                         }
                         // The producer settled the body while the stream was being made.

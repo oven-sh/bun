@@ -497,11 +497,7 @@ impl FileSink {
         // drop the last reference and free `this` before that `close()` runs.
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            if (*this).stream_error.get().is_none() {
-                (*this)
-                    .stream_error
-                    .set(Some(streams::StreamError::Error(err.clone())));
-            }
+            (*this).record_stream_error(streams::StreamError::Error(err.clone()));
             if (*this).pending.get().state == streams::PendingState::Pending {
                 (*this)
                     .pending
@@ -696,13 +692,16 @@ impl FileSink {
             if let (sys::Result::Err(err), bun_io::PathOrFileDescriptor::Path(path)) =
                 (&result, &io_path)
             {
-                if err.get_errno() == sys::E::ENOENT && webcore::blob::mkdirp_parent(path) {
-                    result = open(
-                        &mut pollable_out,
-                        &mut is_socket_out,
-                        &mut nonblocking_out,
-                        &mut force_sync_out,
-                    );
+                if err.get_errno() == sys::E::ENOENT {
+                    result = match webcore::blob::mkdirp_parent(path) {
+                        Ok(()) => open(
+                            &mut pollable_out,
+                            &mut is_socket_out,
+                            &mut nonblocking_out,
+                            &mut force_sync_out,
+                        ),
+                        Err(err) => Err(err),
+                    };
                 }
             }
         }
@@ -905,6 +904,7 @@ impl FileSink {
                     // `run_pending_later()` alone would resolve it as if every
                     // buffered byte had reached the reader. Latch the error and
                     // move the sink to its terminal state (mirrors `end_from_js`).
+                    (*this).record_stream_error(streams::StreamError::Error(err.clone()));
                     (*this).done.set(true);
                     if (*this).pending.get().state == streams::PendingState::Pending {
                         (*this)
@@ -1096,16 +1096,27 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(|w| w.write(data.slice()));
-        self.stream_bytes.set(
-            self.stream_bytes.get()
-                + match &rc {
-                    WriteResult::Err(_) => 0,
-                    WriteResult::Done(n) => *n as u64,
-                    _ => data.slice().len() as u64,
-                },
-        );
+        self.count_stream_bytes(&rc, data.slice().len());
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
+    }
+
+    fn count_stream_bytes(&self, rc: &WriteResult, encoded_len: usize) {
+        match rc {
+            WriteResult::Err(err) => {
+                self.record_stream_error(streams::StreamError::Error(err.clone()))
+            }
+            WriteResult::Done(n) => self.stream_bytes.set(self.stream_bytes.get() + *n as u64),
+            _ => self
+                .stream_bytes
+                .set(self.stream_bytes.get() + encoded_len as u64),
+        }
+    }
+
+    fn record_stream_error(&self, err: streams::StreamError) {
+        if self.stream_error.get().is_none() {
+            self.stream_error.set(Some(err));
+        }
     }
 
     pub(crate) fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
@@ -1115,6 +1126,10 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
+        self.count_stream_bytes(
+            &rc,
+            bun_core::strings::element_length_latin1_into_utf8(data.slice()),
+        );
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -1126,6 +1141,10 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
+        self.count_stream_bytes(
+            &rc,
+            bun_core::strings::element_length_utf16_into_utf8(data.slice16()),
+        );
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -1145,8 +1164,8 @@ impl FileSink {
             Some(streams::StreamError::Error(e)) => Some(e.clone()),
             _ => None,
         };
-        if self.stream_error.get().is_none() {
-            self.stream_error.set(err);
+        if let Some(err) = err {
+            self.record_stream_error(err);
         }
         if !errored || !is_byte_stream {
             let _ = self.end(sys_err);
@@ -1156,8 +1175,14 @@ impl FileSink {
             return;
         }
         self.done.set(true);
-        self.readable_stream
-            .with_mut(|rs| *rs = readable_stream::Strong::default());
+        // The source stopped because a write failed (it cleared its sink first): nothing reads
+        // the rest, so cancel it. A source that failed on its own is already done.
+        let readable_stream = self
+            .readable_stream
+            .replace(readable_stream::Strong::default());
+        if let (Some(stream), Some(global)) = (readable_stream.get(), self.js_global()) {
+            crate::dispatch::fold(stream.cancel(global));
+        }
         self.writer.with_mut(|w| w.close());
     }
 
@@ -1186,6 +1211,7 @@ impl FileSink {
                 sys::Result::Ok(())
             }
             WriteResult::Err(e) => {
+                self.record_stream_error(streams::StreamError::Error(e.clone()));
                 self.done.set(true);
                 if has_pending {
                     self.pending
@@ -1641,7 +1667,9 @@ impl FileSink {
             |src| self.source.set(src),
         ) {
             readable_stream::NativeWireResult::Wired => {
-                if !matches!(self.source.get(), streams::SourceHandle::None) {
+                // A synchronous source (FileReader over a regular file) may have run to the
+                // end inside `wire_native_sink`; the promise is settled then.
+                if self.stream_done.get().has_value() && !self.done.get() {
                     self.writer
                         .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
                     if !self.must_be_kept_alive_until_eof.get() {

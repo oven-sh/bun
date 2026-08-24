@@ -933,7 +933,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       const payload = Buffer.alloc(CHUNK, "a");
       return Bun.serve({
         port: 0,
-        fetch() {
+        fetch(req) {
+          if (req.url.endsWith("/small")) return new Response(payload.subarray(0, 1000));
           let i = 0;
           return new Response(
             new ReadableStream({
@@ -994,18 +995,41 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     });
 
     // https://github.com/oven-sh/bun/issues/13237: this never settled.
-    it("a Response around a JS ReadableStream", async () => {
+    it("a Response around a JS ReadableStream, counting string chunks by their UTF-8 length", async () => {
       using dir = tempDir("bun-write-response-js-stream", {});
       const dest = join(String(dir), "out.txt");
       const stream = new ReadableStream({
         start(ctrl) {
-          ctrl.enqueue(new TextEncoder().encode("hello "));
-          ctrl.enqueue(new TextEncoder().encode("stream"));
+          ctrl.enqueue("héllo ");
+          ctrl.enqueue(new TextEncoder().encode("stream "));
+          ctrl.enqueue("\u{1f600}");
           ctrl.close();
         },
       });
-      expect(await Bun.write(dest, new Response(stream))).toBe(12);
-      expect(await Bun.file(dest).text()).toBe("hello stream");
+      const expected = Buffer.from("héllo stream \u{1f600}");
+      expect(await Bun.write(dest, new Response(stream))).toBe(expected.length);
+      expect(Buffer.from(await Bun.file(dest).arrayBuffer())).toEqual(expected);
+    });
+
+    // /dev/full: every write fails with ENOSPC.
+    it.skipIf(process.platform !== "linux")("rejects with the write error, for each kind of body", async () => {
+      await using server = await origin();
+      const streamed = await fetch(server.url);
+      // A body that has fully arrived behind an untouched `.body` stream is written as a blob.
+      const arrived = await fetch(server.url + "small");
+      while (!Bun.inspect(arrived).includes("Blob")) await Bun.sleep(5);
+      expect(arrived.body).toBeInstanceOf(ReadableStream);
+      const js = new Response(
+        new ReadableStream({
+          start(ctrl) {
+            ctrl.enqueue(new Uint8Array(1000));
+            ctrl.close();
+          },
+        }),
+      );
+      for (const res of [streamed, arrived, js]) {
+        expect(Bun.write("/dev/full", res)).rejects.toThrow(expect.objectContaining({ code: "ENOSPC" }));
+      }
     });
 
     it("a Request body inside Bun.serve", async () => {

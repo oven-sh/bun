@@ -173,6 +173,7 @@ public:
     JSC::IsoHeapCellType m_heapCellTypeForNapiHandleScopeImpl;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNativePromiseContext;
+    JSC::IsoHeapCellType m_heapCellTypeForJSMockFunction;
     // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;
 
 private:

@@ -592,19 +592,6 @@ bool JSX509Certificate::checkIssued(JSGlobalObject* globalObject, JSX509Certific
     return view().isIssuedBy(issuer->view());
 }
 
-template<typename T>
-static T* computeOnce(JSX509Certificate* owner, JSGlobalObject* globalObject, WriteBarrier<T>& slot, T* (*compute)(ncrypto::X509View, JSGlobalObject*))
-{
-    if (auto* cached = slot.get())
-        return cached;
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    T* value = compute(owner->view(), globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    slot.set(vm, owner, value);
-    return value;
-}
-
 static JSString* computeSubjectString(ncrypto::X509View view, JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -625,39 +612,102 @@ static JSString* computeIssuerString(ncrypto::X509View view, JSGlobalObject* glo
 
 JSString* JSX509Certificate::subject(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_subject, computeSubjectString);
+    if (auto* cached = m_subject.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* value = computeSubjectString(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_subject.set(vm, this, value);
+    return value;
 }
 JSString* JSX509Certificate::issuer(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_issuer, computeIssuerString);
+    if (auto* cached = m_issuer.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* value = computeIssuerString(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_issuer.set(vm, this, value);
+    return value;
 }
 JSString* JSX509Certificate::validFrom(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_validFrom, computeValidFrom);
+    if (auto* cached = m_validFrom.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* value = computeValidFrom(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_validFrom.set(vm, this, value);
+    return value;
 }
 JSString* JSX509Certificate::validTo(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_validTo, computeValidTo);
+    if (auto* cached = m_validTo.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* value = computeValidTo(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_validTo.set(vm, this, value);
+    return value;
 }
 JSString* JSX509Certificate::serialNumber(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_serialNumber, computeSerialNumber);
+    if (auto* cached = m_serialNumber.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* value = computeSerialNumber(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_serialNumber.set(vm, this, value);
+    return value;
 }
 JSString* JSX509Certificate::fingerprint(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_fingerprint, computeFingerprint);
+    if (auto* cached = m_fingerprint.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* value = computeFingerprint(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_fingerprint.set(vm, this, value);
+    return value;
 }
 JSString* JSX509Certificate::fingerprint256(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_fingerprint256, computeFingerprint256);
+    if (auto* cached = m_fingerprint256.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* value = computeFingerprint256(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_fingerprint256.set(vm, this, value);
+    return value;
 }
 JSString* JSX509Certificate::fingerprint512(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_fingerprint512, computeFingerprint512);
+    if (auto* cached = m_fingerprint512.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* value = computeFingerprint512(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_fingerprint512.set(vm, this, value);
+    return value;
 }
 JSUint8Array* JSX509Certificate::raw(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_raw, computeRaw);
+    if (auto* cached = m_raw.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSUint8Array* value = computeRaw(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_raw.set(vm, this, value);
+    return value;
 }
 JSValue JSX509Certificate::subjectAltName(JSGlobalObject* globalObject)
 {
@@ -673,7 +723,14 @@ JSValue JSX509Certificate::subjectAltName(JSGlobalObject* globalObject)
 }
 JSObject* JSX509Certificate::publicKey(JSGlobalObject* globalObject)
 {
-    return computeOnce(this, globalObject, m_publicKey, computePublicKey);
+    if (auto* cached = m_publicKey.get())
+        return cached;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* value = computePublicKey(view(), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    m_publicKey.set(vm, this, value);
+    return value;
 }
 
 bool JSX509Certificate::checkPrivateKey(const KeyObject& keyObject)

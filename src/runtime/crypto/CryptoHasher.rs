@@ -524,19 +524,15 @@ impl CryptoHasher {
                     match HMAC::init(chosen_algorithm, key.slice()) {
                         Some(h) => h,
                         None => {
-                            if !global.has_exception() {
-                                let err = boring_ssl::ERR_get_error();
-                                if err != 0 {
-                                    let instance = create_crypto_error(global, err);
-                                    boring_ssl::ERR_clear_error();
-                                    return Err(global.throw_value(instance));
-                                } else {
-                                    return Err(global.throw_todo(
-                                        b"HMAC is not supported for this algorithm yet",
-                                    ));
-                                }
+                            let err = boring_ssl::ERR_get_error();
+                            if err != 0 {
+                                let instance = create_crypto_error(global, err);
+                                boring_ssl::ERR_clear_error();
+                                return Err(global.throw_value(instance));
+                            } else {
+                                return Err(global
+                                    .throw_todo(b"HMAC is not supported for this algorithm yet"));
                             }
-                            return Err(JsError::Thrown);
                         }
                     },
                 )));
@@ -599,15 +595,11 @@ impl CryptoHasher {
                     .throw());
             }
         }
-        let buffer = match BlobOrStringOrBuffer::from_js_with_encoding(global, input, encoding)? {
-            Some(b) => b,
-            None => {
-                if !global.has_exception() {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-                }
-                return Err(JsError::Thrown);
-            }
+        let Some(buffer) = BlobOrStringOrBuffer::from_js_with_encoding(global, input, encoding)?
+        else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+            );
         };
         // `defer buffer.deinit()` — handled by Drop.
         if is_bun_file_blob(&buffer) {
@@ -739,13 +731,7 @@ impl CryptoHasher {
             output_digest_slice = &mut output_digest_buf;
         }
 
-        let result = match self.final_(global, output_digest_slice) {
-            Ok(r) => r,
-            Err(_) => return Ok(JSValue::ZERO),
-        };
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
+        let result = self.final_(global, output_digest_slice)?;
 
         if let Some(output_buf) = output {
             Ok(output_buf.value)
@@ -758,13 +744,7 @@ impl CryptoHasher {
     fn digest_to_encoding(&self, global: &JSGlobalObject, encoding: Encoding) -> JsResult<JSValue> {
         let mut output_digest_buf: evp::Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let output_digest_slice: &mut [u8] = &mut output_digest_buf;
-        let out = match self.final_(global, output_digest_slice) {
-            Ok(r) => r,
-            Err(_) => return Ok(JSValue::ZERO),
-        };
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
+        let out = self.final_(global, output_digest_slice)?;
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, out)
     }
 

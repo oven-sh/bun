@@ -115,10 +115,10 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
             // `is_string_literal()` guarantees `as_string()` is non-null and points to a
             // live JSString cell on the JSC heap. `JSString` is an `opaque_ffi!`
             // ZST handle; `opaque_ref` is the centralised deref proof.
-            break 'blk bun_jsc::JSString::opaque_ref(data.as_string()).to_slice(global_this);
+            break 'blk bun_jsc::JSString::opaque_ref(data.as_string()).to_slice(global_this)?;
         }
         let Some(buffer) = data.as_array_buffer(global_this) else {
-            let ty_str = data.js_type_string(global_this).to_slice(global_this);
+            let ty_str = data.js_type_string(global_this).to_slice(global_this)?;
             // ty_str drops at end of scope
             return Err(global_this
                 .err(

@@ -213,7 +213,6 @@ declare function $code(): TODO;
 declare function $createFIFO(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $data(): TODO;
-declare function $dataView(): TODO;
 declare function $decode(): TODO;
 declare function $dirname(): TODO;
 declare function $encoding(): TODO;
@@ -263,6 +262,8 @@ declare function $resolveSync(
   isESM?: boolean,
   isUserRequireResolve?: boolean,
   paths?: string[],
+  parentModule?: JSCommonJSModule,
+  resolveFilenameOptions?: unknown,
 ): string;
 declare function $self(): TODO;
 declare function $size(): TODO;
@@ -539,8 +540,6 @@ declare function $ERR_HTTP2_PING_CANCEL(): Error;
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
 
 declare function $min(a: number, b: number): number;
-
-declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: number): undefined;
 
 interface Map<K, V> {
   $get: typeof Map.prototype.get;

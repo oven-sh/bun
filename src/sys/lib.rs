@@ -38,14 +38,14 @@ impl From<Error> for bun_errno::SystemErrno {
 pub struct SystemError {
     pub errno: core::ffi::c_int,
     /// label for errno
-    pub code: bun_core::OwnedString,
+    pub code: bun_core::String,
     /// it is illegal to have an empty message
-    pub message: bun_core::OwnedString,
-    pub path: bun_core::OwnedString,
-    pub syscall: bun_core::OwnedString,
-    pub hostname: bun_core::OwnedString,
+    pub message: bun_core::String,
+    pub path: bun_core::String,
+    pub syscall: bun_core::String,
+    pub hostname: bun_core::String,
     pub fd: Option<core::ffi::c_int>,
-    pub dest: bun_core::OwnedString,
+    pub dest: bun_core::String,
 }
 impl SystemError {
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
@@ -9382,7 +9382,7 @@ fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
 
 // Backs `bun_core::OutputSink[Sys]` — stderr/mkdir/open/QuietWriter.
 bun_core::link_impl_OutputSink! {
-    Sys for () => |_this| {
+    Sys for extern () => |_this| {
         stderr() => bun_core::output::File(Fd::stderr()),
         make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(|_| bun_core::Error::Unexpected),
         create_file(cwd, path) =>

@@ -74,21 +74,6 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// `bun_crash_handler::VERBOSE_ERROR_TRACE` gates extra crash diagnostics.
-// Expose the flag in crash-trace builds (debug/test/asan).
-const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
-    "--verbose-error-trace             Dump error return traces"
-)];
-macro_rules! maybe_verbose_error_trace {
-    () => {
-        if bun_core::env::SHOW_CRASH_TRACE {
-            VERBOSE_ERROR_TRACE_PARAMS
-        } else {
-            &[] as &[ParamType]
-        }
-    };
-}
-
 const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
     &[
@@ -104,7 +89,6 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
-    maybe_verbose_error_trace!(),
     &[parse_param!("<POS>...")],
 );
 
@@ -817,11 +801,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--revision") {
             cli::print_revision_and_exit();
         }
-    }
-
-    // See `maybe_verbose_error_trace!` above.
-    if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
-        bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
@@ -1880,7 +1859,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
         ctx.test_options.test_filter_pattern = Some(name_pattern.into());
         let regex = match RegularExpression::init(
-            bun_core::String::from_bytes(name_pattern),
+            &bun_core::String::from_bytes(name_pattern),
             RegexFlags::None,
         ) {
             Ok(r) => r,

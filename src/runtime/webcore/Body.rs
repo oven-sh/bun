@@ -582,15 +582,6 @@ impl ValueError {
     // Not a clean Drop — resets self to safe-empty in place. Renamed from `deinit`
     // per PORTING.md (never expose `pub fn deinit(&mut self)`).
     pub fn reset(&mut self) {
-        match self {
-            // The bun.String fields are dropped by the assignment below.
-            ValueError::SystemError(_) | ValueError::SystemTypeError(_) => {}
-            ValueError::Message(message) => message.deref(),
-            ValueError::TypeError(message) => message.deref(),
-            ValueError::JSValue(v) => v.deinit(),
-            ValueError::AbortReason(_) => {}
-        }
-        // safe empty value after deinit
         *self = ValueError::JSValue(jsc::strong::Optional::empty());
     }
 }
@@ -634,8 +625,6 @@ impl ValueError {
 
     pub(crate) fn dupe(&self, global_object: &JSGlobalObject) -> Self {
         match self {
-            // `.clone()` on BunString/SystemError already bumps the refcount (paired
-            // with their Drop deref); an extra `.ref_()` here would leak +1 per dupe.
             ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
             ValueError::SystemTypeError(e) => ValueError::SystemTypeError(e.clone()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
@@ -1026,22 +1015,7 @@ impl Value {
             ));
         }
 
-        let blob = match Blob::get::<true, false>(global_this, value) {
-            Ok(b) => b,
-            Err(_err) => {
-                if !global_this.has_exception() {
-                    // With `REQUIRE_ARRAY = false` an "Expected an Array" branch is
-                    // unreachable (the only `error.InvalidArguments` producer is gated
-                    // on `require_array`), and every other failure path throws first
-                    // (sets the exception).
-                    return Err(
-                        global_this.throw_invalid_arguments(format_args!("Invalid Body object"))
-                    );
-                }
-                return Err(bun_jsc::JsError::Thrown);
-            }
-        };
-        Ok(Value::Blob(blob))
+        Ok(Value::Blob(Blob::get::<true, false>(global_this, value)?))
     }
 
     pub(crate) fn from_readable_stream_without_lock_check(

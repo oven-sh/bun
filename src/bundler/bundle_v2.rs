@@ -1408,7 +1408,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
-                source_provider_url: &mut bun_core::String,
+                source_provider_url: &bun_core::String,
             ) -> Option<Box<[u8]>>;
         }
 
@@ -1446,7 +1446,7 @@ pub mod bv2_impl {
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_provider_url: &mut bun_core::String,
+            source_provider_url: &bun_core::String,
         ) -> Option<Box<[u8]>> {
             __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
         }
@@ -4191,28 +4191,36 @@ pub mod bv2_impl {
                     let index = reachable_source.get() as usize;
                     let key: &[u8] = &unique_key_for_additional_files[index];
                     if !key.is_empty() {
-                        let mut template: options::PathTemplate =
-                            if self.graph.html_imports.server_source_indices.len() != 0
-                                && self.transpiler.options.asset_naming.is_empty()
-                            {
-                                options::PathTemplate::ASSET_WITH_TARGET.into()
-                            } else {
-                                options::PathTemplate::ASSET.into()
-                            };
-
+                        let loader = loaders[index];
                         let target = targets[index];
-                        // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                        // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                        // never touches `graph.input_files`.
-                        let asset_naming = unsafe {
-                            &(*self_ptr)
-                                .transpiler_for_target(target)
-                                .options
-                                .asset_naming
+                        let mut template: options::PathTemplate = if loader == Loader::Text {
+                            // Text modules ignore `--asset-naming`: without `[hash]`
+                            // two same-named files would share one path.
+                            options::PathTemplate::ASSET.into()
+                        } else {
+                            let mut template: options::PathTemplate =
+                                if self.graph.html_imports.server_source_indices.len() != 0
+                                    && self.transpiler.options.asset_naming.is_empty()
+                                {
+                                    options::PathTemplate::ASSET_WITH_TARGET.into()
+                                } else {
+                                    options::PathTemplate::ASSET.into()
+                                };
+
+                            // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
+                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
+                            // never touches `graph.input_files`.
+                            let asset_naming = unsafe {
+                                &(*self_ptr)
+                                    .transpiler_for_target(target)
+                                    .options
+                                    .asset_naming
+                            };
+                            if !asset_naming.is_empty() {
+                                template.data.clone_from(asset_naming);
+                            }
+                            template
                         };
-                        if !asset_naming.is_empty() {
-                            template.data.clone_from(asset_naming);
-                        }
 
                         let source = &mut sources[index];
 
@@ -4252,8 +4260,6 @@ pub mod bv2_impl {
                                 .expect("oom");
                             v.into_boxed_slice()
                         };
-
-                        let loader = loaders[index];
 
                         // Hand the existing `source.contents` buffer to the
                         // OutputFile — no copy: move the contents
@@ -7097,6 +7103,13 @@ pub mod bv2_impl {
                         .input_files
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
+                    if !result.unique_key_for_additional_file.is_empty()
+                        && result.loader == Loader::Text
+                    {
+                        // `process_resolve_queue` only counts `should_copy_for_bundling()`
+                        // loaders, and a zero count skips `process_files_to_copy`.
+                        this.graph.estimated_file_loader_count += 1;
+                    }
                     if !result.unique_key_for_additional_file.is_empty()
                         && result.loader.should_copy_for_bundling()
                     {

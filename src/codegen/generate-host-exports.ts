@@ -121,7 +121,7 @@ interface Export {
   modPath: string; // `crate::…` (relative to bun_runtime) or `bun_jsc::…`
   params: Param[];
   ret: string;
-  shape: "host" | "lazy" | "generic" | "rust";
+  shape: "host" | "reaction" | "lazy" | "generic" | "rust";
   isUnsafe: boolean;
 }
 
@@ -279,6 +279,17 @@ for (const { dir, crate } of scanRoots) {
       let shape: Export["shape"];
       if (abi === "rust") shape = "rust";
       else if (
+        params.length === 3 &&
+        /^(?:(?:::)?bun_ptr::)?ThisPtr\s*</.test(params[0].ty) &&
+        /JSGlobalObject$/.test(params[1].ty) &&
+        /CallFrame$/.test(params[2].ty) &&
+        isJsRet
+      ) {
+        // Promise reaction: `JSValue::then(global, ctx, resolve, reject)` stashes
+        // `ctx` as the trailing argument; the thunk hands it back typed.
+        shape = "reaction";
+        abi ??= "jsc";
+      } else if (
         params.length === 2 &&
         /JSGlobalObject$/.test(params[0].ty) &&
         /CallFrame$/.test(params[1].ty) &&
@@ -424,6 +435,22 @@ function emitThunk(e: Export): string {
 // ${loc}
 ${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body, /*unsafeFn*/ true)}`;
     }
+    case "reaction": {
+      const wrap = retIsJsResult ? "host_fn::host_fn_static_raw" : "host_fn::host_fn_static_passthrough_raw";
+      const body = `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid; the
+    // trailing argument is the \`ctx\` this reaction was registered with via
+    // \`JSValue::then\`, on which the registrant holds a ref until it runs.
+    unsafe {
+        ${wrap}(g, cf, |g, cf| {
+            let args = cf.arguments();
+            let this = ::bun_ptr::ThisPtr::new(args[args.len() - 1].as_promise_ptr());
+            ${impl}(this, g, cf)
+        })
+    }`;
+      return `
+// ${loc}
+${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body, /*unsafeFn*/ true)}`;
+    }
     case "lazy": {
       // Lazy property creator: `(g) -> JSValue`. ABI is whatever the C++ decl
       // uses — `e.abi` (default `c` for direct `extern "C"` calls; `jsc` for
@@ -559,7 +586,7 @@ writeIfNotChanged(path.join(outBase, "generated_host_exports.rs"), header + impo
 
 console.log(
   `generated_host_exports.rs: ${exportsFound.length} exports ` +
-    `(host=${exportsFound.filter(e => e.shape === "host").length}, ` +
+    `(host=${exportsFound.filter(e => e.shape === "host" || e.shape === "reaction").length}, ` +
     `lazy=${exportsFound.filter(e => e.shape === "lazy").length}, ` +
     `generic=${exportsFound.filter(e => e.shape === "generic").length}, ` +
     `rust=${exportsFound.filter(e => e.shape === "rust").length}); ` +

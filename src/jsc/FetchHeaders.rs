@@ -14,7 +14,7 @@ bun_opaque::opaque_ffi! {
 // `FetchHeaders`/`JSGlobalObject`/`VM` are opaque `UnsafeCell`-backed ZST
 // handles, so `&T` is ABI-identical to a non-null `*const T` and C++ mutating
 // header storage / VM state through them is interior mutation invisible to
-// Rust. `ZigString` and `String` (`BunString`) are plain `#[repr(C)]` PODs;
+// Rust. `ZigString` and `String` (`BunString`) are plain `#[repr(C)]` structs;
 // `&`/`&mut` refs to them at the FFI boundary are sound (C++ reads/writes
 // only the named struct).
 // Shims that traffic only in such refs + scalars are declared `safe fn`; those

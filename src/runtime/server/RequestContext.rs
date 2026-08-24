@@ -164,7 +164,7 @@ pub struct RequestContext<
     pub(crate) response_body_readable_stream_ref: JsCell<readable_stream::Strong>,
 
     /// Used in errors
-    pub(crate) pathname: Cell<BunString>,
+    pub(crate) pathname: JsCell<bun_core::String>,
 
     /// Used either for temporary blob data or fallback
     /// When the response body is a temporary value
@@ -1370,7 +1370,7 @@ where
                 sink: Cell::new(None),
                 byte_stream: Cell::new(None),
                 response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
-                pathname: Cell::new(BunString::empty()),
+                pathname: JsCell::new(BunString::empty()),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
@@ -1568,11 +1568,7 @@ where
         self.response_body_readable_stream_ref
             .with_mut(|s| s.deinit());
 
-        let pathname = self.pathname.get();
-        if !pathname.is_empty() {
-            pathname.deref();
-            self.pathname.set(BunString::empty());
-        }
+        self.pathname.set(BunString::empty());
     }
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
@@ -1781,8 +1777,7 @@ where
                     }
                 };
                 let mut sys: jsc::SystemError = err.to_system_error().into();
-                sys.message =
-                    BunString::static_("Cannot stream a directory as a response body").into();
+                sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
             (bun_io::FileType::File, false)
@@ -1922,7 +1917,7 @@ where
         }
 
         let server = self.server();
-        FileResponseStream::start(&file_response_stream::StartOptions {
+        FileResponseStream::start(file_response_stream::StartOptions {
             fd,
             auto_close,
             resp,
@@ -1936,10 +1931,12 @@ where
                 None
             },
             idle_timeout: server.config().idle_timeout,
-            ctx: self.as_ctx_ptr().cast::<c_void>(),
-            on_complete: Self::on_file_stream_complete,
-            on_abort: Some(Self::on_file_stream_abort),
-            on_error: Self::on_file_stream_error,
+            owner: file_response_stream::StreamOwner::Ctx {
+                ctx: self.as_ctx_ptr().cast::<c_void>(),
+                on_complete: Self::on_file_stream_complete,
+                on_abort: Some(Self::on_file_stream_abort),
+                on_error: Self::on_file_stream_error,
+            },
         });
     }
 
@@ -3148,12 +3145,10 @@ where
                         let err = jsc::SystemError {
                             code: BunString::static_(<&'static str>::from(
                                 jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
-                            ))
-                            .into(),
+                            )),
                             message: BunString::static_(
                                 "Stream already used, please create a new one",
-                            )
-                            .into(),
+                            ),
                             ..Default::default()
                         };
                         stream.value.unprotect();

@@ -380,11 +380,9 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
     }
 
     WTF::String errorMessage = WTF::String::fromUTF8(message);
-    RETURN_IF_EXCEPTION(scope, {});
 
     // Create error object with the message
     JSC::JSObject* errorObject = createError(globalObject, errorMessage);
-    RETURN_IF_EXCEPTION(scope, {});
 
     PutPropertySlot messageSlot(errorObject, false);
     errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "message"_s), jsString(vm, errorMessage), messageSlot);
@@ -695,7 +693,6 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
 
             if (encodingView != "buffer"_s) {
                 encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
-                RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
             }
         }
 

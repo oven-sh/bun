@@ -62,11 +62,7 @@ unsafe extern "C" {
         headers: FfiSlice<'_, RawHeader<'_>>,
         body: FfiSlice<'_>,
     );
-    safe fn WebSocket__didClose(
-        websocket_context: &CppWebSocket,
-        code: u16,
-        reason: &mut BunString,
-    );
+    safe fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: BunString);
     safe fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
@@ -80,7 +76,7 @@ unsafe extern "C" {
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
-    safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: &mut BunString);
+    safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
 }
 
 // Receivers are `&self` (not `&mut self`) because `CppWebSocket` is
@@ -118,7 +114,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_close(&self, code: u16, reason: &mut BunString) {
+    pub(crate) fn did_close(&self, code: u16, reason: BunString) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         WebSocket__didClose(self, code, reason);
@@ -188,7 +184,7 @@ impl CppWebSocket {
         WebSocket__releasePendingActivityForClient(self);
     }
 
-    pub(crate) fn set_protocol(&self, protocol: &mut BunString) {
+    pub(crate) fn set_protocol(&self, protocol: BunString) {
         bun_jsc::mark_binding!();
         WebSocket__setProtocol(self, protocol);
     }

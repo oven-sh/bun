@@ -123,8 +123,7 @@ fn bun_create_object_url(
     let registry = ObjectURLRegistry::singleton();
     // SAFETY: `bun_vm_ptr()` returns the live VM pointer for `global_object`.
     let uuid = registry.register(unsafe { &mut *global_object.bun_vm_ptr() }, blob);
-    let mut str = bun_core::String::create_format(format_args!("blob:{}", uuid));
-    str.transfer_to_js(global_object)
+    bun_core::String::create_format(format_args!("blob:{}", uuid)).into_js(global_object)
 }
 
 #[bun_jsc::host_fn(export = "Bun__revokeObjectURL")]
@@ -145,11 +144,9 @@ fn bun_revoke_object_url(
             global_object.throw_invalid_arguments(format_args!("revokeObjectURL expects a string"))
         );
     }
-    // `to_bun_string` returns a +1 ref; `bun_core::String` is `Copy` (no Drop),
-    // so wrap in `OwnedString` for scope-exit `deref()`.
     // `is_string()` is `is_string_like()` and admits `StringObject`, so
     // `to_bun_string` can still observe a user `toString` that throws.
-    let str = bun_core::OwnedString::new(url_arg.to_bun_string(global_object)?);
+    let str = url_arg.to_bun_string(global_object)?;
     if !str.has_prefix_comptime(b"blob:") {
         return Ok(JSValue::UNDEFINED);
     }
@@ -178,13 +175,7 @@ fn js_function_resolve_object_url(
     if callframe.arguments_count() < 1 {
         return Ok(JSValue::UNDEFINED);
     }
-    // `to_bun_string` returns a +1 ref; wrap in `OwnedString` so every exit
-    // path (exception, non-blob prefix, success) releases it.
-    let str = bun_core::OwnedString::new(url_arg.to_bun_string(global_object)?);
-
-    if global_object.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
+    let str = url_arg.to_bun_string(global_object)?;
 
     if !str.has_prefix_comptime(b"blob:") || str.length() < SPECIFIER_LEN {
         return Ok(JSValue::UNDEFINED);

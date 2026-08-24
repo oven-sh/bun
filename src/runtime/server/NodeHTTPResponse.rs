@@ -954,25 +954,15 @@ impl NodeHTTPResponse {
             200
         };
 
-        // Hot path: src/js/node/_http_server.ts always sets `response.statusMessage`,
-        // so we always land here with a short JS string. `to_slice()` would do
-        // 2×ref + 2×deref FFI (OwnedString + ZigStringSlice::WTF); instead hold
-        // the +1 from `to_bun_string` in an `OwnedString` and borrow the bytes
-        // without the inner ref bump.
-        let status_message_str;
+        let status_message_view;
         let status_message_slice;
         let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
-            status_message_str =
-                bun_core::OwnedString::new(status_message_value.to_bun_string(global_object)?);
-            status_message_slice = status_message_str.to_utf8_without_ref();
+            status_message_view = status_message_value.to_js_string_view(global_object)?;
+            status_message_slice = status_message_view.to_utf8();
             status_message_slice.slice()
         } else {
             &[]
         };
-
-        if global_object.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
 
         if state.is_http_status_called() {
             return err_throw(
@@ -1996,10 +1986,6 @@ impl NodeHTTPResponse {
             }
         }
         // string_or_buffer drops at scope exit.
-
-        if global_object.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
 
         let bytes = string_or_buffer.slice();
 

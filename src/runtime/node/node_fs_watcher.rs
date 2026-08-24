@@ -410,19 +410,6 @@ pub enum StringOrBytesToDecode {
     BytesToFree(Box<[u8]>),
 }
 
-// The `String` arm wraps `bun_core::String`, which is `#[derive(Copy)]` and
-// has NO `Drop` of its own (src/string/lib.rs), so without this impl dropping
-// the enum would silently leak the WTF::StringImpl ref taken by
-// `BunString::clone_utf8` in `win_watcher.rs::emit()`. The `BytesToFree` arm's
-// `Box<[u8]>` already frees via its own `Drop`.
-impl Drop for StringOrBytesToDecode {
-    fn drop(&mut self) {
-        if let Self::String(s) = self {
-            s.deref();
-        }
-    }
-}
-
 // `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
 // it into the owned `bytes_to_free` arm so the Windows task can carry it across
 // the thread hop.
@@ -509,7 +496,7 @@ impl FSWatchTaskWindows {
                 // variant, and `encoding` is immutable after init.
                 unreachable!()
             };
-            let js = s.transfer_to_js(&ctx.global_this)?;
+            let js = core::mem::take(s).into_js(&ctx.global_this)?;
             ctx.emit_with_filename::<EVENT_TYPE>(js);
             Ok(())
         } else {
@@ -529,9 +516,6 @@ impl FSWatchTaskWindows {
     /// `this` must be the unique `heap::alloc` pointer produced by
     /// `append_abort()` / `on_path_update_windows()`.
     pub(crate) unsafe fn deinit(this: *mut Self) {
-        // `Event` (and `StringOrBytesToDecode`, via its explicit `Drop` impl
-        // above which `deref()`s the WTF string) free their payloads via Drop,
-        // so dropping the Box releases everything.
         // SAFETY: paired with `heap::alloc` at the enqueue site.
         drop(unsafe { bun_core::heap::take(this) });
     }

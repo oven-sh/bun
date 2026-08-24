@@ -251,6 +251,16 @@ describe("NODE_OPTIONS environment variable", () => {
     expect(requested[0]).toBe("/react");
   });
 
+  test.concurrent("bun upgrade does not read its own keyword as a package name", async () => {
+    using dir = tempDir("node-options-upgrade", {});
+    // Exits before any network access. Without the offset fix the message
+    // lists the shifted window: "bun update upgrade somepkg".
+    const { stderr, exitCode } = await run(String(dir), ["upgrade", "somepkg"], "--title=from-env");
+    expect(stderr).toContain("does not take package names");
+    expect(stderr).toContain("`bun update somepkg`");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("bun whoami still resolves to whoami", async () => {
     await using server = Bun.serve({
       port: 0,

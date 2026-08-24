@@ -466,7 +466,9 @@ pub fn spliced_long_flags() -> impl Iterator<Item = &'static [u8]> {
 }
 
 fn supported(flag: &[u8]) -> Option<(&'static [u8], &'static Supported)> {
-    let entry = SPLICED.iter().find(|f| f.names.iter().any(|n| *n == flag))?;
+    let entry = SPLICED
+        .iter()
+        .find(|f| f.names.iter().any(|n| *n == flag))?;
     Some((entry.canonical, &entry.kind))
 }
 

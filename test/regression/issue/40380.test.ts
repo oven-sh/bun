@@ -15,16 +15,18 @@ test("clean peer FIN does not fail a pending backpressured TLS write", async () 
     sock.pause(); // never read, so the client's write stays backpressured
     backpressured.promise.then(() => sock.end()); // then half-close cleanly
   });
-  server.listen(0);
-  await once(server, "listening");
-  const { port } = server.address() as { port: number };
-
-  const sock = tls.connect({ port, rejectUnauthorized: false });
-  const clientErrors: Error[] = [];
-  sock.on("error", err => clientErrors.push(err));
-  await once(sock, "secureConnect");
+  let sock: ReturnType<typeof tls.connect> | undefined;
 
   try {
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as { port: number };
+
+    sock = tls.connect({ port, rejectUnauthorized: false });
+    const clientErrors: Error[] = [];
+    sock.on("error", err => clientErrors.push(err));
+    await once(sock, "secureConnect");
+
     let writeErr: Error | null | undefined;
     let writeCbCalled = false;
     const flushed = sock.write(Buffer.alloc(64 << 20), err => {
@@ -49,7 +51,7 @@ test("clean peer FIN does not fail a pending backpressured TLS write", async () 
     expect(writeErr ?? null).toBe(null);
     if (writeCbCalled) expect(writeErr).toBe(null);
   } finally {
-    sock.destroy();
+    sock?.destroy();
     server.close();
   }
 });

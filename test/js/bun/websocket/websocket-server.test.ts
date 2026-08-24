@@ -2219,6 +2219,38 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect(v8.headers.toLowerCase()).toContain("sec-websocket-version: 13");
     expect(upgradeResult).toBe(false);
   });
+
+  it("survives an async upgrade of a connection marked Connection: close", async () => {
+    // Uncorked, the 101's internalEnd() runs the close gate and closes a
+    // connection marked to close on the spot. upgrade() must then stop rather
+    // than adopt a socket us_socket_adopt refuses.
+    let upgradeResult: boolean | undefined;
+    server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req, srv) {
+        // Leave the parse-time cork: the close gate only runs uncorked.
+        await new Promise(resolve => setImmediate(resolve));
+        upgradeResult = srv.upgrade(req);
+        if (upgradeResult) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open() {
+          opened++;
+        },
+        message() {},
+      },
+    });
+
+    expect((await rawHandshake([U, "Connection: close", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+    expect(upgradeResult).toBe(true);
+
+    // The server is intact: a regular handshake on a new connection upgrades.
+    opened = 0;
+    expect((await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+    expect(opened).toBe(1);
+  });
 });
 
 // The 101 switches protocols: the connection stops being HTTP, so the HTTP

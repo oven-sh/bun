@@ -903,17 +903,16 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(scope, false);
                 JSValue constructor1 = hasConstructor1 ? slot1.getValue(globalObject, constructorName) : jsUndefined();
                 RETURN_IF_EXCEPTION(scope, false);
-                bool compareConstructors = false;
-                if (!constructor1.isUndefined()) {
-                    bool hasOwnConstructor;
+                bool compareConstructors = isWellKnownConstructor(constructor1);
+                if (!compareConstructors && !constructor1.isUndefined()) {
                     if (slot1.isTaintedByOpaqueObject()) {
                         PropertySlot ownSlot(protoCheck1, PropertySlot::InternalMethodType::GetOwnProperty);
-                        hasOwnConstructor = protoCheck1->methodTable()->getOwnPropertySlot(protoCheck1, globalObject, constructorName, ownSlot);
+                        bool hasOwnConstructor = protoCheck1->methodTable()->getOwnPropertySlot(protoCheck1, globalObject, constructorName, ownSlot);
                         RETURN_IF_EXCEPTION(scope, false);
+                        compareConstructors = !hasOwnConstructor;
                     } else {
-                        hasOwnConstructor = slot1.slotBase() == protoCheck1;
+                        compareConstructors = slot1.slotBase() != protoCheck1;
                     }
-                    compareConstructors = !hasOwnConstructor || isWellKnownConstructor(constructor1);
                 }
                 if (compareConstructors) {
                     bool inheritedFromSharedChain = slot1.isCacheableValue() && slot1.slotBase() != protoCheck1

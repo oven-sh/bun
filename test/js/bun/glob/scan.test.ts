@@ -940,13 +940,16 @@ test("scan handles a cwd with redundant trailing separators when following symli
 
 // With `this === globalThis`, the private `@resolveSync` that scanSync calls is
 // the module resolver's internal entry point, called with a single argument.
-test("scanSync called with globalThis as this throws instead of crashing", async () => {
+// The private `@pull` that scan calls does not exist on globalThis at all.
+test("scanSync and scan called with globalThis as this throw instead of crashing", async () => {
   const script = `
-    try {
-      Bun.Glob.prototype.scanSync.call(globalThis, 4096);
-      console.log("no error");
-    } catch (e) {
-      console.log(e.code);
+    for (const fn of ["scanSync", "scan"]) {
+      try {
+        Bun.Glob.prototype[fn].call(globalThis, 4096);
+        console.log(fn + ": no error");
+      } catch (e) {
+        console.log(fn + ": " + (e.code ?? e.name));
+      }
     }
   `;
 
@@ -958,7 +961,7 @@ test("scanSync called with globalThis as this throws instead of crashing", async
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("ERR_INVALID_ARG_TYPE");
+  expect(stdout.trim()).toBe("scanSync: ERR_INVALID_ARG_TYPE\nscan: TypeError");
   expect(exitCode).toBe(0);
 });
 

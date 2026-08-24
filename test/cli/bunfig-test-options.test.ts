@@ -392,6 +392,19 @@ describe("bunfig.toml test options", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("--seed wins over [test] seed", async () => {
+      using dir = tempDir("bunfig-seed-cli", {
+        ...files,
+        "bunfig.toml": `[test]\nrandomize = true\nseed = 2`,
+      });
+
+      const { stderr, exitCode } = await runTest(String(dir), "--seed", "1");
+      expect(stderr).toContain("2 pass");
+      expect(stderr).toContain("--seed=1");
+      expect(stderr).not.toContain("--seed=2");
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("--rerun-each wins over [test] rerunEach", async () => {
       using dir = tempDir("bunfig-rerun-each-cli", {
         ...files,

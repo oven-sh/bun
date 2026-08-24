@@ -1699,6 +1699,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 /// shard / parallel / seed / etc. Split out of [`parse`] so the `bun run <script>`
 /// and bare-`bun <file>` hot path (`USES_GLOBAL_OPTIONS` ⇒ `parse` runs on every
 /// invocation) doesn't carry the test-runner flag handling in its instruction pages.
+///
+/// Runs after bunfig.toml is loaded, so every write here overrides a `[test]` key.
+/// Write a field only when its flag is present (`|=`, or gate on `args.flag`): a
+/// plain `= args.flag(..)` resets the bunfig value whenever the flag is absent.
 #[cold]
 #[inline(never)]
 fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
@@ -1932,7 +1936,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             ctx.test_options.timings_files.push((*path).into());
         }
     }
-    ctx.test_options.update_timings = args.flag(b"--update-timings");
+    ctx.test_options.update_timings |= args.flag(b"--update-timings");
     if ctx.test_options.update_timings && ctx.test_options.timings_files.is_empty() {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"
@@ -1946,9 +1950,13 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.pass_with_no_tests |= args.flag(b"--pass-with-no-tests");
     ctx.test_options.concurrent |= args.flag(b"--concurrent");
     ctx.test_options.randomize |= args.flag(b"--randomize");
+    ctx.test_options.test_worker |= args.flag(b"--test-worker");
     let no_isolate = args.flag(b"--no-isolate");
-    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
-    ctx.test_options.test_worker = args.flag(b"--test-worker");
+    if no_isolate {
+        ctx.test_options.isolate = false;
+    } else if args.flag(b"--isolate") {
+        ctx.test_options.isolate = true;
+    }
 
     if let Some(parallel_str) = args.option(b"--parallel") {
         let parsed: u32 = if !parallel_str.is_empty() {

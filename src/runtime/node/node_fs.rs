@@ -4255,11 +4255,6 @@ pub mod args {
     }
     fs_args_path_forwarders!(Cp; src, dest);
     impl Cp {
-        #[inline]
-        pub(crate) fn into_thread_safe(mut self) -> ThreadSafe<Self> {
-            self.to_thread_safe();
-            ThreadSafe::adopt(self)
-        }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Cp> {
             let src = PathLike::from_js_required(ctx, arguments, "src")?;
             // `Drop for PathLike` runs on early return.

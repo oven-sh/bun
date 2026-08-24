@@ -87,9 +87,6 @@ mod bun_paths {
             }
         }};
     }
-    pub(super) fn dirname_platform(p: &[u8], platform: Platform) -> &[u8] {
-        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::dirname::<P>(p))
-    }
     /// Port of `bun.path.joinAbsStringBuf` (value-dispatched).
     pub(super) fn join_abs_string_buf<'b>(
         cwd: &'b [u8],
@@ -101,18 +98,6 @@ mod bun_paths {
             platform,
             |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
         )
-    }
-    pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
-        // NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
-        // returned slice always points into the threadlocal `PARSER_JOIN_INPUT_BUFFER`
-        // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
-        // pass exactly one part). Re-erase to `'static` so the resolver can hold it
-        // across `&mut self` calls.
-        let s = dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs::<P>(
-            cwd, part
-        ));
-        // SAFETY: see NOTE — slice borrows threadlocal storage, valid 'static per-thread.
-        unsafe { bun_ptr::detach_lifetime(s) }
     }
     pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
@@ -595,9 +580,9 @@ impl Drop for TouchedDirsSlot {
     fn drop(&mut self) {
         let p = self.0.get();
         if !p.is_null() {
-            // SAFETY: produced by `Box::leak` in `touched_dirs_init`; the thread
-            // is exiting, so no resolver call frame uses it.
-            drop(unsafe { Box::from_raw(p) });
+            // SAFETY: produced by `heap::into_raw` in `touched_dirs_init`; the
+            // thread is exiting, so no resolver call frame uses it.
+            unsafe { bun_core::heap::destroy(p) };
         }
     }
 }
@@ -614,7 +599,7 @@ fn touched_dirs_get() -> *mut TouchedDirs {
 
 #[cold]
 fn touched_dirs_init() -> *mut TouchedDirs {
-    let p: *mut TouchedDirs = Box::leak(Box::new(TouchedDirs {
+    let p: *mut TouchedDirs = bun_core::heap::into_raw(Box::new(TouchedDirs {
         recording: false,
         hashes: Vec::new(),
     }));
@@ -2592,39 +2577,6 @@ impl<'a> Resolver<'a> {
         // SAFETY: see above; keep the allocation for the next recording.
         unsafe { (*p).hashes = hashes };
         busted
-    }
-
-    /// bust both the named file and a parent directory, because `./hello` can resolve
-    /// to `./hello.js` or `./hello/index.js`
-    pub fn bust_dir_cache_from_specifier(
-        &mut self,
-        import_source_file: &[u8],
-        specifier: &[u8],
-    ) -> bool {
-        if bun_paths::is_absolute(specifier) {
-            let dir = bun_paths::dirname_platform(specifier, bun_paths::Platform::AUTO);
-            let a = self.bust_dir_cache(dir);
-            let b = self.bust_dir_cache(specifier);
-            return a || b;
-        }
-
-        if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
-            return false;
-        }
-        if !bun_paths::is_absolute(import_source_file) {
-            return false;
-        }
-
-        let joined = bun_paths::join_abs(
-            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
-            bun_paths::Platform::AUTO,
-            specifier,
-        );
-        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
-
-        let a = self.bust_dir_cache(dir);
-        let b = self.bust_dir_cache(joined);
-        a || b
     }
 
     pub(crate) fn load_node_modules(

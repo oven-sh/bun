@@ -2292,31 +2292,25 @@ pub mod bv2_impl {
             let mut had_busted_dir_cache = false;
             let resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
-                match unsafe { &mut *transpiler }.resolver.resolve(
-                    source_dir,
-                    &import_record.specifier,
-                    import_record.kind,
-                ) {
+                let resolver = &mut unsafe { &mut *transpiler }.resolver;
+                resolver.start_recording_touched_dirs();
+                let resolved =
+                    resolver.resolve(source_dir, &import_record.specifier, import_record.kind);
+                resolver.stop_recording_touched_dirs();
+                match resolved {
                     Ok(r) => break r,
                     Err(err) => {
-                        // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
-                            if let Some(dev) = &self.dev_server {
-                                if !had_busted_dir_cache {
-                                    // Only re-query if we previously had something cached.
-                                    // SAFETY: see `transpiler` note above.
-                                    if unsafe { &mut *transpiler }
-                                        .resolver
-                                        .bust_dir_cache_from_specifier(
-                                            &import_record.source_file,
-                                            &import_record.specifier,
-                                        )
-                                    {
-                                        had_busted_dir_cache = true;
-                                        continue;
-                                    }
+                            // The miss may have come from the directory cache;
+                            // drop what this lookup read and try once more.
+                            if !had_busted_dir_cache {
+                                had_busted_dir_cache = true;
+                                // Only re-query if we previously had something cached.
+                                if resolver.bust_touched_dirs() {
+                                    continue;
                                 }
-
+                            }
+                            if let Some(dev) = &self.dev_server {
                                 // Tell Bake's Dev Server to wait for the file to be imported.
                                 dev.track_resolution_failure(
                                     &import_record.source_file,

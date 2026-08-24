@@ -134,6 +134,24 @@ test("a failed resolution sees files and packages created after the miss", async
       await build("G3a", path.join("g3", "ent.ts"));
       write(path.join("g3", "node_modules", "dpk3", "i.js"), "export const v = 42;");
       await build("G3b", path.join("g3", "ent.ts"));
+      // An onResolve plugin that matches but declines routes the lookup through
+      // the bundler's other resolver call.
+      const declining = { name: "declining", setup: b => b.onResolve({ filter: /^dpk4$/ }, () => undefined) };
+      const buildWithPlugin = async (label, entry) => {
+        try {
+          console.log(label, "OK", (await Bun.build({ entrypoints: [entry], plugins: [declining] })).outputs.length);
+        } catch (e) {
+          console.log(label, "ERR", (e.errors || []).map(x => x.message).join("|"));
+        }
+      };
+      write(path.join("g4", "ent.ts"), 'import { v } from "dpk4"; console.log(v);');
+      await buildWithPlugin("G4a", path.join("g4", "ent.ts"));
+      installInto("g4", "dpk4");
+      await buildWithPlugin("G4b", path.join("g4", "ent.ts"));
+      // A bare specifier as the entry point, installed after the first build.
+      await build("G5a", "dpk5");
+      installInto(".", "dpk5");
+      await build("G5b", "dpk5");
     `,
   });
 
@@ -167,7 +185,11 @@ test("a failed resolution sees files and packages created after the miss", async
     G2a ERR Could not resolve: "dpk2". Maybe you need to "bun install"?
     G2b OK 1
     G3a ERR Could not resolve: "dpk3". Maybe you need to "bun install"?
-    G3b OK 1"
+    G3b OK 1
+    G4a ERR Could not resolve: "dpk4". Maybe you need to "bun install"?
+    G4b OK 1
+    G5a ERR ModuleNotFound resolving "dpk5" (entry point)
+    G5b OK 1"
   `);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);

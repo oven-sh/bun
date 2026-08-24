@@ -190,19 +190,32 @@ impl Default for Resize {
     }
 }
 
+/// `.extract()` region, in upright (post-rotate/flip) source space. Bounds
+/// are validated against the decoded dimensions at execute time.
+#[derive(Clone, Copy)]
+pub struct Extract {
+    pub(crate) left: u32,
+    pub(crate) top: u32,
+    pub(crate) w: u32,
+    pub(crate) h: u32,
+}
+
 /// One slot per operation, not an op list — calling `.resize()` twice
 /// overwrites, it doesn't resize twice. This is Sharp's semantics and means
 /// the worker snapshot is a plain struct copy with a fixed execution order
 /// (`run()` below), no allocation, no "too many ops" edge.
 ///
-/// Execution order matches Sharp: (autoOrient) → rotate → flip/flop → resize
-/// → modulate. Rotate precedes resize so the target box is interpreted in
-/// upright space; modulate runs last so it operates on the fewest pixels.
+/// Execution order matches Sharp: (autoOrient) → rotate → flip/flop →
+/// extract → resize → modulate. Rotate precedes resize so the target box is
+/// interpreted in upright space; extract precedes resize (Sharp's
+/// pre-resize `extract`) so the region is addressed in source pixels;
+/// modulate runs last so it operates on the fewest pixels.
 #[derive(Clone, Copy, Default)]
 pub struct Pipeline {
     pub(crate) rotate: u16, // 0/90/180/270
     pub(crate) flip: bool,  // vertical
     pub(crate) flop: bool,  // horizontal
+    pub(crate) extract: Option<Extract>,
     pub(crate) resize: Option<Resize>,
     pub(crate) modulate: Option<Modulate>,
     /// Output settings from `.jpeg()/.png()/.webp()`. `None` ⇒ re-encode in
@@ -480,6 +493,56 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
+    pub(crate) fn do_extract(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments();
+        if args.len() < 1 || !args[0].is_object() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "extract({{ left, top, width, height }})"
+            )));
+        }
+        let opt = args[0];
+        // Every present field must be an in-range integer — a clamped or
+        // truncated origin is a different crop than the one the caller asked
+        // for, and Sharp throws for the same inputs. (u32::MAX bound, not
+        // 0x3FFFF like resize: the output can never exceed the decoded
+        // source, and `crop` bounds-checks in u64.)
+        fn field(global: &JSGlobalObject, v: JSValue, name: &str, min: f64) -> JsResult<u32> {
+            let x = if v.is_number() { v.as_number() } else { f64::NAN };
+            if !(x >= min) || x > u32::MAX as f64 || x.fract() != 0.0 {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "extract: {name} must be an integer >= {min}"
+                )));
+            }
+            Ok(x as u32)
+        }
+        let mut e = Extract {
+            left: 0,
+            top: 0,
+            w: 0,
+            h: 0,
+        };
+        if let Some(v) = opt.get(global, "left")? {
+            e.left = field(global, v, "left", 0.0)?;
+        }
+        if let Some(v) = opt.get(global, "top")? {
+            e.top = field(global, v, "top", 0.0)?;
+        }
+        let (Some(w), Some(h)) = (opt.get(global, "width")?, opt.get(global, "height")?) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "extract: width and height are required"
+            )));
+        };
+        e.w = field(global, w, "width", 1.0)?;
+        e.h = field(global, h, "height", 1.0)?;
+        self.update_pipeline(|p| p.extract = Some(e));
+        Ok(callframe.this())
+    }
+
+    #[bun_jsc::host_fn(method)]
     pub(crate) fn do_rotate(
         &self,
         global: &JSGlobalObject,
@@ -635,6 +698,7 @@ fn error_code(e: codecs::Error) -> &'static ZStr {
         E::DecodeFailed => zstr!("ERR_IMAGE_DECODE_FAILED"),
         E::EncodeFailed => zstr!("ERR_IMAGE_ENCODE_FAILED"),
         E::TooManyPixels => zstr!("ERR_IMAGE_TOO_MANY_PIXELS"),
+        E::BadExtractArea => zstr!("ERR_IMAGE_BAD_EXTRACT_AREA"),
         E::UnsupportedOnPlatform => zstr!("ERR_IMAGE_FORMAT_UNSUPPORTED"),
         E::OutOfMemory => zstr!("ERR_OUT_OF_MEMORY"),
     }
@@ -649,6 +713,7 @@ fn error_message(e: codecs::Error) -> &'static ZStr {
         E::DecodeFailed => zstr!("Image: decode failed"),
         E::EncodeFailed => zstr!("Image: encode failed"),
         E::TooManyPixels => zstr!("Image: input exceeds maxPixels limit"),
+        E::BadExtractArea => zstr!("Image: extract area exceeds image bounds"),
         E::UnsupportedOnPlatform => zstr!(
             "Image: format not supported on this machine (HEIC/AVIF/TIFF require the OS codec; AVIF encode needs an AV1 encoder)"
         ),
@@ -1632,7 +1697,12 @@ impl PipelineTask {
         // can be over-shrunk and then upscaled, throwing away detail.
         // (flip/flop are pure mirrors that never change w/h, so the hint
         //  stays valid through them.)
-        let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
+        // An extract disables the hint entirely: its coordinates address
+        // full-resolution source pixels, and the resize target applies to the
+        // extracted region — a reduced-scale decode would shift both.
+        let hint: codecs::DecodeHint = if self.pipeline.extract.is_some() {
+            codecs::DecodeHint::default()
+        } else if let Some(r) = self.pipeline.resize {
             let mut tw = r.w;
             // r.h==0 means "preserve aspect" — constrain on width only.
             let mut th = if r.h != 0 { r.h } else { r.w };
@@ -1923,7 +1993,7 @@ impl PipelineTask {
         Ok(())
     }
 
-    /// Fixed Sharp order: rotate → flip/flop → resize. Each stage replaces
+    /// Fixed Sharp order: rotate → flip/flop → extract → resize. Each stage replaces
     /// `d` in place; the old buffer is freed before assigning the new one so
     /// peak memory is at most 2× one frame. Every stage hand-swaps only the
     /// pixel slots — rotate/resize return a fresh `Decoded` with
@@ -1947,6 +2017,16 @@ impl PipelineTask {
         if p.flop {
             let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
             d.rgba = next;
+        }
+        if let Some(e) = p.extract {
+            // Skip the whole-image identity region; `crop` bounds-checks and
+            // rejects everything else that doesn't fit.
+            if e.left != 0 || e.top != 0 || e.w != d.width || e.h != d.height {
+                let next = codecs::crop(&d.rgba, d.width, d.height, e.left, e.top, e.w, e.h)?;
+                d.rgba = next;
+                d.width = e.w;
+                d.height = e.h;
+            }
         }
         if let Some(r) = p.resize {
             let t = resolve_resize(r, d.width, d.height);

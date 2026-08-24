@@ -31,15 +31,10 @@ extern "C" SYSV_ABI EncodedJSValue Bake__createDevServerFrameworkRequestArgsObje
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
     object->putDirectOffset(vm, 0, JSValue::decode(routerTypeMain));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
     object->putDirectOffset(vm, 1, JSValue::decode(routeModules));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
     object->putDirectOffset(vm, 2, JSValue::decode(clientEntryUrl));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
     object->putDirectOffset(vm, 3, JSValue::decode(styles));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
     object->putDirectOffset(vm, 4, JSValue::decode(params));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
     return JSValue::encode(object);
 }

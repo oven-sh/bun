@@ -975,10 +975,6 @@ impl NodeHTTPResponse {
             &[]
         };
 
-        if global_object.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
-
         if state.is_http_status_called() {
             return err_throw(
                 global_object,
@@ -2014,10 +2010,6 @@ impl NodeHTTPResponse {
             }
         }
         // string_or_buffer drops at scope exit.
-
-        if global_object.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
 
         let bytes = string_or_buffer.slice();
 

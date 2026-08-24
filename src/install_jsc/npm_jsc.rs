@@ -11,12 +11,6 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
         operating_system.apply(slice.slice());
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-    }
-    if global.has_exception() {
-        return Ok(JSValue::ZERO);
     }
     Ok(JSValue::js_boolean(
         operating_system
@@ -33,12 +27,6 @@ pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
         architecture.apply(slice.slice());
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-    }
-    if global.has_exception() {
-        return Ok(JSValue::ZERO);
     }
     Ok(JSValue::js_boolean(
         architecture.combine().is_match(npm::Architecture::CURRENT),

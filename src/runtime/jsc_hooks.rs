@@ -1421,26 +1421,6 @@ fn load_standalone_sourcemap(
     unsafe { (*graph).find(path)?.sourcemap.load() }
 }
 
-/// `node_cluster_binding.handleInternalMessageChild(global, data)` — the
-/// `IPCInstance.handleIPCMessage` `.internal` arm.
-///
-/// # Safety
-/// `global` is the live VM global; called on the JS thread inside an
-/// `event_loop.enter()` scope.
-pub(crate) unsafe fn handle_ipc_internal_child(
-    global: *mut JSGlobalObject,
-    data: JSValue,
-    handle: JSValue,
-) {
-    // SAFETY: per fn contract.
-    let global = unsafe { &*global };
-    // Spec discards a JS exception here (`catch |err| switch (err) {
-    // error.JSError => {} }`); the low tier already wrapped this call in
-    // `event_loop.enter()/exit()` which clears any pending exception, so
-    // dropping the `Err` is correct.
-    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data, handle);
-}
-
 /// `node_cluster_binding.child_singleton.deinit()` —
 /// `IPCInstance.handleIPCClose`.
 ///

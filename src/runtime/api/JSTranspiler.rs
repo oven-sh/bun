@@ -980,10 +980,6 @@ impl JSTranspiler {
 
         config.from_js(global, config_arg, arena_ref)?;
 
-        if global.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
-        }
-
         if (config.log.warnings + config.log.errors) > 0 {
             return Err(
                 global.throw_value(config.log.to_js(global, "Failed to create transpiler")?)
@@ -1306,10 +1302,6 @@ impl JSTranspiler {
             }
             break 'brk None;
         };
-
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1656,18 +1648,12 @@ impl JSTranspiler {
             ));
         };
 
-        let code_holder = match StringOrBuffer::from_js(global, code_arg)? {
-            Some(h) => h,
-            None => {
-                if !global.has_exception() {
-                    return Err(global.throw_invalid_argument_type(
-                        "scanImports",
-                        "code",
-                        "string or Uint8Array",
-                    ));
-                }
-                return Ok(JSValue::ZERO);
-            }
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                "scanImports",
+                "code",
+                "string or Uint8Array",
+            ));
         };
         args.eat();
         let code = code_holder.slice();

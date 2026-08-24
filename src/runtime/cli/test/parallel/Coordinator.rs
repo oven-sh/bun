@@ -356,7 +356,17 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    fn record_timing(&mut self, file_idx: u32, dispatched_at: i64) {
+    /// Normal completion: the worker-reported duration (wall time minus
+    /// run-queue wait), unaffected by sibling-worker contention.
+    fn record_timing_ms(&mut self, file_idx: u32, ms: u32) {
+        if let Some(t) = self.reporter.timings.as_mut() {
+            t.record(self.files[file_idx as usize].as_bytes(), ms);
+        }
+    }
+
+    /// Crash path: no file_done frame arrived; wall time since dispatch is
+    /// all there is.
+    fn record_timing_since(&mut self, file_idx: u32, dispatched_at: i64) {
         if let Some(t) = self.reporter.timings.as_mut() {
             t.record_since(self.files[file_idx as usize].as_bytes(), dispatched_at);
         }
@@ -449,7 +459,7 @@ impl<'a> Coordinator<'a> {
                 Output::flush();
             }
             frame::Kind::FileDone => {
-                let mut nums = [0u32; 9];
+                let mut nums = [0u32; 10];
                 for n in nums.iter_mut() {
                     *n = rd.u32();
                 }
@@ -463,6 +473,7 @@ impl<'a> Coordinator<'a> {
                     skipped_label,
                     files,
                     unhandled,
+                    duration_ms,
                 ] = nums;
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.elapsed_ns = rd.u64();
@@ -496,7 +507,7 @@ impl<'a> Coordinator<'a> {
                     summary.files += files;
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
-                self.record_timing(idx, w.dispatched_at);
+                self.record_timing_ms(idx, duration_ms);
 
                 w.inflight = None;
                 self.files_done += 1;
@@ -602,7 +613,7 @@ impl<'a> Coordinator<'a> {
             if self.stop_reason == Some(StopReason::WorkerPanicked) && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
-                self.record_timing(idx, w.dispatched_at);
+                self.record_timing_since(idx, w.dispatched_at);
                 if w.ipc.corrupt_frame.get() && !panicked {
                     self.account_crash(
                         idx,

@@ -998,6 +998,10 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
+        transpiler.options.compile_target_is_host = config
+            .compile
+            .as_ref()
+            .is_none_or(|compile| compile.compile_target.is_default());
         transpiler.options.compile_mode = if config.compile.is_some() {
             options::CompileMode::Executable
         } else {

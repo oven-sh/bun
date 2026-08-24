@@ -861,13 +861,13 @@ pub mod js_bundler {
 
                 let mut browsers = bun_css::Browsers::default();
                 if css_target.is_string() {
-                    let slice = css_target.to_slice(global_this)?;
+                    let slice = css_target.to_utf8(global_this)?;
                     merge_css_target(global_this, &mut browsers, slice.slice())?;
                     drop(slice);
                 } else if css_target.js_type().is_array() {
                     let mut iter = css_target.array_iterator(global_this)?;
                     while let Some(entry) = iter.next()? {
-                        let slice = entry.to_slice(global_this)?;
+                        let slice = entry.to_utf8(global_this)?;
                         merge_css_target(global_this, &mut browsers, slice.slice())?;
                         drop(slice);
                     }

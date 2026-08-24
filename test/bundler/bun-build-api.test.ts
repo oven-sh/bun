@@ -1987,6 +1987,11 @@ describe.concurrent("cssTarget", () => {
     await expect(buildCss({ cssTarget: "safari16.4.x" })).rejects.toThrow('Invalid cssTarget "safari16.4.x"');
   });
 
+  test("rejects a version component over 255", async () => {
+    // Each component is one byte in the packed version encoding.
+    await expect(buildCss({ cssTarget: "safari15.300" })).rejects.toThrow('Invalid cssTarget "safari15.300"');
+  });
+
   test("applies to target bun, which does not downlevel by default", async () => {
     expect(await buildCss({ target: "bun" })).toContain("oklch(");
     expect(await buildCss({ target: "bun", cssTarget: ["chrome80"] })).toContain("lab(");

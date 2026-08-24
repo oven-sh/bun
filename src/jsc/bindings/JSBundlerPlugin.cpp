@@ -51,7 +51,6 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, uint8_t);
 extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
-extern "C" void JSBundlerPlugin__onVirtualModulePlugin(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__onDefer(void*, JSC::JSGlobalObject*);
 
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter);
@@ -377,9 +376,12 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         return {};
     }
     WTF::String on_before_parse_symbol = on_before_parse_symbol_js.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // The dlopen *void handle is attached to the node_addon as a NapiExternal
-    Bun::NapiExternal* napi_external = dynamicDowncast<Bun::NapiExternal>(node_addon.getObject()->get(globalObject, WebCore::builtinNames(vm).napiDlopenHandlePrivateName()));
+    JSValue napiDlopenHandle = node_addon.getObject()->get(globalObject, WebCore::builtinNames(vm).napiDlopenHandlePrivateName());
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::NapiExternal* napi_external = dynamicDowncast<Bun::NapiExternal>(napiDlopenHandle);
     if (!napi_external) [[unlikely]] {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to have a napiDlopenHandle property"_s);
         return {};

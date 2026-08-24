@@ -17,9 +17,8 @@ use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
-    self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, Exception, JSGlobalObject,
-    JSInternalPromise, JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM,
-    ZigException,
+    self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
+    PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -210,7 +209,7 @@ pub struct VirtualMachine {
     // `transpiler.resolver.standalone_module_graph` without a downcast.
     pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
-    // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
+    // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
@@ -225,11 +224,9 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
-    /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
-    /// After this point the cleanup-hook list is never iterated again, so
-    /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
-    /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would
-    /// only leak the hook's `ctx` allocation.
+    /// Set once `on_exit()` is past `RareData::cleanup_hooks`, run or not
+    /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
+    /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
     /// Explicit `--use-system-ca` / `--no-use-system-ca` for THIS thread, or
@@ -300,6 +297,11 @@ pub struct VirtualMachine {
     /// The loop's idle counter when `loop_start_ns` was stamped: parking before the loop "began"
     /// (a watcher waiting for the first file, a debugger pause) is not loop idle time.
     pub loop_idle_base_ns: core::sync::atomic::AtomicU64,
+    /// `bun run` sets this around the entry load: the ticks that fetch the entry graph (imports
+    /// transpile off-thread) do not stamp `loop_start_ns`; once `entry_evaluation_started`, a tick
+    /// is the loop running under a top-level await and does. Node's loopStart works out the same:
+    /// zeros throughout the entry's synchronous evaluation, however its graph was loaded.
+    pub loop_start_deferred: bool,
     pub(crate) origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
@@ -438,6 +440,29 @@ pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::Standalone
     STANDALONE_MODULE_GRAPH.get().copied()
 }
 
+/// InternalModuleRegistry::generateModule: ahead-of-time bytecode for internal module `id` from a `bun build --compile`
+/// executable (process-lifetime bytes JSC may alias), if this process is one and it carries it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
+    _vm: *mut c_void,
+    id: u32,
+    bytes: *mut *const u8,
+    size: *mut usize,
+) -> bool {
+    let Some(graph) = standalone_module_graph() else {
+        return false;
+    };
+    let Some(found) = graph.builtin_module_bytecode(id) else {
+        return false;
+    };
+    // SAFETY: out-params supplied by the C++ caller; `found` points into the executable's mapped section.
+    unsafe {
+        *bytes = found.cast::<u8>();
+        *size = found.len();
+    }
+    true
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Nested types
 // ──────────────────────────────────────────────────────────────────────────
@@ -573,6 +598,9 @@ pub struct ExitHandler {
     pub exit_code: u8,
     /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
     pub skip_exit_listeners: bool,
+    /// `process.exit()` or a fatal error, as opposed to the event loop running dry.
+    /// See `VirtualMachine::exit_tears_down_napi_envs`.
+    pub requested: bool,
 }
 
 impl ExitHandler {
@@ -586,11 +614,12 @@ impl ExitHandler {
         vm.entry_evaluation_started = true;
     }
 
-    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
-    /// any other VM answers `true` so the hook's registry probe never runs there.
+    /// Only a worker's start (`wait_for_worker_entry_evaluation`) and `bun run`'s deferred loop-start
+    /// stamp (`loop_start_deferred`) wait on this; any other VM answers `true` so the hook's registry
+    /// probe never runs there.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
-        vm.entry_evaluation_started || vm.worker.is_none()
+        vm.entry_evaluation_started || !(vm.worker.is_some() || vm.loop_start_deferred)
     }
 
     /// The module-registry key of the current entry load's root: the
@@ -599,13 +628,12 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
-        out: &mut bun_core::String,
-    ) {
-        *out = if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
-            bun_core::String::static_(MAIN_FILE_NAME)
+    ) -> bun_core::StringView<'_> {
+        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
+            bun_core::StringView::static_(MAIN_FILE_NAME)
         } else {
-            bun_core::String::borrow_utf8(vm.main())
-        };
+            bun_core::StringView::borrow_utf8(vm.main())
+        }
     }
 
     #[unsafe(no_mangle)]
@@ -946,6 +974,22 @@ impl VirtualMachine {
         self.event_loop_mut()
     }
 
+    /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
+    fn install_bytecode_string_table(
+        &self,
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    ) {
+        let table = graph.bytecode_string_table();
+        if table.is_empty() {
+            return;
+        }
+        unsafe extern "C" {
+            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
+        }
+        // SAFETY: `jsc_vm` set in `init()`; `table` is a mmapped process-lifetime span from the executable's own section.
+        unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
+    }
+
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
     /// `init()` and live for the VM lifetime.
     #[inline(always)]
@@ -1239,7 +1283,7 @@ impl VirtualMachine {
                 + self.active_tasks
                 + el.tasks.readable_length()
                 + el.yield_tasks.len()
-                + (!el.concurrent_tasks.is_empty() as usize)
+                + (el.has_concurrent_tasks() as usize)
                 + (el.has_pending_refs() as usize)
                 > 0)
     }
@@ -1451,12 +1495,12 @@ impl VirtualMachine {
             let display = result
                 .to_error()
                 .unwrap_or(result)
-                .get_zig_string(global)
+                .to_js_string_view(global)
                 .ok();
             match display {
-                Some(zs) => {
-                    let utf8 = zs.to_owned_slice();
-                    let _ = writer.write_all(utf8.as_slice());
+                Some(s) => {
+                    let utf8 = s.to_utf8();
+                    let _ = writer.write_all(utf8.slice());
                     let _ = writer.write_all(b"\n");
                 }
                 None => {
@@ -1727,12 +1771,34 @@ impl VirtualMachine {
 
         self.is_shutting_down = true;
 
-        // Make sure we run new cleanup hooks introduced by running cleanup
-        // hooks.
-        // Note: each iteration re-fetches `rare_data` so the FFI hook
-        // bodies (which may re-enter `VirtualMachine` and push more hooks) do
-        // not run while a `&mut RareData` is live — the borrow ends after
-        // `mem::take` returns the owned `Vec`.
+        if self.exit_tears_down_napi_envs() {
+            self.run_cleanup_hooks();
+        }
+        self.has_run_cleanup_hooks = true;
+
+        // Persist the Node compile cache (NODE_COMPILE_CACHE /
+        // module.enableCompileCache()) after user exit handlers ran.
+        if self.is_main_thread() {
+            crate::node_compile_cache::persist_at_exit();
+        }
+    }
+
+    /// Whether `on_exit()` runs `RareData::cleanup_hooks`, i.e. `NapiEnv::cleanup` for
+    /// each addon. Node does this when it frees an environment: a worker's on any exit,
+    /// the main thread's only once its loop ran dry (`process.exit()` and a fatal error
+    /// call `exit()` instead). `BUN_DESTRUCT_VM_ON_EXIT` destroys the main thread's VM
+    /// like a worker's, and that teardown expects the envs to be gone, so it tears them
+    /// down on every exit too.
+    fn exit_tears_down_napi_envs(&self) -> bool {
+        !self.is_main_thread()
+            || !self.exit_handler.requested
+            || self.should_destruct_main_thread_on_exit()
+    }
+
+    /// Drains `RareData::cleanup_hooks`, repeating while the hooks push more (an env's
+    /// cleanup defers finalizers onto this list once shutdown has begun). The `Vec` is
+    /// taken out of `rare_data` before the hooks run: they re-enter the VM.
+    fn run_cleanup_hooks(&mut self) {
         loop {
             let hooks = match self.rare_data.as_deref_mut() {
                 Some(rare) if !rare.cleanup_hooks.is_empty() => {
@@ -1750,14 +1816,6 @@ impl VirtualMachine {
                     let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
                 }
             }
-        }
-        // `mem::take` above leaves an empty `Vec` (capacity already freed by drop).
-        self.has_run_cleanup_hooks = true;
-
-        // Persist the Node compile cache (NODE_COMPILE_CACHE /
-        // module.enableCompileCache()) after user exit handlers ran.
-        if self.is_main_thread() {
-            crate::node_compile_cache::persist_at_exit();
         }
     }
 
@@ -2052,7 +2110,7 @@ extern crate alloc;
 // §Dispatch — `bun_runtime` vtable.
 //
 // `init` / `load_entry_point` / the `bun -e` path reach into types that live
-// in the higher-tier `bun_runtime` crate (`api::Timer::All`, `node::fs`,
+// in the higher-tier `bun_runtime` crate (`timer::All`, `node::fs`,
 // `webcore::Body`, the bundler entry-point generator, …). Per PORTING.md
 // §Dispatch (cold-path), the low tier defines a manual vtable; `bun_runtime`
 // defines the `#[no_mangle]` static `__BUN_RUNTIME_HOOKS`. The fn-ptr
@@ -2175,16 +2233,16 @@ pub struct RuntimeHooks {
     /// supply explicit options. The storage slot lives in `RareData`
     /// (low-tier) but population reaches `RuntimeState.ssl_ctx_cache`
     /// (`bun_runtime`, b2-cycle).
-    pub default_client_ssl_ctx: unsafe fn(vm: *mut VirtualMachine) -> *mut uws::SslCtx,
+    pub default_client_ssl_ctx: fn(vm: &VirtualMachine) -> *mut uws::SslCtx,
     /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — per-VM
     /// digest-keyed weak `SSL_CTX*` cache. Returns a +1 ref or `None` on
     /// BoringSSL rejection (`err` populated). `SSLContextCache` lives in
     /// `bun_runtime::RuntimeState` (b2-cycle).
-    pub ssl_ctx_cache_get_or_create: unsafe fn(
-        vm: *mut VirtualMachine,
+    pub ssl_ctx_cache_get_or_create: fn(
+        vm: &VirtualMachine,
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut uws::create_bun_socket_error_t,
-    ) -> Option<*mut uws::SslCtx>,
+    ) -> Option<bun_boringssl::c::OwnedSslCtx>,
     /// Lazy `NodeFS` creation.
     /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
     /// the type-erased pointer. Stored back into `vm.node_fs`.
@@ -2222,7 +2280,6 @@ pub struct RuntimeHooks {
         formatter: &'a mut crate::console_object::Formatter<'f>,
         writer: &'a mut dyn bun_io::Write,
         value: JSValue,
-        name_buf: &'a [u8; 512],
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
     /// Applies `--compile`-baked runtime flags to the
@@ -2354,6 +2411,25 @@ impl VirtualMachine {
     pub unsafe fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
         // SAFETY: caller contract above.
         unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, this) }
+    }
+
+    /// `RareData.defaultClientSslCtx()` — the VM-wide default-trust-store
+    /// client `SSL_CTX*` (see [`RuntimeHooks::default_client_ssl_ctx`]).
+    pub fn default_client_ssl_ctx(&self) -> *mut uws::SslCtx {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        (hooks.default_client_ssl_ctx)(self)
+    }
+
+    /// `RareData.sslCtxCache().getOrCreateOpts()` — a +1 `SSL_CTX` for `opts`
+    /// from the per-VM weak cache (see
+    /// [`RuntimeHooks::ssl_ctx_cache_get_or_create`]).
+    pub fn ssl_ctx_cache_get_or_create(
+        &self,
+        opts: &uws::SocketContext::BunSocketContextOptions,
+        err: &mut uws::create_bun_socket_error_t,
+    ) -> Option<bun_boringssl::c::OwnedSslCtx> {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        (hooks.ssl_ctx_cache_get_or_create)(self, opts, err)
     }
 
     /// `&self` overload of [`event_loop_ctx`]. Routes through
@@ -2735,11 +2811,13 @@ impl VirtualMachine {
 
     /// This thread's loop has begun: the main thread stamps it on its first poll (node's uv_run, after
     /// the entry point's synchronous evaluation); a worker stamps it before its script, whose
-    /// bootstrap already runs inside the loop.
+    /// bootstrap already runs inside the loop. A no-op while [`Self::loop_start_deferred`] holds.
     #[inline]
     pub fn mark_loop_started(&self) {
         use core::sync::atomic::Ordering;
-        if self.loop_start_ns.load(Ordering::Relaxed) != 0 {
+        if self.loop_start_ns.load(Ordering::Relaxed) != 0
+            || (self.loop_start_deferred && !self.entry_evaluation_started)
+        {
             return;
         }
         // SAFETY: `event_loop` is this VM's own loop; the idle counter is read atomically.
@@ -2751,6 +2829,12 @@ impl VirtualMachine {
         let _ = self
             .loop_start_ns
             .compare_exchange(0, ns, Ordering::Release, Ordering::Relaxed);
+    }
+
+    /// See [`Self::loop_start_deferred`]. `bun run` sets it before loading the entry point and clears
+    /// it, then stamps, when it enters its run loop.
+    pub fn defer_loop_start(&mut self, deferred: bool) {
+        self.loop_start_deferred = deferred;
     }
 
     /// Milliseconds since this thread's loop began polling; `None` before that.
@@ -2825,7 +2909,6 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
-        self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
@@ -3004,22 +3087,16 @@ impl VirtualMachine {
     }
 }
 
-/// Synthesize a JS
-/// `BuildMessage` / `ResolveMessage` / `AggregateError` from the parser
-/// `log` and write it into `ret` as `.err(..)` so the C++ module-loader
-/// (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp) rejects the import promise
-/// with a real Error instead of `undefined`.
-///
-/// Free function; takes `&JSGlobalObject` directly rather
-/// than `&mut VirtualMachine` because the body never touches VM state.
-pub(crate) fn process_fetch_log(
+/// Synthesize a JS `BuildMessage` / `ResolveMessage` / `AggregateError` from
+/// the parser `log` for a failed fetch, so the import promise rejects with a
+/// real Error instead of `undefined`.
+pub fn process_fetch_log(
     global_this: &JSGlobalObject,
-    specifier: bun_core::String,
-    referrer: bun_core::String,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
     log: &mut bun_ast::Log,
-    ret: &mut ErrorableResolvedSource,
     err: crate::CrateError,
-) {
+) -> JSValue {
     use crate::{BuildMessage, ResolveMessage};
 
     // Helper: on error, swap in the pending exception value.
@@ -3060,25 +3137,21 @@ pub(crate) fn process_fetch_log(
                     ..Default::default()
                 }
             };
-            *ret = ErrorableResolvedSource::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                take(BuildMessage::create(global_this, msg)),
-            );
+            take(BuildMessage::create(global_this, msg))
         }
 
         1 => {
             // Note: `Msg` is not `Copy`, so move it out — the caller deinits
             // the log immediately after, so consuming the vec is sound.
             let msg = log.msgs.swap_remove(0);
-            let value = match msg.metadata {
+            match msg.metadata {
                 bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
                 bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
                     global_this,
                     &msg,
                     referrer_utf8.slice(),
                 )),
-            };
-            *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), value);
+            }
         }
 
         _ => {
@@ -3111,10 +3184,7 @@ pub(crate) fn process_fetch_log(
             );
             let mut message = crate::ZigString::init(message_text);
             message.mark_global();
-            *ret = ErrorableResolvedSource::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                take(global_this.create_aggregate_error(&errors_stack[..len], &message)),
-            );
+            take(global_this.create_aggregate_error(&errors_stack[..len], &message))
         }
     }
 }
@@ -3317,7 +3387,7 @@ pub struct Options {
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub store_fd: bool,
     pub smol: bool,
-    // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
+    // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
     pub dns_result_order: u8,
     /// `--print` needs the result from evaluating the main module.
@@ -3525,16 +3595,6 @@ fn normalize_source(source: &[u8]) -> &[u8] {
         return rest;
     }
     source
-}
-
-/// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is
-/// byte-equal to `s`, in which case bump `s`'s refcount instead.
-#[inline]
-pub(crate) fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
-    if s.eql_utf8(other) {
-        return s.dupe_ref();
-    }
-    bun_core::String::clone_utf8(other)
 }
 
 // Additional FFI used by the formerly-gated impl.
@@ -3846,8 +3906,7 @@ impl VirtualMachine {
                 return;
             }
             Mode::Strict => {
-                let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 let _ = self.uncaught_exception(global_object, wrapped, true);
                 let handled = handle_unhandled();
                 if !handled {
@@ -3861,8 +3920,7 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 if self.uncaught_exception(global_object, wrapped, true) {
                     drain(self);
                     return;
@@ -4115,6 +4173,7 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
+        vm_ref.install_bytecode_string_table(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         vm_ref.transpiler.resolver.store_fd = false;
@@ -4163,6 +4222,9 @@ impl VirtualMachine {
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
+        if let Some(graph) = opts.graph {
+            vm_ref.install_bytecode_string_table(graph);
+        }
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
@@ -4227,44 +4289,28 @@ impl VirtualMachine {
     }
 
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
-    pub fn ref_counted_resolved_source<const ADD_DOUBLE_REF: bool>(
+    pub fn ref_counted_resolved_source(
         &mut self,
         code: &[u8],
-        specifier: bun_core::String,
+        specifier: &bun_core::String,
         source_url: &[u8],
         hash_: Option<u32>,
     ) -> ResolvedSource {
         // refCountedString will panic if the code is empty
         if code.is_empty() {
             return ResolvedSource {
-                source_code: bun_core::String::init(b""),
-                specifier,
-                source_url: create_if_different(&specifier, source_url),
-                source_code_needs_deref: false,
+                source_url: specifier.create_if_different(source_url),
                 ..Default::default()
             };
         }
-        // Const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
-        let source = if ADD_DOUBLE_REF {
-            self.ref_counted_string::<false>(code, hash_)
-        } else {
-            self.ref_counted_string::<true>(code, hash_)
-        };
+        let source = self.ref_counted_string::<true>(code, hash_);
         // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
-        // `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
-        // external-string finalizer.
+        // `self.ref_strings` until JSC calls the external-string finalizer.
         let source_ref = unsafe { &*source };
-        if ADD_DOUBLE_REF {
-            source_ref.ref_();
-            source_ref.ref_();
-        }
 
         ResolvedSource {
-            source_code: bun_core::String::adopt_wtf_impl(source_ref.impl_),
-            specifier,
-            source_url: create_if_different(&specifier, source_url),
-            allocator: source.cast::<c_void>(),
-            source_code_needs_deref: false,
+            source_code: bun_core::String::retain_wtf_impl(source_ref.impl_),
+            source_url: specifier.create_if_different(source_url),
             ..Default::default()
         }
     }
@@ -4350,22 +4396,17 @@ impl VirtualMachine {
     pub(crate) fn fetch_without_on_load_plugins(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
-        specifier: bun_core::String,
-        referrer: bun_core::String,
+        specifier: &bun_core::String,
+        referrer: &bun_core::String,
         log: &mut bun_ast::Log,
         flags: FetchFlags,
     ) -> crate::CrateResult<ResolvedSource> {
         debug_assert!(VirtualMachine::is_loaded());
 
-        let global_ptr = core::ptr::NonNull::from(global_object);
-        let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
-        let builtin =
-            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, &specifier, &referrer, &mut ret);
-        match builtin {
-            ModuleLoader::FetchBuiltinResult::Found | ModuleLoader::FetchBuiltinResult::Errored => {
-                return ret.unwrap().map_err(Into::into);
-            }
-            ModuleLoader::FetchBuiltinResult::NotFound => {}
+        if let Some(resolved) =
+            ModuleLoader::__bun_fetch_builtin_module(jsc_vm, global_object, specifier)
+        {
+            return Ok(resolved);
         }
 
         let specifier_clone = specifier.to_utf8();
@@ -4453,18 +4494,18 @@ impl VirtualMachine {
             input_specifier: specifier,
             log: std::ptr::from_mut::<bun_ast::Log>(log),
             virtual_source: lr.virtual_source,
-            global_object: std::ptr::from_ref::<JSGlobalObject>(global_object).cast_mut(),
+            global_object,
             flags,
-            extra: (&raw mut extra).cast::<c_void>(),
+            extra: &raw mut extra,
         };
-        let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
-        let ok = ModuleLoader::transpile_source_code(guard.0, &args, &mut ret);
-
-        if !ok && flags == FetchFlags::PrintSource {
+        // SAFETY: `guard.0` is the live per-thread VM; `args.extra` points at
+        // the live `extra` above.
+        let result = unsafe { ModuleLoader::__bun_transpile_source_code(guard.0, &args) };
+        if result.is_err() && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
         }
         // `blob_to_deinit` drop guard fires here.
-        ret.unwrap().map_err(Into::into)
+        result
     }
 
     /// Dupe `s` into a VM-owned allocation for the `_resolve` fast-paths.
@@ -4666,34 +4707,16 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// Resolves `specifier` relative to `source`, writing the result or error into `res`.
-    pub(crate) fn resolve(
-        res: &mut ErrorableString,
-        global: &JSGlobalObject,
-        specifier: bun_core::String,
-        source: bun_core::String,
-        query_string: Option<&mut bun_core::String>,
-        mode: ResolveMode,
-    ) -> JsResult<()> {
-        Self::resolve_maybe_needs_trailing_slash::<true>(
-            res,
-            global,
-            specifier,
-            source,
-            query_string,
-            mode,
-        )
-    }
-
-    /// Module-resolution core: resolves `specifier` relative to `source`, with path-length checks when `IS_A_FILE_PATH`.
+    /// Module-resolution core: resolves `specifier` relative to `source`, with
+    /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(value))` is a
+    /// resolution failure to be thrown/rejected with `value`.
     pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>(
-        res: &mut ErrorableString,
         global: &JSGlobalObject,
-        specifier: bun_core::String,
-        source: bun_core::String,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
-    ) -> JsResult<()> {
+    ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
         // filesystem, so the path-length cap does not apply to them.
@@ -4714,11 +4737,11 @@ impl VirtualMachine {
                 data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
                 ..Default::default()
             };
-            *res = ErrorableString::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
-            );
-            return Ok(());
+            return Ok(Err(crate::ResolveMessage::create(
+                global,
+                &msg,
+                source_utf8.slice(),
+            )?));
         }
 
         let mut result = ResolveFunctionResult::default();
@@ -4740,13 +4763,12 @@ impl VirtualMachine {
                 };
                 if let Some(resolved_path) = plugin_runner_on_resolve_jsc(
                     global,
-                    bun_core::String::init(namespace),
-                    bun_core::String::borrow_utf8(after_namespace),
+                    &bun_core::String::init(namespace),
+                    &bun_core::String::borrow_utf8(after_namespace),
                     source,
                     crate::BunPluginTarget::Bun,
                 )? {
-                    *res = resolved_path;
-                    return Ok(());
+                    return Ok(resolved_path);
                 }
             }
         }
@@ -4756,20 +4778,18 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
-            *res = ErrorableString::ok(
+            return Ok(Ok(
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
-                    specifier.dupe_ref()
+                    specifier.clone()
                 } else {
                     bun_core::String::init(hardcoded.path.as_bytes())
                 },
-            );
-            return Ok(());
+            ));
         }
 
         // Node's `--expose-internals`.
         if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
-            *res = ErrorableString::ok(specifier.dupe_ref());
-            return Ok(());
+            return Ok(Ok(specifier.clone()));
         }
 
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
@@ -4863,23 +4883,18 @@ impl VirtualMachine {
                         ..Default::default()
                     }
                 });
-            *res = ErrorableString::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
-            );
-            return Ok(());
+            return Ok(Err(crate::ResolveMessage::create(
+                global,
+                &msg,
+                source_utf8.slice(),
+            )?));
         }
 
         if let Some(query) = query_string {
-            *query = if !result.query_string.is_empty() {
-                bun_core::String::clone_utf8(result.query_string)
-            } else {
-                bun_core::String::empty()
-            };
+            *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        *res = ErrorableString::ok(bun_core::String::clone_utf8(result.path));
-        Ok(())
+        Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
@@ -4899,14 +4914,8 @@ impl VirtualMachine {
         // `SavedSourceMap`'s `Drop` frees each stored map along with its table.
         drop(core::mem::take(&mut self.source_mappings));
 
-        // Drain cron jobs BEFORE taking rare_data off `self`: the teardown
-        // hook reads `self.rare_data` to find the job list, so calling it
-        // after `take()` is a no-op and `RareData::drop`'s
-        // `debug_assert!(cron_jobs.is_empty())` fires.
-        if self.rare_data.is_some() {
-            if let Some(hooks) = runtime_hooks() {
-                (hooks.stop_cron_for_vm_teardown)(self);
-            }
+        if let Some(hooks) = runtime_hooks() {
+            (hooks.stop_cron_for_vm_teardown)(self);
         }
         if let Some(rare) = self.rare_data.take() {
             // Paired with `rare_data()`'s register_root_region. Without this,
@@ -4940,6 +4949,7 @@ impl VirtualMachine {
         unsafe { self.transpiler.deinit() };
 
         drop(core::mem::take(&mut self.resolved_path_dups));
+        drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
 
@@ -5002,7 +5012,6 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
-        self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
@@ -5262,7 +5271,6 @@ impl VirtualMachine {
         self.has_patched_run_main = false;
         self.set_main(b"");
         self.main_hash = 0;
-        self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
         self.unhandled_error_counter = 0;
         // The finished file's plugins are dropped with its global; the next
@@ -5648,7 +5656,6 @@ impl VirtualMachine {
                 bun_sourcemap::SourceContentHandling::NoSourceContents,
             ) {
                 if let Some(source_url) = lookup.display_source_url_if_needed(path) {
-                    frame.source_url.deref();
                     frame.source_url = source_url;
                 }
                 // Direct copy; both sides are
@@ -5798,10 +5805,8 @@ impl VirtualMachine {
                     {
                         continue;
                     }
-                    // Note: `frames[j] = frame`. `ZigStackFrame` impls
-                    // `Drop` so `copy_within` is unavailable; swap instead —
-                    // the discarded tail past `j` is never read after we
-                    // truncate `frames_len` below.
+                    // Swap rather than overwrite: the discarded tail past `j`
+                    // still owns its strings and is released with the Holder.
                     frames_buf.swap(j, i);
                     j += 1;
                 }
@@ -5895,7 +5900,6 @@ impl VirtualMachine {
             };
 
             if let Some(src) = display_url {
-                frames[top].source_url.deref();
                 frames[top].source_url = src;
             }
 
@@ -5914,10 +5918,8 @@ impl VirtualMachine {
                 let Ok(original_source) = Self::fetch_without_on_load_plugins(
                     self,
                     global,
-                    // `top.source_url` is passed by
-                    // value (no `dupeRef`); `bun_core::String` is `Copy`.
-                    frames[top].source_url,
-                    bun_core::String::empty(),
+                    &frames[top].source_url,
+                    &bun_core::String::empty(),
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {
@@ -5925,23 +5927,8 @@ impl VirtualMachine {
                     break 'code bun_core::ZigStringSlice::EMPTY;
                 };
                 *must_reset_parser_arena_later = true;
-                // Note: the transpile path `clone_utf8`s the source for
-                // `.print_source`
-                // (the backing `parse_result` drops on return — see
-                // jsc_hooks.rs Note at the `PrintSource` arm), leaving
-                // `source_code` with a +1 strong ref this caller never
-                // consumed. `to_utf8()` takes its own ref via
-                // `ZigStringSlice::WTF`, so balance the clone here. Also
-                // release the `dupe_ref` / `create_if_different` refs on
-                // `specifier` / `source_url` — this caller never reads them.
-                // Skipping the `source_code` deref leaks one WTFStringImpl
-                // (~file-size) per `Bun.inspect(new Error)` and fails
-                // inspect-error-leak.test.js.
-                let code = original_source.source_code.to_utf8();
-                original_source.source_code.deref();
-                original_source.specifier.deref();
-                original_source.source_url.deref();
-                code
+                // `to_utf8()` takes its own ref; `original_source` drops here.
+                original_source.source_code.to_utf8()
             };
 
             if enable_source_code_preview.get() && code.slice().is_empty() {
@@ -6008,7 +5995,6 @@ impl VirtualMachine {
                     bun_sourcemap::SourceContentHandling::NoSourceContents,
                 ) {
                     if let Some(src) = lookup.display_source_url_if_needed(source_url.slice()) {
-                        frames[i].source_url.deref();
                         frames[i].source_url = src;
                     }
                     let mapping = lookup.mapping;
@@ -6124,11 +6110,6 @@ impl VirtualMachine {
         );
 
         drop(source_code_slice);
-        // `exception_holder.deinit`
-        // releases the WTFString refs (`name`/`message`/stack-frame
-        // `function_name`/`source_url`/source-line bodies) populated by
-        // `JSC__JSValue__toZigException`. Skipping this leaks ~1 KB/error and
-        // OOMs the inspect-error-leak test.
         exception_holder.deinit(self);
         result
     }
@@ -6280,8 +6261,8 @@ impl VirtualMachine {
         }
         let _ = last_pad;
 
-        let name = exception.name;
-        let message = exception.message;
+        let name = &exception.name;
+        let message = &exception.message;
 
         let is_error_instance = error_instance != JSValue::ZERO
             && error_instance.is_cell()
@@ -6291,37 +6272,20 @@ impl VirtualMachine {
         // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
         // borrow. `global()` returns `&'static` so the borrow detaches.
         let global_ref = self.global();
-        // Note: hold the owning `bun_core::String`
-        // alongside the slice so the latin1 view stays live for this fn.
-        // `bun_core::String` is `Copy` (no `Drop`), so use a scopeguard to
-        // run `.deref()` on every exit path.
-        let mut code_string_guard = scopeguard::guard(None::<bun_core::String>, |s| {
-            if let Some(s) = s {
-                s.deref();
-            }
-        });
+        // Holds the owning `bun_core::String` so the latin1 view below stays
+        // live for this fn.
+        let code_string: Option<bun_core::String>;
         let code: Option<&[u8]> = if is_error_instance {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
             let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
             if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
                 if code_value.is_string() {
                     match code_value.to_bun_string(global_ref) {
-                        Ok(code_string) if code_string.is_8bit() => {
-                            // SAFETY: `code_string` is moved into
-                            // `code_string_guard` and outlives the borrow.
-                            let bytes: &[u8] = unsafe {
-                                bun_core::ffi::slice(
-                                    code_string.latin1().as_ptr(),
-                                    code_string.latin1().len(),
-                                )
-                            };
-                            *code_string_guard = Some(code_string);
-                            Some(bytes)
+                        Ok(s) if s.is_8bit() => {
+                            code_string = Some(s);
+                            code_string.as_ref().map(|s| s.latin1())
                         }
-                        Ok(s) => {
-                            s.deref();
-                            None
-                        }
+                        Ok(_) => None,
                         Err(_) => bun_core::out_of_memory(),
                     }
                 } else {
@@ -6480,7 +6444,7 @@ impl VirtualMachine {
             let mut saw_cause = false;
             // SAFETY: `is_error_instance` ⇒ object.
             let error_obj = unsafe { error_instance.get_object().unwrap_unchecked() };
-            let mut iterator = crate::JSPropertyIterator::init(
+            let iterator = crate::JSPropertyIterator::init(
                 global_ref,
                 error_obj,
                 crate::JSPropertyIteratorOptions {
@@ -6493,8 +6457,7 @@ impl VirtualMachine {
             )?;
             let longest_name = iterator.get_longest_property_name().min(10);
             let mut is_first_property = true;
-            while let Some(field) = iterator.next()? {
-                let value = iterator.value;
+            while let Some((field, value)) = iterator.next()? {
                 if field.eql_comptime(b"message")
                     || field.eql_comptime(b"name")
                     || field.eql_comptime(b"stack")
@@ -6671,8 +6634,8 @@ impl VirtualMachine {
     }
 
     fn print_error_name_and_message(
-        name: bun_core::String,
-        message: bun_core::String,
+        name: &bun_core::String,
+        message: &bun_core::String,
         is_browser_error: bool,
         optional_code: Option<&[u8]>,
         writer: &mut bun_core::io::Writer,
@@ -6719,20 +6682,26 @@ impl VirtualMachine {
                             };
                             if has_prefix {
                                 break 'brk (
-                                    bun_core::String::init(code),
+                                    bun_core::StringView::from_bytes(code),
                                     message.substring(code.len() + 2),
                                 );
                             }
                         }
                     }
-                    (bun_core::String::empty(), message)
+                    (
+                        bun_core::StringView::EMPTY,
+                        bun_core::StringView::new(message),
+                    )
                 }
             } else {
-                (name, message)
+                (
+                    bun_core::StringView::new(name),
+                    bun_core::StringView::new(message),
+                )
             };
             pretty_write!(
                 "{}<b>{}<r>\n",
-                error_display_level.formatter(display_name, allow_ansi_color, Colon::IncludeColon),
+                error_display_level.formatter(&display_name, allow_ansi_color, Colon::IncludeColon),
                 display_message,
             )?;
         } else if !name.is_empty() {
@@ -6745,7 +6714,7 @@ impl VirtualMachine {
             pretty_write!(
                 "{}<b>{}<r>\n",
                 error_display_level.formatter(
-                    bun_core::String::empty(),
+                    &bun_core::String::empty(),
                     allow_ansi_color,
                     Colon::IncludeColon
                 ),
@@ -6755,7 +6724,7 @@ impl VirtualMachine {
             pretty_write!(
                 "{}\n",
                 error_display_level.formatter(
-                    bun_core::String::empty(),
+                    &bun_core::String::empty(),
                     allow_ansi_color,
                     Colon::ExcludeColon
                 ),
@@ -6942,66 +6911,72 @@ fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bo
     })
 }
 
-fn wrap_unhandled_rejection_error_for_uncaught_exception(
+/// What `--unhandled-rejections=strict|throw` hand to the uncaught-exception path for `reason`. If describing the
+/// rejection itself throws (a hostile Proxy under isErrorLike, an OOM resolving a rope), that failure does not
+/// replace the thing being reported: the rejection is the user's bug, so it is reported as-is — unless what was
+/// thrown is a termination, which has to win.
+fn unhandled_rejection_as_uncaught_error(
     global_object: &JSGlobalObject,
     reason: JSValue,
 ) -> JSValue {
-    let like = is_error_like(global_object, reason).unwrap_or_else(|_| {
-        global_object.clear_exception();
-        false
-    });
-    if like {
-        return reason;
-    }
-    // Open an explicit `TopExceptionScope`
-    // around the call and clear any exception via the scope; the C++ side has a
-    // `DECLARE_THROW_SCOPE`, so under `BUN_JSC_validateExceptionChecks=1` a
-    // post-call `clear_exception()` (whose own scope ctor asserts) would be
-    // wrong without a Rust-side scope live across the call.
-    let reason_str = {
-        crate::top_scope!(scope, global_object);
-        let r = Bun__noSideEffectsToString(global_object.vm(), global_object, reason);
-        if scope.exception().is_some() {
-            scope.clear_exception();
+    match wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason) {
+        Ok(wrapped) => wrapped,
+        Err(e) => {
+            let secondary = global_object.take_exception(e);
+            if secondary.is_termination_exception() {
+                secondary
+            } else {
+                reason
+            }
         }
-        r
-    };
+    }
+}
+
+fn wrap_unhandled_rejection_error_for_uncaught_exception(
+    global_object: &JSGlobalObject,
+    reason: JSValue,
+) -> JsResult<JSValue> {
+    if is_error_like(global_object, reason)? {
+        return Ok(reason);
+    }
+    let reason_str = jsc::from_js_host_call_generic(global_object, || {
+        Bun__noSideEffectsToString(global_object.vm(), global_object, reason)
+    })?;
     const MSG_1: &str = "This error originated either by throwing inside of an async function \
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";
-    if reason_str.is_string() {
-        // SAFETY: `as_string()` returns a non-null `*mut JSString` when
-        // `is_string()` is true; `view()` borrows it for the `write!` below.
-        let view = unsafe { (*reason_str.as_string()).view(global_object) };
-        return global_object
+    if reason_str.is_string_literal() {
+        let view = reason_str.as_string().view(global_object)?;
+        return Ok(global_object
             .err(
                 crate::ErrorCode::ERR_UNHANDLED_REJECTION,
                 format_args!("{MSG_1}{view}\"."),
             )
-            .to_js();
+            .to_js());
     }
-    global_object
+    Ok(global_object
         .err(
             crate::ErrorCode::ERR_UNHANDLED_REJECTION,
             format_args!("{MSG_1}undefined\"."),
         )
-        .to_js()
+        .to_js())
 }
 
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
-    namespace: bun_core::String,
-    specifier: bun_core::String,
-    importer: bun_core::String,
+    namespace: &bun_core::String,
+    specifier: &bun_core::String,
+    importer: &bun_core::String,
     target: crate::BunPluginTarget,
-) -> JsResult<Option<ErrorableString>> {
+) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     use crate::StringJsc as _;
+    let empty = bun_core::String::EMPTY;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         if namespace.length() > 0 && !namespace.eql_comptime(b"file") {
             namespace
         } else {
-            bun_core::String::static_(b"")
+            &empty
         },
         specifier,
         importer,
@@ -7020,42 +6995,36 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         return Ok(None);
     }
     if !path_value.is_string() {
-        return Ok(Some(ErrorableString::err(
-            ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-            bun_core::String::static_(b"Expected \"path\" to be a string in onResolve plugin")
-                .to_error_instance(global),
-        )));
+        return Ok(Some(Err(bun_core::String::static_(
+            b"Expected \"path\" to be a string in onResolve plugin",
+        )
+        .to_error_instance(global))));
     }
 
-    let file_path = bun_core::OwnedString::new(path_value.to_bun_string(global)?);
+    let file_path = path_value.to_bun_string(global)?;
 
     if file_path.length() == 0 {
-        return Ok(Some(ErrorableString::err(
-            ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-            bun_core::String::static_(
-                b"Expected \"path\" to be a non-empty string in onResolve plugin",
-            )
-            .to_error_instance(global),
-        )));
+        return Ok(Some(Err(bun_core::String::static_(
+            b"Expected \"path\" to be a non-empty string in onResolve plugin",
+        )
+        .to_error_instance(global))));
     } else if file_path.eql_comptime(b".")
         || file_path.eql_comptime(b"..")
         || file_path.eql_comptime(b"...")
         || file_path.eql_comptime(b" ")
     {
-        return Ok(Some(ErrorableString::err(
-            ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-            bun_core::String::static_(b"\"path\" is invalid in onResolve plugin")
-                .to_error_instance(global),
-        )));
+        return Ok(Some(Err(bun_core::String::static_(
+            b"\"path\" is invalid in onResolve plugin",
+        )
+        .to_error_instance(global))));
     }
     let user_namespace: bun_core::String = 'brk: {
         if let Some(namespace_value) = on_resolve_plugin.get(global, b"namespace")? {
             if !namespace_value.is_string() {
-                return Ok(Some(ErrorableString::err(
-                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                    bun_core::String::static_(b"Expected \"namespace\" to be a string")
-                        .to_error_instance(global),
-                )));
+                return Ok(Some(Err(bun_core::String::static_(
+                    b"Expected \"namespace\" to be a string",
+                )
+                .to_error_instance(global))));
             }
 
             let namespace_str = namespace_value.to_bun_string(global)?;
@@ -7063,55 +7032,28 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
                 break 'brk bun_core::String::static_(b"file");
             }
             if namespace_str.eql_comptime(b"file") {
-                namespace_str.deref();
                 break 'brk bun_core::String::static_(b"file");
             }
             if namespace_str.eql_comptime(b"bun") {
-                namespace_str.deref();
                 break 'brk bun_core::String::static_(b"bun");
             }
             if namespace_str.eql_comptime(b"node") {
-                namespace_str.deref();
                 break 'brk bun_core::String::static_(b"node");
             }
             break 'brk namespace_str;
         }
         break 'brk bun_core::String::static_(b"file");
     };
-    // `bun_core::String`
-    // is `Copy` (no `Drop`), so guard the WTF refcount across the remaining
-    // early-return paths.
-    let user_namespace = scopeguard::guard(user_namespace, |s| s.deref());
 
     // A `file`-namespace result (the default) is a filesystem path, not a new
     // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
     // form the module loader dispatches on.
     if user_namespace.eql_comptime(b"file") {
-        return Ok(Some(ErrorableString::ok(file_path.into_inner())));
+        return Ok(Some(Ok(file_path)));
     }
 
-    // Our slow way of cloning the string into memory owned by JSC.
-    use std::io::Write as _;
-    let mut combined_string: Vec<u8> = Vec::new();
-    write!(&mut combined_string, "{}:{}", *user_namespace, file_path).expect("unreachable");
-    let out_ = bun_core::String::borrow_utf8(&combined_string);
-    let jsval = match out_.to_js(global) {
-        Ok(v) => v,
-        Err(_) => {
-            return Ok(Some(ErrorableString::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                global.try_take_exception().unwrap_or(JSValue::UNDEFINED),
-            )));
-        }
-    };
-    let out = match jsval.to_bun_string(global) {
-        Ok(v) => v,
-        Err(_) => {
-            return Ok(Some(ErrorableString::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                global.try_take_exception().unwrap_or(JSValue::UNDEFINED),
-            )));
-        }
-    };
-    Ok(Some(ErrorableString::ok(out)))
+    Ok(Some(Ok(bun_core::String::create_format(format_args!(
+        "{}:{}",
+        user_namespace, file_path
+    )))))
 }

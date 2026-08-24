@@ -3,8 +3,6 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const Readable = require("internal/streams/readable");
-const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
 const { throwNotImplemented } = require("internal/shared");
 const {
   validateString,
@@ -54,16 +52,6 @@ function validateWorkerFilename(filename) {
   throw $ERR_WORKER_PATH(message);
 }
 
-const {
-  MessageChannel,
-  BroadcastChannel,
-  Worker: WebWorker,
-} = globalThis as typeof globalThis & {
-  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-  // instance. This is so that it can emit the `worker` event on the process with the
-  // node:worker_threads instance instead of the Web Worker instance.
-  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
-};
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
@@ -81,8 +69,15 @@ const {
   10: _isNodeWorker,
   11: _setParentPort,
   12: _setStdioPorts,
-  13: _workerHasRef,
-  14: _workerEventLoopUtilization,
+  // The intrinsic web constructors, captured natively so user code replacing the
+  // globals (e.g. happy-dom's registrator) before this module loads cannot break
+  // worker_threads (#40268).
+  13: _MessagePort,
+  14: MessageChannel,
+  15: BroadcastChannel,
+  16: WebWorker,
+  17: _workerHasRef,
+  18: _workerEventLoopUtilization,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -97,6 +92,13 @@ const {
   boolean,
   (port: MessagePort) => void,
   (ports: object) => void,
+  typeof globalThis.MessagePort,
+  typeof globalThis.MessageChannel,
+  typeof globalThis.BroadcastChannel,
+  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+  // instance. This is so that it can emit the `worker` event on the process with the
+  // node:worker_threads instance instead of the Web Worker instance.
+  new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
   (worker: WebWorker) => boolean | undefined,
   (worker: WebWorker) => [number, number] | null,
 ];
@@ -106,8 +108,9 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
+// Looked up here, not in the constructor: diagnostics_channel's registry is a Map, and `new Worker()`
+// has to keep working after user code replaces Map.prototype (the tamper tests in worker_threads.test.ts).
 const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
-const { tickInitHooks, newAsyncId } = require("internal/async_hooks_tick");
 
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
@@ -289,7 +292,6 @@ function injectFakeEmitter(Class) {
   Object.setPrototypeOf(proto, inherited);
 }
 
-const _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
 
 const MessagePort = _MessagePort;
@@ -599,7 +601,7 @@ let parentPort: MessagePort | null = null;
 // postMessageToThread (Node 22+): the Worker ctor always smuggles a control
 // MessagePort to the worker by wrapping workerData; unwrap it here.
 const messaging = require("internal/worker/messaging");
-messaging.initThreadInfo(threadId, isMainThread);
+messaging.initThreadInfo(threadId, isMainThread, MessageChannel);
 // Captured stdio + the messaging control port ride inside workerData (wrapped;
 // ports transferred). Unwrap and bind the worker's stdio / messaging hub.
 // Gate on _isNodeWorker so a raw `new globalThis.Worker` that loads this module
@@ -1000,6 +1002,7 @@ class Worker extends EventEmitter {
   }
 
   #emitAsyncHooksInit() {
+    const { tickInitHooks, newAsyncId } = require("internal/async_hooks_tick");
     const count = tickInitHooks.length;
     if (count === 0) return;
     const worker = this;
@@ -1073,6 +1076,7 @@ class Worker extends EventEmitter {
   }
 
   #eventLoopUtilization(utilization1, utilization2) {
+    const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
     return internalEventLoopUtilization(_workerEventLoopUtilization(this.#worker), utilization1, utilization2);
   }
 
@@ -1118,7 +1122,7 @@ class Worker extends EventEmitter {
 
   getHeapSnapshot(options: unknown) {
     const stringPromise = this.#worker.getHeapSnapshot(options);
-    return stringPromise.then(s => new HeapSnapshotStream(s));
+    return stringPromise.then(makeHeapSnapshotStream);
   }
 
   getHeapStatistics() {
@@ -1281,21 +1285,25 @@ class Worker extends EventEmitter {
   }
 }
 
-class HeapSnapshotStream extends Readable {
-  #json: string | undefined;
+let _HeapSnapshotStream;
+function makeHeapSnapshotStream(json: string) {
+  _HeapSnapshotStream ??= class HeapSnapshotStream extends require("internal/streams/readable") {
+    #json: string | undefined;
 
-  constructor(json: string) {
-    super();
-    this.#json = json;
-  }
-
-  _read() {
-    if (this.#json !== undefined) {
-      this.push(this.#json);
-      this.push(null);
-      this.#json = undefined;
+    constructor(json: string) {
+      super();
+      this.#json = json;
     }
-  }
+
+    _read() {
+      if (this.#json !== undefined) {
+        this.push(this.#json);
+        this.push(null);
+        this.#json = undefined;
+      }
+    }
+  };
+  return new _HeapSnapshotStream(json);
 }
 
 export default {

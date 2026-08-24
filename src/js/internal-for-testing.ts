@@ -638,6 +638,15 @@ export const socketFaultInjection = {
   /** Disarm all fault rules. */
   clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
 };
+
+export const namedPipeInternals = {
+  /**
+   * Live native contexts behind sockets over Windows named pipes: one per
+   * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
+   * one per accepted pipe client. Always 0 on other platforms.
+   */
+  liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
+};
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,
@@ -695,6 +704,8 @@ export const getEventLoopStats: () => {
   numPolls: number;
   loopActive: boolean;
   eventLoopAlive: boolean;
+  /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
+  iteration: number;
 } = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
 export const hostedGitInfo = {
@@ -772,3 +783,11 @@ export const byteStreamInternals = {
     stream: ReadableStream,
   ) => void,
 };
+
+// How many internal modules (node:fs etc.) this process created from bytecode embedded by `bun build --compile
+// --bytecode` instead of parsing their source.
+export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
+  "InternalModuleRegistry.cpp",
+  "jsInternalModulesLoadedFromBytecode",
+  0,
+);

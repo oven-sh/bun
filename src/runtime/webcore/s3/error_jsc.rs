@@ -137,11 +137,7 @@ impl JSS3Error {
         }
     }
 
-    // The three `bun_core::String` fields deref themselves via `Drop`, so no
-    // explicit `Drop` impl is needed here.
-
     fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
-        // `defer this.deinit()` → `self` is consumed and dropped at scope exit.
         S3Error__toErrorInstance(&self, global)
     }
 }

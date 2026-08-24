@@ -963,6 +963,77 @@ describe("options.transfer iterator error propagation", () => {
   });
 });
 
+// The transfer list is read through the iterator protocol. A Set iterator hands back plain
+// {value, done} objects; a custom next() can return anything, including accessors, and those
+// must still run in IteratorComplete, IteratorValue order.
+describe("options.transfer iterator results", () => {
+  test("a Set of buffers is transferred", () => {
+    const a = new ArrayBuffer(4);
+    const b = new ArrayBuffer(8);
+    const cloned = structuredClone([a, b], { transfer: new Set([a, b]) } as any);
+    expect({
+      clonedLengths: cloned.map((x: ArrayBuffer) => x.byteLength),
+      originalLengths: [a.byteLength, b.byteLength],
+    }).toEqual({ clonedLengths: [4, 8], originalLengths: [0, 0] });
+  });
+
+  test("done and value accessors on a custom iterator result are honored", () => {
+    const buffers = [new ArrayBuffer(4), new ArrayBuffer(8)];
+    const reads: string[] = [];
+    let i = 0;
+    const transfer = {
+      [Symbol.iterator]() {
+        return {
+          next() {
+            const n = i++;
+            return {
+              get done() {
+                reads.push(`done${n}`);
+                return n >= buffers.length;
+              },
+              get value() {
+                reads.push(`value${n}`);
+                // IteratorStepValue: the value of a done result is never read.
+                if (n >= buffers.length) throw new Error("value read on a done result");
+                return buffers[n];
+              },
+            };
+          },
+        };
+      },
+    };
+    const cloned = structuredClone(buffers, { transfer } as any);
+    expect({
+      clonedLengths: cloned.map((x: ArrayBuffer) => x.byteLength),
+      originalLengths: buffers.map(x => x.byteLength),
+      reads,
+    }).toEqual({
+      clonedLengths: [4, 8],
+      originalLengths: [0, 0],
+      reads: ["done0", "value0", "done1", "value1", "done2"],
+    });
+  });
+
+  test("a {value, done} result given a done accessor afterwards uses the accessor", () => {
+    const buffer = new ArrayBuffer(4);
+    let i = 0;
+    const transfer = {
+      [Symbol.iterator]() {
+        return {
+          next() {
+            const n = i++;
+            const result = { value: buffer, done: false };
+            Object.defineProperty(result, "done", { get: () => n >= 1 });
+            return result;
+          },
+        };
+      },
+    };
+    const cloned = structuredClone(buffer, { transfer } as any);
+    expect([cloned.byteLength, buffer.byteLength]).toEqual([4, 0]);
+  });
+});
+
 describe("truncated Set/Map payloads are rejected without hanging", () => {
   // Wire header + tag bytes derived from a real serialize() so a CurrentVersion
   // bump doesn't invalidate the crafted payloads.
@@ -1018,5 +1089,33 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
   test("valid Set and Map payloads still round-trip", () => {
     expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});
+
+describe("string constant pool entries survive GC during deserialization", () => {
+  // A string that appears twice in one payload is materialized once and referenced by index the
+  // second time. If the only object holding the first JSString drops it (here: a Map key that the
+  // payload sets twice) and the heap is collected before the back-reference is read, the
+  // deserializer must still hand back the original string.
+  test("Map value re-set during serialization", () => {
+    for (let iteration = 0; iteration < 1; iteration++) {
+      const expected = "Expected result " + iteration;
+      const map = new Map();
+      map.set("free", expected);
+      map.set("tmp", {
+        get a() {
+          map.delete("free");
+          map.set("free", 0x1234);
+          for (let i = 0; i < 0x10; i++) map.set("gc1_" + i, new ArrayBuffer(1024 * 1024 * 0x10));
+          for (let i = 0; i < 0x800; i++) map.set("gc2_" + i, new Date());
+          map.set("expected", expected);
+          return 1;
+        },
+      });
+      const result = structuredClone(map);
+      expect(result.get("expected")).toBe(expected);
+      expect(result.get("free")).toBe(0x1234);
+      expect(result.get("tmp")).toEqual({ a: 1 });
+    }
   });
 });

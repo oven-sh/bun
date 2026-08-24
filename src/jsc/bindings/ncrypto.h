@@ -62,7 +62,6 @@ namespace ncrypto {
 
 #if NCRYPTO_DEVELOPMENT_CHECKS
 #define NCRYPTO_STR(x) #x
-#define NCRYPTO_REQUIRE(EXPR) ASSERT_WITH_MESSAGE(EXPR, "Assertion failed")
 #define NCRYPTO_FAIL(MESSAGE) ASSERT_WITH_MESSAGE(false, MESSAGE)
 #define NCRYPTO_ASSERT_EQUAL(LHS, RHS, MESSAGE) \
     ASSERT_WITH_MESSAGE(LHS == RHS, MESSAGE)
@@ -115,7 +114,6 @@ public:
     // Add an error message to the end of the stack.
     void add(WTF::String message);
 
-    inline const WTF::String& peek_back() const { return errors_.back(); }
     inline size_t size() const { return errors_.size(); }
     inline bool empty() const { return errors_.empty(); }
 
@@ -265,20 +263,11 @@ public:
     inline operator const EVP_MD*() const { return md_; }
     inline operator bool() const { return md_ != nullptr; }
 
-    static const Digest& MD5();
-    static const Digest& SHA1();
-    static const Digest& SHA256();
-    static const Digest& SHA384();
-    static const Digest& SHA512();
-
     static const Digest FromName(WTF::StringView name);
 
 private:
     const EVP_MD* md_ = nullptr;
 };
-
-DataPointer hashDigest(const Buffer<const unsigned char>& data,
-    const EVP_MD* md);
 
 class Cipher final {
 public:
@@ -313,7 +302,6 @@ public:
 
     bool isGcmMode() const;
     bool isWrapMode() const;
-    bool isCtrMode() const;
     bool isCcmMode() const;
     bool isOcbMode() const;
     bool isStreamMode() const;
@@ -321,20 +309,9 @@ public:
 
     bool isSupportedAuthenticatedMode() const;
 
-    int bytesToKey(const Digest& digest,
-        const Buffer<const unsigned char>& input,
-        unsigned char* key,
-        unsigned char* iv) const;
-
     static const Cipher FromName(WTF::StringView name);
     static const Cipher FromNid(int nid);
     static const Cipher FromCtx(const CipherCtxPointer& ctx);
-
-    using CipherNameCallback = WTF::Function<void(WTF::StringView name)>;
-
-    // Iterates the known ciphers if the underlying implementation
-    // is able to do so.
-    static void ForEach(CipherNameCallback&& callback);
 
     // Utilities to get various ciphers by type. If the underlying
     // implementation does not support the requested cipher, then
@@ -345,15 +322,6 @@ public:
     static const Cipher& AES_128_CBC();
     static const Cipher& AES_192_CBC();
     static const Cipher& AES_256_CBC();
-    static const Cipher& AES_128_CTR();
-    static const Cipher& AES_192_CTR();
-    static const Cipher& AES_256_CTR();
-    static const Cipher& AES_128_GCM();
-    static const Cipher& AES_192_GCM();
-    static const Cipher& AES_256_GCM();
-    static const Cipher& AES_128_KW();
-    static const Cipher& AES_192_KW();
-    static const Cipher& AES_256_KW();
 
     struct CipherParams {
         int padding;
@@ -450,13 +418,6 @@ public:
 
     using CipherParams = Cipher::CipherParams;
 
-    static DataPointer encrypt(const EVPKeyPointer& key,
-        const CipherParams& params,
-        const Buffer<const void> in);
-    static DataPointer decrypt(const EVPKeyPointer& key,
-        const CipherParams& params,
-        const Buffer<const void> in);
-
 private:
     OSSL3_CONST RSA* rsa_;
 };
@@ -468,7 +429,6 @@ public:
     NCRYPTO_DISALLOW_COPY_AND_MOVE(Ec)
 
     const EC_GROUP* getGroup() const;
-    int getCurve() const;
 
     static int GetCurveIdFromName(const char* name);
 
@@ -486,17 +446,6 @@ public:
     static DataPointer Alloc(size_t len);
     static DataPointer Copy(const Buffer<const void>& buffer);
 
-    // Attempts to allocate the buffer space using the secure heap, if
-    // supported/enabled. If the secure heap is disabled, then this
-    // ends up being equivalent to Alloc(len). Note that allocation
-    // will fail if there is not enough free space remaining in the
-    // secure heap space.
-    static DataPointer SecureAlloc(size_t len);
-
-    // If the secure heap is enabled, returns the amount of data that
-    // has been allocated from the heap.
-    static size_t GetSecureHeapUsed();
-
     static DataPointer FromSpan(std::span<const uint8_t> span)
     {
         if (span.empty()) return {};
@@ -507,20 +456,9 @@ public:
         return {};
     }
 
-    enum class InitSecureHeapResult {
-        FAILED,
-        UNABLE_TO_MEMORY_MAP,
-        OK,
-    };
-
-    // Attempt to initialize the secure heap. The secure heap is not
-    // supported on all operating systems and whenever boringssl is
-    // used.
-    static InitSecureHeapResult TryInitSecureHeap(size_t amount, size_t min);
-
     DataPointer() = default;
-    explicit DataPointer(void* data, size_t len, bool secure = false);
-    explicit DataPointer(const Buffer<void>& buffer, bool secure = false);
+    explicit DataPointer(void* data, size_t len);
+    explicit DataPointer(const Buffer<void>& buffer);
     DataPointer(DataPointer&& other) noexcept;
     DataPointer& operator=(DataPointer&& other) noexcept;
     NCRYPTO_DISALLOW_COPY(DataPointer)
@@ -559,12 +497,9 @@ public:
         };
     }
 
-    bool isSecure() const { return secure_; }
-
 private:
     void* data_ = nullptr;
     size_t len_ = 0;
-    bool secure_ = false;
 };
 
 class BIOPointer final {
@@ -572,13 +507,9 @@ class BIOPointer final {
 
 public:
     static BIOPointer NewMem();
-    static BIOPointer NewSecMem();
     static BIOPointer New(const BIO_METHOD* method);
     static BIOPointer New(const void* data, size_t len);
     static BIOPointer New(const BIGNUM* bn);
-    static BIOPointer NewFile(WTF::StringView filename, WTF::StringView mode);
-    static BIOPointer NewFp(FILE* fd, int flags);
-
     template<typename T>
     static BIOPointer New(const Buffer<T>& buf)
     {
@@ -616,13 +547,6 @@ public:
 
     static int Write(BIOPointer* bio, WTF::StringView message);
 
-    template<typename... Args>
-    static void Printf(BIOPointer* bio, const char* format, Args... args)
-    {
-        if (bio == nullptr || !*bio) return;
-        BIO_printf(bio->get(), format, std::forward<Args...>(args...));
-    }
-
 private:
     mutable DeleteFnPtr<BIO, BIO_free_all> bio_;
 };
@@ -647,8 +571,6 @@ public:
     void reset(const unsigned char* data, size_t len);
     BIGNUM* release();
 
-    bool isOne() const;
-
     bool setWord(unsigned long w); // NOLINT(runtime/int)
     // std::nullopt when the value does not fit in a single BN_ULONG, which
     // BN_get_word reports as the all-ones word (otherwise a real value).
@@ -660,9 +582,7 @@ public:
     static DataPointer toHex(const BIGNUM* bn);
     DataPointer toHex() const;
     DataPointer encode() const;
-    DataPointer encodePadded(size_t size) const;
     size_t encodeInto(unsigned char* out) const;
-    size_t encodePaddedInto(unsigned char* out, size_t size) const;
 
     using PrimeCheckCallback = WTF::Function<bool(int, int)>;
     int isPrime(int checks,
@@ -674,17 +594,11 @@ public:
         const BignumPointer& rem;
     };
 
-    static BignumPointer NewPrime(
-        const PrimeConfig& params,
-        PrimeCheckCallback cb = defaultPrimeCheckCallback);
-
     bool generate(const PrimeConfig& params,
         PrimeCheckCallback cb = defaultPrimeCheckCallback) const;
 
     static BignumPointer New();
     static BignumPointer NewSecure();
-    static BignumPointer NewSub(const BignumPointer& a, const BignumPointer& b);
-    static BignumPointer NewLShift(size_t length);
 
     static DataPointer Encode(const BIGNUM* bn);
     static DataPointer EncodePadded(const BIGNUM* bn, size_t size);
@@ -775,7 +689,6 @@ public:
     void reset(EVP_PKEY_CTX* ctx = nullptr);
     EVP_PKEY_CTX* release();
 
-    bool initForDerive(const EVPKeyPointer& peer);
     DataPointer derive() const;
 
     bool initForParamgen();
@@ -784,20 +697,15 @@ public:
     bool setEcParameters(int curve, int encoding);
 
     bool setRsaOaepMd(const Digest& md);
-    bool setRsaMgf1Md(const Digest& md);
     bool setRsaPadding(int padding);
     bool setRsaKeygenPubExp(BignumPointer&& e);
     bool setRsaKeygenBits(int bits);
     bool setRsaPssKeygenMd(const Digest& md);
     bool setRsaPssKeygenMgf1Md(const Digest& md);
     bool setRsaPssSaltlen(int salt_len);
-    bool setRsaImplicitRejection();
     bool setRsaOaepLabel(DataPointer&& data);
 
     bool setSignatureMd(const EVPMDCtxPointer& md);
-
-    bool publicCheck() const;
-    bool privateCheck() const;
 
     bool verify(const Buffer<const unsigned char>& sig,
         const Buffer<const unsigned char>& data);
@@ -812,7 +720,6 @@ public:
 
     EVPKeyPointer paramgen() const;
 
-    bool initForEncrypt();
     bool initForDecrypt();
     bool initForKeygen();
     int initForVerify();
@@ -937,7 +844,6 @@ public:
     size_t rawPrivateKeySize() const;
     DataPointer rawPublicKey() const;
     DataPointer rawPrivateKey() const;
-    BIOPointer derPublicKey() const;
 
     Result<BIOPointer, bool> writePrivateKey(
         const PrivateKeyEncodingConfig& config) const;
@@ -1075,8 +981,6 @@ public:
     BIOPointer getInfoAccess() const;
     BIOPointer getValidFrom() const;
     BIOPointer getValidTo() const;
-    int64_t getValidFromTime() const;
-    int64_t getValidToTime() const;
     std::optional<std::string_view> getSignatureAlgorithm() const;
     std::optional<std::string> getSignatureAlgorithmOID() const;
     DataPointer getSerialNumber() const;
@@ -1115,14 +1019,6 @@ public:
     CheckMatch checkEmail(const std::span<const char> email, int flags) const;
     CheckMatch checkIp(const char* ip, int flags) const;
 
-    using UsageCallback = WTF::Function<void(std::span<const char>)>;
-    bool enumUsages(UsageCallback&& callback) const;
-
-    template<typename T>
-    using KeyCallback = WTF::Function<bool(const T& t)>;
-    bool ifRsa(KeyCallback<Rsa>&& callback) const;
-    bool ifEc(KeyCallback<Ec>&& callback) const;
-
 private:
     const X509* cert_ = nullptr;
 };
@@ -1152,7 +1048,6 @@ public:
     operator X509View() const { return view(); }
 
     static WTF::ASCIILiteral ErrorCode(int32_t err);
-    static std::optional<WTF::ASCIILiteral> ErrorReason(int32_t err);
 
 private:
     DeleteFnPtr<X509, X509_free> cert_;
@@ -1276,7 +1171,6 @@ public:
     static const EC_POINT* GetPublicKey(const EC_KEY* key);
     static const BIGNUM* GetPrivateKey(const EC_KEY* key);
     static const EC_GROUP* GetGroup(const EC_KEY* key);
-    static int GetGroupName(const EC_KEY* key);
     static bool Check(const EC_KEY* key);
 
 private:
@@ -1362,10 +1256,6 @@ private:
 // FIPS
 bool isFipsEnabled();
 
-bool setFipsEnabled(bool enabled, CryptoErrorList* errors);
-
-bool testFipsEnabled();
-
 // ============================================================================
 // Various utilities
 
@@ -1412,31 +1302,5 @@ DataPointer hkdf(const Digest& md,
     const Buffer<const unsigned char>& info,
     const Buffer<const unsigned char>& salt,
     size_t length);
-
-bool checkScryptParams(uint64_t N, uint64_t r, uint64_t p, uint64_t maxmem);
-
-DataPointer scrypt(const Buffer<const char>& pass,
-    const Buffer<const unsigned char>& salt,
-    uint64_t N,
-    uint64_t r,
-    uint64_t p,
-    uint64_t maxmem,
-    size_t length);
-
-DataPointer pbkdf2(const Digest& md,
-    const Buffer<const char>& pass,
-    const Buffer<const unsigned char>& salt,
-    uint32_t iterations,
-    size_t length);
-
-// ============================================================================
-// Version metadata
-#define NCRYPTO_VERSION "0.0.1"
-
-enum {
-    NCRYPTO_VERSION_MAJOR = 0,
-    NCRYPTO_VERSION_MINOR = 0,
-    NCRYPTO_VERSION_REVISION = 1,
-};
 
 } // namespace ncrypto

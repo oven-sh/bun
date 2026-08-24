@@ -109,7 +109,7 @@ CPP_DECL bool JSC__JSString__is8Bit(const JSC::JSString* arg0);
 CPP_DECL void JSC__JSString__iterator(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, void* arg2);
 CPP_DECL size_t JSC__JSString__length(const JSC::JSString* arg0);
 CPP_DECL JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject* arg1);
-CPP_DECL void JSC__JSString__toZigString(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, ZigString* arg2);
+CPP_DECL BunString JSC__JSString__view(JSC::JSString* arg0, JSC::JSGlobalObject* arg1);
 
 #pragma mark - JSC::JSModuleLoader
 
@@ -228,12 +228,12 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObj
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__bigIntFromLatin1(JSC::JSGlobalObject* arg0, const uint8_t* arg1, size_t arg2);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromTimevalNoTruncate(JSC::JSGlobalObject* arg0, int64_t nsec, int64_t sec);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__bigIntSum(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1);
-CPP_DECL void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2);
+CPP_DECL BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
-CPP_DECL void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2);
+CPP_DECL BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__getPrototype(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
-CPP_DECL void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2);
+CPP_DECL BunString JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__hasOwnProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString arg2);
 CPP_DECL bool JSC__JSValue__isAggregateError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
@@ -280,7 +280,7 @@ CPP_DECL void JSC__JSValue__putIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
 CPP_DECL void JSC__JSValue__putRecord(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3, size_t arg4);
 CPP_DECL bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL bool JSC__JSValue__stringIncludes(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__symbolFor(JSC::JSGlobalObject* arg0, ZigString* arg1);
+CPP_DECL JSC::EncodedJSValue JSC__JSValue__symbolFor(JSC::JSGlobalObject* arg0, const BunString* arg1);
 CPP_DECL bool JSC__JSValue__symbolKeyFor(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL bool JSC__JSValue__toBoolean(JSC::EncodedJSValue JSValue0);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0);
@@ -290,9 +290,9 @@ CPP_DECL bool JSC__JSValue__toMatch(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
 CPP_DECL JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::JSString* JSC__JSValue__toString(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::JSString* JSC__JSValue__toStringOrNull(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
+CPP_DECL JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global, BunString* view);
 CPP_DECL uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue JSValue0);
 CPP_DECL void JSC__JSValue__toZigException(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigException* arg2);
-CPP_DECL void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, ZigString* arg1, JSC::JSGlobalObject* arg2);
 
 #pragma mark - JSC::VM
 
@@ -425,8 +425,6 @@ extern "C" JSC::EncodedJSValue SYSV_ABI Reader__intptr__slowpath(JSC::JSGlobalOb
 #pragma mark - Zig::GlobalObject
 
 CPP_DECL JSC::JSGlobalObject* Zig__GlobalObject__create(void* arg0, int32_t arg1, bool arg2, bool arg3, void* arg4);
-CPP_DECL void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0);
-CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject* arg0, void* arg1);
 
 #ifdef __cplusplus
 
@@ -434,7 +432,7 @@ ZIG_DECL void Zig__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC::JSGlo
 ZIG_DECL void Zig__GlobalObject__onCrash();
 ZIG_DECL JSC::EncodedJSValue Zig__GlobalObject__promiseRejectionTracker(JSC::JSGlobalObject* arg0, JSC::JSPromise* arg1, uint32_t JSPromiseRejectionOperation2);
 ZIG_DECL JSC::EncodedJSValue Zig__GlobalObject__reportUncaughtException(JSC::JSGlobalObject* arg0, JSC::Exception* arg1);
-ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC::JSGlobalObject* arg1, BunString* arg2, BunString* arg3, BunString* arg4);
+ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC::JSGlobalObject* arg1, const BunString* arg2, const BunString* arg3, BunString* arg4);
 
 #endif
 
@@ -600,10 +598,10 @@ ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
 ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     JSC::JSGlobalObject* globalObject, CppWebSocket* websocket,
     const BunString* host, uint16_t port, const BunString* path, const BunString* protocols,
-    BunString* headerNames, BunString* headerValues, size_t headerCount,
+    const BunString* headerNames, size_t headerNamesCount, const BunString* headerValues, size_t headerValuesCount,
     const BunString* proxyHost, uint16_t proxyPort,
     const BunString* proxyAuthorization,
-    BunString* proxyHeaderNames, BunString* proxyHeaderValues, size_t proxyHeaderCount,
+    const BunString* proxyHeaderNames, size_t proxyHeaderNamesCount, const BunString* proxyHeaderValues, size_t proxyHeaderValuesCount,
     void* sslConfig, bool targetIsSecure,
     const BunString* targetAuthorization,
     const BunString* unixSocketPath,
@@ -617,10 +615,10 @@ ZIG_DECL void Bun__WebSocketHTTPSClient__cancel(WebSocketHTTPSClient* arg0);
 ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     JSC::JSGlobalObject* globalObject, CppWebSocket* websocket,
     const BunString* host, uint16_t port, const BunString* path, const BunString* protocols,
-    BunString* headerNames, BunString* headerValues, size_t headerCount,
+    const BunString* headerNames, size_t headerNamesCount, const BunString* headerValues, size_t headerValuesCount,
     const BunString* proxyHost, uint16_t proxyPort,
     const BunString* proxyAuthorization,
-    BunString* proxyHeaderNames, BunString* proxyHeaderValues, size_t proxyHeaderCount,
+    const BunString* proxyHeaderNames, size_t proxyHeaderNamesCount, const BunString* proxyHeaderValues, size_t proxyHeaderValuesCount,
     void* sslConfig, bool targetIsSecure,
     const BunString* targetAuthorization,
     const BunString* unixSocketPath,
@@ -639,7 +637,7 @@ ZIG_DECL void Bun__WebSocketClient__cancel(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__dropConnectionWithoutCallback(WebSocketClient* arg0);
-ZIG_DECL void* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, unsigned char* arg3, size_t arg4, const PerMessageDeflateParams* arg5, void* customSSLCtx);
+ZIG_DECL WebSocketClient* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx);
 ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const ZigString* arg1, unsigned char arg2);
 ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
@@ -652,7 +650,7 @@ ZIG_DECL void Bun__WebSocketClientTLS__cancel(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__dropConnectionWithoutCallback(WebSocketClientTLS* arg0);
-ZIG_DECL void* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, unsigned char* arg3, size_t arg4, const PerMessageDeflateParams* arg5, void* customSSLCtx);
+ZIG_DECL WebSocketClientTLS* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx);
 ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const ZigString* arg1, unsigned char arg2);
 ZIG_DECL size_t Bun__WebSocketClientTLS__memoryCost(WebSocketClientTLS* arg0);
@@ -667,8 +665,8 @@ ZIG_DECL JSC::EncodedJSValue Bun__Process__getCwd(JSC::JSGlobalObject* arg0);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__createExecArgv(JSC::JSGlobalObject* arg0);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getExecPath(JSC::JSGlobalObject* arg0);
 ZIG_DECL bool Bun__Process__hasTitle();
-ZIG_DECL void Bun__Process__getTitle(JSC::JSGlobalObject* arg0, BunString* arg1);
-ZIG_DECL void Bun__Process__setTitle(JSC::JSGlobalObject* arg0, BunString* arg1);
+ZIG_DECL BunString Bun__Process__getTitle(JSC::JSGlobalObject* arg0);
+ZIG_DECL void Bun__Process__setTitle(JSC::JSGlobalObject* arg0, const BunString* arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__setCwd(JSC::JSGlobalObject* arg0, ZigString* arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getEval(JSC::JSGlobalObject* arg0);
 

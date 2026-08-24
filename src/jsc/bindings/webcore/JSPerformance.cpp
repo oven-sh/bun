@@ -68,10 +68,7 @@
 #include <wtf/URL.h>
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
+#include <JavaScriptCore/FrameTracers.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -565,38 +562,8 @@ void JSPerformanceOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* contex
     uncacheWrapper(world, &jsPerformance->wrapped(), jsPerformance);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7Performance@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore11PerformanceE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Performance>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<Performance>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7Performance@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore11PerformanceE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // Performance has subclasses. If Performance has subclasses that get passed
-        // to toJS() we currently require Performance you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<Performance>(globalObject, WTF::move(impl));
 }
 

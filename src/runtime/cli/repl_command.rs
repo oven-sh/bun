@@ -55,8 +55,10 @@ impl ReplCommand {
             )?;
         }
 
-        // Initialize JSC
-        jsc::initialize(true); // true for eval mode
+        jsc::initialize(jsc::InitializeOptions {
+            eval_mode: true,
+            ..Default::default()
+        });
 
         bun_ast::initialize_store();
         // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
@@ -180,7 +182,6 @@ impl ReplCommand {
     fn dump_build_error(vm: &VirtualMachine) {
         Output::flush();
         let writer = Output::error_writer_buffered();
-        // defer Output.flush()
         let _flush = Output::flush_guard();
         if let Some(log) = vm.log {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.

@@ -213,7 +213,6 @@ declare function $code(): TODO;
 declare function $createFIFO(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $data(): TODO;
-declare function $dataView(): TODO;
 declare function $decode(): TODO;
 declare function $dirname(): TODO;
 declare function $encoding(): TODO;
@@ -221,10 +220,7 @@ declare function $end(): TODO;
 declare function $errno(): TODO;
 declare function $extname(): TODO;
 declare function $fatal(): TODO;
-declare function $filePath(): TODO;
-declare function $filter(): TODO;
 declare function $format(): TODO;
-declare function $fulfillModuleSync(key: string): void;
 declare function $esmNamespaceForCjs(key: string): any | undefined;
 declare function $esmRegistryDelete(key: string): boolean;
 declare function $esmRegistryEvaluatedKeys(): string[];
@@ -241,11 +237,9 @@ declare function $internalRequire(id: string, parent: JSCommonJSModule): TODO;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $join(): TODO;
-declare function $loadModule(): TODO;
 declare function $main(): TODO;
 declare function $makeDOMException(): TODO;
 declare function $makeGetterTypeError(className: string, prop: string): Error;
-declare function $map(): TODO;
 declare function $method(): TODO;
 declare function $normalize(): TODO;
 declare function $parse(): TODO;
@@ -268,9 +262,9 @@ declare function $resolveSync(
   isESM?: boolean,
   isUserRequireResolve?: boolean,
   paths?: string[],
+  parentModule?: JSCommonJSModule,
+  resolveFilenameOptions?: unknown,
 ): string;
-declare function $search(): TODO;
-declare function $searchParams(): TODO;
 declare function $self(): TODO;
 declare function $size(): TODO;
 declare function $start(): TODO;
@@ -279,7 +273,6 @@ declare function $stream(): TODO;
 declare function $syscall(): TODO;
 declare function $toNamespacedPath(): TODO;
 declare function $url(): TODO;
-declare function $whenSignalAborted(signal: AbortSignal, cb: (reason: any) => void): TODO;
 declare function $writable(): TODO;
 declare function $write(): TODO;
 declare function $writer(): TODO;
@@ -547,8 +540,6 @@ declare function $ERR_HTTP2_PING_CANCEL(): Error;
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
 
 declare function $min(a: number, b: number): number;
-
-declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: number): undefined;
 
 interface Map<K, V> {
   $get: typeof Map.prototype.get;

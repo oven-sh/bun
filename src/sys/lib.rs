@@ -38,14 +38,14 @@ impl From<Error> for bun_errno::SystemErrno {
 pub struct SystemError {
     pub errno: core::ffi::c_int,
     /// label for errno
-    pub code: bun_core::OwnedString,
+    pub code: bun_core::String,
     /// it is illegal to have an empty message
-    pub message: bun_core::OwnedString,
-    pub path: bun_core::OwnedString,
-    pub syscall: bun_core::OwnedString,
-    pub hostname: bun_core::OwnedString,
+    pub message: bun_core::String,
+    pub path: bun_core::String,
+    pub syscall: bun_core::String,
+    pub hostname: bun_core::String,
     pub fd: Option<core::ffi::c_int>,
-    pub dest: bun_core::OwnedString,
+    pub dest: bun_core::String,
 }
 impl SystemError {
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
@@ -3533,12 +3533,8 @@ impl TimeLike {
 }
 #[cfg(unix)]
 pub const UTIME_NOW: i64 = libc::UTIME_NOW;
-#[cfg(unix)]
-pub const UTIME_OMIT: i64 = libc::UTIME_OMIT;
 #[cfg(windows)]
 pub const UTIME_NOW: i64 = -1;
-#[cfg(windows)]
-pub const UTIME_OMIT: i64 = -2;
 
 #[cfg(windows)]
 #[path = "sys_uv.rs"]
@@ -4962,7 +4958,7 @@ pub mod c {
         pub safe fn getgid() -> libc::gid_t;
     }
     #[cfg(unix)]
-    pub use super::{UTIME_NOW, UTIME_OMIT};
+    pub use super::UTIME_NOW;
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -5057,9 +5053,7 @@ pub mod c {
         vm_statistics64,
         vm_statistics64_data_t,
     };
-    // `UTIME_NOW`/`UTIME_OMIT` — already re-exported via
-    // `pub use super::{UTIME_NOW, UTIME_OMIT}` above (top-level `#[cfg(unix)]`
-    // consts cast `libc::UTIME_NOW`/`_OMIT` to i64).
+
     /// Safe rc-returning `clonefile(2)` — callers that want their own
     /// `sys::Tag` / path boxing (`errno_sys_p`) take the raw `c_int` instead
     /// of the `Maybe<()>`-shaped [`super::clonefile`].
@@ -7652,7 +7646,7 @@ pub fn environ() -> &'static [*const c_char] {
     #[cfg(windows)]
     {
         // Populated by `windows::env::convert_env_to_wtf8()` at startup
-        // (bun_bin/lib.rs). The slice is NUL-terminated WTF-8
+        // (bun_runtime::bin_entry). The slice is NUL-terminated WTF-8
         // C strings; the underlying allocation is `Box::leak`'d for the
         // process lifetime so `'static` here is sound.
         // SAFETY: written exactly once at startup before any reader runs.
@@ -9388,7 +9382,7 @@ fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
 
 // Backs `bun_core::OutputSink[Sys]` — stderr/mkdir/open/QuietWriter.
 bun_core::link_impl_OutputSink! {
-    Sys for () => |_this| {
+    Sys for extern () => |_this| {
         stderr() => bun_core::output::File(Fd::stderr()),
         make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(|_| bun_core::Error::Unexpected),
         create_file(cwd, path) =>

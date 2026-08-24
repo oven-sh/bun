@@ -22,6 +22,7 @@
 
 #include "root.h"
 
+#include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <wtf/NeverDestroyed.h>
@@ -64,6 +65,30 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const std::span<const uint8_t> data);
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore);
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject);
+
+class JSBufferConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::HasStaticPropertyTable;
+
+    ~JSBufferConstructor() = default;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSBufferConstructor*>(cell)->JSBufferConstructor::~JSBufferConstructor();
+    }
+
+    static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*);
+
+    DECLARE_INFO;
+
+    static JSBufferConstructor* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, JSC::JSObject* prototype);
+
+private:
+    JSBufferConstructor(JSC::VM&, JSC::Structure*);
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
+};
 
 JSC_DECLARE_HOST_FUNCTION(constructSlowBuffer);
 JSC::JSObject* createBufferPrototype(JSC::VM&, JSC::JSGlobalObject*);

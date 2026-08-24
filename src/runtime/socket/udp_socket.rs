@@ -969,9 +969,7 @@ impl UDPSocket {
             None
         };
 
-        // Fetched only after every argument has been converted: `parse_addr`
-        // runs user `toString`, which may close this socket and free its fd
-        // number for reuse.
+        // After the last `parse_addr`: its user `toString` may have closed this socket.
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
@@ -1072,8 +1070,7 @@ impl UDPSocket {
             None
         };
 
-        // See `set_membership`: the socket is fetched after the last
-        // `parse_addr`, whose user `toString` may have closed it.
+        // After the last `parse_addr`: its user `toString` may have closed this socket.
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };

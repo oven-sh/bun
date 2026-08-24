@@ -37,11 +37,11 @@ use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Respo
 // ConcurrentTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
-/// How much of a body nothing is reading is taken off the socket before the transport is left
-/// paused, whether it waits in `scheduled_response_buffer` (`FetchTasklet::callback`) or in a
-/// stream (`FetchTasklet::after_body_chunk_delivered`). Below this an unread body still
-/// completes, which frees the connection for reuse; above it memory stays bounded.
-const UNOBSERVED_BODY_HIGH_WATER_MARK: usize = 256 * 1024;
+/// Receive backpressure high-water mark (`BodyReceiveMode`). Bytes no consumer has taken sit in
+/// `scheduled_response_buffer` (checked by `callback`, HTTP thread) or in the body's ByteStream
+/// (checked by `after_body_chunk_delivered`, JS thread); either side pauses the transport once
+/// its share reaches this. A body shorter than this completes unread, which frees its connection.
+const BODY_HIGH_WATER_MARK: usize = 256 * 1024;
 
 use boringssl::c::{X509_free, d2i_X509};
 
@@ -125,8 +125,8 @@ pub struct FetchTasklet {
     /// ref also roots the stream's JS wrapper, except while the body is parked
     /// (`body_stream_parked`).
     pub(crate) response_stream_source: Cell<Option<NonNull<crate::webcore::byte_stream::Source>>>,
-    /// Nothing reads the body stream and it holds `UNOBSERVED_BODY_HIGH_WATER_MARK` bytes: the
-    /// transport is left paused, the loop is released, and the stream is left collectable
+    /// The body stream holds `BODY_HIGH_WATER_MARK` bytes and nothing reads it: the transport is
+    /// paused, the loop is released, and the stream is left collectable
     /// (`on_body_stream_collected`). A consumer that drains the stream's buffer or a native
     /// sink that attaches unparks it.
     pub(crate) body_stream_parked: Cell<bool>,
@@ -163,10 +163,6 @@ pub struct FetchTasklet {
     // Custom Hostname
     pub(crate) hostname: Option<Box<[u8]>>,
     pub(crate) is_waiting_body: bool,
-    /// Set by `on_start_buffering_callback` (JS thread) and read by
-    /// `callback()` (HTTP thread, under `mutex`): the body is being
-    /// accumulated in `scheduled_response_buffer` for a buffered consumer.
-    pub(crate) is_buffering_body: AtomicBool,
     pub(crate) is_waiting_abort: bool,
     pub(crate) is_waiting_request_stream_start: bool,
     pub(crate) mutex: Mutex,
@@ -1628,9 +1624,6 @@ impl FetchTasklet {
                 this.response_stream_source.set(NonNull::new(source));
             }
         }
-        // A ByteStream now drains scheduled_response_buffer per chunk; undo any
-        // buffered-consumer reservation request so callback() stops growing it.
-        this.is_buffering_body.store(false, Ordering::Release);
     }
 
     fn on_start_streaming_http_response_body_callback(ctx: NonNull<c_void>) -> DrainResult {
@@ -1645,28 +1638,16 @@ impl FetchTasklet {
         this.poll_ref
             .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
 
-        if let Some(http_) = this.http.as_mut() {
-            http_.enable_response_body_streaming();
-        }
-
         this.mutex.lock();
-        // A ByteStream is attaching; clear the buffered-consumer reserve gate
-        // under the mutex so the HTTP thread cannot observe the stale `true`
-        // in `callback()` between this unlock and `on_readable_stream_available`.
-        this.is_buffering_body.store(false, Ordering::Release);
         let size_hint = this.get_size_hint() as usize;
-        // This means we have received part of the body but not the whole thing.
         let drained = core::mem::take(&mut this.scheduled_response_buffer.list);
         this.mutex.unlock();
 
-        // The bytes taken above are the drain `Paused` was waiting for: flip back to
-        // `AutoPause` and resume. After the drain, not before: a chunk the HTTP thread
-        // appends (and pauses for) in between would otherwise be handed to the stream here
-        // with its task finding the buffer empty, and nothing left to undo that pause.
-        // Also covers headers and body arriving in separate writes with no follow-up
-        // data: the HTTP thread must flush what it has.
-        this.signal_store
-            .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause);
+        // After the take, not before: a chunk the HTTP thread appends (and pauses for) in
+        // between would otherwise reach the stream with its task finding the buffer empty, and
+        // nothing left to undo that pause. Unconditional: also flushes body bytes the client
+        // holds that arrived with no follow-up read (`drain_response_body`).
+        this.signal_store.unpause_receive();
         this.schedule_receive_resume();
 
         if drained.is_empty() {
@@ -1723,27 +1704,18 @@ impl FetchTasklet {
         }
     }
 
+    /// reader.cancel() / body.cancel(): the server has to see the close (Node, Deno and browsers
+    /// abort too).
     pub(crate) fn on_stream_cancelled(&mut self) {
-        if self.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
-            return;
-        }
-        // reader.cancel() / body.cancel() aborts the fetch so the server sees the
-        // close (Node/Deno/browsers abort unconditionally). abort_task() is idempotent.
         self.abort_task();
-        self.ignore_remaining_response_body();
+        self.abandon_response_body();
     }
 
     /// `SourceHandle::consumer_collected`: the parked stream's wrapper was swept, so nothing
-    /// can read the rest of the body. Inside a GC sweep: native state only, like
-    /// `on_response_finalize`. The abort comes back through the HTTP callback and the usual
-    /// teardown runs there.
+    /// can read the rest of the body. Inside a GC sweep, like `on_response_finalize`.
     pub(crate) fn on_body_stream_collected(&self) {
         bun_output::scoped_log!(FetchTasklet, "onBodyStreamCollected");
-        if self.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
-            return;
-        }
-        self.abort_transport();
-        self.ignore_remaining_response_body();
+        self.abandon_response_body();
     }
 
     pub(crate) fn on_stream_drained(&self) {
@@ -1752,10 +1724,7 @@ impl FetchTasklet {
     }
 
     fn resume_receive(&self) {
-        if self
-            .signal_store
-            .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause)
-        {
+        if self.signal_store.unpause_receive() {
             self.schedule_receive_resume();
         }
     }
@@ -1765,28 +1734,25 @@ impl FetchTasklet {
         self.unpark_body_stream();
     }
 
-    /// After a non-terminal delivery. A consumer waiting on the stream resumes the transport
-    /// itself as it drains. Bytes nothing took stay in the stream's buffer: keep receiving until
-    /// it holds `UNOBSERVED_BODY_HIGH_WATER_MARK` (a small body still completes, which frees the
-    /// connection), then park.
+    /// The JS-thread half of `BODY_HIGH_WATER_MARK` (the other half is in `callback`): the
+    /// stream's buffer now holds what no consumer took.
     fn after_body_chunk_delivered(&self, bytes: &crate::webcore::ByteStream) {
-        bun_output::scoped_log!(
-            FetchTasklet,
-            "afterBodyChunkDelivered sink={} action={} pending={} buffered={}",
-            bytes.sink.get().is_some(),
-            bytes.buffer_action.get().is_some(),
-            bytes.pending.get().state == crate::webcore::streams::PendingState::Pending,
-            bytes.buffered_len()
-        );
-        if bytes.sink.get().is_some()
-            || bytes.buffer_action.get().is_some()
-            || bytes.pending.get().state == crate::webcore::streams::PendingState::Pending
-        {
+        let buffered = bytes.buffered_len();
+        bun_output::scoped_log!(FetchTasklet, "afterBodyChunkDelivered buffered={}", buffered);
+        // `readableStreamTo*(res.body)`: a whole-body consumer, like `on_start_buffering_callback`.
+        if bytes.buffer_action.get().is_some() {
+            if self.signal_store.receive_all() {
+                self.schedule_receive_resume();
+            }
             return;
         }
-        if bytes.buffered_len() < UNOBSERVED_BODY_HIGH_WATER_MARK {
+        if buffered < BODY_HIGH_WATER_MARK {
             self.resume_receive();
-        } else {
+            return;
+        }
+        self.signal_store.pause_receive();
+        // A back-pressured sink resumes us when it drains (`on_stream_drained`).
+        if bytes.sink.get().is_none() {
             self.park_body_stream();
         }
     }
@@ -1821,11 +1787,7 @@ impl FetchTasklet {
         let this = Self::from_ctx(ctx);
         this.poll_ref
             .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
-        this.is_buffering_body.store(true, Ordering::Release);
-        if this
-            .signal_store
-            .set_receive_mode_terminal(BodyReceiveMode::BufferAll)
-        {
+        if this.signal_store.receive_all() {
             this.schedule_receive_resume();
         }
     }
@@ -1878,14 +1840,12 @@ impl FetchTasklet {
                 .is_some_and(|http_| http_.method() == Method::HEAD)
     }
 
-    /// Content the server frames anyway (a 205 with content) is dropped, and the
-    /// rest of it drained as for a Response collected unread, which keeps the
-    /// connection poolable. No Response is attached yet, so that is all the
-    /// ignore does. `is_waiting_body` stays false: nothing may reach this body.
+    /// Content the server frames anyway (a 205 with content) is dropped and the connection
+    /// closed. `is_waiting_body` stays false: nothing may reach this body.
     fn null_body_value(&mut self) -> BodyValue {
         self.scheduled_response_buffer = MutableString::default();
         if self.result.has_more {
-            self.ignore_remaining_response_body();
+            self.abandon_response_body();
         }
         BodyValue::Null
     }
@@ -1936,21 +1896,18 @@ impl FetchTasklet {
         )
     }
 
-    /// After the caller aborted the fetch: discard what still arrives, let go of the response.
-    fn ignore_remaining_response_body(&self) {
-        bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
-        debug_assert!(self.signal_store.aborted.load(Ordering::Relaxed));
-        self.signal_store
-            .set_receive_mode_terminal(BodyReceiveMode::Ignore);
-        // we should not keep the process alive if we are ignoring the body
+    /// Nothing will read the rest of the body: abort the transport, let go of the loop and of the
+    /// response; `callback` drops whatever still arrives. Safe inside a GC sweep
+    /// (`on_response_finalize`, `on_body_stream_collected`): no JS cell is touched; the
+    /// request-body sink is left for `clear_sink()` in `deinit()`.
+    fn abandon_response_body(&self) {
+        bun_output::scoped_log!(FetchTasklet, "abandonResponseBody");
+        self.signal_store.abandon();
+        self.abort_transport();
         self.poll_ref
             .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
-        // Also fine from GC sweeps (`on_response_finalize`, `on_body_stream_collected`):
-        // unhooking touches no JS cell. The request-body sink is left for `clear_sink()` in
-        // `deinit()` (an event-loop task, outside sweep) to detach.
         self.clear_stream_handlers();
         self.response.clear();
-
         if let Some(response) = self.native_response.take() {
             // SAFETY: `response` is the +1 ref held in `native_response`.
             Response::unref(response);
@@ -2028,7 +1985,6 @@ impl FetchTasklet {
             upgraded_connection: fetch_options.upgraded_connection,
             hostname: fetch_options.hostname,
             is_waiting_body: false,
-            is_buffering_body: AtomicBool::new(false),
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
             mutex: Mutex::new(),
@@ -2403,9 +2359,8 @@ impl FetchTasklet {
         }
     }
 
-    /// Idempotent: reader.cancel(), an AbortSignal, a collected body stream and a collected
-    /// Response can all reach here for the same fetch. Only the first abort enqueues a shutdown;
-    /// a second would append a redundant ShutdownMessage for an already-closing socket. No JS.
+    /// Idempotent: an AbortSignal, VM teardown and `abandon_response_body` can all reach here for
+    /// the same fetch. Only the first enqueues a shutdown. No JS.
     fn abort_transport(&self) -> bool {
         if self.signal_store.aborted.swap(true, Ordering::Relaxed) {
             return false;
@@ -2563,12 +2518,11 @@ impl FetchTasklet {
 
         let success = task_ref.result.is_success();
 
-        if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
+        if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Abandoned {
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
                 task_ref.scheduled_response_buffer = MutableString::default();
             }
             if success && task_ref.result.has_more {
-                // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
                 task_ref.mutex.unlock();
                 return;
             }
@@ -2579,9 +2533,8 @@ impl FetchTasklet {
             } else {
                 // Grow to Content-Length once so the per-packet append below
                 // doesn't leave the ~2x doubling over-capacity that the
-                // ArrayBuffer would adopt. Gated on `is_buffering_body`
-                // (set by `on_start_buffering_callback`).
-                if task_ref.is_buffering_body.load(Ordering::Acquire) {
+                // ArrayBuffer would adopt. Only for a consumer that wants the whole body.
+                if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
                     if let http::BodySize::ContentLength(n) = task_ref.body_size {
                         if n > scheduled.list.capacity() {
                             let additional = n
@@ -2600,21 +2553,10 @@ impl FetchTasklet {
                     bun_core::handle_oom(scheduled.write(chunk));
                 }
             }
-            // A stream takes the body chunk by chunk and resumes per chunk: pause behind each.
-            // Until one attaches, the body waits here: pause once it holds the mark.
-            let buffered = task_ref.scheduled_response_buffer.list.len();
             if task_ref.result.has_more
-                && buffered > 0
-                && (buffered >= UNOBSERVED_BODY_HIGH_WATER_MARK
-                    || task_ref
-                        .signal_store
-                        .response_body_streaming
-                        .load(Ordering::Acquire))
+                && task_ref.scheduled_response_buffer.list.len() >= BODY_HIGH_WATER_MARK
             {
-                let _ = task_ref.signal_store.try_transition_receive_mode(
-                    BodyReceiveMode::AutoPause,
-                    BodyReceiveMode::Paused,
-                );
+                task_ref.signal_store.pause_receive();
             }
         }
 
@@ -2727,36 +2669,24 @@ impl FetchTasklet {
     #[bun_uws::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
     pub(crate) fn on_response_finalize(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
-        let this = self;
-        if let Some(response) = this.native_response.get() {
-            // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
-            let body = unsafe { (*response).get_body_value() };
-            // Three scenarios:
-            //
-            // 1. The body arrived, or it is a stream: a stream outlives its Response, and its
-            //    own collection ends the body (`on_body_stream_collected`).
-            // 2. A consumer waits for the whole body (`.text()` and friends hold a promise,
-            //    `Bun.write` an `on_receive_value`): keep loading.
-            // 3. Still arriving, so longer than the mark `callback` receives on its own, and
-            //    nothing will ever take it: abort, as for a collected stream.
-            //
-            // Inside a finalizer: decide from native state only.
-            if !matches!(body, BodyValue::Locked(_)) || this.response_stream_source.get().is_some()
-            {
-                return;
-            }
-
-            if let BodyValue::Locked(locked) = body {
-                let has_consumer = locked.on_receive_value.is_some()
-                    || locked
-                        .promise
-                        .is_some_and(|promise| !promise.is_empty_or_undefined_or_null());
-                if has_consumer {
-                    return;
-                }
-                this.abort_transport();
-                this.ignore_remaining_response_body();
-            }
+        let Some(response) = self.native_response.get() else {
+            return;
+        };
+        // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
+        let BodyValue::Locked(locked) = (unsafe { (*response).get_body_value() }) else {
+            // The body arrived or failed; nothing is underway.
+            return;
+        };
+        // What can outlive the Response and still take the body: its stream (whose own collection
+        // is `on_body_stream_collected`), or a whole-body consumer (`.text()` and friends hold a
+        // promise, `Bun.write` an `on_receive_value`).
+        let outlived = self.response_stream_source.get().is_some()
+            || locked.on_receive_value.is_some()
+            || locked
+                .promise
+                .is_some_and(|promise| !promise.is_empty_or_undefined_or_null());
+        if !outlived {
+            self.abandon_response_body();
         }
     }
 }

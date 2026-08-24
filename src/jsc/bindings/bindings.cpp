@@ -1072,7 +1072,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
-    if constexpr (isStrict && !checkPrototypes) {
+    if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
@@ -1745,7 +1745,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
         }
 
-        if (!mode.checkPrototypes) {
+        if (!mode.checkPrototypes && !mode.skipPrototypeIdentity) {
             if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
                 return false;
             }

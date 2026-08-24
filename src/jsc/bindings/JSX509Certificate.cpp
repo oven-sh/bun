@@ -19,7 +19,6 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
-#include <JavaScriptCore/LazyPropertyInlines.h>
 #include "openssl/evp.h"
 #include "JavaScriptCore/ObjectPrototype.h"
 #include "BunString.h"

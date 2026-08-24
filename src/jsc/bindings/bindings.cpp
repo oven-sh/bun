@@ -2417,13 +2417,18 @@ struct AsymmetricMatcherSubstitution {
 
     void substitute(JSObject* received, JSObject* matchers)
     {
+        auto& vm = globalObject->vm();
+        if (!vm.isSafeToRecurse()) [[unlikely]] {
+            throwStackOverflowError(globalObject, throwScope);
+            return;
+        }
         if (received == matchers) return;
 
         JSObject* clone = cloneFor(received);
         RETURN_IF_EXCEPTION(throwScope, );
         if (!clone) return;
 
-        PropertyNameArrayBuilder names(globalObject->vm(), PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
         matchers->getPropertyNames(globalObject, names, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, );
 

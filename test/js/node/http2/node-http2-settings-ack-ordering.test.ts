@@ -51,7 +51,12 @@ test("client sends the SETTINGS ACK before DATA unblocked by a larger INITIAL_WI
 
     // A default 65535 stream window but a huge connection window, so the
     // per-stream window is the only thing that can block the client.
-    socket.write(settingsFrame([[0x4, INITIAL_WINDOW], [0x5, 16384]]));
+    socket.write(
+      settingsFrame([
+        [0x4, INITIAL_WINDOW],
+        [0x5, 16384],
+      ]),
+    );
     const windowUpdate = Buffer.alloc(4);
     windowUpdate.writeUInt32BE(64 * 1024 * 1024);
     socket.write(frame(0x8, 0, 0, windowUpdate));

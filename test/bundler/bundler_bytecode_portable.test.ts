@@ -161,8 +161,8 @@ describe("bytecode cache portability", () => {
         "bun build --bytecode --minify features.js": {
           "js": "b7e2b5e35d1332896a04d0e7283c8c3863ae06fb9777e46bc5ce487992d70525",
           "jsc": {
-            "bytes": 46192,
-            "sha256": "aa09a039aac7be0f933adc117a709761e05164fd47183cee09545c0c7c3786b4",
+            "bytes": 46552,
+            "sha256": "a5a4f785fa90b71d545381e40925747d64a74b92d94ccbf9ab1d765ddcf844c4",
           },
         },
         "bun build --bytecode big.js": {
@@ -175,8 +175,8 @@ describe("bytecode cache portability", () => {
         "bun build --bytecode features.js": {
           "js": "64e70d24ce6b976b54cafc901e1e50b81ec1581b250d128ee30225d61c48bb1a",
           "jsc": {
-            "bytes": 47560,
-            "sha256": "15691d96af6e36aea6ee2081458a8d06e27b19441e472b5f29e30ba662fa7107",
+            "bytes": 47904,
+            "sha256": "d64e7248d9f79b92d9763960994939f4592cdff2f8672ac46da0d72f62475673",
           },
         },
         "vm.Script big.js": {

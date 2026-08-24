@@ -3567,6 +3567,7 @@ private:
         // read bun types
         if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end)) {
             JSValue deserialized = JSValue::decode(value.value());
+            // Empty: the record was malformed, or the hook threw (the caller checks its scope first).
             if (deserialized.isEmpty()) {
                 fail();
                 return JSValue();
@@ -4858,9 +4859,12 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     if (didFail) {
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
     }
-    if (throwScope.exception() || throwExceptions == SerializationErrorMode::Throwing) [[unlikely]]
-        maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
+    // Whatever the deserializer itself threw (a Blob/File/native record that failed to rehydrate, OOM) is the error.
     RETURN_IF_EXCEPTION(throwScope, {});
+    if (throwExceptions == SerializationErrorMode::Throwing) {
+        maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
 
     return result.first ? result.first : jsNull();
 }
@@ -5091,13 +5095,12 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     );
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
-    // Deserialize may throw an exception. Similar to serialize (SerializedScriptValue::create),
-    // we'll catch and rethrow.
-    if (scope.exception() || throwExceptions == SerializationErrorMode::Throwing) [[unlikely]]
-        maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, result.second);
-
-    // Rethrow is a bit simpler here since we don't deal with return codes.
+    // Whatever the deserializer itself threw (a Blob/File/native record that failed to rehydrate, OOM) is the error.
     RETURN_IF_EXCEPTION(scope, {});
+    if (throwExceptions == SerializationErrorMode::Throwing) {
+        maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, result.second);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     return result.first;
 }

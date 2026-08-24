@@ -182,11 +182,12 @@ pub trait BlobExt {
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
     );
+    /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
-    ) -> JsResult<JSValue>
+    ) -> JsResult<Option<JSValue>>
     where
         Self: Sized;
     fn from_url_search_params(
@@ -808,7 +809,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         // SAFETY: codegen passes a live `*mut *mut u8` cursor (C++:
         // `(uint8_t**)&ptr`) and a one-past-the-end `*const u8`; both are
         // non-null and `[*ptr, end)` is the serialized byte range owned by
@@ -825,11 +826,7 @@ impl BlobExt for Blob {
             Err(e) if e.name() == "OutOfMemory" => {
                 return Err(global_this.throw_out_of_memory());
             }
-            Err(_) => {
-                return Err(
-                    global_this.throw(format_args!("Blob.onStructuredCloneDeserialize failed"))
-                );
-            }
+            Err(_) => return Ok(None),
         };
 
         // Advance the caller's cursor by the number of bytes consumed.
@@ -837,7 +834,7 @@ impl BlobExt for Blob {
         // construction, so the advanced pointer stays within `[start, end]`.
         unsafe { *ptr = start.add(buffer_stream.pos) };
 
-        Ok(result)
+        Ok(Some(result))
     }
     fn from_url_search_params(
         global_this: &JSGlobalObject,

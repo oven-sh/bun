@@ -435,11 +435,12 @@ impl BlockList {
     // signature is fixed by `generate-classes.ts`, so the deref is documented with
     // the SAFETY comment below.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
     pub(crate) fn on_structured_clone_deserialize(
         global: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
         // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
         // non-null out-param the caller expects us to advance.
@@ -451,13 +452,8 @@ impl BlockList {
         let mut r =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
 
-        let nonce = match r.read_int_le::<u64>() {
-            Ok(n) => n,
-            Err(_) => {
-                return Err(global.throw(format_args!(
-                    "BlockList.onStructuredCloneDeserialize failed"
-                )));
-            }
+        let Ok(nonce) = r.read_int_le::<u64>() else {
+            return Ok(None);
         };
 
         // Advance the caller's cursor by the number of bytes consumed
@@ -473,9 +469,7 @@ impl BlockList {
         let this: *mut Self = {
             let refs = SERIALIZED_REFS.lock();
             let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
-                return Err(global.throw(format_args!(
-                    "BlockList.onStructuredCloneDeserialize failed"
-                )));
+                return Ok(None);
             };
             let this = addr as *mut Self;
             // SAFETY: the entry was pushed by `on_structured_clone_serialize`
@@ -489,7 +483,7 @@ impl BlockList {
         // SAFETY: ownership of the ref taken above transfers to the C++ wrapper
         // (released via `finalize` → `deref`). `to_js_ptr` is the
         // `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
-        Ok(unsafe { Self::to_js_ptr(this, global) })
+        Ok(Some(unsafe { Self::to_js_ptr(this, global) }))
     }
 }
 

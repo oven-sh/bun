@@ -187,8 +187,14 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
 ) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
-    let (bytes, handle) =
-        CachedBytecode::generate(format, source, source_encoding, source_provider_url, depth, external_strings)?;
+    let (bytes, handle) = CachedBytecode::generate(
+        format,
+        source,
+        source_encoding,
+        source_provider_url,
+        depth,
+        external_strings,
+    )?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;
     // `CachedBytecode` is an opaque ZST handle so `opaque_mut` is the

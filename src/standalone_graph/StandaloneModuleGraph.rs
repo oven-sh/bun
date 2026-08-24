@@ -644,6 +644,7 @@ impl File {
                 s
             })
             .clone()
+    }
 
     /// `Utf16` contents viewed as code units.
     fn utf16_units(&self) -> &'static [u16] {
@@ -680,7 +681,6 @@ impl File {
             },
             Encoding::Utf16 => Cow::Owned(strings::to_utf8_alloc(self.utf16_units())),
         }
-    }
     }
 }
 

@@ -87,8 +87,9 @@ public:
             return JSValue::encode(JSC::jsUndefined());
         }
 
-        return JSValue::encode(
-            WebCore::JSBlob::create(vm, globalObject, structure, ptr));
+        auto* instance = WebCore::JSBlob::create(vm, globalObject, structure, ptr);
+        vm.heap.reportExtraMemoryAllocated(instance, WebCore::JSBlob::memoryCost(ptr));
+        return JSValue::encode(instance);
     }
 
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

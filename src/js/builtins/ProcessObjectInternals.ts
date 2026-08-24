@@ -348,7 +348,6 @@ export function initializeNextTickQueue(
 ) {
   var queue;
   var tickInitHooks;
-  var process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
   var reportUncaughtException = reportUncaughtExceptionFn;
@@ -411,10 +410,7 @@ export function initializeNextTickQueue(
 
   function nextTick(cb, ...args) {
     validateFunction(cb, "callback");
-    if (setup) {
-      setup();
-      process = globalThis.process;
-    }
+    if (setup) setup();
     if (process._exiting) return;
 
     const tock = {

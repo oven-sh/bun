@@ -9,6 +9,7 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 // module whose body threw stays cached (that is the spec, and Node does it too).
 test("import() of a module that failed to load retries after the file changes", async () => {
   using dir = tempDir("import-retry", {
+    "h3.virt": "",
     "main.mjs": `
       import fs from "node:fs";
       import { createRequire } from "node:module";
@@ -99,6 +100,16 @@ test("import() of a module that failed to load retries after the file changes", 
       console.log("H2", h2.map(r => (r.status === "fulfilled" ? "OK " + r.value.v : "ERR")).join(" "));
       await t("H2b", "./h2.virt");
       console.log("H2 loads", loads.get("h2.virt"));
+      // Module.runMain starts the same kind of top-level load as import().
+      // h3.virt exists before bun starts: runMain resolves with no referrer and
+      // does not re-read a directory listed before the file was written.
+      require("module").runMain("./h3.virt");
+      const h3 = await Promise.resolve()
+        .then(() => import("./h3.virt"))
+        .then(ns => "OK " + ns.v, () => "ERR");
+      console.log("H3", h3);
+      await t("H3b", "./h3.virt");
+      console.log("H3 loads", loads.get("h3.virt"));
 
       // A module whose body threw stays cached even after the file changes.
       fs.writeFileSync("e.mjs", 'throw new Error("boom"); export const v = 1;');
@@ -138,6 +149,9 @@ test("import() of a module that failed to load retries after the file changes", 
     H2 ERR ERR
     H2b OK 42
     H2 loads 2
+    H3 ERR
+    H3b OK 42
+    H3 loads 2
     E1 ERR boom
     E2 ERR boom"
   `);

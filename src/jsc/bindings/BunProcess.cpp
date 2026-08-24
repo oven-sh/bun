@@ -4646,16 +4646,14 @@ static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
-    auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    if (auto* cached = processObject->cachedCwd()) {
-        return cached;
-    }
-
+    // Do NOT cache the result: process.cwd() must re-query the syscall each
+    // call (like Node's uv_cwd()), so a cwd deleted via rmdir after chdir
+    // surfaces ENOENT. The Rust side (bun_sys::process_cwd) already probes
+    // /proc/self/cwd on OHOS to detect the deleted-cwd case; caching here
+    // would hide it.
     auto cwd = Bun__Process__getCwd(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSString* cwdStr = uncheckedDowncast<JSString>(JSValue::decode(cwd));
-    processObject->setCachedCwd(vm, cwdStr);
     RELEASE_AND_RETURN(scope, cwdStr);
 }
 

@@ -3069,9 +3069,7 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     sni_node_destructor(node);
     return 1;
   }
-  if (us_ctx_sni_policy_ex_idx >= 0 &&
-      ((uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx) &
-       US_SNI_POLICY_REQUEST_CERT)) {
+  if (us_internal_ssl_ctx_sni_request_cert(ctx)) {
     ls->sni_has_cert_policy = 1;
   }
   return 0;

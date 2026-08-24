@@ -673,8 +673,17 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (source->stackTrace()) {
-        destination->stackTrace()->appendVector(*source->stackTrace());
-        source->stackTrace()->clear();
+        // ErrorInstance::visitChildren reads the frames under the cell lock. Take the two locks
+        // one after the other: source and destination can be the same error.
+        {
+            WTF::Locker locker { destination->cellLock() };
+            destination->stackTrace()->appendVector(*source->stackTrace());
+        }
+        {
+            WTF::Locker locker { source->cellLock() };
+            source->stackTrace()->clear();
+        }
+        vm.writeBarrier(destination);
     }
 
     return JSC::JSValue::encode(jsUndefined());
@@ -724,7 +733,12 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
+        std::unique_ptr<WTF::Vector<JSC::StackFrame>> ownedStackTrace;
+        {
+            // ErrorInstance::visitChildren reads the frames under the cell lock.
+            WTF::Locker locker { errorObject->cellLock() };
+            ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
+        }
         JSC::MarkedArgumentBuffer protectedFrameCells;
         protectedFrameCells.ensureCapacity(ownedStackTrace->size() * 2);
         for (auto& frame : *ownedStackTrace) {

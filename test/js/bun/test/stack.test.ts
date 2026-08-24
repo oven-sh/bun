@@ -175,3 +175,74 @@ test("Async functions frame should be included in stack trace", async () => {
         at async <anonymous> (file:NN:NN)"
   `);
 });
+
+test("error.stack is formatted lazily with live frames when a GC runs between creation and the first read", async () => {
+  // Every error here is created inside a function object that is unreachable by the time
+  // Bun.gc runs: the module's top-level callee before its first await, an IIFE, a .then
+  // callback, an async function prologue, and Error.captureStackTrace inside an IIFE.
+  // JSC used to hold the captured frames weakly and pre-render a frames-only string from the
+  // GC end phase once one of them died. That string had no message and skipped
+  // Error.prepareStackTrace.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const tla = new Error("tla message");
+       await 0;
+
+       let iife;
+       (function dies() { iife = new RangeError("iife message"); })();
+
+       let then;
+       await Promise.resolve().then(() => { then = new Error("then message"); });
+
+       async function prologue() { const e = new TypeError("prologue message"); await 0; return e; }
+       const asyncErr = await prologue();
+
+       let captured;
+       (function capturer() { captured = new Error("captured message"); Error.captureStackTrace(captured); })();
+
+       let pst;
+       (function pstFn() { pst = new Error("pst message"); })();
+
+       // Collect from a fresh microtask so no stale stack slot keeps a callee alive.
+       await 0;
+       Bun.gc(true);
+
+       const util = require("node:util");
+       const head = s => s.split("\\n")[0];
+       const results = {
+         tla: head(tla.stack),
+         iife: head(iife.stack),
+         iifeFrame: iife.stack.split("\\n")[1].trim().split(" (")[0],
+         then: head(then.stack),
+         prologue: head(asyncErr.stack),
+         prologueFrame: asyncErr.stack.split("\\n")[1].trim().split(" (")[0],
+         captured: head(captured.stack),
+         capturedFrame: captured.stack.split("\\n")[1].trim().split(" (")[0],
+         inspect: head(util.inspect(iife)),
+       };
+       Error.prepareStackTrace = (err, callSites) =>
+         "PST " + err.name + ": " + err.message + " | " + callSites.length + ":" + callSites[0].getFunctionName();
+       results.pst = head(pst.stack);
+       console.log(JSON.stringify(results));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    tla: "Error: tla message",
+    iife: "RangeError: iife message",
+    iifeFrame: "at dies",
+    then: "Error: then message",
+    prologue: "TypeError: prologue message",
+    prologueFrame: "at prologue",
+    captured: "Error: captured message",
+    capturedFrame: "at capturer",
+    inspect: "RangeError: iife message",
+    pst: "PST Error: pst message | 2:pstFn",
+  });
+  expect(exitCode).toBe(0);
+});

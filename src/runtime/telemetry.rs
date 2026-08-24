@@ -375,8 +375,8 @@ fn configure_with(
         RETIRED_STATES.lock().push(old as usize);
     }
     *p.config.write() = cfg.batch;
-    let host_name = bun_core::OwnedString::new(crate::node::node_os::hostname_string());
-    let os_version = bun_core::OwnedString::new(crate::node::node_os::release());
+    let host_name = crate::node::node_os::hostname_string();
+    let os_version = crate::node::node_os::release();
     let resource =
         bun_telemetry_cold::resource::encode(&bun_telemetry_cold::resource::ResourceInfo {
             service_name: cfg.service_name.as_deref(),
@@ -881,7 +881,7 @@ fn read_instrumentations(
     let Some(o) = v.get_object() else {
         return Ok(());
     };
-    let mut iter = bun_jsc::JSPropertyIterator::init(
+    let iter = bun_jsc::JSPropertyIterator::init(
         global,
         o,
         bun_jsc::JSPropertyIteratorOptions {
@@ -890,8 +890,7 @@ fn read_instrumentations(
             ..Default::default()
         },
     )?;
-    while let Some(name) = iter.next()? {
-        let val = iter.value;
+    while let Some((name, val)) = iter.next()? {
         let key = name.to_utf8();
         let Some(i) = Instrument::from_name(key.slice()) else {
             return Err(global.throw_invalid_arguments(format_args!(

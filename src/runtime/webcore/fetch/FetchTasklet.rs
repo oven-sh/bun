@@ -494,11 +494,7 @@ impl FetchTasklet {
         let error = match self.result.fail {
             Some(e) => {
                 let e = fetch_error_strings(e, &BunString::EMPTY);
-                let (code, message) = (
-                    bun_core::OwnedString::new(e.code),
-                    bun_core::OwnedString::new(e.message),
-                );
-                Some((code.to_utf8_bytes(), message.to_utf8_bytes()))
+                Some((e.code.to_owned_slice(), e.message.to_owned_slice()))
             }
             None if self.abort_reason.has() => Some((
                 b"AbortError".to_vec(),

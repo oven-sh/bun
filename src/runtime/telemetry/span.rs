@@ -15,7 +15,7 @@ use super::local;
 
 unsafe extern "C" {
     safe fn Bun__Telemetry__activeSpanStub(global: &JSGlobalObject) -> *const SpanStub;
-    safe fn Bun__Telemetry__activeExtrasBaggage(global: &JSGlobalObject) -> JsString;
+    safe fn Bun__Telemetry__activeExtrasBaggage(global: &JSGlobalObject) -> OwnedJsString;
     safe fn Bun__Telemetry__activeSpanCell(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Telemetry__enter(global: &JSGlobalObject, span: JSValue) -> JSValue;
     safe fn Bun__Telemetry__exit(global: &JSGlobalObject, prev: JSValue);
@@ -99,7 +99,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
             })
             .unwrap_or_default();
         if owned[1].is_empty() {
-            let extras = bun_core::OwnedString::new(Bun__Telemetry__activeExtrasBaggage(global));
+            let extras = Bun__Telemetry__activeExtrasBaggage(global);
             return f(&owned[0], extras.to_utf8().slice());
         }
         return f(&owned[0], &owned[1]);
@@ -113,7 +113,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
     let (ts, bg) = (ts.to_utf8_without_ref(), bg.to_utf8_without_ref());
     if bg.slice().is_empty() {
         // Baggage carried by the api Context (propagation.extract / setBaggage).
-        let extras = bun_core::OwnedString::new(Bun__Telemetry__activeExtrasBaggage(global));
+        let extras = Bun__Telemetry__activeExtrasBaggage(global);
         return f(ts.slice(), extras.to_utf8().slice());
     }
     f(ts.slice(), bg.slice())
@@ -189,7 +189,7 @@ pub(crate) fn for_each_attribute(
     let Some(o) = obj.get_object() else {
         return Ok(());
     };
-    let mut iter = JSPropertyIterator::init(
+    let iter = JSPropertyIterator::init(
         global,
         o,
         JSPropertyIteratorOptions {
@@ -198,8 +198,7 @@ pub(crate) fn for_each_attribute(
             ..Default::default()
         },
     )?;
-    while let Some(name) = iter.next()? {
-        let value = iter.value;
+    while let Some((name, value)) = iter.next()? {
         let key = name.to_utf8();
         if value.is_string() {
             let s = value.to_slice(global)?;
@@ -274,7 +273,10 @@ pub fn discard_native(global: &JSGlobalObject, span: NativeSpan) {
 // (not ref'd) WTFStringImpl-backed `BunString`s that C++ keeps alive for the
 // duration of the call; nothing here retains them.
 
-use bun_core::String as JsString;
+/// A BunString C++ owns (a JSString's value or a stack temporary) that Rust
+/// only reads during the call: same 24 bytes as `bun_core::String`, no ref.
+type JsString = bun_core::StringView<'static>;
+use bun_core::String as OwnedJsString;
 use bun_core::strings;
 
 /// bun_telemetry::Instrument::Sqlite's enable bit, for JSSQLStatement.cpp.
@@ -300,9 +302,8 @@ struct AttrSlice {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 union AttrValue {
-    string: JsString,
+    string: core::mem::ManuallyDrop<JsString>,
     /// Also Bool (0/1).
     integer: i64,
     number: f64,
@@ -981,14 +982,17 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(
 
 /// The slot's current name (for the `.name` getter); +1 ref, caller adopts.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeName(global: &JSGlobalObject, handle: u64) -> JsString {
+pub extern "C" fn Bun__Telemetry__nativeName(
+    global: &JSGlobalObject,
+    handle: u64,
+) -> OwnedJsString {
     let Some(l) = local(global) else {
-        return JsString::empty();
+        return OwnedJsString::empty();
     };
     pool::with_ref(&l.pool, NativeSpan(handle), |s| {
-        JsString::clone_utf8(&s.name)
+        OwnedJsString::clone_utf8(&s.name)
     })
-    .unwrap_or(JsString::empty())
+    .unwrap_or(OwnedJsString::empty())
 }
 
 /// W3C `tracestate` / `baggage` a native-owned span received (+1 refs, caller
@@ -997,11 +1001,11 @@ pub extern "C" fn Bun__Telemetry__nativeName(global: &JSGlobalObject, handle: u6
 pub extern "C" fn Bun__Telemetry__nativePropagation(
     global: &JSGlobalObject,
     handle: u64,
-    trace_state: &mut JsString,
-    baggage: &mut JsString,
+    trace_state: &mut OwnedJsString,
+    baggage: &mut OwnedJsString,
 ) -> bool {
-    *trace_state = JsString::empty();
-    *baggage = JsString::empty();
+    *trace_state = OwnedJsString::empty();
+    *baggage = OwnedJsString::empty();
     let Some(l) = local(global) else {
         return false;
     };
@@ -1009,8 +1013,8 @@ pub extern "C" fn Bun__Telemetry__nativePropagation(
         if s.trace_state.is_empty() && s.baggage.is_empty() {
             return false;
         }
-        *trace_state = JsString::clone_utf8(&s.trace_state);
-        *baggage = JsString::clone_utf8(&s.baggage);
+        *trace_state = OwnedJsString::clone_utf8(&s.trace_state);
+        *baggage = OwnedJsString::clone_utf8(&s.baggage);
         true
     })
     .unwrap_or(false)

@@ -188,7 +188,6 @@ error: Hello World`,
   }
 });
 
-
 // https://github.com/oven-sh/bun/issues/29286: `--bytecode --format=esm`
 // without `--compile` emits a `.js.jsc` sidecar next to each chunk that
 // `bun <chunk>.js` loads automatically, so top-level `await` works without

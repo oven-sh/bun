@@ -50,6 +50,7 @@ fn is_grease(value: u16) -> bool {
 pub enum Ja3Error {
     Shape,
     Number { field: &'static str },
+    Duplicate { field: &'static str, id: u16 },
     Version(u16),
     NoCiphers,
     Cipher(u16),
@@ -73,6 +74,9 @@ impl fmt::Display for Ja3Error {
                     f,
                     "{field} must be dash-separated decimal numbers in 0..65535"
                 )
+            }
+            Self::Duplicate { field, id } => {
+                write!(f, "{field} lists {id} more than once")
             }
             Self::Version(v) => write!(
                 f,
@@ -132,6 +136,13 @@ fn parse_ids(field: &[u8], name: &'static str, out: &mut Vec<u16>) -> Result<(),
             value = value * 10 + u32::from(digit - b'0');
         }
         let value = u16::try_from(value).map_err(|_| Ja3Error::Number { field: name })?;
+        // A ClientHello carries each cipher, extension and group at most once (RFC 8446 4.2).
+        if out.contains(&value) {
+            return Err(Ja3Error::Duplicate {
+                field: name,
+                id: value,
+            });
+        }
         out.push(value);
     }
     Ok(())

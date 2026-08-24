@@ -452,22 +452,11 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// Resolve an entry-point specifier, retrying once after a miss with the
-    /// directories it read dropped from the cache.
+    /// Resolve an entry-point specifier, reporting the error to the log on failure.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
-        self.resolver.start_recording_touched_dirs();
-        let first = self._resolve_entry_point(entry_point);
-        self.resolver.stop_recording_touched_dirs();
-        match first {
+        match self._resolve_entry_point(entry_point) {
             Ok(r) => self.reject_disabled_entry_point(r, entry_point),
             Err(err) => {
-                if self.resolver.bust_touched_dirs() {
-                    if let Ok(result) = self._resolve_entry_point(entry_point) {
-                        return self.reject_disabled_entry_point(result, entry_point);
-                    }
-                    // ignore this error, we will print the original error
-                }
-
                 self.log_mut().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,

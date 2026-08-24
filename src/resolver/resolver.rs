@@ -624,6 +624,13 @@ thread_local! {
         const { core::cell::RefCell::new(None) };
 }
 
+/// The cached listing of `dir` was probed for `name` and had no such entry.
+/// Called from `DirEntry::get`, the one lookup every listing probe goes through.
+#[inline]
+pub(crate) fn record_missing_entry(dir: &[u8], name: &[u8]) {
+    record_touched(TouchedKind::MissingEntry, dir, name);
+}
+
 #[inline]
 fn record_touched(kind: TouchedKind, dir: &[u8], name: &[u8]) {
     TOUCHED_DIRS.with(|slot| {
@@ -1452,8 +1459,12 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         }
 
-        let mut tmp =
-            self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        let mut tmp = self.resolve_without_symlinks_retrying(
+            source_dir_normalized,
+            import_path,
+            kind,
+            global_cache,
+        );
 
         // Fragments in URLs in CSS imports are technically expected to work
         if matches!(tmp, ResultUnion::NotFound) && kind.is_from_css() {
@@ -1473,7 +1484,7 @@ impl<'a> Resolver<'a> {
                         bstr::BStr::new(&import_path[suffix..])
                     ));
                 }
-                let result2 = self.resolve_without_symlinks(
+                let result2 = self.resolve_without_symlinks_retrying(
                     source_dir_normalized,
                     &import_path[0..suffix],
                     kind,
@@ -1777,6 +1788,30 @@ impl<'a> Resolver<'a> {
 
         result.module_type = module_type;
         Ok(())
+    }
+
+    /// `resolve_without_symlinks`, then once more after a miss if the cached
+    /// directory state the miss rested on no longer matches the disk. The
+    /// cache holds misses for the life of the process and nothing outside
+    /// watch mode invalidates them, so a file installed after the first miss
+    /// would otherwise stay invisible.
+    fn resolve_without_symlinks_retrying(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'static [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) -> ResultUnion {
+        Self::start_recording_touched_dirs();
+        let first = self.resolve_without_symlinks(source_dir, import_path, kind, global_cache);
+        Self::stop_recording_touched_dirs();
+        if !matches!(first, ResultUnion::NotFound) || !self.bust_touched_dirs() {
+            return first;
+        }
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note(b"Retrying after dropping stale directory cache entries".to_vec());
+        }
+        self.resolve_without_symlinks(source_dir, import_path, kind, global_cache)
     }
 
     pub(crate) fn resolve_without_symlinks(
@@ -2521,7 +2556,7 @@ impl<'a> Resolver<'a> {
 
     /// Record what the next resolution on this thread looks for and does not
     /// find, for `bust_touched_dirs`.
-    pub fn start_recording_touched_dirs(&mut self) {
+    fn start_recording_touched_dirs() {
         TOUCHED_DIRS.with(|slot| {
             let mut slot = slot.borrow_mut();
             let touched = slot.get_or_insert_with(Default::default);
@@ -2532,7 +2567,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Keeps the records for `bust_touched_dirs`.
-    pub fn stop_recording_touched_dirs(&mut self) {
+    fn stop_recording_touched_dirs() {
         TOUCHED_DIRS.with(|slot| {
             if let Some(touched) = slot.borrow_mut().as_deref_mut() {
                 touched.recording = false;
@@ -2544,12 +2579,6 @@ impl<'a> Resolver<'a> {
     #[inline]
     fn record_missing_dir(&self, dir: &[u8]) {
         record_touched(TouchedKind::MissingDir, dir, b"");
-    }
-
-    /// The cached listing of `dir` was probed for `name` and had no such entry.
-    #[inline]
-    fn record_missing_entry(&self, dir: &[u8], name: &[u8]) {
-        record_touched(TouchedKind::MissingEntry, dir, name);
     }
 
     /// `dir` was a `node_modules` search level that the cache says has none.
@@ -2569,7 +2598,7 @@ impl<'a> Resolver<'a> {
     /// them again. Returns whether anything was dropped. A lookup that still
     /// fails for the same reasons costs one `access()` per record and keeps
     /// every cache entry.
-    pub fn bust_touched_dirs(&mut self) -> bool {
+    fn bust_touched_dirs(&mut self) -> bool {
         let Some(mut touched) = TOUCHED_DIRS.with(|slot| slot.borrow_mut().take()) else {
             return false;
         };
@@ -3906,7 +3935,6 @@ impl<'a> Resolver<'a> {
                 let entry_query = match entry_lookup {
                     Some(q) => q,
                     None => {
-                        self.record_missing_entry(resolved_dir_info.abs_path, base);
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
@@ -5577,9 +5605,6 @@ impl<'a> Resolver<'a> {
                     )
                 })
         };
-        if !matches!(looked_up, Some((Some(_), _))) {
-            self.record_missing_entry(dir_info.abs_path, &base[..]);
-        }
         if let Some((Some(lookup), dirname_fd)) = looked_up {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -5823,7 +5848,9 @@ impl<'a> Resolver<'a> {
         // Try using the main field(s) from "package.json"
         if dir_info.package_json().is_none() {
             // Absent, or present but unparseable when the directory was read.
-            self.record_missing_entry(dir_info.abs_path, b"package.json");
+            // The listing lookup happened at that read, so `DirEntry::get`
+            // does not see this probe.
+            record_missing_entry(dir_info.abs_path, b"package.json");
         }
         if let Some(pkg_json) = dir_info.package_json() {
             package_json = Some(std::ptr::from_ref(pkg_json));
@@ -6076,9 +6103,6 @@ impl<'a> Resolver<'a> {
         // single `entries_mutex` critical section (see its doc for the
         // in-place rewrite this guards against).
         let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
-        if plain_query.is_none() {
-            self.record_missing_entry(dir_path, base);
-        }
         if let Some(query) = plain_query {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -6180,9 +6204,6 @@ impl<'a> Resolver<'a> {
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
-                    if ts_query.is_none() {
-                        self.record_missing_entry(dir_path, &buffer[..]);
-                    }
                     if let Some(query) = ts_query {
                         // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                         // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -6287,12 +6308,6 @@ impl<'a> Resolver<'a> {
         }
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
-        if ext_query.is_none() {
-            self.record_missing_entry(
-                strings::without_trailing_slash_windows_path(Dirname::dirname(path)),
-                file_name,
-            );
-        }
         if let Some(query) = ext_query {
             // SAFETY: rfs points at the process-global RealFS; the lazy-stat
             // rewrite inside `kind()` is serialized on the per-entry mutex.

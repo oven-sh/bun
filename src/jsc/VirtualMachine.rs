@@ -4390,42 +4390,22 @@ impl VirtualMachine {
             top_level_dir
         };
 
-        // A `loop`
-        // returning the resolver result; `retry_on_not_found` is consumed on
-        // the first miss.
-        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-        let result: bun_resolver::Result = loop {
-            let import_kind = if is_esm {
-                bun_ast::ImportKind::Stmt
-            } else {
-                bun_ast::ImportKind::Require
-            };
-            let resolver = &mut self.transpiler.resolver;
-            let global_cache = resolver.opts.global_cache;
-            resolver.start_recording_touched_dirs();
-            let resolved = resolver.resolve_and_auto_install(
-                source_to_use,
-                normalized_specifier,
-                import_kind,
-                global_cache,
-            );
-            resolver.stop_recording_touched_dirs();
-            match resolved {
-                ResultUnion::Success(r) => break r,
-                ResultUnion::Failure(e) => return Err(e.into()),
-                ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                    if !retry_on_not_found {
-                        return Err(crate::CrateError::ModuleNotFound);
-                    }
-                    retry_on_not_found = false;
-
-                    // The miss may be the cache's, not the disk's: drop what
-                    // changed on disk and resolve once more.
-                    if self.transpiler.resolver.bust_touched_dirs() {
-                        continue;
-                    }
-                    return Err(crate::CrateError::ModuleNotFound);
-                }
+        let import_kind = if is_esm {
+            bun_ast::ImportKind::Stmt
+        } else {
+            bun_ast::ImportKind::Require
+        };
+        let global_cache = self.transpiler.resolver.opts.global_cache;
+        let result: bun_resolver::Result = match self.transpiler.resolver.resolve_and_auto_install(
+            source_to_use,
+            normalized_specifier,
+            import_kind,
+            global_cache,
+        ) {
+            ResultUnion::Success(r) => r,
+            ResultUnion::Failure(e) => return Err(e.into()),
+            ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                return Err(crate::CrateError::ModuleNotFound);
             }
         };
 

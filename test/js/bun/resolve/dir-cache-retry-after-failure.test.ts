@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // The resolver caches every directory it reads, including the ones it did not
@@ -26,10 +27,45 @@ const files = {
       }
     };
   `,
+  // A project whose tsconfig maps aliases onto directories; see the tsconfig group.
+  "ts/tsconfig.json": JSON.stringify({
+    compilerOptions: { baseUrl: ".", paths: { "@/*": ["./*"], "~/*": ["./gen/*"] } },
+  }),
+  "ts/app.mjs": `
+    import fs from "node:fs";
+    import path from "node:path";
+    import { createRequire } from "node:module";
+    import { fileURLToPath } from "node:url";
+    const require = createRequire(import.meta.url);
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const write = (file, contents) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, contents);
+    };
+    // "@/*" maps onto a directory whose listing the first import cached.
+    for (let i = 1; i <= 3; i++) {
+      write(path.join(here, "files", "file-" + i + ".mjs"), "export const v = " + i + ";");
+      try {
+        console.log("P" + i, "OK", (await import("@/files/file-" + i + ".mjs")).v);
+      } catch (e) {
+        console.log("P" + i, "ERR", e.message.split("\\n")[0]);
+      }
+    }
+    // The same through require() and a mapping onto a subdirectory.
+    for (let i = 1; i <= 3; i++) {
+      write(path.join(here, "gen", "mod-" + i + ".cjs"), "module.exports = { v: " + i + " };");
+      try {
+        console.log("Q" + i, "OK", require("~/mod-" + i + ".cjs").v);
+      } catch (e) {
+        console.log("Q" + i, "ERR", e.message.split("\\n")[0]);
+      }
+    }
+  `,
   "main.mjs": `
     import fs from "node:fs";
     import path from "node:path";
     import { createRequire } from "node:module";
+    import { pathToFileURL } from "node:url";
     import { Worker } from "node:worker_threads";
     const require = createRequire(import.meta.url);
     const helper = require.resolve("./helper.cjs");
@@ -140,6 +176,33 @@ const files = {
         res("O2", () => require.resolve("global-pkg"));
       },
 
+      async tsconfig() {
+        // tsconfig "paths" aliases onto directories that gain files later.
+        await import("./ts/app.mjs");
+      },
+
+      async fileurl() {
+        // A file URL through a symlinked root, like macOS's /var -> /private/var
+        // (the test creates var -> private/var before bun starts). The loader
+        // resolves the real path with no importer, and a file created after
+        // the real directory was listed has to be found.
+        const root = path.resolve("var", "folders", "t");
+        fs.mkdirSync(root, { recursive: true });
+        const load = async (label, name) => {
+          try {
+            console.log(label, "OK", (await import(pathToFileURL(path.join(root, name)).href)).v);
+          } catch (e) {
+            console.log(label, "ERR", e.message.split("\\n")[0]);
+          }
+        };
+        write(path.join(root, "a.mjs"), "export const v = 1;");
+        await load("R1", "a.mjs");
+        write(path.join(root, "b.mjs"), "export const v = 2;");
+        await load("R2", "b.mjs");
+        write(path.join(root, "c.mjs"), "export const v = 3;");
+        await load("R3", "c.mjs");
+      },
+
       async require() {
         // "main" target written after the miss.
         write(nm("p1", "package.json"), '{"name":"p1","main":"./i.js"}');
@@ -245,8 +308,13 @@ const files = {
   `,
 };
 
-async function runGroup(group: string, env: (dir: string) => Record<string, string> = () => ({})) {
+async function runGroup(
+  group: string,
+  env: (dir: string) => Record<string, string> = () => ({}),
+  setup: (dir: string) => void = () => {},
+) {
   using dir = tempDir("dir-cache-retry", files);
+  setup(String(dir));
   await using proc = Bun.spawn({
     cmd: [bunExe(), "main.mjs", group],
     env: { ...bunEnv, ...env(String(dir)) },
@@ -297,6 +365,41 @@ describe.concurrent("a failed resolution sees files and packages created after t
         "stdout": 
       "N1 ERR MODULE_NOT_FOUND
       N2 OK vendor/linked-pkg/index.js"
+      ,
+      }
+    `);
+  });
+
+  test("tsconfig paths aliases onto directories that gain files later", async () => {
+    expect(await runGroup("tsconfig")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "P1 OK 1
+      P2 OK 2
+      P3 OK 3
+      Q1 OK 1
+      Q2 OK 2
+      Q3 OK 3"
+      ,
+      }
+    `);
+  });
+
+  test.skipIf(isWindows)("a file URL through a symlinked root, with no importer", async () => {
+    const linkedRoot = (dir: string) => {
+      mkdirSync(join(dir, "private", "var", "folders"), { recursive: true });
+      symlinkSync(join("private", "var"), join(dir, "var"));
+    };
+    expect(await runGroup("fileurl", undefined, linkedRoot)).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "R1 OK 1
+      R2 OK 2
+      R3 OK 3"
       ,
       }
     `);

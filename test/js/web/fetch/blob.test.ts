@@ -93,6 +93,90 @@ for (const info of [
   });
 }
 
+// text()/json() cache whether the bytes they decoded were all ASCII, and Blobs
+// sharing one backing store read each other's cache. The cache must only ever
+// describe bytes the reader is actually going to decode.
+describe("Blob text()/json() decoding does not depend on what was read before", () => {
+  const utf8 = "héllo wörld ✓";
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
+
+  test("parent after an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await blob.slice(0, 3).text()).toBe("abc");
+    expect(await blob.text()).toBe("abc" + utf8);
+  });
+
+  test("sibling slice after an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc", utf8]);
+    const rest = blob.slice(3);
+    expect(await blob.slice(0, 3).text()).toBe("abc");
+    expect(await rest.text()).toBe(utf8);
+  });
+
+  test("Response wrapping the Blob after an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await blob.slice(0, 3).text()).toBe("abc");
+    expect(await new Response(blob).text()).toBe("abc" + utf8);
+  });
+
+  test("parent after a Response body made from an ASCII prefix slice", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await new Response(blob.slice(0, 3)).text()).toBe("abc");
+    expect(await blob.text()).toBe("abc" + utf8);
+  });
+
+  test("parent after a Response body made from an ASCII prefix slice was read as json()", async () => {
+    const blob = new Blob(["123", utf8]);
+    expect(await new Response(blob.slice(0, 3)).json()).toBe(123);
+    expect(await blob.text()).toBe("123" + utf8);
+  });
+
+  test("parent json() after an ASCII prefix slice text()", async () => {
+    const blob = new Blob(['"', utf8, '"']);
+    expect(await blob.slice(0, 1).text()).toBe('"');
+    expect(await blob.json()).toBe(utf8);
+  });
+
+  test("parent text() after an ASCII prefix slice json()", async () => {
+    const blob = new Blob(["123", utf8]);
+    expect(await blob.slice(0, 3).json()).toBe(123);
+    expect(await blob.text()).toBe("123" + utf8);
+  });
+
+  test("slice(0) spans the whole Blob and decodes the same as the parent", async () => {
+    const blob = new Blob(["abc", utf8]);
+    expect(await blob.slice(0).text()).toBe("abc" + utf8);
+    expect(await blob.text()).toBe("abc" + utf8);
+    expect(await blob.slice(0, 3).text()).toBe("abc");
+    expect(await blob.slice(3).text()).toBe(utf8);
+  });
+
+  test("slice into a UTF-8 BOM after the parent's text() stripped it", async () => {
+    const blob = new Blob([bom, "abc"]);
+    const sliceMadeBefore = blob.slice(1);
+    expect(await blob.text()).toBe("abc");
+    expect(await blob.text()).toBe("abc");
+    expect(await sliceMadeBefore.text()).toBe("\ufffd\ufffdabc");
+    expect(await blob.slice(1).text()).toBe("\ufffd\ufffdabc");
+  });
+
+  test("slice into a UTF-8 BOM after the parent's json() stripped it", async () => {
+    const blob = new Blob([bom, '{"a":1}']);
+    const sliceMadeBefore = blob.slice(1);
+    expect(await blob.json()).toEqual({ a: 1 });
+    expect(await sliceMadeBefore.text()).toBe('\ufffd\ufffd{"a":1}');
+    expect(await blob.slice(1).text()).toBe('\ufffd\ufffd{"a":1}');
+  });
+
+  test("Blob built from a BOM-prefixed Blob part that was already read", async () => {
+    const part = new Blob([bom, "abc"]);
+    expect(await part.text()).toBe("abc");
+    // The BOM is no longer at the start, so it decodes as U+FEFF.
+    expect(await new Blob(["x", part]).text()).toBe("x\ufeffabc");
+    expect(await new Blob([part]).text()).toBe("abc");
+  });
+});
+
 test("new Blob", () => {
   var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });
   expect(blob.size).toBe(6);

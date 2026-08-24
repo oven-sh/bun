@@ -88,23 +88,24 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
 auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> MessageEventWithStrongData
 {
     auto& vm = globalObject.vm();
-    // Locker<JSC::JSLock> locker(vm.apiLock());
-    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    bool didFail = false;
-
-    auto deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::NonThrowing, &didFail);
-    // A record that fails to rehydrate is delivered as a `messageerror` event, not an exception; only the VM's
-    // termination stays pending for the caller.
-    if (topExceptionScope.exception()) [[unlikely]] {
-        topExceptionScope.clearExceptionExceptTermination();
-        didFail = true;
-        deserialized = jsUndefined();
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps (7.3):
+    // "Let deserializeRecord be StructuredDeserializeWithTransfer(serializeWithTransferResult, targetRealm).
+    //  If this throws an exception, catch it, fire an event named messageerror at finalTargetPort, using
+    //  MessageEvent, and then return." A termination is not caught; the caller sees it on its scope.
+    bool didThrow = false;
+    JSValue deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::Throwing);
+    if (scope.exception()) [[unlikely]] {
+        if (!vm.hasPendingTerminationException())
+            scope.clearException();
+        didThrow = true;
+        deserialized = jsNull();
     }
 
     JSC::Strong<JSC::Unknown> strongData(vm, deserialized);
 
-    auto& eventType = didFail ? eventNames().messageerrorEvent : eventNames().messageEvent;
+    auto& eventType = didThrow ? eventNames().messageerrorEvent : eventNames().messageEvent;
     auto event = adoptRef(*new MessageEvent(eventType, WTF::move(data), origin, lastEventId, WTF::move(source), WTF::move(ports)));
     JSC::Strong<JSC::JSObject> strongWrapper(vm, uncheckedDowncast<JSC::JSObject>(toJS(&globalObject, uncheckedDowncast<JSDOMGlobalObject>(&globalObject), event.get())));
     // Since we've already deserialized the SerializedScriptValue, cache the result so we don't have to deserialize

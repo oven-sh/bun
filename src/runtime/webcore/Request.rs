@@ -10,15 +10,14 @@ use enumset::EnumSet;
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::EncodedSliceBlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
     CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
 };
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
-use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{String as BunString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
@@ -28,6 +27,7 @@ use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
 use bun_ptr::weak_ptr::WeakPtrData;
@@ -669,11 +669,11 @@ impl Request {
     }
 
     pub(crate) fn get_destination(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        EncodedSlice::init(b"").to_js(global_this)
+        JSValue::js_empty_string(global_this)
     }
 
     pub(crate) fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        EncodedSlice::EMPTY.to_js(global_this)
+        JSValue::js_empty_string(global_this)
     }
 
     /// The `AbortSignal` this request was constructed with or lazily created
@@ -753,11 +753,11 @@ impl Request {
             }
         }
 
-        EncodedSlice::init(b"").to_js(global_object)
+        JSValue::js_empty_string(global_object)
     }
 
     pub(crate) fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        EncodedSlice::init(b"").to_js(global_this)
+        JSValue::js_empty_string(global_this)
     }
 
     pub(crate) fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {

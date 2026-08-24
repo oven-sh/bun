@@ -18,7 +18,7 @@ use crate::webcore::s3::client::{
     S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
     S3ListObjectsResult,
 };
-use bun_core::{EncodedSlice, strings};
+use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
@@ -225,14 +225,6 @@ impl FileExt for File {
     fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
-                let encoded_slice = match path_like {
-                    PathLike::EncodedSlice(slice) => {
-                        bun_core::Utf8Bytes::Owned(slice.slice().to_vec())
-                    }
-                    _ => EncodedSlice::init_utf8(path_like.slice())
-                        .to_utf8()
-                        .into_owned(),
-                };
                 // The `*Binding` arg is unused in `AsyncFSTask::create`.
                 let binding = node_fs::Binding::default();
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
@@ -241,7 +233,9 @@ impl FileExt for File {
                     global_this,
                     &binding,
                     node_fs::args::Unlink {
-                        path: PathLike::EncodedSlice(encoded_slice),
+                        path: PathLike::Utf8(bun_core::Utf8Bytes::Owned(
+                            path_like.slice().to_vec(),
+                        )),
                     },
                     global_this.bun_vm().as_mut(),
                 ))

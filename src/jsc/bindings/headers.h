@@ -50,12 +50,9 @@ CPP_DECL JSC::EncodedJSValue JSC__JSObject__getDirect(JSC::JSObject* arg0, JSC::
 CPP_DECL JSC::EncodedJSValue JSC__JSObject__getIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, uint32_t arg2);
 CPP_DECL void JSC__JSObject__putRecord(JSC::JSObject* arg0, JSC::JSGlobalObject* arg1, EncodedSlice* arg2, EncodedSlice* arg3, size_t arg4);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__external(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(void* arg0, void* arg1, size_t arg2));
-CPP_DECL JSC::EncodedJSValue EncodedSlice__to16BitValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
-CPP_DECL JSC::EncodedJSValue EncodedSlice__toAtomicValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toErrorInstance(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toExternalU16(const uint16_t* arg0, size_t arg1, JSC::JSGlobalObject* arg2);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toExternalValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
-CPP_DECL JSC::EncodedJSValue EncodedSlice__toExternalValueWithCallback(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1, void(* ArgFn2)(void* arg0, void* arg1, size_t arg2));
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toRangeErrorInstance(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toSyntaxErrorInstance(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toTypeErrorInstance(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);

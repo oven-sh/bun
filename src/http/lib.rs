@@ -933,7 +933,6 @@ impl Drop for HTTPClient<'_> {
             // Release the strong ref taken in set_custom_ssl_ctx.
             ctx.deref();
         }
-        self.unix_socket_path = Utf8Bytes::EMPTY;
     }
 }
 

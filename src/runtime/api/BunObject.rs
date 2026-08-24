@@ -565,9 +565,7 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         cwd_str.slice(),
         bin_str.slice(),
     ) {
-        return Ok(EncodedSlice::init(bin_path)
-            .with_encoding()
-            .to_js(global_this));
+        return Ok(EncodedSlice::from_bytes(bin_path).to_js(global_this));
     }
 
     Ok(JSValue::NULL)
@@ -701,7 +699,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
-    let out = EncodedSlice::init(&array).with_encoding();
+    let out = EncodedSlice::from_bytes(&array);
     let ret = out.to_js(global_this);
 
     Ok(ret)

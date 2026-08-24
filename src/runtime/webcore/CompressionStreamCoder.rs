@@ -19,7 +19,7 @@
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
-use bun_jsc::EncodedSlice;
+use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, Strong};
 

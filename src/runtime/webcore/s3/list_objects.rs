@@ -15,9 +15,6 @@ pub struct S3ListObjectsOptions {
     pub(crate) start_after: Option<Utf8Bytes<'static>>,
 }
 
-// Each Utf8Bytes field cleans up via Drop, so no explicit `impl Drop` is
-// needed here.
-
 struct ObjectOwner {
     id: Option<Box<[u8]>>,
     display_name: Option<Box<[u8]>>,

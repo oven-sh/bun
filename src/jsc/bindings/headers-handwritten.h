@@ -358,8 +358,6 @@ typedef struct {
 
 extern "C" const char* Bun__userAgent;
 
-extern "C" void EncodedSlice__free(const unsigned char* ptr, size_t len, void* allocator);
-
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,

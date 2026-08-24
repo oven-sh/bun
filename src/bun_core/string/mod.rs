@@ -39,7 +39,6 @@ use crate::strings;
 #[path = "identifier.rs"]
 pub mod identifier;
 
-use crate::RawSlice;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
@@ -189,9 +188,10 @@ impl String {
     /// `bun.String.static` — `'static` slice; converted to JS via
     /// `WTF::ExternalStringImpl` without copying. Generic over `str`/`[u8]`
     /// so call sites may pass either `"lit"` or `b"lit"`.
+    /// No UTF-8 tag: C++ `Zig::toStringStatic` aborts on a UTF-8-tagged
+    /// static, and `to_utf8`/`into_utf8` borrow the bytes directly.
     #[inline]
     pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
-        // No UTF-8 mark on the static path.
         Self::wrap(Tag::StaticEncodedSlice, EncodedSlice::init(s.as_ref()))
     }
     /// `clone_utf8(other)`, unless `other` is byte-equal to `self`, in which
@@ -669,13 +669,14 @@ impl String {
     pub fn to_utf8(&self) -> Utf8Bytes<'_> {
         match self.0.tag {
             Tag::WTFStringImpl => self.as_wtf().to_utf8(),
-            Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().to_utf8(),
+            Tag::EncodedSlice => self.encoded().to_utf8(),
+            Tag::StaticEncodedSlice => Utf8Bytes::Borrowed(self.static_bytes()),
             _ => Utf8Bytes::EMPTY,
         }
     }
     /// Consuming [`to_utf8`] for storing the result: moves `self`'s ref into
-    /// a `Shared` slice (8-bit all-ASCII WTF), transcodes, or copies a
-    /// borrowed `EncodedSlice` so the result never depends on `self`'s backing.
+    /// `Shared` (8-bit all-ASCII WTF), transcodes, or copies a borrowed
+    /// `EncodedSlice` so the result never depends on `self`'s backing.
     ///
     /// [`to_utf8`]: Self::to_utf8
     pub fn into_utf8(self) -> Utf8Bytes<'static> {
@@ -688,20 +689,19 @@ impl String {
                 if let Some(utf8) = strings::to_utf8_from_latin1(wtf.latin1_slice()) {
                     return Utf8Bytes::Owned(utf8);
                 }
-                let bytes = RawSlice::new(wtf.latin1_slice());
-                Utf8Bytes::Shared {
-                    string_impl: self.leak_wtf_impl(),
-                    bytes,
-                }
+                Utf8Bytes::Shared(self)
             }
             Tag::EncodedSlice => self.encoded().to_utf8().into_owned(),
-            Tag::StaticEncodedSlice => {
-                let utf8 = self.encoded().to_utf8();
-                // SAFETY: `StaticEncodedSlice` bytes are `'static` by construction.
-                unsafe { core::mem::transmute::<Utf8Bytes<'_>, Utf8Bytes<'static>>(utf8) }
-            }
+            Tag::StaticEncodedSlice => Utf8Bytes::Borrowed(self.static_bytes()),
             _ => Utf8Bytes::EMPTY,
         }
+    }
+    /// `String::static_` stores an ASCII `'static` literal with no encoding tag.
+    #[inline]
+    fn static_bytes(&self) -> &'static [u8] {
+        debug_assert_eq!(self.0.tag, Tag::StaticEncodedSlice);
+        let z = self.encoded();
+        EncodedSlice::<'static>::from_tagged_ptr(z.tagged_ptr(), z.len).slice()
     }
     /// Returns `Some(utf8_bytes)` only if this is already valid UTF-8 with no
     /// transcoding needed.
@@ -777,7 +777,14 @@ impl String {
     pub fn to_encoded_slice(&self) -> EncodedSlice<'_> {
         match self.0.tag {
             Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded(),
-            Tag::WTFStringImpl => EncodedSlice(self.as_wtf().to_encoded_slice(), PhantomData),
+            Tag::WTFStringImpl => {
+                let w = self.as_wtf();
+                if w.is_8bit() {
+                    EncodedSlice::init(w.latin1_slice())
+                } else {
+                    EncodedSlice::init_utf16(w.utf16_slice())
+                }
+            }
             _ => EncodedSlice::EMPTY,
         }
     }
@@ -910,13 +917,9 @@ impl String {
     /// `bun.String.toSlice` — consume `self` into a [`SliceWithUnderlyingString`].
     #[inline]
     pub fn into_slice(self) -> SliceWithUnderlyingString {
-        let utf8 = {
-            let mut utf8 = self.to_utf8();
-            if let Utf8Bytes::Owned(v) = &mut utf8 {
-                Some(core::mem::take(v))
-            } else {
-                None
-            }
+        let utf8 = match self.to_utf8() {
+            Utf8Bytes::Owned(v) => Some(v),
+            _ => None,
         };
         SliceWithUnderlyingString {
             utf8,
@@ -985,20 +988,13 @@ impl String {
         }
     }
 
-    // `to_js` / `into_js` / `create_utf8_for_js` are tier-6 (jsc) — the
-    // *_jsc alias pattern: deleted here per PORTING.md, defined as inherent
-    // free fns / extension trait in `bun_jsc::string` (would otherwise create
-    // a `bun_string ↔ bun_jsc` dependency cycle).
+    // `to_js` / `into_js` / `create_utf8_for_js` live in the
+    // `bun_jsc::StringJsc` extension trait (a `bun_core ↔ bun_jsc` cycle
+    // otherwise).
 }
 // `bun.String.init` dispatch table —
 // expressed as `From` impls feeding `String::init<T: Into<Self>>`. The
 // `String → String` identity case is covered by the std blanket `From<T> for T`.
-impl From<EncodedSlice<'static>> for String {
-    #[inline]
-    fn from(z: EncodedSlice<'static>) -> Self {
-        Self::wrap(Tag::EncodedSlice, z)
-    }
-}
 impl From<&[u8]> for String {
     /// Byte-slice arm — `EncodedSlice::from_bytes` (auto-marks UTF-8 if non-ASCII).
     #[inline]
@@ -1169,18 +1165,6 @@ impl core::fmt::Display for String {
     }
 }
 
-/// `Display` adapter for [`EncodedSlice::github_action`]; delegates to
-/// `crate::fmt::github_action_writer` over the UTF-8 bytes.
-pub struct EncodedSliceGithubActionFormatter<'a> {
-    text: EncodedSlice<'a>,
-}
-impl core::fmt::Display for EncodedSliceGithubActionFormatter<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let utf8 = self.text.to_utf8();
-        crate::fmt::github_action_writer(f, utf8.slice())
-    }
-}
-
 impl core::fmt::Display for EncodedSlice<'_> {
     // Encoding-aware `Display` formatter.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -1196,13 +1180,14 @@ impl core::fmt::Display for EncodedSlice<'_> {
 
 /// `{ptr, len}` plus encoding bits (Latin-1 / UTF-8 / UTF-16); borrows `'a`.
 /// The pointer-tag accessors (`is_*` / `mark_*` / `len`) are reached via
-/// `Deref` to [`bun_alloc::EncodedSliceRaw`].
+/// `Deref` to [`bun_alloc::EncodedSlice`] (the layout shared with the
+/// `String` union arm).
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct EncodedSlice<'a>(bun_alloc::EncodedSliceRaw, PhantomData<&'a [u8]>);
+pub struct EncodedSlice<'a>(bun_alloc::EncodedSlice, PhantomData<&'a [u8]>);
 
 impl core::ops::Deref for EncodedSlice<'_> {
-    type Target = bun_alloc::EncodedSliceRaw;
+    type Target = bun_alloc::EncodedSlice;
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -1223,14 +1208,14 @@ impl Default for EncodedSlice<'_> {
 }
 
 impl<'a> EncodedSlice<'a> {
-    pub const EMPTY: Self = Self(bun_alloc::EncodedSliceRaw::EMPTY, PhantomData);
+    pub const EMPTY: Self = Self(bun_alloc::EncodedSlice::EMPTY, PhantomData);
 
     /// Construct from an already-tagged pointer + length pair. `ptr` is stored
     /// verbatim — tag bits are not touched. Caller vouches for `'a`.
     #[inline]
     pub(crate) const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
         Self(
-            bun_alloc::EncodedSliceRaw::from_tagged_ptr(ptr, len),
+            bun_alloc::EncodedSlice::from_tagged_ptr(ptr, len),
             PhantomData,
         )
     }
@@ -1238,7 +1223,7 @@ impl<'a> EncodedSlice<'a> {
     /// Borrow `s` as Latin-1/ASCII (no encoding tag).
     #[inline]
     pub const fn init(s: &'a [u8]) -> Self {
-        Self(bun_alloc::EncodedSliceRaw::init(s), PhantomData)
+        Self::from_tagged_ptr(s.as_ptr(), s.len())
     }
     /// Borrow UTF-8 bytes (sets the UTF-8 ptr-tag).
     #[inline]
@@ -1250,7 +1235,9 @@ impl<'a> EncodedSlice<'a> {
     /// Borrow UTF-16 code units (sets the 16-bit ptr-tag).
     #[inline]
     pub fn init_utf16(s: &'a [u16]) -> Self {
-        Self(bun_alloc::EncodedSliceRaw::init_utf16(s), PhantomData)
+        let mut z = Self::from_tagged_ptr(s.as_ptr().cast(), s.len());
+        z.mark_utf16();
+        z
     }
 
     /// Wrap a globally-allocated (mimalloc) UTF-16 buffer whose ownership is
@@ -1273,30 +1260,35 @@ impl<'a> EncodedSlice<'a> {
         }
     }
 
-    /// Wrap a `'static` ASCII literal. Generic over `str`/`[u8]` so either
-    /// `"lit"` or `b"lit"` is accepted.
     #[inline]
-    pub fn static_<S: ?Sized + AsRef<[u8]>>(slice: &'static S) -> EncodedSlice<'static> {
-        EncodedSlice(
-            bun_alloc::EncodedSliceRaw::init(slice.as_ref()),
-            PhantomData,
-        )
+    fn untagged_ptr(self) -> *const u8 {
+        bun_alloc::EncodedSlice::untagged(self.tagged_ptr())
     }
-
     /// 8-bit byte view (Latin-1 or UTF-8). Caller must ensure `!is_16bit()`.
     #[inline]
     pub fn slice(self) -> &'a [u8] {
-        let s: *const [u8] = self.0.slice();
-        // SAFETY: the bytes live for `'a` (constructor contract), not for the
-        // `Copy` wrapper `self`.
-        unsafe { &*s }
+        if self.len == 0 {
+            return &[];
+        }
+        debug_assert!(
+            !self.is_16bit(),
+            "EncodedSlice::slice() on UTF-16; use to_utf8()"
+        );
+        // SAFETY: the constructor stored a valid ptr/len for `'a`; flag bits
+        // stripped. Length is capped at `u32::MAX`.
+        unsafe { core::slice::from_raw_parts(self.untagged_ptr(), self.len.min(u32::MAX as usize)) }
     }
     /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
     #[inline]
     pub fn utf16_slice(self) -> &'a [u16] {
-        let s: *const [u16] = self.0.utf16_slice();
-        // SAFETY: see `slice`.
-        unsafe { &*s }
+        if self.len == 0 {
+            return &[];
+        }
+        debug_assert!(self.is_16bit());
+        // SAFETY: a 16-bit-tagged constructor stored a 2-byte-aligned ptr
+        // valid for `len` u16 units for `'a`; flag bits stripped (the cast
+        // goes `usize → *const u16` directly to keep the alignment lint quiet).
+        unsafe { core::slice::from_raw_parts(self.untagged_ptr() as usize as *const u16, self.len) }
     }
     /// Raw bytes regardless of encoding (`len * 2` for UTF-16).
     pub fn byte_slice(self) -> &'a [u8] {
@@ -1310,8 +1302,8 @@ impl<'a> EncodedSlice<'a> {
         };
         // SAFETY: constructor stored a valid ptr for `len` elements of the
         // tagged width; `bytes` is exactly that element count times element
-        // size. Flag bits stripped by `untagged`.
-        unsafe { core::slice::from_raw_parts(Self::untagged(self.tagged_ptr()), bytes) }
+        // size.
+        unsafe { core::slice::from_raw_parts(self.untagged_ptr(), bytes) }
     }
 
     /// Exact UTF-8 byte length needed to encode this string.
@@ -1341,13 +1333,6 @@ impl<'a> EncodedSlice<'a> {
         }
         // Latin-1 → one UTF-16 code unit per byte.
         self.len * 2
-    }
-
-    /// `Display` formatter that escapes the string for GitHub Actions
-    /// annotation output (`%0A` for newlines, ANSI stripped).
-    #[inline]
-    pub fn github_action(self) -> EncodedSliceGithubActionFormatter<'a> {
-        EncodedSliceGithubActionFormatter { text: self }
     }
 
     /// Allocate a NUL-terminated UTF-8 copy.
@@ -1458,11 +1443,6 @@ impl<'a> EncodedSlice<'a> {
         Ok(ZStr::from_buf(&buf[..], written))
     }
 
-    #[inline]
-    pub(crate) fn untagged(ptr: *const u8) -> *const u8 {
-        bun_alloc::EncodedSliceRaw::untagged(ptr)
-    }
-
     /// Re-wrap a sub-range of the underlying storage, preserving the
     /// UTF-8/16-bit/global tag bits.
     pub fn substring_with_len(self, start_index: usize, end_index: usize) -> Self {
@@ -1551,116 +1531,58 @@ impl<'a> EncodedSlice<'a> {
 
 /// UTF-8 bytes derived from a string: borrowed when the source is already
 /// UTF-8 (incl. 8-bit all-ASCII), otherwise a transcoded copy, or a view kept
-/// alive by a `WTF::StringImpl` ref it holds.
+/// alive by the WTF-backed `String` it holds.
+#[derive(Clone)]
 pub enum Utf8Bytes<'a> {
     Borrowed(&'a [u8]),
     Owned(Vec<u8>),
-    /// 8-bit ASCII buffer of `string_impl`, on which this holds a ref.
-    Shared {
-        string_impl: *const wtf::WTFStringImplStruct,
-        bytes: RawSlice<u8>,
-    },
+    /// 8-bit all-ASCII `Tag::WTFStringImpl` string; the bytes are its buffer.
+    Shared(String),
 }
 impl Default for Utf8Bytes<'_> {
+    #[inline]
     fn default() -> Self {
         Self::EMPTY
     }
 }
-impl From<Vec<u8>> for Utf8Bytes<'_> {
-    #[inline]
-    fn from(v: Vec<u8>) -> Self {
-        Self::Owned(v)
-    }
-}
 impl<'a> Utf8Bytes<'a> {
     pub const EMPTY: Self = Self::Borrowed(b"");
-    #[inline]
-    pub const fn empty() -> Self {
-        Self::EMPTY
-    }
-    /// Allocate an owned copy of `input`.
-    pub fn init_dupe(input: &[u8]) -> Result<Self, crate::AllocError> {
-        Ok(Self::Owned(input.to_vec()))
-    }
     /// Detach from any `'a` borrow: `Borrowed` is copied; `Owned`/`Shared`
     /// pass through.
+    #[inline]
     pub fn into_owned(self) -> Utf8Bytes<'static> {
         match self {
             Self::Borrowed(b) => Utf8Bytes::Owned(b.to_vec()),
-            // SAFETY: `Owned`/`Shared` hold no `'a` borrow.
-            owned => unsafe { core::mem::transmute::<Utf8Bytes<'a>, Utf8Bytes<'static>>(owned) },
+            Self::Owned(v) => Utf8Bytes::Owned(v),
+            Self::Shared(s) => Utf8Bytes::Shared(s),
         }
     }
     #[inline]
     pub fn slice(&self) -> &[u8] {
         match self {
             Self::Borrowed(b) => b,
-            Self::Owned(v) => v.as_slice(),
-            Self::Shared { bytes, .. } => bytes.slice(),
+            Self::Owned(v) => v,
+            Self::Shared(s) => s.as_wtf().latin1_slice(),
         }
-    }
-    #[inline]
-    pub fn length(&self) -> usize {
-        self.slice().len()
     }
     /// Consume into an owned `Vec<u8>` — moves out the buffer if `Owned`,
     /// allocates a copy otherwise.
-    pub fn into_vec(mut self) -> Vec<u8> {
-        if let Self::Owned(v) = &mut self {
-            return core::mem::take(v);
+    pub fn into_vec(self) -> Vec<u8> {
+        match self {
+            Self::Owned(v) => v,
+            other => other.slice().to_vec(),
         }
-        self.slice().to_vec()
     }
-    /// True iff this owns memory (`Owned` buffer or `Shared` ref) released on
-    /// `Drop`; `Borrowed` views someone else's storage.
+    /// True iff the bytes are a transcoded/copied buffer rather than a view
+    /// of the source string.
     #[inline]
-    pub fn is_allocated(&self) -> bool {
-        matches!(self, Self::Owned(_) | Self::Shared { .. })
+    pub fn is_owned(&self) -> bool {
+        matches!(self, Self::Owned(_))
     }
     /// True iff this is a ref-holding view into a `WTF::StringImpl`.
     #[inline]
     pub fn is_shared(&self) -> bool {
-        matches!(self, Self::Shared { .. })
-    }
-    /// Consume an `Owned` slice into the raw `(ptr, len)` pair without freeing,
-    /// for hand-off to a foreign owner (JSC external string). Any other
-    /// variant returns `None` and leaves `self` untouched.
-    pub fn take_owned_raw(&mut self) -> Option<(*const u8, usize)> {
-        let Self::Owned(v) = self else {
-            return None;
-        };
-        let mut v = core::mem::ManuallyDrop::new(core::mem::take(v));
-        *self = Self::EMPTY;
-        // Shrink so the foreign `mi_free(ptr)` releases exactly this block.
-        v.shrink_to_fit();
-        Some((v.as_ptr(), v.len()))
-    }
-}
-impl Clone for Utf8Bytes<'_> {
-    /// Views the same bytes: `Borrowed` copies the borrow, `Shared` takes
-    /// another ref, `Owned` deep-copies.
-    fn clone(&self) -> Self {
-        match self {
-            Self::Borrowed(b) => Self::Borrowed(b),
-            Self::Owned(v) => Self::Owned(v.clone()),
-            Self::Shared { string_impl, bytes } => {
-                // SAFETY: `Shared` holds a ref, so `string_impl` is live;
-                // the clone's `Drop` pairs with this ref.
-                unsafe { (**string_impl).r#ref() };
-                Self::Shared {
-                    string_impl: *string_impl,
-                    bytes: *bytes,
-                }
-            }
-        }
-    }
-}
-impl Drop for Utf8Bytes<'_> {
-    fn drop(&mut self) {
-        if let Self::Shared { string_impl, .. } = *self {
-            // SAFETY: constructor took a ref; we now release it.
-            unsafe { (*string_impl).deref() }
-        }
+        matches!(self, Self::Shared(_))
     }
 }
 impl core::ops::Deref for Utf8Bytes<'_> {
@@ -1705,16 +1627,6 @@ impl SliceWithUnderlyingString {
     #[inline]
     pub fn is_shared(&self) -> bool {
         self.utf8.is_none() && self.underlying.0.tag == Tag::WTFStringImpl
-    }
-
-    /// Another ref to `underlying` with no UTF-8 copy (callers re-derive it).
-    pub fn dupe_ref(&self) -> SliceWithUnderlyingString {
-        SliceWithUnderlyingString {
-            utf8: None,
-            underlying: self.underlying.clone(),
-            #[cfg(debug_assertions)]
-            did_report_extra_memory_debug: false,
-        }
     }
 
     /// The UTF-8 bytes.
@@ -1768,10 +1680,7 @@ impl Clone for SliceWithUnderlyingString {
 
 impl core::fmt::Display for SliceWithUnderlyingString {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match &self.utf8 {
-            Some(utf8) => write!(f, "{}", crate::fmt::s(utf8)),
-            None => self.underlying.fmt(f),
-        }
+        write!(f, "{}", crate::fmt::s(self.slice()))
     }
 }
 

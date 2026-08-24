@@ -1710,7 +1710,7 @@ pub(super) fn generate_symbol_for_function(
     if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(
-                EncodedSlice::static_(b"Expected an object with \"args\" as an array")
+                EncodedSlice::init(b"Expected an object with \"args\" as an array")
                     .to_error_instance(global),
             ));
         }
@@ -1721,7 +1721,7 @@ pub(super) fn generate_symbol_for_function(
         while let Some(val) = array.next()? {
             if val.is_empty_or_undefined_or_null() {
                 return Ok(Some(
-                    EncodedSlice::static_(b"param must be a string (type name) or number")
+                    EncodedSlice::init(b"param must be a string (type name) or number")
                         .to_error_instance(global),
                 ));
             }
@@ -1733,14 +1733,14 @@ pub(super) fn generate_symbol_for_function(
                     continue;
                 } else {
                     return Ok(Some(
-                        EncodedSlice::static_(b"invalid ABI type").to_error_instance(global),
+                        EncodedSlice::init(b"invalid ABI type").to_error_instance(global),
                     ));
                 }
             }
 
             if !val.js_type().is_string_like() {
                 return Ok(Some(
-                    EncodedSlice::static_(b"param must be a string (type name) or number")
+                    EncodedSlice::init(b"param must be a string (type name) or number")
                         .to_error_instance(global),
                 ));
             }
@@ -1773,7 +1773,7 @@ pub(super) fn generate_symbol_for_function(
                     break 'brk;
                 } else {
                     return Ok(Some(
-                        EncodedSlice::static_(b"invalid ABI type").to_error_instance(global),
+                        EncodedSlice::init(b"invalid ABI type").to_error_instance(global),
                     ));
                 }
             }
@@ -1793,13 +1793,13 @@ pub(super) fn generate_symbol_for_function(
 
     if return_type == ABIType::NapiEnv {
         return Ok(Some(
-            EncodedSlice::static_(b"Cannot return napi_env to JavaScript: a napi_env is an in-parameter for cc()-compiled C, never a return value").to_error_instance(global),
+            EncodedSlice::init(b"Cannot return napi_env to JavaScript: a napi_env is an in-parameter for cc()-compiled C, never a return value").to_error_instance(global),
         ));
     }
 
     if return_type == ABIType::Buffer {
         return Ok(Some(
-            EncodedSlice::static_(
+            EncodedSlice::init(
                 b"Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)",
             )
             .to_error_instance(global),
@@ -1808,7 +1808,7 @@ pub(super) fn generate_symbol_for_function(
 
     if return_type == ABIType::BufferLength {
         return Ok(Some(
-            EncodedSlice::static_(
+            EncodedSlice::init(
                 b"buffer_length is an argument-only type; it cannot be a return type",
             )
             .to_error_instance(global),

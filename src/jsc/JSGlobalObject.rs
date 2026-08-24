@@ -5,13 +5,13 @@ use crate::EncodedSliceJsc as _;
 use crate::Error as JscError; // jsc.Error (ErrorCode enum)
 use crate::ErrorCode as NodeErrorCode;
 use crate::StringJsc as _; // .to_js() / .to_error_instance() on bun_core::String
-use crate::encoded_slice::EncodedSlice;
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
+use bun_core::EncodedSlice;
 
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{String as BunString, strings};

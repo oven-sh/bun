@@ -1283,7 +1283,6 @@ pub type PlatformEventLoop = bun_uws::Loop;
 pub type PlatformEventLoop = bun_io::Loop;
 
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
-pub use bun_core::{EncodedSlice, Utf8Bytes};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Core webcore data types (Blob/Store/BuildArtifact) and node path types,
@@ -1445,15 +1444,8 @@ impl SliceWithUnderlyingStringJsc for bun_core::SliceWithUnderlyingString {
     }
 }
 
-/// Extension trait providing JSC-aware methods on `bun_core::EncodedSlice`.
-///
-/// `bun_core::EncodedSlice` is a lower-tier (no JSC dep) `#[repr(C)]` struct;
-/// JSC-side conversions (`toJS`, `toExternalValue`, `external`,
-/// `toJSONObject`, `toErrorInstance`, …) live as inherent methods on the
-/// `bun_jsc::encoded_slice::EncodedSlice` twin. Higher-tier crates that import
-/// `bun_core::EncodedSlice` (e.g. `bun_runtime::webcore::Blob`) cannot reach those
-/// inherent methods cross-crate, so this trait re-surfaces them on the
-/// canonical type.
+/// JSC conversions (`toJS`, `toExternalValue`, `external`, `toJSONObject`,
+/// `toErrorInstance`, …) for `bun_core::EncodedSlice`.
 pub trait EncodedSliceJsc: Sized {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
@@ -1481,10 +1473,6 @@ pub trait EncodedSliceJsc: Sized {
         ctx: *mut core::ffi::c_void,
         callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
     ) -> JSValue;
-    /// `EncodedSlice.withEncoding` — returns `self` tagged UTF-8 if its bytes
-    /// contain non-ASCII (mirrors `setOutputEncoding`'s effect for the value
-    /// case).
-    fn with_encoding(self) -> Self;
 }
 impl EncodedSliceJsc for bun_core::EncodedSlice<'_> {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
@@ -1577,28 +1565,6 @@ impl EncodedSliceJsc for bun_core::EncodedSlice<'_> {
         // Ownership of the buffer + `ctx` transfers to JSC's finalizer.
         EncodedSlice__external(self, global, ctx, callback)
     }
-    #[inline]
-    fn with_encoding(mut self) -> Self {
-        if !bun_core::is_all_ascii(self.byte_slice()) {
-            self.mark_utf8();
-        }
-        self
-    }
-}
-
-/// Free-function form of `EncodedSlice.toExternalU16` for callers that import
-/// `bun_core::EncodedSlice`. Forwards to the canonical impl in [`encoded_slice`].
-///
-/// # Safety
-/// See [`encoded_slice::to_external_u16`].
-#[inline]
-pub unsafe fn encoded_slice_to_external_u16(
-    ptr: *const u16,
-    len: usize,
-    global: &JSGlobalObject,
-) -> JSValue {
-    // SAFETY: caller upholds `to_external_u16`'s contract.
-    unsafe { crate::encoded_slice::to_external_u16(ptr, len, global) }
 }
 
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).

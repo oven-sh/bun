@@ -7,9 +7,9 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
+use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::encoded_slice::EncodedSlice;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
@@ -985,7 +985,7 @@ impl Listener {
         let UnixOrHost::Unix(unix) = &this.connection else {
             return JSValue::UNDEFINED;
         };
-        EncodedSlice::init(unix).with_encoding().to_js(global)
+        EncodedSlice::from_bytes(unix).to_js(global)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -993,7 +993,7 @@ impl Listener {
         let UnixOrHost::Host { host, .. } = &this.connection else {
             return JSValue::UNDEFINED;
         };
-        EncodedSlice::init(host).with_encoding().to_js(global)
+        EncodedSlice::from_bytes(host).to_js(global)
     }
 
     #[bun_jsc::host_fn(getter)]

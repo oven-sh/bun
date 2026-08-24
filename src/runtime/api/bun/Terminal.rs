@@ -15,17 +15,17 @@ use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
-use crate::webcore::blob::EncodedSliceBlobExt;
-use bun_core::EncodedSlice;
 use bun_core::SignalCode;
+use bun_core::{EncodedSlice, Utf8Bytes};
 use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    MarkedArrayBuffer, SysErrorJsc, Utf8Bytes,
+    MarkedArrayBuffer, SysErrorJsc,
 };
 use bun_sys::{self as sys, Fd, FdExt};
 
@@ -216,7 +216,7 @@ impl Default for Options {
         Self {
             cols: 80,
             rows: 24,
-            term_name: Utf8Bytes::default(),
+            term_name: Utf8Bytes::EMPTY,
             data_callback: None,
             exit_callback: None,
             drain_callback: None,
@@ -426,9 +426,6 @@ impl Terminal {
         } else {
             Utf8Bytes::Borrowed(b"xterm-256color")
         };
-        // Ownership moves to the struct below; clear so caller's options drop
-        // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
-        options.term_name = Utf8Bytes::default();
 
         // Heap-allocate the Terminal; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.

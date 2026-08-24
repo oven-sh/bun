@@ -10,7 +10,6 @@
 // Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`.
 #![feature(thread_local)]
 
-use core::fmt::Write as _;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
 use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
@@ -775,11 +774,10 @@ pub fn page_size() -> usize {
     })
 }
 
-// ── String — TYPE_ONLY landing ─────────────────────────────────────────────
-// Layout-only (#[repr(C)]) so T0/T1 crates can name the type; rich methods
-// (toJS, toUTF8, WTF refcounting) remain in bun_str via extension traits.
-// PORTING.md: "#[repr(C)] struct { tag: u8, value: StringValue } — NOT a Rust
-// enum (C++ mutates tag and value independently across FFI)."
+// ── String — layout only ───────────────────────────────────────────────────
+// `#[repr(C)]` so lower-tier crates can name the type; every method lives on
+// `bun_core::String`. Not a Rust enum: C++ mutates `tag` and `value`
+// independently across FFI.
 
 /// Discriminant for [`String`]'s representation.
 #[repr(u8)]
@@ -792,144 +790,78 @@ pub enum Tag {
     Empty = 4,
 }
 
-// `EncodedSliceRaw` pointer-tag scheme — single source of truth.
+// `EncodedSlice` pointer-tag scheme — single source of truth.
 // Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
-pub(crate) const ZS_UTF8_BIT: usize = 1usize << 61;
-pub(crate) const ZS_GLOBAL_BIT: usize = 1usize << 62;
-pub(crate) const ZS_16BIT_BIT: usize = 1usize << 63;
-pub(crate) const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
+const TAG_UTF8_BIT: usize = 1usize << 61;
+const TAG_GLOBAL_BIT: usize = 1usize << 62;
+const TAG_UTF16_BIT: usize = 1usize << 63;
+const UNTAG_MASK: usize = (1usize << 53) - 1;
 
 /// `{ tagged ptr, len }` with encoding bits in the pointer's high byte; the
 /// lifetime-free layout under `bun_core::EncodedSlice<'a>` and the
-/// [`String`] union arm. Higher-tier callers should name `bun_core::EncodedSlice`.
+/// [`String`] union arm. Everything but the tag-bit accessors lives on
+/// `bun_core::EncodedSlice`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct EncodedSliceRaw {
+pub struct EncodedSlice {
     /// Tagged pointer — never dereference directly; use `untagged()`.
-    pub(crate) _unsafe_ptr_do_not_use: *const u8,
+    ptr: *const u8,
     pub len: usize,
 }
 
-impl EncodedSliceRaw {
-    pub const EMPTY: EncodedSliceRaw = EncodedSliceRaw {
-        _unsafe_ptr_do_not_use: b"".as_ptr(),
+impl EncodedSlice {
+    pub const EMPTY: EncodedSlice = EncodedSlice {
+        ptr: b"".as_ptr(),
         len: 0,
     };
-
-    #[inline]
-    pub const fn init(slice: &[u8]) -> EncodedSliceRaw {
-        EncodedSliceRaw {
-            _unsafe_ptr_do_not_use: slice.as_ptr(),
-            len: slice.len(),
-        }
-    }
 
     /// Construct from an already-tagged pointer + length. `ptr` is stored
     /// verbatim — tag bits are not touched.
     #[inline]
-    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> EncodedSliceRaw {
-        EncodedSliceRaw {
-            _unsafe_ptr_do_not_use: ptr,
-            len,
-        }
+    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> EncodedSlice {
+        EncodedSlice { ptr, len }
     }
 
     /// Raw tagged pointer (top-bit flags intact). Pair with
     /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
     #[inline]
     pub const fn tagged_ptr(&self) -> *const u8 {
-        self._unsafe_ptr_do_not_use
+        self.ptr
     }
 
-    #[inline]
-    pub fn init_utf16(items: &[u16]) -> EncodedSliceRaw {
-        let mut out = EncodedSliceRaw {
-            _unsafe_ptr_do_not_use: items.as_ptr().cast(),
-            len: items.len(),
-        };
-        out.mark_utf16();
-        out
-    }
-
-    #[inline]
-    pub const fn length(&self) -> usize {
-        self.len
-    }
     #[inline]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
-
     #[inline]
     pub fn is_16bit(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_16BIT_BIT != 0
+        (self.ptr as usize) & TAG_UTF16_BIT != 0
     }
     #[inline]
     pub fn is_utf8(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_UTF8_BIT != 0
+        (self.ptr as usize) & TAG_UTF8_BIT != 0
     }
     #[inline]
     pub fn is_globally_allocated(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_GLOBAL_BIT != 0
+        (self.ptr as usize) & TAG_GLOBAL_BIT != 0
     }
     #[inline]
     pub fn mark_utf16(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_16BIT_BIT) as *const u8;
+        self.ptr = ((self.ptr as usize) | TAG_UTF16_BIT) as *const u8;
     }
     #[inline]
     pub fn mark_utf8(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_UTF8_BIT) as *const u8;
+        self.ptr = ((self.ptr as usize) | TAG_UTF8_BIT) as *const u8;
     }
     #[inline]
     pub fn mark_global(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_GLOBAL_BIT) as *const u8;
+        self.ptr = ((self.ptr as usize) | TAG_GLOBAL_BIT) as *const u8;
     }
 
     /// Strip the flag bits — truncate to the low 53 bits.
     #[inline]
     pub fn untagged(ptr: *const u8) -> *const u8 {
-        ((ptr as usize) & ZS_UNTAG_MASK) as *const u8
-    }
-
-    /// 8-bit byte view (latin1 or utf8). Caller must ensure `!is_16bit()`.
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        if self.len == 0 {
-            return &[];
-        }
-        debug_assert!(
-            !self.is_16bit(),
-            "EncodedSliceRaw::slice() on UTF-16 string; use to_utf8()"
-        );
-        // SAFETY: constructor stored a valid ptr/len; flag bits stripped.
-        // Length is capped at `u32::MAX`.
-        unsafe {
-            core::slice::from_raw_parts(
-                Self::untagged(self._unsafe_ptr_do_not_use),
-                core::cmp::min(self.len, u32::MAX as usize),
-            )
-        }
-    }
-
-    /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
-    #[inline]
-    pub fn utf16_slice(&self) -> &[u16] {
-        if self.len == 0 {
-            return &[];
-        }
-        debug_assert!(self.is_16bit());
-        // SAFETY: 16-bit-tagged constructor stored a 2-byte-aligned ptr valid
-        // for `self.len` u16 units; flag bits stripped via `ZS_UNTAG_MASK`
-        // (inlined `untagged()` so the cast goes `usize → *const u16` directly).
-        unsafe {
-            core::slice::from_raw_parts(
-                ((self._unsafe_ptr_do_not_use as usize) & ZS_UNTAG_MASK) as *const u16,
-                self.len,
-            )
-        }
+        ((ptr as usize) & UNTAG_MASK) as *const u8
     }
 }
 
@@ -1093,14 +1025,6 @@ impl WTFStringImplStruct {
     pub fn ensure_hash(&self) {
         Bun__WTFStringImpl__ensureHash(self);
     }
-    #[inline]
-    pub fn to_encoded_slice(&self) -> EncodedSliceRaw {
-        if self.is_8bit() {
-            EncodedSliceRaw::init(self.latin1_slice())
-        } else {
-            EncodedSliceRaw::init_utf16(self.utf16_slice())
-        }
-    }
 }
 
 unsafe extern "C" {
@@ -1124,14 +1048,14 @@ unsafe extern "C" {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union StringImpl {
-    pub encoded: EncodedSliceRaw,
+    pub encoded: EncodedSlice,
     pub wtf_string_impl: WTFStringImpl,
     // .StaticEncodedSlice aliases .encoded; .Dead/.Empty are zero-width.
 }
 
 /// Known as `BunString` in C++.
 ///
-/// 5-variant tagged union over WTF-backed and `EncodedSliceRaw`-backed strings. NOT a
+/// 5-variant tagged union over WTF-backed and `EncodedSlice`-backed strings. NOT a
 /// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1144,68 +1068,15 @@ impl String {
     pub const EMPTY: String = String {
         tag: Tag::Empty,
         value: StringImpl {
-            encoded: EncodedSliceRaw::EMPTY,
+            encoded: EncodedSlice::EMPTY,
         },
     };
     pub const DEAD: String = String {
         tag: Tag::Dead,
         value: StringImpl {
-            encoded: EncodedSliceRaw::EMPTY,
+            encoded: EncodedSlice::EMPTY,
         },
     };
-
-    /// Borrow the live `WTF::StringImpl` backing this string.
-    ///
-    /// Centralises the union-field read + raw-ptr deref that `to_encoded_slice` /
-    /// `length` / `is_8bit` each open-coded. Callers branch on
-    /// `self.tag == WTFStringImpl` first (debug-asserted).
-    #[inline(always)]
-    fn wtf_impl(&self) -> &WTFStringImplStruct {
-        debug_assert_eq!(self.tag, Tag::WTFStringImpl);
-        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
-        // union field and a non-null, live `*mut WTFStringImplStruct`
-        // (refcount ≥ 1 for the `String`'s lifetime).
-        unsafe { &*self.value.wtf_string_impl }
-    }
-
-    #[inline]
-    pub(crate) fn to_encoded_slice(&self) -> EncodedSliceRaw {
-        match self.tag {
-            Tag::StaticEncodedSlice | Tag::EncodedSlice => {
-                // SAFETY: `tag` is `EncodedSlice`/`StaticEncodedSlice` ⇒ `encoded`
-                // is the active union field.
-                unsafe { self.value.encoded }
-            }
-            Tag::WTFStringImpl => self.wtf_impl().to_encoded_slice(),
-            _ => EncodedSliceRaw::EMPTY,
-        }
-    }
-}
-
-impl core::fmt::Display for String {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // utf8 → write bytes; utf16 → transcode;
-        // latin1 → widen each byte to a Unicode scalar.
-        let zs = self.to_encoded_slice();
-        if zs.len == 0 {
-            return Ok(());
-        }
-        if zs.is_16bit() {
-            for c in core::char::decode_utf16(zs.utf16_slice().iter().copied()) {
-                f.write_char(c.unwrap_or(core::char::REPLACEMENT_CHARACTER))?;
-            }
-            Ok(())
-        } else if zs.is_utf8() {
-            // BStr renders raw bytes without allocating.
-            write!(f, "{}", bstr::BStr::new(zs.slice()))
-        } else {
-            for &b in zs.slice() {
-                // Latin-1 byte → Unicode codepoint of the same value.
-                f.write_char(b as char)?;
-            }
-            Ok(())
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

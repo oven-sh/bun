@@ -1324,8 +1324,8 @@ impl JSTranspiler {
             return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
         }
 
-        let exports_label = EncodedSlice::static_(b"exports");
-        let imports_label = EncodedSlice::static_(b"imports");
+        let exports_label = EncodedSlice::init(b"exports");
+        let imports_label = EncodedSlice::init(b"imports");
         let named_imports_value = named_imports_to_js(
             global,
             parse_result.ast.import_records.as_slice(),
@@ -1380,7 +1380,7 @@ impl JSTranspiler {
             let bytes = code.slice().to_vec();
             global.vm().report_extra_memory(bytes.len());
             bun_jsc::Unprotect::unprotect(&mut code);
-            code = StringOrBuffer::EncodedSlice(bun_core::Utf8Bytes::Owned(bytes));
+            code = StringOrBuffer::Utf8(bun_core::Utf8Bytes::Owned(bytes));
         }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
         // (`Flavor::Async`) already protected; adopt into a `ThreadSafe` so any
@@ -1577,8 +1577,8 @@ fn named_imports_to_js(
     import_records: &[ImportRecord],
     trim_unused_imports: bool,
 ) -> JsResult<JSValue> {
-    let path_label = EncodedSlice::static_(b"path");
-    let kind_label = EncodedSlice::static_(b"kind");
+    let path_label = EncodedSlice::init(b"path");
+    let kind_label = EncodedSlice::init(b"kind");
 
     let mut count: u32 = 0;
     for record in import_records {

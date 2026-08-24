@@ -764,38 +764,28 @@ impl AsyncModule {
             _ => b"PackageResolveError",
         };
 
-        let error_instance = EncodedSlice::from_bytes(&msg)
-            .with_encoding()
-            .to_error_instance(global_this);
+        let error_instance = EncodedSlice::from_bytes(&msg).to_error_instance(global_this);
         if !result.url.is_empty() {
             error_instance.put(
                 global_this,
                 b"url",
-                EncodedSlice::from_bytes(result.url)
-                    .with_encoding()
-                    .to_js(global_this),
+                EncodedSlice::from_bytes(result.url).to_js(global_this),
             );
         }
         error_instance.put(
             global_this,
             b"name",
-            EncodedSlice::from_bytes(name)
-                .with_encoding()
-                .to_js(global_this),
+            EncodedSlice::from_bytes(name).to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"pkg",
-            EncodedSlice::from_bytes(result.name)
-                .with_encoding()
-                .to_js(global_this),
+            EncodedSlice::from_bytes(result.name).to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"specifier",
-            EncodedSlice::from_bytes(self.specifier())
-                .with_encoding()
-                .to_js(global_this),
+            EncodedSlice::from_bytes(self.specifier()).to_js(global_this),
         );
         let location = bun_ast::range_data(
             Some(&self.parse_result.source),
@@ -807,9 +797,7 @@ impl AsyncModule {
         error_instance.put(
             global_this,
             b"sourceURL",
-            EncodedSlice::from_bytes(self.parse_result.source.path.text)
-                .with_encoding()
-                .to_js(global_this),
+            EncodedSlice::from_bytes(self.parse_result.source.path.text).to_js(global_this),
         );
         error_instance.put(
             global_this,
@@ -820,9 +808,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"lineText",
-                EncodedSlice::from_bytes(line_text)
-                    .with_encoding()
-                    .to_js(global_this),
+                EncodedSlice::from_bytes(line_text).to_js(global_this),
             );
         }
         error_instance.put(
@@ -835,9 +821,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"referrer",
-                EncodedSlice::from_bytes(referrer)
-                    .with_encoding()
-                    .to_js(global_this),
+                EncodedSlice::from_bytes(referrer).to_js(global_this),
             );
         }
 
@@ -967,40 +951,30 @@ impl AsyncModule {
             _ => b"TarballDownloadError",
         };
 
-        let error_instance = EncodedSlice::from_bytes(&msg)
-            .with_encoding()
-            .to_error_instance(global_this);
+        let error_instance = EncodedSlice::from_bytes(&msg).to_error_instance(global_this);
         if !result.url.is_empty() {
             error_instance.put(
                 global_this,
                 b"url",
-                EncodedSlice::from_bytes(result.url)
-                    .with_encoding()
-                    .to_js(global_this),
+                EncodedSlice::from_bytes(result.url).to_js(global_this),
             );
         }
         error_instance.put(
             global_this,
             b"name",
-            EncodedSlice::from_bytes(name)
-                .with_encoding()
-                .to_js(global_this),
+            EncodedSlice::from_bytes(name).to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"pkg",
-            EncodedSlice::from_bytes(result.name)
-                .with_encoding()
-                .to_js(global_this),
+            EncodedSlice::from_bytes(result.name).to_js(global_this),
         );
         let specifier = self.specifier();
         if !specifier.is_empty() && specifier != b"undefined" {
             error_instance.put(
                 global_this,
                 b"referrer",
-                EncodedSlice::from_bytes(specifier)
-                    .with_encoding()
-                    .to_js(global_this),
+                EncodedSlice::from_bytes(specifier).to_js(global_this),
             );
         }
 
@@ -1019,15 +993,12 @@ impl AsyncModule {
                     .path
                     .text,
             )
-            .with_encoding()
             .to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"sourceURL",
-            EncodedSlice::from_bytes(self.parse_result.source.path.text)
-                .with_encoding()
-                .to_js(global_this),
+            EncodedSlice::from_bytes(self.parse_result.source.path.text).to_js(global_this),
         );
         error_instance.put(
             global_this,
@@ -1038,9 +1009,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"lineText",
-                EncodedSlice::from_bytes(line_text)
-                    .with_encoding()
-                    .to_js(global_this),
+                EncodedSlice::from_bytes(line_text).to_js(global_this),
             );
         }
         error_instance.put(

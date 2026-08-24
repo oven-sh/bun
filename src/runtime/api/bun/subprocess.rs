@@ -1443,7 +1443,7 @@ impl Subprocess<'_> {
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
                 use bun_jsc::EncodedSliceJsc as _;
-                return bun_jsc::encoded_slice::EncodedSlice::init(name.as_bytes()).to_js(global);
+                return bun_core::EncodedSlice::init(name.as_bytes()).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);
             }

@@ -5515,10 +5515,6 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            // `bun_core::EncodedSlice` lacks `with_encoding`/`to_js` (those live
-            // on `bun_jsc::encoded_slice::EncodedSlice`). The formatted bytes here are pure
-            // ASCII (IP address + optional port), so `with_encoding()` would be a no-op
-            // anyway — borrow as a `bun_core::String` and hand to JS.
             use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
                 values.put_index(

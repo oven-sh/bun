@@ -1270,8 +1270,6 @@ pub struct S3CredentialsWithOptions {
     pub _content_encoding_slice: Option<bun_core::Utf8Bytes<'static>>,
 }
 
-// Utf8Bytes impls Drop, so no explicit Drop needed.
-
 // ──────────────────────────────────────────────────────────────────────────
 // SignedHeaders
 // ──────────────────────────────────────────────────────────────────────────

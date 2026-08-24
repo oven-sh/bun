@@ -42,8 +42,8 @@ typedef void (*URLSearchParams__toStringCallback)(void* ctx, const EncodedSlice*
 extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchParams, void* ctx, URLSearchParams__toStringCallback callback)
 {
     String str = urlSearchParams->toString();
-    auto zig = Zig::toEncodedSlice(str);
-    callback(ctx, &zig);
+    auto slice = Zig::toEncodedSlice(str);
+    callback(ctx, &slice);
 }
 
 URLSearchParams::URLSearchParams(const String& init, DOMURL* associatedURL)

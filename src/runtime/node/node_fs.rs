@@ -4506,14 +4506,8 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
         Encoding::Buffer => {
             StringOrBuffer::Buffer(Buffer::from_string(bytes).expect("unreachable"))
         }
-        Encoding::Utf8 => StringOrBuffer::String(node::SliceWithUnderlyingString {
-            underlying: BunString::clone_utf8(bytes),
-            ..Default::default()
-        }),
-        enc => StringOrBuffer::String(node::SliceWithUnderlyingString {
-            underlying: webcore::encoding::to_bun_string(bytes, enc),
-            ..Default::default()
-        }),
+        Encoding::Utf8 => StringOrBuffer::String(BunString::clone_utf8(bytes).into_slice()),
+        enc => StringOrBuffer::String(webcore::encoding::to_bun_string(bytes, enc).into_slice()),
     }
 }
 
@@ -7417,7 +7411,7 @@ impl NodeFS {
         if args.encoding == Encoding::Utf8 {
             if let PathLike::SliceWithUnderlyingString(s) = &args.path {
                 if strings::eql_long(s.slice(), link_path, true) {
-                    return Ok(StringOrBuffer::String(s.dupe_ref()));
+                    return Ok(StringOrBuffer::String(s.clone()));
                 }
             }
         }
@@ -7507,7 +7501,7 @@ impl NodeFS {
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::SliceWithUnderlyingString(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
-                        return Ok(StringOrBuffer::String(s.dupe_ref()));
+                        return Ok(StringOrBuffer::String(s.clone()));
                     }
                 }
             }
@@ -7560,7 +7554,7 @@ impl NodeFS {
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::SliceWithUnderlyingString(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
-                        return Ok(StringOrBuffer::String(s.dupe_ref()));
+                        return Ok(StringOrBuffer::String(s.clone()));
                     }
                 }
             }

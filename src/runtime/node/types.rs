@@ -2,8 +2,7 @@ use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::Utf8Bytes;
-use bun_core::{self, fmt as bun_fmt};
+use bun_core::{self, EncodedSlice, Utf8Bytes, fmt as bun_fmt};
 use bun_core::{WStr, ZStr};
 use bun_jsc::{EncodedSliceJsc as _, SliceWithUnderlyingStringJsc as _, StringJsc as _};
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
@@ -153,7 +152,7 @@ impl BlobOrStringOrBuffer {
                     // rather than referencing the store which isn't thread-safe
                     let blob_data = blob.shared_view();
                     let owned_data: Vec<u8> = blob_data.to_vec();
-                    return Ok(Some(Self::StringOrBuffer(StringOrBuffer::EncodedSlice(
+                    return Ok(Some(Self::StringOrBuffer(StringOrBuffer::Utf8(
                         Utf8Bytes::Owned(owned_data),
                     ))));
                 }
@@ -274,7 +273,7 @@ impl BlobOrStringOrBuffer {
 pub enum StringOrBuffer {
     String(SliceWithUnderlyingString),
     ThreadsafeString(SliceWithUnderlyingString),
-    EncodedSlice(Utf8Bytes<'static>),
+    Utf8(Utf8Bytes<'static>),
     Buffer(Buffer),
 }
 
@@ -285,13 +284,13 @@ impl Default for StringOrBuffer {
 }
 
 impl StringOrBuffer {
-    pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(Utf8Bytes::EMPTY);
+    pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::Utf8(Utf8Bytes::EMPTY);
 
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::String(str) => str.slice(),
             Self::ThreadsafeString(str) => str.slice(),
-            Self::EncodedSlice(str) => str.slice(),
+            Self::Utf8(str) => str.slice(),
             Self::Buffer(str) => str.slice(),
         }
     }
@@ -335,7 +334,7 @@ impl StringOrBuffer {
                 *self = Self::ThreadsafeString(str);
             }
             Self::ThreadsafeString(_) => {}
-            Self::EncodedSlice(_) => {}
+            Self::Utf8(_) => {}
             Self::Buffer(buffer) => {
                 buffer.buffer.value.protect();
             }
@@ -364,9 +363,9 @@ impl StringOrBuffer {
     pub fn to_js(&mut self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Self::ThreadsafeString(str) | Self::String(str) => core::mem::take(str).into_js(ctx),
-            Self::EncodedSlice(encoded_slice) => {
-                let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, encoded_slice.slice());
-                *encoded_slice = Utf8Bytes::default();
+            Self::Utf8(utf8) => {
+                let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, utf8.slice());
+                *utf8 = Utf8Bytes::EMPTY;
                 result
             }
             Self::Buffer(buffer) => {
@@ -417,7 +416,7 @@ impl StringOrBuffer {
                     sliced.report_extra_memory(global.vm());
 
                     if sliced.underlying.is_empty() {
-                        *out = Self::EncodedSlice(sliced.into_utf8());
+                        *out = Self::Utf8(sliced.into_utf8());
                         return Ok(true);
                     }
 
@@ -553,7 +552,7 @@ impl StringOrBuffer {
             let encoded = str.encode(encoding);
             global.vm().report_extra_memory(encoded.len());
 
-            *out = Self::EncodedSlice(Utf8Bytes::Owned(encoded));
+            *out = Self::Utf8(Utf8Bytes::Owned(encoded));
             return Ok(true);
         }
 
@@ -792,7 +791,7 @@ impl Encoding {
             }
             Self::Base64url => {
                 let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(jsc::encoded_slice::EncodedSlice::init(&buf).to_js(global_object))
+                Ok(EncodedSlice::init(&buf).to_js(global_object))
             }
             Self::Hex => {
                 // The byte-by-byte `write!` formatting machinery is pathologically
@@ -1257,7 +1256,7 @@ impl PathLikeExt for PathLike {
             sliced.report_extra_memory(global.vm());
 
             if sliced.underlying.is_empty() {
-                return Ok(Self::EncodedSlice(sliced.into_utf8()));
+                return Ok(Self::Utf8(sliced.into_utf8()));
             }
             Ok(Self::ThreadsafeString(sliced))
         } else {
@@ -1277,7 +1276,7 @@ impl PathLikeExt for PathLike {
 
             // It is expensive to keep both around: `utf8` here is a transcoded
             // copy (UTF-16 or non-ASCII Latin-1 input) independent of `underlying`.
-            Ok(Self::EncodedSlice(sliced.into_utf8()))
+            Ok(Self::Utf8(sliced.into_utf8()))
         }
     }
 }

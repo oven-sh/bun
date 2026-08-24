@@ -622,7 +622,6 @@ impl AnyRoute {
         let Some(index) = argument.get_optional_slice(init_ctx.global, b"index")? else {
             return Ok(None);
         };
-        // `Utf8Bytes` impls `Drop` — freed at scope end.
 
         let Some(files) = argument.get_array(init_ctx.global, b"files")? else {
             return Ok(None);
@@ -1724,15 +1723,10 @@ where
                 }
             });
 
-            let mut sec_websocket_protocol = EncodedSlice::EMPTY;
-            let mut sec_websocket_extensions = EncodedSlice::EMPTY;
-
-            // Owned backing storage for the above when they come from options.headers.
-            // fastGet returns a EncodedSlice that borrows from the header map entry's
-            // StringImpl, which fastRemove then frees — so we must copy the bytes
-            // before removing the entry.
-            let mut _sec_websocket_protocol_owned = Utf8Bytes::EMPTY;
-            let mut _sec_websocket_extensions_owned = Utf8Bytes::EMPTY;
+            // Copied out of `options.headers` because `fast_remove` frees the
+            // entry they would otherwise borrow.
+            let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
+            let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
 
             if let Some(opts) = optional {
                 'getter: {
@@ -1780,10 +1774,7 @@ where
                         if let Some(protocol) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
                         {
-                            // Clone before fastRemove frees the backing StringImpl.
-                            _sec_websocket_protocol_owned = protocol.to_utf8().into_owned();
-                            sec_websocket_protocol =
-                                EncodedSlice::init(_sec_websocket_protocol_owned.slice());
+                            sec_websocket_protocol = protocol.to_utf8().into_owned();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                         }
@@ -1791,10 +1782,7 @@ where
                         if let Some(extensions) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions)
                         {
-                            // Clone before fastRemove frees the backing StringImpl.
-                            _sec_websocket_extensions_owned = extensions.to_utf8().into_owned();
-                            sec_websocket_extensions =
-                                EncodedSlice::init(_sec_websocket_extensions_owned.slice());
+                            sec_websocket_extensions = extensions.to_utf8().into_owned();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
@@ -1812,8 +1800,8 @@ where
             }
             return Ok(JSValue::from(node_http_response.upgrade(
                 data_value,
-                sec_websocket_protocol,
-                sec_websocket_extensions,
+                sec_websocket_protocol.slice(),
+                sec_websocket_extensions.slice(),
             )));
         }
 
@@ -1858,19 +1846,11 @@ where
             unsafe { (*p).deref() }
         });
 
-        let mut sec_websocket_key_str = EncodedSlice::EMPTY;
-        let mut sec_websocket_protocol = EncodedSlice::EMPTY;
-        let mut sec_websocket_extensions = EncodedSlice::EMPTY;
-        let mut sec_websocket_version = EncodedSlice::EMPTY;
-        let mut upgrade_header = EncodedSlice::EMPTY;
-
-        // Owned backing storage for sec_websocket_*.
-        // `Utf8Bytes` impls `Drop`; reassignment drops the previous value.
-        let mut _sec_websocket_key_owned = bun_core::Utf8Bytes::empty();
-        let mut _sec_websocket_protocol_owned = bun_core::Utf8Bytes::empty();
-        let mut _sec_websocket_extensions_owned = bun_core::Utf8Bytes::empty();
-        let mut _sec_websocket_version_owned = bun_core::Utf8Bytes::empty();
-        let mut _upgrade_header_owned = bun_core::Utf8Bytes::empty();
+        let mut sec_websocket_key = Utf8Bytes::EMPTY;
+        let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
+        let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
+        let mut sec_websocket_version = Utf8Bytes::EMPTY;
+        let mut upgrade_header = Utf8Bytes::EMPTY;
 
         // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
@@ -1882,25 +1862,19 @@ where
             // (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
             let head = bun_opaque::opaque_deref_mut(head.as_ptr());
             if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
-                _sec_websocket_key_owned = key.to_utf8().into_owned();
-                sec_websocket_key_str = EncodedSlice::init(_sec_websocket_key_owned.slice());
+                sec_websocket_key = key.to_utf8().into_owned();
             }
             if let Some(proto) = head.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                _sec_websocket_protocol_owned = proto.to_utf8().into_owned();
-                sec_websocket_protocol = EncodedSlice::init(_sec_websocket_protocol_owned.slice());
+                sec_websocket_protocol = proto.to_utf8().into_owned();
             }
             if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                _sec_websocket_extensions_owned = ext.to_utf8().into_owned();
-                sec_websocket_extensions =
-                    EncodedSlice::init(_sec_websocket_extensions_owned.slice());
+                sec_websocket_extensions = ext.to_utf8().into_owned();
             }
             if let Some(ver) = head.fast_get(HTTPHeaderName::SecWebSocketVersion) {
-                _sec_websocket_version_owned = ver.to_utf8().into_owned();
-                sec_websocket_version = EncodedSlice::init(_sec_websocket_version_owned.slice());
+                sec_websocket_version = ver.to_utf8().into_owned();
             }
             if let Some(up) = head.fast_get(HTTPHeaderName::Upgrade) {
-                _upgrade_header_owned = up.to_utf8().into_owned();
-                upgrade_header = EncodedSlice::init(_upgrade_header_owned.slice());
+                upgrade_header = up.to_utf8().into_owned();
             }
         }
 
@@ -1915,24 +1889,16 @@ where
             // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref
             // (BACKREF; live while RequestContext.req is Some).
             let r = bun_opaque::opaque_deref(req_ptr.cast::<uws_sys::Request>().cast_const());
-            if sec_websocket_key_str.len == 0 {
-                sec_websocket_key_str =
-                    EncodedSlice::init(r.header(b"sec-websocket-key").unwrap_or(b""));
-            }
-            if sec_websocket_protocol.len == 0 {
-                sec_websocket_protocol =
-                    EncodedSlice::init(r.header(b"sec-websocket-protocol").unwrap_or(b""));
-            }
-            if sec_websocket_extensions.len == 0 {
-                sec_websocket_extensions =
-                    EncodedSlice::init(r.header(b"sec-websocket-extensions").unwrap_or(b""));
-            }
-            if sec_websocket_version.len == 0 {
-                sec_websocket_version =
-                    EncodedSlice::init(r.header(b"sec-websocket-version").unwrap_or(b""));
-            }
-            if upgrade_header.len == 0 {
-                upgrade_header = EncodedSlice::init(r.header(b"upgrade").unwrap_or(b""));
+            for (value, name) in [
+                (&mut sec_websocket_key, b"sec-websocket-key".as_slice()),
+                (&mut sec_websocket_protocol, b"sec-websocket-protocol"),
+                (&mut sec_websocket_extensions, b"sec-websocket-extensions"),
+                (&mut sec_websocket_version, b"sec-websocket-version"),
+                (&mut upgrade_header, b"upgrade"),
+            ] {
+                if value.is_empty() {
+                    *value = Utf8Bytes::Borrowed(r.header(name).unwrap_or(b""));
+                }
             }
         }
 
@@ -1945,7 +1911,7 @@ where
         {
             return Ok(JSValue::FALSE);
         }
-        if !is_valid_sec_websocket_key(sec_websocket_key_str.slice()) {
+        if !is_valid_sec_websocket_key(sec_websocket_key.slice()) {
             return Ok(JSValue::FALSE);
         }
         // RFC 6455 §4.4: an unsupported |Sec-WebSocket-Version| MUST be
@@ -1960,13 +1926,6 @@ where
             upgrader.end_without_body(true);
             return Ok(JSValue::FALSE);
         }
-        if sec_websocket_protocol.len > 0 {
-            sec_websocket_protocol.mark_utf8();
-        }
-        if sec_websocket_extensions.len > 0 {
-            sec_websocket_extensions.mark_utf8();
-        }
-
         let mut data_value = JSValue::ZERO;
         // Non-unit guard state: holds the temporarily-created FetchHeaders (if
         // any) and derefs it on scope exit. Populated below via DerefMut.
@@ -2017,16 +1976,13 @@ where
 
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                     let fh = bun_opaque::opaque_deref_mut(fh);
+                    // Copied out because `fast_remove` frees the entry.
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                        _sec_websocket_protocol_owned = p.to_utf8().into_owned();
-                        sec_websocket_protocol =
-                            EncodedSlice::init(_sec_websocket_protocol_owned.slice());
+                        sec_websocket_protocol = p.to_utf8().into_owned();
                         fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                     }
                     if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                        _sec_websocket_extensions_owned = e.to_utf8().into_owned();
-                        sec_websocket_extensions =
-                            EncodedSlice::init(_sec_websocket_extensions_owned.slice());
+                        sec_websocket_extensions = e.to_utf8().into_owned();
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }
                 }
@@ -2095,9 +2051,6 @@ where
         );
         data_value.ensure_still_alive();
 
-        let proto_str = sec_websocket_protocol.to_utf8();
-        let ext_str = sec_websocket_extensions.to_utf8();
-
         resp.clear_aborted();
         resp.clear_on_data();
         resp.clear_on_writable();
@@ -2111,9 +2064,9 @@ where
 
         resp.upgrade(
             ws,
-            sec_websocket_key_str.slice(),
-            proto_str.slice(),
-            ext_str.slice(),
+            sec_websocket_key.slice(),
+            sec_websocket_protocol.slice(),
+            sec_websocket_extensions.slice(),
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST, safe
             // deref; `UpgradeState::Pending` documents who keeps it alive.
             Some(bun_opaque::opaque_deref_mut(upgrade_ctx.as_ptr())),
@@ -2336,8 +2289,8 @@ where
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
         let existing_request: Box<Request> = if first_arg.is_string() {
-            let url_zig_str = arguments[0].to_slice(ctx)?;
-            let temp_url_str = url_zig_str.slice();
+            let url_utf8 = arguments[0].to_slice(ctx)?;
+            let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
                 let fetch_error = Fetch::FETCH_ERROR_BLANK_URL;
@@ -2353,7 +2306,7 @@ where
 
             // The UTF-8 clone of `url.href` below makes its own copy, so the
             // joined buffer only needs to live through this block. The else arm
-            // borrows `temp_url_str` (kept alive by `url_zig_str`) instead of
+            // borrows `temp_url_str` (kept alive by `url_utf8`) instead of
             // duping it.
             let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
                 std::borrow::Cow::Owned(

@@ -1076,7 +1076,8 @@ impl JSValkeyClient {
 
         let second_arg = frame.argument(1);
 
-        let mut args: Vec<bun_jsc::Utf8Bytes<'_>> = Vec::new();
+        let object_iter;
+        let mut args: Vec<bun_core::Utf8Bytes<'_>> = Vec::new();
 
         args.push(key.to_utf8());
 
@@ -1086,7 +1087,7 @@ impl JSValkeyClient {
                 return Err(global.throw_invalid_argument_type(bname(command), "fields", "object"));
             };
 
-            let object_iter = JSPropertyIterator::init(
+            object_iter = JSPropertyIterator::init(
                 global,
                 obj,
                 jsc::PropertyIteratorOptions {
@@ -1098,7 +1099,7 @@ impl JSValkeyClient {
             args.ensure_total_capacity(1 + object_iter.len * 2);
 
             while let Some((field_name, value)) = object_iter.next()? {
-                args.push(field_name.to_utf8().into_owned());
+                args.push(field_name.to_utf8());
 
                 let value_str = value.to_bun_string(global)?;
                 args.push(value_str.into_utf8());

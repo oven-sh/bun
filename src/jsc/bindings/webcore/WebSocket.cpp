@@ -772,15 +772,15 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
 {
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        auto zigStr = Zig::toEncodedSlice(message);
-        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &zigStr, static_cast<uint8_t>(op));
+        auto slice = Zig::toEncodedSlice(message);
+        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &slice, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        auto zigStr = Zig::toEncodedSlice(message);
-        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr, static_cast<uint8_t>(op));
+        auto slice = Zig::toEncodedSlice(message);
+        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &slice, static_cast<uint8_t>(op));
         break;
     }
     default: {
@@ -853,14 +853,14 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     m_state = CLOSING;
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        EncodedSlice reasonZigStr = Zig::toEncodedSlice(reason);
-        Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonZigStr);
+        EncodedSlice reasonSlice = Zig::toEncodedSlice(reason);
+        Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonSlice);
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        EncodedSlice reasonZigStr = Zig::toEncodedSlice(reason);
-        Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonZigStr);
+        EncodedSlice reasonSlice = Zig::toEncodedSlice(reason);
+        Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonSlice);
         // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
     }

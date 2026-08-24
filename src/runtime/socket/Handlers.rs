@@ -500,7 +500,7 @@ impl SocketConfig {
                 GeneratedTls::Object(ssl) => SSLConfig::from_generated(vm, global, ssl)?,
             };
             break 'blk SocketConfig {
-                hostname_or_unix: Utf8Bytes::empty(),
+                hostname_or_unix: Utf8Bytes::EMPTY,
                 port: None,
                 fd: generated.fd.map(|v| {
                     #[cfg(windows)]

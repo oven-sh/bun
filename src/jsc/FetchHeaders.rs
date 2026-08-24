@@ -234,7 +234,7 @@ impl FetchHeaders {
     }
 
     pub fn fast_get(&mut self, name_: HTTPHeaderName) -> Option<EncodedSlice<'_>> {
-        let mut str = EncodedSlice::init(b"");
+        let mut str = EncodedSlice::EMPTY;
         self.fast_get_(name_ as u8, &mut str);
         if str.len == 0 {
             return None;

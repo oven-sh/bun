@@ -3,6 +3,7 @@ use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
 
+use bun_core::Utf8Bytes;
 use bun_jsc::{ComptimeStringMapExt as _, JsCell};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
@@ -11,7 +12,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
-    JsError, JsRef, JsResult, Utf8Bytes,
+    JsError, JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 use crate::webcore::{Blob, BlobExt};
@@ -1345,7 +1346,7 @@ impl ServerWebSocket {
 
         let message_value: Utf8Bytes = 'brk: {
             if args[1].is_undefined() {
-                break 'brk Utf8Bytes::empty();
+                break 'brk Utf8Bytes::EMPTY;
             }
             break 'brk args[1].to_slice(global_this)?;
         };

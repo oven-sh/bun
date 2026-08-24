@@ -24,7 +24,7 @@ use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 /// outlives the borrowed source.
 #[inline]
 fn dupe_path_like(path: &[u8]) -> PathLike {
-    PathLike::EncodedSlice(Utf8Bytes::init_dupe(path).unwrap_or_else(|_| bun_core::out_of_memory()))
+    PathLike::Utf8(Utf8Bytes::Owned(path.to_vec()))
 }
 
 #[inline]

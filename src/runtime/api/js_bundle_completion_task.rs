@@ -520,7 +520,7 @@ impl JSBundleCompletionTask {
                             bun_ptr::cow_slice::CowSlice::init_unchecked(write_path, false),
                         )),
                         flush: false,
-                        data: StringOrBuffer::EncodedSlice(bun_core::Utf8Bytes::Borrowed(
+                        data: StringOrBuffer::Utf8(bun_core::Utf8Bytes::Borrowed(
                             // SAFETY: `write_file_with_path_buffer` is synchronous;
                             // `output_files[i]` outlives the call.
                             unsafe { bun_ptr::detach_lifetime(bytes) },

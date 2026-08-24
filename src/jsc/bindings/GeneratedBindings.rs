@@ -8,7 +8,8 @@
 
 #![allow(non_snake_case)]
 
-use crate::{JSGlobalObject, JSHostFn, JSValue, encoded_slice, host_fn};
+use crate::{JSGlobalObject, JSHostFn, JSValue, host_fn};
+use bun_core::EncodedSlice;
 
 /// Generated for "src/jsc/bindgen_test.rs"
 pub mod bindgen_test {
@@ -27,7 +28,7 @@ pub mod bindgen_test {
     pub(crate) fn create_add_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
-            Some(&encoded_slice::EncodedSlice::init(b"add")),
+            Some(&EncodedSlice::init(b"add")),
             3,
             JS_ADD,
             false,
@@ -38,9 +39,7 @@ pub mod bindgen_test {
     pub(crate) fn create_required_and_optional_arg_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
-            Some(&encoded_slice::EncodedSlice::init(
-                b"requiredAndOptionalArg",
-            )),
+            Some(&EncodedSlice::init(b"requiredAndOptionalArg")),
             4,
             JS_REQUIRED_AND_OPTIONAL_ARG,
             false,

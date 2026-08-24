@@ -1,10 +1,10 @@
 use core::cell::Cell;
 use std::io::Write as _;
 
-use crate::encoded_slice::EncodedSlice;
 use crate::{
     CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _,
 };
+use bun_core::EncodedSlice;
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 // R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field

@@ -4771,7 +4771,7 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
 
                 let content_slice = content.to_utf8();
                 // Dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = matches!(content_slice, bun_core::Utf8Bytes::Owned(_));
+                let dupe = content_slice.is_owned();
                 let mt = MimeType::init(
                     content_slice.slice(),
                     dupe,

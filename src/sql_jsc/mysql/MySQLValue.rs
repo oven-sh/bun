@@ -158,7 +158,7 @@ pub struct Bytes {
 impl Default for Bytes {
     fn default() -> Self {
         Self {
-            slice: Utf8Bytes::empty(),
+            slice: Utf8Bytes::EMPTY,
             pinned: JSValue::ZERO,
         }
     }
@@ -171,11 +171,8 @@ impl Drop for Bytes {
             // lifetime of this Value (see struct doc); the FFI itself is `safe fn`.
             JSC__JSValue__unpinArrayBuffer(self.pinned);
         }
-        // self.slice dropped automatically
     }
 }
-
-// No explicit Drop for Value: the enum payloads (Utf8Bytes, Bytes, Data) all impl Drop.
 
 /// The integer branches of `Value::from_js` validate against the full range of
 /// the target type, so the bounds are derived from `T` rather than repeated at
@@ -345,11 +342,10 @@ impl Value {
                         // FastTypedArray — tiny, GC-movable vector; dupe.
                         1 => Ok(Value::Bytes(Bytes {
                             // SAFETY: ptr/len returned from helper are valid for the
-                            // duration of this call; init_dupe copies immediately.
-                            slice: Utf8Bytes::init_dupe(unsafe {
-                                core::slice::from_raw_parts(ptr, len)
-                            })
-                            .map_err(|_| any_mysql_error::Error::OutOfMemory)?,
+                            // duration of this call; copied immediately.
+                            slice: Utf8Bytes::Owned(
+                                unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec(),
+                            ),
                             pinned: JSValue::ZERO,
                         })),
                         // Oversize/Wasteful/DataView/JSArrayBuffer — pinned

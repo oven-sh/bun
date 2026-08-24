@@ -90,22 +90,31 @@ crosses the boundary (C++ `Bun::toStringRef` return / `transferToWTFString()`
 consumer); `&String` ⇔ `const BunString*`.
 
 ```rust
-use bun_core::String;
+use bun_core::{EncodedSlice, String, Utf8Bytes};   // the only import path for all three
 
 let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
 let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
-let s = String::static_(b"literal");       // 'static slice, never freed
+let s = String::static_(b"literal");       // 'static ASCII slice, never freed
 
 let utf8: Utf8Bytes<'_>      = s.to_utf8();    // borrows `s` (ASCII/UTF-8) or transcodes; for locals
 let utf8: Utf8Bytes<'static> = s.into_utf8();  // moves `s`'s ref in / copies; for storing in fields
 let owned: Vec<u8>           = s.to_owned_slice();
 ```
 
-`Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared{..}` (a
-ref-holding view of a WTF 8-bit buffer); it derefs to `[u8]`. `EncodedSlice<'a>`
-is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16) borrowed view
-(`String::to_encoded_slice()`, `StringView::from_encoded(..)`,
-`EncodedSlice::to_utf8() -> Utf8Bytes<'a>`).
+Rule: a `Utf8Bytes<'static>` field/element must come from an owning producer
+(`into_utf8()`, `value.to_slice(global)?`, `x.to_utf8().into_owned()`,
+`Utf8Bytes::Owned(..)`) — never from `to_utf8()` on a `&String`/`StringView`
+reached through a `&'static` accessor.
+
+`Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared(String)`
+(`Shared` holds an 8-bit all-ASCII WTF-backed `String` and reads its buffer);
+it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
+`EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
+borrowed view: `EncodedSlice::init(bytes)` (Latin-1/ASCII, also for `'static`
+literals), `init_utf8(bytes)`, `init_utf16(units)`, `from_bytes(bytes)` (scans;
+tags UTF-8 if non-ASCII), `String::to_encoded_slice()`,
+`StringView::from_encoded(..)`, `EncodedSlice::to_utf8() -> Utf8Bytes<'a>`;
+`bun_jsc::EncodedSliceJsc` adds `to_js`/`to_error_instance`/….
 
 JSValue → string: `value.to_bun_string(global)?` (owned `String`),
 `value.to_slice(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or

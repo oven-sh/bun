@@ -182,25 +182,32 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
 
-fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValue {
-    let data_url = data_url_;
-
-    let data = match data_url.decode_data() {
-        Ok(d) => d,
-        Err(_) => {
-            let err =
-                global_this.create_error_instance(format_args!("failed to fetch the data URL"));
-            return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global_this,
-                err,
-            );
-        }
-    };
-    let blob = Blob::init(data, global_this);
-
+fn data_url_blob(data_url: &DataURL, global_this: &JSGlobalObject) -> Option<Blob> {
+    let blob = Blob::init(data_url.decode_data().ok()?, global_this);
     let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
     blob.content_type
         .set(crate::webcore::blob::BlobContentType::from(mime_type));
+    Some(blob)
+}
+
+fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
+    let blob = {
+        let url_utf8 = url.to_utf8();
+        match DataURL::parse_without_check(url_utf8.slice())
+            .ok()
+            .and_then(|data_url| data_url_blob(&data_url, global_this))
+        {
+            Some(blob) => blob,
+            None => {
+                let err =
+                    global_this.create_error_instance(format_args!("failed to fetch the data URL"));
+                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    err,
+                );
+            }
+        }
+    };
 
     let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {
@@ -209,7 +216,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
             ..Default::default()
         },
         Body::new(BodyValue::Blob(blob)),
-        data_url.url,
+        url,
         false,
     )));
 
@@ -451,7 +458,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Custom Hostname
     let mut hostname: Option<Box<[u8]>> = None;
     let mut range: Option<bun_core::ZBox> = None;
-    let mut unix_socket_path: Utf8Bytes<'static> = Utf8Bytes::empty();
+    let mut unix_socket_path: Utf8Bytes<'static> = Utf8Bytes::EMPTY;
 
     // `url_proxy_buffer` gets reassigned while `url`/`proxy`
     // still point into it (or into the buffer about to replace it). Detach the
@@ -560,24 +567,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if url_str.has_prefix_comptime(b"data:") {
-        let url_slice = url_str.to_utf8();
-        // `defer url_slice.deinit()` → Drop.
-
-        let data_url = match DataURL::parse_without_check(url_slice.slice()) {
-            Ok(d) => d,
-            Err(_) => {
-                let err = ctx.create_error_instance(format_args!("failed to fetch the data URL"));
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global_this,
-                        err,
-                    ),
-                );
-            }
-        };
-        let mut data_url = data_url;
-        data_url.url = url_str.clone();
-        return Ok(data_url_response(data_url, global_this));
+        return Ok(data_url_response(url_str, global_this));
     }
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
@@ -1291,7 +1281,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // We don't pass along headers, we ignore method, we ignore status code...
     // But it's better than status quo.
     if url_type != URLType::Remote {
-        // `defer unix_socket_path.deinit()` → Drop on scope exit.
         let mut path_buf = PathBuffer::uninit();
         let mut path_buf2 = PathBuffer::uninit();
         let decoded_len = match PercentEncoding::decode_into(
@@ -1416,7 +1405,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `crate::webcore::node_types` stub (until it's swapped to a
             // re-export of `crate::node::types`); construct that variant here.
             let mut pathlike = crate::webcore::node_types::PathOrFileDescriptor::Path(
-                crate::webcore::node_types::PathLike::EncodedSlice(Utf8Bytes::Owned(
+                crate::webcore::node_types::PathLike::Utf8(Utf8Bytes::Owned(
                     temp_file_path.to_vec(),
                 )),
             );
@@ -1950,7 +1939,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         } else {
             jsc::strong::Optional::create(check_server_identity, global_this)
         },
-        unix_socket_path: core::mem::replace(&mut unix_socket_path, Utf8Bytes::empty()),
+        unix_socket_path: core::mem::take(&mut unix_socket_path),
     };
 
     let _ = FetchTasklet::queue(

@@ -1424,6 +1424,20 @@ pub fn github_action_property(self_: &[u8]) -> GithubActionPropertyFormatter<'_>
     GithubActionPropertyFormatter { text: self_ }
 }
 
+pub struct GithubActionFormatter<'a> {
+    text: &'a [u8],
+}
+
+impl Display for GithubActionFormatter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        github_action_writer(f, self.text)
+    }
+}
+
+pub fn github_action(utf8: &[u8]) -> GithubActionFormatter<'_> {
+    GithubActionFormatter { text: utf8 }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // QuotedFormatter
 // ───────────────────────────────────────────────────────────────────────────

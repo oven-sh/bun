@@ -2,9 +2,9 @@
 
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
+use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::encoded_slice::EncodedSlice;
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]

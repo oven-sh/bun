@@ -103,7 +103,7 @@ pub enum PathLike {
     Buffer(MarkedArrayBuffer),
     SliceWithUnderlyingString(SliceWithUnderlyingString),
     ThreadsafeString(SliceWithUnderlyingString),
-    EncodedSlice(Utf8Bytes<'static>),
+    Utf8(Utf8Bytes<'static>),
 }
 
 impl Default for PathLike {
@@ -135,7 +135,7 @@ impl Clone for PathLike {
             }),
             Self::SliceWithUnderlyingString(s) => Self::SliceWithUnderlyingString(s.clone()),
             Self::ThreadsafeString(s) => Self::ThreadsafeString(s.clone()),
-            Self::EncodedSlice(s) => Self::EncodedSlice(s.clone()),
+            Self::Utf8(s) => Self::Utf8(s.clone()),
         }
     }
 }
@@ -155,7 +155,7 @@ impl Drop for PathLike {
             // `SliceWithUnderlyingString` derefs `underlying` in its own `Drop`.
             Self::SliceWithUnderlyingString(_) | Self::ThreadsafeString(_) => {}
             // `Utf8Bytes` releases its WTF ref / owned buffer in its own `Drop`.
-            Self::EncodedSlice(_) => {}
+            Self::Utf8(_) => {}
         }
     }
 }
@@ -172,7 +172,7 @@ impl PathLike {
             Self::String(s) => s.slice(),
             Self::Buffer(b) => b.slice(),
             Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => s.slice(),
-            Self::EncodedSlice(s) => s.slice(),
+            Self::Utf8(s) => s.slice(),
         }
     }
 
@@ -181,7 +181,7 @@ impl PathLike {
             Self::String(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),
             Self::SliceWithUnderlyingString(_) | Self::ThreadsafeString(_) => 0,
-            Self::EncodedSlice(s) => s.slice().len(),
+            Self::Utf8(s) => s.slice().len(),
         }
     }
 
@@ -204,7 +204,7 @@ impl PathLike {
             Self::Buffer(b) => {
                 b.buffer.value.protect();
             }
-            Self::String(_) | Self::ThreadsafeString(_) | Self::EncodedSlice(_) => {}
+            Self::String(_) | Self::ThreadsafeString(_) | Self::Utf8(_) => {}
         }
     }
 }

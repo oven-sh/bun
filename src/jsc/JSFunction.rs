@@ -79,11 +79,12 @@ impl JSFunction {
         )
     }
 
-    pub fn get_source_code(value: JSValue) -> Option<BunString> {
+    /// Borrows the function's source text; valid while `value` is alive.
+    pub fn get_source_code(value: JSValue) -> Option<EncodedSlice<'static>> {
         let mut str = EncodedSlice::EMPTY;
         // C++ overwrites `str` on success and leaves it untouched on failure.
         if JSC__JSFunction__getSourceCode(value, &mut str) {
-            Some(BunString::init(str))
+            Some(str)
         } else {
             None
         }

@@ -5,9 +5,9 @@ use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use core::cell::{Cell, RefCell};
 
+use bun_core::EncodedSlice;
 use jsc::EncodedSliceJsc as _;
 use jsc::StringJsc as _;
-use jsc::encoded_slice::EncodedSlice;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -459,7 +459,7 @@ impl TextDecoder {
                     // empty string instead.
                     if len == 0 {
                         drop(decoded);
-                        return Ok(EncodedSlice::EMPTY.to_js(global_this));
+                        return Ok(JSValue::js_empty_string(global_this));
                     }
                     // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
                     let ptr = decoded.leak().as_mut_ptr();
@@ -530,7 +530,7 @@ impl TextDecoder {
 
                 if decoded.is_empty() {
                     drop(decoded);
-                    return Ok(EncodedSlice::EMPTY.to_js(global_this));
+                    return Ok(JSValue::js_empty_string(global_this));
                 }
 
                 // Transfer ownership of the backing allocation to JSC; freed via
@@ -585,7 +585,7 @@ impl TextDecoder {
                 };
 
                 if decoded.is_empty() {
-                    return Ok(EncodedSlice::EMPTY.to_js(global_this));
+                    return Ok(JSValue::js_empty_string(global_this));
                 }
 
                 let len = decoded.len();

@@ -315,8 +315,6 @@ impl<'a> AsyncHTTP<'a> {
 
     pub fn clear_data(&mut self) {
         self.response = None;
-        // Note: `Utf8Bytes` Drop releases WTF/owned variants;
-        // assigning EMPTY runs Drop on the old value.
         self.client.unix_socket_path = Utf8Bytes::EMPTY;
     }
 }

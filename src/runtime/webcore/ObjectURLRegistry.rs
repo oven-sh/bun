@@ -152,8 +152,6 @@ fn bun_revoke_object_url(
     }
 
     let slice = str.to_utf8();
-    // released by Utf8Bytes Drop
-
     let sliced = slice.slice();
     if sliced.len() < b"blob:".len() + UUID::STRING_LENGTH {
         return Ok(JSValue::UNDEFINED);

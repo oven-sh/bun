@@ -1429,8 +1429,8 @@ impl JSValue {
         key: impl AsRef<[u8]>,
         value: JSValue,
     ) {
-        let zs = bun_core::EncodedSlice::init(key.as_ref());
-        JSC__JSValue__putNonEnumerable(self, global, &zs, value)
+        let key = bun_core::EncodedSlice::init(key.as_ref());
+        JSC__JSValue__putNonEnumerable(self, global, &key, value)
     }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
     /// `undefined`) when `None`. Collapses the open-coded
@@ -1470,8 +1470,8 @@ impl JSValue {
     }
     /// `JSValue.deleteProperty` — delete an own property by name.
     pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> bool {
-        let zs = bun_core::EncodedSlice::init(key.as_ref());
-        JSC__JSValue__deleteProperty(self, global, &zs)
+        let key = bun_core::EncodedSlice::init(key.as_ref());
+        JSC__JSValue__deleteProperty(self, global, &key)
     }
     /// `JSValue.putMayBeIndex` — same as [`put`] but accepts
     /// both non-numeric and numeric keys. Prefer [`put`] when the key is
@@ -1867,8 +1867,8 @@ impl PutKey for bun_core::String {
 impl PutKey for &[u8] {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        let zs = bun_core::EncodedSlice::init(self);
-        (&zs).put(target, global, value)
+        let key = bun_core::EncodedSlice::init(self);
+        (&key).put(target, global, value)
     }
 }
 impl<const N: usize> PutKey for &[u8; N] {

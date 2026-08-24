@@ -4,10 +4,10 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
+use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
-use bun_jsc::encoded_slice::EncodedSlice;
 use bun_ptr::IntrusiveRc;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc

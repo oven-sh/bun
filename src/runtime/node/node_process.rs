@@ -2,9 +2,9 @@
 
 use core::ffi::c_char;
 
+use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_core::{self, Environment, Global};
-use bun_jsc::encoded_slice::EncodedSlice;
 use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue};
 
 unsafe extern "C" {
@@ -160,9 +160,8 @@ static Bun__version_sha: CStrPtr = CStrPtr(
 
 mod _impl {
     use bun_core::env_var;
-    use bun_core::{String as BunString, strings};
+    use bun_core::{EncodedSlice, String as BunString, strings};
     use bun_jsc::bun_string_jsc;
-    use bun_jsc::encoded_slice::EncodedSlice;
     use bun_jsc::{
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
     };
@@ -421,14 +420,10 @@ mod _impl {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
-            return EncodedSlice::init(script)
-                .with_encoding()
-                .to_js(global_object);
+            return EncodedSlice::from_bytes(script).to_js(global_object);
         }
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return EncodedSlice::init(source.contents())
-                .with_encoding()
-                .to_js(global_object);
+            return EncodedSlice::from_bytes(source.contents()).to_js(global_object);
         }
         JSValue::UNDEFINED
     }
@@ -448,9 +443,9 @@ mod _impl {
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
         let mut buf = PathBuffer::uninit();
         match bun_sys::getcwd(&mut buf[..]) {
-            bun_sys::Result::Ok(len) => Ok(EncodedSlice::init(&buf[..len])
-                .with_encoding()
-                .to_js(global_object)),
+            bun_sys::Result::Ok(len) => {
+                Ok(EncodedSlice::from_bytes(&buf[..len]).to_js(global_object))
+            }
             bun_sys::Result::Err(e) => {
                 // Node's UVException from `Cwd` (node_process_methods.cc):
                 // "CODE: process.cwd failed with error <uv_strerror>[, hint], uv_cwd"
@@ -487,7 +482,7 @@ mod _impl {
     }
 
     fn set_cwd(global_object: &JSGlobalObject, to: &EncodedSlice) -> JsResult<JSValue> {
-        if to.length() == 0 {
+        if to.len == 0 {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
         }

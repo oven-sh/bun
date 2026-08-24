@@ -340,11 +340,6 @@ impl Response {
         self.url.set(url);
     }
 
-    #[inline]
-    pub(crate) fn get_utf8_url(&self) -> bun_core::Utf8Bytes<'_> {
-        self.url.get().to_utf8()
-    }
-
     /// The JS getter keeps `get_url` (codegen calls that name); this internal
     /// accessor is `url()`.
     #[inline]

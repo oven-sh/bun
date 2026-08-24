@@ -1,7 +1,7 @@
 use core::fmt;
 use std::borrow::Cow;
 
-use bun_core::{EncodedSlice, String, StringView};
+use bun_core::{String, StringView};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
@@ -839,31 +839,19 @@ impl<'a> ParseArgsState<'a> {
             };
 
             let obj = JSValue::create_empty_object(global, num_properties);
-            obj.put(global, EncodedSlice::static_("kind"), kind_jsvalue);
+            obj.put(global, b"kind", kind_jsvalue);
             match &token_generic {
                 Token::Option(token) => {
-                    obj.put(
-                        global,
-                        EncodedSlice::static_("name"),
-                        token.name.as_js_value(global)?,
-                    );
-                    obj.put(
-                        global,
-                        EncodedSlice::static_("rawName"),
-                        token.make_raw_name_js_value(global)?,
-                    );
-                    obj.put(
-                        global,
-                        EncodedSlice::static_("index"),
-                        JSValue::js_number(token.index as f64),
-                    );
+                    obj.put(global, b"name", token.name.as_js_value(global)?);
+                    obj.put(global, b"rawName", token.make_raw_name_js_value(global)?);
+                    obj.put(global, b"index", JSValue::js_number(token.index as f64));
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
                     let value = token.value.as_js_value(global)?;
-                    obj.put(global, EncodedSlice::static_("value"), value);
+                    obj.put(global, b"value", value);
                     obj.put(
                         global,
-                        EncodedSlice::static_("inlineValue"),
+                        b"inlineValue",
                         if value.is_undefined() {
                             JSValue::UNDEFINED
                         } else {
@@ -872,23 +860,11 @@ impl<'a> ParseArgsState<'a> {
                     );
                 }
                 Token::Positional { index, value } => {
-                    obj.put(
-                        global,
-                        EncodedSlice::static_("index"),
-                        JSValue::js_number(*index as f64),
-                    );
-                    obj.put(
-                        global,
-                        EncodedSlice::static_("value"),
-                        value.as_js_value(global)?,
-                    );
+                    obj.put(global, b"index", JSValue::js_number(*index as f64));
+                    obj.put(global, b"value", value.as_js_value(global)?);
                 }
                 Token::OptionTerminator { index } => {
-                    obj.put(
-                        global,
-                        EncodedSlice::static_("index"),
-                        JSValue::js_number(*index as f64),
-                    );
+                    obj.put(global, b"index", JSValue::js_number(*index as f64));
                 }
             }
             self.tokens.push(global, obj)?;
@@ -1063,14 +1039,10 @@ fn parse_args_impl(
     bun_output::scoped_log!(parseArgs, "Phase 4: Build result object");
 
     let result = JSValue::create_empty_object(global, if return_tokens { 3 } else { 2 });
-    result.put(global, EncodedSlice::static_("values"), state.values);
-    result.put(
-        global,
-        EncodedSlice::static_("positionals"),
-        state.positionals,
-    );
+    result.put(global, b"values", state.values);
+    result.put(global, b"positionals", state.positionals);
     if return_tokens {
-        result.put(global, EncodedSlice::static_("tokens"), state.tokens);
+        result.put(global, b"tokens", state.tokens);
     }
     Ok(result)
 }

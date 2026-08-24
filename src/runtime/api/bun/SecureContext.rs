@@ -425,8 +425,8 @@ impl SecureContext {
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
 
+use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::encoded_slice::EncodedSlice;
 use bun_uws_sys::socket_context::c;
 
 mod cpp {

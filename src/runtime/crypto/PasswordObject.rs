@@ -2,11 +2,9 @@ use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
-use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-// JSC-side EncodedSlice carries `to_js` (the `bun_core::EncodedSlice` repr-twin
-// lives in `bun_jsc::encoded_slice`); used for ASCII→JS conversions only.
-use bun_jsc::EncodedSlice;
+use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{JSPromise, JSPromiseStrong};
 
 use crate::node::StringOrBuffer;

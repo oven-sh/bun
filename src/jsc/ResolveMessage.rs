@@ -4,10 +4,10 @@ use std::io::Write as _;
 use bun_ast::ImportKind;
 use bun_core::strings;
 
-use crate::encoded_slice::EncodedSlice;
 use crate::{
     CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _,
 };
+use bun_core::EncodedSlice;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
 // `referrer` are read-only after construction; only `logged` is mutated
@@ -459,7 +459,7 @@ impl ResolveMessage {
             }
             // Unreachable in practice (ResolveMessage is only constructed for
             // `.resolve` metadata).
-            _ => EncodedSlice::init(b"").to_js(global),
+            _ => JSValue::js_empty_string(global),
         })
     }
 
@@ -469,7 +469,7 @@ impl ResolveMessage {
             bun_ast::Metadata::Resolve(resolve) => {
                 EncodedSlice::init(import_kind_label(resolve.import_kind)).to_js(global)
             }
-            _ => EncodedSlice::init(b"").to_js(global),
+            _ => JSValue::js_empty_string(global),
         })
     }
 

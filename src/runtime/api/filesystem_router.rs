@@ -28,9 +28,7 @@ use bun_core::{EncodedSlice, Utf8Bytes};
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
@@ -52,13 +50,10 @@ pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemR
 
 const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
-// ── local shims ───────────────────────────────────────────────────────────
-// `to_js` lives on the `bun_jsc::EncodedSliceJsc` extension trait; `from_bytes`
-// auto-detects UTF-8.
 use bun_jsc::EncodedSliceJsc as _;
 #[inline]
-fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
-    jsc::encoded_slice::EncodedSlice::from_bytes(bytes).to_js(global)
+fn bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
+    EncodedSlice::from_bytes(bytes).to_js(global)
 }
 
 // ── ResolverLike bridge ───────────────────────────────────────────────────
@@ -132,8 +127,8 @@ impl FileSystemRouter {
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
         let mut root_dir_path: Utf8Bytes<'_> = Utf8Bytes::Borrowed(vm.top_level_dir());
-        let mut origin_str: Utf8Bytes = Utf8Bytes::default();
-        let mut asset_prefix_slice: Utf8Bytes = Utf8Bytes::default();
+        let mut origin_str: Utf8Bytes = Utf8Bytes::EMPTY;
+        let mut asset_prefix_slice: Utf8Bytes = Utf8Bytes::EMPTY;
         if let Some(style_val) = argument.get(global_this, "style")? {
             if !style_val
                 .to_js_string_view(global_this)?
@@ -548,23 +543,19 @@ impl FileSystemRouter {
         }
 
         let mut path: Utf8Bytes = 'brk: {
+            // `path` is moved into the `MatchedRoute`, so every arm must own its bytes.
             if argument.is_string() {
-                // Force ownership via into_vec: Utf8Bytes has no clone-if-borrowed
-                // helper, and `path` must outlive the JS string rope it came from.
-                break 'brk Utf8Bytes::Owned(argument.to_slice(global_this)?.into_vec());
+                break 'brk argument.to_slice(global_this)?;
             }
 
             if argument.is_cell() {
-                // `as_class_ref` is the safe shared-borrow downcast (centralised
-                // deref proof in `JSValue`); the JS wrapper roots the payload
-                // while `argument` is on the stack.
                 if let Some(req) = argument.as_class_ref::<Request>() {
                     req.ensure_url().expect("unreachable");
-                    break 'brk req.url.get().to_utf8();
+                    break 'brk req.url.get().clone().into_utf8();
                 }
 
                 if let Some(resp) = argument.as_class_ref::<Response>() {
-                    break 'brk resp.get_utf8_url();
+                    break 'brk resp.url().clone().into_utf8();
                 }
             }
 
@@ -580,11 +571,7 @@ impl FileSystemRouter {
             || strings::has_prefix(path.slice(), b"https://")
             || strings::has_prefix(path.slice(), b"file://")
         {
-            let prev_path = path;
-            path = match Utf8Bytes::init_dupe(URL::parse(prev_path.slice()).pathname) {
-                Ok(p) => p,
-                Err(_) => return Err(global_this.throw_out_of_memory()),
-            };
+            path = Utf8Bytes::Owned(URL::parse(path.slice()).pathname.to_vec());
         }
 
         // URLPath::parse strips byte 0 and the route table is keyed without the
@@ -662,7 +649,7 @@ impl FileSystemRouter {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(ref origin) = this.origin {
-            return Ok(zs_to_js(origin.leak(), global_this));
+            return Ok(bytes_to_js(origin.leak(), global_this));
         }
 
         Ok(JSValue::NULL)
@@ -762,7 +749,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_name(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().name, global_this))
+        Ok(bytes_to_js(this.route().name, global_this))
     }
 
     pub(crate) fn init(
@@ -861,7 +848,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_file_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().file_path, global_this))
+        Ok(bytes_to_js(this.route().file_path, global_this))
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -870,12 +857,12 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_pathname(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().pathname, global_this))
+        Ok(bytes_to_js(this.route().pathname, global_this))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(
+        Ok(bytes_to_js(
             kind_enum::classify(this.route().name),
             global_this,
         ))
@@ -956,7 +943,7 @@ impl MatchedRoute {
             &mut writer,
             path::Platform::Posix,
         );
-        Ok(zs_to_js(writer.as_bytes(), global_this))
+        Ok(bytes_to_js(writer.as_bytes(), global_this))
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -27,13 +27,9 @@ use crate::webcore::streams::{
     self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
 };
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
-use bun_core::String as BunString;
-use bun_core::Utf8Bytes;
-// `EncodedSlice` re-exports `bun_core::EncodedSlice`; JSC-side methods
-// (`to_js`, `with_encoding`, …) come from the `EncodedSliceJsc` extension trait.
+use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::encoded_slice::EncodedSlice;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
 // can be parked in a JsClass `DetachablePtr` for the duration of the

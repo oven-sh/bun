@@ -1,13 +1,10 @@
-//! JSC-side helpers for `bun_core::EncodedSlice` (`to_external_u16`, the
-//! `EncodedSlice__free*` callbacks); the conversions live on
-//! [`crate::EncodedSliceJsc`]. Prefer `bun_core::String` in new code.
+//! `to_external_u16` and the `EncodedSlice__freeGlobal` callback; the
+//! `bun_core::EncodedSlice` → JS conversions live on [`crate::EncodedSliceJsc`].
 
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
-
-pub use bun_core::EncodedSlice;
 
 unsafe extern "C" {
     fn EncodedSlice__toExternalU16(
@@ -45,45 +42,18 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
 }
 
 /// # Safety
-/// `raw` must point to `len` bytes allocated by the default allocator.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn EncodedSlice__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
-    let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
-        return;
-    };
-    // The buffer is always owned by the global allocator. Verified:
-    // no C++ call site passes a non-default allocator — the only reference to
-    // this symbol outside this file is the declaration in
-    // headers-handwritten.h (helpers.h frees via `EncodedSlice__freeGlobal`).
-    let _ = allocator_;
-    // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
-    let s = unsafe { bun_core::ffi::slice(raw, len) };
-    let ptr = EncodedSlice::init(s).slice().as_ptr();
-    if bun_alloc::USE_MIMALLOC {
-        // SAFETY: read-only heap-region probe.
-        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
-    }
-    let _ = len;
-    // SAFETY: ptr was allocated by the default allocator.
-    unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<c_void>()) };
-}
-
-/// # Safety
-/// `ptr` must point to `len` bytes allocated by the default allocator.
+/// `ptr` must be a (possibly tagged) pointer to `len` bytes allocated by the
+/// default allocator.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn EncodedSlice__freeGlobal(ptr: *const u8, len: usize) {
-    // SAFETY: ptr/len describe a valid slice.
-    let s = unsafe { bun_core::ffi::slice(ptr, len) };
-    let untagged = EncodedSlice::init(s)
-        .slice()
-        .as_ptr()
+    let _ = len;
+    let untagged = bun_alloc::EncodedSlice::untagged(ptr)
         .cast_mut()
         .cast::<c_void>();
     if bun_alloc::USE_MIMALLOC {
         // SAFETY: read-only heap-region probe.
-        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(untagged) });
     }
-    // we must untag the string pointer
     // SAFETY: untagged ptr was allocated by the default allocator.
     unsafe { bun_alloc::default_alloc::free(untagged) };
 }

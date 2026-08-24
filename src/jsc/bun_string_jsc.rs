@@ -2,9 +2,9 @@
 //! `src/string/` free of `JSValue`/`JSGlobalObject`/`CallFrame` types — the
 //! original methods are aliased to the free fns here.
 
-use bun_core::{SliceWithUnderlyingString, String, Tag, strings};
+use bun_core::{EncodedSlice, SliceWithUnderlyingString, String, Tag, strings};
 
-use crate::encoded_slice::{self, EncodedSlice};
+use crate::encoded_slice;
 use crate::{CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
 
 // ── extern decls ────────────────────────────────────────────────────────────

@@ -3028,7 +3028,7 @@ pub fn process_fetch_log(
                     .into_bytes()
                     .into_boxed_slice(),
             );
-            let mut message = crate::EncodedSlice::init(message_text);
+            let mut message = bun_core::EncodedSlice::init(message_text);
             message.mark_global();
             take(global_this.create_aggregate_error(&errors_stack[..len], &message))
         }
@@ -4829,7 +4829,7 @@ impl VirtualMachine {
         if self.main().is_empty() {
             return Ok(());
         }
-        let str = crate::encoded_slice::EncodedSlice::init(MAIN_FILE_NAME);
+        let str = bun_core::EncodedSlice::init(MAIN_FILE_NAME);
         self.global().delete_module_registry_entry(&str)
     }
 
@@ -6638,8 +6638,11 @@ impl VirtualMachine {
                 cursor += i + 1;
             }
             if cursor > 0 {
-                let body = jsc::EncodedSlice::init_utf8(&msg[cursor as usize..]);
-                let _ = write!(writer, "{}", body.github_action());
+                let _ = write!(
+                    writer,
+                    "{}",
+                    bun_core::fmt::github_action(&msg[cursor as usize..])
+                );
             }
         } else {
             let _ = writer.write_all(b"::");
@@ -6676,14 +6679,14 @@ impl VirtualMachine {
                     let _ = write!(
                         writer,
                         "%0A      at {} ({})",
-                        jsc::EncodedSlice::init_utf8(name_str.as_bytes()).github_action(),
-                        jsc::EncodedSlice::init_utf8(loc_str.as_bytes()).github_action(),
+                        bun_core::fmt::github_action(name_str.as_bytes()),
+                        bun_core::fmt::github_action(loc_str.as_bytes()),
                     );
                 } else {
                     let _ = write!(
                         writer,
                         "%0A      at {}",
-                        jsc::EncodedSlice::init_utf8(loc_str.as_bytes()).github_action(),
+                        bun_core::fmt::github_action(loc_str.as_bytes()),
                     );
                 }
             }

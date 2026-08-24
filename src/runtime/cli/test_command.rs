@@ -7,15 +7,11 @@ use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
-// `set_time_zone` / `delete_module_registry_entry` take the JSC-side
-// `EncodedSlice` (repr(C)-identical to `bun_core::EncodedSlice`, but with the
-// JSGlobalObject FFI methods); import that one so the call sites type-check.
-use bun_core::strings;
-use bun_jsc::encoded_slice::EncodedSlice;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;

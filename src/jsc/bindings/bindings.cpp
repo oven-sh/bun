@@ -3833,31 +3833,6 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGl
     return JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, messageString, cause, nullptr, JSC::TypeNothing, false));
 }
 
-JSC::EncodedJSValue EncodedSlice__toAtomicValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1)
-{
-    if (arg0->len == 0) {
-        return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
-    }
-
-    if (isTaggedUTF16Ptr(arg0->ptr)) {
-        if (auto impl = WTF::AtomStringImpl::lookUp(std::span { reinterpret_cast<const char16_t*>(untag(arg0->ptr)), arg0->len })) {
-            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTF::move(impl))));
-        }
-    } else {
-        if (auto impl = WTF::AtomStringImpl::lookUp(std::span { untag(arg0->ptr), arg0->len })) {
-            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTF::move(impl))));
-        }
-    }
-
-    return JSC::JSValue::encode(JSC::jsString(arg1->vm(), makeAtomString(Zig::toStringCopy(*arg0))));
-}
-
-JSC::EncodedJSValue EncodedSlice__to16BitValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1)
-{
-    auto str = WTF::String::fromUTF8(std::span { arg0->ptr, arg0->len });
-    return JSC::JSValue::encode(JSC::jsString(arg1->vm(), str));
-}
-
 JSC::EncodedJSValue EncodedSlice__toExternalU16(const uint16_t* arg0, size_t len, JSC::JSGlobalObject* global)
 {
     if (len == 0) {
@@ -3903,18 +3878,6 @@ JSC::EncodedJSValue EncodedSlice__external(const EncodedSlice* arg0, JSC::JSGlob
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
     } else {
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
-    }
-}
-
-JSC::EncodedJSValue EncodedSlice__toExternalValueWithCallback(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1, void (*ArgFn2)(void* arg2, void* arg0, size_t arg1))
-{
-
-    EncodedSlice str
-        = *arg0;
-    if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
-    } else {
-        return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
     }
 }
 

@@ -9,10 +9,10 @@ use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EncodedSlice, EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
+use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
-use bun_core::{String as BunString, strings};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below can use the `JSLexer.isLatin1Identifier` /
@@ -1151,7 +1151,6 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         Output::enable_ansi_colors_stderr(),
     );
 
-    // `Utf8Bytes` frees on `Drop`.
     drop(source_code_slice);
     holder.deinit(vm);
 }

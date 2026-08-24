@@ -296,7 +296,6 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                 .throw());
         }
     };
-    // `defer name.deinit()` — Utf8Bytes's Drop handles cleanup.
 
     let namespace: [u8; 16] = 'brk: {
         if namespace_value.is_string() {

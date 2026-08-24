@@ -1319,7 +1319,7 @@ extern "C" fn always_allow_ssl_verify_callback(
 #[cold]
 #[inline(never)]
 fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue {
-    let mut zig_str = EncodedSlice::init(b"");
+    let mut message = EncodedSlice::EMPTY;
     // Backing storage for the formatted "OpenSSL ..." message. Declared at
     // function scope so it outlives `to_error_instance` below. The string is
     // tagged UTF-8 (`init_utf8`) so that `to_error_instance` takes the copying
@@ -1378,32 +1378,32 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
     }
 
     if written > 0 {
-        let message = &output_buf[0..written];
-        formatted.reserve(b"OpenSSL ".len() + message.len());
+        let text = &output_buf[0..written];
+        formatted.reserve(b"OpenSSL ".len() + text.len());
         {
             use std::io::Write;
-            let _ = write!(&mut formatted, "OpenSSL {}", ::bstr::BStr::new(message));
+            let _ = write!(&mut formatted, "OpenSSL {}", ::bstr::BStr::new(text));
         }
-        // `zig_str` borrows `formatted`, which lives until this function
+        // `message` borrows `formatted`, which lives until this function
         // returns. The UTF-8 tag is what makes `to_error_instance` clone the
         // bytes (untagged strings are wrapped without copying — see
         // Zig::toString in src/jsc/bindings/helpers.h), matching the
         // "Ensure we clone it" pattern in JSGlobalObject::create_error_instance.
-        zig_str = EncodedSlice::init_utf8(&formatted);
+        message = EncodedSlice::init_utf8(&formatted);
 
         // We shouldn't *need* to do this but it's not entirely clear.
         boringssl::ERR_clear_error();
     }
 
-    if zig_str.len == 0 {
-        zig_str = EncodedSlice::init(default_message);
+    if message.len == 0 {
+        message = EncodedSlice::init(default_message);
     }
 
     // store the exception in here
     // (UTF-8-tagged strings are cloned by toErrorInstance; the untagged
     // `default_message` fallback is wrapped without copying, which is safe
     // because callers pass static literals)
-    let exception = zig_str.to_error_instance(global);
+    let exception = message.to_error_instance(global);
 
     // reference it in stack memory
     exception.ensure_still_alive();

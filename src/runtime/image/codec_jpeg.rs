@@ -265,14 +265,8 @@ pub(crate) fn decode(
     // SAFETY: rc 0 (no warning) with unchanged dims means all `ht` rows of `w` pixels were written.
     unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     if cmyk {
-        // libjpeg hands back the STORED component values (YCCK is undone to
-        // the same CMYK representation internally). Adobe writers — the
-        // producers of essentially every CMYK JPEG in the wild — store
-        // inverted CMYK (byte = 255 − ink), so "no ink" is 255 and the
-        // conversion on the raw bytes is R = C·K/255 (ditto M→G, Y→B).
-        // This is the same formula browsers (Skia/Chromium, Firefox) apply;
-        // a colorimetric conversion would need a CMS and the source's CMYK
-        // profile.
+        // Adobe-convention inverted CMYK (stored byte = 255 − ink) → RGB,
+        // the same non-CMS formula Skia and Firefox use: R = C·K/255.
         for px in out.chunks_exact_mut(4) {
             let k = u32::from(px[3]);
             px[0] = u8::try_from((u32::from(px[0]) * k + 127) / 255).expect("int cast");
@@ -295,10 +289,8 @@ pub(crate) fn decode(
     let mut icc_ptr: *mut u8 = core::ptr::null_mut();
     let mut icc_size: usize = 0;
     let icc: Option<Vec<u8>> = 'blk: {
-        // A CMYK/YCCK source's ICC profile describes the four ink channels;
-        // the conversion above leaves (approximately) sRGB pixels, so
-        // carrying the profile into the RGBA output would misdescribe it —
-        // drop it instead.
+        // A CMYK source's ICC profile describes ink channels, not the RGBA
+        // produced above — drop it.
         if cmyk {
             break 'blk None;
         }

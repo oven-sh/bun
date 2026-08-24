@@ -217,8 +217,8 @@ pub struct Decoded {
     /// source didn't carry one or the decode path doesn't extract it —
     /// BMP/GIF (no ICC chunk), system backends (which already colour-
     /// manage into sRGB during decode, so the profile is no longer
-    /// needed), and CMYK/YCCK JPEGs (whose profile describes the four ink
-    /// channels, not the RGBA the codec converts them to). The image
+    /// needed), and CMYK/YCCK JPEGs (an ink-channel profile doesn't
+    /// describe the converted RGBA). The image
     /// pipeline hands this straight to the matching
     /// encoder — the RGBA buffer is NOT converted to sRGB, so the bytes
     /// only have their intended colour meaning when the profile travels

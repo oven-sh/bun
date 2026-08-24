@@ -18,7 +18,7 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
@@ -1542,7 +1542,7 @@ impl JSTranspiler {
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let result = EncodedSlice::from_bytes(buffer_writer.written()).to_js(global);
+        let result = bun_string_jsc::create_utf8_for_js(global, buffer_writer.written())?;
         self.buffer_writer.set(Some(buffer_writer));
         Ok(result)
     }
@@ -1601,8 +1601,8 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = EncodedSlice::from_bytes(record.path.text).to_js(global);
-        let kind = EncodedSlice::latin1(record.kind.label()).to_js(global);
+        let path = bun_string_jsc::create_utf8_for_js(global, record.path.text)?;
+        let kind = BunString::static_(record.kind.label()).to_js(global)?;
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
         i += 1;

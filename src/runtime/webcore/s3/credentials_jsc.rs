@@ -77,25 +77,21 @@ pub(crate) fn get_credentials_with_options(
         request_payer: default_request_payer,
         ..Default::default()
     };
-    // errdefer new_credentials.deinit() — handled by Drop on early return
 
     if let Some(opts) = options {
         if opts.is_object() {
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"accessKeyId", true)? {
-                new_credentials.credentials.access_key_id = Box::<[u8]>::from(utf8.slice());
-                new_credentials._access_key_id_slice = Some(utf8);
+                new_credentials.credentials.access_key_id = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
             if let Some(utf8) =
                 get_truthy_string_utf8(opts, global_object, b"secretAccessKey", true)?
             {
-                new_credentials.credentials.secret_access_key = Box::<[u8]>::from(utf8.slice());
-                new_credentials._secret_access_key_slice = Some(utf8);
+                new_credentials.credentials.secret_access_key = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"region", true)? {
-                new_credentials.credentials.region = Box::<[u8]>::from(utf8.slice());
-                new_credentials._region_slice = Some(utf8);
+                new_credentials.credentials.region = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
             if let Some(js_value) = opts.get_truthy(global_object, "endpoint")? {
@@ -121,7 +117,6 @@ pub(crate) fn get_credentials_with_options(
                                     js_value,
                                 ));
                             }
-                            new_credentials._endpoint_slice = Some(utf8);
                         }
                     } else {
                         return Err(global_object.throw_invalid_argument_type_value(
@@ -133,8 +128,7 @@ pub(crate) fn get_credentials_with_options(
                 }
             }
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"bucket", true)? {
-                new_credentials.credentials.bucket = Box::<[u8]>::from(utf8.slice());
-                new_credentials._bucket_slice = Some(utf8);
+                new_credentials.credentials.bucket = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
 
@@ -147,8 +141,7 @@ pub(crate) fn get_credentials_with_options(
 
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"sessionToken", true)?
             {
-                new_credentials.credentials.session_token = Box::<[u8]>::from(utf8.slice());
-                new_credentials._session_token_slice = Some(utf8);
+                new_credentials.credentials.session_token = utf8.into_vec().into_boxed_slice();
                 new_credentials.changed_credentials = true;
             }
 

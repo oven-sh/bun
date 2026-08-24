@@ -175,23 +175,27 @@ impl SecureContext {
         }
         let result = JSValue::create_empty_object(global, 0);
         // SAFETY: the helper returned NUL-terminated PEM strings of the given
-        // lengths; EncodedSlice::to_js copies into the JS heap before `free`.
+        // lengths; `create_utf8_for_js` copies into the JS heap before `free`.
         unsafe {
             let key_slice = core::slice::from_raw_parts(out_key.cast::<u8>(), key_len);
             result.put(
                 global,
                 b"key",
-                EncodedSlice::latin1(key_slice).to_js(global),
+                bun_string_jsc::create_utf8_for_js(global, key_slice)?,
             );
             let cert_slice = core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len);
             result.put(
                 global,
                 b"cert",
-                EncodedSlice::latin1(cert_slice).to_js(global),
+                bun_string_jsc::create_utf8_for_js(global, cert_slice)?,
             );
             if !out_ca.is_null() && ca_len > 0 {
                 let ca_slice = core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len);
-                result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global));
+                result.put(
+                    global,
+                    b"ca",
+                    bun_string_jsc::create_utf8_for_js(global, ca_slice)?,
+                );
             }
             free(out_key.cast());
             free(out_cert.cast());
@@ -429,8 +433,7 @@ impl SecureContext {
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
 
-use bun_core::EncodedSlice;
-use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::bun_string_jsc;
 use bun_uws_sys::socket_context::c;
 
 mod cpp {

@@ -1,5 +1,6 @@
 //! JSC bridges for `bun_install::hosted_git_info`.
 
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Extension trait providing `.to_js()` on `HostedGitInfo`.
@@ -14,23 +15,23 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
         obj.put(
             go,
             b"type",
-            BunString::from_bytes(self.host_provider.type_str().as_bytes()).to_js(go)?,
+            BunString::static_(self.host_provider.type_str()).to_js(go)?,
         );
         obj.put(
             go,
             b"domain",
-            BunString::from_bytes(self.host_provider.domain()).to_js(go)?,
+            bun_string_jsc::create_utf8_for_js(go, self.host_provider.domain())?,
         );
         obj.put(
             go,
             b"project",
-            BunString::from_bytes(self.project()).to_js(go)?,
+            bun_string_jsc::create_utf8_for_js(go, self.project())?,
         );
         obj.put(
             go,
             b"user",
             if let Some(user) = self.user() {
-                BunString::from_bytes(user).to_js(go)?
+                bun_string_jsc::create_utf8_for_js(go, user)?
             } else {
                 JSValue::NULL
             },
@@ -39,7 +40,7 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
             go,
             b"committish",
             if let Some(committish) = self.committish() {
-                BunString::from_bytes(committish).to_js(go)?
+                bun_string_jsc::create_utf8_for_js(go, committish)?
             } else {
                 JSValue::NULL
             },

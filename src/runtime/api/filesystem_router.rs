@@ -24,7 +24,8 @@ use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
-use bun_core::{EncodedSlice, Utf8Bytes};
+use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -49,8 +50,6 @@ use crate::webcore::{Request, Response};
 pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
 
 const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
-
-use bun_jsc::EncodedSliceJsc as _;
 
 // ── ResolverLike bridge ───────────────────────────────────────────────────
 // `bun_router::ResolverLike` is the duck-typed seam for `Router::load_routes`;
@@ -638,7 +637,7 @@ impl FileSystemRouter {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_origin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(ref origin) = this.origin {
-            return Ok(EncodedSlice::from_bytes(origin.leak()).to_js(global_this));
+            return bun_string_jsc::create_utf8_for_js(global_this, origin.leak());
         }
 
         Ok(JSValue::NULL)
@@ -650,7 +649,6 @@ impl FileSystemRouter {
         let paths = router.get_entry_points();
         let names = router.get_names();
         let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; names.len() * 2];
-        // `defer free(name_strings)` → Drop
         let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
         for (i, name) in names.iter().enumerate() {
             name_strings_slice[i] = EncodedSlice::from_bytes(name);
@@ -738,7 +736,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_name(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(EncodedSlice::from_bytes(this.route().name).to_js(global_this))
+        bun_string_jsc::create_utf8_for_js(global_this, this.route().name)
     }
 
     pub(crate) fn init(
@@ -837,7 +835,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_file_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(EncodedSlice::from_bytes(this.route().file_path).to_js(global_this))
+        bun_string_jsc::create_utf8_for_js(global_this, this.route().file_path)
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -846,12 +844,12 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_pathname(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(EncodedSlice::from_bytes(this.route().pathname).to_js(global_this))
+        bun_string_jsc::create_utf8_for_js(global_this, this.route().pathname)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(EncodedSlice::from_bytes(kind_enum::classify(this.route().name)).to_js(global_this))
+        BunString::static_(kind_enum::classify(this.route().name)).to_js(global_this)
     }
 
     pub(crate) fn create_query_object(
@@ -929,7 +927,7 @@ impl MatchedRoute {
             &mut writer,
             path::Platform::Posix,
         );
-        Ok(EncodedSlice::from_bytes(writer.as_bytes()).to_js(global_this))
+        bun_string_jsc::create_utf8_for_js(global_this, writer.as_bytes())
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -17,6 +17,7 @@ use bun_http::{
     Signals, ThreadSafeStreamBuffer,
 };
 use bun_io::KeepAlive;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
 use bun_sys::FdExt;
@@ -1230,7 +1231,7 @@ impl FetchTasklet {
                             return false;
                         }
                     };
-                    let js_hostname: JSValue = match bun_jsc::bun_string_jsc::create_utf8_for_js(
+                    let js_hostname: JSValue = match bun_string_jsc::create_utf8_for_js(
                         &global_object,
                         &certificate_info.hostname,
                     ) {

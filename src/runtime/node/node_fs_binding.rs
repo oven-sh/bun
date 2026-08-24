@@ -45,12 +45,12 @@ where
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
-    let mut result = this
+    let result = this
         .node_fs
         .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
     match result {
-        Err(ref err) => Err(global.throw_value(err.to_js(global))),
-        Ok(ref mut res) => res.fs_to_js(global),
+        Err(err) => Err(global.throw_value(err.to_js(global))),
+        Ok(res) => res.fs_to_js(global),
     }
 }
 

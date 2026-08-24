@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult,
-    ProtectedJSValue, StringJsc as _, SystemError, bun_string_jsc,
+    ProtectedJSValue, SystemError, bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -154,14 +154,14 @@ macro_rules! lol_content_ops {
             callback: fn(&mut $Raw, &str, lol_html::html_content::ContentType),
             this_object: JSValue,
             global_object: &JSGlobalObject,
-            content: &Utf8Bytes,
+            content: &[u8],
             content_options: Option<ContentOptions>,
         ) -> JsResult<JSValue> {
             let Some(raw) = self.$field.get_mut() else {
                 return Ok($null_ret);
             };
             // lol-html content ops are infallible, so the UTF-8 check is the only throw path.
-            let content_str = utf8_or_throw(global_object, content.slice())?;
+            let content_str = utf8_or_throw(global_object, content)?;
             callback(raw, content_str, content_type(content_options));
             Ok(this_object)
         }
@@ -172,7 +172,7 @@ macro_rules! lol_content_ops {
                 &self,
                 call_frame: &CallFrame,
                 global_object: &JSGlobalObject,
-                content: &Utf8Bytes,
+                content: &[u8],
                 content_options: Option<ContentOptions>,
             ) -> JsResult<JSValue> {
                 self.content_handler(
@@ -364,11 +364,11 @@ impl HTMLRewriter {
     pub(crate) fn on_(
         &self,
         global: &JSGlobalObject,
-        selector_name: &Utf8Bytes,
+        selector_name: &[u8],
         call_frame: &CallFrame,
         listener: JSValue,
     ) -> JsResult<JSValue> {
-        let selector_source = utf8_or_throw(global, selector_name.slice())?;
+        let selector_source = utf8_or_throw(global, selector_name)?;
         let selector = match selector_source.parse::<lol_html::Selector>() {
             Ok(s) => s,
             Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
@@ -2446,8 +2446,7 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     // active `RewriterPipe` (`record_handler_error`) and `on_rewriting_error`
     // prefers it over the generic message, so only lol-html-internal
     // parse/encoding errors reach here.
-    let err = lol_err_string(message);
-    let value = err.to_error_instance(global);
+    let value = global.create_error_instance(format_args!("{message}"));
     value.put(
         global,
         b"name",
@@ -3047,29 +3046,25 @@ impl Element {
     pub(crate) fn get_attribute_(
         &self,
         global_object: &JSGlobalObject,
-        name: &Utf8Bytes,
+        name: &[u8],
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::NULL);
         };
         // A non-UTF-8 name came back from the C API as a null-data `Str`,
         // which JS saw as `null` — not a throw. Keep that distinction.
-        let Ok(name) = core::str::from_utf8(name.slice()) else {
+        let Ok(name) = core::str::from_utf8(name) else {
             return Ok(JSValue::NULL);
         };
         opt_string_to_js_or_null(el.get_attribute(name), global_object)
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub(crate) fn has_attribute_(
-        &self,
-        global: &JSGlobalObject,
-        name: &Utf8Bytes,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn has_attribute_(&self, global: &JSGlobalObject, name: &[u8]) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::FALSE);
         };
-        let name = utf8_or_throw(global, name.slice())?;
+        let name = utf8_or_throw(global, name)?;
         Ok(JSValue::from(el.has_attribute(name)))
     }
 
@@ -3078,8 +3073,8 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: &Utf8Bytes,
-        value: &Utf8Bytes,
+        name: &[u8],
+        value: &[u8],
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
@@ -3089,8 +3084,8 @@ impl Element {
         // to, so end their iteration rather than let them repeat or skip one.
         self.detach_attribute_iterators();
 
-        let name = utf8_or_throw(global_object, name.slice())?;
-        let value = utf8_or_throw(global_object, value.slice())?;
+        let name = utf8_or_throw(global_object, name)?;
+        let value = utf8_or_throw(global_object, value)?;
         if let Err(e) = el.set_attribute(name, value) {
             let err = create_lolhtml_error(global_object, &e);
             return Err(global_object.throw_value(err));
@@ -3103,7 +3098,7 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: &Utf8Bytes,
+        name: &[u8],
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
@@ -3113,7 +3108,7 @@ impl Element {
         // AttributeIterator's index would skip the one that took this slot.
         self.detach_attribute_iterators();
 
-        let name = utf8_or_throw(global_object, name.slice())?;
+        let name = utf8_or_throw(global_object, name)?;
         el.remove_attribute(name);
         Ok(call_frame.this())
     }

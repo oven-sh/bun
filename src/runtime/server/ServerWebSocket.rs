@@ -4,6 +4,7 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_core::Utf8Bytes;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{ComptimeStringMapExt as _, JsCell};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
@@ -508,7 +509,7 @@ impl ServerWebSocket {
         let _loop_guard = vm.enter_event_loop_scope();
 
         let data = match opcode {
-            Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message),
+            Opcode::Text => bun_string_jsc::create_utf8_for_js(global_object, message),
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
         };
@@ -761,7 +762,7 @@ impl ServerWebSocket {
                 }
             }
 
-            let message_js = match jsc::bun_string_jsc::create_utf8_for_js(global_object, message) {
+            let message_js = match bun_string_jsc::create_utf8_for_js(global_object, message) {
                 Ok(v) => v,
                 Err(e) => {
                     let err = global_object.take_error(e);
@@ -1533,7 +1534,7 @@ impl ServerWebSocket {
             _ => return Ok(JSValue::UNDEFINED),
         };
         let text = bun_core::fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, text)
+        bun_string_jsc::create_utf8_for_js(global_this, text)
     }
 }
 

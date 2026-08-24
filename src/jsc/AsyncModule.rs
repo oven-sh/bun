@@ -8,6 +8,7 @@ use bun_install::{DependencyID, Resolution};
 use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
 
+use crate::bun_string_jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
@@ -764,28 +765,28 @@ impl AsyncModule {
             _ => b"PackageResolveError",
         };
 
-        let error_instance = EncodedSlice::from_bytes(&msg).to_error_instance(global_this);
+        let error_instance = EncodedSlice::utf8(&msg).to_error_instance(global_this);
         if !result.url.is_empty() {
             error_instance.put(
                 global_this,
                 b"url",
-                EncodedSlice::from_bytes(result.url).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, result.url)?,
             );
         }
         error_instance.put(
             global_this,
             b"name",
-            EncodedSlice::from_bytes(name).to_js(global_this),
+            bun_string_jsc::create_utf8_for_js(global_this, name)?,
         );
         error_instance.put(
             global_this,
             b"pkg",
-            EncodedSlice::from_bytes(result.name).to_js(global_this),
+            bun_string_jsc::create_utf8_for_js(global_this, result.name)?,
         );
         error_instance.put(
             global_this,
             b"specifier",
-            EncodedSlice::from_bytes(self.specifier()).to_js(global_this),
+            bun_string_jsc::create_utf8_for_js(global_this, self.specifier())?,
         );
         let location = bun_ast::range_data(
             Some(&self.parse_result.source),
@@ -797,7 +798,7 @@ impl AsyncModule {
         error_instance.put(
             global_this,
             b"sourceURL",
-            EncodedSlice::from_bytes(self.parse_result.source.path.text).to_js(global_this),
+            bun_string_jsc::create_utf8_for_js(global_this, self.parse_result.source.path.text)?,
         );
         error_instance.put(
             global_this,
@@ -808,7 +809,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"lineText",
-                EncodedSlice::from_bytes(line_text).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, line_text)?,
             );
         }
         error_instance.put(
@@ -821,7 +822,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"referrer",
-                EncodedSlice::from_bytes(referrer).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, referrer)?,
             );
         }
 
@@ -951,30 +952,30 @@ impl AsyncModule {
             _ => b"TarballDownloadError",
         };
 
-        let error_instance = EncodedSlice::from_bytes(&msg).to_error_instance(global_this);
+        let error_instance = EncodedSlice::utf8(&msg).to_error_instance(global_this);
         if !result.url.is_empty() {
             error_instance.put(
                 global_this,
                 b"url",
-                EncodedSlice::from_bytes(result.url).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, result.url)?,
             );
         }
         error_instance.put(
             global_this,
             b"name",
-            EncodedSlice::from_bytes(name).to_js(global_this),
+            bun_string_jsc::create_utf8_for_js(global_this, name)?,
         );
         error_instance.put(
             global_this,
             b"pkg",
-            EncodedSlice::from_bytes(result.name).to_js(global_this),
+            bun_string_jsc::create_utf8_for_js(global_this, result.name)?,
         );
         let specifier = self.specifier();
         if !specifier.is_empty() && specifier != b"undefined" {
             error_instance.put(
                 global_this,
                 b"referrer",
-                EncodedSlice::from_bytes(specifier).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, specifier)?,
             );
         }
 
@@ -988,17 +989,17 @@ impl AsyncModule {
         error_instance.put(
             global_this,
             b"specifier",
-            EncodedSlice::from_bytes(
+            bun_string_jsc::create_utf8_for_js(
+                global_this,
                 self.parse_result.ast.import_records[import_record_id as usize]
                     .path
                     .text,
-            )
-            .to_js(global_this),
+            )?,
         );
         error_instance.put(
             global_this,
             b"sourceURL",
-            EncodedSlice::from_bytes(self.parse_result.source.path.text).to_js(global_this),
+            bun_string_jsc::create_utf8_for_js(global_this, self.parse_result.source.path.text)?,
         );
         error_instance.put(
             global_this,
@@ -1009,7 +1010,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"lineText",
-                EncodedSlice::from_bytes(line_text).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, line_text)?,
             );
         }
         error_instance.put(
@@ -1186,7 +1187,7 @@ impl AsyncModule {
             let mut resolved_source = unsafe {
                 (*jsc_vm).ref_counted_resolved_source(
                     printer.ctx.get_written(),
-                    &BunString::init(specifier),
+                    &BunString::from_bytes(specifier),
                     path.text,
                     None,
                 )
@@ -1199,7 +1200,7 @@ impl AsyncModule {
 
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
-            source_url: BunString::init(path.text),
+            source_url: BunString::from_bytes(path.text),
             is_commonjs_module,
             ..Default::default()
         })

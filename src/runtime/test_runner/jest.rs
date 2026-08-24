@@ -5,11 +5,11 @@ use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
-use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
 
 pub use super::bun_test;
@@ -718,7 +718,7 @@ pub(crate) fn format_label(
                 let var_path = &label[var_start..var_end];
                 let value = function_args[0].get_if_property_exists_from_path(
                     global_this,
-                    bun_core::String::init(var_path).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, var_path)?,
                 )?;
                 if !value.is_empty_or_undefined_or_null() {
                     // For primitive strings, use toString() to avoid adding quotes

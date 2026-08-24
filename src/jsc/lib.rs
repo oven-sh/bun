@@ -140,6 +140,7 @@ pub mod deprecated_strong;
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
 pub mod encoded_slice;
+pub use encoded_slice::EncodedSliceJsc;
 #[path = "Exception.rs"]
 pub mod exception;
 #[path = "JSArray.rs"]
@@ -991,51 +992,6 @@ pub use self::js_promise::Unwrapped as PromiseResult;
 // defined in `js_property_iterator` and re-exported below alongside
 // `JSPropertyIterator`.
 
-// `EncodedSlice` → JS bridges used by the `EncodedSliceJsc` extension trait below
-// (the rest of the `JSGlobalObject` extern surface lives in `JSGlobalObject.rs`).
-unsafe extern "C" {
-    // safe: `EncodedSlice` is `#[repr(C)]` and read-only across the call; `JSGlobalObject` is an
-    // opaque `UnsafeCell`-backed ZST handle. `&T` is ABI-identical to a non-null `*const T`.
-    safe fn EncodedSlice__toErrorInstance(
-        this: &bun_core::EncodedSlice,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn EncodedSlice__toTypeErrorInstance(
-        this: &bun_core::EncodedSlice,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn EncodedSlice__toSyntaxErrorInstance(
-        this: &bun_core::EncodedSlice,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn EncodedSlice__toRangeErrorInstance(
-        this: &bun_core::EncodedSlice,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn EncodedSlice__toDOMExceptionInstance(
-        this: &bun_core::EncodedSlice,
-        global: &JSGlobalObject,
-        code: u8,
-    ) -> JSValue;
-    safe fn EncodedSlice__toValueGC(
-        this: &bun_core::EncodedSlice,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    // EncodedSlice__toExternalValue: use the generated `cpp::` re-export (canonical signature).
-    // safe: `EncodedSlice`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
-    // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
-    // pointer C++ stores into the external string's finalizer slot and forwards
-    // to `callback` on GC (never dereferenced as Rust data) — same contract as
-    // `JSC__JSGlobalObject__queueMicrotaskCallback`. The caller-side ownership
-    // transfer is documented at the (already-safe) public wrapper.
-    safe fn EncodedSlice__external(
-        this: &bun_core::EncodedSlice,
-        global: &JSGlobalObject,
-        ctx: *mut core::ffi::c_void,
-        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JSValue;
-}
-
 // `JSGlobalObject` inherent methods that are NOT covered by the dedicated
 // port file (`JSGlobalObject.rs`). The bulk of the surface (throw_*, vm,
 // bun_vm, take_exception, …) lives there; this block only adds the handful
@@ -1383,9 +1339,6 @@ pub trait StringJsc {
     /// Consume: the +1 moves into the `JSString`.
     fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for bun_core::String {
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_core::String> {
@@ -1400,15 +1353,6 @@ impl StringJsc for bun_core::String {
     fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::to_js_by_parse_json(self, global)
     }
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        bun_string_jsc::to_error_instance(self, global)
-    }
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        bun_string_jsc::to_type_error_instance(self, global)
-    }
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        bun_string_jsc::to_range_error_instance(self, global)
-    }
 }
 
 /// Extension trait providing JSC-aware methods on
@@ -1421,129 +1365,6 @@ impl Utf8WithStringJsc for bun_core::Utf8WithString {
     #[inline]
     fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::utf8_with_string_into_js(self, global)
-    }
-}
-
-/// JSC conversions (`toJS`, `toExternalValue`, `external`, `toJSONObject`,
-/// `toErrorInstance`, …) for `bun_core::EncodedSlice`.
-pub trait EncodedSliceJsc: Sized {
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode)
-    -> JSValue;
-    /// `EncodedSlice.toJS` — copies into a GC-managed `JSString` (or hands an
-    /// external value if globally allocated).
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
-    /// `EncodedSlice.toExternalValue` — transfers ownership of a globally-allocated
-    /// buffer to JSC's external-string finalizer.
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
-    /// `EncodedSlice.toJSONObject` — `JSON.parse` over the bytes.
-    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// `EncodedSlice.external` — like `to_external_value` but with a caller-supplied
-    /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
-    ///
-    /// # Safety
-    /// `ctx` and the string's backing buffer must satisfy `callback`'s contract;
-    /// ownership of both transfers to JSC, which invokes `callback` exactly once.
-    unsafe fn external(
-        &self,
-        global: &JSGlobalObject,
-        ctx: *mut core::ffi::c_void,
-        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JSValue;
-}
-impl EncodedSliceJsc for bun_core::EncodedSlice<'_> {
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        EncodedSlice__toErrorInstance(self, global)
-    }
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        EncodedSlice__toTypeErrorInstance(self, global)
-    }
-    #[inline]
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        EncodedSlice__toSyntaxErrorInstance(self, global)
-    }
-    #[inline]
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        EncodedSlice__toRangeErrorInstance(self, global)
-    }
-    #[inline]
-    fn to_dom_exception_instance(
-        &self,
-        global: &JSGlobalObject,
-        code: DOMExceptionCode,
-    ) -> JSValue {
-        EncodedSlice__toDOMExceptionInstance(self, global, code as u8)
-    }
-    #[inline]
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        if self.is_globally_allocated() {
-            return self.to_external_value(global);
-        }
-        EncodedSlice__toValueGC(self, global)
-    }
-    #[inline]
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
-        if self.len > bun_core::String::max_length() {
-            // SAFETY: contract — bytes were allocated by the default (global)
-            // allocator. `default_alloc::free` agrees with the
-            // `#[global_allocator]` (`mi_free` normally; libc free under ASAN).
-            unsafe {
-                bun_alloc::default_alloc::free(
-                    self.byte_slice()
-                        .as_ptr()
-                        .cast_mut()
-                        .cast::<core::ffi::c_void>(),
-                )
-            };
-            let _ = global
-                .err(
-                    crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2147483647 characters"),
-                )
-                .throw();
-            return JSValue::ZERO;
-        }
-        // SAFETY: `self` is a valid `&EncodedSlice`; `JSGlobalObject` is an opaque
-        // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
-        unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) }
-    }
-    #[inline]
-    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
-        unsafe { crate::cpp::EncodedSlice__toJSONObject(self, global) }
-    }
-    #[inline]
-    unsafe fn external(
-        &self,
-        global: &JSGlobalObject,
-        ctx: *mut core::ffi::c_void,
-        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JSValue {
-        if self.len > bun_core::String::max_length() {
-            // SAFETY: invoking the caller-supplied finalizer on the buffer it owns.
-            unsafe {
-                callback(
-                    ctx,
-                    self.byte_slice()
-                        .as_ptr()
-                        .cast_mut()
-                        .cast::<core::ffi::c_void>(),
-                    self.len,
-                )
-            };
-            let _ = global
-                .err(
-                    crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2147483647 characters"),
-                )
-                .throw();
-            return JSValue::ZERO;
-        }
-        // Ownership of the buffer + `ctx` transfers to JSC's finalizer.
-        EncodedSlice__external(self, global, ctx, callback)
     }
 }
 
@@ -1569,6 +1390,12 @@ impl SysErrorJsc for bun_sys::Error {
 pub trait LogJsc {
     fn to_js(&self, global: &JSGlobalObject, message: &'static str) -> JsResult<JSValue>;
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    /// Unlike `to_js`, always produces an `AggregateError`.
+    fn to_js_aggregate_error(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<JSValue>;
 }
 /// Wrap a single `Msg` in
 /// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
@@ -1595,15 +1422,19 @@ impl LogJsc for bun_ast::Log {
                 for (i, msg) in msgs[0..count].iter().enumerate() {
                     errors_stack[i] = msg_to_js(msg, global)?;
                 }
-                global.create_aggregate_error(
-                    &errors_stack[..count],
-                    &bun_core::String::static_(message),
-                )
+                global.create_aggregate_error(&errors_stack[..count], format_args!("{message}"))
             }
         }
     }
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         JSValue::create_array_from_iter(global, self.msgs.iter(), |msg| msg_to_js(msg, global))
+    }
+    fn to_js_aggregate_error(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<JSValue> {
+        global.create_aggregate_error_with_array(message, self.to_js_array(global)?)
     }
 }
 

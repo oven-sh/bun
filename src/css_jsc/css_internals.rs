@@ -1,7 +1,7 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
-use bun_core::String as BunString;
 use bun_css::targets::{Browsers, Targets};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
 use crate::JsResult;
@@ -95,7 +95,7 @@ fn testing_impl(
         DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
         PrinterOptions, StyleSheet,
     };
-    use bun_jsc::{LogJsc as _, StringJsc as _};
+    use bun_jsc::LogJsc as _;
 
     let arena = Arena::new();
     // The CSS parser allocates into this bump arena; freed when it drops.
@@ -182,7 +182,7 @@ fn testing_impl(
                 Ok(_) => {}
                 Err(err) => {
                     return Err(
-                        global.throw_value(crate::error_jsc::to_error_instance(&err, global)?)
+                        global.throw_value(crate::error_jsc::to_error_instance(&err, global))
                     );
                 }
             }
@@ -212,12 +212,12 @@ fn testing_impl(
                 Ok(result) => result,
                 Err(err) => {
                     return Err(
-                        global.throw_value(crate::error_jsc::to_error_instance(&err, global)?)
+                        global.throw_value(crate::error_jsc::to_error_instance(&err, global))
                     );
                 }
             };
 
-            BunString::from_bytes(&result.code).to_js(global)
+            bun_string_jsc::create_utf8_for_js(global, &result.code)
         }
         Err(err) => {
             if log.has_errors() {
@@ -291,7 +291,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     use bun_css::{
         ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute,
     };
-    use bun_jsc::{LogJsc as _, StringJsc as _};
+    use bun_jsc::LogJsc as _;
 
     let arena = Arena::new();
     // StyleAttribute::parse allocates its
@@ -362,7 +362,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                 }
             };
 
-            BunString::from_bytes(&result.code).to_js(global)
+            bun_string_jsc::create_utf8_for_js(global, &result.code)
         }
         Err(err) => {
             if log.has_any() {

@@ -12,9 +12,10 @@ use crate::napi;
 use bun_collections::StringArrayHashMap;
 use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsCell, JsClass, JsError, JsResult, SystemError,
+    JsCell, JsClass, JsError, JsResult, StringJsc as _, SystemError,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
@@ -36,9 +37,7 @@ fn dir_exists(path: &'static [u8]) -> bool {
 
 /// `bun.String.toJSArray` — local shim over `JSValue::create_array_from_iter`.
 fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> JsResult<JSValue> {
-    JSValue::create_array_from_iter(global, strs.iter(), |s| {
-        jsc::bun_string_jsc::to_js(s, global)
-    })
+    JSValue::create_array_from_iter(global, strs.iter(), |s| s.to_js(global))
 }
 
 // Runtime availability is governed by `bun_core::Environment::ENABLE_TINYCC`
@@ -1195,7 +1194,7 @@ impl FFI {
             }
             match &function.step {
                 Step::Failed { msg, .. } => {
-                    let res = EncodedSlice::from_bytes(msg).to_error_instance(global_this);
+                    let res = EncodedSlice::utf8(msg).to_error_instance(global_this);
                     return Err(global_this.throw_value(res));
                 }
                 Step::Pending => {
@@ -1204,17 +1203,17 @@ impl FFI {
                     );
                 }
                 Step::Compiled(compiled) => {
-                    let str = EncodedSlice::latin1(function_name.as_bytes());
+                    let symbol_name = EncodedSlice::utf8(function_name.as_bytes());
                     let cb = new_runtime_function(
                         global_this,
-                        &str,
+                        &symbol_name,
                         u32::try_from(function.arg_types.len()).expect("int cast"),
                         compiled.ptr.cast_const(),
                         true,
                         function.symbol_from_dynamic_library,
                     );
                     // `cb` is rooted by the `symbolsValue` cached own-property set below.
-                    obj.put(global_this, str.slice(), cb);
+                    obj.put(global_this, symbol_name, cb);
                 }
             }
         }
@@ -1341,7 +1340,7 @@ impl FFI {
         let _ = function;
         let text: &[u8] =
             b"// bun:ffi callbacks are compiled by JavaScriptCore (no C source is generated)\n";
-        jsc::bun_string_jsc::create_utf8_for_js(global, text)
+        bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     pub fn print(
@@ -1538,8 +1537,8 @@ impl FFI {
             let target = function
                 .symbol_from_dynamic_library
                 .expect("symbol was resolved above");
-            let str = EncodedSlice::latin1(function_name.as_bytes());
-            let cb = create_jsc_ffi_function(global, &str, function, target, js_object);
+            let symbol_name = EncodedSlice::utf8(function_name.as_bytes());
+            let cb = create_jsc_ffi_function(global, &symbol_name, function, target, js_object);
             if cb.is_empty() {
                 // An exception the constructor left pending is the caller's.
                 let ret = if global.has_exception() {
@@ -1556,7 +1555,7 @@ impl FFI {
                 unsafe { &*lib_ptr }.do_close();
                 return ret;
             }
-            obj.put(global, str.slice(), cb);
+            obj.put(global, symbol_name, cb);
         }
 
         // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
@@ -1624,8 +1623,8 @@ impl FFI {
                 return Ok(err);
             }
             let target = function.symbol_from_dynamic_library.expect("checked above");
-            let name = EncodedSlice::latin1(function_name.as_bytes());
-            let cb = create_jsc_ffi_function(global, &name, function, target, js_object);
+            let symbol_name = EncodedSlice::utf8(function_name.as_bytes());
+            let cb = create_jsc_ffi_function(global, &symbol_name, function, target, js_object);
             if cb.is_empty() {
                 // An exception the constructor left pending is the caller's.
                 let err = if global.has_exception() {
@@ -1640,7 +1639,7 @@ impl FFI {
                 unsafe { &*lib_ptr }.do_close();
                 return err;
             }
-            obj.put(global, name.slice(), cb);
+            obj.put(global, symbol_name, cb);
         }
 
         // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
@@ -1673,7 +1672,7 @@ impl FFI {
 
         let name = match name_value {
             Some(value) if value.is_string() => value.to_bun_string(global)?,
-            _ => bun_core::String::static_(b"CFunction"),
+            _ => bun_core::String::static_("CFunction"),
         };
         if let Some(err) = function.reject_napi_types_error(global) {
             return Ok(err);
@@ -1707,10 +1706,9 @@ pub(super) fn generate_symbol_for_function(
 
     if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
-            return Ok(Some(
-                EncodedSlice::latin1(b"Expected an object with \"args\" as an array")
-                    .to_error_instance(global),
-            ));
+            return Ok(Some(global.create_error_instance(format_args!(
+                "Expected an object with \"args\" as an array"
+            ))));
         }
 
         let mut array = args.array_iterator(global)?;
@@ -1794,21 +1792,15 @@ pub(super) fn generate_symbol_for_function(
     }
 
     if return_type == ABIType::Buffer {
-        return Ok(Some(
-            EncodedSlice::latin1(
-                b"Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)",
-            )
-            .to_error_instance(global),
-        ));
+        return Ok(Some(global.create_error_instance(format_args!(
+            "Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)"
+        ))));
     }
 
     if return_type == ABIType::BufferLength {
-        return Ok(Some(
-            EncodedSlice::latin1(
-                b"buffer_length is an argument-only type; it cannot be a return type",
-            )
-            .to_error_instance(global),
-        ));
+        return Ok(Some(global.create_error_instance(format_args!(
+            "buffer_length is an argument-only type; it cannot be a return type"
+        ))));
     }
 
     *function = Function::default();

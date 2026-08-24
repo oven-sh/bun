@@ -11,6 +11,7 @@ use bun_core::String as BunString;
 use bun_core::ZStr;
 use bun_core::strings;
 use bun_jsc::StringJsc as _;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
     MarkedArgumentBuffer,
@@ -67,10 +68,7 @@ impl ShellErr {
                 let err = bun_jsc::SystemError::from(sys).to_error_instance(global);
                 global.throw_value(err)
             }
-            ShellErr::Custom(custom) => {
-                let err_value = BunString::clone_utf8(&custom).to_error_instance(global);
-                global.throw_value(err_value)
-            }
+            ShellErr::Custom(custom) => global.throw(format_args!("{}", bstr::BStr::new(&custom))),
             ShellErr::Todo(todo) => global.throw_todo(&todo),
         }
     }
@@ -466,7 +464,7 @@ pub(crate) fn handle_template_value(
                     depth + 1,
                 )?;
                 if i < last {
-                    let str = BunString::static_(b" ");
+                    let str = BunString::static_(" ");
                     let mut b = ShellSrcBuilder::init(global, out_script, jsstrings);
                     if !b.append_bun_str::<false>(str)? {
                         return Err(global
@@ -889,7 +887,7 @@ pub mod testing_apis {
             "{}",
             bun_shell_parser::json_fmt::script_json_fmt(&script_ast)
         );
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
+        bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
     }
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`

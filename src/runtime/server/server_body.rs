@@ -22,7 +22,6 @@ use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, fmt as bun_fmt};
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
-use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
@@ -1010,10 +1009,10 @@ impl ServePlugins {
         let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
         let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
-            bunstring_array.push(BunString::init(&***raw_plugin));
+            bunstring_array.push(BunString::from_bytes(raw_plugin));
         }
         let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
-        let bunfig_folder_bunstr = jsc::bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
+        let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {
             promise: jsc::JSPromiseStrong::init(global),
@@ -2270,11 +2269,10 @@ where
 
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    EncodedSlice::latin1(fetch_error.as_bytes()).to_error_instance(ctx),
+                    ctx.create_error_instance(format_args!("{}", Fetch::FETCH_ERROR_NO_ARGS)),
                 ),
             );
         }
@@ -2294,11 +2292,10 @@ where
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
-                let fetch_error = Fetch::FETCH_ERROR_BLANK_URL;
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         ctx,
-                        EncodedSlice::latin1(fetch_error.as_bytes()).to_error_instance(ctx),
+                        ctx.create_error_instance(format_args!("{}", Fetch::FETCH_ERROR_BLANK_URL)),
                     ),
                 );
             }
@@ -2506,7 +2503,7 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_id(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        jsc::bun_string_jsc::create_utf8_for_js(global, &self.config.id)
+        bun_string_jsc::create_utf8_for_js(global, &self.config.id)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2523,7 +2520,7 @@ where
     pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.config.address {
             server_config::Address::Unix(unix) => {
-                jsc::bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
+                bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
             }
             server_config::Address::Tcp { port: tcp_port, .. } => {
                 let mut port: u16 = *tcp_port;
@@ -2594,7 +2591,7 @@ where
                     .remote_address(&mut buf[..1024])
                 {
                     if !addr.is_empty() {
-                        return jsc::bun_string_jsc::create_utf8_for_js(global, addr);
+                        return bun_string_jsc::create_utf8_for_js(global, addr);
                     }
                 }
             }
@@ -2602,12 +2599,9 @@ where
                 match &self.config.address {
                     server_config::Address::Tcp { hostname, .. } => {
                         if let Some(hostname) = hostname {
-                            return jsc::bun_string_jsc::create_utf8_for_js(
-                                global,
-                                hostname.as_bytes(),
-                            );
+                            return bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes());
                         } else {
-                            return BunString::static_(b"localhost").to_js(global);
+                            return BunString::static_("localhost").to_js(global);
                         }
                     }
                     server_config::Address::Unix(_) => unreachable!(),
@@ -2620,9 +2614,9 @@ where
     pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let _ = self;
         if SSL {
-            BunString::static_(b"https").to_js(global)
+            BunString::static_("https").to_js(global)
         } else {
-            BunString::static_(b"http").to_js(global)
+            BunString::static_("http").to_js(global)
         }
     }
 

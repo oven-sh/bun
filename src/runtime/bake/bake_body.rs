@@ -1385,8 +1385,7 @@ fn get_optional_string(
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    let str = value.to_bun_string(global)?;
-    Ok(Some(allocations.track(str.into_utf8())))
+    Ok(Some(allocations.track(value.to_utf8(global)?)))
 }
 
 // Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`

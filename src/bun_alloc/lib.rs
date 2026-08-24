@@ -774,103 +774,6 @@ pub fn page_size() -> usize {
     })
 }
 
-// ── String — layout only ───────────────────────────────────────────────────
-// `#[repr(C)]` so lower-tier crates can name the type; every method lives on
-// `bun_core::String`. Not a Rust enum: C++ mutates `tag` and `value`
-// independently across FFI.
-
-/// Discriminant for [`String`]'s representation.
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Tag {
-    Dead = 0,
-    WTFStringImpl = 1,
-    EncodedSlice = 2,
-    StaticEncodedSlice = 3,
-    Empty = 4,
-}
-
-// `EncodedSlice` pointer-tag scheme — single source of truth.
-// Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
-const TAG_UTF8_BIT: usize = 1usize << 61;
-const TAG_GLOBAL_BIT: usize = 1usize << 62;
-const TAG_UTF16_BIT: usize = 1usize << 63;
-const UNTAG_MASK: usize = (1usize << 53) - 1;
-
-/// `{ tagged ptr, len }` with encoding bits in the pointer's high byte; the
-/// lifetime-free layout under `bun_core::EncodedSlice<'a>` and the
-/// [`String`] union arm. Everything but the tag-bit accessors lives on
-/// `bun_core::EncodedSlice`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct EncodedSlice {
-    /// Tagged pointer — never dereference directly; use `untagged()`.
-    _unsafe_ptr_do_not_use: *const u8,
-    pub len: usize,
-}
-
-impl EncodedSlice {
-    pub const EMPTY: EncodedSlice = EncodedSlice {
-        _unsafe_ptr_do_not_use: b"".as_ptr(),
-        len: 0,
-    };
-
-    /// Construct from an already-tagged pointer + length. `ptr` is stored
-    /// verbatim — tag bits are not touched.
-    #[inline]
-    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> EncodedSlice {
-        EncodedSlice {
-            _unsafe_ptr_do_not_use: ptr,
-            len,
-        }
-    }
-
-    /// Raw tagged pointer (top-bit flags intact). Pair with
-    /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
-    #[inline]
-    pub const fn tagged_ptr(&self) -> *const u8 {
-        self._unsafe_ptr_do_not_use
-    }
-
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-    #[inline]
-    pub fn is_16bit(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & TAG_UTF16_BIT != 0
-    }
-    #[inline]
-    pub fn is_utf8(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & TAG_UTF8_BIT != 0
-    }
-    #[inline]
-    pub fn is_globally_allocated(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & TAG_GLOBAL_BIT != 0
-    }
-    #[inline]
-    pub fn mark_utf16(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | TAG_UTF16_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_utf8(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | TAG_UTF8_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_global(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | TAG_GLOBAL_BIT) as *const u8;
-    }
-
-    /// Strip the flag bits — truncate to the low 53 bits.
-    #[inline]
-    pub fn untagged(ptr: *const u8) -> *const u8 {
-        ((ptr as usize) & UNTAG_MASK) as *const u8
-    }
-}
-
 /// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
 ///
 /// `m_ref_count` / `m_hash_and_flags` are `Cell<u32>` (not bare `u32`) because
@@ -1043,46 +946,8 @@ unsafe extern "C" {
     // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
     // allocation backing the pointer.
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
-    // Rust no longer calls these.
-    pub safe fn Bun__WTFStringImpl__ref(this: &WTFStringImplStruct);
-    pub fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
     safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
-}
-
-/// C-layout untagged union over [`String`]'s payload representations.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union StringImpl {
-    pub encoded: EncodedSlice,
-    pub wtf_string_impl: WTFStringImpl,
-    // .StaticEncodedSlice aliases .encoded; .Dead/.Empty are zero-width.
-}
-
-/// Known as `BunString` in C++.
-///
-/// 5-variant tagged union over WTF-backed and `EncodedSlice`-backed strings. NOT a
-/// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct String {
-    pub tag: Tag,
-    pub value: StringImpl,
-}
-
-impl String {
-    pub const EMPTY: String = String {
-        tag: Tag::Empty,
-        value: StringImpl {
-            encoded: EncodedSlice::EMPTY,
-        },
-    };
-    pub const DEAD: String = String {
-        tag: Tag::Dead,
-        value: StringImpl {
-            encoded: EncodedSlice::EMPTY,
-        },
-    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

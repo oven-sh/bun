@@ -357,12 +357,12 @@ mod _impl {
         if vm.standalone_module_graph.is_some() {
             // Don't break user's code because they did process.argv.slice(2)
             // Even if they didn't type "bun", we still want to add it as argv[0]
-            args_list.push(BunString::static_(b"bun"));
+            args_list.push(BunString::static_("bun"));
         } else {
             let exe_path = bun_core::self_exe_path().ok();
             args_list.push(match exe_path {
                 Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
-                None => BunString::static_(b"bun"),
+                None => BunString::static_("bun"),
             });
         }
 
@@ -382,7 +382,7 @@ mod _impl {
             && !strings::ends_with(vm.main(), STDIN_SUFFIX)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
-                args_list.push(BunString::static_(b"[worker eval]"));
+                args_list.push(BunString::static_("[worker eval]"));
             } else {
                 args_list.push(BunString::borrow_utf8(vm.main()));
             }
@@ -444,7 +444,7 @@ mod _impl {
         let mut buf = PathBuffer::uninit();
         match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(len) => {
-                Ok(EncodedSlice::from_bytes(&buf[..len]).to_js(global_object))
+                bun_string_jsc::create_utf8_for_js(global_object, &buf[..len])
             }
             bun_sys::Result::Err(e) => {
                 // Node's UVException from `Cwd` (node_process_methods.cc):

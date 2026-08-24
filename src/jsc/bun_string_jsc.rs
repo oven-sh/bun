@@ -2,10 +2,9 @@
 //! `bun_core::string` free of `JSValue`/`JSGlobalObject`/`CallFrame` types;
 //! the `StringJsc`/`Utf8WithStringJsc` extension traits forward here.
 
-use bun_core::{EncodedSlice, String, Tag, Utf8WithString, strings};
+use bun_core::{String, Tag, Utf8WithString, strings};
 
-use crate::encoded_slice;
-use crate::{CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
@@ -24,9 +23,6 @@ unsafe extern "C" {
         ptr: *const String,
         len: usize,
     ) -> JSValue;
-    safe fn JSC__createError(global: &JSGlobalObject, str_: &String) -> JSValue;
-    safe fn JSC__createTypeError(global: &JSGlobalObject, str_: &String) -> JSValue;
-    safe fn JSC__createRangeError(global: &JSGlobalObject, str_: &String) -> JSValue;
 }
 
 // ── bun.String methods ──────────────────────────────────────────────────────
@@ -39,21 +35,9 @@ pub(crate) fn into_js(mut this: String, global_this: &JSGlobalObject) -> JsResul
     unsafe { crate::cpp::BunString__transferToJS(&raw mut this, global_this) }
 }
 
-pub(crate) fn to_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
-    JSC__createError(global_object, this)
-}
-
-pub(crate) fn to_type_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
-    JSC__createTypeError(global_object, this)
-}
-
-pub(crate) fn to_range_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
-    JSC__createRangeError(global_object, this)
-}
-
 #[inline]
 #[track_caller]
-pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<String> {
+pub(crate) fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<String> {
     crate::validation_scope!(scope, global_object);
     let mut out: String = String::DEAD;
     // SAFETY: `global_object` is a valid handle; `out` is a live stack out-param.
@@ -78,7 +62,7 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
 }
 
 #[track_caller]
-pub fn to_js(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn to_js(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: `this` borrows a live `String` for the call duration.
     unsafe { crate::cpp::BunString__toJS(global_object, this) }
 }
@@ -107,7 +91,10 @@ pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult
 }
 
 #[track_caller]
-pub fn to_js_by_parse_json(self_: &String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn to_js_by_parse_json(
+    self_: &String,
+    global_object: &JSGlobalObject,
+) -> JsResult<JSValue> {
     // SAFETY: `self_` is a live `&String`.
     unsafe { crate::cpp::BunString__toJSON(global_object, self_) }
 }
@@ -124,6 +111,15 @@ pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> 
     }
 }
 
+/// UTF-8 `Vec<u8>` → JS string, handing the allocation (or its UTF-16
+/// transcode) to JSC instead of copying.
+pub fn owned_utf8_into_js(global_object: &JSGlobalObject, utf8: Vec<u8>) -> JsResult<JSValue> {
+    into_js(
+        String::from_owned_utf8(utf8).map_err(|_| global_object.throw_out_of_memory())?,
+        global_object,
+    )
+}
+
 #[track_caller]
 pub fn parse_date(this: &String, global_object: &JSGlobalObject) -> JsResult<f64> {
     // SAFETY: `this` is a live `&String`; cppbind wrapper opens its own scope.
@@ -138,24 +134,7 @@ pub(crate) fn utf8_with_string_into_js(
     let (utf8, string) = this.into_parts();
     if string.is_empty() {
         if let Some(utf8) = utf8.filter(|v| !v.is_empty()) {
-            if let Some(utf16) = strings::to_utf16_alloc(&utf8, false, false)
-                .map_err(|_| global_object.throw_out_of_memory())?
-            {
-                drop(utf8);
-                // Ownership of `utf16` is transferred to JSC as an
-                // external string; do not drop it here.
-                let mut utf16 = core::mem::ManuallyDrop::new(utf16);
-                utf16.shrink_to_fit();
-                // SAFETY: `utf16` was allocated by the global allocator and is
-                // wrapped in `ManuallyDrop`; ownership transfers to JSC here.
-                return Ok(unsafe {
-                    encoded_slice::to_external_u16(utf16.as_ptr(), utf16.len(), global_object)
-                });
-            }
-            // All-ASCII: ownership of the bytes is transferred to JSC via
-            // `to_external_value` (mimalloc-freed by JSC).
-            let bytes = bun_core::heap::release(utf8.into_boxed_slice());
-            return Ok(EncodedSlice::latin1(bytes).to_external_value(global_object));
+            return owned_utf8_into_js(global_object, utf8);
         }
     }
     into_js(string, global_object)

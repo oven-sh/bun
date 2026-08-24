@@ -17,10 +17,10 @@ use bun_http_types::MimeType::MimeType;
 use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
-use bun_core::{EncodedSlice, String as BunString};
+use bun_core::String as BunString;
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
-use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::{JsCell, StringJsc as _};
+use bun_jsc::JsCell;
+use bun_jsc::bun_string_jsc;
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
 /// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
@@ -396,7 +396,7 @@ impl PendingValue {
                             let fd = form_data.take().unwrap();
                             let encoding_js = match &fd.encoding {
                                 bun_core::form_data::Encoding::Multipart(multipart) => {
-                                    BunString::init(&multipart[..]).to_js(global_this)?
+                                    bun_string_jsc::create_utf8_for_js(global_this, multipart)?
                                 }
                                 bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
                             };
@@ -612,8 +612,12 @@ impl ValueError {
             ValueError::SystemTypeError(system_error) => {
                 core::mem::take(system_error).to_type_error_instance(global_object)
             }
-            ValueError::Message(message) => message.to_error_instance(global_object),
-            ValueError::TypeError(message) => message.to_type_error_instance(global_object),
+            ValueError::Message(message) => {
+                global_object.create_error_instance(format_args!("{message}"))
+            }
+            ValueError::TypeError(message) => {
+                global_object.create_type_error_instance(format_args!("{message}"))
+            }
             // do an early return in this case we don't need to create a new Strong
             ValueError::JSValue(js_value) => {
                 return js_value.get().unwrap_or(JSValue::UNDEFINED);
@@ -1110,10 +1114,9 @@ impl Value {
                             // `blob.detach()` below covers the reject error path too.
                             let r = promise.reject(
                                 global,
-                                EncodedSlice::latin1(
-                                    b"Internal error: task for FormData must not be null",
-                                )
-                                .to_error_instance(global),
+                                global.create_error_instance(format_args!(
+                                    "Internal error: task for FormData must not be null"
+                                )),
                             );
                             blob.detach();
                             r?;

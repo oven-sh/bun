@@ -130,7 +130,7 @@ impl JSS3Error {
             code: BunString::create_atom_if_possible(code),
             message: BunString::create_atom_if_possible(message),
             path: if let Some(p) = path {
-                BunString::init(p)
+                BunString::from_bytes(p)
             } else {
                 BunString::empty()
             },

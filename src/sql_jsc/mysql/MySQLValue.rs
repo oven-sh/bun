@@ -4,9 +4,8 @@
 
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult,
-    MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
+    MarkedArgumentBuffer, js_error_to_mysql,
 };
-use bun_core::String as BunString;
 use bun_core::Utf8Bytes;
 
 use bun_sql::mysql::mysql_types::FieldType;
@@ -386,9 +385,9 @@ impl Value {
                 }
 
                 if value.is_string() {
-                    let str =
-                        BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
-                    return Ok(Value::String(str.into_utf8()));
+                    return Ok(Value::String(
+                        value.to_utf8(global_object).map_err(js_error_to_mysql)?,
+                    ));
                 }
 
                 Err(js_error_to_mysql(global_object.throw_invalid_arguments(
@@ -405,10 +404,9 @@ impl Value {
             }
 
             //   FieldType::MYSQL_TYPE_VARCHAR | FieldType::MYSQL_TYPE_VAR_STRING | FieldType::MYSQL_TYPE_STRING => {
-            _ => {
-                let str = BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
-                Ok(Value::String(str.into_utf8()))
-            }
+            _ => Ok(Value::String(
+                value.to_utf8(global_object).map_err(js_error_to_mysql)?,
+            )),
         }
     }
 }

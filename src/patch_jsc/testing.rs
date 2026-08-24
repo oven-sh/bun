@@ -1,9 +1,7 @@
 //! JS testing bindings for `bun.patch`. Keeps `src/patch/` free of JSC types.
 
-use bun_core::String as BunString;
-use bun_jsc::{
-    ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc,
-};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, SysErrorJsc};
 use bun_patch::{ParseErr, PatchFile, git_diff_internal, parse_patch_file};
 use bun_sys::{Fd, FdExt};
 
@@ -42,7 +40,7 @@ impl TestingAPIs {
         match diff {
             Ok(s) => {
                 // `from_bytes` borrows — no +1 WTF ref.
-                let result = BunString::from_bytes(s.as_slice()).to_js(global);
+                let result = bun_string_jsc::create_utf8_for_js(global, s.as_slice());
                 drop(s);
                 result
             }
@@ -102,8 +100,7 @@ impl TestingAPIs {
             use std::io::Write as _;
             write!(&mut str, "{}", bun_patch::json_fmt(&patchfile)).expect("unreachable");
         }
-        let outstr = BunString::borrow_utf8(&str);
-        let js = outstr.to_js(global)?;
+        let js = bun_string_jsc::create_utf8_for_js(global, &str)?;
         drop(patchfile);
         Ok(js)
     }

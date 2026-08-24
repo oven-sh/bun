@@ -2,21 +2,12 @@
 
 use core::fmt::Display;
 
-use bun_alloc::AllocError;
-use bun_core::String as BunString;
-use bun_jsc::{JSGlobalObject, JSValue, StringJsc as _};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 /// `this` is `&css::Err<T>` for any `T`; only `.kind` is accessed.
-// Only fallible call is `create_format` (OOM), so AllocError.
-pub(crate) fn to_error_instance<T>(
+pub(crate) fn to_error_instance<T: Display>(
     this: &bun_css::Err<T>,
     global_this: &JSGlobalObject,
-) -> Result<JSValue, AllocError>
-where
-    // `this.kind` is formatted, so the kind type must be `Display`.
-    T: Display,
-{
-    let str = BunString::create_format(format_args!("{}", this.kind));
-    let js = str.to_error_instance(global_this);
-    Ok(js)
+) -> JSValue {
+    global_this.create_error_instance(format_args!("{}", this.kind))
 }

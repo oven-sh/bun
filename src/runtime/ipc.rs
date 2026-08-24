@@ -512,7 +512,7 @@ mod json {
         // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
         // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
         // drop — so the freed-flag check must follow it.
-        let parsed = bun_jsc::bun_string_jsc::to_js_by_parse_json(&str, global_this);
+        let parsed = str.to_js_by_parse_json(global_this);
         drop(str);
         if is_ascii && !was_ascii_string_freed {
             panic!(
@@ -1398,8 +1398,8 @@ impl SendQueue {
             }
             // too many retries; give up - emit warning if possible
             let warning =
-                BunString::static_(b"Handle did not reach the receiving process correctly");
-            let warning_name = BunString::static_(b"SentHandleNotReceivedWarning");
+                BunString::static_("Handle did not reach the receiving process correctly");
+            let warning_name = BunString::static_("SentHandleNotReceivedWarning");
             if let Ok(warning_js) = warning.into_js(global) {
                 if let Ok(warning_name_js) = warning_name.into_js(global) {
                     let _ = global.emit_warning(
@@ -2085,7 +2085,7 @@ fn handle_ipc_message(
                     if !cmd.is_cell() {
                         break 'handle_message;
                     }
-                    let cmd_str = bun_jsc::bun_string_jsc::from_js(cmd, global_this)?;
+                    let cmd_str = bun_core::String::from_js(cmd, global_this)?;
                     if cmd_str.eq_ascii(b"NODE_HANDLE") {
                         internal_command = Some(IPCCommand::Handle(msg_data));
                     } else if cmd_str.eq_ascii(b"NODE_HANDLE_ACK") {

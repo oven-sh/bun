@@ -9,6 +9,7 @@ use bun_core::Utf8Bytes;
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
@@ -854,7 +855,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
-        let msg_value = match jsc::bun_string_jsc::create_utf8_for_js(global_this, msg_bytes) {
+        let msg_value = match bun_string_jsc::create_utf8_for_js(global_this, msg_bytes) {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -866,7 +867,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
-        let code_value = match jsc::bun_string_jsc::create_utf8_for_js(global_this, code_bytes) {
+        let code_value = match bun_string_jsc::create_utf8_for_js(global_this, code_bytes) {
             Ok(v) => v,
             Err(_) => return,
         };

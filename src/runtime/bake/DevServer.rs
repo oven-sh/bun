@@ -20,9 +20,10 @@ use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, String as BunString, ZStr, strings};
 use bun_core::{Environment, Output};
-use bun_jsc::StringJsc as _;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{LogJsc as _, StringJsc as _};
 use bun_paths::{self as paths, PathBuffer};
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
@@ -48,28 +49,6 @@ use crate::bake::dev_server::ResponseLike;
 pub(super) use crate::bake::dev_server::assets::Assets;
 pub(super) use crate::bake::dev_server::error_report_request::ErrorReportRequest;
 
-// ── local extension shims for upstream-crate methods missing in Rust port ──
-// LAYERING: `bake::Framework::{init_transpiler, resolve}` are now inherent
-// methods on the keystone `bake::Framework` (ported into `bake/mod.rs` from
-// `bake_body::Framework` so this file can call them without the trait shim).
-
-/// Shim: `bun_ast::Log::to_js_aggregate_error` — body lives in `bun_logger_jsc`.
-trait LogToJsAggregateErrorExt {
-    fn to_js_aggregate_error(
-        &mut self,
-        _global: &JSGlobalObject,
-        _msg: &BunString,
-    ) -> JsResult<JSValue>;
-}
-impl LogToJsAggregateErrorExt for Log {
-    fn to_js_aggregate_error(
-        &mut self,
-        global: &JSGlobalObject,
-        msg: &BunString,
-    ) -> JsResult<JSValue> {
-        bun_ast_jsc::log_to_js_aggregate_error(self, global, msg)
-    }
-}
 pub(super) use crate::bake::dev_server::HotReloadEvent;
 pub(super) use crate::bake::dev_server::incremental_graph::IncrementalGraph;
 pub(super) use crate::bake::dev_server::memory_cost::MemoryCost;
@@ -780,7 +759,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
         return Err(global.throw_value(dev.log.to_js_aggregate_error(
             global,
-            &BunString::static_("Framework is missing required files!"),
+            format_args!("Framework is missing required files!"),
         )?));
     }
 
@@ -2434,7 +2413,7 @@ impl DevServer {
                             as usize]
                     };
                     let mut buf = paths::path_buffer_pool::get();
-                    let s = bun_jsc::bun_string_jsc::create_utf8_for_js(
+                    let s = bun_string_jsc::create_utf8_for_js(
                         global,
                         // SAFETY: `relative_path(&self)` only reads `self.root`;
                         // no `&mut` derived from `*this` is live across this call.
@@ -2484,7 +2463,7 @@ impl DevServer {
                         arr.put_index(
                             global,
                             0,
-                            bun_jsc::bun_string_jsc::create_utf8_for_js(global, route_name)?,
+                            bun_string_jsc::create_utf8_for_js(global, route_name)?,
                         )?;
                     }
                     n = 1;
@@ -2502,7 +2481,7 @@ impl DevServer {
                             arr.put_index(
                                 global,
                                 u32::try_from(n).expect("int cast"),
-                                bun_jsc::bun_string_jsc::create_utf8_for_js(global, layout_name)?,
+                                bun_string_jsc::create_utf8_for_js(global, layout_name)?,
                             )?;
                             n += 1;
                         }
@@ -3612,7 +3591,7 @@ impl DevServer {
             arr.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                bun_jsc::bun_string_jsc::create_utf8_for_js(global, path)?,
+                bun_string_jsc::create_utf8_for_js(global, path)?,
             )?;
         }
         Ok(arr)
@@ -3694,7 +3673,7 @@ impl DevServer {
             arr.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                bun_jsc::bun_string_jsc::create_utf8_for_js(global, s)?,
+                bun_string_jsc::create_utf8_for_js(global, s)?,
             )?;
         }
         Ok(arr)

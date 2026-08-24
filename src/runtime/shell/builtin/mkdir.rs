@@ -324,10 +324,10 @@ impl ShellMkdirTask {
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                filepath.as_bytes(),
-                false,
-            )),
+            // SAFETY: `mkdir_recursive` is synchronous; `filepath` outlives the call.
+            path: PathLike::Utf8(bun_core::Utf8Bytes::Borrowed(unsafe {
+                bun_ptr::detach_lifetime(filepath.as_bytes())
+            })),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,

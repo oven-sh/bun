@@ -2,9 +2,10 @@ use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::{self, EncodedSlice, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
+use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
 use bun_core::{WStr, ZStr};
-use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, Utf8WithStringJsc as _};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
@@ -358,15 +359,11 @@ impl StringOrBuffer {
         Ok(result)
     }
 
-    pub fn to_js(&mut self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            Self::ThreadsafeString(str) | Self::String(str) => core::mem::take(str).into_js(ctx),
-            Self::Utf8(utf8) => {
-                let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, utf8.slice());
-                *utf8 = Utf8Bytes::EMPTY;
-                result
-            }
-            Self::Buffer(buffer) => {
+            Self::ThreadsafeString(str) | Self::String(str) => str.into_js(ctx),
+            Self::Utf8(utf8) => bun_string_jsc::create_utf8_for_js(ctx, &utf8),
+            Self::Buffer(mut buffer) => {
                 if buffer.buffer.value != JSValue::ZERO {
                     return Ok(buffer.buffer.value);
                 }
@@ -410,15 +407,16 @@ impl StringOrBuffer {
                 }
                 let str = bun_core::String::from_js(value, global)?;
                 if flavor == Flavor::Async {
-                    let mut utf8 = str.into_utf8_with_string_thread_safe();
-                    utf8.report_extra_memory(|len| global.vm().report_extra_memory(len));
-
-                    if utf8.string().is_empty() {
-                        *out = Self::Utf8(utf8.into_utf8());
+                    let utf8 = str.into_utf8_with_string_thread_safe();
+                    if utf8.is_shared() {
+                        *out = Self::ThreadsafeString(utf8);
                         return Ok(true);
                     }
-
-                    *out = Self::ThreadsafeString(utf8);
+                    let utf8 = utf8.into_utf8();
+                    if let Utf8Bytes::Owned(owned) = &utf8 {
+                        global.vm().report_extra_memory(owned.len());
+                    }
+                    *out = Self::Utf8(utf8);
                 } else {
                     *out = Self::String(str.into_utf8_with_string());
                 }
@@ -789,7 +787,7 @@ impl Encoding {
             }
             Self::Base64url => {
                 let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(EncodedSlice::latin1(&buf).to_js(global_object))
+                bun_string_jsc::create_utf8_for_js(global_object, &buf)
             }
             Self::Hex => {
                 // The byte-by-byte `write!` formatting machinery is pathologically
@@ -1243,39 +1241,33 @@ impl PathLikeExt for PathLike {
         str: bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> {
-        if will_be_async {
-            let mut utf8 = str.into_utf8_with_string_thread_safe();
-
-            // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
-            Valid::path_string_length(utf8.slice().len(), global)?;
-            Valid::path_null_bytes(utf8.slice(), global)?;
-
-            utf8.report_extra_memory(|len| global.vm().report_extra_memory(len));
-
-            if utf8.string().is_empty() {
-                return Ok(Self::Utf8(utf8.into_utf8()));
-            }
-            Ok(Self::ThreadsafeString(utf8))
+        let utf8 = if will_be_async {
+            str.into_utf8_with_string_thread_safe()
         } else {
-            let mut utf8 = str.into_utf8_with_string();
+            str.into_utf8_with_string()
+        };
 
-            // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
-            Valid::path_string_length(utf8.slice().len(), global)?;
-            Valid::path_null_bytes(utf8.slice(), global)?;
+        // Validate the UTF-8 byte length after conversion, since the path
+        // will be stored in a fixed-size PathBuffer.
+        Valid::path_string_length(utf8.slice().len(), global)?;
+        Valid::path_null_bytes(utf8.slice(), global)?;
 
-            // Costs nothing to keep both around.
-            if utf8.is_shared() {
-                return Ok(Self::String(utf8));
-            }
-
-            utf8.report_extra_memory(|len| global.vm().report_extra_memory(len));
-
-            // It is expensive to keep both around: `utf8` here is a transcoded
-            // copy (UTF-16 or non-ASCII Latin-1 input) independent of `string`.
-            Ok(Self::Utf8(utf8.into_utf8()))
+        // Costs nothing to keep both around.
+        if utf8.is_shared() {
+            return Ok(if will_be_async {
+                Self::ThreadsafeString(utf8)
+            } else {
+                Self::String(utf8)
+            });
         }
+
+        // It is expensive to keep both around: `utf8` here is a transcoded
+        // copy (UTF-16 or non-ASCII Latin-1 input) independent of `string`.
+        let utf8 = utf8.into_utf8();
+        if let Utf8Bytes::Owned(owned) = &utf8 {
+            global.vm().report_extra_memory(owned.len());
+        }
+        Ok(Self::Utf8(utf8))
     }
 }
 

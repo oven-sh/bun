@@ -4,6 +4,7 @@ use core::ffi::{c_char, c_uint, c_void};
 
 use bun_core;
 use bun_core::String as BunString;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 unsafe extern "C" {
@@ -70,8 +71,6 @@ mod _impl {
             Self::Any
         }
     }
-
-    use bun_jsc::EncodedSliceJsc as _;
 
     // Neither `bun_core` nor `bun_sys` re-exports HOST_NAME_MAX yet; 256 is a
     // safe upper bound for the stack buffer on every platform.
@@ -274,7 +273,7 @@ mod _impl {
                             cpu.put(
                                 global_this,
                                 b"model",
-                                EncodedSlice::latin1(b"unknown").to_js(global_this),
+                                BunString::static_("unknown").to_js(global_this)?,
                             );
                             cpu.put(global_this, b"speed", JSValue::js_number(0.0));
                             stubs.put_index(global_this, i, cpu)?;
@@ -350,7 +349,7 @@ mod _impl {
                         cpu.put(
                             global_this,
                             b"model",
-                            EncodedSlice::latin1(b"unknown").to_js(global_this),
+                            BunString::static_("unknown").to_js(global_this)?,
                         );
                     }
                     // If this line starts a new processor, parse the index from the line
@@ -367,7 +366,7 @@ mod _impl {
                     cpu.put(
                         global_this,
                         b"model",
-                        EncodedSlice::utf8(model_name).to_js(global_this),
+                        bun_string_jsc::create_utf8_for_js(global_this, model_name)?,
                     );
                     has_model_name = true;
                 }
@@ -377,7 +376,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    EncodedSlice::latin1(b"unknown").to_js(global_this),
+                    BunString::static_("unknown").to_js(global_this)?,
                 );
             }
 
@@ -389,7 +388,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    EncodedSlice::latin1(b"unknown").to_js(global_this),
+                    BunString::static_("unknown").to_js(global_this)?,
                 );
             }
         }
@@ -443,9 +442,9 @@ mod _impl {
 
         let mut model_buf = [0u8; 512];
         let model = if bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_buf[..]).is_ok() {
-            EncodedSlice::utf8(bun_core::slice_to_nul(&model_buf)).to_js(global_this)
+            bun_string_jsc::create_utf8_for_js(global_this, bun_core::slice_to_nul(&model_buf))?
         } else {
-            EncodedSlice::latin1(b"unknown").to_js(global_this)
+            BunString::static_("unknown").to_js(global_this)?
         };
 
         let mut speed_mhz: c_uint = 0;
@@ -534,8 +533,10 @@ mod _impl {
         // NOTE: sysctlbyname doesn't update len if it was large enough, so we
         // still have to find the null terminator.  All cpus can share the same
         // model name.
-        let model_name =
-            EncodedSlice::utf8(bun_core::slice_to_nul(&model_name_buf)).to_js(global_this);
+        let model_name = bun_string_jsc::create_utf8_for_js(
+            global_this,
+            bun_core::slice_to_nul(&model_name_buf),
+        )?;
 
         // Get CPU speed
         let mut speed: u64 = 0;
@@ -617,7 +618,7 @@ mod _impl {
             cpu.put(
                 global_this,
                 b"model",
-                EncodedSlice::utf8(model).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, model)?,
             );
             cpu.put(
                 global_this,
@@ -674,7 +675,7 @@ mod _impl {
             // environment variable, then falls back to reading the passwd entry.
             if let Some(home) = env_var::HOME.get() {
                 if !home.is_empty() {
-                    return Ok(BunString::init(home));
+                    return Ok(BunString::from_bytes(home));
                 }
             }
 
@@ -769,7 +770,7 @@ mod _impl {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
             }
 
-            return Ok(EncodedSlice::latin1(b"unknown").to_js(global));
+            return BunString::static_("unknown").to_js(global);
         }
         #[cfg(not(windows))]
         {
@@ -779,7 +780,7 @@ mod _impl {
             } else {
                 b"unknown"
             };
-            return Ok(EncodedSlice::utf8(s).to_js(global));
+            return bun_string_jsc::create_utf8_for_js(global, s);
         }
     }
 
@@ -1003,13 +1004,13 @@ mod _impl {
                     };
                     // The full cidr value is the address + the suffix
                     let cidr_str = &buf[start..start + addr_len + suffix_len];
-                    cidr = EncodedSlice::utf8(cidr_str).to_js(global_this);
+                    cidr = bun_string_jsc::create_utf8_for_js(global_this, cidr_str)?;
                 }
 
                 interface.put(
                     global_this,
                     b"address",
-                    EncodedSlice::utf8(&buf[start..start + addr_len]).to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[start..start + addr_len])?,
                 );
                 interface.put(global_this, b"cidr", cidr);
             }
@@ -1021,7 +1022,7 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"netmask",
-                    EncodedSlice::utf8(str).to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(global_this, str)?,
                 );
             }
 
@@ -1032,7 +1033,7 @@ mod _impl {
                 match addr.family() as c_int {
                     libc::AF_INET => global_this.common_strings().ipv4(),
                     libc::AF_INET6 => global_this.common_strings().ipv6(),
-                    _ => EncodedSlice::latin1(b"unknown").to_js(global_this),
+                    _ => BunString::static_("unknown").to_js(global_this)?,
                 },
             );
 
@@ -1090,7 +1091,7 @@ mod _impl {
                         interface.put(
                             global_this,
                             b"mac",
-                            EncodedSlice::utf8(mac).to_js(global_this),
+                            bun_string_jsc::create_utf8_for_js(global_this, mac)?,
                         );
                     } else {
                         let mac_buf = bun_fmt::mac_address_lower(
@@ -1099,7 +1100,7 @@ mod _impl {
                         interface.put(
                             global_this,
                             b"mac",
-                            EncodedSlice::utf8(&mac_buf).to_js(global_this),
+                            bun_string_jsc::create_utf8_for_js(global_this, &mac_buf)?,
                         );
                     }
                 } else {
@@ -1107,7 +1108,7 @@ mod _impl {
                     interface.put(
                         global_this,
                         b"mac",
-                        EncodedSlice::utf8(mac).to_js(global_this),
+                        bun_string_jsc::create_utf8_for_js(global_this, mac)?,
                     );
                 }
             }
@@ -1223,13 +1224,16 @@ mod _impl {
                     };
                     // The full cidr value is the address + the suffix
                     let cidr_str = &ip_buf[start..start + addr_len + suffix_len];
-                    cidr = EncodedSlice::utf8(cidr_str).to_js(global_this);
+                    cidr = bun_string_jsc::create_utf8_for_js(global_this, cidr_str)?;
                 }
 
                 interface.put(
                     global_this,
                     b"address",
-                    EncodedSlice::utf8(&ip_buf[start..start + addr_len]).to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(
+                        global_this,
+                        &ip_buf[start..start + addr_len],
+                    )?,
                 );
             }
 
@@ -1250,7 +1254,7 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"netmask",
-                    EncodedSlice::utf8(str).to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(global_this, str)?,
                 );
             }
             // family
@@ -1262,7 +1266,7 @@ mod _impl {
                 match family {
                     bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
                     bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
-                    _ => EncodedSlice::latin1(b"unknown").to_js(global_this),
+                    _ => BunString::static_("unknown").to_js(global_this)?,
                 },
             );
 
@@ -1272,7 +1276,7 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"mac",
-                    EncodedSlice::utf8(&mac_buf).to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(global_this, &mac_buf)?,
                 );
             }
 
@@ -1513,7 +1517,10 @@ mod _impl {
             result.put(
                 global_this,
                 b"username",
-                EncodedSlice::utf8(env_var::USER.get().unwrap_or(b"unknown")).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    env_var::USER.get().unwrap_or(b"unknown"),
+                )?,
             );
             result.put(global_this, b"uid", JSValue::js_number(-1.0));
             result.put(global_this, b"gid", JSValue::js_number(-1.0));
@@ -1526,12 +1533,15 @@ mod _impl {
             result.put(
                 global_this,
                 b"username",
-                EncodedSlice::utf8(username).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, username)?,
             );
             result.put(
                 global_this,
                 b"shell",
-                EncodedSlice::utf8(env_var::SHELL.get().unwrap_or(b"unknown")).to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    env_var::SHELL.get().unwrap_or(b"unknown"),
+                )?,
             );
             // `bun_sys::c::{getuid,getgid}` are declared `safe fn` (no args, never
             // fail) — discharges the per-site proof the raw `libc` re-export needed.

@@ -431,8 +431,7 @@ impl S3Ext for S3 {
 
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
-        // `S3ListObjectsOptions` is not `Clone` (it owns `Utf8Bytes`s);
-        // box the wrapper first so the options live on the heap, then hand a
+        // Box the wrapper first so the options live on the heap, then hand a
         // borrow to `list_objects` (which only reads them synchronously to
         // build the search-params string). The wrapper retains ownership for
         // `Drop` after the async callback.

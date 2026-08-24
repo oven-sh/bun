@@ -355,19 +355,9 @@ impl TextDecoder {
                 let buf =
                     unsafe { core::slice::from_raw_parts_mut(units.as_mut_ptr(), out_length) };
                 let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
-                // SAFETY: the copy above initialized all `out_length` units (one per input byte).
-                unsafe { units.set_len(out_length) };
-                // The boxed slice is a tight allocation (no excess capacity).
-                let bytes = units.into_boxed_slice();
-                // SAFETY: `bytes` was allocated by the global allocator; `into_raw`
-                // transfers ownership of the buffer to JSC's external-string finalizer.
-                Ok(unsafe {
-                    jsc::encoded_slice::to_external_u16(
-                        bun_core::heap::into_raw(bytes).cast::<u16>(),
-                        out.written as usize,
-                        global_this,
-                    )
-                })
+                // SAFETY: the copy above initialized `out.written` (≤ `out_length`) units.
+                unsafe { units.set_len(out.written as usize) };
+                jsc::encoded_slice::to_external_u16(units, global_this)
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the
@@ -449,25 +439,7 @@ impl TextDecoder {
                             });
                         }
                     }
-                    let len = decoded.len();
-                    // `to_external_u16` returns `jsEmptyString` and never
-                    // calls `free_global_string` for `len == 0`, so a
-                    // zero-length decode (e.g. a buffered partial sequence
-                    // with `stream: true`, or all-replaced bytes when
-                    // `fatal: false`) would strand the `Vec`'s reserved
-                    // backing store. Drop it here and return the canonical
-                    // empty string instead.
-                    if len == 0 {
-                        drop(decoded);
-                        return Ok(JSValue::js_empty_string(global_this));
-                    }
-                    // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
-                    let ptr = decoded.leak().as_mut_ptr();
-                    // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                    // ownership transfers to JSC's external-string finalizer.
-                    return Ok(unsafe {
-                        jsc::encoded_slice::to_external_u16(ptr, len, global_this)
-                    });
+                    return jsc::encoded_slice::to_external_u16(decoded, global_this);
                 }
 
                 // All-ASCII input needed no conversion. `EncodedSlice::latin1(..).to_js`
@@ -533,14 +505,7 @@ impl TextDecoder {
                     return Ok(JSValue::js_empty_string(global_this));
                 }
 
-                // Transfer ownership of the backing allocation to JSC; freed via
-                // free_global_string -> mi_free when the string is collected.
-                let len = decoded.len();
-                // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
-                let ptr = decoded.leak().as_mut_ptr();
-                // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                // ownership transfers to JSC's external-string finalizer.
-                Ok(unsafe { jsc::encoded_slice::to_external_u16(ptr, len, global_this) })
+                jsc::encoded_slice::to_external_u16(decoded, global_this)
             }
 
             // Every other encoding goes through encoding_rs.
@@ -588,11 +553,7 @@ impl TextDecoder {
                     return Ok(JSValue::js_empty_string(global_this));
                 }
 
-                let len = decoded.len();
-                let ptr = decoded.leak().as_mut_ptr();
-                // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
-                // ownership transfers to JSC's external-string finalizer.
-                Ok(unsafe { jsc::encoded_slice::to_external_u16(ptr, len, global_this) })
+                jsc::encoded_slice::to_external_u16(decoded, global_this)
             }
         }
     }

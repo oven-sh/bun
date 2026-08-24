@@ -4,6 +4,7 @@ use bun_alloc::Arena;
 use bun_ast::Log;
 use bun_core::String as BunString;
 use bun_core::output::{ColorDepth, Source as OutputSource};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
 use crate::JsResult;
@@ -617,7 +618,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             }
             drop(printer);
 
-            return bun_jsc::bun_string_jsc::create_utf8_for_js(global, &dest);
+            return bun_string_jsc::create_utf8_for_js(global, &dest);
         }
     }
 }

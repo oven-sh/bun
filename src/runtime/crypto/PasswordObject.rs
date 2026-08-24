@@ -490,7 +490,7 @@ impl PasswordOp for HashOp {
         PasswordObject::hash(password, self.algorithm)
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
-        EncodedSlice::latin1(&value).to_js(g)
+        EncodedSlice::utf8(&value).to_js(g)
         // `value` drops here.
     }
 }
@@ -533,7 +533,7 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
         "Password {verb} failed with error \"{}\"",
         err.name()
     ));
-    instance.put(g, b"code", EncodedSlice::latin1(&error_code).to_js(g));
+    instance.put(g, b"code", EncodedSlice::utf8(&error_code).to_js(g));
     instance
 }
 

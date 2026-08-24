@@ -692,7 +692,7 @@ impl ErrorDeferred {
         instance.put(
             global_this,
             b"name",
-            bstr::String::static_(b"DNSException").to_js(global_this)?,
+            bstr::String::static_("DNSException").to_js(global_this)?,
         );
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
@@ -779,7 +779,7 @@ pub(crate) fn error_to_js_with_syscall(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_("DNSException").to_js(global_this)?,
     );
     Ok(instance)
 }
@@ -821,7 +821,7 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_("DNSException").to_js(global_this)?,
     );
     Ok(instance)
 }

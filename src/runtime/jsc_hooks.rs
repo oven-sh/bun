@@ -22,6 +22,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
 
+use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
 use bun_jsc::resolved_source::Bytecode;
@@ -1877,7 +1878,7 @@ unsafe fn retroactively_report_discovered_tests(
     let file_path = runner.files.items_source()[active_file.file_id as usize]
         .path
         .text();
-    let source_url = bun_core::String::init(file_path);
+    let source_url = bun_core::String::from_bytes(file_path);
 
     let mut max_id: i32 = next_test_id;
 
@@ -1908,7 +1909,7 @@ unsafe fn retroactively_report_discovered_tests(
                         // Assign the ID so start/end events will fire during
                         // execution.
                         describe.base.test_id_for_debugger = test_id;
-                        let name = bun_core::String::init(
+                        let name = bun_core::String::from_bytes(
                             describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
                         );
                         // SAFETY: `agent` is a live C++ handle (fn contract).
@@ -1935,7 +1936,7 @@ unsafe fn retroactively_report_discovered_tests(
                         *max_id += 1;
                         let test_id = *max_id;
                         test_entry.base.test_id_for_debugger = test_id;
-                        let name = bun_core::String::init(
+                        let name = bun_core::String::from_bytes(
                             test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
                         );
                         // SAFETY: `agent` is a live C++ handle (fn contract).
@@ -2880,7 +2881,7 @@ fn transpile_source_code_inner(
                     let ext = bun_paths::extension(source.path.text);
                     if ext == b".cjs" || ext == b".cts" {
                         return Ok(ResolvedSource {
-                            source_code: bun_core::String::static_(b"(function(){})"),
+                            source_code: bun_core::String::static_("(function(){})"),
                             source_url: input_specifier.create_if_different(path.text),
                             is_commonjs_module: true,
                             tag: ResolvedSourceTag::Javascript,
@@ -3489,10 +3490,10 @@ fn transpile_source_code_inner(
                     &mut buf,
                     bun_paths::Platform::Loose,
                 );
-                bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, buf.as_bytes())
+                bun_string_jsc::create_utf8_for_js(global_object, buf.as_bytes())
                     .map_err(|_| crate::Error::JSError)?
             } else {
-                bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, path.text)
+                bun_string_jsc::create_utf8_for_js(global_object, path.text)
                     .map_err(|_| crate::Error::JSError)?
             };
             Ok(ResolvedSource {
@@ -3685,7 +3686,7 @@ fn get_hardcoded_module(
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
             return Some(ResolvedSource {
-                source_code: bun_core::String::init(bun_ast::runtime::Runtime::source_code()),
+                source_code: bun_core::String::from_bytes(bun_ast::runtime::Runtime::source_code()),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
             });
@@ -4809,7 +4810,7 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
     // the VM; `parse_http_date` is only reachable from a `Bun.serve` request
     // callback (JS thread, VM live).
     let global = unsafe { &*(*vm).global };
-    let string = bun_core::String::init(value);
+    let string = bun_core::String::from_bytes(value);
     // The only callers — FileRoute / static
     // routes — treat a throw the same as "header absent / unparsable", so
     // swallow `JsError` here and surface `None`.

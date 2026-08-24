@@ -4,10 +4,8 @@ use std::io::Write as _;
 use bun_ast::ImportKind;
 use bun_core::strings;
 
-use crate::{
-    CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _,
-};
-use bun_core::EncodedSlice;
+use crate::bun_string_jsc;
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
 // `referrer` are read-only after construction; only `logged` is mutated
@@ -234,26 +232,16 @@ impl ResolveMessage {
         out
     }
 
-    pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
-        let mut text = Vec::new();
+    pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // Keep `String(err)` consistent with `err.message`/`err.stack`, which
         // route through `node_message()` for the reshaped module-not-found
         // cases.
         let node_message = self.node_message();
         let message: &[u8] = node_message.as_deref().unwrap_or(&self.msg.data.text);
-        if write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(message)).is_err() {
-            return global.throw_out_of_memory_value();
-        }
-        let str = EncodedSlice::from_bytes(&text);
-        if str.is_utf8() {
-            return str.to_js(global);
-        }
-
-        // `to_external_value` transfers ownership of `text` to JSC: the Box is
-        // leaked here (single transfer via `heap::release`) and freed exactly
-        // once by JSC's external-string finalizer with the global allocator.
-        EncodedSlice::latin1(bun_core::heap::release(text.into_boxed_slice()))
-            .to_external_value(global)
+        let mut text = Vec::new();
+        write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(message))
+            .expect("infallible: in-memory write");
+        bun_string_jsc::owned_utf8_into_js(global, text)
     }
 
     #[crate::host_fn(method)]
@@ -263,7 +251,7 @@ impl ResolveMessage {
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        Ok(this.to_string_fn(global))
+        this.to_string_fn(global)
     }
 
     #[crate::host_fn(method)]
@@ -280,7 +268,7 @@ impl ResolveMessage {
 
             let str = args[0].to_bun_string(global)?;
             if str.eq_ascii(b"default") || str.eq_ascii(b"string") {
-                return Ok(this.to_string_fn(global));
+                return this.to_string_fn(global);
             }
         }
 
@@ -293,7 +281,7 @@ impl ResolveMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_(b"ResolveMessage").to_js(global)?,
+            bun_core::String::static_("ResolveMessage").to_js(global)?,
         );
         object.put(global, b"position", Self::get_position(this, global)?);
         object.put(global, b"message", Self::get_message(this, global)?);
@@ -324,9 +312,7 @@ impl ResolveMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_position(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(crate::BuildMessage::generate_position_object(
-            &this.msg, global,
-        ))
+        crate::BuildMessage::generate_position_object(&this.msg, global)
     }
 
     /// Module-not-found for a runtime import kind whose `.message` /
@@ -404,9 +390,9 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_message(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(text) = this.node_message() {
-            return Ok(EncodedSlice::utf8(&text).to_js(global));
+            return bun_string_jsc::create_utf8_for_js(global, &text);
         }
-        Ok(EncodedSlice::utf8(&this.msg.data.text).to_js(global))
+        bun_string_jsc::create_utf8_for_js(global, &this.msg.data.text)
     }
 
     // Node: MODULE_NOT_FOUND errors carry `requireStack` (the chain of
@@ -424,7 +410,7 @@ impl ResolveMessage {
             entries.push(r);
         }
         JSValue::create_array_from_iter(global, entries.iter().copied(), |r| {
-            Ok(EncodedSlice::utf8(r).to_js(global))
+            bun_string_jsc::create_utf8_for_js(global, r)
         })
     }
 
@@ -438,20 +424,21 @@ impl ResolveMessage {
             Some(text) => out.extend_from_slice(&text),
             None => out.extend_from_slice(&this.msg.data.text),
         }
-        Ok(EncodedSlice::utf8(&out).to_js(global))
+        bun_string_jsc::create_utf8_for_js(global, &out)
     }
 
     #[crate::host_fn(getter)]
     pub fn get_level(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(EncodedSlice::latin1(this.msg.kind.string()).to_js(global))
+        bun_core::String::static_(this.msg.kind.string()).to_js(global)
     }
 
     #[crate::host_fn(getter)]
     pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
-            bun_ast::Metadata::Resolve(resolve) => {
-                EncodedSlice::utf8(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
-            }
+            bun_ast::Metadata::Resolve(resolve) => bun_string_jsc::create_utf8_for_js(
+                global,
+                resolve.specifier.slice(&this.msg.data.text),
+            )?,
             // Unreachable in practice (ResolveMessage is only constructed for
             // `.resolve` metadata).
             _ => JSValue::js_empty_string(global),
@@ -462,7 +449,7 @@ impl ResolveMessage {
     pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                EncodedSlice::latin1(import_kind_label(resolve.import_kind)).to_js(global)
+                bun_core::String::static_(import_kind_label(resolve.import_kind)).to_js(global)?
             }
             _ => JSValue::js_empty_string(global),
         })
@@ -471,7 +458,7 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(if let Some(referrer) = &this.referrer {
-            EncodedSlice::utf8(referrer).to_js(global)
+            bun_string_jsc::create_utf8_for_js(global, referrer)?
         } else {
             JSValue::NULL
         })

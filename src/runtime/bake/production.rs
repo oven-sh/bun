@@ -23,6 +23,7 @@ use bun_collections::{AutoBitSet, StringArrayHashMap};
 use bun_core::String as BunString;
 use bun_core::{Global, Output};
 use bun_dotenv as dotenv;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -1133,7 +1134,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             // (slice iterators are ExactSize + DoubleEnded).
             let param_info_array =
                 JSValue::create_array_from_iter(global, params_buf.iter().rev(), |param| {
-                    jsc::bun_string_jsc::create_utf8_for_js(global, param)
+                    bun_string_jsc::create_utf8_for_js(global, param)
                 })
                 .map_err(js_err)?;
             route_param_info
@@ -1162,7 +1163,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
-            &BunString::init(&*root_dir_path),
+            &BunString::from_bytes(&root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,

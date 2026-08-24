@@ -10,6 +10,7 @@ use core::mem;
 
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc};
 use bun_ptr::JsCell;
 
@@ -538,7 +539,7 @@ impl SocketAddress {
 
         Ok(JSSocketAddressDTO__create(
             global_object,
-            bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
+            bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
             port_,
             is_ipv6,
         ))

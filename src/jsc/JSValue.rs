@@ -889,7 +889,7 @@ impl JSValue {
     /// JS `typeof`, or `"array"` for arrays.
     pub fn type_name<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
         if self.js_type().is_array() {
-            return bun_core::StringView::static_(b"array");
+            return bun_core::StringView::static_("array");
         }
         self.js_type_string(global)
     }
@@ -1417,8 +1417,7 @@ impl JSValue {
         Ok(len.clamp(0.0, I52_MAX as f64) as u64)
     }
     /// Set a property. Key dispatch goes through the [`PutKey`] trait so
-    /// callers may pass `&[u8]`, `EncodedSlice`, `&EncodedSlice`, `bun.String`, or
-    /// `&bun.String`.
+    /// callers may pass `&[u8]`, `EncodedSlice`, `bun.String`, or `&bun.String`.
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
@@ -1840,16 +1839,10 @@ impl<T: FromAny> FromAny for Option<T> {
 pub trait PutKey {
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
 }
-impl PutKey for &bun_core::EncodedSlice<'_> {
-    #[inline]
-    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        JSC__JSValue__put(target, global, self, value)
-    }
-}
 impl PutKey for bun_core::EncodedSlice<'_> {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        (&self).put(target, global, value)
+        JSC__JSValue__put(target, global, &self, value)
     }
 }
 impl PutKey for &bun_core::String {
@@ -1867,8 +1860,7 @@ impl PutKey for bun_core::String {
 impl PutKey for &[u8] {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        let key = bun_core::EncodedSlice::latin1(self);
-        (&key).put(target, global, value)
+        bun_core::EncodedSlice::latin1(self).put(target, global, value)
     }
 }
 impl<const N: usize> PutKey for &[u8; N] {
@@ -2332,7 +2324,7 @@ impl JSValue {
     /// `JSValue.getClassName`.
     pub fn get_class_name(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         if !self.is_cell() {
-            return Ok(bun_core::String::static_(b"[not a class]"));
+            return Ok(bun_core::String::static_("[not a class]"));
         }
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__getClassName(self, global))
     }

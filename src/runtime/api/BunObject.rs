@@ -100,7 +100,7 @@ use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use bun_collections::index_sort;
 use bun_core::Utf8Bytes;
-use bun_jsc::EncodedSliceJsc as _; // to_error_instance / to_type_error_instance
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
@@ -565,7 +565,7 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         cwd_str.slice(),
         bin_str.slice(),
     ) {
-        return Ok(EncodedSlice::from_bytes(bin_path).to_js(global_this));
+        return bun_string_jsc::create_utf8_for_js(global_this, bin_path);
     }
 
     Ok(JSValue::NULL)
@@ -802,7 +802,6 @@ fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
     EncodedSlice::from_bytes(VirtualMachine::get().origin.origin).to_js(global_this)
 }
 
@@ -1172,7 +1171,9 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         // Vec<u8> writes are infallible.
         let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
 
-        return Ok(Resolved::Found(EncodedSlice::utf8(&arraylist).to_js(ctx)));
+        return Ok(Resolved::Found(bun_string_jsc::create_utf8_for_js(
+            ctx, &arraylist,
+        )?));
     }
 
     Ok(Resolved::Found(result_value.into_js(ctx)?))
@@ -2137,8 +2138,8 @@ pub(crate) mod environment_variables {
     ) -> Option<EncodedSlice<'a>> {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm();
-        let sliced = name.to_utf8();
-        let value = vm.env_loader().get(sliced.slice())?;
+        let utf8 = name.to_utf8();
+        let value = vm.env_loader().get(utf8.slice())?;
         Some(EncodedSlice::utf8(value))
     }
 }
@@ -2431,9 +2432,7 @@ pub mod JSZlib {
                     }
                     Err(_) => {
                         let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                        return Err(global_this.throw_value(
-                            EncodedSlice::latin1(msg).to_error_instance(global_this),
-                        ));
+                        return Err(global_this.throw(format_args!("{}", bstr::BStr::new(msg))));
                     }
                 }
                 // NOTE: the reader *borrows* `list_ptr`,
@@ -2574,9 +2573,7 @@ pub mod JSZlib {
                     }
                     Err(_) => {
                         let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                        return Err(global_this.throw_value(
-                            EncodedSlice::latin1(msg).to_error_instance(global_this),
-                        ));
+                        return Err(global_this.throw(format_args!("{}", bstr::BStr::new(msg))));
                     }
                 }
                 // NOTE: see gunzip path — reader borrows `list`, so drop

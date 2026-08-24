@@ -283,7 +283,7 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let name_buffer;
     let name: bun_core::Utf8Bytes = 'brk: {
         if name_value.is_string() {
-            break 'brk name_value.to_bun_string(global)?.into_utf8();
+            break 'brk name_value.to_utf8(global)?;
         } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
             name_buffer = array_buffer;
             break 'brk bun_core::Utf8Bytes::Borrowed(name_buffer.byte_slice());

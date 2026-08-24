@@ -220,13 +220,11 @@ test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
     cmd: [bunExe(), "test", "counter.test.ts", "--rerun-each=3"],
     env: bunEnv,
     cwd: String(dir),
-    stderr: "pipe",
+    stderr: "ignore",
     stdout: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  // The module-registry key for the file was decoded as Latin-1, so the entry
-  // was never evicted and the file body ran once.
   expect(stdout.match(/Run #\d/g)).toEqual(["Run #1", "Run #2", "Run #3"]);
   expect(exitCode).toBe(0);
 });

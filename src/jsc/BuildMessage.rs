@@ -1,10 +1,8 @@
 use core::cell::Cell;
 use std::io::Write as _;
 
-use crate::{
-    CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _,
-};
-use bun_core::EncodedSlice;
+use crate::bun_string_jsc;
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 // R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field
@@ -36,26 +34,15 @@ impl BuildMessage {
         })
     }
 
-    pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
-        // write! into a Vec<u8>; Rust aborts on OOM so no OOM-throw path is needed.
-        let mut text: Vec<u8> = Vec::new();
+    pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let mut text = Vec::new();
         write!(
             &mut text,
             "BuildMessage: {}",
             bstr::BStr::new(&self.msg.data.text)
         )
         .expect("infallible: in-memory write");
-
-        let str = EncodedSlice::from_bytes(&text);
-        if str.is_utf8() {
-            return str.to_js(global);
-        }
-
-        // All-ASCII path: hand the buffer to JSC as an external Latin-1 string.
-        // Ownership transfers via `heap::release`; the external-string finalizer
-        // calls `mi_free` on the block (global allocator is mimalloc).
-        EncodedSlice::latin1(bun_core::heap::release(text.into_boxed_slice()))
-            .to_external_value(global)
+        bun_string_jsc::owned_utf8_into_js(global, text)
     }
 
     /// Clone `msg` into a
@@ -80,7 +67,7 @@ impl BuildMessage {
 
     #[crate::host_fn(method)]
     pub fn to_string(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(self.to_string_fn(global))
+        self.to_string_fn(global)
     }
 
     #[crate::host_fn(method)]
@@ -97,7 +84,7 @@ impl BuildMessage {
 
             let str = args[0].to_bun_string(global)?;
             if str.eq_ascii(b"default") || str.eq_ascii(b"string") {
-                return Ok(self.to_string_fn(global));
+                return self.to_string_fn(global);
             }
         }
 
@@ -110,7 +97,7 @@ impl BuildMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_(b"BuildMessage").to_js(global)?,
+            bun_core::String::static_("BuildMessage").to_js(global)?,
         );
         object.put(global, b"position", self.get_position(global)?);
         object.put(global, b"message", self.get_message(global)?);
@@ -118,33 +105,39 @@ impl BuildMessage {
         Ok(object)
     }
 
-    pub(crate) fn generate_position_object(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn generate_position_object(
+        msg: &bun_ast::Msg,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         let Some(location) = &msg.data.location else {
-            return JSValue::NULL;
+            return Ok(JSValue::NULL);
         };
         let object = JSValue::create_empty_object(global, 7);
 
         object.put(
             global,
             b"lineText",
-            EncodedSlice::utf8(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
+            bun_string_jsc::create_utf8_for_js(
+                global,
+                location.line_text.as_deref().unwrap_or(b""),
+            )?,
         );
         object.put(
             global,
             b"file",
-            EncodedSlice::utf8(&location.file).to_js(global),
+            bun_string_jsc::create_utf8_for_js(global, &location.file)?,
         );
         object.put(
             global,
             b"namespace",
-            EncodedSlice::utf8(location.namespace).to_js(global),
+            bun_string_jsc::create_utf8_for_js(global, location.namespace)?,
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));
         object.put(global, b"length", JSValue::from(location.length));
         object.put(global, b"offset", JSValue::from(location.offset));
 
-        object
+        Ok(object)
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
@@ -168,16 +161,16 @@ impl BuildMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_position(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(BuildMessage::generate_position_object(&self.msg, global))
+        BuildMessage::generate_position_object(&self.msg, global)
     }
 
     #[crate::host_fn(getter)]
     pub fn get_message(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(EncodedSlice::utf8(&self.msg.data.text).to_js(global))
+        bun_string_jsc::create_utf8_for_js(global, &self.msg.data.text)
     }
 
     #[crate::host_fn(getter)]
     pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(EncodedSlice::latin1(self.msg.kind.string()).to_js(global))
+        bun_core::String::static_(self.msg.kind.string()).to_js(global)
     }
 }

@@ -4092,7 +4092,7 @@ pub(crate) mod http_server_agent {
                 max_id = max_id.max(user_route.id);
                 routes.push(Route {
                     route_id: user_route.id as i32,
-                    path: BunString::init(user_route.route.path.as_bytes()),
+                    path: BunString::from_bytes(user_route.route.path.as_bytes()),
                     r#type: RouteType::Api,
                     ..Default::default()
                 });
@@ -4103,7 +4103,7 @@ pub(crate) mod http_server_agent {
             max_id += 1;
             routes.push(Route {
                 route_id: max_id as i32,
-                path: BunString::init(&*entry.path),
+                path: BunString::from_bytes(&entry.path),
                 r#type: match &entry.route {
                     AnyRoute::Html(_) => RouteType::Html,
                     AnyRoute::Static(_) => RouteType::Static,
@@ -4113,7 +4113,7 @@ pub(crate) mod http_server_agent {
                     // SAFETY: RefPtr.data is a live NonNull while held in the
                     // route table; `.bundle` (IntrusiveRc) derefs to the live
                     // HTMLBundle whose `path` outlives this borrow.
-                    AnyRoute::Html(r) => BunString::init(&*r.data().bundle.path),
+                    AnyRoute::Html(r) => BunString::from_bytes(&r.data().bundle.path),
                     _ => BunString::EMPTY,
                 },
                 ..Default::default()

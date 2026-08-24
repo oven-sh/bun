@@ -94,7 +94,8 @@ use bun_core::{EncodedSlice, String, Utf8Bytes};   // the only import path for a
 
 let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
 let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
-let s = String::static_(b"literal");       // 'static ASCII slice, never freed
+let s = String::static_("literal");        // 'static ASCII slice, never freed
+let s = String::from_bytes(bytes);         // borrow arbitrary bytes; tags UTF-8 if non-ASCII
 
 let utf8: Utf8Bytes<'_>      = s.to_utf8();             // borrows `s` (ASCII/UTF-8) or transcodes; for locals
 let utf8: Utf8Bytes<'static> = s.into_utf8();           // moves `s`'s ref in / copies; for storing in fields
@@ -115,15 +116,30 @@ source is a bare `&[u8]`/`EncodedSlice` view.
 it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
 `Utf8WithString` (`String::into_utf8_with_string[_thread_safe]()`) keeps the
 UTF-8 bytes _and_ the source `String` so the value can go back to JS without
-re-encoding; it is the string arm of `PathLike`/`StringOrBuffer`.
+re-encoding; `Utf8WithString::js_only(string)` wraps an output-only string.
+`PathLike` / `StringOrBuffer` arms: `String`/`ThreadsafeString`
+(`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'static>)` (transcoded
+JS string, or Rust-side bytes: `Borrowed` for a synchronous lend, `Owned`
+when the value must own them), `Buffer`.
+
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
-borrowed view: `EncodedSlice::latin1(bytes)` only for ASCII literals or bytes
-known to be Latin-1; runtime data (paths, hostnames, messages, user input) is
-`from_bytes(bytes)` (scans; tags UTF-8 if non-ASCII) or `utf8(bytes)` when
-known UTF-8; `utf16(units)`; `String::to_encoded_slice()`,
+borrowed view handed to C++. Constructors name the encoding of the bytes:
+`utf8(bytes)` for Rust text (`&str`, `format!` output, anything known
+UTF-8); `from_bytes(bytes)` for arbitrary bytes (OS paths, env values, user
+buffers — scans and tags UTF-8 if non-ASCII); `latin1(bytes)` only for
+ASCII literals / `&'static` ASCII tables or bytes that really are Latin-1;
+`utf16(units)`. `String::to_encoded_slice()` borrows any `String` as one;
 `EncodedSlice::to_utf8() -> Utf8Bytes<'a>`; `bun_jsc::EncodedSliceJsc` adds
-`to_js`/`to_error_instance`/…. Bytes → JS string in one step:
-`bun_string_jsc::create_utf8_for_js(global, bytes)`.
+`to_js` / `to_error_instance` / `to_external_value`.
+
+Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`
+(copies; ASCII stays 8-bit). An owned `Vec<u8>` that JS should adopt:
+`bun_string_jsc::owned_utf8_into_js(global, vec)?`. An ASCII literal or
+`&'static` ASCII: `String::static_("lit").to_js(global)?`. A message →
+`Error`: `global.create_error_instance(format_args!(..))` (and the
+`type_error`/`range_error`/`syntax_error` siblings). The infallible
+`EncodedSlice::…(bytes).to_js(global)` is only for callbacks that cannot
+return `JsResult`.
 
 JSValue → string: `value.to_bun_string(global)?` (owned `String`),
 `value.to_utf8(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or
@@ -138,7 +154,6 @@ use bun_jsc::StringJsc;
 let js: JSValue = s.to_js(global)?;        // JS takes its own ref; `s` still usable
 let js: JSValue = s.into_js(global)?;      // hands `s`'s ref to the JSString
 let s = bun_core::String::from_js(value, global)?;
-let err = s.to_error_instance(global);
 ```
 
 `bun_core::strings` is the SIMD-backed `&[u8]` toolkit (Google Highway kernels

@@ -7,6 +7,7 @@ use core::ffi::{c_char, c_void};
 use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsPtr, JsResult,
     JsThread, Protected, Strong,
@@ -1295,7 +1296,7 @@ mod _impl {
         let array = JSValue::create_empty_array(global, hashes.count())?;
 
         for (i, hash) in hashes.keys().iter().enumerate() {
-            let str = jsc::bun_string_jsc::create_utf8_for_js(global, hash)?;
+            let str = bun_string_jsc::create_utf8_for_js(global, hash)?;
             array.put_index(global, u32::try_from(i).expect("int cast"), str)?;
         }
 

@@ -2,6 +2,7 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_core::{String, StringView};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
@@ -150,7 +151,7 @@ impl OptionToken<'_> {
                 let written = 8 - cursor.len();
                 &buf[..written]
             };
-            String::borrow_utf8(str).to_js(global)
+            bun_string_jsc::create_utf8_for_js(global, str)
         } else {
             match self.parse_type {
                 OptionParseType::LoneShortOption | OptionParseType::LoneLongOption => {
@@ -498,7 +499,7 @@ fn parse_option_definitions<'a>(
             if !option.short_name.is_empty() {
                 StringView::new(&option.short_name)
             } else {
-                StringView::static_(b"none")
+                StringView::static_("none")
             },
             option.multiple as u8,
             if option.default_value.is_some() {

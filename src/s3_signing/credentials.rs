@@ -1255,12 +1255,6 @@ pub struct S3CredentialsWithOptions {
     pub changed_credentials: bool,
     /// indicates if the virtual hosted style is used
     pub virtual_hosted_style: bool,
-    pub _access_key_id_slice: Option<bun_core::Utf8Bytes<'static>>,
-    pub _secret_access_key_slice: Option<bun_core::Utf8Bytes<'static>>,
-    pub _region_slice: Option<bun_core::Utf8Bytes<'static>>,
-    pub _endpoint_slice: Option<bun_core::Utf8Bytes<'static>>,
-    pub _bucket_slice: Option<bun_core::Utf8Bytes<'static>>,
-    pub _session_token_slice: Option<bun_core::Utf8Bytes<'static>>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

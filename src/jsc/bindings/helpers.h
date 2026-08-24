@@ -148,34 +148,6 @@ static const WTF::String toString(EncodedSlice str)
               { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
 
-static const WTF::String toString(EncodedSlice str, StringPointer ptr)
-{
-    if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
-        return WTF::String();
-    }
-    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
-        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
-        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
-        if (ptr.len > maxLength) [[unlikely]] {
-            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(&untag(str.ptr)[ptr.off]), ptr.len);
-            if (utf16Length > maxLength) {
-                return {};
-            }
-        }
-        return convertUTF8ToString(std::span { &untag(str.ptr)[ptr.off], ptr.len });
-    }
-
-    // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (ptr.len > Bun__stringSyntheticAllocationLimit || ptr.len > WTF::String::MaxLength) [[unlikely]] {
-        return {};
-    }
-
-    return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ &untag(str.ptr)[ptr.off], ptr.len }))
-        : WTF::String(WTF::StringImpl::createWithoutCopying(
-              { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
-}
-
 static const WTF::String toStringCopy(EncodedSlice str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {

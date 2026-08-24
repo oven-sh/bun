@@ -1056,10 +1056,10 @@ impl ServerConfig {
         }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
-            let sliced = base_uri.to_utf8(global)?;
+            let utf8 = base_uri.to_utf8(global)?;
 
-            if !sliced.slice().is_empty() {
-                args.base_uri = Box::<[u8]>::from(sliced.slice());
+            if !utf8.slice().is_empty() {
+                args.base_uri = Box::<[u8]>::from(utf8.slice());
             }
         }
 

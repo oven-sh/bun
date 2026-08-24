@@ -1,14 +1,13 @@
 //! `node.PathLike` / `node.PathOrFileDescriptor` — single nominal definitions.
 //!
 //! LAYERING: defined at the
-//! `bun_jsc` tier because every variant payload (`CowSlice<u8>`, `Buffer` =
+//! `bun_jsc` tier because every variant payload (`Buffer` =
 //! `MarkedArrayBuffer`, `Utf8WithString`, `Utf8Bytes`, `Fd`)
 //! is already reachable from this crate. `bun_runtime::node::types`
 //! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
 //! `from_js_with_allocator`) on top via inherent impls in that crate.
 
 use bun_core::{Utf8Bytes, Utf8WithString};
-use bun_ptr::cow_slice::CowSlice;
 use bun_sys::Fd;
 
 use crate::array_buffer::MarkedArrayBuffer;
@@ -99,7 +98,6 @@ impl<T: Unprotect + Default> Default for ThreadSafe<T> {
 
 /// `node.PathLike`.
 pub enum PathLike {
-    Bytes(CowSlice<u8>),
     Buffer(MarkedArrayBuffer),
     String(Utf8WithString),
     ThreadsafeString(Utf8WithString),
@@ -109,7 +107,7 @@ pub enum PathLike {
 impl Default for PathLike {
     #[inline]
     fn default() -> Self {
-        PathLike::Bytes(CowSlice::EMPTY)
+        PathLike::Utf8(Utf8Bytes::EMPTY)
     }
 }
 
@@ -119,13 +117,6 @@ impl Clone for PathLike {
     /// the same bytes as the original.
     fn clone(&self) -> Self {
         match self {
-            // An owned path must be duped so the clone is independently
-            // droppable; a borrowed path shares the backing (non-owning).
-            Self::Bytes(s) => Self::Bytes(if s.is_owned() {
-                bun_core::handle_oom(CowSlice::init_dupe(s.slice()))
-            } else {
-                s.borrow()
-            }),
             Self::Buffer(b) => Self::Buffer(MarkedArrayBuffer {
                 buffer: b.buffer,
                 // The clone borrows the JS-owned backing store; only the
@@ -143,9 +134,6 @@ impl Clone for PathLike {
 impl Drop for PathLike {
     fn drop(&mut self) {
         match self {
-            // `CowSlice` frees its backing in its own `Drop` iff it owns it;
-            // a borrowed path is a no-op.
-            Self::Bytes(_) => {}
             Self::Buffer(b) => {
                 if b.pinned {
                     b.pinned = false;
@@ -159,14 +147,8 @@ impl Drop for PathLike {
 
 impl PathLike {
     #[inline]
-    pub fn is_bytes(&self) -> bool {
-        matches!(self, Self::Bytes(_))
-    }
-
-    #[inline]
     pub fn slice(&self) -> &[u8] {
         match self {
-            Self::Bytes(s) => s.slice(),
             Self::Buffer(b) => b.slice(),
             Self::String(s) | Self::ThreadsafeString(s) => s.slice(),
             Self::Utf8(s) => s.slice(),
@@ -175,7 +157,6 @@ impl PathLike {
 
     pub(crate) fn estimated_size(&self) -> usize {
         match self {
-            Self::Bytes(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),
             Self::String(_) | Self::ThreadsafeString(_) => 0,
             Self::Utf8(s) => s.slice().len(),
@@ -201,7 +182,7 @@ impl PathLike {
             Self::Buffer(b) => {
                 b.buffer.value.protect();
             }
-            Self::Bytes(_) | Self::ThreadsafeString(_) | Self::Utf8(_) => {}
+            Self::ThreadsafeString(_) | Self::Utf8(_) => {}
         }
     }
 }

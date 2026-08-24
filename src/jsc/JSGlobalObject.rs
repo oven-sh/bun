@@ -2,9 +2,9 @@ use core::ffi::{c_char, c_void};
 use core::fmt::Arguments;
 
 use crate::EncodedSliceJsc as _;
-use crate::Error as JscError; // jsc.Error (ErrorCode enum)
+use crate::Error as JscError;
 use crate::ErrorCode as NodeErrorCode;
-use crate::StringJsc as _; // .to_js() / .to_error_instance() on bun_core::String
+use crate::StringJsc as _;
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
@@ -717,39 +717,35 @@ impl JSGlobalObject {
         Ok(Some(result))
     }
 
-    pub fn create_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        // `core::fmt::Arguments::as_str()` returns `Some(&'static str)` when
-        // there are no interpolated args — fast path for constant messages.
+    /// `args` formatted as UTF-8. If a `Display` impl fails mid-way (e.g. a
+    /// JS `Symbol.toPrimitive` threw), the pending exception is cleared and
+    /// the partial message is used rather than an error about an error.
+    fn error_message(&self, args: Arguments<'_>) -> bun_core::Utf8Bytes<'static> {
         if let Some(fmt) = args.as_str() {
-            return EncodedSlice::from_bytes(fmt.as_bytes()).to_error_instance(self);
+            return bun_core::Utf8Bytes::Borrowed(fmt.as_bytes());
         }
-
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
         if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
-            // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
             let _ = self.clear_exception_except_termination();
-            return EncodedSlice::utf8(&buf).to_error_instance(self);
         }
+        bun_core::Utf8Bytes::Owned(buf)
+    }
 
-        // Ensure we clone it.
-        let str = EncodedSlice::utf8(&buf);
-        str.to_error_instance(self)
+    pub fn create_error_instance(&self, args: Arguments<'_>) -> JSValue {
+        EncodedSlice::utf8(&self.error_message(args)).to_error_instance(self)
     }
 
     pub fn create_type_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        if let Some(fmt) = args.as_str() {
-            return EncodedSlice::from_bytes(fmt.as_bytes()).to_type_error_instance(self);
-        }
-        let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use core::fmt::Write;
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            let _ = self.clear_exception_except_termination();
-            return EncodedSlice::utf8(&buf).to_type_error_instance(self);
-        }
-        let str = EncodedSlice::utf8(&buf);
-        str.to_type_error_instance(self)
+        EncodedSlice::utf8(&self.error_message(args)).to_type_error_instance(self)
+    }
+
+    pub fn create_syntax_error_instance(&self, args: Arguments<'_>) -> JSValue {
+        EncodedSlice::utf8(&self.error_message(args)).to_syntax_error_instance(self)
+    }
+
+    pub fn create_range_error_instance(&self, args: Arguments<'_>) -> JSValue {
+        EncodedSlice::utf8(&self.error_message(args)).to_range_error_instance(self)
     }
 
     pub(crate) fn create_dom_exception_instance(
@@ -758,43 +754,12 @@ impl JSGlobalObject {
         args: Arguments<'_>,
     ) -> JsResult<JSValue> {
         if let Some(fmt) = args.as_str() {
-            return Ok(
-                EncodedSlice::from_bytes(fmt.as_bytes()).to_dom_exception_instance(self, code)
-            );
+            return Ok(EncodedSlice::utf8(fmt.as_bytes()).to_dom_exception_instance(self, code));
         }
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
         write!(WriteVec(&mut buf), "{}", args).map_err(|_| JsError::Thrown)?;
-        let str = EncodedSlice::utf8(&buf);
-        Ok(str.to_dom_exception_instance(self, code))
-    }
-
-    pub fn create_syntax_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        if let Some(fmt) = args.as_str() {
-            return EncodedSlice::from_bytes(fmt.as_bytes()).to_syntax_error_instance(self);
-        }
-        let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use core::fmt::Write;
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            let _ = self.clear_exception_except_termination();
-            return EncodedSlice::utf8(&buf).to_syntax_error_instance(self);
-        }
-        let str = EncodedSlice::utf8(&buf);
-        str.to_syntax_error_instance(self)
-    }
-
-    pub fn create_range_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        if let Some(fmt) = args.as_str() {
-            return EncodedSlice::from_bytes(fmt.as_bytes()).to_range_error_instance(self);
-        }
-        let mut buf: Vec<u8> = Vec::with_capacity(2048);
-        use core::fmt::Write;
-        if write!(WriteVec(&mut buf), "{}", args).is_err() {
-            let _ = self.clear_exception_except_termination();
-            return EncodedSlice::utf8(&buf).to_range_error_instance(self);
-        }
-        let str = EncodedSlice::utf8(&buf);
-        str.to_range_error_instance(self)
+        Ok(EncodedSlice::utf8(&buf).to_dom_exception_instance(self, code))
     }
 
     pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {
@@ -919,46 +884,34 @@ impl JSGlobalObject {
         // - We're incorrectly returning JSError from a function that did not throw.
         debug_assert!(err.name() != b"JSError");
 
-        let mut buffer: Vec<u8> = Vec::new();
-        use core::fmt::Write;
-        if write!(
-            WriteVec(&mut buffer),
-            "{} {}",
-            bstr::BStr::new(err.name()),
-            fmt
-        )
-        .is_err()
-        {
-            return self.throw_out_of_memory();
-        }
-        let str = EncodedSlice::utf8(&buffer);
-        let err_value = str.to_error_instance(self);
-        self.throw_value(err_value)
+        self.throw(format_args!("{} {}", bstr::BStr::new(err.name()), fmt))
     }
 
     pub fn create_aggregate_error(
         &self,
         errors: &[JSValue],
-        message: &BunString,
+        message: Arguments<'_>,
     ) -> JsResult<JSValue> {
+        let message = BunString::create_format(message);
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
         crate::from_js_host_call(self, || unsafe {
-            JSC__JSGlobalObject__createAggregateError(self, errors.as_ptr(), errors.len(), message)
+            JSC__JSGlobalObject__createAggregateError(self, errors.as_ptr(), errors.len(), &message)
         })
     }
 
     pub fn create_aggregate_error_with_array(
         &self,
-        message: &BunString,
+        message: Arguments<'_>,
         error_array: JSValue,
     ) -> JsResult<JSValue> {
         debug_assert!(error_array.is_array());
+        let message = BunString::create_format(message);
         crate::from_js_host_call(self, || {
             JSC__JSGlobalObject__createAggregateErrorWithArray(
                 self,
                 error_array,
-                message,
+                &message,
                 JSValue::UNDEFINED,
             )
         })

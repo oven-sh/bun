@@ -276,21 +276,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
         }
         Encoding::Latin1 => create_external_globally_allocated_latin1(input),
         Encoding::Buffer | Encoding::Utf8 => {
-            let converted = match strings::to_utf16_alloc(&input, false, false) {
-                Ok(v) => v,
-                Err(_) => {
-                    // input dropped
-                    return BunString::dead();
-                }
-            };
-
-            if let Some(utf16) = converted {
-                // input dropped at end of scope
-                return create_external_globally_allocated_utf16(utf16);
-            }
-
-            // If we get here, it means we can safely assume the string is 100% ASCII characters
-            create_external_globally_allocated_latin1(input)
+            BunString::from_owned_utf8(input).unwrap_or(BunString::DEAD)
         }
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters - if input length is 0 or odd, handle gracefully

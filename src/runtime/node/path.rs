@@ -1,6 +1,7 @@
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
-    JSGlobalObject, JSStringView, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString,
+    JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
+    bun_string_jsc,
 };
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
@@ -16,7 +17,6 @@ use bun_sys;
 /// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
-    use crate::jsc::{StringJsc as _, bun_string_jsc};
     if T::IS_U16 {
         // T == u16 when IS_U16; bytemuck statically checks the layout.
         let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
@@ -785,7 +785,7 @@ fn dirname(
 
     let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
-        return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
+        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
     }
 
     let path_slice = path_str.to_utf8();
@@ -1524,7 +1524,7 @@ pub(crate) fn join(
 ) -> JsResult<JSValue> {
     let args_len = args.len();
     if args_len == 0 {
-        return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
+        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
     }
 
     // ASCII-only inputs (the common case) borrow the JSString backing without
@@ -1980,7 +1980,7 @@ fn normalize(
     validate_string(global_object, path_ptr, format_args!("path"))?;
     let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
-        return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
+        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
     }
 
     let path_slice = path_str.to_utf8();

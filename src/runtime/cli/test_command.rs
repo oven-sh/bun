@@ -1810,12 +1810,10 @@ impl CommandLineReporter {
                     // Ensure the directory exists
                     let mut fs = crate::node::fs::NodeFS::default();
                     let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-                        path: crate::node::PathLike::Bytes(
-                            bun_ptr::cow_slice::CowSlice::init_unchecked(
-                                &opts.reports_directory,
-                                false,
-                            ),
-                        ),
+                        // SAFETY: `mkdir_recursive` is synchronous; `opts` outlives the call.
+                        path: crate::node::PathLike::Utf8(bun_core::Utf8Bytes::Borrowed(unsafe {
+                            bun_ptr::detach_lifetime(&opts.reports_directory)
+                        })),
                         always_return_none: true,
                         recursive: true,
                         ..Default::default()
@@ -2335,7 +2333,9 @@ impl TestCommand {
         }
 
         if !tz_name.is_empty() {
-            _ = vm.global().set_time_zone(&EncodedSlice::latin1(tz_name));
+            _ = vm
+                .global()
+                .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
 
         if ctx.test_options.test_worker {

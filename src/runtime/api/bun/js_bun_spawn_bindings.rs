@@ -842,9 +842,9 @@ fn spawn_maybe_sync(
                         terminal_js_value = terminal_val;
                     } else if terminal_val.is_object() {
                         // Create a new terminal from options
-                        let mut term_options =
+                        let term_options =
                             TerminalOptions::parse_from_js(global_this, terminal_val)?;
-                        match Terminal::create_from_spawn(global_this, &mut term_options) {
+                        match Terminal::create_from_spawn(global_this, &term_options) {
                             Ok(created) => {
                                 **terminal_info = Some(TerminalCreateResult {
                                     // Transfer the +1 ref to `Subprocess.terminal` (released
@@ -860,7 +860,6 @@ fn spawn_maybe_sync(
                                 });
                             }
                             Err(err) => {
-                                drop(term_options);
                                 return Err(match err {
                                     TerminalInitError::OpenPtyFailed => {
                                         global_this.throw(format_args!("Failed to open PTY"))

@@ -20,6 +20,7 @@ use bun_dns::{
 #[cfg(not(windows))]
 use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
@@ -3835,10 +3836,7 @@ trait OrderJscExt {
 
 impl OrderJscExt for Order {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::create_utf8_for_js(
-            global_this,
-            <&'static str>::from(self).as_bytes(),
-        )
+        bun_string_jsc::create_utf8_for_js(global_this, <&'static str>::from(self).as_bytes())
     }
 }
 
@@ -5520,7 +5518,7 @@ impl Resolver {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::String::borrow_utf8(&buf[1..size]).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[1..size])?,
                 )?;
             } else if family == netc::AF_INET6 {
                 buf[0] = b'[';
@@ -5549,7 +5547,7 @@ impl Resolver {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::String::borrow_utf8(&buf[1..size + port_len]).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[1..size + port_len])?,
                 )?;
             }
 
@@ -5635,22 +5633,13 @@ impl Resolver {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<c_int> {
-        let str_ = value.to_utf8(global_this)?;
-        // Utf8Bytes has no `into_owned_slice_z`; build the
-        // NUL-terminated buffer inline.
-        let bytes = str_.slice();
-        let mut slice = bytes.to_vec();
-        slice.push(0);
+        let address = value.to_bun_string(global_this)?.to_owned_slice_z();
 
         let mut addr = [0u8; 16];
 
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
+        // SAFETY: FFI; `address` is NUL-terminated; `addr` is a 16-byte stack buffer.
         if unsafe {
-            c_ares::ares_inet_pton(
-                c_ares::AF::INET,
-                slice.as_ptr().cast::<c_char>(),
-                addr.as_mut_ptr().cast(),
-            )
+            c_ares::ares_inet_pton(c_ares::AF::INET, address.as_ptr(), addr.as_mut_ptr().cast())
         } == 1
         {
             let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
@@ -5659,11 +5648,11 @@ impl Resolver {
             return Ok(c_ares::AF::INET);
         }
 
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
+        // SAFETY: FFI; `address` is NUL-terminated; `addr` is a 16-byte stack buffer.
         if unsafe {
             c_ares::ares_inet_pton(
                 c_ares::AF::INET6,
-                slice.as_ptr().cast::<c_char>(),
+                address.as_ptr(),
                 addr.as_mut_ptr().cast(),
             )
         } == 1
@@ -5677,7 +5666,7 @@ impl Resolver {
             global_this,
             format_args!(
                 "Invalid IP address: \"{}\"",
-                bstr::BStr::new(&slice[..slice.len() - 1])
+                bstr::BStr::new(address.as_bytes())
             ),
         ))
     }

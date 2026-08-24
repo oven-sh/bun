@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
-use bun_core::{String as BunString, Utf8WithString, ZStr};
+use bun_core::{String as BunString, Utf8Bytes, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
@@ -589,9 +589,7 @@ mod _async_tasks {
                 // runs (it points into caller-owned state, not this box).
                 let path = unsafe { &*self.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                        path, false,
-                    )),
+                    path: PathLike::Utf8(Utf8Bytes::Borrowed(path)),
                     recursive: true,
                     ..Default::default()
                 });
@@ -932,13 +930,13 @@ mod _async_tasks {
             let _deinit =
                 scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
             // Move `result` out so the `global_object()` `&self` borrow can coexist
-            // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
-            let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
+            // with consuming it below; the sentinel left behind is dropped in `destroy()`.
+            let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
             let global_object = self.global_object();
             let success = matches!(result, Ok(_));
             let promise_value = self.promise.value();
             let promise = self.promise.get();
-            let result = match &mut result {
+            let result = match result {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
@@ -1111,86 +1109,83 @@ mod _async_tasks {
     /// Convert an async-FS result payload to a `JSValue`.
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
     }
     impl FsReturn for JSValue {
         #[inline]
-        fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(*self)
+        fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+            Ok(self)
         }
     }
     impl FsReturn for () {
         #[inline]
-        fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(JSValue::UNDEFINED)
         }
     }
     impl FsReturn for bool {
         #[inline]
-        fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(JSValue::js_boolean(*self))
+        fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+            Ok(JSValue::js_boolean(self))
         }
     }
     impl FsReturn for Null {
         #[inline]
-        fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(JSValue::NULL)
         }
     }
     impl FsReturn for Stats {
         #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js_newly_created(global)
         }
     }
     impl FsReturn for FD {
         #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(crate::node::types::FdJsc::to_js(*self, global))
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            Ok(crate::node::types::FdJsc::to_js(self, global))
         }
     }
     impl FsReturn for StringOrBuffer {
         #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            self.to_js(global)
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            self.into_js(global)
         }
     }
     impl FsReturn for StringOrUndefined {
         #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            self.to_js(global)
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            self.into_js(global)
         }
     }
     impl FsReturn for ret::Read {
         #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(self.to_js(global))
         }
     }
     impl FsReturn for ret::Write {
         #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(self.to_js(global))
         }
     }
     impl FsReturn for node::StatFS {
         #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js_newly_created(global)
         }
     }
     impl FsReturn for ret::Readdir {
         #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            // `Readdir::to_js` consumes by value (the boxed slices are handed to
-            // JS). Swap in an empty `Files` payload so `&mut self` stays valid.
-            let owned = core::mem::replace(self, ret::Readdir::Files(Box::default()));
-            owned.to_js(global)
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            self.to_js(global)
         }
     }
     impl FsReturn for StatOrNotFound {
         #[inline]
-        fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js_newly_created(global)
         }
     }
@@ -1259,7 +1254,7 @@ mod _async_tasks {
             let success = this.result.is_ok();
             let promise_value = js.promise.value();
             let promise = js.promise.get();
-            let result = match &mut this.result {
+            let result = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
                 Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                     Ok(v) => v,
                     Err(e) => {
@@ -1708,7 +1703,7 @@ mod _async_tasks {
             // resolve/reject. The `JSPromise` itself lives on the JS heap
             // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
-            let result = match self.result.get_mut() {
+            let result = match core::mem::replace(self.result.get_mut(), Ok(())) {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
                 Err(err) => match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
                     Ok(v) => v,
@@ -4335,9 +4330,9 @@ pub enum StringOrUndefined {
     None,
 }
 impl StringOrUndefined {
-    fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn into_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            StringOrUndefined::String(s) => core::mem::take(s).into_js(global_object),
+            StringOrUndefined::String(s) => s.into_js(global_object),
             StringOrUndefined::None => Ok(JSValue::UNDEFINED),
         }
     }
@@ -4506,11 +4501,11 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
             StringOrBuffer::Buffer(Buffer::from_string(bytes).expect("unreachable"))
         }
         Encoding::Utf8 => {
-            StringOrBuffer::String(BunString::clone_utf8(bytes).into_utf8_with_string())
+            StringOrBuffer::String(Utf8WithString::js_only(BunString::clone_utf8(bytes)))
         }
-        enc => StringOrBuffer::String(
-            webcore::encoding::to_bun_string(bytes, enc).into_utf8_with_string(),
-        ),
+        enc => StringOrBuffer::String(Utf8WithString::js_only(webcore::encoding::to_bun_string(
+            bytes, enc,
+        ))),
     }
 }
 
@@ -6851,7 +6846,7 @@ impl NodeFS {
                             &args.path,
                         ));
                     }
-                    Ok(StringOrBuffer::String(Utf8WithString::for_js(str)))
+                    Ok(StringOrBuffer::String(Utf8WithString::js_only(str)))
                 }
                 ret::ReadFileWithOptions::String(s) => {
                     let str = if s.is_empty() {
@@ -6868,7 +6863,7 @@ impl NodeFS {
                             &args.path,
                         ));
                     }
-                    Ok(StringOrBuffer::String(Utf8WithString::for_js(str)))
+                    Ok(StringOrBuffer::String(Utf8WithString::js_only(str)))
                 }
                 _ => unreachable!(),
             },
@@ -7939,9 +7934,9 @@ impl NodeFS {
                 );
                 let _ = global_this.throw_value(
                     bun_jsc::SystemError {
-                        message: BunString::init(&buf[..]),
-                        code: BunString::init(err.name()),
-                        path: BunString::init(path.as_slice()),
+                        message: BunString::from_bytes(&buf[..]),
+                        code: BunString::static_(err.name()),
+                        path: BunString::from_bytes(path.as_slice()),
                         ..Default::default()
                     }
                     .to_error_instance(&global_this),
@@ -9000,10 +8995,10 @@ impl NodeFS {
                         len -= 1;
                     }
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        path: PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                            &bytes[..len],
-                            false,
-                        )),
+                        // SAFETY: `mkdir_recursive` is synchronous; `bytes` outlives the call.
+                        path: PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
+                            bun_ptr::detach_lifetime(&bytes[..len])
+                        })),
                         recursive: true,
                         ..Default::default()
                     });
@@ -9458,9 +9453,10 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
         unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
     node_fs
         .mkdir_recursive(&args::Mkdir {
-            path: PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                path_bytes, false,
-            )),
+            // SAFETY: `mkdir_recursive` is synchronous; `path_bytes` outlives the call.
+            path: PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
+                bun_ptr::detach_lifetime(path_bytes)
+            })),
             recursive: true,
             ..Default::default()
         })

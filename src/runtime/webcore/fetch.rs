@@ -182,21 +182,18 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
 
-fn data_url_blob(data_url: &DataURL, global_this: &JSGlobalObject) -> Option<Blob> {
-    let blob = Blob::init(data_url.decode_data().ok()?, global_this);
-    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
-    blob.content_type
-        .set(crate::webcore::blob::BlobContentType::from(mime_type));
-    Some(blob)
-}
-
 fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
     let blob = {
         let url_utf8 = url.to_utf8();
         match DataURL::parse_without_check(url_utf8.slice())
             .ok()
-            .and_then(|data_url| data_url_blob(&data_url, global_this))
-        {
+            .and_then(|data_url| {
+                let blob = Blob::init(data_url.decode_data().ok()?, global_this);
+                let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
+                blob.content_type
+                    .set(crate::webcore::blob::BlobContentType::from(mime_type));
+                Some(blob)
+            }) {
             Some(blob) => blob,
             None => {
                 let err =

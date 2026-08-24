@@ -464,10 +464,8 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeparator());
 
-    // Materialize host/path as WTF::String so the BunString wrappers hold a
-    // stable WTFStringImpl backing (preserving 8-bit vs UTF-16 encoding).
-    // EncodedSlice wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
-    // tag and corrupt the HTTP upgrade request build on the native side.
+    // `Bun::toString(WTF::String&)` borrows the impl, so materialize the
+    // `m_url` views into `WTF::String`s that outlive the connect call.
     String hostString = m_url.host().toString();
     auto resource = resourceName(m_url);
     String unixSocketPathString;

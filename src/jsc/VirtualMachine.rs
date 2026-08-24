@@ -11,6 +11,7 @@ use bun_bundler::Transpiler;
 use bun_io as Async;
 use bun_uws as uws;
 
+use crate::bun_string_jsc;
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
@@ -2835,7 +2836,7 @@ impl VirtualMachine {
                     self.pending_internal_promise = None;
                     self.pending_internal_promise_is_protected = false;
                     let global_ref = self.global();
-                    let argv1 = jsc::bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
+                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
                         .map_err(|_| crate::CrateError::JSError)?;
                     let ret = jsc::from_js_host_call_generic(global_ref, || {
                         NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
@@ -3020,10 +3021,10 @@ pub fn process_fetch_log(
                 };
             }
 
-            let message = bun_core::String::create_format(format_args!(
-                "{len} errors building \"{specifier}\""
-            ));
-            take(global_this.create_aggregate_error(&errors_stack[..len], &message))
+            take(global_this.create_aggregate_error(
+                &errors_stack[..len],
+                format_args!("{len} errors building \"{specifier}\""),
+            ))
         }
     }
 }
@@ -4590,7 +4591,7 @@ impl VirtualMachine {
                 };
                 if let Some(resolved_path) = plugin_runner_on_resolve_jsc(
                     global,
-                    &bun_core::String::init(namespace),
+                    &bun_core::String::from_bytes(namespace),
                     &bun_core::String::borrow_utf8(after_namespace),
                     source,
                     crate::BunPluginTarget::Bun,
@@ -4609,7 +4610,7 @@ impl VirtualMachine {
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                     specifier.clone()
                 } else {
-                    bun_core::String::init(hardcoded.path.as_bytes())
+                    bun_core::String::from_bytes(hardcoded.path.as_bytes())
                 },
             ));
         }
@@ -5131,7 +5132,7 @@ impl VirtualMachine {
         &mut self,
         entry_path: &[u8],
     ) -> Option<*mut JSInternalPromise> {
-        let path_str = bun_core::String::init(entry_path);
+        let path_str = bun_core::String::from_bytes(entry_path);
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
                 .as_ptr();
@@ -5794,7 +5795,7 @@ impl VirtualMachine {
                     // To minimize duplicate allocations, we use the same slice
                     // as above — it should virtually always be UTF-8 and thus
                     // not cloned.
-                    source_lines[i] = bun_core::String::init(*line);
+                    source_lines[i] = bun_core::String::from_bytes(line);
                     source_line_numbers[i] = current_line_number;
                     current_line_number -= 1;
                 }
@@ -6394,7 +6395,7 @@ impl VirtualMachine {
 
             // "cause" is not enumerable, so the above loop won't see it.
             if !saw_cause {
-                let key = bun_core::String::static_(b"cause");
+                let key = bun_core::String::static_("cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
                     if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
                         cause.protect();
@@ -6803,7 +6804,6 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     importer: &bun_core::String,
     target: crate::BunPluginTarget,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
-    use crate::StringJsc as _;
     let empty = bun_core::String::EMPTY;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         if namespace.length() > 0 && !namespace.eq_ascii(b"file") {
@@ -6828,54 +6828,50 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         return Ok(None);
     }
     if !path_value.is_string() {
-        return Ok(Some(Err(bun_core::String::static_(
-            b"Expected \"path\" to be a string in onResolve plugin",
-        )
-        .to_error_instance(global))));
+        return Ok(Some(Err(global.create_error_instance(format_args!(
+            "Expected \"path\" to be a string in onResolve plugin"
+        )))));
     }
 
     let file_path = path_value.to_bun_string(global)?;
 
     if file_path.length() == 0 {
-        return Ok(Some(Err(bun_core::String::static_(
-            b"Expected \"path\" to be a non-empty string in onResolve plugin",
-        )
-        .to_error_instance(global))));
+        return Ok(Some(Err(global.create_error_instance(format_args!(
+            "Expected \"path\" to be a non-empty string in onResolve plugin"
+        )))));
     } else if file_path.eq_ascii(b".")
         || file_path.eq_ascii(b"..")
         || file_path.eq_ascii(b"...")
         || file_path.eq_ascii(b" ")
     {
-        return Ok(Some(Err(bun_core::String::static_(
-            b"\"path\" is invalid in onResolve plugin",
-        )
-        .to_error_instance(global))));
+        return Ok(Some(Err(global.create_error_instance(format_args!(
+            "\"path\" is invalid in onResolve plugin"
+        )))));
     }
     let user_namespace: bun_core::String = 'brk: {
         if let Some(namespace_value) = on_resolve_plugin.get(global, b"namespace")? {
             if !namespace_value.is_string() {
-                return Ok(Some(Err(bun_core::String::static_(
-                    b"Expected \"namespace\" to be a string",
-                )
-                .to_error_instance(global))));
+                return Ok(Some(Err(global.create_error_instance(format_args!(
+                    "Expected \"namespace\" to be a string"
+                )))));
             }
 
             let namespace_str = namespace_value.to_bun_string(global)?;
             if namespace_str.length() == 0 {
-                break 'brk bun_core::String::static_(b"file");
+                break 'brk bun_core::String::static_("file");
             }
             if namespace_str.eq_ascii(b"file") {
-                break 'brk bun_core::String::static_(b"file");
+                break 'brk bun_core::String::static_("file");
             }
             if namespace_str.eq_ascii(b"bun") {
-                break 'brk bun_core::String::static_(b"bun");
+                break 'brk bun_core::String::static_("bun");
             }
             if namespace_str.eq_ascii(b"node") {
-                break 'brk bun_core::String::static_(b"node");
+                break 'brk bun_core::String::static_("node");
             }
             break 'brk namespace_str;
         }
-        break 'brk bun_core::String::static_(b"file");
+        break 'brk bun_core::String::static_("file");
     };
 
     // A `file`-namespace result (the default) is a filesystem path, not a new

@@ -4,6 +4,7 @@ use crate::api::bun_secure_context::SecureContext;
 use bun_boringssl_sys as boringssl;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::JsClass as _;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc as _,
 };
@@ -304,7 +305,7 @@ pub(super) fn get_servername(
     }
     // SAFETY: SSL_get_servername returns a NUL-terminated C string owned by the SSL session.
     let slice = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-    Ok(EncodedSlice::utf8(slice).to_js(global))
+    bun_string_jsc::create_utf8_for_js(global, slice)
 }
 
 pub(super) fn set_servername(
@@ -403,7 +404,7 @@ pub(super) fn get_tls_version(
     if slice.is_empty() {
         return Ok(JSValue::NULL);
     }
-    Ok(EncodedSlice::utf8(slice).to_js(global))
+    bun_string_jsc::create_utf8_for_js(global, slice)
 }
 
 pub(super) fn set_max_send_fragment(
@@ -759,7 +760,7 @@ pub(super) fn get_shared_sigalgs(
             array.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                EncodedSlice::utf8(&buffer).to_js(global),
+                bun_string_jsc::create_utf8_for_js(global, &buffer)?,
             )?;
         } else {
             let mut buffer: Vec<u8> = Vec::with_capacity(sig_with_md.len() + 6);
@@ -768,7 +769,7 @@ pub(super) fn get_shared_sigalgs(
             array.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                EncodedSlice::utf8(&buffer).to_js(global),
+                bun_string_jsc::create_utf8_for_js(global, &buffer)?,
             )?;
         }
     }
@@ -800,7 +801,11 @@ pub(super) fn get_cipher(
     } else {
         // SAFETY: SSL_CIPHER_get_name returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-        result.put(global, b"name", EncodedSlice::utf8(s).to_js(global));
+        result.put(
+            global,
+            b"name",
+            bun_string_jsc::create_utf8_for_js(global, s)?,
+        );
     }
 
     let standard_name = ffi::SSL_CIPHER_standard_name(cipher);
@@ -809,7 +814,11 @@ pub(super) fn get_cipher(
     } else {
         // SAFETY: SSL_CIPHER_standard_name returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(standard_name) }.to_bytes();
-        result.put(global, b"standardName", EncodedSlice::utf8(s).to_js(global));
+        result.put(
+            global,
+            b"standardName",
+            bun_string_jsc::create_utf8_for_js(global, s)?,
+        );
     }
 
     let version = ffi::SSL_CIPHER_get_version(cipher);
@@ -818,7 +827,11 @@ pub(super) fn get_cipher(
     } else {
         // SAFETY: SSL_CIPHER_get_version returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
-        result.put(global, b"version", EncodedSlice::utf8(s).to_js(global));
+        result.put(
+            global,
+            b"version",
+            bun_string_jsc::create_utf8_for_js(global, s)?,
+        );
     }
 
     Ok(result)
@@ -1050,7 +1063,7 @@ pub(super) fn get_ephemeral_key_info(
             result.put(
                 global,
                 b"name",
-                EncodedSlice::utf8(curve_name).to_js(global),
+                bun_string_jsc::create_utf8_for_js(global, curve_name)?,
             );
             result.put(global, b"size", JSValue::js_number(f64::from(bits)));
         }
@@ -1084,7 +1097,7 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
     if strings::eql(slice, b"http/1.1") {
         return BunString::static_("http/1.1").to_js(global);
     }
-    Ok(EncodedSlice::utf8(slice).to_js(global))
+    bun_string_jsc::create_utf8_for_js(global, slice)
 }
 
 /// The session Node's `getSession()`/`getTLSTicket()` read: the one most

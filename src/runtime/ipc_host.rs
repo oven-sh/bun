@@ -7,7 +7,7 @@ use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
 use bun_core::String as BunString;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::socket::Listener;
@@ -286,7 +286,7 @@ pub(crate) fn do_send(
         ex.put(
             global_object,
             b"syscall",
-            bun_jsc::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
+            BunString::static_("write").to_js(global_object)?,
         );
         return do_send_err(global_object, callback, ex, from);
     }

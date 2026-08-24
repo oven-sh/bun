@@ -57,19 +57,19 @@ impl PluginResolver for PluginRunner {
 
         let namespace_slice = Self::extract_namespace(specifier);
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
-            BunString::init(namespace_slice)
+            BunString::from_bytes(namespace_slice)
         } else {
             BunString::empty()
         };
         let Some(on_resolve_plugin) = global
             .run_on_resolve_plugins(
                 &namespace,
-                &BunString::init(specifier).substring(if namespace.length() > 0 {
+                &BunString::from_bytes(specifier).substring(if namespace.length() > 0 {
                     namespace.length() + 1
                 } else {
                     0
                 }),
-                &BunString::init(importer),
+                &BunString::from_bytes(importer),
                 target,
             )
             .map_err(js_err)?
@@ -118,19 +118,19 @@ impl PluginResolver for PluginRunner {
 
                 let namespace_str = namespace_value.to_bun_string(global).map_err(js_err)?;
                 if namespace_str.length() == 0 {
-                    break 'brk BunString::init(b"file");
+                    break 'brk BunString::static_("file");
                 }
 
                 if namespace_str.eq_ascii(b"file") {
-                    break 'brk BunString::init(b"file");
+                    break 'brk BunString::static_("file");
                 }
 
                 if namespace_str.eq_ascii(b"bun") {
-                    break 'brk BunString::init(b"bun");
+                    break 'brk BunString::static_("bun");
                 }
 
                 if namespace_str.eq_ascii(b"node") {
-                    break 'brk BunString::init(b"node");
+                    break 'brk BunString::static_("node");
                 }
 
                 static_namespace = false;
@@ -138,7 +138,7 @@ impl PluginResolver for PluginRunner {
                 break 'brk namespace_str;
             }
 
-            break 'brk BunString::init(b"file");
+            break 'brk BunString::static_("file");
         };
 
         // `FsPath<'static>` borrows, so the formatted buffer is leaked to

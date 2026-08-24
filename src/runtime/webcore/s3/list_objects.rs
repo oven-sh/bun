@@ -1,4 +1,4 @@
-use bun_jsc::bun_string_jsc::create_utf8_for_js;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
@@ -82,12 +82,13 @@ impl S3ListObjectsV2Result {
                 object_info.put(
                     global_object,
                     b"key",
-                    create_utf8_for_js(global_object, &item.key)?,
+                    bun_string_jsc::create_utf8_for_js(global_object, &item.key)?,
                 );
 
                 object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
                 if let Some(algorithm) = item.checksum_algorithm.as_deref() {
-                    let js_algorithm = create_utf8_for_js(global_object, algorithm)?;
+                    let js_algorithm =
+                        bun_string_jsc::create_utf8_for_js(global_object, algorithm)?;
                     object_info.put(global_object, b"checksumAlgorithm", js_algorithm);
                     // Back-compat alias for the original misspelling (#19142).
                     object_info.put_non_enumerable(
@@ -147,7 +148,7 @@ impl S3ListObjectsV2Result {
                 js_prefix.put(
                     global_object,
                     b"prefix",
-                    create_utf8_for_js(global_object, prefix)?,
+                    bun_string_jsc::create_utf8_for_js(global_object, prefix)?,
                 );
                 js_common_prefixes.put_index(
                     global_object,

@@ -21,6 +21,7 @@ use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
     JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
@@ -670,8 +671,8 @@ fn reject_error(global: &JSGlobalObject, e: codecs::Error) -> JSValue {
 
 fn error_with_code(global: &JSGlobalObject, code: &ZStr, msg: &ZStr) -> JSValue {
     let err = global.create_error_instance(format_args!("{}", bstr::BStr::new(msg.as_bytes())));
-    let code_js = jsc::bun_string_jsc::create_utf8_for_js(global, code.as_bytes())
-        .unwrap_or(JSValue::UNDEFINED);
+    let code_js =
+        bun_string_jsc::create_utf8_for_js(global, code.as_bytes()).unwrap_or(JSValue::UNDEFINED);
     err.put(global, b"code", code_js);
     err
 }
@@ -955,7 +956,7 @@ impl Image {
                     obj.put(
                         global,
                         b"format",
-                        jsc::bun_string_jsc::create_utf8_for_js(
+                        bun_string_jsc::create_utf8_for_js(
                             global,
                             format_name(p.format).as_bytes(),
                         )?,
@@ -1863,11 +1864,10 @@ impl PipelineTask {
                         let mut buf = vec![0u8; pre.len() + base64::encode_len(out_slice)];
                         buf[..pre.len()].copy_from_slice(pre);
                         let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], out_slice);
-                        let str =
-                            match jsc::bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
-                                Ok(s) => s,
-                                Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
-                            };
+                        let str = match bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
+                            Ok(s) => s,
+                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                        };
                         promise.resolve(global, str)?;
                     }
                     // `.write(dest)` — wrap the codec buffer as a Buffer (codec's
@@ -1923,7 +1923,7 @@ impl PipelineTask {
                 obj.put(global, b"width", JSValue::js_number(f64::from(w)));
                 obj.put(global, b"height", JSValue::js_number(f64::from(h)));
                 let fmt_js =
-                    jsc::bun_string_jsc::create_utf8_for_js(global, format_name(format).as_bytes())
+                    bun_string_jsc::create_utf8_for_js(global, format_name(format).as_bytes())
                         .unwrap_or(JSValue::UNDEFINED);
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;

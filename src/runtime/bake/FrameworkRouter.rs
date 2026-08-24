@@ -11,6 +11,7 @@ use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
@@ -1856,7 +1857,7 @@ impl JSFrameworkRouter {
                     )))
                 })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
-                &bun_core::String::static_("Errors scanning routes"),
+                format_args!("Errors scanning routes"),
                 arr,
             )?));
         }
@@ -1885,10 +1886,7 @@ impl JSFrameworkRouter {
                         params_obj.put(
                             global,
                             param.key.slice(),
-                            bun_jsc::bun_string_jsc::create_utf8_for_js(
-                                global,
-                                param.value.slice(),
-                            )?,
+                            bun_string_jsc::create_utf8_for_js(global, param.value.slice())?,
                         );
                     }
                     params_obj
@@ -2041,7 +2039,7 @@ impl JSFrameworkRouter {
         let mut rendered: Vec<u8> = Vec::new();
         part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
             .expect("ByteFmtWriter is infallible");
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &rendered)
+        bun_string_jsc::create_utf8_for_js(global, &rendered)
     }
 
     pub(crate) fn file_id_to_js(

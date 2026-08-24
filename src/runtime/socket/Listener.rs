@@ -7,12 +7,15 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
-use bun_core::EncodedSlice;
+use bun_core::{EncodedSlice, String as BunString};
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _,
+};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -520,13 +523,13 @@ impl Listener {
                 err.put(
                     global,
                     b"syscall",
-                    jsc::bun_string_jsc::create_utf8_for_js(global, b"listen")?,
+                    BunString::static_("listen").to_js(global)?,
                 );
                 err.put(global, b"errno", JSValue::js_number(errno as f64));
                 err.put(
                     global,
                     b"address",
-                    EncodedSlice::utf8(hostname_bytes).to_js(global),
+                    bun_string_jsc::create_utf8_for_js(global, hostname_bytes)?,
                 );
                 if let Some(p) = port {
                     err.put(global, b"port", JSValue::js_number(p as f64));
@@ -535,7 +538,7 @@ impl Listener {
                     err.put(
                         global,
                         b"code",
-                        EncodedSlice::latin1(<&'static str>::from(str_).as_bytes()).to_js(global),
+                        BunString::static_(<&'static str>::from(str_)).to_js(global)?,
                     );
                 }
             }
@@ -981,19 +984,19 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_unix(this: &Self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_unix(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let UnixOrHost::Unix(unix) = &this.connection else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
-        EncodedSlice::from_bytes(unix).to_js(global)
+        bun_string_jsc::create_utf8_for_js(global, unix)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_hostname(this: &Self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_hostname(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let UnixOrHost::Host { host, .. } = &this.connection else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
-        EncodedSlice::from_bytes(host).to_js(global)
+        bun_string_jsc::create_utf8_for_js(global, host)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1532,7 +1535,7 @@ impl Listener {
             .unwrap(),
             _ => return Ok(JSValue::UNDEFINED),
         };
-        let address_js = EncodedSlice::latin1(formatted).to_js(global);
+        let address_js = bun_string_jsc::create_utf8_for_js(global, formatted)?;
         let port_js = match socket_ref.get_local_port() {
             Some(p) => JSValue::js_number(p as f64),
             None => JSValue::UNDEFINED,

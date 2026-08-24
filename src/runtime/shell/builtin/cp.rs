@@ -710,14 +710,14 @@ impl ShellCpTask {
         self.tgt_absolute = Some(tgt.as_bytes().to_vec());
 
         let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                self.src_absolute.as_deref().unwrap(),
-                false,
-            )),
-            dest: bun_jsc::node::PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                self.tgt_absolute.as_deref().unwrap(),
-                false,
-            )),
+            // SAFETY: `self` owns `src_absolute`/`tgt_absolute` and outlives `args`.
+            src: bun_jsc::node::PathLike::Utf8(bun_core::Utf8Bytes::Borrowed(unsafe {
+                bun_ptr::detach_lifetime(self.src_absolute.as_deref().unwrap())
+            })),
+            // SAFETY: as above.
+            dest: bun_jsc::node::PathLike::Utf8(bun_core::Utf8Bytes::Borrowed(unsafe {
+                bun_ptr::detach_lifetime(self.tgt_absolute.as_deref().unwrap())
+            })),
             flags: crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
                 force: true,

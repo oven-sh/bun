@@ -23,7 +23,9 @@
 use core::ffi::c_void;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame,
+};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -137,7 +139,7 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     if let Some(eval_source) = this.module_loader.eval_source.as_ref() {
         let global = this.global();
         let specifier_str =
-            bun_jsc::bun_string_jsc::from_js(specifier, global).expect("unexpected exception");
+            bun_core::String::from_js(specifier, global).expect("unexpected exception");
         return specifier_str.eql_utf8(eval_source.path.text);
     }
     false
@@ -153,7 +155,7 @@ pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
     let global = this.global();
     // A failed conversion just skips the note; must never panic at an FFI
     // boundary.
-    let Ok(specifier_str) = bun_jsc::bun_string_jsc::from_js(specifier, global) else {
+    let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
         return;
     };
     if specifier_str.eql_utf8(this.main()) {

@@ -6,6 +6,7 @@ use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
@@ -624,7 +625,7 @@ pub(crate) fn get_presign_url_from(
         Err(sign_err) => return Err(s3::throw_sign_error(sign_err.into(), global)),
     };
     // `Blob.global_this` is the JSGlobalObject the blob was created with; live for VM lifetime.
-    bun_jsc::bun_string_jsc::create_utf8_for_js(
+    bun_string_jsc::create_utf8_for_js(
         this.global_this().expect("Blob.global_this set"),
         &result.url,
     )
@@ -660,7 +661,7 @@ fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
 // so the proc-macro shim is not used here — the raw ABI shim is hand-wired.
 fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     if let Some(name) = get_bucket_name(this) {
-        return bun_jsc::bun_string_jsc::create_utf8_for_js(global, name);
+        return bun_string_jsc::create_utf8_for_js(global, name);
     }
     Ok(JSValue::UNDEFINED)
 }

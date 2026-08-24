@@ -18,10 +18,10 @@ use bun_core as bun;
 use bun_core::Output;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::{EncodedSliceJsc as _, StringJsc as _};
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_sys::{self, Fd};
 
-use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
+use crate::webcore::node_types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::s3 as S3;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
 
@@ -2162,9 +2162,7 @@ impl BlobExt for Blob {
                             global_this,
                             binding,
                             crate::node::fs::args::Stat {
-                                path: crate::node::types::PathLike::Utf8(Utf8Bytes::Owned(
-                                    path_like.slice().to_vec(),
-                                )),
+                                path: PathLike::Utf8(Utf8Bytes::Owned(path_like.slice().to_vec())),
                                 big_int: false,
                                 throw_if_no_entry: true,
                             },
@@ -2604,17 +2602,7 @@ impl BlobExt for Blob {
                     // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                 }
-                // Ownership of the UTF-16 buffer transfers to JSC's external-string
-                // finalizer (which calls back into the default allocator's `free`).
-                // `into_raw` is the explicit ownership-transfer-to-FFI API; the
-                // matching free lives on the C++ side.
-                let len = external.len();
-                let ptr = bun_core::heap::into_raw(external.into_boxed_slice())
-                    .cast::<u16>()
-                    .cast_const();
-                // SAFETY: `ptr` came from `heap::into_raw` on a global-allocator
-                // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
-                return Ok(unsafe { jsc::encoded_slice::to_external_u16(ptr, len, global) });
+                return jsc::encoded_slice::to_external_u16(external, global);
             }
 
             if LIFETIME != Lifetime::Temporary {
@@ -3264,10 +3252,10 @@ impl BlobExt for Blob {
                             // buffers instead — regardless of `MOVE`.
                             return Ok(artifact.blob.dupe());
                         } else {
-                            let sliced = current.to_js_string_view(global)?;
-                            if !sliced.is_empty() {
+                            let view = current.to_js_string_view(global)?;
+                            if !view.is_empty() {
                                 return Ok(Blob::init_with_all_ascii(
-                                    sliced.to_owned_slice(),
+                                    view.to_owned_slice(),
                                     global,
                                     false,
                                 ));
@@ -3302,10 +3290,9 @@ impl BlobExt for Blob {
                 | jsc::JSType::String
                 | jsc::JSType::StringObject
                 | jsc::JSType::DerivedStringObject => {
-                    let sliced = current.to_utf8(global)?;
-                    could_have_non_ascii = could_have_non_ascii || sliced.is_owned();
-                    // Clone into the joiner and let `sliced` drop normally.
-                    joiner.push_cloned(sliced.slice());
+                    let utf8 = current.to_utf8(global)?;
+                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                    joiner.push_cloned(utf8.slice());
                 }
 
                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
@@ -3352,10 +3339,9 @@ impl BlobExt for Blob {
                                 | jsc::JSType::String
                                 | jsc::JSType::StringObject
                                 | jsc::JSType::DerivedStringObject => {
-                                    let sliced = item.to_utf8(global)?;
-                                    could_have_non_ascii =
-                                        could_have_non_ascii || sliced.is_owned();
-                                    joiner.push_cloned(sliced.slice());
+                                    let utf8 = item.to_utf8(global)?;
+                                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                                    joiner.push_cloned(utf8.slice());
                                     continue;
                                 }
                                 t if t.is_array_buffer_like() => {
@@ -3377,10 +3363,9 @@ impl BlobExt for Blob {
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    let sliced = item.to_utf8(global)?;
-                                    could_have_non_ascii =
-                                        could_have_non_ascii || sliced.is_owned();
-                                    joiner.push_cloned(sliced.slice());
+                                    let utf8 = item.to_utf8(global)?;
+                                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                                    joiner.push_cloned(utf8.slice());
                                     continue;
                                 }
                                 jsc::JSType::DOMWrapper => {
@@ -3402,18 +3387,17 @@ impl BlobExt for Blob {
                                         }
                                         continue;
                                     } else {
-                                        let sliced = item.to_utf8(global)?;
+                                        let utf8 = item.to_utf8(global)?;
                                         could_have_non_ascii =
-                                            could_have_non_ascii || sliced.is_owned();
-                                        joiner.push_cloned(sliced.slice());
+                                            could_have_non_ascii || utf8.is_owned();
+                                        joiner.push_cloned(utf8.slice());
                                         continue;
                                     }
                                 }
                                 _ => {
-                                    let sliced = item.to_utf8(global)?;
-                                    could_have_non_ascii =
-                                        could_have_non_ascii || sliced.is_owned();
-                                    joiner.push_cloned(sliced.slice());
+                                    let utf8 = item.to_utf8(global)?;
+                                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                                    joiner.push_cloned(utf8.slice());
                                 }
                             }
                         }
@@ -3429,9 +3413,9 @@ impl BlobExt for Blob {
                         // free this Blob's Store before `done()`, so always copy.
                         joiner.push_cloned(blob.shared_view());
                     } else {
-                        let sliced = current.to_utf8(global)?;
-                        could_have_non_ascii = could_have_non_ascii || sliced.is_owned();
-                        joiner.push_cloned(sliced.slice());
+                        let utf8 = current.to_utf8(global)?;
+                        could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                        joiner.push_cloned(utf8.slice());
                     }
                 }
 
@@ -3446,9 +3430,9 @@ impl BlobExt for Blob {
                 }
 
                 _ => {
-                    let sliced = current.to_utf8(global)?;
-                    could_have_non_ascii = could_have_non_ascii || sliced.is_owned();
-                    joiner.push_cloned(sliced.slice());
+                    let utf8 = current.to_utf8(global)?;
+                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                    joiner.push_cloned(utf8.slice());
                 }
             }
             current = match stack.pop() {
@@ -3538,9 +3522,7 @@ impl BlobExt for Blob {
                     let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
                     let copy = core::mem::replace(
                         path_or_fd,
-                        PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::Bytes(
-                            bun_ptr::cow_slice::CowSlice::EMPTY,
-                        )),
+                        PathOrFileDescriptor::Path(PathLike::default()),
                     );
                     let PathOrFileDescriptor::Path(path) = copy else {
                         unreachable!()
@@ -3560,13 +3542,9 @@ impl BlobExt for Blob {
                     // The assignment below drops the old `PathLike` (releasing
                     // the caller-owned path) as part of the `*path_or_fd = …`
                     // write.
-                    *path_or_fd =
-                        PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::Bytes(
-                            // Heap-dupe: this buffer is freed by `Blob.Store.deinit`.
-                            bun_ptr::cow_slice::CowSlice::init_owned(
-                                b"\\\\.\\NUL".to_vec().into_boxed_slice(),
-                            ),
-                        ));
+                    *path_or_fd = PathOrFileDescriptor::Path(PathLike::Utf8(Utf8Bytes::Borrowed(
+                        b"\\\\.\\NUL",
+                    )));
                 }
 
                 // SAFETY: bun_vm() is live for the duration of a host call.
@@ -3584,25 +3562,12 @@ impl BlobExt for Blob {
                     // process-lifetime singleton; this runs on the JS thread.
                     if let Some(file) = unsafe { &mut *graph }.find(path_or_fd.path().slice()) {
                         use crate::api::standalone_graph_jsc::FileJsc as _;
-                        let blob = file.file_blob(global_this).dupe();
-                        if !path_or_fd.path().is_bytes() {
-                            *path_or_fd = PathOrFileDescriptor::Path(
-                                crate::webcore::node_types::PathLike::Bytes(
-                                    bun_ptr::cow_slice::CowSlice::EMPTY,
-                                ),
-                            );
-                        }
-                        return blob;
+                        return file.file_blob(global_this).dupe();
                     }
                 }
 
                 path_or_fd.to_thread_safe();
-                core::mem::replace(
-                    path_or_fd,
-                    PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::Bytes(
-                        bun_ptr::cow_slice::CowSlice::EMPTY,
-                    )),
-                )
+                core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::default()))
             }
             PathOrFileDescriptor::Fd(fd) => {
                 if let Some(tag) = fd.stdio_tag() {
@@ -3809,7 +3774,7 @@ impl FormDataContext<'_> {
             // which outlives `joiner.done()` in `from_dom_form_data`.
             Utf8Bytes::Borrowed(b) => joiner.push(unsafe { bun_ptr::detach_lifetime(b) }),
             // Releases its ref on drop — copy rather than borrow past it.
-            Utf8Bytes::Shared { .. } => joiner.push_cloned(slice.slice()),
+            Utf8Bytes::Shared(_) => joiner.push_cloned(slice.slice()),
         }
     }
 
@@ -4067,13 +4032,8 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
                     }
-                    // The owned `CowSlice`
-                    // adopts the `Box<[u8]>` so the store frees it in
-                    // `PathLike::drop`; borrowing here would drop `path` at scope
-                    // end and leave the store dangling.
-                    let mut dest = PathOrFileDescriptor::Path(node::PathLike::Bytes(
-                        bun_ptr::cow_slice::CowSlice::init_owned(path.into_boxed_slice()),
-                    ));
+                    let mut dest =
+                        PathOrFileDescriptor::Path(PathLike::Utf8(Utf8Bytes::Owned(path)));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,
                         global_this,
@@ -4256,9 +4216,10 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                path: node::PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                    dirname, false,
-                )),
+                // SAFETY: `mkdir_recursive` is synchronous; `path_string` outlives the call.
+                path: PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
+                    bun_ptr::detach_lifetime(dirname)
+                })),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -4392,11 +4353,11 @@ fn write_file_with_empty_source_to_destination(
                                 };
                                 let mkdir_result =
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: node::PathLike::Bytes(
-                                            bun_ptr::cow_slice::CowSlice::init_unchecked(
-                                                dirpath, false,
-                                            ),
-                                        ),
+                                        // SAFETY: `mkdir_recursive` is synchronous;
+                                        // `dirpath` outlives the call.
+                                        path: PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
+                                            bun_ptr::detach_lifetime(dirpath)
+                                        })),
                                         recursive: true,
                                         always_return_none: true,
                                         ..Default::default()
@@ -6627,34 +6588,10 @@ impl Internal {
     }
 
     pub(crate) fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
-        if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false)
-            .map_err(|_| global_this.throw_out_of_memory())?
-        {
-            let out_len = out.len();
-            // Ownership transfers to JSC's external-string finalizer.
-            let out_ptr = bun_core::heap::into_raw(out.into_boxed_slice())
-                .cast::<u16>()
-                .cast_const();
-            // SAFETY: `out_ptr` came from `heap::into_raw` on a global-allocator
-            // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
-            let return_value =
-                unsafe { jsc::encoded_slice::to_external_u16(out_ptr, out_len, global_this) };
-            return_value.ensure_still_alive();
-            self.bytes = Vec::new();
-            return Ok(return_value);
-        } else if bytes_without_bom.len() != self.bytes.len() {
-            // If there was a UTF8 BOM, we clone it.
-            let out = BunString::clone_latin1(&self.bytes[3..]);
-            self.bytes = Vec::new();
-            return out.into_js(global_this);
-        } else {
-            // All-ASCII fast path: hand the heap buffer to JSC's external-string
-            // finalizer (freed by mimalloc on GC). `to_owned_slice` moves
-            // `self.bytes` out, so the allocation is no longer owned by us.
-            let owned = bun_core::heap::release(self.to_owned_slice().into_boxed_slice());
-            return Ok(EncodedSlice::latin1(owned).to_external_value(global_this));
-        }
+        let mut bytes = self.to_owned_slice();
+        let bom_len = bytes.len() - strings::without_utf8_bom(&bytes).len();
+        bytes.drain(..bom_len);
+        bun_string_jsc::owned_utf8_into_js(global_this, bytes)
     }
 
     pub(crate) fn to_json(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {

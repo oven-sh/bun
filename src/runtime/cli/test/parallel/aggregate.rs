@@ -247,10 +247,10 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();
         let _ = fs.mkdir_recursive(&fs_args::Mkdir {
-            path: PathLike::Bytes(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                &opts.reports_directory,
-                false,
-            )),
+            // SAFETY: `mkdir_recursive` is synchronous; `opts` outlives the call.
+            path: PathLike::Utf8(bun_core::Utf8Bytes::Borrowed(unsafe {
+                bun_ptr::detach_lifetime(&opts.reports_directory)
+            })),
             always_return_none: true,
             ..Default::default()
         });

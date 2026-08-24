@@ -79,6 +79,7 @@
 #include "JavaScriptCore/DateConstructor.h"
 #include "JavaScriptCore/ErrorConstructor.h"
 #include "JavaScriptCore/JSArrayBufferConstructor.h"
+#include "JavaScriptCore/JSTypedArrayConstructors.h"
 #include "JavaScriptCore/MapConstructor.h"
 #include "JavaScriptCore/NumberConstructor.h"
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -89,6 +90,7 @@
 #include "JavaScriptCore/SymbolConstructor.h"
 #include "JavaScriptCore/WeakMapConstructor.h"
 #include "JavaScriptCore/WeakSetConstructor.h"
+#include "JSBuffer.h"
 #include "JavaScriptCore/ParserError.h"
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/StackFrame.h"
@@ -751,45 +753,48 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
 }
 
 // Mirrors the wellKnownConstructors set in node's
-// lib/internal/util/comparisons.js: the global built-in constructors
-// (Object, Array, the typed arrays, Buffer, ...). Subclass constructors and
-// user functions are not in the set.
-static bool isWellKnownConstructor(JSC::JSGlobalObject* globalObject, JSValue value)
+// lib/internal/util/comparisons.js: the built-in constructors (Object, Array,
+// the typed arrays, Buffer, ...) of any realm. Subclass constructors and user
+// functions are not in the set.
+static bool isWellKnownConstructor(JSValue value)
 {
     if (!value.isCell())
         return false;
     JSCell* cell = value.asCell();
-    if (cell->inherits<JSC::ObjectConstructor>()
-        || cell->inherits<JSC::ArrayConstructor>()
-        || cell->inherits<JSC::FunctionConstructor>()
-        || cell->inherits<JSC::RegExpConstructor>()
-        || cell->inherits<JSC::JSPromiseConstructor>()
-        || cell->inherits<JSC::StringConstructor>()
-        || cell->inherits<JSC::SymbolConstructor>()
-        || cell->inherits<JSC::BigIntConstructor>()
-        || cell->inherits<JSC::BooleanConstructor>()
-        || cell->inherits<JSC::NumberConstructor>()
-        || cell->inherits<JSC::DateConstructor>()
-        || cell->inherits<JSC::ErrorConstructor>()
-        || cell->inherits<JSC::MapConstructor>()
-        || cell->inherits<JSC::SetConstructor>()
-        || cell->inherits<JSC::WeakMapConstructor>()
-        || cell->inherits<JSC::WeakSetConstructor>()
-        || cell->inherits<JSC::JSArrayBufferConstructor>())
-        return true;
-
-    if (!cell->inherits<JSC::InternalFunction>())
+    if (cell->type() != InternalFunctionType && cell->type() != JSFunctionType)
         return false;
-
-    // Int8Array through DataView. The concurrent accessor returns null for a
-    // constructor that was never materialized, and a value can only be that
-    // constructor if it was materialized.
-    for (uint8_t type = JSC::TypeInt8; type <= JSC::TypeDataView; type++) {
-        if (cell == globalObject->typedArrayConstructorConcurrently(static_cast<JSC::TypedArrayType>(type)))
-            return true;
-    }
-
-    return cell == defaultGlobalObject(globalObject)->JSBufferConstructor();
+    const ClassInfo* info = cell->classInfo();
+    return info == JSC::ObjectConstructor::info()
+        || info == JSC::ArrayConstructor::info()
+        || info == JSC::FunctionConstructor::info()
+        || info == JSC::RegExpConstructor::info()
+        || info == JSC::JSPromiseConstructor::info()
+        || info == JSC::StringConstructor::info()
+        || info == JSC::SymbolConstructor::info()
+        || info == JSC::BigIntConstructor::info()
+        || info == JSC::BooleanConstructor::info()
+        || info == JSC::NumberConstructor::info()
+        || info == JSC::DateConstructor::info()
+        || info == JSC::ErrorConstructor::info()
+        || info == JSC::MapConstructor::info()
+        || info == JSC::SetConstructor::info()
+        || info == JSC::WeakMapConstructor::info()
+        || info == JSC::WeakSetConstructor::info()
+        || info == JSC::JSArrayBufferConstructor::info()
+        || info == JSC::JSInt8ArrayConstructor::info()
+        || info == JSC::JSInt16ArrayConstructor::info()
+        || info == JSC::JSInt32ArrayConstructor::info()
+        || info == JSC::JSUint8ArrayConstructor::info()
+        || info == JSC::JSUint8ClampedArrayConstructor::info()
+        || info == JSC::JSUint16ArrayConstructor::info()
+        || info == JSC::JSUint32ArrayConstructor::info()
+        || info == JSC::JSFloat16ArrayConstructor::info()
+        || info == JSC::JSFloat32ArrayConstructor::info()
+        || info == JSC::JSFloat64ArrayConstructor::info()
+        || info == JSC::JSBigInt64ArrayConstructor::info()
+        || info == JSC::JSBigUint64ArrayConstructor::info()
+        || info == JSC::JSDataViewConstructor::info()
+        || info == WebCore::JSBufferConstructor::info();
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
@@ -888,23 +893,39 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSObject* protoCheck2 = v2.getObject();
         if (protoCheck1 && protoCheck2) {
             if constexpr (!skipPrototypeIdentity) {
+                // One property-slot walk yields both val1.constructor and, through the
+                // slot base, hasOwn(val1, "constructor"). A cacheable data slot found on
+                // the prototype chain holds the same value for any object with the same
+                // (mono-proto) structure, so val2.constructor needs no second walk then.
                 const auto& constructorName = vm.propertyNames->constructor;
-                JSValue constructor1 = protoCheck1->get(globalObject, constructorName);
+                PropertySlot slot1(protoCheck1, PropertySlot::InternalMethodType::Get);
+                bool hasConstructor1 = protoCheck1->getPropertySlot(globalObject, constructorName, slot1);
+                RETURN_IF_EXCEPTION(scope, false);
+                JSValue constructor1 = hasConstructor1 ? slot1.getValue(globalObject, constructorName) : jsUndefined();
                 RETURN_IF_EXCEPTION(scope, false);
                 bool compareConstructors = false;
                 if (!constructor1.isUndefined()) {
-                    PropertySlot slot(protoCheck1, PropertySlot::InternalMethodType::GetOwnProperty);
-                    bool hasOwnConstructor = protoCheck1->methodTable()->getOwnPropertySlot(protoCheck1, globalObject, constructorName, slot);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    compareConstructors = !hasOwnConstructor || isWellKnownConstructor(globalObject, constructor1);
+                    bool hasOwnConstructor;
+                    if (slot1.isTaintedByOpaqueObject()) {
+                        PropertySlot ownSlot(protoCheck1, PropertySlot::InternalMethodType::GetOwnProperty);
+                        hasOwnConstructor = protoCheck1->methodTable()->getOwnPropertySlot(protoCheck1, globalObject, constructorName, ownSlot);
+                        RETURN_IF_EXCEPTION(scope, false);
+                    } else {
+                        hasOwnConstructor = slot1.slotBase() == protoCheck1;
+                    }
+                    compareConstructors = !hasOwnConstructor || isWellKnownConstructor(constructor1);
                 }
                 if (compareConstructors) {
-                    JSValue constructor2 = protoCheck2->get(globalObject, constructorName);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    bool sameConstructor = JSC::JSValue::strictEqual(globalObject, constructor1, constructor2);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (!sameConstructor) {
-                        return false;
+                    bool inheritedFromSharedChain = slot1.isCacheableValue() && slot1.slotBase() != protoCheck1
+                        && protoCheck1->structureID() == protoCheck2->structureID() && !protoCheck1->structure()->hasPolyProto();
+                    if (!inheritedFromSharedChain) {
+                        JSValue constructor2 = protoCheck2->get(globalObject, constructorName);
+                        RETURN_IF_EXCEPTION(scope, false);
+                        bool sameConstructor = JSC::JSValue::strictEqual(globalObject, constructor1, constructor2);
+                        RETURN_IF_EXCEPTION(scope, false);
+                        if (!sameConstructor) {
+                            return false;
+                        }
                     }
                 } else {
                     JSValue proto1 = protoCheck1->getPrototype(globalObject);

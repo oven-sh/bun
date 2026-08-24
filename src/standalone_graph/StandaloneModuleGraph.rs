@@ -747,9 +747,9 @@ impl StandaloneModuleGraph {
                 } else {
                     0
                 };
-            // SAFETY: `to_bytes` wrote `u32 count` + `count` records right here; read-only, unaligned-safe reads.
             let read_u32 = |at: usize| -> u32 {
                 debug_assert!(at + 4 <= raw_len);
+                // SAFETY: `to_bytes` wrote `u32 count` + `count` records right here; read-only, unaligned-safe read within `[0, raw_len)`.
                 unsafe { core::ptr::read_unaligned(raw_const.add(at).cast::<u32>()) }
             };
             let count = read_u32(table_offset) as usize;

@@ -2069,11 +2069,13 @@ bool Bun__deepMatch(
     ASSERT(subsetValue.isCell());
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
+    // like jest, a function is a value to compare, not a pattern to walk.
+    if (subsetValue.isCallable()) return false;
     VM& vm = globalObject->vm();
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
 
@@ -2082,12 +2084,22 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
+    bool objIsArray = isArray(globalObject, objValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    bool subsetIsArray = isArray(globalObject, subsetValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+
+    // an array subset needs an array; an object subset may be satisfied by one.
+    if (subsetIsArray && !objIsArray) {
+        return false;
+    }
+
     // arrays should match exactly
-    if (isArray(globalObject, objValue) && isArray(globalObject, subsetValue)) {
+    if (objIsArray && subsetIsArray) {
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
             return false;
         }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (objProps.size() != subsetProps.size()) {
@@ -2140,7 +2152,7 @@ bool Bun__deepMatch(
             }
         }
 
-        if (subsetProp.isObject() and prop.isObject()) {
+        if (subsetProp.isObject() && !subsetProp.isCallable() && prop.isObject()) {
             // if this is called from inside an objectContaining asymmetric matcher, it should behave slightly differently:
             // in such case, it expects exhaustive matching of any nested object properties, not just a subset,
             // and the user would need to opt-in to subset matching by using another nested objectContaining matcher

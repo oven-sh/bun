@@ -2070,16 +2070,25 @@ struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, vo
   return ret;
 }
 
-/* The EOF dispatch below is scoped to uWS HTTP server sockets: their
- * context's onEnd owns the EOF (premature-EOF clientError
- * HPE_INVALID_EOF_STATE, CONNECT/Upgrade half-open, pipeline drain after
- * FIN), and closing without dispatching silently skipped all of it for
- * node:https. Every other TLS socket kind predates the dispatch and
- * synthesizes its JS 'end' from the close event, so they keep the
- * historical force-close (dispatching for them strands sockets whose end
- * handler expects the transport to close underneath it). */
-static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+static int ssl_is_uws_http_tls(struct us_socket_t *s) {
   return us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS;
+}
+
+/* EOF dispatch only for kinds whose user layer consumes 'end' + honors
+ * allow_half_open (uWS HTTP server: their context's onEnd owns the EOF;
+ * Bun.connect/listen, which node:tls rides on). All other TLS kinds derive
+ * EOF from close and keep the historical force-close (dispatching for them
+ * strands sockets whose end handler expects the transport to close
+ * underneath it). */
+static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+  unsigned char kind = us_socket_kind(s);
+  if (kind == BUN_SOCKET_KIND_UWS_HTTP_TLS) {
+    return 1;
+  }
+  /* Mid-handshake EOF keeps the force-close so JS surfaces it as a failed
+   * handshake (ECONNRESET "socket hang up", like Node) not a clean 'end'. */
+  return kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS &&
+         s->ssl_handshake_state == HANDSHAKE_COMPLETED;
 }
 
 /* Deliver the plaintext EOF to the user layer once, like the plain-TCP path
@@ -2204,7 +2213,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
    * onWritable clears the teardown timeout armed at shutdown. node sockets
    * still get write-completion dispatch after a half-close in either
    * direction. */
-  if (ssl_wants_eof_dispatch(s) && us_internal_ssl_is_shut_down(s)) return s;
+  if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
     s = us_dispatch_writable(s);

@@ -77,7 +77,8 @@ export class HMRModule {
   /** ES Modules have different semantics for `.exports` and `.cjs` */
   esm: boolean;
   state: State = State.Pending;
-  /** The ESM namespace object. `null` if not yet initialized. */
+  /** The ESM namespace object. `null` until the module is instantiated; from
+   * then on it is a live object, even while the module still evaluates. */
   exports: any = null;
   /** For ESM, this is the converted CJS exports.
    *  For CJS, this is the `module` object. */
@@ -89,9 +90,13 @@ export class HMRModule {
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
    * Unused for CJS
+   *
+   * Stays `null` until the module evaluates, which is after its dependencies
+   * load.
    */
   imports: HMRModule[] | any[] | null = null;
-  /** Assignned by an ESM module's load function immediately.
+  /** Assigned by an ESM module's load function. A two-phase module assigns it
+   * while it instantiates, which is before `imports` is filled in.
    * HTML files do not emit a store to this field */
   updateImport: ((exports: any) => void)[] | null = null;
   /** When calling `import.meta.hot.dispose` */
@@ -272,13 +277,21 @@ HMRModule.prototype.indirectHot = new Proxy({}, {
 });
 
 // TODO: This function is currently recursive.
-export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
+export function loadModuleSync(
+  id: Id,
+  isUserDynamic: boolean,
+  importer: HMRModule | null,
+  importIndex?: number,
+): HMRModule {
   // First, try and re-use an existing module.
   let mod = registry.get(id);
   if (mod) {
     if (mod.state === State.Error) throw mod.failure;
     if (mod.state === State.Stale) {
       mod.state = State.Pending;
+      // The bindings of the previous evaluation take no part in this one.
+      mod.imports = null;
+      mod.updateImport = null;
       isUserDynamic = false;
     } else {
       if (importer) {
@@ -352,9 +365,9 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
 
     // Two-phase load. The load function is a generator: the first resume
-    // instantiates the module (hoisted function declarations and the
-    // `hmr.exports` object exist after it), the second resume evaluates the
-    // body. Instantiation happens before the dependencies load, so a module
+    // instantiates the module (hoisted function declarations, `hmr.updateImport`
+    // and the `hmr.exports` object exist after it), the second resume evaluates
+    // the body. Instantiation happens before the dependencies load, so a module
     // in an import cycle reads this module's namespace object, not `null`.
     try {
       const gen = load(mod) as ModuleLoadGenerator;
@@ -362,6 +375,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       gen.next();
       if (mod.exports === exportsBefore) mod.exports = {};
       const lateStars = mergeStarExports(mod, stars);
+      bindImportOfImporterOnStack(importer, importIndex, mod);
       const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
       if (lateStars) mergeLateStarExports(mod, lateStars);
       mod.imports = depsList.map(getEsmExports);
@@ -394,6 +408,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   id: Id,
   isUserDynamic: IsUserDynamic,
   importer: HMRModule | null,
+  importIndex?: number,
 ): (IsUserDynamic extends true ? null : never) | Promise<HMRModule> | HMRModule {
   // First, try and re-use an existing module.
   let mod = registry.get(id)!;
@@ -402,6 +417,9 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (state === State.Error) throw mod.failure;
     if (state === State.Stale) {
       mod.state = State.Pending;
+      // The bindings of the previous evaluation take no part in this one.
+      mod.imports = null;
+      mod.updateImport = null;
       isUserDynamic = false as IsUserDynamic;
     } else {
       if (importer) {
@@ -478,10 +496,15 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
     if (selfIsAsync) {
       // Top-level await keeps the one-phase form: an async load function,
-      // because a generator cannot suspend on `await`.
+      // because a generator cannot suspend on `await`. Its namespace object
+      // exists only after its body ends. Until then a module in an import
+      // cycle with it reads an empty object, not `null`, and `patchImporters`
+      // rebinds that importer once this module loads.
       let list: (HMRModule | Promise<HMRModule>)[];
       let isAsync: boolean;
       try {
+        mod.exports = {};
+        bindImportOfImporterOnStack(importer, importIndex, mod);
         ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
       } catch (e) {
         mod.state = State.Error;
@@ -524,6 +547,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       gen.next();
       if (mod.exports === exportsBefore) mod.exports = {};
       lateStars = mergeStarExports(mod, stars);
+      bindImportOfImporterOnStack(importer, importIndex, mod);
       ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
     } catch (e) {
       mod.state = State.Error;
@@ -556,10 +580,10 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
 /** One-phase load of a module with top-level await. The star re-exports
  * merge after the body assigns the exports object. The dependencies are
- * loaded by then, so both merge halves run back to back. */
+ * loaded by then, so both merge halves run back to back. A body without
+ * exports leaves the empty object that `loadModuleAsync` installed. */
 function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], stars: Id[], modules: HMRModule[]) {
   try {
-    const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
     const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
     const p = load(mod) as Promise<void> | undefined;
@@ -568,7 +592,6 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], stars: Id[]
       return p.then(
         () => {
           mod.state = State.Loaded;
-          if (mod.exports === exportsBefore) mod.exports = {};
           const lateStars = mergeStarExports(mod, stars);
           if (lateStars) mergeLateStarExports(mod, lateStars);
           mod.cjs = null;
@@ -582,7 +605,6 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], stars: Id[]
         },
       );
     }
-    if (mod.exports === exportsBefore) mod.exports = {};
     const lateStars = mergeStarExports(mod, stars);
     if (lateStars) mergeLateStarExports(mod, lateStars);
     mod.cjs = null;
@@ -594,6 +616,22 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], stars: Id[]
     mod.failure = e;
     throw e;
   }
+}
+
+/** The importer is on the stack while its dependency instantiates: the body
+ * of the importer has not bound its imports yet. A function of the importer
+ * that the body of the dependency calls, as happens in an import cycle, must
+ * already see the namespace object. So the binding is made here, the way the
+ * ESM link binds every import before any module evaluates. An importer with
+ * top-level await, or a CommonJS importer, has no `updateImport` yet and
+ * binds its imports itself. */
+function bindImportOfImporterOnStack(
+  importer: HMRModule | null,
+  importIndex: number | undefined,
+  dependency: HMRModule,
+) {
+  if (importer === null || importIndex === undefined) return;
+  importer.updateImport?.[importIndex](dependency.exports);
 }
 
 /** Evaluation half of a two-phase load. The generator was already resumed
@@ -723,7 +761,7 @@ function mergeLateStarExports(mod: HMRModule, lateIds: Id[]) {
   }
 }
 
-type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule) => R;
+type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule, importIndex: number) => R;
 // TODO: This function is currently recursive.
 function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   parent: HMRModule,
@@ -739,7 +777,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     DEBUG.ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
     DEBUG.ASSERT(typeof deps[i + 1] === "number");
-    const promiseOrModule = enqueueModuleLoad(dep, false, parent);
+    const promiseOrModule = enqueueModuleLoad(dep, false, parent, list.length);
     list.push(promiseOrModule);
 
     const unloadedModule = unloadedModuleRegistry[dep];
@@ -1025,10 +1063,13 @@ function patchImporters(mod: HMRModule) {
   const { importers } = mod;
   const exports = getEsmExports(mod);
   for (const importer of importers) {
-    if (!importer.esm || !importer.updateImport) continue;
-    const index = importer.imports!.indexOf(mod);
+    // `updateImport` is assigned during instantiation, `imports` only just
+    // before evaluation, so an importer can be instantiated but not linked
+    // yet. It reads the namespace object when it evaluates.
+    if (!importer.esm || !importer.updateImport || !importer.imports) continue;
+    const index = importer.imports.indexOf(mod);
     if (index === -1) continue; // require or dynamic import
-    importer.updateImport![index](exports);
+    importer.updateImport[index](exports);
   }
 }
 

@@ -80,7 +80,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
-            let mut exports_assignment: Option<Stmt> = None;
+            let mut instantiate_stmts: Vec<Stmt> = Vec::new();
             // SAFETY: see `parts` raw-pointer note above.
             for part in unsafe { (*parts).iter() } {
                 let part_stmts: &[Stmt] = part.stmts.slice();
@@ -90,19 +90,20 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     part_stmts,
                     arena,
                     &mut ast,
-                    &mut exports_assignment,
+                    &mut instantiate_stmts,
                 ) {
                     return PrintResult::Err(err.into());
                 }
             }
 
-            // Two-phase ESM: the exports assignment and a `yield` go first.
-            // See the doc comment on `convert_stmts_for_chunk_for_dev_server`.
+            // Two-phase ESM: the instantiation statements and a `yield` go
+            // first. See the doc comment on
+            // `convert_stmts_for_chunk_for_dev_server`.
             let two_phase = is_two_phase_esm(&ast);
             let phase_stmts_len = if two_phase {
-                1 + usize::from(exports_assignment.is_some())
+                instantiate_stmts.len() + 1
             } else {
-                debug_assert!(exports_assignment.is_none());
+                debug_assert!(instantiate_stmts.is_empty());
                 0
             };
             let main_stmts_len = phase_stmts_len
@@ -112,9 +113,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             stmts.all_stmts.reserve(all_stmts_len);
             if two_phase {
-                if let Some(stmt) = exports_assignment {
-                    stmts.all_stmts.push(stmt);
-                }
+                stmts.all_stmts.extend_from_slice(&instantiate_stmts);
                 stmts.all_stmts.push(Stmt::allocate_expr(
                     temp_arena,
                     Expr::init(E::Yield::default(), bun_ast::Loc::EMPTY),

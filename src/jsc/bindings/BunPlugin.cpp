@@ -666,8 +666,6 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                                 moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
-                            // Keep the synthesized default (see generateObjectModuleSourceCode) in sync
-                            // with the new exports object. A no-op when the module has no default binding.
                             if (!hasDefault) {
                                 moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, object);
                                 RETURN_IF_EXCEPTION(scope, {});

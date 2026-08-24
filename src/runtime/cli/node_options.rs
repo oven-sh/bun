@@ -1,5 +1,4 @@
-//! `NODE_OPTIONS` parsing, mirroring `ParseNodeOptionsEnvVar` in Node's
-//! `src/node_options.cc`.
+//! `NODE_OPTIONS` parsing; mirrors `ParseNodeOptionsEnvVar` in Node's `src/node_options.cc`.
 
 use bstr::BStr;
 use bun_core::{Global, Output, strings};
@@ -79,8 +78,7 @@ fn normalize(flag: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-/// Node's `kAllowedInEnvvar` set, sorted. Regenerate with:
-/// `node -e '[...process.allowedNodeEnvironmentFlags].sort().forEach(f => console.log(f))'`
+/// Sorted `[...process.allowedNodeEnvironmentFlags]` from Node (its `kAllowedInEnvvar` set).
 static ALLOWED: &[&[u8]] = &[
     b"--abort-on-uncaught-exception",
     b"--addons",
@@ -430,7 +428,6 @@ fn fail_tokenize(detail: &str) -> ! {
 }
 
 /// Unknown flags warn once; tokenizer errors and a preload flag with no value exit 9.
-/// Caller checks the env var is set before calling, so this stays off the hot path.
 #[cold]
 #[inline(never)]
 pub fn parse(raw: &[u8]) -> Parsed {

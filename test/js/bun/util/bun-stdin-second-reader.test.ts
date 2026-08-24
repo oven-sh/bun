@@ -76,11 +76,14 @@ test.concurrent.skipIf(!isWindows)(
       process.exit(0);
     `);
     feed(proc, "first");
-    const lines = await readLines(proc, line => {
-      if (line === "r2 EBUSY open") feed(proc, "second");
-      if (line === "r3 opened") feed(proc, "third");
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [lines, stderr, exitCode] = await Promise.all([
+      readLines(proc, line => {
+        if (line === "r2 EBUSY open") feed(proc, "second");
+        if (line === "r3 opened") feed(proc, "third");
+      }),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
     expect(stderr).toBe("");
     expect(lines).toEqual(["r1 first", "r2 EBUSY open", "r1 second", "r3 opened", "r3 third"]);
     expect(exitCode).toBe(0);
@@ -106,10 +109,13 @@ test.concurrent.skipIf(!isWindows)(
       });
     `);
     feed(proc, "first");
-    const lines = await readLines(proc, line => {
-      if (line === "r2 EBUSY open") feed(proc, "second");
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [lines, stderr, exitCode] = await Promise.all([
+      readLines(proc, line => {
+        if (line === "r2 EBUSY open") feed(proc, "second");
+      }),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
     expect(stderr).toBe("");
     expect(lines).toEqual(["stdin first", "r2 EBUSY open", "stdin second"]);
     expect(exitCode).toBe(0);
@@ -133,10 +139,13 @@ test.concurrent.skipIf(!isWindows)(
       process.exit(0);
     `);
     feed(proc, "first");
-    const lines = await readLines(proc, line => {
-      if (line === "net error") feed(proc, "second");
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [lines, stderr, exitCode] = await Promise.all([
+      readLines(proc, line => {
+        if (line === "net error") feed(proc, "second");
+      }),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
     expect(stderr).toBe("");
     expect(lines).toEqual(["r1 first", "net error", "r1 second"]);
     expect(exitCode).toBe(0);

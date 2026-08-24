@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -527,8 +527,14 @@ describe("web worker", () => {
         (function burst() { for (let i = 0; i < 2000; i++) { p.n++; postMessage(p) } setImmediate(burst) })()`;
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       let received = 0;
-      w.onmessage = () => received++;
-      // Three timer turns while the flood is running is the property; not the timing.
+      const flooding = Promise.withResolvers<void>();
+      w.onmessage = () => {
+        received++;
+        flooding.resolve();
+      };
+      // Wait for the flood to reach us (worker boot is slow in debug builds).
+      // Three timer turns while it is running is the property; not the timing.
+      await flooding.promise;
       for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
       expect(received).toBeGreaterThan(0);
       w.terminate();
@@ -590,7 +596,9 @@ describe("web worker", () => {
           const got = [];
           self.onmessage = e => { got.push(e.data); if (e.data === "last") postMessage(got); };`,
       });
-      for (let i = 0; i < 3; i++) {
+      // Each round transpiles big.js from scratch, which takes well over a
+      // second in a debug build; one round then fits the test budget.
+      for (let i = 0; i < (isDebug ? 1 : 3); i++) {
         const w = new Worker(path.join(String(dir), "worker.js"), { preload: [path.join(String(dir), "preload.js")] });
         w.postMessage("first");
         w.postMessage("second");
@@ -637,7 +645,7 @@ describe("web worker", () => {
              let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
              postMessage("busy")\`;
            const url = URL.createObjectURL(new Blob([src]));
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+           for (let r = 0; r < ${isDebug ? 3 : 12}; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
              const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
            console.log("PASS");`,
           path.join(String(dir), "f.bin"),

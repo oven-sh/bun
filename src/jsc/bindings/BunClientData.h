@@ -265,6 +265,11 @@ public:
     Bun::StrongRootBlock* m_strongRootBlockCursor { nullptr };
     JSC::Structure* m_strongRootBlockStructure { nullptr };
 
+    // Zig::GlobalObjects on this VM with a callable user Error.prepareStackTrace (ShadowRealm and
+    // `bun test --isolate` globals share the VM). VM::keepsErrorStackFramesAlive() is set while it
+    // is non-zero. Maintained by Zig::GlobalObject::setHasUserPrepareStackTrace.
+    unsigned realmsWithUserPrepareStackTrace { 0 };
+
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
     // avoid pulling ZigSourceProvider.h into this header; the cache class

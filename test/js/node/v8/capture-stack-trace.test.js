@@ -1294,4 +1294,20 @@ describe("Error.prepareStackTrace when a GC runs before the first .stack read", 
       exitCode: 0,
     });
   });
+
+  test("another realm on the same VM resetting its own formatter does not affect this one", async () => {
+    // A ShadowRealm gets its own Zig::GlobalObject on the same VM, with its own Error.prepareStackTrace.
+    using dir = tempDir("prepare-stack-trace-gc-realms", {
+      "fixture.mjs": [
+        `Error.prepareStackTrace = (error, sites) => "custom:" + error.message;`,
+        `const realm = new ShadowRealm();`,
+        `realm.evaluate("Error.prepareStackTrace = (error, sites) => 'shadow:' + error.message; Error.prepareStackTrace = undefined; 0");`,
+        `const error = new Function("return new Error('main')")();`,
+        `Bun.gc(true);`,
+        `console.log(JSON.stringify({ stack: error.stack }));`,
+      ].join("\n"),
+    });
+
+    expect(await runFixture(dir, [])).toEqual({ result: { stack: "custom:main" }, stderr: "", exitCode: 0 });
+  });
 });

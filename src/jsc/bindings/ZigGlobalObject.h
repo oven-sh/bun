@@ -429,6 +429,10 @@ public:
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 
+    // Whether this realm has a callable user Error.prepareStackTrace. Counted per VM in
+    // JSVMClientData::realmsWithUserPrepareStackTrace, which drives VM::keepsErrorStackFramesAlive().
+    void setHasUserPrepareStackTrace(bool);
+
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 
@@ -826,6 +830,7 @@ public:
 
 private:
     InFlightRejections* m_rejectedPromisesBeingProcessed { nullptr };
+    bool m_hasUserPrepareStackTrace { false };
 };
 
 class EvalGlobalObject : public GlobalObject {

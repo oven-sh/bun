@@ -1015,6 +1015,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
+    // A `bun test --isolate` global that dies with a formatter installed must not keep the VM flag set.
+    setHasUserPrepareStackTrace(false);
     m_scriptExecutionContext->globalObjectDestroyed();
     m_scriptExecutionContext->deref();
 }
@@ -1099,13 +1101,26 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
     } else {
         thisObject->m_errorConstructorPrepareStackTraceValue.set(vm, thisObject, value);
     }
+    thisObject->setHasUserPrepareStackTrace(isUserValue && value.isCallable());
+
+    return true;
+}
+
+void GlobalObject::setHasUserPrepareStackTrace(bool value)
+{
+    if (m_hasUserPrepareStackTrace == value)
+        return;
+    m_hasUserPrepareStackTrace = value;
 
     // The callback runs at the first .stack read and needs the error's frames. JSC holds them
     // weakly and renders the stack string in the GC end phase once one dies, where no JS can run.
-    // Keep them alive while a user formatter is installed, as V8 does.
-    vm.setKeepsErrorStackFramesAlive(isUserValue && value.isCallable());
-
-    return true;
+    // Keep them alive while any realm on this VM has a user formatter, as V8 does.
+    auto& count = WebCore::clientData(vm())->realmsWithUserPrepareStackTrace;
+    if (value)
+        count++;
+    else
+        count--;
+    vm().setKeepsErrorStackFramesAlive(count > 0);
 }
 
 #pragma mark - Globals

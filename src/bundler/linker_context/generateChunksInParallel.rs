@@ -1294,8 +1294,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    for (chunk_index, &position) in chunk_load_order(c, chunks).iter().enumerate() {
-        output_files.output_files[chunk_index].load_order = position;
+    // Only `StandaloneModuleGraph::to_bytes` reads `load_order`.
+    if is_compile {
+        for (chunk_index, &position) in chunk_load_order(c, chunks).iter().enumerate() {
+            output_files.output_files[chunk_index].load_order = position;
+        }
     }
 
     if is_standalone {

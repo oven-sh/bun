@@ -42,7 +42,11 @@ describe("bundler", () => {
       onAfterBundle(api) {
         const payload = readFileSync(api.outfile).toString("latin1");
         const order = ["entry", "lazy1", "lazy2", "shared", "shared2"]
-          .map(name => ({ name, offset: payload.lastIndexOf(`mark:${name}"`) }))
+          .map(name => {
+            const offset = payload.lastIndexOf(`mark:${name}"`);
+            expect(offset, `marker mark:${name} not found in the payload`).toBeGreaterThanOrEqual(0);
+            return { name, offset };
+          })
           .sort((a, b) => a.offset - b.offset)
           .map(m => m.name);
         expect(order).toEqual(["shared", "entry", "shared2", "lazy1", "lazy2"]);

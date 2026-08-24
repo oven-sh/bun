@@ -220,8 +220,7 @@ pub struct BundlerOptions {
     pub module_preload: bool,
 =======
     pub min_chunk_size: u64,
-    /// Explicit browser targets for CSS downleveling (the `--css-target`
-    /// flag). `None` means derive the CSS targets from the build target.
+    /// The `--css-target` flag. `None`: derive the CSS targets from the build target.
     pub css_target: Option<bun_css::Browsers>,
 >>>>>>> f27492c8a4 (Bun.build: add cssTarget option to set CSS browser targets)
     pub bake: bool,

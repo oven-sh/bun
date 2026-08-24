@@ -929,7 +929,20 @@ pub fn path_for_resolution<'a>(
             // borrow can't be held across it. Copy the name out first.
             let package_name = this.lockfile.str(&package_name_).to_vec();
 
-            path_for_cached_npm_path(this, buf, &package_name, npm.version)
+            let flat_len = path_for_cached_npm_path(this, buf, &package_name, npm.version)?.len();
+
+            #[cfg(not(windows))]
+            if let Some(store_len) = super::native_addon_links::maybe_store_path(
+                this,
+                package_id,
+                &package_name,
+                npm.version,
+                buf,
+            ) {
+                return Ok(&mut buf.0[..store_len]);
+            }
+
+            Ok(&mut buf.0[..flat_len])
         }
         _ => Ok(&mut buf.0[..0]),
     }

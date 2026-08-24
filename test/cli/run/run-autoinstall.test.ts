@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { join } from "path";
 
 //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
@@ -83,6 +85,154 @@ test("auto-install in a project whose package.json has a name and version", asyn
   expect(requests).toContain("/pkg-that-does-not-exist-anywhere");
   expect(stderr).toContain("Cannot find package 'pkg-that-does-not-exist-anywhere'");
   expect(exitCode).toBe(1);
+});
+
+// Minimal ustar + gzip so the local registry can serve real tarballs without
+// a binary fixture. All entry names stay under the 100-byte ustar limit.
+function tarEntry(name: string, body: Buffer): Buffer[] {
+  const header = Buffer.alloc(512, 0);
+  header.write(name, 0, 100, "utf8");
+  const octal = (n: number, width: number) => n.toString(8).padStart(width - 1, "0") + "\0";
+  header.write(octal(0o644, 8), 100); // mode
+  header.write(octal(0, 8), 108); // uid
+  header.write(octal(0, 8), 116); // gid
+  header.write(octal(body.length, 12), 124); // size
+  header.write(octal(0, 12), 136); // mtime
+  header.fill(" ", 148, 156); // checksum placeholder
+  header.write("0", 156); // regular file
+  header.write("ustar\0", 257);
+  header.write("00", 263);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += header[i];
+  header.write(octal(sum, 8), 148);
+  const pad = Buffer.alloc((512 - (body.length % 512)) % 512, 0);
+  return [header, body, pad];
+}
+
+function buildTarball(files: Record<string, string>): { tgz: Buffer; shasum: string; integrity: string } {
+  const blocks: Buffer[] = [];
+  for (const [path, body] of Object.entries(files)) {
+    blocks.push(...tarEntry(`package/${path}`, Buffer.from(body)));
+  }
+  blocks.push(Buffer.alloc(1024, 0)); // end-of-archive
+  const tgz = gzipSync(Buffer.concat(blocks));
+  return {
+    tgz,
+    shasum: createHash("sha1").update(tgz).digest("hex"),
+    integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
+  };
+}
+
+// Prebuilt native addons locate sibling shared libraries with
+// $ORIGIN-relative RPATH entries such as "$ORIGIN/../../lib-pkg/lib", which
+// assume a node_modules layout. Auto-install runs packages out of flat cache
+// dirs ("name@version@@@N"), so every candidate used to miss (#40269).
+// Packages with a .node file must resolve to a node_modules-shaped view
+// whose siblings link to their dependencies' cache dirs.
+test.skipIf(isWindows)("auto-install native addon packages resolve $ORIGIN-shaped RPATH siblings", async () => {
+  const tarballs: Record<string, { tgz: Buffer; shasum: string; integrity: string }> = {
+    "lib-pkg": buildTarball({
+      "package.json": JSON.stringify({ name: "lib-pkg", version: "1.2.3" }),
+      "lib/libfake.so": "not really a shared library\n",
+    }),
+    "addon-pkg": buildTarball({
+      "package.json": JSON.stringify({
+        name: "addon-pkg",
+        version: "1.0.0",
+        main: "index.js",
+        dependencies: { "lib-pkg": "^1.2.0" },
+      }),
+      "index.js": "module.exports = require.resolve('./lib/fake.node');\n",
+      "lib/fake.node": "not really a native addon\n",
+    }),
+  };
+  const versions: Record<string, string> = { "lib-pkg": "1.2.3", "addon-pkg": "1.0.0" };
+
+  using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const pathname = new URL(req.url).pathname;
+      const tgz = pathname.match(/^\/tarballs\/(.+)\.tgz$/);
+      if (tgz) {
+        const name = tgz[1];
+        if (!tarballs[name]) return new Response("not found", { status: 404 });
+        return new Response(tarballs[name].tgz, {
+          headers: { "content-type": "application/octet-stream" },
+        });
+      }
+      const name = pathname.slice(1);
+      if (!tarballs[name]) return new Response("not found", { status: 404 });
+      const version = versions[name];
+      const pkg = JSON.parse(
+        JSON.stringify({
+          name,
+          version,
+          dependencies: name === "addon-pkg" ? { "lib-pkg": "^1.2.0" } : undefined,
+        }),
+      );
+      pkg.dist = {
+        shasum: tarballs[name].shasum,
+        integrity: tarballs[name].integrity,
+        tarball: `http://127.0.0.1:${registry.port}/tarballs/${name}.tgz`,
+      };
+      return Response.json({
+        name,
+        "dist-tags": { latest: version },
+        versions: { [version]: pkg },
+      });
+    },
+  });
+
+  using dir = tempDir("autoinstall-addon-links", {
+    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+    "check.js": `
+      const fs = require("fs");
+      const path = require("path");
+      const addonPath = require("addon-pkg");
+      const origin = path.dirname(fs.realpathSync(addonPath));
+      // The same walk the dynamic linker does for the RPATH entry
+      // "$ORIGIN/../../lib-pkg/lib": plain string concatenation, so the
+      // kernel resolves ".." through the real parent dirs, exactly like
+      // dlopen. No path.join, which would collapse ".." textually.
+      const found = fs.existsSync(origin + "/../../lib-pkg/lib/libfake.so");
+      const shaped = origin.includes(path.sep + "node_modules" + path.sep + "addon-pkg" + path.sep);
+      console.log(JSON.stringify({ found, shaped }));
+    `,
+  });
+  const env = {
+    ...bunEnv,
+    BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+  };
+
+  // First run populates the cache through the local registry.
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.js"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  // Second run resolves from the warm cache (cached manifests, no lockfile
+  // edge for lib-pkg), which is the layout every pre-existing cache has.
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.js"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(JSON.parse(stdout)).toEqual({ found: true, shaped: true });
+    expect(exitCode).toBe(0);
+  }
 });
 
 test("--install=fallback to install missing packages", async () => {

@@ -286,6 +286,7 @@ pub(crate) fn scan_imports_and_exports(
                     export_star_records: &*export_star_import_records,
                     output_format,
                     wrap_stack: Vec::new(),
+                    export_star_stack: Vec::new(),
                 }
             };
             for source_index_ in &reachable {
@@ -303,7 +304,7 @@ pub(crate) fn scan_imports_and_exports(
 
                 if dependency_wrapper.export_star_records[id].len() > 0 {
                     dependency_wrapper.export_star_map.clear();
-                    let _ = dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
+                    dependency_wrapper.mark_dynamic_exports_due_to_export_star(source_index);
                 }
 
                 // Even if the output file is CommonJS-like, we may still need to wrap
@@ -350,7 +351,7 @@ pub(crate) fn scan_imports_and_exports(
                             import_records_list,
                             export_star_records: export_star_import_records,
                             imports_to_bind: imports_to_bind_list,
-                            source_index_stack: Vec::with_capacity(32),
+                            stack: Vec::with_capacity(32),
                             exports_kind,
                             named_exports,
                         });
@@ -1150,14 +1151,90 @@ struct DependencyWrapper<'a> {
     export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
     wrap_stack: Vec<IndexInt>,
+    export_star_stack: Vec<ExportStarFrame>,
+}
+
+/// One file on the path of an explicit-stack walk over the `export *` graph:
+/// the file and how many of its `export_star_import_records` have been
+/// followed so far.
+struct ExportStarFrame {
+    source_index: IndexInt,
+    next_record: usize,
+}
+
+/// What the recursive form of `mark_dynamic_exports_due_to_export_star`
+/// returned immediately upon entering a file, if anything.
+enum ExportStarEntry {
+    /// The file already has dynamic exports (`true`).
+    Dynamic,
+    /// The file was already visited from this root (`false`).
+    Visited,
+    /// The file's own export stars need to be followed.
+    Pushed,
 }
 
 impl DependencyWrapper<'_> {
-    fn has_dynamic_exports_due_to_export_star(&mut self, source_index: IndexInt) -> bool {
+    /// Marks `source_index` as `EsmWithDynamicFallback` if it transitively
+    /// `export *`s from a file whose exports are not statically analyzable
+    /// (CommonJS, or an unresolved external `export *`), along with every file
+    /// on the `export *` path to that file.
+    ///
+    /// Explicit-stack DFS (was per-edge recursive, one call per `export *`).
+    /// In the recursive form, finding such a file returned `true` through
+    /// every frame on the way back up, and each of those frames marked its
+    /// file: the frames on the stack at that moment are exactly the files to
+    /// mark. A file whose export stars are exhausted without finding one
+    /// returned `false`, which is popping it.
+    fn mark_dynamic_exports_due_to_export_star(&mut self, source_index: IndexInt) {
+        debug_assert!(self.export_star_stack.is_empty());
+        if !matches!(
+            self.enter_export_star(source_index),
+            ExportStarEntry::Pushed
+        ) {
+            return;
+        }
+
+        while let Some(frame) = self.export_star_stack.last_mut() {
+            let source_index = frame.source_index;
+            let Some(&id) = self.export_star_records[source_index as usize].get(frame.next_record)
+            else {
+                self.export_star_stack.pop();
+                continue;
+            };
+            frame.next_record += 1;
+
+            // This file has dynamic exports if the exported imports are from a file
+            // that either has dynamic exports directly or transitively by itself
+            // having an export star from a file with dynamic exports.
+            let kind = self.entry_point_kinds[source_index as usize];
+            let rec_source_index =
+                self.import_records[source_index as usize].as_slice()[id as usize].source_index;
+            let found_dynamic = if rec_source_index.is_invalid() {
+                !kind.is_entry_point() || !self.output_format.keep_es6_import_export_syntax()
+            } else if rec_source_index.get() != source_index {
+                matches!(
+                    self.enter_export_star(rec_source_index.get()),
+                    ExportStarEntry::Dynamic
+                )
+            } else {
+                false
+            };
+            if found_dynamic {
+                for frame in self.export_star_stack.drain(..) {
+                    self.exports_kind[frame.source_index as usize] =
+                        ExportsKind::EsmWithDynamicFallback;
+                }
+                return;
+            }
+        }
+    }
+
+    fn enter_export_star(&mut self, source_index: IndexInt) -> ExportStarEntry {
         // Terminate the traversal now if this file already has dynamic exports
-        let export_kind = self.exports_kind[source_index as usize];
-        match export_kind {
-            ExportsKind::Cjs | ExportsKind::EsmWithDynamicFallback => return true,
+        match self.exports_kind[source_index as usize] {
+            ExportsKind::Cjs | ExportsKind::EsmWithDynamicFallback => {
+                return ExportStarEntry::Dynamic;
+            }
             _ => {}
         }
 
@@ -1167,28 +1244,14 @@ impl DependencyWrapper<'_> {
             .get_or_put(source_index)
             .expect("unreachable");
         if has_visited.found_existing {
-            return false;
+            return ExportStarEntry::Visited;
         }
 
-        for id in self.export_star_records[source_index as usize].iter() {
-            // This file has dynamic exports if the exported imports are from a file
-            // that either has dynamic exports directly or transitively by itself
-            // having an export star from a file with dynamic exports.
-            let kind = self.entry_point_kinds[source_index as usize];
-            let rec_source_index =
-                self.import_records[source_index as usize].as_slice()[*id as usize].source_index;
-            if (rec_source_index.is_invalid()
-                && (!kind.is_entry_point() || !self.output_format.keep_es6_import_export_syntax()))
-                || (rec_source_index.is_valid()
-                    && rec_source_index.get() != source_index
-                    && self.has_dynamic_exports_due_to_export_star(rec_source_index.get()))
-            {
-                self.exports_kind[source_index as usize] = ExportsKind::EsmWithDynamicFallback;
-                return true;
-            }
-        }
-
-        false
+        self.export_star_stack.push(ExportStarFrame {
+            source_index,
+            next_record: 0,
+        });
+        ExportStarEntry::Pushed
     }
 
     fn wrap(&mut self, source_index: IndexInt) {
@@ -1235,7 +1298,7 @@ impl DependencyWrapper<'_> {
 // ──────────────────────────────────────────────────────────────────────────
 struct ExportStarContext<'a> {
     import_records_list: *mut [ImportRecordList<'a>],
-    source_index_stack: Vec<IndexInt>,
+    stack: Vec<ExportStarFrame>,
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
@@ -1243,26 +1306,38 @@ struct ExportStarContext<'a> {
 }
 
 impl<'a> ExportStarContext<'a> {
-    /// Recursively merge re-exports from `source_index` into
-    /// `resolved_exports[target_id]`.
+    /// Merge the re-exports reachable through `source_index`'s `export *`
+    /// statements into `resolved_exports[target_id]`.
+    ///
+    /// Explicit-stack DFS (was per-edge recursive, one call per `export *`).
+    /// `stack` is the chain of files being followed from `source_index`, which
+    /// the recursive form kept as a separate list: a file already on it is a
+    /// cycle and is not entered again, and a real export in any file on it
+    /// shadows the re-exports found below.
     fn add_exports(
         &mut self,
         resolved_exports: *mut [ResolvedExports],
         target_id: usize,
         source_index: IndexInt,
     ) {
-        // Avoid infinite loops due to cycles in the export star graph
-        for i in self.source_index_stack.iter() {
-            if *i == source_index {
-                return;
-            }
-        }
-        self.source_index_stack.push(source_index);
-        let stack_end_pos = self.source_index_stack.len();
+        debug_assert!(self.stack.is_empty());
+        self.stack.push(ExportStarFrame {
+            source_index,
+            next_record: 0,
+        });
 
-        for import_id in col_ref!(self.export_star_records)[source_index as usize].iter() {
+        while let Some(frame) = self.stack.last_mut() {
+            let source_index = frame.source_index;
+            let Some(&import_id) =
+                col_ref!(self.export_star_records)[source_index as usize].get(frame.next_record)
+            else {
+                self.stack.pop();
+                continue;
+            };
+            frame.next_record += 1;
+
             let other_source_index = col_ref!(self.import_records_list)[source_index as usize]
-                .as_slice()[*import_id as usize]
+                .as_slice()[import_id as usize]
                 .source_index
                 .get();
 
@@ -1302,8 +1377,10 @@ impl<'a> ExportStarContext<'a> {
                 }
 
                 // This export star is shadowed if any file in the stack has a matching real named export
-                for prev in &self.source_index_stack[0..stack_end_pos] {
-                    if col_ref!(self.named_exports)[*prev as usize].contains(alias_slice) {
+                for prev in self.stack.iter() {
+                    if col_ref!(self.named_exports)[prev.source_index as usize]
+                        .contains(alias_slice)
+                    {
                         continue 'next_export;
                     }
                 }
@@ -1352,12 +1429,19 @@ impl<'a> ExportStarContext<'a> {
                 }
             }
 
-            // Search further through this file's export stars
-            self.add_exports(resolved_exports, target_id, other_source_index);
+            // Search further through this file's export stars, unless doing so
+            // would loop: avoid infinite loops due to cycles in the export star graph
+            if !self
+                .stack
+                .iter()
+                .any(|frame| frame.source_index == other_source_index)
+            {
+                self.stack.push(ExportStarFrame {
+                    source_index: other_source_index,
+                    next_record: 0,
+                });
+            }
         }
-
-        // Scope-end truncation (no early returns after the push).
-        self.source_index_stack.truncate(stack_end_pos - 1);
     }
 }
 
@@ -1470,9 +1554,18 @@ mod __css_validation {
             range: bun_ast::Range,
         }
 
+        /// A class (`Ref` local to the CSS file `IndexInt`) on the explicit
+        /// stack of `Visitor::visit`.
+        #[derive(Clone, Copy)]
+        enum Frame {
+            Enter(IndexInt, bun_ast::Ref),
+            Leave(IndexInt, bun_ast::Ref),
+        }
+
         struct Visitor<'a, 'bump> {
             visited: ArrayHashMap<bun_ast::Ref, ()>,
             properties: StringArrayHashMap<PropertyInFile>,
+            stack: Vec<Frame>,
             all_import_records: *mut [ImportRecordList<'bump>],
             all_css_asts: *mut [CssCol],
             all_symbols: &'a symbol::Map,
@@ -1567,63 +1660,102 @@ mod __css_validation {
                 self.properties.clear_retaining_capacity();
             }
 
-            fn visit(&mut self, idx: IndexInt, ast: &BundlerStyleSheet, r#ref: bun_ast::Ref) {
-                if self.visited.contains(&r#ref) {
-                    return;
-                }
-                self.visited.put(r#ref, ()).expect("unreachable");
+            /// Every frame names a class of a file that has a CSS AST: the root
+            /// comes from `validate_css_import_composes`, and `Enter` only
+            /// pushes classes it looked up in the composed file's AST.
+            fn css_ast(&self, idx: IndexInt) -> &'a BundlerStyleSheet {
+                col_ref!(self.all_css_asts)[idx as usize]
+                    .as_deref()
+                    .expect("composes walk only reaches files with a CSS AST")
+            }
 
-                // This local name was in a style rule that
-                if let Some(composes) = ast.composes.get(&r#ref) {
-                    for compose in composes.composes.slice_const() {
-                        // is an import
-                        if let Some(from) = compose.from.as_ref() {
-                            if let Specifier::ImportRecordIndex(import_record_idx) = from {
-                                let record = &col_ref!(self.all_import_records)[idx as usize]
-                                    .as_slice()[*import_record_idx as usize];
-                                if record.source_index.is_invalid() {
-                                    continue;
-                                }
-                                // Read-only deref — recursion may revisit the
-                                // same allocation as `ast`, so bind shared.
-                                let Some(other_ast) = col_ref!(self.all_css_asts)
-                                    [record.source_index.get() as usize]
-                                    .as_deref()
-                                else {
-                                    continue;
-                                };
-                                for name in compose.names.slice() {
-                                    let name_v = name.v();
-                                    let Some(other_name) = other_ast.local_scope.get(name_v) else {
+            /// Records the properties of `root` and of everything it
+            /// (transitively) composes, warning when two files contribute the
+            /// same property.
+            ///
+            /// Explicit-stack DFS (was recursive, one call per composed class).
+            /// `Enter` pushes the composed classes in source order followed by
+            /// its own `Leave`, then reverses that tail so they pop in source
+            /// order, each one's subtree completing before the next pops, and
+            /// `Leave` last: the recursion's postorder, which is what decides
+            /// which style rule a conflicting property is first seen in.
+            fn visit(&mut self, idx: IndexInt, root: bun_ast::Ref) {
+                debug_assert!(self.stack.is_empty());
+                self.stack.push(Frame::Enter(idx, root));
+
+                while let Some(frame) = self.stack.pop() {
+                    let (idx, r#ref) = match frame {
+                        Frame::Leave(idx, r#ref) => {
+                            self.record_properties(idx, r#ref);
+                            continue;
+                        }
+                        Frame::Enter(idx, r#ref) => (idx, r#ref),
+                    };
+
+                    if self.visited.contains(&r#ref) {
+                        continue;
+                    }
+                    self.visited.put(r#ref, ()).expect("unreachable");
+
+                    let ast = self.css_ast(idx);
+                    let mark = self.stack.len();
+                    // This local name was in a style rule that
+                    if let Some(composes) = ast.composes.get(&r#ref) {
+                        for compose in composes.composes.slice_const() {
+                            // is an import
+                            if let Some(from) = compose.from.as_ref() {
+                                if let Specifier::ImportRecordIndex(import_record_idx) = from {
+                                    let record = &col_ref!(self.all_import_records)[idx as usize]
+                                        .as_slice()
+                                        [*import_record_idx as usize];
+                                    if record.source_index.is_invalid() {
+                                        continue;
+                                    }
+                                    let other_idx = record.source_index.get();
+                                    // Read-only deref: may be the same
+                                    // allocation as `ast`, so bind shared.
+                                    let Some(other_ast) =
+                                        col_ref!(self.all_css_asts)[other_idx as usize].as_deref()
+                                    else {
                                         continue;
                                     };
-                                    let other_name_ref =
-                                        other_name.ref_.to_real_ref(record.source_index.get());
-                                    self.visit(
-                                        record.source_index.get(),
-                                        other_ast,
-                                        other_name_ref,
-                                    );
+                                    for name in compose.names.slice() {
+                                        let name_v = name.v();
+                                        let Some(other_name) = other_ast.local_scope.get(name_v)
+                                        else {
+                                            continue;
+                                        };
+                                        self.stack.push(Frame::Enter(
+                                            other_idx,
+                                            other_name.ref_.to_real_ref(other_idx),
+                                        ));
+                                    }
+                                } else {
+                                    debug_assert!(matches!(from, Specifier::Global));
+                                    // Otherwise it is composed from the global scope.
+                                    //
+                                    // See comment above for why we are skipping checking this for now.
                                 }
                             } else {
-                                debug_assert!(matches!(from, Specifier::Global));
-                                // Otherwise it is composed from the global scope.
-                                //
-                                // See comment above for why we are skipping checking this for now.
-                            }
-                        } else {
-                            // inside this file
-                            for name in compose.names.slice() {
-                                let name_v = name.v();
-                                let Some(name_entry) = ast.local_scope.get(name_v) else {
-                                    continue;
-                                };
-                                self.visit(idx, ast, name_entry.ref_.to_real_ref(idx));
+                                // inside this file
+                                for name in compose.names.slice() {
+                                    let name_v = name.v();
+                                    let Some(name_entry) = ast.local_scope.get(name_v) else {
+                                        continue;
+                                    };
+                                    self.stack
+                                        .push(Frame::Enter(idx, name_entry.ref_.to_real_ref(idx)));
+                                }
                             }
                         }
                     }
+                    self.stack.push(Frame::Leave(idx, r#ref));
+                    self.stack[mark..].reverse();
                 }
+            }
 
+            fn record_properties(&mut self, idx: IndexInt, r#ref: bun_ast::Ref) {
+                let ast = self.css_ast(idx);
                 let Some(property_usage) = ast.local_properties.get(&r#ref) else {
                     return;
                 };
@@ -1663,6 +1795,7 @@ mod __css_validation {
         let mut visitor = Visitor {
             visited: ArrayHashMap::<bun_ast::Ref, ()>::default(),
             properties: StringArrayHashMap::<PropertyInFile>::default(),
+            stack: Vec::new(),
             all_import_records: import_records_list,
             all_css_asts,
             all_symbols: &this.graph.symbols,
@@ -1673,7 +1806,7 @@ mod __css_validation {
         };
         for local in root_css_ast.local_scope.values() {
             visitor.clear_retaining_capacity();
-            visitor.visit(index, root_css_ast, local.ref_.to_real_ref(index));
+            visitor.visit(index, local.ref_.to_real_ref(index));
         }
     }
 }

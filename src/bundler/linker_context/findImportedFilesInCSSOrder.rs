@@ -2,9 +2,9 @@ use crate::mal_prelude::*;
 use bstr::BStr;
 
 use bun_alloc::Arena;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, Range};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
-use bun_core::handle_oom;
+use bun_core::{StackCheck, handle_oom};
 
 use crate::Graph::Graph;
 use crate::bun_css::css_parser::BundlerCssRule;
@@ -72,6 +72,10 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// as far as "@layer" is concerned. So we may in some cases keep both the
 /// first and last locations and only write out the "@layer" information
 /// for the first location.
+///
+/// The traversal recurses once per `@import`, so an import chain deeper than
+/// the thread's stack allows is reported as an error on the bundler log and
+/// yields an empty order.
 pub(crate) fn find_imported_files_in_css_order<'a>(
     this: &'a mut LinkerContext,
     temp_arena: &'a Arena,
@@ -96,6 +100,18 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         has_external_import: bool,
         visited: Vec<Index>,
         order: Vec<CssImportOrder>,
+
+        stack_check: StackCheck,
+        /// The `@import` that could not be followed because `visit` recurses
+        /// once per `@import` and the thread's stack was nearly exhausted.
+        /// Once set, the walk unwinds without visiting anything else.
+        too_deep: Option<TooDeep>,
+    }
+
+    struct TooDeep {
+        importer: Index,
+        range: Range,
+        kind: ImportKind,
     }
 
     impl<'a> Visitor<'a> {
@@ -103,6 +119,32 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         fn input_file_pretty(&self, source_index: Index) -> &BStr {
             let sources = self.parse_graph.input_files.items_source();
             BStr::new(&sources[source_index.get() as usize].path.pretty)
+        }
+
+        /// Visits the file `record` (an `@import` or `composes` in `importer`)
+        /// resolved to. Returns false if the walk has been abandoned, in which
+        /// case the caller returns as well.
+        fn visit_import(
+            &mut self,
+            importer: Index,
+            record: &ImportRecord,
+            wrapping_conditions: &mut Vec<ImportConditions>,
+            wrapping_import_records: &mut Vec<ImportRecord>,
+        ) -> bool {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.too_deep = Some(TooDeep {
+                    importer,
+                    range: record.range,
+                    kind: record.kind,
+                });
+                return false;
+            }
+            self.visit(
+                record.source_index,
+                wrapping_conditions,
+                wrapping_import_records,
+            );
+            self.too_deep.is_none()
         }
 
         fn visit(
@@ -157,7 +199,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             // }
 
             // `visited.pop()` happens at the end of this function; the early
-            // return above intentionally skips it.
+            // return above intentionally skips it, and the `too_deep` returns
+            // below don't need it because the whole walk is discarded.
 
             // Iterate over the top-level "@import" rules
             let mut import_record_idx: usize = 0;
@@ -189,8 +232,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                                     &mut nested_import_records,
                                 ),
                             );
-                            self.visit(
-                                record.source_index,
+                            let followed = self.visit_import(
+                                source_index,
+                                record,
                                 &mut nested_conditions,
                                 wrapping_import_records,
                             );
@@ -198,14 +242,20 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // outer `wrapping_import_records` is), so it is uniquely
                             // owned here — drop it normally to free the buffer.
                             drop(nested_import_records);
+                            if !followed {
+                                return;
+                            }
                             import_record_idx += 1;
                             continue;
                         }
-                        self.visit(
-                            record.source_index,
+                        if !self.visit_import(
+                            source_index,
+                            record,
                             wrapping_conditions,
                             wrapping_import_records,
-                        );
+                        ) {
+                            return;
+                        }
                         import_record_idx += 1;
                         continue;
                     }
@@ -264,12 +314,16 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             // matter for these because the output order is explicitly undfened
             // in the specification.
             for record in self.all_import_records[source_index.get() as usize].as_slice() {
-                if record.kind == ImportKind::Composes && record.source_index.is_valid() {
-                    self.visit(
-                        record.source_index,
+                if record.kind == ImportKind::Composes
+                    && record.source_index.is_valid()
+                    && !self.visit_import(
+                        source_index,
+                        record,
                         wrapping_conditions,
                         wrapping_import_records,
-                    );
+                    )
+                {
+                    return;
                 }
             }
 
@@ -313,6 +367,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         all_import_records: all_import_records_slice,
         has_external_import: false,
         order: Vec::new(),
+        stack_check: StackCheck::init(),
+        too_deep: None,
     };
     let mut wrapping_conditions: Vec<ImportConditions> = Vec::new();
     let mut wrapping_import_records: Vec<ImportRecord> = Vec::new();
@@ -323,6 +379,33 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             &mut wrapping_conditions,
             &mut wrapping_import_records,
         );
+        if visitor.too_deep.is_some() {
+            break;
+        }
+    }
+
+    if let Some(TooDeep {
+        importer,
+        range,
+        kind,
+    }) = visitor.too_deep
+    {
+        let importer = &this.parse_graph().input_files.items_source()[importer.get() as usize];
+        // Split-borrow (see `LinkerContext::log_disjoint`). `link()` fails the
+        // build once `compute_chunks` returns.
+        this.log_disjoint().add_range_error_fmt(
+            Some(importer),
+            range,
+            format_args!(
+                "Maximum call stack size exceeded while following this \"{}\" chain",
+                if kind == ImportKind::Composes {
+                    "composes"
+                } else {
+                    "@import"
+                }
+            ),
+        );
+        return Vec::new();
     }
 
     let has_external_import = visitor.has_external_import;

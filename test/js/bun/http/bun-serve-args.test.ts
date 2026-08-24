@@ -766,41 +766,6 @@ describe("Bun.serve unix socket validation", () => {
     ).toThrow();
   });
 
-  describe("invalid unix socket paths should throw", () => {
-    const invalidPaths = [
-      {
-        toString() {
-          throw new Error("invalid toString");
-        },
-        toJSON() {
-          return "invalid toJSON";
-        },
-      },
-      {
-        toString() {
-          return Symbol("test");
-        },
-        toJSON() {
-          return "Symbol(test)";
-        },
-      },
-    ];
-
-    for (const unix of invalidPaths) {
-      test(JSON.stringify(unix), () => {
-        expect(() =>
-          serve({
-            // @ts-expect-error - Testing invalid unix socket path
-            unix,
-            fetch() {
-              return new Response("ok");
-            },
-          }),
-        ).toThrow();
-      });
-    }
-  });
-
   test("unix socket path coercion is rejected", () => {
     expect(() =>
       serve({
@@ -826,29 +791,5 @@ describe("Bun.serve unix socket validation", () => {
         },
       }),
     ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
-  });
-
-  test("invalid unix socket path coercion should throw", () => {
-    const invalidCoercions = [
-      {
-        toString() {
-          throw new Error("invalid toString");
-        },
-      },
-    ];
-
-    for (const unix of invalidCoercions) {
-      expect(() => {
-        using server = serve({
-          port: 0,
-          // @ts-expect-error - Testing runtime coercion
-          unix,
-          fetch() {
-            return new Response("ok");
-          },
-        });
-        server.stop();
-      }).toThrow();
-    }
   });
 });

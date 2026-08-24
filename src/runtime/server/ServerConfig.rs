@@ -1087,11 +1087,11 @@ impl ServerConfig {
             if !unix.is_undefined_or_null() {
                 let path = if unix.is_string() {
                     let s = unix.to_slice(global)?;
-                    bun_core::ZBox::from_bytes(s.slice())
+                    ZBox::from_bytes(s.slice())
                 } else if unix.is_cell() && unix.js_type() == bun_jsc::JSType::Uint8Array {
                     match unix.as_array_buffer(global) {
-                        Some(ab) => bun_core::ZBox::from_bytes(ab.byte_slice()),
-                        None => bun_core::ZBox::from_bytes(b""),
+                        Some(ab) => ZBox::from_bytes(ab.byte_slice()),
+                        None => ZBox::from_bytes(b""),
                     }
                 } else {
                     return Err(global.throw_invalid_property_type(b"unix", "string", unix));

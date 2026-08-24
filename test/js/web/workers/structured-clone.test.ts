@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv, bunExe, isASAN, tls } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
 import { deflate } from "node:zlib";
@@ -34,9 +34,8 @@ function jscSerializeRoundtrip(value: any) {
   return cloned;
 }
 
-// The child scripts below reply through Bun.write(Bun.stdout) rather than process.stdout:
-// the first touch of process.stdout loads the node:stream/node:tty machinery, which costs
-// most of a second per child in a debug build.
+// The child scripts reply through Bun.write(Bun.stdout): the first touch of process.stdout
+// loads node:stream, which costs most of a second per child in a debug build.
 
 // Cold variant: a brand-new Bun process per clone, so the deserialize happens in a
 // completely fresh JSC VM (empty object pool, first-touch platform-object structures).
@@ -601,10 +600,7 @@ function createBlob(arr: number[]): Blob {
   return new Blob([view]);
 }
 
-// A child process runs each case inside its own function and collects between cases, so a
-// child that runs several cases peaks at one source, one serialization buffer, and one clone.
-// The two tests are independent, so they overlap.
-describe.concurrent("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {
+describe("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {
   async function runInChild(script: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -619,7 +615,8 @@ describe.concurrent("structuredClone with ArrayBuffer larger than serialization 
   // The serialization buffer is a WTF::Vector<uint8_t> capped at 2GiB. Cloning an
   // ArrayBuffer at or above that size must throw DataCloneError instead of aborting.
   // SharedArrayBuffer shares its backing store (no serialization copy), so it
-  // succeeds regardless of size. Nothing here copies 2GiB, so one child runs all cases.
+  // succeeds regardless of size. Nothing here copies 2GiB, so one child runs all cases,
+  // collecting between them so only one buffer is mapped at a time.
   test("at or above 2GiB: copies throw DataCloneError, SharedArrayBuffers are shared", async () => {
     const cases = [
       ["ArrayBuffer", "new ArrayBuffer(2 ** 31)", "DOMException DataCloneError"],
@@ -660,93 +657,69 @@ describe.concurrent("structuredClone with ArrayBuffer larger than serialization 
     });
   });
 
-  // A large-but-under-2GiB ArrayBuffer nested inside an object/array fills the serialization
-  // buffer to its reserved capacity; the subsequent terminator write then triggers vector
-  // growth. The default 1.5x growth exceeds the 2GiB cap and would crash. These cases must
-  // succeed and round-trip correctly since the total serialized size still fits under 2GiB.
+  // A large-but-under-2GiB ArrayBuffer nested inside an object fills the serialization buffer
+  // to its reserved capacity; the subsequent terminator write then triggers vector growth. The
+  // default 1.5x growth exceeds the 2GiB cap and would crash. These cases must succeed and
+  // round-trip correctly since the total serialized size still fits under 2GiB.
   //
-  // Five clones of 1.5 GB take about 10 s even in a release build: the time goes to the kernel
-  // faulting in the serialization buffer and the clone, hence the explicit timeout. Each case
-  // gets its own child so the peak stays near 3 GB: mimalloc keeps freed pages for a moment,
-  // and two cases in one process overlap to about 4.5 GB, which the 8 GB CI runners cannot
-  // spare. Under ASAN the allocator unmaps freed pages at once, so the peak does not grow, and
-  // one child for all cases saves a process start plus the shadow-memory page faults per case.
-  test("nested ArrayBuffers under 2GiB clone without crashing and round-trip", async () => {
-    // The smallest size (plus margin) whose 1.5x serialization-buffer growth
-    // exceeds the 2GiB cap (2**31 / 1.5 = ~1.43e9); peak child memory is ~3x.
-    const size = 1_500_000_000;
-    // `pick` is the path of the ArrayBuffer or view inside the value `v`.
-    const cases: {
-      label: string;
-      value: string;
-      pick: string;
-      type: "ArrayBuffer" | "Uint8Array";
-      resizable?: true;
-    }[] = [
-      { label: "ArrayBuffer in object", value: "{ h: new ArrayBuffer(size) }", pick: "v.h", type: "ArrayBuffer" },
-      { label: "ArrayBuffer in array", value: "[new ArrayBuffer(size)]", pick: "v[0]", type: "ArrayBuffer" },
-      { label: "Uint8Array in object", value: "{ h: new Uint8Array(size) }", pick: "v.h", type: "Uint8Array" },
-      { label: "nested ArrayBuffer", value: "{ a: { b: new ArrayBuffer(size) } }", pick: "v.a.b", type: "ArrayBuffer" },
-      {
-        label: "resizable ArrayBuffer in object",
-        value: "{ h: new ArrayBuffer(size, { maxByteLength: size }) }",
-        pick: "v.h",
-        type: "ArrayBuffer",
-        resizable: true,
-      },
-    ];
-    const casesPerChild = isASAN ? cases.length : 1;
-    for (let i = 0; i < cases.length; i += casesPerChild) {
-      const batch = cases.slice(i, i + casesPerChild);
-      const caseList = batch.map(c => `["${c.label}", () => (${c.value}), v => ${c.pick}]`).join(", ");
+  // One case per distinct serializer path: a plain ArrayBuffer, an ArrayBufferView (its own
+  // header and deserializer), and a resizable ArrayBuffer (its own tag and reservation). An
+  // array or a nested object around the buffer reaches the same endObject() terminator write
+  // after the same reservation, so those containers add nothing here. Each case gets its own
+  // child: a clone is about 3 GB of fresh pages (source, serialization buffer, clone) and the
+  // kernel work to fault them in is most of the time.
+  const size = 1_500_000_000; // smallest (plus margin) whose 1.5x growth exceeds 2GiB: 2**31 / 1.5 = ~1.43e9
+  for (const { label, value, type, resizable } of [
+    { label: "ArrayBuffer", value: "new ArrayBuffer(size)", type: "ArrayBuffer", resizable: false },
+    { label: "Uint8Array", value: "new Uint8Array(size)", type: "Uint8Array", resizable: null },
+    {
+      label: "resizable ArrayBuffer",
+      value: "new ArrayBuffer(size, { maxByteLength: size })",
+      type: "ArrayBuffer",
+      resizable: true,
+    },
+  ]) {
+    test(`${label} in an object under 2GiB clones without crashing and round-trips`, async () => {
       const result = await runInChild(`
         const size = ${size};
-        function run(label, make, pick) {
-          const v = make();
-          // Mark both ends of the source so the check proves the bytes were copied, not only the
-          // length. Two pages are touched; the rest of the source stays unmapped.
-          const source = pick(v);
-          const sourceBytes = source instanceof ArrayBuffer ? new Uint8Array(source) : source;
-          sourceBytes[0] = 1;
-          sourceBytes[size - 1] = 2;
-          const out = pick(structuredClone(v));
-          const bytes = out instanceof ArrayBuffer ? new Uint8Array(out) : out;
-          return {
-            label,
-            type: out.constructor.name,
-            byteLength: bytes.byteLength,
-            first: bytes[0],
-            last: bytes[size - 1],
-            resizable: out.resizable ?? null,
-            maxByteLength: out.maxByteLength ?? null,
-          };
-        }
-        for (const [label, make, pick] of [${caseList}]) {
-          console.log(JSON.stringify(run(label, make, pick)));
-          Bun.gc(true);
-        }
+        const v = { h: ${value} };
+        // Mark both ends of the source so the check proves the bytes were copied, not only the
+        // length. Two pages are touched; the rest of the source stays unmapped.
+        const sourceBytes = v.h instanceof ArrayBuffer ? new Uint8Array(v.h) : v.h;
+        sourceBytes[0] = 1;
+        sourceBytes[size - 1] = 2;
+        const out = structuredClone(v).h;
+        const bytes = out instanceof ArrayBuffer ? new Uint8Array(out) : out;
+        console.log(JSON.stringify({
+          type: out.constructor.name,
+          byteLength: bytes.byteLength,
+          first: bytes[0],
+          last: bytes[size - 1],
+          resizable: out.resizable ?? null,
+          maxByteLength: out.maxByteLength ?? null,
+        }));
       `);
-      const lines = result.lines.map(line => JSON.parse(line));
-      const expected = batch.map(({ label, type, resizable = false }) => ({
-        label,
-        type,
-        byteLength: size,
-        first: 1,
-        last: 2,
-        // A view reports neither; a fixed-length ArrayBuffer reports maxByteLength === byteLength.
-        resizable: type === "ArrayBuffer" ? resizable : null,
-        maxByteLength: type === "ArrayBuffer" ? size : null,
-      }));
-      // The host's OOM killer reclaiming the child on a small CI runner is not a structuredClone
-      // failure: the cases the child reported before the kill are still checked, the rest are
-      // skipped. Any other signal (SIGSEGV/SIGABRT/...) still fails.
-      if (result.signalCode === "SIGKILL") {
-        expect(lines).toEqual(expected.slice(0, lines.length));
-        continue;
-      }
-      expect({ ...result, lines }).toEqual({ lines: expected, stderr: "", signalCode: null, exitCode: 0 });
-    }
-  }, 60_000);
+      // The host's OOM killer reclaiming the child on a small CI runner is not a
+      // structuredClone failure; any other signal (SIGSEGV/SIGABRT/...) still is.
+      if (result.signalCode === "SIGKILL" && result.lines.length === 0) return;
+      expect({ ...result, lines: result.lines.map(line => JSON.parse(line)) }).toEqual({
+        lines: [
+          {
+            type,
+            byteLength: size,
+            first: 1,
+            last: 2,
+            // A view reports neither; a fixed-length ArrayBuffer reports maxByteLength === byteLength.
+            resizable,
+            maxByteLength: type === "ArrayBuffer" ? size : null,
+          },
+        ],
+        stderr: "",
+        signalCode: null,
+        exitCode: 0,
+      });
+    });
+  }
 });
 
 // A repeated object is serialized as an ObjectReferenceTag holding an index into the

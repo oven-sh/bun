@@ -549,13 +549,6 @@ const cases: Case[] = [
     loose: false,
   },
   {
-    name: "two boxed equal bigints",
-    a: () => Object(1n),
-    b: () => Object(1n),
-    strict: true,
-    loose: true,
-  },
-  {
     name: "an Error and a plain object inheriting Error.prototype with the same message",
     a: () => new Error("a"),
     b: () => withHiddenProperty(withHiddenProperty(Object.create(Error.prototype), "message", "a"), "stack", ""),

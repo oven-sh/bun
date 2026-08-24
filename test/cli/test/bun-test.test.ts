@@ -28,9 +28,8 @@ describe.concurrent("bun test", () => {
     // promise costs nothing.
     const hangingTest = `
       import { test, expect } from "bun:test";
-      import { sleep } from "bun";
-      test("ok", async () => {
-        await expect(sleep(1)).resolves.toBeUndefined();
+      test("ok", () => {
+        expect().pass();
       });
       test("timeout", async () => {
         await new Promise(() => {});

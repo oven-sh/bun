@@ -2117,7 +2117,7 @@ describe("bundler", () => {
       `,
     },
     target: "node",
-    capture: ["false", "false", "__require.main == __require.module", "__require.main == __require.module"],
+    capture: ["false", "false", "__require.main === __require.module", "__require.main === __require.module"],
     onAfterBundle(api) {
       // This should not be marked as a CommonJS module
       api.expectFile("/out.js").not.toMatch(/\brequire\b/); // __require is ok
@@ -2138,12 +2138,76 @@ describe("bundler", () => {
     },
     target: "node",
     format: "cjs",
-    capture: ["false", "false", "require.main == module", "require.main == module"],
+    capture: ["false", "false", "require.main === module", "require.main === module"],
     onAfterBundle(api) {
-      console.log(api.readFile("/out.js"));
       // This should be marked as a CommonJS module
       api.expectFile("/out.js").toMatch(/\brequire\b/); // __require is not ok
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
+    },
+  });
+  itBundled("edgecase/ImportMetaMainPrecedenceCjs", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(
+          capture("x=" + (require.main === module) + "!"),
+          capture(1 + (require.main === module)),
+          capture("x" + !(require.main !== module)),
+          capture((require.main === module).toString()),
+          capture((require.main !== module) ** 2),
+        );
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    capture: [
+      `"x=" + (require.main === module) + "!"`,
+      `1 + (require.main === module)`,
+      `"x" + !(require.main !== module)`,
+      `(require.main === module).toString()`,
+      `(require.main !== module) ** 2`,
+    ],
+  });
+  itBundled("edgecase/ImportMetaMainPrecedenceEsm", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(
+          capture("x=" + (require.main !== module) + "!"),
+          capture((require.main !== module).toString()),
+          capture((require.main !== module) ** 2),
+          capture(import.meta.main.toString()),
+        );
+      `,
+    },
+    capture: [
+      `"x=" + !import.meta.main + "!"`,
+      `(!import.meta.main).toString()`,
+      `(!import.meta.main) ** 2`,
+      `import.meta.main.toString()`,
+    ],
+  });
+  itBundled("edgecase/ImportMetaMainPrecedenceTargetNode", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(JSON.stringify([
+          capture(typeof import.meta.main),
+          capture(!import.meta.main),
+          capture("x" + import.meta.main),
+          capture(import.meta.main.toString()),
+        ]));
+      `,
+    },
+    target: "node",
+    capture: [
+      `typeof (__require.main === __require.module)`,
+      `!(__require.main === __require.module)`,
+      `"x" + (__require.main === __require.module)`,
+      `(__require.main === __require.module).toString()`,
+    ],
+    run: {
+      stdout: `["boolean",false,"xtrue","true"]`,
     },
   });
   itBundled("edgecase/IdentifierInEnum#13081", {
@@ -2944,9 +3008,10 @@ describe("bundler", () => {
     },
     run: { stdout: "true" },
   });
-  // `import.meta.main` is rewritten to EImportMetaMain; under `target: node`
-  // that prints as `__require.main == __require.module` without its own paren
-  // wrap, so an unwrapped `delete` would bind to `__require.main`.
+  // `import.meta.main` is rewritten to EImportMetaMain, which prints as either
+  // the property access `import.meta.main` or `(__require.main === __require.module)`
+  // depending on target. The `(0, ...)` guard keeps `delete` applied to a value
+  // in both shapes instead of to the property access.
   itBundled("edgecase/DeleteFoldedImportMetaMainRef", {
     files: {
       "/entry.js": /* js */ `

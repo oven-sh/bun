@@ -849,6 +849,7 @@ console.log(Object.getPrototypeOf(cache), cache === require("node:module")._cach
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("null true 1 true\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
   test("require a cjs file uses the 'module.exports' export", () => {

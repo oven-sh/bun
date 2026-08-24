@@ -8428,6 +8428,12 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
+        /// True for the program itself (the object whose segments also contain
+        /// this crate's code), false for a shared object such as libc or a
+        /// native addon. Decided by address: libcs disagree on what
+        /// `dlpi_name` says for the main program ("" on glibc, the path on
+        /// FreeBSD, `NULL` on Android).
+        pub is_main_program: bool,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8439,10 +8445,14 @@ pub mod elf {
 
         struct Ctx {
             address: usize,
+            /// An address inside this crate's own code. The object that maps it
+            /// is the program.
+            own_code: usize,
             result: Option<LoadedModule>,
         }
         let mut ctx = Ctx {
             address,
+            own_code: find_loaded_module as *const () as usize,
             result: None,
         };
 
@@ -8465,6 +8475,8 @@ pub mod elf {
             // SAFETY: dlpi_phdr points to dlpi_phnum entries.
             let phdrs =
                 unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
+            let mut contains_address = false;
+            let mut contains_own_code = false;
             for phdr in phdrs {
                 if phdr.p_type != PT_LOAD {
                     continue;
@@ -8473,26 +8485,29 @@ pub mod elf {
                 // having a p_vaddr = 0xffffffffff700000
                 let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
                 let seg_end = seg_start + phdr.p_memsz as usize;
-                if context.address >= seg_start && context.address < seg_end {
-                    // Android libc uses NULL instead of an empty string to mark
-                    // the main program.
-                    let name = if info.dlpi_name.is_null() {
-                        Box::default()
-                    } else {
-                        // SAFETY: dlpi_name is a valid NUL-terminated C string.
-                        unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
-                            .to_bytes()
-                            .to_vec()
-                            .into_boxed_slice()
-                    };
-                    context.result = Some(LoadedModule {
-                        base_address: info.dlpi_addr as usize,
-                        name,
-                    });
-                    return 1; // error.Found → stop iteration
-                }
+                contains_address |= context.address >= seg_start && context.address < seg_end;
+                contains_own_code |= context.own_code >= seg_start && context.own_code < seg_end;
             }
-            0
+            if !contains_address {
+                return 0;
+            }
+            // Android libc uses NULL instead of an empty string to mark
+            // the main program.
+            let name = if info.dlpi_name.is_null() {
+                Box::default()
+            } else {
+                // SAFETY: dlpi_name is a valid NUL-terminated C string.
+                unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
+                    .to_bytes()
+                    .to_vec()
+                    .into_boxed_slice()
+            };
+            context.result = Some(LoadedModule {
+                base_address: info.dlpi_addr as usize,
+                name,
+                is_main_program: contains_own_code,
+            });
+            1 // error.Found → stop iteration
         }
 
         // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.

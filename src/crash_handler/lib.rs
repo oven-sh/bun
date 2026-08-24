@@ -2530,14 +2530,43 @@ mod draft {
             }
             #[cfg(not(any(windows, target_os = "macos")))]
             {
-                let _ = name_bytes;
                 let address = addr.saturating_sub(1);
                 let m = bun_sys::elf::find_loaded_module(address)?;
+                // The offset only means something together with the object it
+                // is relative to. Without the name, bun.report symbolizes a
+                // libc or native addon frame against bun's own debug info and
+                // shows a bun function that never ran.
+                let object = if m.is_main_program {
+                    None
+                } else {
+                    let basename = bun_paths::basename(&m.name);
+                    // An offset into an object nobody can name is not remappable.
+                    if basename.is_empty() {
+                        return None;
+                    }
+                    Some(Self::url_safe_object_name(basename, name_bytes))
+                };
                 return Some(StackLine {
-                    address: i32::try_from(address - m.base_address).expect("int cast"),
-                    object: None,
+                    // A frame too deep into a huge object to encode is reported
+                    // as unknown rather than taking the crash report down with it.
+                    address: i32::try_from(address - m.base_address).ok()?,
+                    object,
                 });
             }
+        }
+
+        /// The object name goes into the report URL verbatim and bun.report
+        /// reads it back by character count, so keep it to plain ASCII.
+        #[cfg(not(any(windows, target_os = "macos")))]
+        fn url_safe_object_name(name: &[u8], buf: &mut [u8]) -> Box<[u8]> {
+            let len = name.len().min(buf.len());
+            for (dst, &src) in buf[..len].iter_mut().zip(name) {
+                *dst = match src {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-' => src,
+                    _ => b'_',
+                };
+            }
+            Box::from(&buf[..len])
         }
 
         fn write_encoded(self_: Option<&StackLine>, writer: &mut impl Write) -> crate::Result<()> {

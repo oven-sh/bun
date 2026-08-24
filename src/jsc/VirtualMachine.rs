@@ -419,7 +419,7 @@ pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::Standalone
 /// InternalModuleRegistry::generateModule: ahead-of-time bytecode for internal module `id` from a `bun build --compile`
 /// executable (process-lifetime bytes JSC may alias), if this process is one and it carries it.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__standaloneInternalModuleBytecode(
+pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
     _vm: *mut c_void,
     id: u32,
     bytes: *mut *const u8,

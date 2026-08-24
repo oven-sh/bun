@@ -38,12 +38,7 @@ impl TestingAPIs {
             Err(e) => return Err(global.throw_error(e, "failed to make diff")),
         };
         match diff {
-            Ok(s) => {
-                // `from_bytes` borrows — no +1 WTF ref.
-                let result = bun_string_jsc::create_utf8_for_js(global, s.as_slice());
-                drop(s);
-                result
-            }
+            Ok(s) => bun_string_jsc::create_utf8_for_js(global, s.as_slice()),
             Err(e) => {
                 let result = Err(global.throw(format_args!(
                     "failed to make diff: {}",

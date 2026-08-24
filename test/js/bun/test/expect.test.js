@@ -3573,6 +3573,74 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    if (isBun) {
+      // https://github.com/oven-sh/bun/issues/9089
+      const stripAnsi = (/** @type {string} */ s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+      const capture = (/** @type {() => void} */ fn) => {
+        try {
+          fn();
+        } catch (e) {
+          return stripAnsi(/** @type {Error} */ (e).message);
+        }
+        throw new Error("expected matcher to throw");
+      };
+
+      test("diff only flags the asymmetric matcher that actually failed", () => {
+        const msg = capture(() =>
+          expect({ a: "foobar", b: new Date(0), c: "hello" }).toMatchObject({
+            a: expect.any(Date),
+            b: expect.any(Date),
+            c: "hello",
+          }),
+        );
+        // Only `a` should be flagged; `b` matched its `expect.any(Date)` matcher.
+        expect(msg).toContain("- Expected  - 1");
+        expect(msg).toContain("+ Received  + 1");
+        expect(msg).toContain(`    "b": Any<Date>,`);
+        expect(msg).not.toContain(`-   "b":`);
+        expect(msg).not.toContain(`+   "b":`);
+      });
+
+      test("diff still replaces matching asymmetric matchers after a non-matcher mismatch", () => {
+        const msg = capture(() =>
+          expect({ a: "foobar", b: "bar", c: "baz" }).toMatchObject({
+            a: "wrong",
+            b: expect.any(String),
+            c: expect.stringContaining("az"),
+          }),
+        );
+        expect(msg).toContain("- Expected  - 1");
+        expect(msg).toContain("+ Received  + 1");
+        expect(msg).not.toContain(`-   "b":`);
+        expect(msg).not.toContain(`-   "c":`);
+      });
+
+      test("diff replaces matching asymmetric matchers in nested objects when a sibling fails", () => {
+        const msg = capture(() =>
+          expect({ outer: { a: 1, b: "x" }, ok: 42 }).toMatchObject({
+            outer: { a: 2, b: expect.any(String) },
+            ok: expect.any(Number),
+          }),
+        );
+        expect(msg).toContain("- Expected  - 1");
+        expect(msg).toContain("+ Received  + 1");
+        expect(msg).not.toContain(`-     "b":`);
+        expect(msg).not.toContain(`-   "ok":`);
+      });
+
+      test("diff replaces matching asymmetric matchers after a missing property", () => {
+        const msg = capture(() =>
+          expect({ b: new Date(0) }).toMatchObject({
+            a: "present",
+            b: expect.any(Date),
+          }),
+        );
+        expect(msg).toContain(`    "b": Any<Date>,`);
+        expect(msg).not.toContain(`-   "b":`);
+        expect(msg).not.toContain(`+   "b":`);
+      });
+    }
   });
 
   describe("toMatch()", () => {

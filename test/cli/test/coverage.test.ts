@@ -589,3 +589,55 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/39930
+// One worker executes count(), the other only imports the module. The
+// import-only worker reports the unexecuted function's whole line range
+// (blank line 5 included) as executable with zero hits. The merge must not
+// let that over-approximation mark the fully executed function as
+// partially covered.
+test("--parallel merges line coverage across workers", async () => {
+  using dir = tempDir("cov-parallel-merge", {
+    "subject.ts": `await Bun.sleep(100);
+
+export default function count(values: string[]) {
+  const count = values.length;
+
+  return count;
+}
+`,
+    "execute.test.ts": `
+import { expect, test } from "bun:test";
+import count from "./subject.ts";
+
+test("executes the function", () => {
+  expect(count(["first", "second"])).toBe(2);
+});
+`,
+    "importOnly.test.ts": `
+import { expect, test } from "bun:test";
+import count from "./subject.ts";
+
+test("only imports the function", () => {
+  expect(typeof count).toBe("function");
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
+  expect(record).toBeDefined();
+  // Blank line 5 is only "executable" in the worker that never ran count().
+  expect(record).not.toContain("DA:5,");
+  expect(record).toMatch(/LF:4\nLH:4\n/);
+
+  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(exitCode).toBe(0);
+});

@@ -68,10 +68,7 @@
 #include <wtf/URL.h>
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
+#include <JavaScriptCore/FrameTracers.h>
 
 namespace WebCore {
 using namespace JSC;

@@ -42,10 +42,6 @@ where
     // releases its own resources; the wrapper structs need no manual hook).
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
 
-    if global.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
@@ -91,14 +87,6 @@ fn run_async<A: FsArgument>(
             return Err(err);
         }
     };
-
-    if global.has_exception() {
-        args.unprotect();
-        drop(args);
-        // SAFETY: not yet dropped; only drop site for this path.
-        unsafe { ManuallyDrop::drop(&mut slice) };
-        return Ok(JSValue::ZERO);
-    }
 
     if A::HAVE_ABORT_SIGNAL {
         if let Some(signal) = args.signal() {
@@ -198,13 +186,6 @@ impl Binding {
             }
         };
 
-        if global.has_exception() {
-            drop(cp_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Ok(JSValue::ZERO);
-        }
-
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(global, this, cp_args, vm))
@@ -222,10 +203,6 @@ impl Binding {
 
         // `defer args.deinit()` → `Drop` on `cp_args` (its `PathLike` fields).
         let cp_args = args::Cp::from_js(global, &mut slice)?;
-
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
         match this.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
@@ -255,13 +232,6 @@ impl Binding {
             }
         };
 
-        if global.has_exception() {
-            drop(rd_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Ok(JSValue::ZERO);
-        }
-
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
@@ -286,10 +256,6 @@ impl Binding {
 
         let watch_args = fs::Watcher::Arguments::from_js(global, &mut slice)?;
 
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
         match this
@@ -312,10 +278,6 @@ impl Binding {
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
         let wf_args = fs::StatWatcher::Arguments::from_js(global, &mut slice)?;
-
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         match this
             .node_fs

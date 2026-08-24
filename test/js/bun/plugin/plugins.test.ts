@@ -920,6 +920,34 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=1", stderr: "", exitCode: 0 });
   });
 
+  it("an onResolve error propagates out of a static import in a later-loaded module", async () => {
+    using dir = tempDir("onresolve-throws-static", {
+      "entry.mjs": `import "./dep.custom"; export default 1;`,
+      "main.mjs": `
+        Bun.plugin({ name: "throws", setup(b) { b.onResolve({ filter: /\\.custom$/ }, () => { throw new Error("resolve boom"); }); } });
+        try {
+          await import("./entry.mjs");
+          console.log("resolved");
+        } catch (e) {
+          console.log("caught=" + e.message);
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "caught=resolve boom",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("re-registering a namespaced onResolve plugin after clearAll() drops the old callback", async () => {
     const { stdout, stderr, exitCode } = await run(`
       Bun.plugin({
@@ -1016,4 +1044,23 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
       exitCode: 0,
     });
   });
+});
+
+it("object loader: an error thrown by a getter on the exports object rejects the require()", () => {
+  const boom = new Error("boom");
+  plugin({
+    name: "object loader with throwing __esModule",
+    setup(build) {
+      build.module("object-loader-throwing-esmodule", () => ({
+        exports: {
+          get __esModule() {
+            throw boom;
+          },
+          a: 1,
+        },
+        loader: "object",
+      }));
+    },
+  });
+  expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
 });

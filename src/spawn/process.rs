@@ -142,6 +142,56 @@ impl Drop for Process {
     }
 }
 
+/// The exit-handler owner's handle on a [`Process`]: one owned ref, and
+/// dropping it detaches the handler before releasing that ref. The owner must
+/// stay live until the handle is dropped or the exit has been dispatched —
+/// keeping the handle in one of the owner's fields satisfies that.
+///
+/// Every method projects a call-scoped borrow of the `Process` (its own heap
+/// allocation, event-loop thread only); none escapes this type. Dropping the
+/// handle from inside the exit handler re-enters the `Process` whose `on_exit`
+/// is dispatching, exactly as the raw-pointer owners do.
+pub struct ProcessHandle(bun_ptr::RefPtr<Process>);
+
+impl ProcessHandle {
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn process_mut(&self) -> &mut Process {
+        // SAFETY: we hold a ref, so the pointee is live; the borrow ends with
+        // the forwarding call (see the type-level note on re-entrancy).
+        unsafe { &mut *self.0.as_ptr() }
+    }
+
+    /// Dispatch this process's exit to `owner` (see the type-level contract).
+    pub fn set_exit_handler<T: crate::ProcessExitOwner>(&self, owner: bun_ptr::ThisPtr<T>) {
+        // SAFETY: `owner` is live now (`ThisPtr` invariant) and, per the
+        // type-level contract, for every dispatch.
+        let h = unsafe { ProcessExit::of(owner.as_ptr()) };
+        self.process_mut().set_exit_handler(h);
+    }
+
+    /// See [`Process::watch_or_reap`]; may synchronously run the exit handler.
+    pub fn watch_or_reap(&self) -> bun_sys::Result<bool> {
+        self.process_mut().watch_or_reap()
+    }
+
+    /// See [`Process::on_exit`]; runs the exit handler.
+    pub fn on_exit(&self, status: Status, rusage: &Rusage) {
+        self.process_mut().on_exit(status, rusage)
+    }
+
+    pub fn has_exited(&self) -> bool {
+        self.0.data().has_exited()
+    }
+}
+
+impl Drop for ProcessHandle {
+    fn drop(&mut self) {
+        self.process_mut().detach();
+        self.0.deref();
+    }
+}
+
 impl Process {
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<Self>()
@@ -1522,6 +1572,14 @@ impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized) -> *mut Process {
         self.process.take().unwrap()
     }
+
+    /// [`to_process`](Self::to_process), returning the owning handle.
+    pub fn to_process_handle(&mut self, event_loop: impl Sized) -> ProcessHandle {
+        // SAFETY: `to_process` returns the live heap `Process` allocated by
+        // `spawn_process_windows` with its initial ref; that ref moves into
+        // the handle.
+        ProcessHandle(unsafe { bun_ptr::RefPtr::from_raw(self.to_process(event_loop)) })
+    }
 }
 
 #[cfg(windows)]
@@ -1679,8 +1737,15 @@ impl WindowsSpawnOptions {
 /// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
 /// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
 /// trait method so callers keep the `.to_process(loop_, sync)` spelling.
-pub trait SpawnResultExt {
+pub trait SpawnResultExt: Sized {
     fn to_process(self, event_loop: EventLoopHandle) -> *mut Process;
+
+    /// [`to_process`](Self::to_process), returning the owning handle.
+    fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
+        // SAFETY: `to_process` returns a live heap `Process` whose initial ref
+        // the caller owns; that ref moves into the handle.
+        ProcessHandle(unsafe { bun_ptr::RefPtr::from_raw(self.to_process(event_loop)) })
+    }
 }
 
 #[cfg(unix)]
@@ -1747,7 +1812,8 @@ mod spawn_process_body {
     /// # Safety
     /// `argv` must point to a null-terminated array of NUL-terminated C
     /// strings with at least one non-null element; `envp` must point to a
-    /// null-terminated array of NUL-terminated C strings. Both must remain
+    /// null-terminated array of NUL-terminated C strings, or be null on
+    /// Windows (libuv then inherits the parent environment). Both must remain
     /// valid for the duration of the call.
     pub unsafe fn spawn_process(
         options: &SpawnOptions,
@@ -1763,6 +1829,50 @@ mod spawn_process_body {
         {
             spawn_process_windows(options, argv, envp)
         }
+    }
+
+    /// The environment block handed to the child by [`spawn_process_cstr`].
+    #[derive(Clone, Copy)]
+    pub enum SpawnEnv<'a> {
+        /// This process's own `environ`.
+        Inherit,
+        /// `KEY=VALUE` strings; the null-terminated pointer block is built here.
+        Strings(&'a [&'a core::ffi::CStr]),
+    }
+
+    /// [`spawn_process`] for callers holding borrowed C strings: builds the
+    /// null-terminated `argv`/`envp` pointer blocks for the duration of the call.
+    pub fn spawn_process_cstr(
+        options: &SpawnOptions,
+        argv: &[&core::ffi::CStr],
+        env: SpawnEnv<'_>,
+    ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
+        assert!(!argv.is_empty(), "spawn_process_cstr: argv[0] is required");
+        let argv: Vec<CStrPtr> = argv
+            .iter()
+            .map(|s| s.as_ptr())
+            .chain(core::iter::once(core::ptr::null()))
+            .collect();
+        let env_block: Vec<CStrPtr>;
+        let envp: Envp = match env {
+            // libuv: a null `env` inherits the parent's environment.
+            #[cfg(windows)]
+            SpawnEnv::Inherit => core::ptr::null(),
+            #[cfg(unix)]
+            SpawnEnv::Inherit => bun_core::c_environ(),
+            SpawnEnv::Strings(strings) => {
+                env_block = strings
+                    .iter()
+                    .map(|s| s.as_ptr())
+                    .chain(core::iter::once(core::ptr::null()))
+                    .collect();
+                env_block.as_ptr()
+            }
+        };
+        // SAFETY: `argv` is a null-terminated array of NUL-terminated strings
+        // with argv[0] non-null (asserted); `envp` is likewise, or null on
+        // Windows for `Inherit`. Both are borrowed for the call.
+        unsafe { spawn_process(options, argv.as_ptr(), envp) }
     }
 
     #[cfg(windows)]
@@ -1817,10 +1927,6 @@ mod spawn_process_body {
         };
 
         let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
-
-        // defer: close uv_files_to_close — handled at each return site below
-        // via explicit cleanup calls at each error return; no
-        // `failed` flag is needed.
 
         if let Some(hpcon) = options.pseudoconsole {
             uv_process_options.pseudoconsole = hpcon;
@@ -2068,8 +2174,6 @@ mod spawn_process_body {
             exit_handler: ProcessExitHandler::default(),
         }));
 
-        // defer if failed: process.close(); process.deref(); — handled at error sites
-
         // SAFETY: process is freshly allocated
         unsafe {
             // SAFETY: all-zero is valid uv::Process
@@ -2082,7 +2186,6 @@ mod spawn_process_body {
             uv_proc.data = process.cast::<c_void>();
         }
 
-        // defer dup_fds cleanup — handled below at each exit
         let cleanup_dup = |failed: bool| {
             if dup_src.is_some() {
                 debug_assert!(dup_src.is_some() && dup_tgt.is_some());
@@ -2631,6 +2734,8 @@ mod spawn_process_body {
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_ = options.windows.loop_.platform_event_loop();
+            // All stdio inherited: the child is the foreground program on our console.
+            let _child = crate::ctrl_c::Child::enter();
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
                     Err(err) => return Ok(Err(err)),
@@ -3171,8 +3276,6 @@ mod spawn_process_body {
                 process.stderr.unwrap_or(Fd::INVALID),
             ];
             let mut success = false;
-            // defer cleanup — handled at end / via guards below; error returns
-            // run their cleanup manually
 
             let mut out_fds_to_wait_for: [Fd; 2] = [
                 process.stdout.unwrap_or(Fd::INVALID),
@@ -3882,5 +3985,6 @@ mod spawn_process_body {
 pub use spawn_process_body::spawn_process;
 #[cfg(unix)]
 pub use spawn_process_body::spawn_process_posix;
+pub use spawn_process_body::{SpawnEnv, spawn_process_cstr};
 
 pub use spawn_process_body::sync;

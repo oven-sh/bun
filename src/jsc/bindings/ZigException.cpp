@@ -683,11 +683,6 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
             }
 
             {
-                for (int i = 1; i < except.stack.frames_len; i++) {
-                    auto frame = except.stack.frames_ptr[i];
-                    frame.function_name.deref();
-                    frame.source_url.deref();
-                }
                 except.stack.frames_len = 1;
                 PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
                 except.stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);

@@ -699,9 +699,9 @@ it("unref should exit when no more work pending", async () => {
   expect(await process.exited).toBe(0);
 });
 
-// An unref() applied while lookup is pending must survive the autoSelectFamily handle reinit.
-it("unref survives an autoSelectFamily retry", async () => {
-  // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; unref() runs mid-lookup.
+// IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; the call runs mid-lookup
+// and must carry over to the retry handle. The pending connect holds the loop by itself; once connected it lets go.
+it.concurrent.each(["s.unref()", "s.pause()"])("%s survives an autoSelectFamily retry", async call => {
   const server = createServer(() => {});
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -714,25 +714,122 @@ it("unref survives an autoSelectFamily retry", async () => {
           const lookup = (host, opts, cb) =>
             setTimeout(() => cb(null, [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }]), 10);
           const s = net.connect({ host: "localhost", port: ${server.address().port}, autoSelectFamily: true, lookup });
-          s.on("data", () => {});
           s.on("error", e => process.stdout.write("error " + e.code + "\\n"));
           s.on("connect", () => process.stdout.write("connected " + s.remoteAddress + "\\n"));
-          s.unref();
-          // Sentinel keeping the loop alive across the refuse + retry.
-          setTimeout(() => process.stdout.write("timer\\n"), 500);
+          ${call};
         `,
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    // After the sentinel timer only the unref'd socket remains, so the process must exit.
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim().split("\n").sort()).toEqual(["connected 127.0.0.1", "timer"]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("connected 127.0.0.1\n");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   } finally {
     server.close();
   }
+});
+
+// https://github.com/oven-sh/bun/issues/37086 — node's pending uv_connect_t keeps the loop alive even on an
+// unref'd/non-reading handle, so unref()/pause() issued before or while connecting only take effect once connected.
+describe.concurrent("unref()/pause() around connect()", () => {
+  async function run(client: string, onConnection = "c => c.unref()") {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = net.createServer(${onConnection});
+          server.listen(0, "127.0.0.1", () => {
+            const port = server.address().port;
+            const s = new net.Socket();
+            s.on("connect", () => process.stdout.write("connected\\n"));
+            s.on("close", () => { process.stdout.write("closed\\n"); server.close(); });
+            ${client}
+          });
+          server.unref();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // net.ts hands the connect to the native socket on the next tick, so two ticks in the
+  // attempt is in flight (the handle exists but is not yet established).
+  const inFlight = (code: string) => `process.nextTick(() => process.nextTick(() => { ${code} }));`;
+  it.each([
+    ["unref() before connect()", `s.unref(); s.connect(port, "127.0.0.1");`],
+    ["unref() right after connect()", `s.connect(port, "127.0.0.1"); s.unref();`],
+    ["unref() while the connect is in flight", `s.connect(port, "127.0.0.1"); ${inFlight("s.unref();")}`],
+    ["pause() before connect()", `s.pause(); s.connect(port, "127.0.0.1");`],
+    ["pause() right after connect()", `s.connect(port, "127.0.0.1"); s.pause();`],
+    ["pause() while the connect is in flight", `s.connect(port, "127.0.0.1"); ${inFlight("s.pause();")}`],
+  ])("%s waits for the connection, then lets the process exit", async (_, client) => {
+    const { stdout, stderr, exitCode } = await run(client);
+    expect(stdout).toBe("connected\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["right after connect()", `s.connect(port, "127.0.0.1"); s.unref(); s.ref(); s.resume();`],
+    ["while the connect is in flight", `s.connect(port, "127.0.0.1"); ${inFlight("s.unref(); s.ref(); s.resume();")}`],
+  ])("ref() after unref() %s keeps holding the loop", async (_, client) => {
+    const { stdout, stderr, exitCode } = await run(client, "c => { c.unref(); c.end(); }");
+    expect(stdout).toBe("connected\nclosed\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A pause() that reached the native socket mid-connect used to latch its paused bit while the
+  // open re-armed reads, so backpressure could never pause it again and the buffer grew unbounded.
+  it("pause() while the connect is in flight still lets backpressure stop reads", async () => {
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    let serverBackedUp = false;
+    await using server = createServer(c => {
+      const pump = () => {
+        while (!c.destroyed && c.write(chunk)) {}
+        serverBackedUp = !c.destroyed;
+      };
+      c.on("drain", pump);
+      c.on("error", () => {});
+      pump();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const s = new Socket();
+    try {
+      s.connect((server.address() as any).port, "127.0.0.1");
+      await new Promise<void>(resolve =>
+        process.nextTick(() =>
+          process.nextTick(() => {
+            s.pause();
+            resolve();
+          }),
+        ),
+      );
+      await once(s, "connect");
+      // Once the client stops reading (buffer past the high-water mark, or never started) the
+      // server backs up; from then on bytesRead must stay put. Unpatched, every loop turn
+      // delivered another recv; allow a couple that were already in flight.
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline && !serverBackedUp && s.readableLength < s.readableHighWaterMark)
+        await new Promise(r => setTimeout(r, 1));
+      expect(serverBackedUp || s.readableLength >= s.readableHighWaterMark).toBeTrue();
+      const settled = s.bytesRead;
+      for (let i = 0; i < 100; i++) await new Promise(r => setTimeout(r, 0));
+      const recvBuffer = 512 * 1024;
+      expect(s.bytesRead - settled).toBeLessThanOrEqual(2 * recvBuffer);
+    } finally {
+      s.destroy();
+    }
+  });
 });
 
 it("socket should keep process alive if unref is not called", async () => {
@@ -1549,6 +1646,183 @@ describe("paused socket whose peer sends RST", () => {
       server.close();
     }
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+  // Like node, an onread socket's pause() stops the handle itself, so the RST
+  // arrives at a handle that is not registered for reads at all.
+  it("does not surface a bogus errno error for an onread socket", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const errors: NodeJS.ErrnoException[] = [];
+    const server = createServer(c => {
+      c.on("error", () => {});
+      c.on("data", () => c.resetAndDestroy());
+    });
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const c = connect({ port, host: "127.0.0.1", onread: { buffer: Buffer.alloc(16), callback: () => {} } });
+      c.on("error", e => errors.push(e));
+      c.on("close", () => resolve());
+      await once(c, "connect");
+      // Every 'connect' listener has run by now, including the _read() that
+      // connect() queued, so nothing starts the handle again after this pause.
+      c.pause();
+      c.write("x");
+      await promise;
+    } finally {
+      server.close();
+    }
+    expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});
+
+// Node stops kernel reads when push() returns false, not on pause(): a paused
+// socket keeps reading into its buffer, so it still sees the peer's FIN.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
+// Stopping the handle on pause() left the FIN unread forever, so a socket that
+// nothing resumes (unpipe() pauses it) never emitted 'end' or 'close' and its
+// server's close() never called back.
+describe.concurrent("paused socket whose peer ends", () => {
+  // Pauses the accepted socket after the accept-time read(0), with nothing
+  // pushed afterwards that could start the handle again, then the peer ends.
+  async function pauseThenPeerEnds(endBeforePeer: boolean) {
+    const server = createServer();
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("connection", accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const serverClosed = Promise.withResolvers<void>();
+    try {
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      const clientClosed = once(client, "close");
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      socket.on("end", () => events.push("end"));
+      socket.on("close", hadError => {
+        events.push(`close hadError=${hadError}`);
+        closed.resolve();
+      });
+      socket.on("error", closed.reject);
+      socket.pause();
+      if (endBeforePeer) socket.end();
+      expect(socket.isPaused()).toBe(true);
+      client.end();
+      await Promise.all([closed.promise, clientClosed]);
+      expect(events).toEqual(["end", "close hadError=false"]);
+    } finally {
+      server.close(err => (err ? serverClosed.reject(err) : serverClosed.resolve()));
+    }
+    // The connection is gone, so close() calls back.
+    await serverClosed.promise;
+  }
+
+  it("still emits 'end' and 'close'", () => pauseThenPeerEnds(false));
+
+  it("still emits 'end' and 'close' after it end()ed first", () => pauseThenPeerEnds(true));
+});
+
+// The peer's bytes are queued on `socket` once the write callback ran; the poll
+// between the two immediates is when a handle that reads would consume them.
+async function expectNothingRead(socket: Socket, peer: Socket, bytes: string) {
+  await new Promise(resolve => peer.write(bytes, resolve));
+  await new Promise(resolve => setImmediate(() => setImmediate(resolve)));
+  expect({ paused: socket.isPaused(), bytesRead: socket.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
+  const data = once(socket, "data");
+  socket.resume();
+  expect(String((await data)[0])).toBe(bytes);
+}
+
+// Node starts a connection's reads with a read(0) after the 'connect' listeners ran,
+// and skips it if one of them paused: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1695-L1696
+it("pause() in a 'connect' listener leaves the peer's bytes unread until resume()", async () => {
+  const accepted = Promise.withResolvers<Socket>();
+  const server = createServer(accepted.resolve);
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const client: Socket = connect(port, "127.0.0.1", () => client.pause());
+    const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+    await expectNothingRead(client, socket, "reply");
+    socket.destroy();
+    await once(client, "close");
+  } finally {
+    server.close();
+  }
+});
+
+// A 'readable' listener sets flowing to false as well, but the read() has asked for data: Node's
+// handle is reading then, so ours must keep reading (the https-over-proxy CONNECT does this).
+it("read() and once('readable') in a 'connect' listener still receive the peer's bytes", async () => {
+  const server = createServer(socket => socket.write("reply"));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const readable = Promise.withResolvers<string>();
+    const client: Socket = connect(port, "127.0.0.1", () => {
+      client.read();
+      client.once("readable", () => readable.resolve(String(client.read())));
+    });
+    client.on("error", readable.reject);
+    expect(await readable.promise).toBe("reply");
+    client.destroy();
+  } finally {
+    server.close();
+  }
+});
+
+describe.concurrent("pauseOnConnect", () => {
+  it("reads server.pauseOnConnect per connection, like node", async () => {
+    const server = createServer();
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("connection", accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    // Set after listen(): the listener was created without it, so this connection is stopped from JS.
+    server.pauseOnConnect = true;
+    try {
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      await expectNothingRead(socket, client, "early");
+      client.destroy();
+      await once(socket, "close");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("applies to a dialed socket", async () => {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer(accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const client = connect({ port, host: "127.0.0.1", pauseOnConnect: true } as import("node:net").NetConnectOpts);
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      await expectNothingRead(client, socket, "reply");
+      socket.destroy();
+      await once(client, "close");
+    } finally {
+      server.close();
+    }
+  });
+
+  // A socket that opened paused must notice its peer going away like a socket that
+  // pause()d later does, on every backend (kqueue keeps a read knote for that).
+  it("still reports a peer reset before resume()", async () => {
+    const server = createServer({ pauseOnConnect: true });
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("connection", accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      const errors: NodeJS.ErrnoException[] = [];
+      socket.on("error", e => errors.push(e));
+      const closed = new Promise(resolve => socket.on("close", resolve));
+      client.resetAndDestroy();
+      await closed;
+      expect(errors.map(e => e.code).filter(code => code !== "ECONNRESET")).toEqual([]);
+    } finally {
+      server.close();
+    }
   });
 });
 

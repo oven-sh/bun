@@ -299,6 +299,33 @@ describe("bun", () => {
       await installBunx({ HOME: join(String(dir), "home-local") });
       expect(fs.readlinkSync(join(String(dir), "home-local", ".local", "bin", bunxName))).toBe(exeRealpath);
     });
+
+    test("reports that PowerShell completions do not exist when $SHELL is pwsh", async () => {
+      // An empty home keeps the bunx symlink step from writing outside the test.
+      using home = tempDir("completions-pwsh-home", {});
+
+      async function run(env: Record<string, string>) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "completions"],
+          env: { ...bunEnv, HOME: String(home), BUN_INSTALL: undefined, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("PowerShell completions are not yet written for Bun.");
+        expect(stderr).toContain("https://github.com/oven-sh/bun/issues/8939");
+        return exitCode;
+      }
+
+      expect(await run({ SHELL: "/usr/local/bin/pwsh" })).toBe(1);
+      expect(await run({ SHELL: "/usr/bin/powershell" })).toBe(1);
+
+      // `bun upgrade` runs `bun completions` with IS_BUN_AUTO_UPDATE=true. That skips the "stdout is a
+      // pipe" shortcut, so the command reaches the same directory search a terminal does, and a
+      // failure exits 0. Without the Pwsh arm this path used to hit `unreachable!()` and crash.
+      expect(await run({ SHELL: "/usr/local/bin/pwsh", IS_BUN_AUTO_UPDATE: "true" })).toBe(0);
+    });
   });
   describe("--help preserves <placeholder> text", () => {
     const env = { ...bunEnv, NO_COLOR: "1" };

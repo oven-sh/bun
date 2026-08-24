@@ -167,23 +167,6 @@ test("a factory without a default key exports the returned object as default", a
   expect(require("mock-module-no-default").default).toBe(exports);
 });
 
-test("re-mocking without a default key moves the synthesized default to the new object", async () => {
-  const first = { wow: () => 1 };
-  const second = { wow: () => 2 };
-  const third = { wow: () => 3, default: "explicit" };
-  mock.module("mock-module-remock-default", () => first);
-  const ns = await import("mock-module-remock-default");
-  expect(ns.default).toBe(first);
-
-  mock.module("mock-module-remock-default", () => second);
-  expect(ns.wow()).toBe(2);
-  expect(ns.default).toBe(second);
-
-  mock.module("mock-module-remock-default", () => third);
-  expect(ns.wow()).toBe(3);
-  expect(ns.default).toBe("explicit");
-});
-
 test("mocking a builtin", async () => {
   mock.module("fs/promises", () => {
     return {

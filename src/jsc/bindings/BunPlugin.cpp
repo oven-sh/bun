@@ -650,10 +650,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                             // namespace untouched.
                             MarkedArgumentBuffer values;
                             values.ensureCapacity(names.size());
-                            bool hasDefault = false;
                             for (auto& name : names) {
-                                if (name == vm.propertyNames->defaultKeyword)
-                                    hasDefault = true;
                                 JSValue value = object->get(globalObject, name);
                                 RETURN_IF_EXCEPTION(scope, {});
                                 values.append(value);
@@ -664,10 +661,6 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                             }
                             for (size_t i = 0; i < names.size(); ++i) {
                                 moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
-                                RETURN_IF_EXCEPTION(scope, {});
-                            }
-                            if (!hasDefault) {
-                                moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, object);
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
 

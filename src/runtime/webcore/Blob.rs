@@ -1642,6 +1642,7 @@ impl BlobExt for Blob {
                     jsc::js_promise::Status::Fulfilled => {
                         // SAFETY: live until the deref below.
                         let written = unsafe { (*file_sink).stream_bytes.get() };
+                        // SAFETY: release our +1 ref on the sink; not used after this.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done();
                         return Ok(JSPromise::resolved_promise_value(
@@ -1674,6 +1675,7 @@ impl BlobExt for Blob {
         }
         // SAFETY: live until the deref below.
         let written = unsafe { (*file_sink).stream_bytes.get() };
+        // SAFETY: release our +1 ref on the sink; not used after this.
         unsafe { webcore::FileSink::deref(file_sink) };
 
         Ok(JSPromise::resolved_promise_value(
@@ -4675,7 +4677,7 @@ pub(crate) fn write_file_with_source_destination(
             )?,
             ctx,
         )? {
-            return destination_blob.pipe_readable_stream_to_blob(ctx, stream, &options);
+            return destination_blob.pipe_readable_stream_to_blob(ctx, stream, options);
         } else {
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5163,9 +5165,8 @@ pub(crate) fn write_file_internal(
                             locked.readable.get()
                         });
                         // SAFETY: scoped; `to_readable_stream` may have replaced the value.
-                        if let (Some(readable), BodyValue::Locked(_)) =
-                            (readable, unsafe { &*body_value })
-                        {
+                        let body = unsafe { &*body_value };
+                        if let (Some(readable), BodyValue::Locked(_)) = (readable, body) {
                             if readable.is_locked(global_this) || readable.is_disturbed(global_this)
                             {
                                 destination_blob.detach();
@@ -5197,6 +5198,8 @@ pub(crate) fn write_file_internal(
                             BodyValue::Error(err) => {
                                 let err_js = err.to_js(global_this);
                                 destination_blob.detach();
+                                // SAFETY: `err` is not used after `to_js`, so this is the only
+                                // live borrow of the value.
                                 let _ = unsafe { (*body_value).use_() };
                                 return Ok(ControlFlow::Break(
                                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5205,6 +5208,7 @@ pub(crate) fn write_file_internal(
                                     ),
                                 ));
                             }
+                            // SAFETY: the match borrow ended with the pattern; no other borrow is live.
                             _ => return Ok(ControlFlow::Continue(unsafe { (*body_value).use_() })),
                         }
                     }

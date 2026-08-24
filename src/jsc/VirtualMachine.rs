@@ -2123,16 +2123,16 @@ pub struct RuntimeHooks {
     /// supply explicit options. The storage slot lives in `RareData`
     /// (low-tier) but population reaches `RuntimeState.ssl_ctx_cache`
     /// (`bun_runtime`, b2-cycle).
-    pub default_client_ssl_ctx: unsafe fn(vm: *mut VirtualMachine) -> *mut uws::SslCtx,
+    pub default_client_ssl_ctx: fn(vm: &VirtualMachine) -> *mut uws::SslCtx,
     /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — per-VM
     /// digest-keyed weak `SSL_CTX*` cache. Returns a +1 ref or `None` on
     /// BoringSSL rejection (`err` populated). `SSLContextCache` lives in
     /// `bun_runtime::RuntimeState` (b2-cycle).
-    pub ssl_ctx_cache_get_or_create: unsafe fn(
-        vm: *mut VirtualMachine,
+    pub ssl_ctx_cache_get_or_create: fn(
+        vm: &VirtualMachine,
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut uws::create_bun_socket_error_t,
-    ) -> Option<*mut uws::SslCtx>,
+    ) -> Option<bun_boringssl::c::OwnedSslCtx>,
     /// Lazy `NodeFS` creation.
     /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
     /// the type-erased pointer. Stored back into `vm.node_fs`.
@@ -2304,6 +2304,25 @@ impl VirtualMachine {
     pub unsafe fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
         // SAFETY: caller contract above.
         unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, this) }
+    }
+
+    /// `RareData.defaultClientSslCtx()` — the VM-wide default-trust-store
+    /// client `SSL_CTX*` (see [`RuntimeHooks::default_client_ssl_ctx`]).
+    pub fn default_client_ssl_ctx(&self) -> *mut uws::SslCtx {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        (hooks.default_client_ssl_ctx)(self)
+    }
+
+    /// `RareData.sslCtxCache().getOrCreateOpts()` — a +1 `SSL_CTX` for `opts`
+    /// from the per-VM weak cache (see
+    /// [`RuntimeHooks::ssl_ctx_cache_get_or_create`]).
+    pub fn ssl_ctx_cache_get_or_create(
+        &self,
+        opts: &uws::SocketContext::BunSocketContextOptions,
+        err: &mut uws::create_bun_socket_error_t,
+    ) -> Option<bun_boringssl::c::OwnedSslCtx> {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        (hooks.ssl_ctx_cache_get_or_create)(self, opts, err)
     }
 
     /// `&self` overload of [`event_loop_ctx`]. Routes through
@@ -3717,8 +3736,7 @@ impl VirtualMachine {
                 return;
             }
             Mode::Strict => {
-                let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 let _ = self.uncaught_exception(global_object, wrapped, true);
                 let handled = handle_unhandled();
                 if !handled {
@@ -3732,8 +3750,7 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 if self.uncaught_exception(global_object, wrapped, true) {
                     drain(self);
                     return;
@@ -4764,14 +4781,8 @@ impl VirtualMachine {
         // `SavedSourceMap`'s `Drop` frees each stored map along with its table.
         drop(core::mem::take(&mut self.source_mappings));
 
-        // Drain cron jobs BEFORE taking rare_data off `self`: the teardown
-        // hook reads `self.rare_data` to find the job list, so calling it
-        // after `take()` is a no-op and `RareData::drop`'s
-        // `debug_assert!(cron_jobs.is_empty())` fires.
-        if self.rare_data.is_some() {
-            if let Some(hooks) = runtime_hooks() {
-                (hooks.stop_cron_for_vm_teardown)(self);
-            }
+        if let Some(hooks) = runtime_hooks() {
+            (hooks.stop_cron_for_vm_teardown)(self);
         }
         if let Some(rare) = self.rare_data.take() {
             // Paired with `rare_data()`'s register_root_region. Without this,
@@ -6807,50 +6818,57 @@ fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bo
     })
 }
 
-fn wrap_unhandled_rejection_error_for_uncaught_exception(
+/// What `--unhandled-rejections=strict|throw` hand to the uncaught-exception path for `reason`. If describing the
+/// rejection itself throws (a hostile Proxy under isErrorLike, an OOM resolving a rope), that failure does not
+/// replace the thing being reported: the rejection is the user's bug, so it is reported as-is — unless what was
+/// thrown is a termination, which has to win.
+fn unhandled_rejection_as_uncaught_error(
     global_object: &JSGlobalObject,
     reason: JSValue,
 ) -> JSValue {
-    let like = is_error_like(global_object, reason).unwrap_or_else(|_| {
-        global_object.clear_exception();
-        false
-    });
-    if like {
-        return reason;
-    }
-    // Open an explicit `TopExceptionScope`
-    // around the call and clear any exception via the scope; the C++ side has a
-    // `DECLARE_THROW_SCOPE`, so under `BUN_JSC_validateExceptionChecks=1` a
-    // post-call `clear_exception()` (whose own scope ctor asserts) would be
-    // wrong without a Rust-side scope live across the call.
-    let reason_str = {
-        crate::top_scope!(scope, global_object);
-        let r = Bun__noSideEffectsToString(global_object.vm(), global_object, reason);
-        if scope.exception().is_some() {
-            scope.clear_exception();
+    match wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason) {
+        Ok(wrapped) => wrapped,
+        Err(e) => {
+            let secondary = global_object.take_exception(e);
+            if secondary.is_termination_exception() {
+                secondary
+            } else {
+                reason
+            }
         }
-        r
-    };
+    }
+}
+
+fn wrap_unhandled_rejection_error_for_uncaught_exception(
+    global_object: &JSGlobalObject,
+    reason: JSValue,
+) -> JsResult<JSValue> {
+    if is_error_like(global_object, reason)? {
+        return Ok(reason);
+    }
+    let reason_str = jsc::from_js_host_call_generic(global_object, || {
+        Bun__noSideEffectsToString(global_object.vm(), global_object, reason)
+    })?;
     const MSG_1: &str = "This error originated either by throwing inside of an async function \
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";
     if reason_str.is_string() {
         // SAFETY: `as_string()` returns a non-null `*mut JSString` when
         // `is_string()` is true; `view()` borrows it for the `write!` below.
-        let view = unsafe { (*reason_str.as_string()).view(global_object) };
-        return global_object
+        let view = unsafe { (*reason_str.as_string()).view(global_object) }?;
+        return Ok(global_object
             .err(
                 crate::ErrorCode::ERR_UNHANDLED_REJECTION,
                 format_args!("{MSG_1}{view}\"."),
             )
-            .to_js();
+            .to_js());
     }
-    global_object
+    Ok(global_object
         .err(
             crate::ErrorCode::ERR_UNHANDLED_REJECTION,
             format_args!("{MSG_1}undefined\"."),
         )
-        .to_js()
+        .to_js())
 }
 
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.

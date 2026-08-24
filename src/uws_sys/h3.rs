@@ -9,6 +9,8 @@ use crate::SocketAddress;
 use crate::response::{State, WriteResult};
 use crate::socket_context::BunSocketContextOptions;
 use crate::thunk;
+use crate::{AnyRequest, AnyResponse};
+use bun_ptr::ThisPtr;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ListenSocket
@@ -162,9 +164,6 @@ impl Response {
     }
     pub(crate) fn reset_timeout(&mut self) {
         c::uws_h3_res_reset_timeout(self)
-    }
-    pub fn override_write_offset(&mut self, off: u64) {
-        c::uws_h3_res_override_write_offset(self, off)
     }
     pub(crate) fn get_buffered_amount(&mut self) -> u64 {
         c::uws_h3_res_get_buffered_amount(self)
@@ -353,6 +352,24 @@ enum RouteKind {
     Any,
 }
 
+impl RouteKind {
+    fn from_method(m: bun_http_types::Method::Method) -> Option<RouteKind> {
+        use bun_http_types::Method::Method as M;
+        Some(match m {
+            M::GET => RouteKind::Get,
+            M::POST => RouteKind::Post,
+            M::PUT => RouteKind::Put,
+            M::DELETE => RouteKind::Delete,
+            M::PATCH => RouteKind::Patch,
+            M::OPTIONS => RouteKind::Options,
+            M::HEAD => RouteKind::Head,
+            M::CONNECT => RouteKind::Connect,
+            M::TRACE => RouteKind::Trace,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum AddServerNameError {
     FailedToAddServerName,
@@ -424,6 +441,33 @@ impl App {
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
             }
         }
+        Self::route_raw(which, this, pattern, Some(cb::<UD, H>), ud.cast());
+    }
+
+    /// `route` for an intrusively-refcounted `U` as the route userdata; see
+    /// [`method_this`](Self::method_this).
+    fn route_this<U: 'static, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        extern "C" fn cb<U: 'static, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
+        where
+            H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        {
+            // SAFETY: `p` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
+            let this = unsafe { ThisPtr::new(p.cast::<U>()) };
+            thunk::zst::<H>()(this, AnyRequest::H3(req), AnyResponse::H3(res));
+        }
+        Self::route_raw(which, this, pattern, Some(cb::<U, H>), ud.as_ptr().cast());
+    }
+
+    fn route_raw(
+        which: RouteKind,
+        this: &mut App,
+        pattern: &[u8],
+        cb: c::Handler,
+        ud: *mut c_void,
+    ) {
         let f = match which {
             RouteKind::Get => c::uws_h3_app_get,
             RouteKind::Post => c::uws_h3_app_post,
@@ -437,15 +481,7 @@ impl App {
             RouteKind::Any => c::uws_h3_app_any,
         };
         // SAFETY: this is a live FFI handle; pattern ptr/len valid for read; trampoline is `extern "C"`
-        unsafe {
-            f(
-                this,
-                pattern.as_ptr(),
-                pattern.len(),
-                Some(cb::<UD, H>),
-                ud.cast(),
-            )
-        }
+        unsafe { f(this, pattern.as_ptr(), pattern.len(), cb, ud) }
     }
 
     h3_route_methods! {
@@ -463,19 +499,34 @@ impl App {
     where
         H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        use bun_http_types::Method::Method as M;
-        match m {
-            M::GET => self.get(p, ud, h),
-            M::POST => self.post(p, ud, h),
-            M::PUT => self.put(p, ud, h),
-            M::DELETE => self.delete(p, ud, h),
-            M::PATCH => self.patch(p, ud, h),
-            M::OPTIONS => self.options(p, ud, h),
-            M::HEAD => self.head(p, ud, h),
-            M::CONNECT => Self::route(RouteKind::Connect, self, p, ud, h),
-            M::TRACE => Self::route(RouteKind::Trace, self, p, ud, h),
-            _ => {}
+        if let Some(kind) = RouteKind::from_method(m) {
+            Self::route(kind, self, p, ud, h);
         }
+    }
+
+    /// [`method`](Self::method) with an intrusively-refcounted `U` as the
+    /// route userdata. The registrant keeps a ref on `this` for as long as the
+    /// route is registered, so the trampoline can hand the handler a `ThisPtr`.
+    pub fn method_this<U: 'static, H>(
+        &mut self,
+        m: bun_http_types::Method::Method,
+        p: &[u8],
+        _h: H,
+        this: ThisPtr<U>,
+    ) where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        if let Some(kind) = RouteKind::from_method(m) {
+            Self::route_this::<U, H>(kind, self, p, this);
+        }
+    }
+
+    /// [`any`](Self::any) counterpart of [`method_this`](Self::method_this).
+    pub fn any_this<U: 'static, H>(&mut self, p: &[u8], _h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        Self::route_this::<U, H>(RouteKind::Any, self, p, this);
     }
 
     pub fn listen_with_config<UD, H>(&mut self, ud: *mut UD, _handler: H, config: &ListenConfig)
@@ -670,7 +721,6 @@ mod c {
         pub(super) safe fn uws_h3_res_write_mark(res: &mut Response);
         pub(super) safe fn uws_h3_res_flush_headers(res: &mut Response, immediate: bool);
         pub(super) fn uws_h3_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
-        pub(super) safe fn uws_h3_res_override_write_offset(res: &mut Response, off: u64);
         pub(super) safe fn uws_h3_res_has_responded(res: &mut Response) -> bool;
         pub(super) safe fn uws_h3_res_get_buffered_amount(res: &mut Response) -> u64;
         pub(super) safe fn uws_h3_res_reset_timeout(res: &mut Response);

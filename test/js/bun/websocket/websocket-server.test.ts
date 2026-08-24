@@ -357,6 +357,86 @@ describe("Server", () => {
     });
   });
 
+  it.concurrent("unsubscribe() and close() only change the calling socket's share of subscriberCount", async () => {
+    const opened = {
+      a: Promise.withResolvers<ServerWebSocket<{ id: string }>>(),
+      b: Promise.withResolvers<ServerWebSocket<{ id: string }>>(),
+    };
+    const closed = {
+      a: Promise.withResolvers<void>(),
+      b: Promise.withResolvers<void>(),
+    };
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        const id = new URL(req.url).searchParams.get("id") as "a" | "b";
+        if (server.upgrade(req, { data: { id } })) return;
+        return new Response("Not a websocket", { status: 400 });
+      },
+      websocket: {
+        data: {} as { id: "a" | "b" },
+        open(ws) {
+          opened[ws.data.id].resolve(ws);
+        },
+        close(ws) {
+          closed[ws.data.id].resolve();
+        },
+        message() {},
+      },
+    });
+
+    const clientA = new WebSocket(`ws://localhost:${server.port}/?id=a`);
+    const clientB = new WebSocket(`ws://localhost:${server.port}/?id=b`);
+    const [a, b] = await Promise.all([opened.a.promise, opened.b.promise]);
+
+    expect({
+      b_shared: b.subscribe("shared"),
+      b_only: b.subscribe("only-b"),
+      a_shared: a.subscribe("shared"),
+      shared: server.subscriberCount("shared"),
+      onlyB: server.subscriberCount("only-b"),
+    }).toEqual({ b_shared: true, b_only: true, a_shared: true, shared: 2, onlyB: 1 });
+
+    // A topic that exists but that this socket never joined, and a topic that
+    // does not exist at all: both are a no-op that reports false.
+    expect({
+      notJoined: a.unsubscribe("only-b"),
+      unknown: a.unsubscribe("never-subscribed"),
+      bStillSubscribed: b.isSubscribed("only-b"),
+      onlyB: server.subscriberCount("only-b"),
+      shared: server.subscriberCount("shared"),
+    }).toEqual({ notJoined: false, unknown: false, bStillSubscribed: true, onlyB: 1, shared: 2 });
+
+    // Leaving the last topic releases the socket's subscriber state. Joining
+    // again afterwards works and is counted again.
+    expect({
+      left: a.unsubscribe("shared"),
+      aSubscribed: a.isSubscribed("shared"),
+      bSubscribed: b.isSubscribed("shared"),
+      shared: server.subscriberCount("shared"),
+      rejoined: a.subscribe("shared"),
+      sharedAfterRejoin: server.subscriberCount("shared"),
+    }).toEqual({ left: true, aSubscribed: false, bSubscribed: true, shared: 1, rejoined: true, sharedAfterRejoin: 2 });
+
+    // Closing a socket with live subscriptions removes it from every topic and
+    // leaves the other socket's subscriptions alone.
+    b.close();
+    await closed.b.promise;
+    expect({
+      shared: server.subscriberCount("shared"),
+      onlyB: server.subscriberCount("only-b"),
+      aSubscribed: a.isSubscribed("shared"),
+      bSubscriptions: b.subscriptions,
+    }).toEqual({ shared: 1, onlyB: 0, aSubscribed: true, bSubscriptions: [] });
+
+    a.close();
+    await closed.a.promise;
+    expect(server.subscriberCount("shared")).toBe(0);
+    clientA.close();
+    clientB.close();
+  });
+
   it.concurrent("subscriptions - duplicate subscriptions", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
@@ -591,6 +671,41 @@ describe("Server", () => {
         done();
       },
     }));
+    test("returning an Error from message() is not treated as a throw", (done, connect) => ({
+      open(ws) {
+        ws.send("trigger");
+      },
+      message(ws) {
+        queueMicrotask(() => done());
+        return new Error("returned, not thrown");
+      },
+      error(error) {
+        done(error);
+      },
+    }));
+    for (const hook of ["ping", "pong", "close"] as const) {
+      test(`${hook} handler that throws passes its error to error()`, done => {
+        const thrown = new Error(`${hook} threw`);
+        return {
+          open(ws) {
+            if (hook === "ping") ws.ping();
+            else if (hook === "pong") ws.pong();
+            else ws.close();
+          },
+          [hook]() {
+            throw thrown;
+          },
+          error(error) {
+            try {
+              expect(error).toBe(thrown);
+              done();
+            } catch (e) {
+              done(e);
+            }
+          },
+        };
+      });
+    }
     test("maxPayloadLength", done => ({
       maxPayloadLength: 4,
       open(ws) {

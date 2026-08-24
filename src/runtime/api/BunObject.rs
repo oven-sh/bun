@@ -402,9 +402,6 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     }
 
     let bunstr = jsval.to_bun_string(global_this)?;
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
     let bunstr = scopeguard::guard(bunstr, |s| s.deref());
 
     let mut outbuf: Vec<u8> = Vec::new();
@@ -540,9 +537,6 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
     }
 
     let bin_str = path_arg.to_slice(global_this)?;
-    if global_this.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     if bin_str.slice().len() >= MAX_PATH_BYTES {
         return Err(global_this.throw(format_args!("bin path is too long")));
@@ -635,16 +629,14 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
     table_printer.value_formatter.single_line = format_options.single_line;
 
-    let print_result = if format_options.enable_colors {
-        table_printer.print_table::<true>(&mut array)
+    if format_options.enable_colors {
+        table_printer.print_table::<true>(&mut array)?;
     } else {
-        table_printer.print_table::<false>(&mut array)
-    };
-    if print_result.is_err() {
-        if !global_this.has_exception() {
-            return Err(global_this.throw_out_of_memory());
-        }
-        return Ok(JSValue::ZERO);
+        table_printer.print_table::<false>(&mut array)?;
+    }
+    // print_table() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
+    if global_this.has_exception() {
+        return Err(jsc::JsError::Thrown);
     }
 
     // writer.flush(): Vec<u8> writer is unbuffered; nothing to flush.
@@ -703,6 +695,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         &mut array,
         format_options,
     )?;
+    // format2() swallows JS throws from nested formatting and returns Ok; see ConsoleObject::Formatter::format
     if global_this.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
@@ -1474,11 +1467,6 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 previous_routes: false,
             },
         )?;
-
-        if global_object.has_exception() {
-            drop(config);
-            return Ok(JSValue::ZERO);
-        }
 
         break 'brk config;
     };
@@ -2434,10 +2422,6 @@ pub mod JSZlib {
             }
         }
 
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
 
@@ -2598,14 +2582,7 @@ pub mod JSZlib {
 
             if let Some(level_value) = options_val.get(global_this, "level")? {
                 level = Some(level_value.coerce::<i32>(global_this)?);
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
             }
-        }
-
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
         }
 
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
@@ -2716,9 +2693,6 @@ pub mod JSZstd {
         if let Some(option_obj) = options_val {
             if let Some(level_val) = option_obj.get(global_this, "level")? {
                 let value = level_val.coerce::<i32>(global_this)?;
-                if global_this.has_exception() {
-                    return Err(jsc::JsError::Thrown);
-                }
 
                 if value < 1 || value > 22 {
                     return Err(global_this.throw_invalid_arguments(format_args!(

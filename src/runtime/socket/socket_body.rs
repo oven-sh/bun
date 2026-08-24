@@ -1423,6 +1423,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
         this.socket.set(socket);
+        // Stale if node:net reconnected through this wrapper while it was paused.
+        this.update_flags(|f| f.remove(Flags::IS_PAUSED));
+        if !this.ref_pollref_on_connect.replace(true) {
+            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        }
         jsc::mark_binding!();
 
         // Add SNI support for TLS (mongodb and others requires this)
@@ -3220,41 +3225,31 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn js_ref(
         this: &Self,
-        global: &JSGlobalObject,
+        _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_detached() {
+        if this.socket.get().is_established() {
+            this.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
+        } else {
+            // `connect_finish` holds the loop until then; `on_open` applies this.
             this.ref_pollref_on_connect.set(true);
         }
-        if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
-        }
-        let _ = global;
-        this.poll_ref.with_mut(|p| {
-            p.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn js_unref(
         this: &Self,
-        global: &JSGlobalObject,
+        _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_detached() {
+        if this.socket.get().is_established() {
+            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        } else {
             this.ref_pollref_on_connect.set(false);
         }
-        let _ = global;
-        this.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3433,9 +3428,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let socket_obj = opts
             .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
         // Bytes already consumed from the wire before the upgrade (e.g. the
         // ClientHello sitting in the readable buffer of the socket being
         // wrapped); fed into the TLS engine once the upgrade is wired up.
@@ -3450,9 +3442,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // server-ness lives in the SSL accept state (adopt_tls
         // is_client=!is_server) + the ServerHandlers JS table, not here.
         let handlers = Handlers::from_js(global, socket_obj, super::SocketMode::Client)?;
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
         // Nothing holds the callback cell until the TLS wrapper below does.
         let _cell_root = handlers.root_cell(global);
 
@@ -3554,9 +3543,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             return Err(global.throw(format_args!("Expected \"tls\" option")));
         }
-        if global.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
 
         let mut default_data = JSValue::ZERO;
         if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? {
@@ -3635,15 +3621,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `deref` runs `deinit_and_destroy`, which drops the owned_ctx
                 // ref and the handlers `Rc`. Sole owner of the fresh allocation.
                 tls.get().deref();
-                if err != 0 && !global.has_exception() {
+                if err != 0 {
                     return Err(global.throw_value(boringssl_err_to_js(global, err)));
                 }
-                if !global.has_exception() {
-                    return Err(global.throw(format_args!(
-                        "Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?",
-                    )));
-                }
-                return Ok(JSValue::UNDEFINED);
+                return Err(global.throw(format_args!(
+                    "Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?",
+                )));
             }
         };
 

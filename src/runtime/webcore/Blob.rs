@@ -1806,8 +1806,13 @@ impl BlobExt for Blob {
                         .event_loop() as *mut (),
                 ),
             );
-            // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner
-            // here, with each access scoped.
+            // `init` returns a freshly-allocated +1 *mut FileSink; release it on
+            // every exit. `to_js` takes its own per-wrapper +1, so rc ≥ 1 after
+            // the guard runs on the success path.
+            // SAFETY: sole owner of init's ref; runs after every use of `sink`.
+            let _sink_guard =
+                scopeguard::guard(sink, |sink| unsafe { webcore::FileSink::deref(sink) });
+            // SAFETY: sink is live (guard holds init's ref); each access scoped.
             unsafe {
                 (*sink)
                     .writer
@@ -1825,16 +1830,11 @@ impl BlobExt for Blob {
                 })
             };
             if let bun_sys::Result::Err(err) = start_result {
-                // SAFETY: release the +1 ref from `init`.
-                unsafe { webcore::FileSink::deref(sink) };
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            // `FileSink::to_js` takes its own per-wrapper +1; release init's +1.
-            // SAFETY: `sink` is still live (rc ≥ 1); exclusive borrow scoped to the call.
+            // SAFETY: sink is live; `to_js` takes its own per-wrapper +1.
             let js = unsafe { (*sink).to_js(global_this) };
-            // SAFETY: `to_js` took a +1; this releases init's +1 (rc ≥ 1 after).
-            unsafe { webcore::FileSink::deref(sink) };
             return Ok(js);
         }
 
@@ -1851,6 +1851,12 @@ impl BlobExt for Blob {
                         .cast::<()>(),
                 ),
             );
+            // `init` returns a freshly-allocated +1 *mut FileSink; release it on
+            // every exit. `to_js` takes its own per-wrapper +1, so rc ≥ 1 after
+            // the guard runs on the success path.
+            // SAFETY: sole owner of init's ref; runs after every use of `sink`.
+            let _sink_guard =
+                scopeguard::guard(sink, |sink| unsafe { webcore::FileSink::deref(sink) });
 
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                 PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
@@ -1862,50 +1868,30 @@ impl BlobExt for Blob {
             // `webcore::PathOrFileDescriptor` is not `Clone`; build user
             // options first, then move `input_path` in once.
             let mut stream_start = if has_args && arg0.is_object() {
-                match streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(
+                streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(
                     global_this,
                     arg0,
-                ) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        // SAFETY: release the +1 ref from `init` on throwing-getter path.
-                        unsafe { webcore::FileSink::deref(sink) };
-                        return Err(e);
-                    }
-                }
+                )?
             } else {
                 streams::Start::FileSink(streams::FileSinkOptions {
                     input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
                     ..Default::default()
                 })
             };
-            match stream_start {
-                streams::Start::Err(err) => {
-                    // SAFETY: release the +1 ref from `init`.
-                    unsafe { webcore::FileSink::deref(sink) };
-                    return Err(global_this.throw_value(err.to_js(global_this)));
-                }
-                streams::Start::FileSink(ref mut opts) => {
-                    opts.input_path = input_path;
-                }
-                _ => {
-                    unreachable!(
-                        "from_js_with_tag::<FileSink> returns only FileSink or Err for an object"
-                    )
-                }
+            if let streams::Start::FileSink(ref mut opts) = stream_start {
+                opts.input_path = input_path;
             }
+            // A non-FileSink variant here is `Start::Err` from invalid options;
+            // `FileSink::start` rejects it below.
 
-            // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
+            // SAFETY: sink is live (guard holds init's ref); exclusive borrow
+            // scoped to the call.
             if let bun_sys::Result::Err(err) = unsafe { (*sink).start(&stream_start) } {
-                // SAFETY: release the +1 ref from `init`.
-                unsafe { webcore::FileSink::deref(sink) };
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
             // SAFETY: sink is live; `to_js` takes its own per-wrapper +1.
             let js = unsafe { (*sink).to_js(global_this) };
-            // SAFETY: `to_js` took a +1; rc ≥ 1 after this deref.
-            unsafe { webcore::FileSink::deref(sink) };
             Ok(js)
         }
     }

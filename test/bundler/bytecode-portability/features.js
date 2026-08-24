@@ -151,11 +151,170 @@ function sloppy() {
   return [o?.a?.b?.c ?? "dflt", 2 ** 10, delete o.a, "a" in o, o instanceof Object, typeof o.zz, void 0, (1, 2)];
 }
 
+
+// Every operator the generator has an opcode (or a fused compare-and-jump) for.
+function operators(a, b, u) {
+  "use strict";
+  const arith = [a - b, a / b, a % b, a ** b, -a, +u, ~a, a & b, a | b, a ^ b, a << b, a >> b, a >>> b, !a];
+  let c = a;
+  c--;
+  --c;
+  const rel = [a == b, a != b, u == null, u != null, a < b, a <= b, a > b, a >= b, a === b, a !== b];
+  const jumps = [];
+  if (a < b) jumps.push("jl");
+  if (a <= b) jumps.push("jle");
+  if (a > b) jumps.push("jg");
+  if (a >= b) jumps.push("jge");
+  if (a == b) jumps.push("jeq");
+  if (a != b) jumps.push("jneq");
+  if (u == null) jumps.push("jeqn");
+  if (u != null) jumps.push("jneqn");
+  if (a === b) jumps.push("jseq");
+  if (a !== b) jumps.push("jnseq");
+  if (!(a < b)) jumps.push("jnl");
+  if (!(a <= b)) jumps.push("jnle");
+  if (!(a > b)) jumps.push("jng");
+  if (!(a >= b)) jumps.push("jnge");
+  while (c > -2) c -= 3;
+  do c++; while (c <= 0);
+  const types = [typeof u === "function", typeof u === "object", typeof u === "undefined", typeof a === "number", typeof a === "boolean", typeof a === "bigint", typeof a === "string", typeof a === "symbol", u === undefined || u === null, Array.isArray(u)];
+  return [arith, c, rel, jumps.join(","), types];
+}
+
+// Property access and definition forms: by-id / by-val / with-this / getters+setters / enumerator ops / delete.
+function properties(key) {
+  const sym = Symbol("s");
+  const pair = { get both() { return this._b; }, set both(v) { this._b = v; } };
+  pair.both = 8;
+  const o = { plain: 1, [key]: 2, [sym]: 3, get g() { return this.plain; }, set s(v) { this.plain = v; }, get gs() { return 4; }, set gs(v) {}, [key + "fn"]: function () { return "anon"; }, method() { return super.toString !== undefined; } };
+  o[key + "2"] = 5;
+  o.s = 6;
+  const arr = new Array(3);
+  arr[0] = key;
+  const seen = [];
+  for (const k in o) {
+    seen.push(k, o[k], k in o, o.hasOwnProperty(k));
+    o[k] = o[k];
+  }
+  for (let k in o) {
+    if (k === "plain") k = key; // reassigning the loop variable makes the loop body generic
+    seen.push(typeof o[k]);
+  }
+  delete o[key];
+  delete o.plain;
+  o[key + "n"] = 0;
+  o[key + "n"]++;
+  o[key + "n"] += 1;
+  class WithSuper extends Object {
+    static probe(k) { return [super.name, super[k]]; }
+    poke(k, v) { super.custom = v; super[k] = v; return [this.custom, this[k]]; }
+  }
+  return [pair.both, seen.length, Object.keys(o).length, arr.length, o[key + "fn"].name, o.method(), WithSuper.probe("length"), new WithSuper().poke("via", 7), typeof sym];
+}
+
+// Calls: varargs, tail calls, direct eval, .call/.apply fast paths, new.target, spread into super().
+function calls() {
+  "use strict";
+  function sum(...xs) { return xs.reduce((x, y) => x + y, 0); }
+  function tail(n, acc) { return n === 0 ? acc : tail(n - 1, acc + n); }
+  function tailVar(...xs) { return sum(...xs); }
+  class P { constructor(...xs) { this.n = xs.length; } }
+  class Q extends P { constructor(...xs) { super(...xs); } }
+  const args = [1, 2, 3];
+  const viaEval = eval("args.length + 1");
+  const indirect = (0, eval)("typeof args");
+  return [sum(...args), tail(3, 0), tailVar(...args), new P(...args).n, new Q(...args, 4).n, sum.call(null, 1, 2), sum.apply(null, args), viaEval, indirect, Reflect.construct(P, args).n];
+}
+
+// A parameter read and written while an inner function captures `arguments`: DirectArguments (op_get_from_arguments/op_put_to_arguments).
+function directArguments(p, q) {
+  const later = () => arguments.length;
+  p = "p2";
+  return [p, q, arguments[0], later()];
+}
+
+// Sloppy-mode-only forms: with, arguments aliasing (ScopedArgumentsTable), callee, non-strict this.
+function sloppyOnly(a, b) {
+  var log = [];
+  with ({ w: 1 }) {
+    log.push(w);
+  }
+  arguments[0] = "aliased";
+  log.push(a);
+  b = "b2";
+  log.push(arguments[1], arguments.length, typeof arguments.callee);
+  function inner() { return typeof this; }
+  log.push(inner(), ...directArguments("p", 2));
+  var fromEval = eval("var hoisted = 3; function evalDecl() { return hoisted; } evalDecl()");
+  log.push(fromEval, typeof evalDecl);
+  return log;
+}
+
+// Function forms: expressions of every kind, name inference, default/destructured params, generators' internal ops.
+const fnForms = {
+  gen: function* (x = 1, { y } = { y: 2 }, [z] = [3]) { const sent = yield x + y + z; yield sent; },
+  asyncFn: async function () { return await null; },
+  asyncArrow: async () => 1,
+  asyncGen: async function* () { yield 1; },
+  arrow: () => fnForms,
+  [Symbol.iterator]: function* () { yield* [1, 2]; },
+};
+class Accessors {
+  static #priv() { return 1; }
+  #instancePriv() { return 6; }
+  static branded(o) { return #instancePriv in o ? o.#instancePriv() : -1; }
+  static get [("dyn" + "Getter")]() { return 2; }
+  static set [("dyn" + "Setter")](v) { Accessors.last = v; }
+  static hasPriv(o) { try { return Accessors.#priv.call(o) === 1 && #priv in Accessors; } catch { return false; } }
+  ["computed" + "Method"]() { return 3; }
+  static [("computed" + "Field")] = 4;
+  [("instance" + "Field")] = 5;
+}
+function functionForms() {
+  const g = fnForms.gen();
+  const first = g.next().value;
+  const second = g.next("sent").value;
+  Accessors.dynSetter = 9;
+  return [first, second, fnForms.gen.name, fnForms.asyncFn.name, fnForms.arrow().asyncArrow.name, [...fnForms].length, Accessors.dynGetter, Accessors.last, Accessors.hasPriv(Accessors), new Accessors().computedMethod(), Accessors.computedField, new Accessors().instanceField, Accessors.branded(new Accessors()), Accessors.branded({})];
+}
+
+// Strings and other constants in every encoding the cache has: inline (<= 3 Latin-1), shared, 16-bit, long enough to
+// alias the payload (>= 48), empty, well-known symbols, 0n, doubles/int32/holes in array literals, char switches.
+function constants(ch) {
+  const short = ["a", "ab", "abc", "", "abcd"];
+  const wide = ["日本語", "😀 astral", "π", "abcā"];
+  const long = "0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz";
+  const wideLong = "長い文字列長い文字列長い文字列長い文字列長い文字列長い文字列長い文字列長い文字列長い文字列長い文字列";
+  const ünïcödeIdentifier = 1;
+  const holes = [1, , 3];
+  const nested = [[1.5, 2.5], ["x", 1], [0n, -0, NaN, Infinity, 2 ** 31, -(2 ** 31) - 1, 1e-7]];
+  const bigs = [0n, 1n, -1n, 2n ** 64n, BigInt.asUintN(64, -1n)];
+  const res = [/a/, /a/dgimsuy, /(?<name>b)\k<name>/v, /[\p{L}--\p{Lu}]/v];
+  let which;
+  switch (ch) {
+    case "a": which = 1; break;
+    case "b": which = 2; break;
+    case "c": which = 3; break;
+    case "z": which = 26; break;
+    default: which = -1;
+  }
+  const templ = ((s, ...v) => [s.length, s.raw[0], v.length])`x${1}é${wide[0]}y`;
+  return [short.join("|"), wide.join("|").length, long.length, wideLong.length, ünïcödeIdentifier, holes.length, 1 in holes, nested.flat().length, bigs.map(String).join(","), res.map(r => r.flags).join(","), which, templ, Symbol.iterator in fnForms, `${long}${wideLong}`.length];
+}
+//# sourceURL=features-corpus.js
+//# sourceMappingURL=data:application/json;base64,e30=
+
 record(classify(2, "gamma"), classify(9, "zeta"));
 record(...literals());
 const d = new Derived(1, 2);
 record(d.describe(), d.publicField, Derived.isDerived(d), Derived.isDerived({}), Derived.tally(), Base.make(5).describe());
 record(tdz(), sloppy());
+record(...operators(7, 2, undefined));
+record(...properties("k"));
+record(...calls());
+record(...sloppyOnly("a0", "b0"));
+record(...functionForms());
+record(...constants("c"));
 asyncStuff(2, "r1", "r2").then(seen => {
   record(seen);
   console.log(log.join("\n"));

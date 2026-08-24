@@ -1452,7 +1452,11 @@ impl Subprocess<'_> {
         JSValue::NULL
     }
 
-    pub(crate) fn handle_ipc_message(&self, message: &IPC::DecodedIPCMessage, handle: JSValue) {
+    pub(crate) fn handle_ipc_message(
+        &self,
+        message: &IPC::DecodedIPCMessage,
+        handle: JSValue,
+    ) -> JsResult<()> {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
         match message {
             // In future versions we can read this in order to detect version mismatches,
@@ -1484,13 +1488,14 @@ impl Subprocess<'_> {
             IPC::DecodedIPCMessage::Internal(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC internal message from child");
                 let global_this = self.global_this;
-                let _ = node_cluster_binding::handle_internal_message_primary(
+                node_cluster_binding::handle_internal_message_primary(
                     global_this.get(),
                     self,
                     *data,
-                );
+                )?;
             }
         }
+        Ok(())
     }
 
     pub(crate) fn handle_ipc_close(&self) {

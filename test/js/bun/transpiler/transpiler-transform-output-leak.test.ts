@@ -11,16 +11,23 @@ test("transform() reject path does not leak the printed output", async () => {
     // logs a warning, so parse and print succeed and transform() rejects.
     const source = kib => 'var big = "' + Buffer.alloc(kib * 1024, "a").toString() + '";\\n--> trailing\\nbig;\\n';
     const warm = source(4), src = source(256);
-    const warmups = 100, iterations = 128;
-    let rejected = 0;
-    async function once(s) { try { await t.transform(s); } catch { rejected++; } }
+    // Only that warning may reject. Any other error is a different bug, and a
+    // resolve means the source no longer takes the reject path.
+    async function once(s) {
+      try {
+        await t.transform(s);
+      } catch (e) {
+        if (String(e.message).includes("legacy HTML single-line comment")) return;
+        throw e;
+      }
+      throw new Error("expected transform() to reject on the legacy HTML comment warning");
+    }
     // A small source warms the JIT and the work pool without the lexing cost.
-    for (let i = 0; i < warmups; i++) await once(warm);
+    for (let i = 0; i < 100; i++) await once(warm);
     Bun.gc(true);
     const before = process.memoryUsage.rss();
-    for (let i = 0; i < iterations; i++) await once(src);
+    for (let i = 0; i < 128; i++) await once(src);
     Bun.gc(true);
-    if (rejected !== warmups + iterations) throw new Error("expected every transform() to reject, got " + rejected);
     console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
   `;
 

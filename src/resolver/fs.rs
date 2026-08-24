@@ -726,7 +726,7 @@ pub fn read_file_contents<'buf>(
 /// Arena-backed twin of the `USE_SHARED_BUFFER = false` arm of
 /// [`read_file_with_handle_impl`]: the returned bytes live
 /// in `arena` so they are bulk-freed when the per-call `MimallocArena` is
-/// `mi_heap_destroy`'d (`TranspilerJob::run` / `ParseTask`), instead of
+/// `mi_heap_destroy`'d (`RuntimeTranspilerStore` jobs / `ParseTask`), instead of
 /// round-tripping through the worker thread's *default* mimalloc heap (which
 /// is never destroyed and retains the segment for the process lifetime).
 ///

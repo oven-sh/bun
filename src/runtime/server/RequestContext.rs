@@ -4206,11 +4206,15 @@ where
 
             this.request_body_buf.with_mut(|buf| {
                 if buf.capacity() == 0 {
-                    buf.reserve_exact(
-                        this.request_body_content_len
-                            .get()
-                            .min(MAX_REQUEST_BODY_PREALLOCATE_LENGTH),
-                    );
+                    // A multiplexed peer controls content-length on up to
+                    // MAX_CONCURRENT_STREAMS requests at once; don't let the
+                    // first byte of each reserve more than its initial window.
+                    let cap = if MUX {
+                        MUX_REQUEST_BODY_PREALLOCATE_LENGTH
+                    } else {
+                        MAX_REQUEST_BODY_PREALLOCATE_LENGTH
+                    };
+                    buf.reserve_exact(this.request_body_content_len.get().min(cap));
                 }
                 buf.extend_from_slice(chunk);
             });
@@ -4413,6 +4417,7 @@ where
 }
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
+const MUX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 64 * 1024;
 
 /// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
 const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;

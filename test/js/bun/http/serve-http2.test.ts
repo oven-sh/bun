@@ -901,6 +901,15 @@ for (const secure of [true, false]) {
         ["connection header", [...baseHeaders("/hello"), ["connection", "keep-alive"]]],
         ["te: gzip", [...baseHeaders("/hello"), ["te", "gzip"]]],
         ["transfer-encoding header", [...baseHeaders("/hello"), ["transfer-encoding", "chunked"]]],
+        ["host differs from :authority", [...baseHeaders("/hello"), ["host", "elsewhere"]]],
+        [
+          "no :authority and no host",
+          [
+            [":method", "GET"],
+            [":scheme", "https"],
+            [":path", "/hello"],
+          ],
+        ],
         [
           "empty :path",
           [
@@ -1032,6 +1041,156 @@ for (const secure of [true, false]) {
         raw.headers(1, baseHeaders("/slow?ms=200"), F.END_HEADERS | F.END_STREAM);
         raw.write(frame(T.WINDOW_UPDATE, 0, 1, Buffer.alloc(4)));
         expect(await raw.rst(1)).toBe(1);
+        raw.close();
+      });
+
+      test("host matching :authority is accepted", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        raw.headers(1, [...baseHeaders("/hello"), ["host", "localhost"]]);
+        expect((await raw.body(1)).toString()).toBe("hello");
+        raw.close();
+      });
+
+      test("DATA beyond the advertised stream window → RST_STREAM FLOW_CONTROL_ERROR", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+        // /late-read never touches the body until released, so the window stays at 64 KB.
+        raw.headers(1, baseHeaders("/late-read", "POST"), F.END_HEADERS);
+        for (let i = 0; i < 4; i++) raw.write(frame(T.DATA, 0, 1, Buffer.alloc(16384)));
+        raw.write(frame(T.DATA, 0, 1, Buffer.alloc(1)));
+        expect(await raw.rst(1)).toBe(3);
+        raw.headers(3, baseHeaders("/release-late-read"));
+        await raw.body(3);
+        raw.close();
+      });
+
+      test("zero-length field name is rejected (HPACK) → GOAWAY", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        raw.headers(1, [...baseHeaders("/hello"), ["", "x"]]);
+        const g = await raw.goaway();
+        expect([1, 9]).toContain(g.code);
+        raw.close();
+      });
+
+      test("stream WINDOW_UPDATE overflow → RST_STREAM FLOW_CONTROL_ERROR", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        raw.headers(1, baseHeaders("/slow?ms=200"), F.END_HEADERS | F.END_STREAM);
+        const inc = Buffer.alloc(4);
+        inc.writeUInt32BE(0x7fffffff, 0);
+        raw.write(frame(T.WINDOW_UPDATE, 0, 1, inc));
+        expect(await raw.rst(1)).toBe(3);
+        raw.close();
+      });
+
+      test("SETTINGS_INITIAL_WINDOW_SIZE above 2^31-1 → GOAWAY FLOW_CONTROL_ERROR", async () => {
+        const settings = Buffer.alloc(6);
+        settings.writeUInt16BE(4, 0);
+        settings.writeUInt32BE(0x80000000, 2);
+        const raw = await RawH2.connect(fx.port, secure, { settings });
+        expect((await raw.goaway()).code).toBe(3);
+        raw.close();
+      });
+
+      test("PRIORITY frame with bad length → GOAWAY FRAME_SIZE_ERROR", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        raw.write(frame(T.PRIORITY, 0, 1, Buffer.alloc(4)));
+        expect((await raw.goaway()).code).toBe(6);
+        raw.close();
+      });
+
+      for (const [name, type, flags] of [
+        ["DATA", T.DATA, F.PADDED],
+        ["HEADERS", T.HEADERS, F.PADDED | F.END_HEADERS],
+      ] as const) {
+        test(`${name} with pad length ≥ payload → GOAWAY PROTOCOL_ERROR`, async () => {
+          const raw = await RawH2.connect(fx.port, secure);
+          if (type === T.DATA) raw.headers(1, baseHeaders("/echo", "POST"), F.END_HEADERS);
+          // Pad Length = 10 but only 3 bytes follow.
+          raw.write(frame(type, flags, 1, Buffer.from([10, 1, 2, 3])));
+          expect((await raw.goaway()).code).toBe(1);
+          raw.close();
+        });
+      }
+
+      test("HEADERS reusing a closed stream id → RST_STREAM STREAM_CLOSED, connection survives", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        raw.headers(3, baseHeaders("/hello"));
+        expect((await raw.body(3)).toString()).toBe("hello");
+        raw.headers(1, baseHeaders("/hello"));
+        expect(await raw.rst(1)).toBe(5);
+        raw.headers(5, baseHeaders("/hello"));
+        expect((await raw.body(5)).toString()).toBe("hello");
+        raw.close();
+      });
+
+      test("CONTINUATION flood past the header-block cap → GOAWAY ENHANCE_YOUR_CALM", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+        // Cap is 2 × SETTINGS_MAX_HEADER_LIST_SIZE (64 KB default) = 128 KB of
+        // header block; send just past it in one write so nothing is still in
+        // flight when the server closes.
+        const junk = hpackLiteral([["x-junk", Buffer.alloc(4000, "j").toString()]]);
+        const parts = [frame(T.HEADERS, 0, 1, hpackLiteral(baseHeaders("/hello")))];
+        for (let total = 0; total <= 132 * 1024; total += junk.length) parts.push(frame(T.CONTINUATION, 0, 1, junk));
+        raw.write(Buffer.concat(parts));
+        expect((await raw.goaway()).code).toBe(11);
+        raw.close();
+      });
+
+      test("HPACK bomb: tiny block expanding via dynamic-table refs is cut off", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+        // Literal with incremental indexing (0x40): name "x", value 3 KB → dynamic index 62.
+        const name = Buffer.from("x");
+        const value = Buffer.alloc(3000, "v");
+        const lit = Buffer.concat([
+          Buffer.from([0x40, name.length]),
+          name,
+          Buffer.from([0x7f, ...encodeInt(value.length - 127)]),
+          value,
+        ]);
+        function encodeInt(n: number) {
+          const out: number[] = [];
+          while (n >= 128) {
+            out.push((n & 0x7f) | 0x80);
+            n >>= 7;
+          }
+          out.push(n);
+          return out;
+        }
+        // Then ~12k one-byte references to it (0x80 | 62) = ~36 MB decoded from a 16 KB frame.
+        const refs = Buffer.alloc(16384 - lit.length - hpackLiteral(baseHeaders("/hello")).length, 0x80 | 62);
+        const block = Buffer.concat([hpackLiteral(baseHeaders("/hello")), lit, refs]);
+        const t0 = performance.now();
+        raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, block));
+        const g = await raw.goaway();
+        expect(g.code).toBe(11);
+        // Bounded work: the server stops decoding at the hard cap instead of expanding all refs.
+        expect(performance.now() - t0).toBeLessThan(5000);
+        raw.close();
+      });
+
+      test("SETTINGS flood from a client that never reads gets the connection closed", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        raw.socket.pause();
+        const batch = Buffer.concat(Array.from({ length: 512 }, () => frame(T.SETTINGS, 0, 0)));
+        let closed = false;
+        raw.waitForClose().then(() => (closed = true));
+        for (let i = 0; i < 4000 && !closed; i++) {
+          raw.write(batch);
+          if (i % 16 === 15) await new Promise<void>(r => setImmediate(r));
+        }
+        raw.socket.resume();
+        await raw.waitForClose();
+        raw.close();
+      });
+
+      test("empty DATA frame flood on an open stream is tolerated and bounded by flow control", async () => {
+        const raw = await RawH2.connect(fx.port, secure);
+        raw.headers(1, baseHeaders("/echo", "POST"), F.END_HEADERS);
+        raw.write(Buffer.concat(Array.from({ length: 2000 }, () => frame(T.DATA, 0, 1, Buffer.alloc(0)))));
+        raw.write(frame(T.DATA, F.END_STREAM, 1, Buffer.from("done")));
+        expect((await raw.body(1)).toString()).toBe("done");
         raw.close();
       });
 

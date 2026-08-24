@@ -85,6 +85,10 @@ static constexpr uint32_t LOCAL_CONNECTION_WINDOW_SIZE = 1u << 24;
 static constexpr uint32_t LOCAL_MAX_CONCURRENT_STREAMS = 256;
 /* Same cap as the HTTP/1 parser (UWS_HTTP_MAX_HEADERS_COUNT). */
 static constexpr size_t MAX_HEADER_FIELDS = 200;
+/* A header block (HEADERS + CONTINUATIONs, and its decoded form) may be at
+ * most this multiple of SETTINGS_MAX_HEADER_LIST_SIZE before the connection
+ * is closed rather than the stream answered 431. */
+static constexpr unsigned HEADER_BLOCK_HARD_CAP_FACTOR = 2;
 static constexpr uint32_t DEFAULT_MAX_HEADER_LIST_SIZE = 64 * 1024;
 /* Stop generating DATA frames once this much is queued on the socket; the
  * remainder waits for on_writable like an HttpResponse<SSL> would. */
@@ -1172,6 +1176,7 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
     case http2::DATA: {
         if (streamId == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
         /* Connection-level flow control counts every DATA byte, delivered or not. */
+        if (length > http2::LOCAL_CONNECTION_WINDOW_SIZE - connUnackedReceive) return connectionError(http2::ERR_FLOW_CONTROL_ERROR);
         connUnackedReceive += length;
         if (connUnackedReceive >= http2::LOCAL_CONNECTION_WINDOW_SIZE / 4) {
             writeWindowUpdate(0, connUnackedReceive);
@@ -1214,7 +1219,7 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
 
     case http2::CONTINUATION: {
         if (!expectingContinuation) return connectionError(http2::ERR_PROTOCOL_ERROR);
-        if (headerBlock.length() + length > (size_t) maxHeaderListSize() * 16) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
+        if (headerBlock.length() + length > std::max<size_t>((size_t) maxHeaderListSize() * http2::HEADER_BLOCK_HARD_CAP_FACTOR, http2::LOCAL_MAX_FRAME_SIZE)) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
         headerBlock.append((const char *) payload, length);
         if (!(flags & http2::END_HEADERS)) return true;
         expectingContinuation = false;
@@ -1282,7 +1287,8 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
         stream->sendWindow += (int32_t) increment;
         if (stream->wantsWrite || stream->data.backpressure.length() || stream->data.onWritable) {
             markWantsWrite(stream);
-            drainWritable();
+            /* Don't call out for dribbled windows; wait until a useful amount opens. */
+            if (stream->sendWindow >= (int32_t) std::min<uint32_t>(peerInitialWindowSize, 8192)) drainWritable();
         }
         return true;
     }
@@ -1305,6 +1311,8 @@ inline bool Http2Connection::handleData(Http2Response *stream, uint8_t flags, co
         bodyLength = length - 1 - pad;
     }
     bool fin = (flags & http2::END_STREAM) != 0;
+    /* §6.9.1: the peer may not send beyond what we advertised for this stream. */
+    if (length > stream->receiveWindow - stream->unackedReceive) return streamError(stream->id, stream, http2::ERR_FLOW_CONTROL_ERROR);
     stream->receivedBodyBytes += bodyLength;
     if (stream->declaredContentLength >= 0 &&
         (stream->receivedBodyBytes > (uint64_t) stream->declaredContentLength ||
@@ -1332,7 +1340,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     /* Decode first whatever we decide about the stream: the HPACK dynamic
      * table is connection state and must see every block. */
     uint32_t limit = maxHeaderListSize();
-    size_t hardCap = (size_t) limit * 16;
+    size_t hardCap = std::max<size_t>((size_t) limit * http2::HEADER_BLOCK_HARD_CAP_FACTOR, http2::LOCAL_MAX_FRAME_SIZE);
     if (length > hardCap) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
     std::vector<char> localBuffer;
     std::vector<us_quic_header_t> localList;
@@ -1341,7 +1349,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     std::vector<us_quic_header_t> &list = nested ? localList : ctx->decodedHeaders;
     if (buf.size() < (size_t) limit + 64) buf.resize((size_t) limit + 64);
     list.clear();
-    size_t used = 0;
+    size_t used = 0, decoded = 0, fields = 0;
     const unsigned char *p = block, *end = block + length;
     while (p < end) {
         lsxpack_header_t x;
@@ -1357,7 +1365,12 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
             continue;
         }
         if (rc != 0) return connectionError(http2::ERR_COMPRESSION_ERROR);
-        if (list.size() > http2::MAX_HEADER_FIELDS) continue; /* keep decoding for HPACK state; rejected below */
+        decoded += lsxpack_header_get_dec_size(&x);
+        fields++;
+        /* Past the 431 thresholds we keep decoding only to keep HPACK state in
+         * sync; a block that expands far beyond them is an attack, not a request. */
+        if (decoded > hardCap || fields > http2::MAX_HEADER_FIELDS * 2) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
+        if (list.size() > http2::MAX_HEADER_FIELDS) continue;
         /* Offsets for now; buf may still grow. */
         list.push_back({(const char *) (uintptr_t) (x.buf + x.name_offset - buf.data()), x.name_len,
                         (const char *) (uintptr_t) (x.buf + x.val_offset - buf.data()), x.val_len, -1});
@@ -1423,6 +1436,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     bool sawRegular = false, malformed = false, isConnect = false;
     unsigned seen = 0; /* 1 :method, 2 :scheme, 4 :path, 8 :authority */
     int64_t contentLength = -1;
+    std::string_view authority, host;
     for (const us_quic_header_t &h : list) {
         std::string_view name{h.name, h.name_len}, value{h.value, h.value_len};
         if (!http2::validFieldName(h.name, h.name_len) || !http2::validFieldValue(h.value, h.value_len)) { malformed = true; break; }
@@ -1432,7 +1446,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
             if (name == ":method") { bit = 1; isConnect = value == "CONNECT"; }
             else if (name == ":scheme") bit = 2;
             else if (name == ":path") bit = 4;
-            else if (name == ":authority") bit = 8;
+            else if (name == ":authority") { bit = 8; authority = value; }
             else { malformed = true; break; }
             if ((seen & bit) || value.empty()) { malformed = true; break; }
             seen |= bit;
@@ -1440,6 +1454,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
             sawRegular = true;
             if (name == "connection" || name == "upgrade" || name == "keep-alive" || name == "proxy-connection" ||
                 name == "transfer-encoding" || (name == "te" && value != "trailers")) { malformed = true; break; }
+            if (name == "host") { if (!host.empty()) { malformed = true; break; } host = value; }
             if (name == "content-length") {
                 uint64_t v = 0;
                 auto r = std::from_chars(value.data(), value.data() + value.size(), v);
@@ -1452,6 +1467,11 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         malformed = isConnect ? seen != (1 | 8) : (seen & 7) != 7;
     }
     if (!malformed && endStream && contentLength > 0) malformed = true;
+    /* §8.3.1: a request needs an authority, and Host may not contradict :authority. */
+    if (!malformed) {
+        if (authority.empty() && host.empty()) malformed = true;
+        else if (!authority.empty() && !host.empty() && authority != host) malformed = true;
+    }
     if (malformed) {
         return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
     }

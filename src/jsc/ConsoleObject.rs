@@ -12,7 +12,7 @@ use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
 use bun_collections::HashMap;
 use bun_core::{Output, StackCheck};
-use bun_core::{OwnedString, String as BunString, strings};
+use bun_core::{String as BunString, strings};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below can use the `JSLexer.isLatin1Identifier` /
@@ -754,7 +754,7 @@ impl<'a> TablePrinter<'a> {
                     }
                 }
             } else {
-                let mut cols_iter = jsc::JSPropertyIterator::init(
+                let cols_iter = jsc::JSPropertyIterator::init(
                     self.global_object,
                     obj,
                     jsc::PropertyIteratorOptions {
@@ -763,27 +763,18 @@ impl<'a> TablePrinter<'a> {
                     },
                 )?;
 
-                while let Some(col_key) = cols_iter.next()? {
-                    let value = cols_iter.value;
-
+                while let Some((col_key, value)) = cols_iter.next()? {
                     // find or create the column for the property
                     let col_idx: usize = 'brk: {
-                        let col_str = BunString::init(col_key);
-
                         // reshaped for borrowck — split find/append.
                         if let Some(idx) =
-                            columns[1..].iter().position(|col| col.name.eql(&col_str))
+                            columns[1..].iter().position(|col| col.name.eql(&col_key))
                         {
                             break 'brk 1 + idx;
                         }
 
-                        // Need to ref this string because JSPropertyIterator
-                        // uses `toString` instead of `toStringRef` for property
-                        // names.
-                        col_str.ref_();
-
                         columns.push(Column {
-                            name: col_str,
+                            name: (*col_key).clone(),
                             width: 1,
                         });
                         break 'brk columns.len() - 1;
@@ -878,13 +869,6 @@ impl<'a> TablePrinter<'a> {
         let global_object = self.global_object;
 
         let mut columns: Vec<Column> = Vec::with_capacity(16);
-        let mut _deref_names = scopeguard::guard(&mut columns, |cols| {
-            for col in cols.iter_mut() {
-                col.name.deref();
-            }
-        });
-        // reshaped for borrowck — re-borrow through the guard.
-        let columns: &mut Vec<Column> = &mut **_deref_names;
 
         // create the first column " " which is always present
         columns.push(Column {
@@ -931,7 +915,7 @@ impl<'a> TablePrinter<'a> {
                 let mut ctx = Ctx {
                     this: self,
                     cell_text: &mut cell_text,
-                    columns,
+                    columns: &mut columns,
                     rows: &mut rows,
                     idx: 0,
                     err: None,
@@ -971,7 +955,7 @@ impl<'a> TablePrinter<'a> {
                 }
             } else {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
-                let mut rows_iter = jsc::JSPropertyIterator::init(
+                let rows_iter = jsc::JSPropertyIterator::init(
                     global_object,
                     tabular_obj,
                     jsc::PropertyIteratorOptions {
@@ -980,13 +964,13 @@ impl<'a> TablePrinter<'a> {
                     },
                 )?;
 
-                while let Some(row_key) = rows_iter.next()? {
-                    let key = RowKey::str(&BunString::init(row_key));
+                while let Some((row_key, value)) = rows_iter.next()? {
+                    let key = RowKey::str(&row_key);
                     let row = self.collect_row::<ENABLE_ANSI_COLORS>(
                         &mut cell_text,
-                        columns,
+                        &mut columns,
                         key,
-                        rows_iter.value,
+                        value,
                     )?;
                     rows.push(row);
                 }
@@ -1059,7 +1043,7 @@ impl<'a> TablePrinter<'a> {
 
         // render pass: replay each row's pre-formatted cell bytes
         for row in rows.iter() {
-            self.print_row(writer, columns, row, &cell_text);
+            self.print_row(writer, &columns, row, &cell_text);
         }
 
         // print the table bottom border
@@ -1147,10 +1131,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
 
     let err = ZigString::init(b"trace output").to_error_instance(global);
-    {
-        let exception = holder.zig_exception();
-        err.to_zig_exception(global, exception);
-    }
+    // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
     // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
     // two simultaneous `&mut` into `holder`. Capture the flag in a local and
     // write it back after.
@@ -1223,14 +1204,14 @@ pub enum Colon {
     ExcludeColon,
 }
 
-pub struct ErrorDisplayLevelFormatter {
-    pub name: BunString,
+pub struct ErrorDisplayLevelFormatter<'a> {
+    pub name: &'a BunString,
     pub(crate) level: ErrorDisplayLevel,
     pub(crate) enable_colors: bool,
     pub(crate) colon: Colon,
 }
 
-impl core::fmt::Display for ErrorDisplayLevelFormatter {
+impl core::fmt::Display for ErrorDisplayLevelFormatter<'_> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.enable_colors {
             match self.level {
@@ -1241,7 +1222,7 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
         }
 
         if !self.name.is_empty() {
-            core::fmt::Display::fmt(&self.name, writer)?;
+            core::fmt::Display::fmt(self.name, writer)?;
         } else if self.level == ErrorDisplayLevel::Warn {
             writer.write_str("warn")?;
         } else {
@@ -1267,10 +1248,10 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
 impl ErrorDisplayLevel {
     pub(crate) fn formatter(
         self,
-        error_name: BunString,
+        error_name: &BunString,
         enable_colors: bool,
         colon: Colon,
-    ) -> ErrorDisplayLevelFormatter {
+    ) -> ErrorDisplayLevelFormatter<'_> {
         ErrorDisplayLevelFormatter {
             name: error_name,
             level: self,
@@ -2212,20 +2193,15 @@ pub mod formatter {
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
                 if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
                     // React 18 and below
-                    let mut react_element_legacy = ZigString::init(b"react.element");
-                    // For React 19 - https://github.com/oven-sh/bun/issues/17223
-                    let mut react_element_transitional =
-                        ZigString::init(b"react.transitional.element");
-                    let mut react_fragment = ZigString::init(b"react.fragment");
-
                     if typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_element_legacy),
+                        JSValue::symbol_for(global_this, b"react.element"),
                         global_this,
                     )? || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_element_transitional),
+                        // For React 19 - https://github.com/oven-sh/bun/issues/17223
+                        JSValue::symbol_for(global_this, b"react.transitional.element"),
                         global_this,
                     )? || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_fragment),
+                        JSValue::symbol_for(global_this, b"react.fragment"),
                         global_this,
                     )? {
                         return Ok(TagResult {
@@ -2604,10 +2580,7 @@ pub mod formatter {
                             PercentTag::J => {
                                 // JSON.stringify the value using FastStringifier
                                 // for SIMD optimization
-                                // `OwnedString` releases the
-                                // +1 WTF ref on every exit (incl. the `?` below).
-                                let mut str = OwnedString::new(BunString::empty());
-                                next_value.json_stringify_fast(global, &mut str)?;
+                                let str = next_value.json_stringify_fast(global)?;
                                 writer.add_for_new_line(str.length());
                                 writer.print(format_args!("{str}"));
                             }
@@ -2727,7 +2700,7 @@ pub mod formatter {
         }
 
         #[inline]
-        pub(crate) fn write_string(&mut self, str: &ZigString) {
+        pub(crate) fn write_string(&mut self, str: &bun_core::String) {
             self.print(format_args!("{str}"));
         }
 
@@ -3196,13 +3169,12 @@ pub mod formatter {
     fn get_object_name(
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<Option<ZigString>> {
-        let mut name_str = ZigString::init(b"");
-        value.get_class_name(global_this, &mut name_str)?;
+    ) -> JsResult<Option<bun_core::String>> {
+        let name_str = value.get_class_name(global_this)?;
         if !name_str.eql_comptime(b"Object") {
             return Ok(Some(name_str));
         } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
-            return Ok(Some(ZigString::static_("[Object: null prototype]")));
+            return Ok(Some(bun_core::String::static_("[Object: null prototype]")));
         }
         Ok(None)
     }
@@ -3551,7 +3523,7 @@ pub mod formatter {
         ) -> JsResult<()> {
             // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
-            let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
+            let str = BunString::from_js(value, self.global_this)?;
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3693,8 +3665,8 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let zstr = value.get_zig_string(self.global_this)?;
-            let out_str = zstr.slice();
+            let view = value.to_js_string_view(self.global_this)?;
+            let out_str = view.latin1();
             writer.add_for_new_line(out_str.len());
             writer.print(format_args!(
                 "{}{}n{}",
@@ -3725,15 +3697,13 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut number_name = ZigString::EMPTY;
-                value.get_class_name(self.global_this, &mut number_name)?;
+                let number_name = value.get_class_name(self.global_this)?;
 
-                let mut number_value = ZigString::EMPTY;
-                value.to_zig_string(&mut number_value, self.global_this)?;
+                let number_value = value.to_js_string_view(self.global_this)?;
 
-                if number_name.slice() != b"Number" {
+                if !number_name.eql_comptime(b"Number") {
                     writer.add_for_new_line(
-                        number_name.len + number_value.len + "[Number ():]".len(),
+                        number_name.length() + number_value.length() + "[Number ():]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
@@ -3748,7 +3718,7 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                writer.add_for_new_line(number_name.len + number_value.len + 4);
+                writer.add_for_new_line(number_name.length() + number_value.length() + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
                     pf!("<r><yellow>"),
@@ -3848,8 +3818,8 @@ pub mod formatter {
             let description = value.get_description(self.global_this);
             writer.add_for_new_line("Symbol".len());
 
-            if description.len > 0 {
-                writer.add_for_new_line(description.len + "()".len());
+            if !description.is_empty() {
+                writer.add_for_new_line(description.length() + "()".len());
                 writer.print(format_args!(
                     "{}Symbol({}){}",
                     pfmt!("<r><blue>", C),
@@ -3924,7 +3894,7 @@ pub mod formatter {
             // `Function.prototype.constructor === Function`, returning
             // "Function". The `.name` property is set to the real class name
             // on the constructor itself. See #29225.
-            let printable = OwnedString::new(value.get_name(self.global_this)?);
+            let printable = value.get_name(self.global_this)?;
             writer.add_for_new_line(printable.length());
 
             // Only report `extends` when the parent is itself a class
@@ -3935,11 +3905,11 @@ pub mod formatter {
             let proto_is_class = !proto.is_empty_or_undefined_or_null()
                 && proto.is_cell()
                 && proto.is_class(self.global_this);
-            let printable_proto = OwnedString::new(if proto_is_class {
+            let printable_proto = if proto_is_class {
                 proto.get_name(self.global_this)?
             } else {
                 BunString::empty()
-            });
+            };
             writer.add_for_new_line(printable_proto.length());
 
             if printable.is_empty() {
@@ -3995,11 +3965,11 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            let printable = OwnedString::new(value.get_name(self.global_this)?);
+            let printable = value.get_name(self.global_this)?;
 
             let proto = value.get_prototype(self.global_this)?;
             // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
-            let func_name = OwnedString::new(proto.get_name(self.global_this)?);
+            let func_name = proto.get_name(self.global_this)?;
 
             if printable.is_empty() || func_name.eql(&printable) {
                 if func_name.is_empty() {
@@ -4133,14 +4103,13 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut bool_name = ZigString::EMPTY;
-                value.get_class_name(self.global_this, &mut bool_name)?;
-                let mut bool_value = ZigString::EMPTY;
-                value.to_zig_string(&mut bool_value, self.global_this)?;
+                let bool_name = value.get_class_name(self.global_this)?;
+                let bool_value = value.to_js_string_view(self.global_this)?;
 
-                if bool_name.slice() != b"Boolean" {
-                    writer
-                        .add_for_new_line(bool_value.len + bool_name.len + "[Boolean (): ]".len());
+                if !bool_name.eql_comptime(b"Boolean") {
+                    writer.add_for_new_line(
+                        bool_value.length() + bool_name.length() + "[Boolean (): ]".len(),
+                    );
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
                         pf!("<r><yellow>"),
@@ -4153,7 +4122,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 }
-                writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
+                writer.add_for_new_line(bool_value.length() + "[Boolean: ]".len());
                 writer.print(format_args!(
                     "{}[Boolean: {}]{}",
                     pf!("<r><yellow>"),
@@ -4211,9 +4180,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let mut str = OwnedString::new(BunString::empty());
-
-            value.json_stringify(self.global_this, self.indent, &mut str)?;
+            let str = value.json_stringify(self.global_this, self.indent)?;
             writer.add_for_new_line(str.length());
             if js_type == jsc::JSType::JSDate {
                 // in the code for printing dates, it never exceeds this amount
@@ -4547,13 +4514,7 @@ pub mod formatter {
             // formatted `value`; otherwise we fall through to the generic
             // object printer below.
             if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-                // The hook only ever
-                // seeds a `ZigString` that `get_class_name` immediately
-                // overwrites with JSC-owned bytes, so a shared zero buffer is
-                // sufficient and keeps 512B off every recursive frame.
-                static NAME_BUF: [u8; 512] = [0; 512];
-                let handled =
-                    (hooks.console_print_runtime_object)(self, writer_, value, &NAME_BUF, C)?;
+                let handled = (hooks.console_print_runtime_object)(self, writer_, value, C)?;
                 if handled {
                     return Ok(());
                 }
@@ -5026,13 +4987,8 @@ pub mod formatter {
             writer.write_all(pf!("<r>").as_bytes());
             writer.write_all(b"<");
 
-            // Both arms of the `type` if/else below assign these, so deferred
-            // init avoids the dead-store warning.
             let mut needs_space: bool;
-            let mut tag_name_str = ZigString::init(b"");
-
-            // `ZigStringSlice` frees on `Drop`, so no explicit cleanup is
-            // needed.
+            let tag_name_view;
             let tag_name_slice: bun_core::ZigStringSlice;
             let mut is_tag_kind_primitive = false;
 
@@ -5040,23 +4996,26 @@ pub mod formatter {
                 let _tag = Tag::get_advanced(type_value, self.global_this, tag_opts)?;
 
                 if _tag.cell == jsc::JSType::Symbol {
-                    // nothing
+                    tag_name_slice = bun_core::ZigStringSlice::EMPTY;
                 } else if _tag.cell.is_string_like() {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                    tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                    tag_name_slice = tag_name_view.to_utf8();
                     is_tag_kind_primitive = true;
                 } else if _tag.cell.is_object() || type_value.is_callable() {
-                    type_value.get_name_property(self.global_this, &mut tag_name_str)?;
-                    if tag_name_str.len == 0 {
-                        tag_name_str = ZigString::init(b"NoName");
-                    }
+                    let name = type_value.get_name_property(self.global_this)?;
+                    tag_name_slice = if name.is_empty() {
+                        bun_core::ZigStringSlice::from_utf8_never_free(b"NoName")
+                    } else {
+                        name.to_utf8()
+                    };
                 } else {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                    tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                    tag_name_slice = tag_name_view.to_utf8();
                 }
 
-                tag_name_slice = tag_name_str.to_slice();
                 needs_space = true;
             } else {
-                tag_name_slice = ZigString::init(b"unknown").to_slice();
+                tag_name_slice = bun_core::ZigStringSlice::from_utf8_never_free(b"unknown");
                 needs_space = true;
             }
 
@@ -5113,7 +5072,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 };
-                let mut props_iter = jsc::JSPropertyIterator::init(
+                let props_iter = jsc::JSPropertyIterator::init(
                     self.global_this,
                     props_obj,
                     jsc::PropertyIteratorOptions {
@@ -5130,13 +5089,11 @@ pub mod formatter {
                         let count_without_children =
                             props_iter.len - usize::from(children_prop.is_some());
 
-                        while let Some(prop) = props_iter.next()? {
-                            let props_i = props_iter.i as usize;
+                        while let Some((prop, property_value)) = props_iter.next()? {
                             if prop.eql_comptime("children") {
                                 continue;
                             }
 
-                            let property_value = props_iter.value;
                             let tag =
                                 Tag::get_advanced(property_value, self.global_this, tag_opts)?;
 
@@ -5156,6 +5113,7 @@ pub mod formatter {
                                 pf!("<d>"),
                                 pf!("<r>")
                             ));
+                            let props_i = props_iter.i.get() as usize;
 
                             if tag.cell.is_string_like() && C {
                                 writer.write_all(pfmt!("<r><green>", true).as_bytes());
@@ -5208,15 +5166,15 @@ pub mod formatter {
                                 match tag.tag.tag() {
                                     Tag::String => {
                                         let children_string =
-                                            children.get_zig_string(self.global_this)?;
-                                        if children_string.len == 0 {
+                                            children.to_js_string_view(self.global_this)?;
+                                        if children_string.is_empty() {
                                             break 'print_children;
                                         }
                                         if C {
                                             writer.write_all(pfmt!("<r>", true).as_bytes());
                                         }
                                         writer.write_all(b">");
-                                        if children_string.len < 128 {
+                                        if children_string.length() < 128 {
                                             writer.write_string(&children_string);
                                         } else {
                                             self.indent += 1;

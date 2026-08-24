@@ -16,7 +16,7 @@ pub fn link_addon(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         return Err(global.throw_invalid_argument_type("linkAddon", "addon", "Uint8Array"));
     };
     let name = bun_core::String::from_js(args[2], global)?;
-    let name_utf8 = name.to_utf8_bytes();
+    let name_utf8 = name.to_owned_slice();
     // Stands in for the exe's exported trampoline, which a synthetic host does not have.
     let exception_handler = match args.get(3) {
         Some(value) if value.is_number() => value.to_u32(),

@@ -3923,6 +3923,15 @@ it("should not trim utf-8 start bytes at end of string", () => {
   expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
 });
 
+it("Buffer.from(BigInt64Array) throws instead of returning a zero-filled buffer", () => {
+  // Copying BigInt elements into a Uint8Array is a TypeError (same as `new Uint8Array(2).set(new BigInt64Array(1))`).
+  expect(() => Buffer.from(new BigInt64Array([1n]))).toThrow(TypeError);
+  expect(() => Buffer.from(new BigUint64Array([1n]))).toThrow(TypeError);
+  expect(() => new Buffer(new BigInt64Array([1n]))).toThrow(TypeError);
+  // An empty one has nothing to copy.
+  expect(Buffer.from(new BigInt64Array(0)).length).toBe(0);
+});
+
 it("Buffer.from(arrayBuffer)", () => {
   const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
   const buf = Buffer.from(ab);
@@ -5133,3 +5142,295 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
     expect(exitCode).toBe(0);
   },
 );
+
+// The fixed-width read* / write* accessors are C++ host functions that JSC's DFG/FTL compile into
+// bounds-checked loads / stores (JSBuffer.cpp + JavaScriptCore's BufferAccessorRegistry). They must
+// keep agreeing with a DataView reference after tier-up, and everything the JIT does not speculate
+// (bad offsets, out-of-range values, other receivers) must keep throwing exactly as before.
+describe("read*/write* after JIT tier-up", () => {
+  const buf = Buffer.alloc(64);
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  for (let i = 0; i < buf.length; i++) buf[i] = (i * 37 + 11) & 0xff;
+
+  const readers = [
+    ["readInt8", 1, o => dv.getInt8(o)],
+    ["readUInt8", 1, o => dv.getUint8(o)],
+    ["readInt16LE", 2, o => dv.getInt16(o, true)],
+    ["readInt16BE", 2, o => dv.getInt16(o, false)],
+    ["readUInt16LE", 2, o => dv.getUint16(o, true)],
+    ["readUInt16BE", 2, o => dv.getUint16(o, false)],
+    ["readInt32LE", 4, o => dv.getInt32(o, true)],
+    ["readInt32BE", 4, o => dv.getInt32(o, false)],
+    ["readUInt32LE", 4, o => dv.getUint32(o, true)],
+    ["readUInt32BE", 4, o => dv.getUint32(o, false)],
+    ["readFloatLE", 4, o => dv.getFloat32(o, true)],
+    ["readFloatBE", 4, o => dv.getFloat32(o, false)],
+    ["readDoubleLE", 8, o => dv.getFloat64(o, true)],
+    ["readDoubleBE", 8, o => dv.getFloat64(o, false)],
+    ["readBigInt64LE", 8, o => dv.getBigInt64(o, true)],
+    ["readBigInt64BE", 8, o => dv.getBigInt64(o, false)],
+    ["readBigUInt64LE", 8, o => dv.getBigUint64(o, true)],
+    ["readBigUInt64BE", 8, o => dv.getBigUint64(o, false)],
+  ];
+
+  function codeOf(fn) {
+    try {
+      fn();
+    } catch (e) {
+      return e.code;
+    }
+    return "no throw";
+  }
+
+  it("reads match a DataView across many iterations, and out-of-bounds keeps throwing", () => {
+    for (const [name, byteSize, reference] of readers) {
+      const read = new Function("b", "o", `return b.${name}(o);`);
+      let mismatches = 0;
+      for (let i = 0; i < 1500; i++) {
+        const o = i & 31;
+        if (read(buf, o) !== reference(o)) mismatches++;
+      }
+      expect(mismatches).toBe(0);
+      expect(read(buf, 64 - byteSize)).toBe(reference(64 - byteSize));
+      let outOfBounds = 0,
+        negative = 0,
+        fractional = 0,
+        wrongType = 0;
+      for (let i = 0; i < 50; i++) {
+        if (codeOf(() => read(buf, 64 - byteSize + 1)) === "ERR_OUT_OF_RANGE") outOfBounds++;
+        if (codeOf(() => read(buf, -1)) === "ERR_OUT_OF_RANGE") negative++;
+        if (codeOf(() => read(buf, 1.5)) === "ERR_OUT_OF_RANGE") fractional++;
+        if (codeOf(() => read(buf, "0")) === "ERR_INVALID_ARG_TYPE") wrongType++;
+      }
+      expect([outOfBounds, negative, fractional, wrongType]).toEqual([50, 50, 50, 50]);
+    }
+  });
+
+  it("writes match a DataView across many iterations, and range checks keep throwing", () => {
+    const cases = [
+      ["writeInt8", 1, o => dv.getInt8(o), i => (i & 0xff) - 128],
+      ["writeUInt8", 1, o => dv.getUint8(o), i => i & 0xff],
+      ["writeInt16LE", 2, o => dv.getInt16(o, true), i => (i & 0xffff) - 0x8000],
+      ["writeUInt16BE", 2, o => dv.getUint16(o, false), i => i & 0xffff],
+      ["writeInt32LE", 4, o => dv.getInt32(o, true), i => (-i * 1000) | 0],
+      ["writeUInt32BE", 4, o => dv.getUint32(o, false), i => 2147483648 + i],
+      ["writeFloatLE", 4, o => dv.getFloat32(o, true), i => Math.fround(i / 3)],
+      ["writeDoubleBE", 8, o => dv.getFloat64(o, false), i => -i - 0.5],
+    ];
+    for (const [name, byteSize, reference, value] of cases) {
+      const write = new Function("b", "v", "o", `return b.${name}(v, o);`);
+      let mismatches = 0;
+      for (let i = 0; i < 1500; i++) {
+        const o = i & 31;
+        const v = value(i);
+        if (write(buf, v, o) !== o + byteSize || reference(o) !== v) mismatches++;
+      }
+      expect(mismatches).toBe(0);
+      let outOfBounds = 0;
+      for (let i = 0; i < 50; i++) if (codeOf(() => write(buf, value(i), 64)) === "ERR_OUT_OF_RANGE") outOfBounds++;
+      expect(outOfBounds).toBe(50);
+    }
+    let ranges = 0;
+    for (let i = 0; i < 2000; i++) {
+      if (codeOf(() => buf.writeInt8(128, 0)) === "ERR_OUT_OF_RANGE") ranges++;
+      if (codeOf(() => buf.writeUInt16LE(65536, 0)) === "ERR_OUT_OF_RANGE") ranges++;
+      if (codeOf(() => buf.writeUInt32BE(-1, 0)) === "ERR_OUT_OF_RANGE") ranges++;
+    }
+    expect(ranges).toBe(6000);
+    expect(() => buf.writeInt16LE("40000", 0)).toThrow("Received 40000");
+  });
+
+  it("BigInt writes match a DataView across many iterations, and 64-bit range checks keep throwing", () => {
+    const values = [0n, 1n, -1n, 2n ** 32n + 7n, 2n ** 63n - 1n, -(2n ** 63n)];
+    let mismatches = 0;
+    for (let i = 0; i < 1500; i++) {
+      const o = (i & 7) * 8;
+      const v = values[i % values.length];
+      if (buf.writeBigInt64LE(v, o) !== o + 8 || dv.getBigInt64(o, true) !== v) mismatches++;
+      if (buf.writeBigInt64BE(v, o) !== o + 8 || dv.getBigInt64(o, false) !== v) mismatches++;
+      if (v >= 0n) {
+        if (buf.writeBigUInt64LE(v, o) !== o + 8 || dv.getBigUint64(o, true) !== v) mismatches++;
+        if (buf.writeBigUInt64BE(v, o) !== o + 8 || dv.getBigUint64(o, false) !== v) mismatches++;
+      }
+    }
+    expect(mismatches).toBe(0);
+    expect(buf.writeBigUInt64LE(2n ** 64n - 1n, 0)).toBe(8);
+    expect(dv.getBigUint64(0, true)).toBe(2n ** 64n - 1n);
+    let codes = [];
+    for (let i = 0; i < 1000; i++) {
+      codes = [
+        codeOf(() => buf.writeBigUInt64LE(-1n, 0)),
+        codeOf(() => buf.writeBigInt64LE(2n ** 63n, 0)),
+        codeOf(() => buf.writeBigInt64LE(-(2n ** 63n) - 1n, 0)),
+        codeOf(() => buf.writeBigInt64LE(5, 0)),
+        codeOf(() => buf.writeBigInt64LE(0n, 57)),
+      ];
+    }
+    expect(codes).toEqual([
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_INVALID_ARG_TYPE",
+      "ERR_OUT_OF_RANGE",
+    ]);
+  });
+
+  it("works on many distinct buffers (no hidden per-buffer state)", () => {
+    const bufs = Array.from({ length: 512 }, (_, i) => {
+      const b = Buffer.alloc(16);
+      b.writeInt32LE(i * 7, 4);
+      return b;
+    });
+    let sum = 0;
+    for (let round = 0; round < 50; round++) {
+      for (let i = 0; i < bufs.length; i++) sum += bufs[i].readInt32LE(4);
+    }
+    expect(sum).toBe(50 * 7 * ((511 * 512) / 2));
+    // Reading/writing added no non-index own properties to the buffers.
+    expect(Object.getOwnPropertyNames(bufs[0]).filter(k => !/^\d+$/.test(k))).toEqual([]);
+    expect(Object.getOwnPropertySymbols(bufs[0])).toEqual([]);
+  });
+
+  it("keeps working with other ArrayBufferView receivers via .call", () => {
+    const u8 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const dv8 = new DataView(u8.buffer);
+    for (let i = 0; i < 1500; i++) {
+      expect(Buffer.prototype.readInt32LE.call(u8, 0)).toBe(dv8.getInt32(0, true));
+      expect(Buffer.prototype.readUInt16BE.call(u8, 6)).toBe(dv8.getUint16(6, false));
+      expect(Buffer.prototype.writeUInt8.call(u8, i & 0xff, 7)).toBe(8);
+      expect(u8[7]).toBe(i & 0xff);
+      expect(() => Buffer.prototype.readInt32LE.call({}, 0)).toThrow(TypeError);
+    }
+    // The bound is the receiver's element count (this.length), as in lib/internal/buffer.js, not
+    // its byteLength: on a wider-element view these throw even though the bytes would fit.
+    const u16 = new Uint16Array(4);
+    expect(codeOf(() => Buffer.prototype.writeUInt32BE.call(u16, 1, 3))).toBe("ERR_OUT_OF_RANGE");
+    // The BigInt writers share the receiver / bound handling with the rest of the family.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(u16, 5n, 0))).toBe("ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(codeOf(() => Buffer.prototype.readBigInt64LE.call(u16, 0))).toBe("ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call({}, 0n))).toBe("ERR_INVALID_ARG_TYPE");
+    // For the BigInt writers checkInt() validates the value's range before checkBounds() reaches the
+    // receiver, so a bad value wins over the DataView receiver.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 2n ** 64n, 0))).toBe(
+      "ERR_OUT_OF_RANGE",
+    );
+    expect(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 2n ** 64n, 0)).toThrow(
+      'The value of "value" is out of range',
+    );
+    // A garbage receiver never masks the value's own error: the BigInt writers, like their
+    // number siblings, validate the value first.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call({}, 2n ** 64n, 0))).toBe("ERR_OUT_OF_RANGE");
+    expect(() => Buffer.prototype.writeBigInt64LE.call({}, 2n ** 64n, 0)).toThrow('The value of "value"');
+    // An omitted offset defaults to 0 in the error text, on writes as on reads.
+    expect(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n)).toThrow("Received 0");
+    // The offset's type is validated before the receiver's length is consulted, matching the
+    // fixed-width writers, so a non-number offset still wins over the DataView receiver.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n, "bad"))).toBe(
+      "ERR_INVALID_ARG_TYPE",
+    );
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n, 1.5))).toBe(
+      "ERR_OUT_OF_RANGE",
+    );
+    // A DataView has no `length`, so as in lib/internal/buffer.js every accessor reports `<= NaN`.
+    const dv = new DataView(new ArrayBuffer(8));
+    for (const f of [
+      () => Buffer.prototype.readIntLE.call(dv, 0, 3),
+      () => Buffer.prototype.writeIntLE.call(dv, 1, 0, 3),
+      () => Buffer.prototype.readInt32LE.call(dv, 0),
+      () => Buffer.prototype.writeInt32LE.call(dv, 1, 0),
+      () => Buffer.prototype.readBigInt64LE.call(dv, 0),
+      () => Buffer.prototype.writeBigInt64LE.call(dv, 5n, 0),
+      () => Buffer.prototype.writeBigUInt64BE.call(dv, 5n, 0),
+    ]) {
+      expect(codeOf(f)).toBe("ERR_OUT_OF_RANGE");
+      expect(() => f()).toThrow("<= NaN");
+    }
+    expect(codeOf(() => Buffer.prototype.readInt32LE.call(u16, 3))).toBe("ERR_OUT_OF_RANGE");
+    expect(codeOf(() => Buffer.prototype.readUIntLE.call(u16, 2, 3))).toBe("ERR_OUT_OF_RANGE");
+    u16[0] = 0x1234;
+    expect(Buffer.prototype.readInt32LE.call(u16, 0)).toBe(new DataView(u16.buffer).getInt32(0, true));
+  });
+
+  it("variable-width readers/writers match across widths after tier-up", () => {
+    const uint = (o, l, le) => {
+      let value = 0;
+      for (let i = 0; i < l; ++i) value = le ? value + buf[o + i] * 2 ** (8 * i) : value * 256 + buf[o + i];
+      return value;
+    };
+    const sint = (o, l, le) => {
+      const value = uint(o, l, le);
+      return value >= 2 ** (8 * l - 1) ? value - 2 ** (8 * l) : value;
+    };
+    // A constant byteLength (JIT-inlined for 1/2/4) and a varying one (host path).
+    const readConst3 = (b, o) => b.readUIntBE(o, 3);
+    const readConst4 = (b, o) => b.readIntLE(o, 4);
+    let mismatches = 0;
+    for (let i = 0; i < 1500; i++) {
+      const o = i & 15;
+      const l = 1 + (i % 6);
+      if (buf.readIntLE(o, l) !== sint(o, l, true)) mismatches++;
+      if (buf.readIntBE(o, l) !== sint(o, l, false)) mismatches++;
+      if (buf.readUIntLE(o, l) !== uint(o, l, true)) mismatches++;
+      if (buf.readUIntBE(o, l) !== uint(o, l, false)) mismatches++;
+      if (readConst3(buf, o) !== uint(o, 3, false)) mismatches++;
+      if (readConst4(buf, o) !== dv.getInt32(o, true)) mismatches++;
+    }
+    expect(mismatches).toBe(0);
+    const scratch = Buffer.alloc(16);
+    for (let i = 0; i < 1500; i++) {
+      const l = 1 + (i % 6);
+      const v = i % 100;
+      expect(scratch.writeUIntLE(v, 0, l)).toBe(l);
+      expect(scratch.readUIntLE(0, l)).toBe(v);
+      expect(scratch.writeIntBE(-v, 8, l)).toBe(8 + l);
+      expect(scratch.readIntBE(8, l)).toBe(-v | 0);
+    }
+    let codes = [];
+    for (let i = 0; i < 1000; i++) {
+      codes = [
+        codeOf(() => buf.readIntLE(0, 7)),
+        codeOf(() => buf.readIntLE(undefined, 4)),
+        codeOf(() => readConst4(buf, 61)),
+        codeOf(() => scratch.writeIntLE(2 ** 24, 0, 3)),
+      ];
+    }
+    expect(codes).toEqual(["ERR_OUT_OF_RANGE", "ERR_INVALID_ARG_TYPE", "ERR_OUT_OF_RANGE", "ERR_OUT_OF_RANGE"]);
+    // The value is only coerced after the byteLength dispatch, as in lib/internal/buffer.js.
+    let valueOfCalls = 0;
+    expect(
+      codeOf(() =>
+        scratch.writeIntLE(
+          {
+            valueOf() {
+              valueOfCalls++;
+              return 1;
+            },
+          },
+          0,
+          7,
+        ),
+      ),
+    ).toBe("ERR_OUT_OF_RANGE");
+    expect(valueOfCalls).toBe(0);
+    // With both a bad value and a bad offset: the one-byte writers (writeU_Int8) report the offset
+    // first, the wider ones (checkInt) the value first.
+    expect(codeOf(() => scratch.writeUIntLE(300, "bad", 1))).toBe("ERR_INVALID_ARG_TYPE");
+    expect(codeOf(() => scratch.writeIntLE(200, "bad", 1))).toBe("ERR_INVALID_ARG_TYPE");
+    expect(codeOf(() => scratch.writeUIntLE(2 ** 24, "bad", 2))).toBe("ERR_OUT_OF_RANGE");
+    expect(codeOf(() => scratch.writeIntBE(2 ** 24, "bad", 3))).toBe("ERR_OUT_OF_RANGE");
+    // Every accessor validates the offset's type before consulting the receiver, so a bad offset
+    // wins over a garbage receiver across the whole family.
+    for (const f of [
+      () => Buffer.prototype.readIntLE.call({}, "bad", 3),
+      () => Buffer.prototype.readInt32LE.call({}, "bad"),
+      () => Buffer.prototype.writeIntLE.call({}, 1, "bad", 3),
+      () => Buffer.prototype.writeBigInt64LE.call({}, 5n, "bad"),
+    ]) {
+      expect(codeOf(f)).toBe("ERR_INVALID_ARG_TYPE");
+      expect(() => f()).toThrow('The "offset" argument must be of type number');
+    }
+    // Out-of-range integral offsets, including |offset| > 2**53, get the bounds message.
+    expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");
+    expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");
+  });
+});

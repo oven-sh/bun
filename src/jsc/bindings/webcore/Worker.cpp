@@ -188,10 +188,10 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
 // it to the Worker object.
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString* message, JSC::EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSC::JSValue error = JSC::JSValue::decode(errorValue);
-    String messageStr = message->transferToWTFString();
+    String messageStr = message.transferToWTFString();
     ErrorEvent::Init init;
     init.message = messageStr;
     init.error = error;

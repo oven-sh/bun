@@ -153,7 +153,7 @@ impl ClearedTimers {
             // job was scheduled and its JS wrapper (strong while scheduled)
             // keeps it alive; no JS has run since; the `FakeTimers` borrow
             // ended before this call.
-            unsafe { CronJob::stop_dropped_from_fake_heap(job) };
+            CronJob::stop_dropped_from_fake_heap(unsafe { bun_ptr::ThisPtr::new(job) });
         }
     }
 }

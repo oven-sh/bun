@@ -894,10 +894,8 @@ pub mod bv2_impl {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
             }
             impl FileMap {
-                /// Looks `specifier` up as a map key. Keys are stored with
-                /// forward slashes (`file_map_from_js`), so on Windows the
-                /// specifier is normalized into a path buffer first. A specifier
-                /// that does not fit one is never a key.
+                /// Keys are stored with forward slashes (`file_map_from_js`), so on
+                /// Windows the specifier is normalized before the lookup.
                 fn get_key_value(&self, specifier: &[u8]) -> Option<(&[u8], &[u8])> {
                     if self.map.is_empty() {
                         return None;
@@ -958,21 +956,16 @@ pub mod bv2_impl {
                         unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
                     };
 
-                    // Direct key match (must return the map-owned key, not the
-                    // parameter).
+                    // Direct key match. Return the map-owned key, not the parameter.
                     if let Some((key, _)) = self.get_key_value(specifier) {
                         return Some(Self::result_for_key(dupe(key)));
                     }
 
                     // Also try joining a relative specifier against the importer's
                     // directory. Relative = not posix-absolute and not Windows
-                    // drive-absolute (e.g. `C:/`).
-                    //
-                    // The specifier is user input of any length (an import
-                    // string, a CSS `url()`), so every step below that writes
-                    // into a path buffer is bounds-checked. A join that does
-                    // not fit one is not a virtual file; the resolver then
-                    // handles the specifier like it does for a file on disk.
+                    // drive-absolute (e.g. `C:/`). A specifier can be any length
+                    // (a CSS `url()`); one that does not fit a path buffer is not
+                    // a virtual file and falls through to the resolver.
                     if !specifier.is_empty() && !bun_paths::is_absolute_loose(specifier) {
                         // `source_file` may itself be relative (e.g. on Windows
                         // when the bundler stores paths relative to cwd).

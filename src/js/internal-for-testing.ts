@@ -676,6 +676,9 @@ export const lowercaseHeaderNameSIMD: (name: string) => string = $newCppFunction
   1,
 );
 
+export const BunString_fromJSNullNoException: () => { ok: boolean; dead: boolean; hasException: boolean } =
+  $newCppFunction("InternalForTesting.cpp", "jsFunction_BunString_fromJSNullNoException", 0);
+
 export const emitMemoryPressure: (level: "warning" | "critical") => void = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_emitMemoryPressure",

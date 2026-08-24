@@ -1,3 +1,4 @@
+import { BunString_fromJSNullNoException } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -13,10 +14,20 @@ import { join } from "node:path";
 // Bun::toStringRef now decides Dead vs Empty by reading
 // vm.exceptionForInspection() (the accessor documented for inspecting pending
 // exceptions without disturbing Throw/CatchScopes) when toWTFString yields
-// null: Dead only when a real exception is pending, else Empty. That edge
-// state is not reproducible from JavaScript (every null-return site in JSC's
-// toWTFString throws first), so these tests pin the observable stringification
-// behavior the fix must preserve.
+// null: Dead only when a real exception is pending, else Empty.
+describe("Bun::toStringRef null-string handling", () => {
+  // The fuzzer state is not reproducible from JavaScript (every null-return
+  // site in JSC's toWTFString throws first), so the native hook fabricates it
+  // and calls the real BunString__fromJS. Before the fix this returned Dead
+  // with no pending exception, which is exactly what fires
+  // debugAssert(has_exception) in String.fromJS.
+  test("null WTF::String with no pending exception maps to Empty, not Dead", () => {
+    const { ok, dead, hasException } = BunString_fromJSNullNoException();
+    expect({ dead, hasException }).not.toEqual({ dead: true, hasException: false });
+    expect(ok).toBe(true);
+  });
+});
+
 describe("Bun.write stringifies non-BlobPart values via Bun::toStringRef", () => {
   test.each([
     ["native constructor", ArrayBuffer],

@@ -384,14 +384,23 @@ describe("web worker", () => {
   // listener; until then (and whenever the last one is removed) messages stay
   // queued in order, as a MessagePort / node's parentPort does. #40141
   describe("messages to the worker global scope wait for a listener", () => {
-    // `early` is posted right after construction (worker still starting); `onStarted` once the
-    // worker's entry has run far enough to post "started". The worker echoes what it receives.
+    // `early` is posted right after construction (worker still starting); `onOpen` from the
+    // worker's 'open' event; `onStarted` once the worker's entry has run far enough to post
+    // "started". The worker echoes what it receives.
     async function expectEchoed(
       src: string,
-      { early = [], onStarted, expected }: { early?: unknown[]; onStarted: unknown[]; expected: unknown[] },
+      {
+        early = [],
+        onOpen = [],
+        onStarted = [],
+        expected,
+      }: { early?: unknown[]; onOpen?: unknown[]; onStarted?: unknown[]; expected: unknown[] },
     ) {
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       for (const m of early) w.postMessage(m);
+      w.addEventListener("open", () => {
+        for (const m of onOpen) w.postMessage(m);
+      });
       const got: unknown[] = [];
       const done = Promise.withResolvers<void>();
       w.onerror = e => done.reject(e.error ?? e.message);
@@ -418,6 +427,49 @@ describe("web worker", () => {
          self.onmessage = e => postMessage(e.data);`,
         { early: ["early"], onStarted: [0, 1, 2], expected: ["early", 0, 1, 2] },
       );
+    });
+
+    // 'open' fires once the entry has run up to its first top-level await, so these posts land in
+    // the same window as `early` ones: waiting for 'open' is not what makes posting safe.
+    test("posted after the 'open' event, handler installed after a top-level await", async () => {
+      await expectEchoed(
+        `await new Promise(r => setTimeout(r, 50));
+         self.onmessage = e => postMessage(e.data);`,
+        { onOpen: [0, 1, 2], expected: [0, 1, 2] },
+      );
+    });
+
+    // A transferred buffer is detached in the sender at postMessage(); its bytes exist only in the
+    // queued message from then on, so a drop here destroys data instead of just losing a copy.
+    test("transferred ArrayBuffers posted before a handler exists arrive intact", async () => {
+      const w = new Worker(
+        URL.createObjectURL(
+          new Blob([
+            `await new Promise(r => setTimeout(r, 50));
+             self.onmessage = e => postMessage(Array.from(new Uint8Array(e.data)));`,
+          ]),
+        ),
+      );
+      const buffers = [1, 2, 3].map(n => new Uint8Array([n, n + 10, n + 20]).buffer);
+      for (const b of buffers) w.postMessage(b, [b]);
+      expect(buffers.map(b => b.byteLength)).toEqual([0, 0, 0]);
+      const got: unknown[] = [];
+      const done = Promise.withResolvers<void>();
+      w.onerror = e => done.reject(e.error ?? e.message);
+      w.onmessage = e => {
+        got.push(e.data);
+        if (got.length === buffers.length) done.resolve();
+      };
+      try {
+        await done.promise;
+        expect(got).toEqual([
+          [1, 11, 21],
+          [2, 12, 22],
+          [3, 13, 23],
+        ]);
+      } finally {
+        w.terminate();
+      }
     });
 
     test("handler installed before a top-level await that never settles", async () => {

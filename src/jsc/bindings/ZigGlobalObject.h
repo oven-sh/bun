@@ -413,7 +413,7 @@ public:
         Bun__S3UploadStream__onRejectStream,
         Bun__HTMLRewriter__onResolveInputStream,
         Bun__HTMLRewriter__onRejectInputStream,
-        Bun__onDynamicImportSettled,
+        Bun__onModuleLoadSettled,
         Count_,
     };
     static constexpr size_t promiseFunctionsSize = static_cast<size_t>(PromiseFunctions::Count_);
@@ -731,12 +731,15 @@ public:
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};
 
-    // Resolved keys of the import() calls whose promise has not settled yet.
-    // moduleLoaderResolve must not drop a failed registry entry for such a key:
-    // the loader's ModuleLoadTopRejected microtask still looks the key up by
-    // name after the failure is recorded, and would store the stale error on a
-    // fresh entry.
-    WTF::HashCountedSet<RefPtr<UniquedStringImpl>, JSC::IdentifierRepHash> pendingDynamicImports;
+    // Resolved keys of the top-level module loads (import(), Module.runMain)
+    // whose promise has not settled yet. moduleLoaderResolve must not drop a
+    // failed registry entry for such a key: the loader's ModuleLoadTopRejected
+    // microtask still looks the key up by name after the failure is recorded,
+    // and would store the stale error on a fresh entry.
+    WTF::HashCountedSet<RefPtr<UniquedStringImpl>, JSC::IdentifierRepHash> pendingModuleLoads;
+    // Keeps `key` in pendingModuleLoads until `promise`, the result of a
+    // top-level load of that key, settles.
+    void trackPendingModuleLoad(const JSC::Identifier& key, JSC::JSPromise* promise);
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider

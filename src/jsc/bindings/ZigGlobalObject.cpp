@@ -791,12 +791,12 @@ static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, c
     if (!impl)
         return;
 
-    // An import() of this key is still settling. The loader records a top-level
-    // failure in one microtask and reports it in the next, and the second one
-    // looks the key up by name: it would attach the stale error to any entry a
-    // new fetch registered in between. Keep the failed entry until the import()
-    // promise has settled.
-    if (globalObject->pendingDynamicImports.contains(impl))
+    // A top-level load of this key is still settling. The loader records a
+    // top-level failure in one microtask and reports it in the next, and the
+    // second one looks the key up by name: it would attach the stale error to
+    // any entry a new fetch registered in between. Keep the failed entry until
+    // the load's promise has settled.
+    if (globalObject->pendingModuleLoads.contains(impl))
         return;
 
     auto* loader = globalObject->moduleLoader();
@@ -821,9 +821,9 @@ static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, c
     loader->removeEntry(key);
 }
 
-// Reaction on the promise of an import(): argument 1 is the resolved key that
-// importResolvedModule registered in pendingDynamicImports.
-BUN_DEFINE_HOST_FUNCTION(Bun__onDynamicImportSettled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Reaction on the promise of a top-level module load: argument 1 is the
+// resolved key that trackPendingModuleLoad registered in pendingModuleLoads.
+BUN_DEFINE_HOST_FUNCTION(Bun__onModuleLoadSettled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -832,11 +832,21 @@ BUN_DEFINE_HOST_FUNCTION(Bun__onDynamicImportSettled, (JSC::JSGlobalObject * glo
         return JSValue::encode(jsUndefined());
     auto key = JSC::Identifier::fromString(vm, keyString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    static_cast<Zig::GlobalObject*>(globalObject)->pendingDynamicImports.remove(key.impl());
+    static_cast<Zig::GlobalObject*>(globalObject)->pendingModuleLoads.remove(key.impl());
     return JSValue::encode(jsUndefined());
 }
 
-// import() of an already resolved key. The key stays in pendingDynamicImports
+void GlobalObject::trackPendingModuleLoad(const JSC::Identifier& key, JSC::JSPromise* promise)
+{
+    auto& vm = this->vm();
+    pendingModuleLoads.add(key.impl());
+    // The key string shares the Identifier's atom, so the handler gets the same
+    // UniquedStringImpl back from Identifier::fromString.
+    JSFunction* onSettled = thenable(Bun__onModuleLoadSettled);
+    promise->performPromiseThenWithContext(vm, this, onSettled, onSettled, jsUndefined(), jsString(vm, key.string()));
+}
+
+// import() of an already resolved key. The key stays in pendingModuleLoads
 // until the returned promise settles, which is after the loader has finished
 // touching the registry for this load. See dropFailedEntryThatNeverEvaluated.
 static JSC::JSPromise* importResolvedModule(Zig::GlobalObject* globalObject, const JSC::Identifier& key, RefPtr<JSC::ScriptFetchParameters>&& parameters, int64_t referrerAsyncOrder)
@@ -844,21 +854,12 @@ static JSC::JSPromise* importResolvedModule(Zig::GlobalObject* globalObject, con
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Before this import() counts as pending, or the resolve hook would see it
-    // and keep the failed entry.
     dropFailedEntryThatNeverEvaluated(globalObject, key);
-    globalObject->pendingDynamicImports.add(key.impl());
     auto* result = JSC::importModule(globalObject, key, JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
-    if (scope.exception()) [[unlikely]] {
-        globalObject->pendingDynamicImports.remove(key.impl());
+    if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-    }
     ASSERT(result);
-
-    // The key string shares the Identifier's atom, so the handler gets the same
-    // UniquedStringImpl back from Identifier::fromString.
-    JSFunction* onSettled = globalObject->thenable(Bun__onDynamicImportSettled);
-    result->performPromiseThenWithContext(vm, globalObject, onSettled, onSettled, jsUndefined(), jsString(vm, key.string()));
+    globalObject->trackPendingModuleLoad(key, result);
     return result;
 }
 
@@ -3486,6 +3487,9 @@ void GlobalObject::clearModuleRegistry()
         WTF::Locker locker { moduleLoader->cellLock() };
         moduleLoader->clearAll();
     }
+    // A load that was in flight has lost its entry, so its promise may never
+    // settle. Do not let it pin a failed entry of the next registry.
+    this->pendingModuleLoads.clear();
     this->requireMap()->clear(this);
 }
 
@@ -4340,8 +4344,8 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onResolveInputStream;
     } else if (handler == Bun__HTMLRewriter__onRejectInputStream) {
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
-    } else if (handler == Bun__onDynamicImportSettled) {
-        return GlobalObject::PromiseFunctions::Bun__onDynamicImportSettled;
+    } else if (handler == Bun__onModuleLoadSettled) {
+        return GlobalObject::PromiseFunctions::Bun__onModuleLoadSettled;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

@@ -779,17 +779,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
 }
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto arg1 = callFrame->argument(0);
     auto name = arg1.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
+    // Resolve first: the load is a top-level load like import() and is tracked
+    // under the key the loader uses while its promise is pending.
+    auto key = Zig::GlobalObject::moduleLoaderResolve(globalObject, globalObject->moduleLoader(), JSC::jsString(vm, name), JSC::jsUndefined(), nullptr, false);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    globalObject->trackPendingModuleLoad(key, promise);
+    Bun__VirtualMachine__setOverrideModuleRunMainPromise(globalObject->bunVM(), promise);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

@@ -788,8 +788,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * lexicalGlobalObjec
     auto name = arg1.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Resolve first: the load is a top-level load like import() and is tracked
-    // under the key the loader uses while its promise is pending.
+    // Resolve first so the load is tracked under the loader's key, as import() is.
     auto key = Zig::GlobalObject::moduleLoaderResolve(globalObject, globalObject->moduleLoader(), JSC::jsString(vm, name), JSC::jsUndefined(), nullptr, false);
     RETURN_IF_EXCEPTION(scope, {});
 

@@ -746,14 +746,8 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
-// The JSC loader caches every failure, including a transpile error, an
-// unresolved static import, or a link error. That is the browser behavior
-// (a module script that fails to fetch or parse is cached as null). Node never
-// caches those: its ModuleJob is only added to the load cache once the source
-// compiled and every dependency resolved, so the next import() re-reads the
-// file. A module that never started evaluating has no side effects that a
-// second load could duplicate, so drop the stale record and let the loader
-// fetch again. A module whose body threw stays cached, as in Node and the spec.
+// Like Node, re-fetch a module whose load failed before it ran; only a module
+// whose body threw keeps its error (the spec's [[EvaluationError]]).
 static bool isFailedEntryThatNeverEvaluated(JSC::ModuleRegistryEntry* entry)
 {
     switch (entry->status()) {
@@ -761,8 +755,7 @@ static bool isFailedEntryThatNeverEvaluated(JSC::ModuleRegistryEntry* entry)
     case JSC::ModuleRegistryEntry::Status::InstantiationFailed:
         return true;
     case JSC::ModuleRegistryEntry::Status::EvaluationFailed: {
-        // A dependency that failed to load is stored as an evaluation error on
-        // the importer even though the importer never linked.
+        // A dependency that failed to load is stored here on the importer too.
         auto* record = entry->record();
         if (!record)
             return true;
@@ -776,9 +769,8 @@ static bool isFailedEntryThatNeverEvaluated(JSC::ModuleRegistryEntry* entry)
 
 static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, const JSC::Identifier& key)
 {
-    // The map is keyed by (specifier, type). Probe each type directly:
-    // registryEntry() falls back to a scan of the whole map for a key that has
-    // no JavaScript entry, and this runs on every resolve.
+    // Probe each (specifier, type) bucket: registryEntry() scans the whole map
+    // for a key without a JavaScript entry, and this runs on every resolve.
     static constexpr JSC::ScriptFetchParameters::Type moduleTypes[] = {
         JSC::ScriptFetchParameters::Type::None,
         JSC::ScriptFetchParameters::Type::JavaScript,
@@ -791,11 +783,8 @@ static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, c
     if (!impl)
         return;
 
-    // A top-level load of this key is still settling. The loader records a
-    // top-level failure in one microtask and reports it in the next, and the
-    // second one looks the key up by name: it would attach the stale error to
-    // any entry a new fetch registered in between. Keep the failed entry until
-    // the load's promise has settled.
+    // ModuleLoadTopRejected looks the key up by name one microtask after the
+    // failure is recorded; a fresh entry there would inherit the stale error.
     if (globalObject->pendingModuleLoads.contains(impl))
         return;
 
@@ -806,8 +795,7 @@ static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, c
         auto* entry = moduleMap.get({ impl, type }).get();
         if (!entry)
             continue;
-        // removeEntry drops every type variant of the key, so keep them all
-        // while any variant holds a module that may have run.
+        // removeEntry drops every type variant of the key.
         if (!isFailedEntryThatNeverEvaluated(entry))
             return;
         found = true;
@@ -821,8 +809,7 @@ static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, c
     loader->removeEntry(key);
 }
 
-// Reaction on the promise of a top-level module load: argument 1 is the
-// resolved key that trackPendingModuleLoad registered in pendingModuleLoads.
+// Argument 1 is the resolved key passed by trackPendingModuleLoad.
 BUN_DEFINE_HOST_FUNCTION(Bun__onModuleLoadSettled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -840,15 +827,12 @@ void GlobalObject::trackPendingModuleLoad(const JSC::Identifier& key, JSC::JSPro
 {
     auto& vm = this->vm();
     pendingModuleLoads.add(key.impl());
-    // The key string shares the Identifier's atom, so the handler gets the same
-    // UniquedStringImpl back from Identifier::fromString.
+    // The string shares the Identifier's atom, so the handler gets the same impl back.
     JSFunction* onSettled = thenable(Bun__onModuleLoadSettled);
     promise->performPromiseThenWithContext(vm, this, onSettled, onSettled, jsUndefined(), jsString(vm, key.string()));
 }
 
-// import() of an already resolved key. The key stays in pendingModuleLoads
-// until the returned promise settles, which is after the loader has finished
-// touching the registry for this load. See dropFailedEntryThatNeverEvaluated.
+// import() of an already resolved key.
 static JSC::JSPromise* importResolvedModule(Zig::GlobalObject* globalObject, const JSC::Identifier& key, RefPtr<JSC::ScriptFetchParameters>&& parameters, int64_t referrerAsyncOrder)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3487,8 +3471,7 @@ void GlobalObject::clearModuleRegistry()
         WTF::Locker locker { moduleLoader->cellLock() };
         moduleLoader->clearAll();
     }
-    // A load that was in flight has lost its entry, so its promise may never
-    // settle. Do not let it pin a failed entry of the next registry.
+    // An in-flight load lost its entry and may never settle.
     this->pendingModuleLoads.clear();
     this->requireMap()->clear(this);
 }
@@ -3638,10 +3621,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     JSC::Identifier resolved = resolveModuleKey(globalObject, key, referrer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Every lookup of a module in the registry, whether from import(), a
-    // static import of a module being linked, or the entry point, goes through
-    // resolve() first. Evicting here makes the loader fetch the module again
-    // when its last load never produced a module.
+    // Every registry lookup, for import(), a static import, or the entry point,
+    // resolves first, so this is where a failed load is retried.
     dropFailedEntryThatNeverEvaluated(globalObject, resolved);
     return resolved;
 }

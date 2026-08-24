@@ -732,13 +732,9 @@ public:
     BunPlugin::OnResolve onResolvePlugins {};
 
     // Resolved keys of the top-level module loads (import(), Module.runMain)
-    // whose promise has not settled yet. moduleLoaderResolve must not drop a
-    // failed registry entry for such a key: the loader's ModuleLoadTopRejected
-    // microtask still looks the key up by name after the failure is recorded,
-    // and would store the stale error on a fresh entry.
+    // whose promise has not settled; moduleLoaderResolve keeps their failed
+    // registry entries until then.
     WTF::HashCountedSet<RefPtr<UniquedStringImpl>, JSC::IdentifierRepHash> pendingModuleLoads;
-    // Keeps `key` in pendingModuleLoads until `promise`, the result of a
-    // top-level load of that key, settles.
     void trackPendingModuleLoad(const JSC::Identifier& key, JSC::JSPromise* promise);
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache

@@ -23,6 +23,26 @@ pub struct Hooks {
     pub sampler: fn() -> crate::Sampler,
     pub limits: fn() -> crate::data::Limits,
     pub capture_db_statement: fn() -> bool,
+    /// `f(tracestate)` with the active span's W3C `tracestate` (empty if none).
+    pub active_trace_state: fn(global: *mut c_void, f: &mut dyn FnMut(&[u8])),
+}
+
+/// Copy the active (parent) span's `tracestate` onto a freshly begun pooled
+/// span so the exported child carries it like JS-created children do.
+pub fn inherit_trace_state(global: *mut c_void, span: crate::pool::NativeSpan) {
+    let Some(h) = HOOKS.get() else { return };
+    (h.active_trace_state)(global, &mut |ts: &[u8]| {
+        if ts.is_empty() {
+            return;
+        }
+        with_local(global, |l| {
+            crate::pool::with(&mut l.pool, span, |s| {
+                if s.trace_state.is_empty() {
+                    s.trace_state.extend_from_slice(ts);
+                }
+            });
+        });
+    });
 }
 
 static HOOKS: OnceLock<Hooks> = OnceLock::new();

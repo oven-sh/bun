@@ -54,12 +54,15 @@ pub fn begin(
     let Some(mut l) = super::local(global) else {
         return NativeSpan::NONE;
     };
-    begin_span(&mut l, stub, |s| {
+    let span = begin_span(&mut l, stub, |s| {
         if stub.is_recording() {
             set_command_attrs(s, argv);
             s.push_attribute(b"process.pid", &Value::Int(pid), super::span::limits());
         }
-    })
+    });
+    drop(l);
+    bun_telemetry::rt::inherit_trace_state(global.as_ptr().cast(), span);
+    span
 }
 
 /// The spawn itself failed.

@@ -8,7 +8,12 @@ Bun.otel.start({
   headers: { "x-api-key": "k" },
   exporters: [
     "http://collector:4318",
-    { url: "https://otlp.example.com/v1/traces", headers: { authorization: "Bearer x" }, compression: "gzip", timeoutMs: 5000 },
+    {
+      url: "https://otlp.example.com/v1/traces",
+      headers: { authorization: "Bearer x" },
+      compression: "gzip",
+      timeoutMs: 5000,
+    },
     {
       export(spans) {
         expectType(spans[0]!.name).is<string>();
@@ -37,7 +42,12 @@ const tracer = Bun.otel.tracer("my-lib", "1.0.0");
 expectType(tracer.name).is<string>();
 
 const span = tracer.startSpan("op", { kind: Bun.otel.SpanKind.CLIENT, attributes: { a: 1, b: "x", c: [true] } });
-span.setAttribute("k", 1n).setAttributes({ x: undefined }).addEvent("e").addEvent("e", { a: 1 }).addEvent("e", Date.now());
+span
+  .setAttribute("k", 1n)
+  .setAttributes({ x: undefined })
+  .addEvent("e")
+  .addEvent("e", { a: 1 })
+  .addEvent("e", Date.now());
 span.setStatus({ code: Bun.otel.SpanStatusCode.ERROR, message: "m" }).setStatus(1);
 span.recordException(new Error()).updateName("renamed").addLink({ context: span.spanContext() });
 expectType(span.traceId).is<string>();
@@ -69,3 +79,18 @@ const ctx = Bun.otel.propagator.extract(Bun.otel.ROOT_CONTEXT, { traceparent: ""
 Bun.otel.propagator.inject(ctx, new Headers(), { set: (h, k, v) => (h as Headers).set(k, v) });
 Bun.otel.contextManager.with(ctx, () => {});
 tracer.startSpan("child", {}, ctx);
+
+// Named kind/status members; api-shaped attribute values (arrays may hold null); traceState output vs input.
+const client: Bun.otel.SpanKind.CLIENT = Bun.otel.SpanKind.CLIENT;
+const err: Bun.otel.SpanStatusCode.ERROR = Bun.otel.SpanStatusCode.ERROR;
+expectType(client).is<2>();
+expectType(err).is<2>();
+Bun.otel.span("attrs", { strs: ["a", null, undefined], nums: [1, 2], flags: [true] }, s =>
+  s.setAttribute("k", [1, null]),
+);
+expectType(span.spanContext().traceState).is<Bun.otel.TraceState | undefined>();
+tracer.startSpan("linked", { links: [{ context: { ...span.spanContext(), traceState: "vendor=1" } }] });
+tracer.startSpan("parented", {
+  parent: { traceId: "0".repeat(32), spanId: "0".repeat(16), traceFlags: 1, traceState: "a=b" },
+});
+expectType(Bun.otel.contextManager.enable().disable()).is<typeof Bun.otel.contextManager>();

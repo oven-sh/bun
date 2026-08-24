@@ -652,6 +652,11 @@ pub extern "C" fn Bun__Telemetry__stubStart(
         &super::state().sampler,
         now,
     );
+    if !super::configured() {
+        // No pipeline (no BUN_OTEL / bunfig / start()): the span still carries
+        // ids for propagation but records nothing and is never buffered.
+        out.ctx.flags = Flags(out.ctx.flags.0 | Flags::NON_RECORDING);
+    }
 }
 
 fn carrier(ctx: SpanContext, remote: bool) -> SpanStub {
@@ -990,6 +995,12 @@ pub extern "C" fn Bun__Telemetry__nativeName(
         return OwnedJsString::empty();
     };
     pool::with_ref(&l.pool, NativeSpan(handle), |s| {
+        if s.name.is_empty() && s.http.active {
+            // A request span's name is derived (method + route) rather than stored.
+            let mut name = Vec::with_capacity(32);
+            s.http.append_name(&mut name);
+            return OwnedJsString::clone_utf8(&name);
+        }
         OwnedJsString::clone_utf8(&s.name)
     })
     .unwrap_or(OwnedJsString::empty())

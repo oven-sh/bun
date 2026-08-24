@@ -72,7 +72,7 @@ pub fn state() -> &'static State {
 }
 
 #[inline]
-fn configured() -> bool {
+pub(crate) fn configured() -> bool {
     !STATE.load(core::sync::atomic::Ordering::Acquire).is_null()
 }
 
@@ -410,6 +410,12 @@ fn configure_with(
         sampler: || state().sampler,
         limits: || state().limits,
         capture_db_statement: || state().capture_db_statement,
+        active_trace_state: |g, f| {
+            span::with_active_propagation(
+                JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>()),
+                |ts, _| f(ts),
+            )
+        },
     });
     bun_telemetry::set_enabled_mask(cfg.instruments, cfg.roots);
     let s = vm_state_or_init(global);

@@ -73,6 +73,36 @@ describe("bun:sqlite", () => {
     expect(q.attributes["db.query.text"]).toBe("select 1 a");
   });
 
+  test("a statement span carries the tracestate of the request it runs under", async () => {
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { sqlite: true, http: true },
+    });
+    const db = new Database(":memory:");
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        db.query("select 1").get();
+        return new Response("ok");
+      },
+    });
+    await (
+      await fetch(server.url, {
+        headers: {
+          traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+          tracestate: "vendor=abc,other=1",
+        },
+      })
+    ).text();
+    db.close();
+    const got = await collect();
+    const q = got.find(s => s.scope.name === "bun.sqlite");
+    const srv = got.find(s => s.scope.name === "bun.http.server");
+    expect(srv.traceState).toBe("vendor=abc,other=1");
+    expect(q.traceState).toBe("vendor=abc,other=1");
+    expect(q.parentSpanId).toBe(srv.spanId);
+  });
+
   test("nested under the active span and captureDbStatement: false", async () => {
     Bun.otel.start({
       exporters: [{ export: (b: any[]) => spans.push(...b) }],

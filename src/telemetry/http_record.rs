@@ -247,6 +247,22 @@ impl Facts {
         }
     }
 
+    /// The span name as it would be exported now: `{METHOD} {route}`, the
+    /// method alone without a route, `HTTP` for methods outside the known set.
+    pub fn append_name(&self, out: &mut Vec<u8>) {
+        let method: &[u8] = if self.flags & FLAG_METHOD_OTHER != 0 {
+            b"HTTP"
+        } else {
+            method_name(self.method).as_bytes()
+        };
+        out.extend_from_slice(method);
+        let route = self.strings().route;
+        if !route.is_empty() && route.len() <= 256 {
+            out.push(b' ');
+            out.extend_from_slice(route);
+        }
+    }
+
     #[inline]
     pub fn set_route(&mut self, route: &[u8]) {
         let route = otlp::truncate_utf8(route, u16::MAX as usize);

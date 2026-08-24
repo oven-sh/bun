@@ -30,14 +30,6 @@ impl System {
             System::Redis => Instrument::Redis,
         }
     }
-    pub const fn default_port(self) -> u16 {
-        match self {
-            System::Postgres => 5432,
-            System::MySql => 3306,
-            System::Sqlite => 0,
-            System::Redis => 6379,
-        }
-    }
 }
 
 pub struct ConnectionInfo<'a> {
@@ -67,7 +59,7 @@ pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> 
         return NativeSpan::NONE;
     }
     let limits = rt::limits();
-    rt::with_local(global, |local| {
+    let span = rt::with_local(global, |local| {
         pool::begin_with(
             &mut local.pool,
             stub,
@@ -98,7 +90,9 @@ pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> 
             },
         )
     })
-    .unwrap_or(NativeSpan::NONE)
+    .unwrap_or(NativeSpan::NONE);
+    rt::inherit_trace_state(global, span);
+    span
 }
 
 bun_core::comptime_string_map! {

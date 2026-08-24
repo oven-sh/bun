@@ -12,19 +12,50 @@ declare module "bun" {
    */
   namespace otel {
     /**
-     * `SpanKind` numbering from `@opentelemetry/api`.
+     * `SpanKind` numbering from `@opentelemetry/api`. The constants are
+     * available at runtime as `Bun.otel.SpanKind.SERVER` etc.; APIs that take a
+     * kind also accept the lowercase name (`"server"`).
      */
-    type SpanKind = 0 | 1 | 2 | 3 | 4;
+    type SpanKind = SpanKind.INTERNAL | SpanKind.SERVER | SpanKind.CLIENT | SpanKind.PRODUCER | SpanKind.CONSUMER;
+    namespace SpanKind {
+      type INTERNAL = 0;
+      type SERVER = 1;
+      type CLIENT = 2;
+      type PRODUCER = 3;
+      type CONSUMER = 4;
+    }
     type SpanKindName = "internal" | "server" | "client" | "producer" | "consumer";
 
     /**
-     * `SpanStatusCode` numbering from `@opentelemetry/api`.
+     * `SpanStatusCode` numbering from `@opentelemetry/api`. At runtime:
+     * `Bun.otel.SpanStatusCode.ERROR` etc.; `setStatus` also accepts `"ok"` / `"error"`.
      */
-    type SpanStatusCode = 0 | 1 | 2;
+    type SpanStatusCode = SpanStatusCode.UNSET | SpanStatusCode.OK | SpanStatusCode.ERROR;
+    namespace SpanStatusCode {
+      type UNSET = 0;
+      type OK = 1;
+      type ERROR = 2;
+    }
     type SpanStatusName = "unset" | "ok" | "error";
 
-    type AttributeValue = string | number | boolean | bigint | ReadonlyArray<string | number | boolean>;
-    type Attributes = Record<string, AttributeValue | undefined | null>;
+    /**
+     * Same shape as `@opentelemetry/api`'s `AttributeValue` (so `Bun.otel.Tracer`
+     * is assignable to the api's `Tracer`), plus `bigint` and readonly arrays.
+     */
+    type AttributeValue =
+      | string
+      | number
+      | boolean
+      | bigint
+      | Array<null | undefined | string>
+      | Array<null | undefined | number>
+      | Array<null | undefined | boolean>
+      | ReadonlyArray<null | undefined | string>
+      | ReadonlyArray<null | undefined | number>
+      | ReadonlyArray<null | undefined | boolean>;
+    interface Attributes {
+      [attributeKey: string]: AttributeValue | undefined;
+    }
 
     /**
      * Anything the API accepts as a timestamp: epoch milliseconds, a `Date`,
@@ -41,11 +72,15 @@ declare module "bun" {
       traceFlags: number;
       /** Present and `true` when the context arrived via a `traceparent` header. */
       isRemote?: boolean;
-      /**
-       * The W3C `tracestate` carried with this span, if any, as an
-       * `@opentelemetry/api`-compatible `TraceState`. When constructing a
-       * `SpanContext` to pass in, a raw header string is also accepted.
-       */
+      /** The W3C `tracestate` carried with this span, if any. */
+      traceState?: TraceState;
+    }
+
+    /**
+     * A `SpanContext` given *to* Bun (`SpanOptions.parent`, `Link.context`,
+     * `Bun.otel.with`): `traceState` may also be the raw header string.
+     */
+    interface SpanContextInput extends Omit<SpanContext, "traceState"> {
       traceState?: TraceState | string;
     }
 
@@ -61,7 +96,7 @@ declare module "bun" {
     }
 
     interface Link {
-      context: SpanContext;
+      context: SpanContext | SpanContextInput;
       attributes?: Attributes;
     }
 
@@ -78,7 +113,7 @@ declare module "bun" {
        * Explicit parent. `undefined` (the default) uses the active span;
        * `null` starts a new trace.
        */
-      parent?: Span | SpanContext | null | undefined;
+      parent?: Span | SpanContextInput | null | undefined;
     }
 
     /**
@@ -127,7 +162,11 @@ declare module "bun" {
       updateName(name: string): this;
       /** Adds an `exception` event with `exception.type` / `.message` / `.stacktrace`. */
       recordException(exception: unknown, time?: TimeInput): this;
-      /** Ends the span and queues it for export. Later calls are ignored. */
+      /**
+       * Ends the span and queues it for export; if this span made itself the
+       * active one (`Bun.otel.span(name)`, `startActiveSpan(name)`, `enter()`)
+       * it also stops being active. Later calls are ignored.
+       */
       end(endTime?: TimeInput): void;
       /**
        * Make this the active span until {@link Span.exit} (or disposal).
@@ -481,7 +520,7 @@ declare module "bun" {
 
     /** Run `fn` with `span` (or an `@opentelemetry/api` `Context`) active. */
     with<R, A extends unknown[]>(
-      span: otel.Span | otel.SpanContext | otel.Context | undefined,
+      span: otel.Span | otel.SpanContextInput | otel.Context | undefined,
       fn: (...args: A) => R,
       thisArg?: unknown,
       ...args: A
@@ -529,8 +568,8 @@ declare module "bun" {
       active(): otel.Context;
       with<R, A extends unknown[]>(context: otel.Context, fn: (...args: A) => R, thisArg?: unknown, ...args: A): R;
       bind<T>(context: otel.Context, target: T): T;
-      enable(): unknown;
-      disable(): unknown;
+      enable(): typeof Bun.otel.contextManager;
+      disable(): typeof Bun.otel.contextManager;
     };
     /** W3C `traceparent`/`tracestate`/`baggage` `TextMapPropagator`. */
     readonly propagator: {

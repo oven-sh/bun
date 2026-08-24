@@ -92,6 +92,53 @@ describe("Bun.otel", () => {
     expect(got.sync.scope.name).toBe("bun");
   });
 
+  test("span(name) with no callback: end() also stops it being the active span", async () => {
+    const s = Bun.otel.span("dangling");
+    expect(Bun.otel.activeSpan()).toBe(s);
+    s.end();
+    expect(Bun.otel.activeSpan()).toBeUndefined();
+    const next = Bun.otel.span("next", n => n);
+    // startActiveSpan(name) (no callback) and enter() behave the same
+    const a = tracer.startActiveSpan("a");
+    a.end();
+    const e = tracer.startSpan("e").enter();
+    e.end();
+    expect(Bun.otel.activeSpan()).toBeUndefined();
+    // ending an entered span that is no longer the innermost active one leaves the active one alone
+    const outer = Bun.otel.span("outer");
+    const inner = Bun.otel.span("inner");
+    outer.end();
+    expect(Bun.otel.activeSpan()).toBe(inner);
+    inner.end();
+    const got = await collect();
+    expect(got.find(x => x.name === "next").parentSpanId).toBeUndefined();
+    expect(next.ended).toBe(true);
+  });
+
+  test("without any pipeline configured, JS-created spans are non-recording and nothing is buffered", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const before = Bun.otel.stats().spansPending;
+        const rec = Bun.otel.span("a", s => s.isRecording());
+        { using s = Bun.otel.span("b"); s.set("k", 1); }
+        Bun.otel.tracer("t").startSpan("c").end();
+        const w = Bun.otel.wrap("w", () => Bun.otel.activeSpan()?.spanContext().traceId.length)();
+        console.log(JSON.stringify([Bun.otel.enabled, rec, Bun.otel.stats().spansPending - before, w]));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // not enabled, not recording, nothing pending — but ids still exist for propagation
+    expect(stdout.trim()).toBe(JSON.stringify([false, false, 0, 32]));
+    expect(exitCode).toBe(0);
+  });
+
   test("span.fail / span.ok / string status and kind names", async () => {
     const s1 = tracer.startSpan("s1", { kind: "producer" });
     s1.fail("just a message").end();

@@ -253,6 +253,16 @@ void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, ui
     if (state & JSTelemetrySpan::Ended)
         return;
     span->setState((state | JSTelemetrySpan::Ended) & ~JSTelemetrySpan::Recording);
+    // A span that made itself active (`span(name)`, `startActiveSpan(name)`,
+    // `enter()`) and still is stops being active when it ends. (An entered
+    // span ended while a later one is active leaves the context alone; its
+    // `[Symbol.dispose]` / `exit()` still restores in LIFO order.)
+    if (span->get(JSTelemetrySpan::Field::Restore)) {
+        auto current = TelemetryContextSlot::current(globalObject);
+        bool isActive = current.header == JSValue(span) || (span->m_native && current.poolHandle() == span->m_native);
+        if (isActive)
+            telemetryExitSpan(globalObject, span);
+    }
     if (span->m_native) {
         Bun__Telemetry__nativeEnd(globalObject, span->m_native, endNs);
         return;

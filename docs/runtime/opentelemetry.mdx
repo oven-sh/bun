@@ -20,7 +20,7 @@ That is enough to get a trace per request in any OTLP-compatible backend (Jaeger
 | `http`          | `Bun.serve` and `node:http` servers: one `SERVER` span per request, named `GET /route` when a route matched. |
 | `fetch`         | `fetch()` and `node:http`/`node:https` clients: one `CLIENT` span per request. `traceparent` is injected.    |
 | `sql`           | `Bun.sql` (PostgreSQL, MySQL): one span per query with `db.query.text` (the parameterized statement).        |
-| `sqlite`        | `bun:sqlite`: one span per statement execution.                                                              |
+| `sqlite`        | `bun:sqlite`, and `Bun.sql` with a SQLite database (it runs on `bun:sqlite`): one span per statement.        |
 | `redis`         | `Bun.redis`: one span per command.                                                                           |
 | `net`           | `Bun.connect` / `node:net` / `node:tls`: a `tcp.connect` span per outgoing connection.                       |
 | `websocket`     | `new WebSocket()` connect; `ServerWebSocket` message handlers (linked to the upgrade request's trace).       |
@@ -53,7 +53,7 @@ Failures set the span status to `ERROR` with the error message, `error.type` (th
 Any one of these turns tracing on for the process:
 
 - `BUN_OTEL=1` in the environment.
-- A `[telemetry]` table in `bunfig.toml`:
+- A `[telemetry]` table with `enabled = true` in `bunfig.toml`:
 
   ```toml title="bunfig.toml" icon="settings"
   [telemetry]
@@ -103,9 +103,12 @@ Bun.otel.start({
     },
   ],
   sampler: 0.25, // keep 25% of new traces; follow the caller's decision for propagated ones
+  // no fs spans; SQLite statements (bun:sqlite, or Bun.sql on a SQLite file) even outside a request
   instrumentations: { fs: false, sqlite: "always" },
 });
 ```
+
+`instrumentations` takes either a list of names to enable (`["http", "fetch"]`) or an object keyed by the names in [What gets traced](#what-gets-traced): `true` / `false`, `"nested"` (only when another span is already active — the default for `fs`, `sqlite`, `net`, `dns`, `spawn`) or `"always"`.
 
 ### Sending to a hosted backend
 
@@ -206,7 +209,6 @@ await tracer.startActiveSpan("validate", async span => {
 
 Spans created this way are children of the active Bun span (for example the current request) and are exported through the same pipeline.
 
-Notes:
+Use either Bun's native tracing or the JavaScript SDK (`@opentelemetry/sdk-node` / `sdk-trace-*`) in a process, not both: each registers itself as the global tracer provider, so with both active every span would be recorded and exported twice, and the SDK's `AsyncLocalStorage` context manager would compete with the native one. Existing SDK setups keep working unchanged as long as `BUN_OTEL` / `Bun.otel.start()` are not used.
 
-- Do not also start the JavaScript `NodeSDK` in the same process; it would register a second pipeline. If you prefer the JavaScript SDK, leave `BUN_OTEL` unset.
-- Metrics and logs are not part of `Bun.otel` yet; only tracing is native.
+`Bun.otel` covers tracing. OpenTelemetry metrics and logs are not implemented natively yet; use the JavaScript SDK's `MeterProvider` / `LoggerProvider` for those if you need them (they do not conflict with native tracing).

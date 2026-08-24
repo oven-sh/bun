@@ -659,6 +659,21 @@ describe("baggage propagation", () => {
   });
 });
 
+describe("live request span", () => {
+  test("activeSpan().name inside a handler is the name the span will export with", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/users/:id": () => new Response(Bun.otel.activeSpan()!.name) },
+      fetch: () => new Response(Bun.otel.activeSpan()!.name),
+    });
+    const named = await (await fetch(new URL("/users/7", server.url))).text();
+    const unnamed = await (await fetch(new URL("/other", server.url), { method: "POST" })).text();
+    expect([named, unnamed]).toEqual(["GET /users/:id", "POST"]);
+    const got = byName(await collect(), "bun.http.server").map(s => s.name);
+    expect(got.sort()).toEqual(["GET /users/:id", "POST"]);
+  });
+});
+
 describe("upgrade", () => {
   test("a rejected upgrade (unsupported Sec-WebSocket-Version → 426) records the status on the request span", async () => {
     using server = Bun.serve({

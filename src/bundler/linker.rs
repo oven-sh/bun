@@ -158,18 +158,6 @@ impl Linker {
         unsafe { &*self.options }
     }
 
-    /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
-    ///
-    /// SAFETY: `self.fs` is the `FileSystem::instance()` singleton, set at
-    /// `Transpiler::init` time and never freed. Never null. Only scalar
-    /// fields (`top_level_dir`) are read.
-    #[inline]
-    pub(crate) fn fs(&self) -> &Fs::FileSystem {
-        debug_assert!(!self.fs.is_null());
-        // SAFETY: `self.fs` is the process-lifetime `FileSystem::instance()`
-        // singleton, set at `Transpiler::init` and never freed or mutated.
-        unsafe { &*self.fs }
-    }
 
     /// Exclusive borrow of the owning `Transpiler.log`.
     ///
@@ -644,7 +632,7 @@ impl Linker {
                         }
                     }
 
-                    let top_level_dir = self.fs().top_level_dir();
+                    let top_level_dir = bun_core::cwd::get();
                     let mut base: &[u8] =
                         bun_paths::resolve_path::relative(top_level_dir, source_path);
                     if let Some(dot) = strings::last_index_of_char(base, b'.') {
@@ -676,7 +664,7 @@ impl Linker {
 
     pub(crate) fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {
         let path = resolve_result.path_const().expect("unreachable");
-        let top_level_dir = self.fs().top_level_dir();
+        let top_level_dir = bun_core::cwd::get();
         let mut hash_key = path.text;
 
         // Shorter hash key is faster to hash

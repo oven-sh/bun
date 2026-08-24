@@ -259,7 +259,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         }
 
         // Set up require(), module, __filename, __dirname relative to cwd
-        let cwd = bun_core::cwd::get().as_bytes();
+        let cwd = bun_core::cwd::get();
         // SAFETY: cwd is a valid byte slice; FFI fn reads exactly `len` bytes.
         // C++ is `[[ZIG_EXPORT(check_slow)]]` → use the generated `bun_jsc::cpp` wrapper,
         // which opens a `TopExceptionScope` before the call (post-hoc `has_exception()`

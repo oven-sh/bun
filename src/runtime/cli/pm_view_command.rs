@@ -71,7 +71,7 @@ pub(crate) fn view(
                 }
             }
 
-            break 'brk bun_paths::basename(bun_core::cwd::get().as_bytes());
+            break 'brk bun_paths::basename(bun_core::cwd::get());
         }
 
         break 'brk spec_;

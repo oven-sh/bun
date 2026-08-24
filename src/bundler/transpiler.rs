@@ -420,7 +420,7 @@ impl<'a> Transpiler<'a> {
     }
 
     fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
-        let top_level_dir = self.fs().top_level_dir();
+        let top_level_dir = bun_core::cwd::get();
         match self.resolver.resolve_with_framework(
             top_level_dir,
             entry_point,
@@ -468,7 +468,7 @@ impl<'a> Transpiler<'a> {
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
                     // Neither buster name below would fit `cache_bust_buf`.
-                    if self.fs().top_level_dir().len() + entry_point.len() + 4
+                    if bun_core::cwd::get().len() + entry_point.len() + 4
                         > bun_paths::MAX_PATH_BYTES
                     {
                         break 'name false;
@@ -494,7 +494,7 @@ impl<'a> Transpiler<'a> {
 
                     // `".."` needs no platform separator rewrite.
                     let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = self.fs().top_level_dir();
+                    let top_level_dir = bun_core::cwd::get();
 
                     let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
                         bun_paths::platform::Auto,
@@ -717,7 +717,7 @@ impl<'a> Transpiler<'a> {
 
         if auto_jsx {
             // Most of the time, this will already be cached
-            let top_level_dir = self.fs().top_level_dir();
+            let top_level_dir = bun_core::cwd::get();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
@@ -774,7 +774,7 @@ impl<'a> Transpiler<'a> {
                 // (or a parent) is unreadable, readDirInfo may return null;
                 // bail out of .env file loading in that case, but process
                 // env vars were already loaded above.
-                let top_level_dir = self.fs().top_level_dir();
+                let top_level_dir = bun_core::cwd::get();
                 let dir_info = match self.resolver.read_dir_info(top_level_dir) {
                     Ok(Some(d)) => d,
                     _ => return Ok(()),
@@ -1259,7 +1259,7 @@ impl<'a> Transpiler<'a> {
         // mut Log` is materialized here, so the sibling raw pointers don't
         // invalidate a long-lived unique borrow under stacked borrows.
         // SAFETY: `fs` is the process-lifetime `Fs::FileSystem` singleton from
-        // `init_file_system` above; this short `&mut *fs` is the only live
+        // `FileSystem::init` above; this short `&mut *fs` is the only live
         // borrow for the duration of `from_api`.
         let bundle_options = options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
 
@@ -2601,7 +2601,7 @@ impl<'a> Transpiler<'a> {
             return crate::linker::dupe(_entry);
         }
 
-        let entry = fs.relative_to(entry);
+        let entry = bun_paths::resolve_path::relative(bun_core::cwd::get(), entry);
 
         if !strings::starts_with(entry, b"./") {
             // Entry point paths without a leading "./" are interpreted as package
@@ -2632,7 +2632,7 @@ impl<'a> Transpiler<'a> {
         // snapshot entry points so the `&mut self` resolver call
         // does not conflict with the `&self.options` borrow.
         let entries: Vec<Box<[u8]>> = self.options.entry_points.to_vec();
-        let top_level_dir = self.fs().top_level_dir();
+        let top_level_dir = bun_core::cwd::get();
 
         for _entry in entries.iter() {
             let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
@@ -2867,7 +2867,7 @@ impl<'a> Transpiler<'a> {
 
         let mut file_path = Fs::Path::init(file_path_text);
 
-        let top_level_dir = self.fs().top_level_dir();
+        let top_level_dir = bun_core::cwd::get();
         let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
 

@@ -7,9 +7,8 @@ use bstr::BStr;
 
 use crate::Error;
 use crate::ShellCompletions;
-use crate::bun_fs::FileSystem;
 use bun_core::{Global, Output};
-use bun_core::{ZBox, ZStr, strings};
+use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
@@ -516,8 +515,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     // may or may not be the package json we are editing
     {
-        let root_package_json_path = ZBox::from_bytes(manager.root_package_json_path.as_bytes());
-        let root_package_json_path = root_package_json_path.as_bytes();
+        let root_package_json_path: &[u8] = &manager.root_package_json_path;
 
         // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
         // https://github.com/oven-sh/bun/issues/12288
@@ -644,16 +642,15 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        let root_package_json_path = ZBox::from_bytes(manager.root_package_json_path.as_bytes());
-        let root_package_json_path: &ZStr = &root_package_json_path;
-        let (source, path): (&[u8], &ZStr) =
+        let root_package_json_path: &[u8] = &manager.root_package_json_path;
+        let (source, path): (&[u8], &[u8]) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 'source_and_path: {
                     let root_package_json_entry = match manager
                         .workspace_package_json_cache
                         .get_with_path(
                             manager.log_mut(),
-                            root_package_json_path.as_bytes(),
+                            root_package_json_path,
                             GetJSONOptions::default(),
                         )
                         .unwrap()
@@ -663,7 +660,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                             Output::err(
                                 err,
                                 "failed to read/parse package.json at '{s}'",
-                                (BStr::new(root_package_json_path.as_bytes()),),
+                                (BStr::new(root_package_json_path),),
                             );
                             Global::exit(1);
                         }
@@ -677,7 +674,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             } else {
                 (
                     &new_package_json_source,
-                    manager.original_package_json_path.as_zstr(),
+                    manager.original_package_json_path.as_bytes(),
                 )
             };
 
@@ -880,7 +877,7 @@ pub fn update_package_json_and_install_and_cli(
                         bun_which::which(
                             &mut path_buf,
                             path_env,
-                            FileSystem::instance().top_level_dir(),
+                            bun_core::cwd::get(),
                             basename,
                         )
                         .is_none()

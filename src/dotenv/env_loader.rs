@@ -231,7 +231,7 @@ impl Loader {
         }
 
         let path = self.get(b"PATH")?;
-        if let Some(node) = which(buf, path, bun_core::cwd::get().as_bytes(), b"node") {
+        if let Some(node) = which(buf, path, bun_core::cwd::get(), b"node") {
             return Some(node);
         }
 
@@ -460,7 +460,7 @@ impl Loader {
         // borrowck — `path` borrows `self.map`; `which` writes into `buf` and
         // returns a borrow of `buf`. Copy the result before mutating `self.map`.
         let ccache_path: Box<[u8]> =
-            which(&mut buf, path, bun_core::cwd::get().as_bytes(), b"ccache")
+            which(&mut buf, path, bun_core::cwd::get(), b"ccache")
                 .map(|z| Box::<[u8]>::from(z.as_bytes()))
                 .unwrap_or_default();
 

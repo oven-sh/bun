@@ -11,7 +11,6 @@ use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_ptr::Interned;
-use bun_resolver::fs::FileSystem;
 use bun_sys::Fd;
 
 use super::aggregate;
@@ -158,8 +157,7 @@ pub(crate) fn run_as_coordinator(
         reporter,
         files: sorted,
         costs,
-        // SAFETY: FileSystem singleton is initialized before any test runner code runs.
-        cwd: FileSystem::get().top_level_dir(),
+        cwd: bun_core::cwd::get(),
         argv,
         envps,
         // Coordinator borrows the workers slice while each Worker holds a raw

@@ -432,7 +432,7 @@ impl CacheStaging {
     fn new(cache_dir: bun_sys::Fd) -> Result<Self, Error> {
         let mut tmp_name_buf = [0u8; 64];
         let tmp_name_len =
-            Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
+            bun_paths::fs::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
                 .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?
                 .len();
         Ok(Self {

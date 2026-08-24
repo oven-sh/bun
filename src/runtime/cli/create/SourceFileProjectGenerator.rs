@@ -184,7 +184,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
     let process = match spawn_sync::spawn(&spawn_sync::Options {
         argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
         envp: None,
-        cwd: Box::<[u8]>::from(bun_core::cwd::get().as_bytes()),
+        cwd: Box::<[u8]>::from(bun_core::cwd::get()),
         stderr: spawn_sync::SyncStdio::Inherit,
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
@@ -250,7 +250,7 @@ pub(crate) fn generate_files(
     let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
         resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
             &mut normalized_buf,
-            bun_core::cwd::get().as_bytes(),
+            bun_core::cwd::get(),
             entry_point,
         )
     } else {
@@ -360,7 +360,7 @@ pub(crate) fn generate_files(
                 let shadcn_process = match spawn_sync::spawn(&spawn_sync::Options {
                     argv: shadcn_argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
                     envp: None,
-                    cwd: Box::<[u8]>::from(bun_core::cwd::get().as_bytes()),
+                    cwd: Box::<[u8]>::from(bun_core::cwd::get()),
                     stderr: spawn_sync::SyncStdio::Inherit,
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stdin: spawn_sync::SyncStdio::Inherit,
@@ -422,7 +422,7 @@ pub(crate) fn generate_files(
             Box::<[u8]>::from(&b"dev"[..]),
         ],
         envp: None,
-        cwd: Box::<[u8]>::from(bun_core::cwd::get().as_bytes()),
+        cwd: Box::<[u8]>::from(bun_core::cwd::get()),
         stderr: spawn_sync::SyncStdio::Inherit,
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,

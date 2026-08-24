@@ -2,7 +2,6 @@ use core::marker::PhantomData;
 use std::borrow::Cow;
 
 use crate::Error;
-use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
@@ -73,7 +72,7 @@ impl<'a> HTMLScanner<'a> {
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
             resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir(),
+                bun_core::cwd::get(),
                 &[&input_path[1..]],
             )
         }

@@ -60,6 +60,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
     //    typing in the dependency names
     // 3. Run the install command
     if cli.analyze {
+        bun_core::cwd::init()?;
         // `ctx` is stored as a raw `*mut ContextData`; the `on_fetch` callback
         // re-enters the install path while `BuildCommand::exec` still holds the
         // global `Context`, so a `&mut` here would be aliased UB.

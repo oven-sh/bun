@@ -340,7 +340,7 @@ pub struct PackageManager {
     pub root_package_json_file: bun_sys::File,
     /// `<cwd>/package.json`: the project root's manifest (the workspace root
     /// when run from a member).
-    pub root_package_json_path: ZBox,
+    pub root_package_json_path: Box<[u8]>,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
     /// could be any of the workspaces.
@@ -1081,7 +1081,7 @@ fn configure_env_for_scripts_run(
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(strings::without_trailing_slash(
-                FileSystem::instance().top_level_dir(),
+                bun_core::cwd::get(),
             )),
         };
     }
@@ -1139,7 +1139,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let tempdir = get_temporary_directory(manager);
     let mut path_buf = PathBuffer::uninit();
     let node_gyp_tempdir_name =
-        fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
+        bun_paths::fs::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
 
     // used later for adding to path for scripts
     manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
@@ -1276,7 +1276,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
-            let normalized = normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
+            let normalized = normalizer.resolve_z(bun_core::cwd::get(), abs_ca_z);
             if !bun_sys::exists_z(normalized) {
                 Output::err(
                     "HTTPThread",
@@ -1485,35 +1485,19 @@ pub fn init(
         bun_sys::fchdir(global_dir)?;
     }
 
-    // First read of the working directory for package-manager commands
-    // (`Tag::read_cwd`): `--cwd`/`--global` above have already moved it.
     bun_core::cwd::init()?;
     bun_resolver::fs::FileSystem::init();
     let fs = FileSystem::instance();
-    let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
+    let original_cwd: &'static [u8] = bun_core::cwd::get();
 
-    // Per-cfg const literal, no runtime alloc.
-    #[cfg(windows)]
-    const SEP_PACKAGE_JSON: &[u8] = b"\\package.json";
-    #[cfg(not(windows))]
-    const SEP_PACKAGE_JSON: &[u8] = b"/package.json";
-
+    // `<dir>/package.json`, starting at the working directory; the walk below
+    // rewrites the directory part in place as it moves up.
     let mut original_package_json_path_buf: Vec<u8> =
-        Vec::with_capacity(top_level_dir_no_trailing_slash.len() + SEP_PACKAGE_JSON.len() + 1);
-    original_package_json_path_buf.extend_from_slice(top_level_dir_no_trailing_slash);
-    original_package_json_path_buf.extend_from_slice(SEP_PACKAGE_JSON);
-    original_package_json_path_buf.push(0);
-
-    let path_len = top_level_dir_no_trailing_slash.len() + SEP_PACKAGE_JSON.len();
-    // SAFETY: NUL written at `path_len` above. Not `from_buf`: this borrow is
-    // intentionally detached — `original_package_json_path_buf` is mutated and
-    // re-sliced below (the directory-walk rewrites the tail in place), and
-    // borrowck cannot see that `original_package_json_path` is reassigned
-    // before the next use after each mutation.
-    let mut original_package_json_path =
-        unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
-    let original_cwd =
-        strings::without_suffix_comptime(original_package_json_path.as_bytes(), SEP_PACKAGE_JSON);
+        ZBox::from_bytes(resolve_path::join_abs_string::<resolve_path::platform::Auto>(
+            original_cwd,
+            &[b"package.json"],
+        ))
+        .into_vec_with_nul();
     let original_cwd_clone = Box::<[u8]>::from(original_cwd);
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
@@ -1630,8 +1614,7 @@ pub fn init(
         original_package_json_path_buf.push(0);
 
         let new_path_len = this_cwd.len() + "/package.json".len();
-        // SAFETY: NUL written above
-        original_package_json_path =
+        let original_package_json_path =
             ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
         let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];
 
@@ -1789,9 +1772,7 @@ pub fn init(
         break 'root_package_json_file (child_cwd, child_json);
     };
 
-    // The project root becomes the working directory; `fs.top_level_dir()`
-    // and every path below derive from it.
-    if root_dir != fs.top_level_dir() {
+    if root_dir != bun_core::cwd::get() {
         bun_sys::chdir(&ZBox::from_bytes(root_dir))?;
     }
     // `loadConfig` was moved down into `bun_bunfig`
@@ -1802,13 +1783,13 @@ pub fn init(
         cli.config,
         ctx,
     )?;
-    let root_package_json_path = ZBox::from_bytes(resolve_path::join_abs_string::<
+    let root_package_json_path: Box<[u8]> = Box::from(resolve_path::join_abs_string::<
         resolve_path::platform::Auto,
-    >(fs.top_level_dir(), &[b"package.json"]));
+    >(bun_core::cwd::get(), &[b"package.json"]));
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+    let entries_option = match fs.read_directory(bun_core::cwd::get(), 0, true)? {
         fs::EntriesOption::Entries(e) => {
             // SAFETY: the BSSMap singleton owns `*e` for the process
             // lifetime, and `init()` runs single-threaded before any other
@@ -2109,7 +2090,7 @@ pub fn init(
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: singleton fully initialized; main thread, no workers yet.
-        let raw: &[u8] = unsafe { &*manager_ptr }.root_package_json_path.as_bytes();
+        let raw: &[u8] = &unsafe { &*manager_ptr }.root_package_json_path;
         let mut buf = PathBuffer::uninit();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
@@ -2362,7 +2343,7 @@ fn init_with_runtime_once(
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let fs_instance = FileSystem::instance();
-    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)? {
+    let root_dir = match fs_instance.read_directory(bun_core::cwd::get(), 0, true)? {
         // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
         // and runtime init runs once on the main thread before any other access.
         fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
@@ -2383,16 +2364,11 @@ fn init_with_runtime_once(
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
-    let top_level_dir_no_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-    let mut original_package_json_path =
-        vec![0u8; top_level_dir_no_trailing_slash.len() + "/package.json".len() + 1];
-    original_package_json_path[..top_level_dir_no_trailing_slash.len()]
-        .copy_from_slice(top_level_dir_no_trailing_slash);
-    original_package_json_path[top_level_dir_no_trailing_slash.len()
-        ..top_level_dir_no_trailing_slash.len() + b"/package.json".len()]
-        .copy_from_slice(b"/package.json");
-    // last byte already 0 (sentinel)
+    let original_package_json_path =
+        ZBox::from_bytes(resolve_path::join_abs_string::<resolve_path::platform::Auto>(
+            bun_core::cwd::get(),
+            &[b"package.json"],
+        ));
 
     // SAFETY: manager_ptr points to uninitialized memory; fully initialize
     // field-by-field via `addr_of_mut!((*p).field).write(..)`. See the PERF
@@ -2462,14 +2438,14 @@ fn init_with_runtime_once(
         );
         wr!(
             root_package_json_path,
-            ZBox::from_bytes(&original_package_json_path[..original_package_json_path.len() - 1])
+            Box::from(original_package_json_path.as_bytes())
         );
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());
         wr!(
             original_package_json_path,
-            ZBox::from_vec_with_nul(original_package_json_path)
+            original_package_json_path
         );
         wr!(subcommand, Subcommand::Install);
 

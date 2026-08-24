@@ -1800,8 +1800,7 @@ impl JSFrameworkRouter {
         let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
             paths::platform::Auto,
         >(
-            // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
-            bun_resolver::fs::FileSystem::get().top_level_dir(),
+            bun_core::cwd::get(),
             root.slice(),
         ))
         .into();

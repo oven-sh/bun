@@ -1804,7 +1804,7 @@ pub(crate) fn install_isolated_packages(
                     // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
                     // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
                     let mut temp_node_modules_buf = PathBuffer::uninit();
-                    let temp_node_modules = paths::fs::FileSystem::tmpname(
+                    let temp_node_modules = bun_paths::fs::tmpname(
                         b"tmp_modules",
                         &mut temp_node_modules_buf.0,
                         fast_random(),

@@ -10,7 +10,6 @@ use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd, FdExt as _};
 // Wyhash (final4 variant). Must stay stable so on-disk
 // `.pile` filenames/hashes remain interchangeable across versions.
@@ -247,7 +246,7 @@ impl Entry {
 
         // atomically write to a tmpfile and then move it to the final destination
         let mut tmpname_buf = PathBuffer::uninit();
-        let tmpfilename = FileSystem::tmpname(
+        let tmpfilename = bun_paths::fs::tmpname(
             paths::extension(destination_path.as_bytes()),
             &mut tmpname_buf[..],
             input_hash,
@@ -631,7 +630,7 @@ impl RuntimeTranspilerCache {
         // `abs_buf` (no NUL-terminating `_z` variant), so go straight to the
         // underlying joiner with the same `top_level_dir` + `Loose` platform
         // that `absBufZ` used.
-        let top = FileSystem::get().top_level_dir();
+        let top = bun_core::cwd::get();
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
             let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];

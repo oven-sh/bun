@@ -1012,7 +1012,7 @@ pub mod bv2_impl {
                             {
                                 b"/"
                             } else {
-                                bun_resolver::fs::FileSystem::instance().top_level_dir()
+                                bun_core::cwd::get()
                             }
                         } else {
                             source_dir
@@ -2520,7 +2520,7 @@ pub mod bv2_impl {
                     bun_paths::resolve_path::platform::Loose,
                     false,
                 >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir(),
+                    bun_core::cwd::get(),
                     path.text,
                 );
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
@@ -5842,7 +5842,7 @@ pub mod bv2_impl {
             let out = generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.transpiler.fs().top_level_dir(),
+                bun_core::cwd::get(),
                 bump,
             )?;
             Ok(out)
@@ -6448,7 +6448,7 @@ pub mod bv2_impl {
                                     } else {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
-                                        let top_level_dir = bun_core::cwd::get().as_bytes();
+                                        let top_level_dir = bun_core::cwd::get();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
                                             && import_record.path.text.starts_with(top_level_dir)
                                         {
@@ -6560,7 +6560,7 @@ pub mod bv2_impl {
                                 bun_paths::resolve_path::platform::Loose,
                                 false,
                             >(
-                                self.transpiler.fs().top_level_dir(), path.text
+                                bun_core::cwd::get(), path.text
                             );
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {

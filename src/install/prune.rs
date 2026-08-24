@@ -444,7 +444,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let quiet = manager.options.log_level == LogLevel::Silent;
 
     let log = manager.log_mut();
-    let path: &[u8] = manager.root_package_json_path.as_bytes();
+    let path: &[u8] = &manager.root_package_json_path;
     let (source, json) = match manager
         .workspace_package_json_cache
         .get_with_path(log, path, Default::default())

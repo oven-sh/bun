@@ -14,7 +14,7 @@ extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
 ) -> BunString {
     let str = input.to_utf8_without_ref();
 
-    let cwd: &[u8] = bun_core::cwd::get().as_bytes();
+    let cwd: &[u8] = bun_core::cwd::get();
     let _ = global_object; // bun_vm() retained for future direct field access
 
     // The input is user-controlled and may be arbitrarily long. The

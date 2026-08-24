@@ -51,7 +51,7 @@ impl ExecCommand {
         // Read the field before the `&mut` method call (borrowck).
         let disable_default_env_files = bundle.options.env.disable_default_env_files;
         bundle.run_env_loader(disable_default_env_files)?;
-        let cwd = bun_core::cwd::get().as_bytes();
+        let cwd = bun_core::cwd::get();
         // SAFETY: `Transpiler::init` always populates `env` (caller-supplied,
         // process singleton, or freshly `heap::alloc`'d) — never null. The
         // loader is a thread-/process-lifetime singleton, so `&'static mut` is

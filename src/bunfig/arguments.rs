@@ -194,7 +194,7 @@ pub fn load_config(
         config_path_len = config_path_.len();
     } else {
         config_path_len = {
-            let cwd = bun_core::cwd::get().as_bytes();
+            let cwd = bun_core::cwd::get();
             let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
                 cwd,
                 &mut *config_buf,

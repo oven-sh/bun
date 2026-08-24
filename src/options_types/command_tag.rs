@@ -91,25 +91,15 @@ impl Tag {
     }
 
     /// Whether this command starts when the working directory cannot be
-    /// read (removed, or an ancestor is not searchable): running code does —
-    /// like Node and like any native executable — with the executable's
-    /// directory standing in and `process.cwd()` reporting the error;
-    /// commands that act on a project refuse to guess which one. Standalone
-    /// executables always start.
+    /// read (removed, or an ancestor is not searchable), the way Node and
+    /// native executables do: the executable's directory stands in and
+    /// `process.cwd()` reports the error. Other commands — and these when
+    /// asked to run workspace scripts — fail up front instead.
     pub fn starts_without_cwd(self) -> bool {
         matches!(
             self,
             Tag::AutoCommand | Tag::RunCommand | Tag::RunAsNodeCommand
         )
-    }
-
-    /// [`starts_without_cwd`](Self::starts_without_cwd), applied.
-    pub fn read_cwd(self) -> Result<&'static bun_core::ZStr, bun_core::Error> {
-        if self.starts_without_cwd() {
-            Ok(bun_core::cwd::init_or_exe_dir())
-        } else {
-            bun_core::cwd::init()
-        }
     }
 
     pub fn read_global_config(self) -> bool {

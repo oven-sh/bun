@@ -43,7 +43,6 @@ use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
 use bun_paths::resolve_path::relative_normalized;
-use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
 use crate::chunk::{Content, Flags};
@@ -187,8 +186,7 @@ pub(crate) fn write<W: Write + ?Sized>(
     let root_dir: &[u8] = if !options.root_dir.is_empty() {
         &options.root_dir[..]
     } else {
-        // SAFETY: FileSystem singleton is initialized before bundling.
-        FileSystem::get().top_level_dir()
+        bun_core::cwd::get()
     };
 
     writer.write_all(b"{")?;

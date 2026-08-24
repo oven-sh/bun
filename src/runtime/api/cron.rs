@@ -30,7 +30,6 @@ use bun_jsc::{
 use bun_paths::PathBuffer;
 use bun_paths::{self as path};
 use bun_ptr::{BackRef, RefPtr, ThisPtr};
-use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
 
@@ -2083,7 +2082,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
             bun_sys::windows::libuv::Pipe,
         >()));
-    let cwd = FileSystem::get().top_level_dir();
+    let cwd = bun_core::cwd::get();
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
@@ -2244,7 +2243,7 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
     let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
     full_prefix.extend_from_slice(prefix.as_bytes());
     full_prefix.extend_from_slice(b"tmp");
-    let name = FileSystem::tmpname(
+    let name = bun_paths::fs::tmpname(
         &full_prefix,
         name_buf.0.as_mut_slice(),
         bun_core::fast_random(),

@@ -402,7 +402,7 @@ pub mod entry {
                             f,
                             "{}",
                             BStr::new(bun_paths::basename(
-                                crate::bun_fs::FileSystem::instance().top_level_dir()
+                                bun_core::cwd::get()
                             ))
                         )
                     } else {

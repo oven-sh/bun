@@ -203,12 +203,12 @@ fn normalize_package_json_path<'a>(
         tempcat[normalized.len() + 1..normalized.len() + PACKAGE_JSON_LEN]
             .copy_from_slice(b"package.json");
         let parts: [&[u8]; 2] = [
-            FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get(),
             &tempcat[0..normalized.len() + PACKAGE_JSON_LEN],
         ];
         abs = FileSystem::instance().abs_buf(&parts, joined);
         FileSystem::instance().relative(
-            FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get(),
             &abs[0..abs.len() - PACKAGE_JSON_LEN],
         )
     } else {
@@ -244,7 +244,7 @@ fn normalize_package_json_path<'a>(
         abs = &joined[0..abs_len];
         // We store the folder name without package.json
         FileSystem::instance().relative(
-            FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get(),
             &abs[0..abs.len() - PACKAGE_JSON_LEN],
         )
     };

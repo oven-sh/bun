@@ -1,7 +1,6 @@
 use bstr::BStr;
 
 use crate::Error;
-use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::value_loc_of;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
 use bun_collections::{StringArrayHashMap, index_sort};
@@ -41,7 +40,7 @@ impl WorkspaceTarget {
         WorkspaceTarget {
             name: Box::default(),
             name_hash: None,
-            package_json_path: Box::from(manager.root_package_json_path.as_bytes()),
+            package_json_path: manager.root_package_json_path.clone(),
         }
     }
 }
@@ -65,7 +64,7 @@ pub(crate) struct WorkspaceMembers {
 }
 
 pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceMembers {
-    let root_path: Box<[u8]> = Box::from(manager.root_package_json_path.as_bytes());
+    let root_path: Box<[u8]> = manager.root_package_json_path.clone();
 
     let (root_expr, root_source, root_name): (bun_ast::Expr, bun_ast::Source, Box<[u8]>) = {
         let log = manager.log_mut();
@@ -154,7 +153,7 @@ pub(crate) fn select_targets(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> Result<Vec<WorkspaceTarget>, Error> {
-    let top_level = FileSystem::instance().top_level_dir();
+    let top_level = bun_core::cwd::get();
     let WorkspaceMembers {
         root_path,
         root_name,

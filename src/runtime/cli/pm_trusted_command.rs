@@ -545,7 +545,7 @@ impl TrustCommand {
 
         // SAFETY: `pm_raw` singleton; the path is written once in `init` and
         // never mutated, so this borrow does not overlap the `&mut` uses below.
-        let root_package_json_path = unsafe { (*pm_raw).root_package_json_path.as_bytes() };
+        let root_package_json_path: &[u8] = unsafe { &(*pm_raw).root_package_json_path };
         let package_json_source = bun_ast::Source::init_path_string(
             root_package_json_path,
             package_json_contents.as_slice(),

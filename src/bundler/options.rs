@@ -1840,7 +1840,7 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
-        let top_level_dir = fs.top_level_dir();
+        let top_level_dir = bun_core::cwd::get();
         opts.external = init_external_modules(
             &mut fs.fs,
             top_level_dir,

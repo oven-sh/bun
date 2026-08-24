@@ -690,7 +690,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // afterwards (overwrites relative_to_buf anyway).
         let norm_len = normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
         join_abs_string_buf::<P>(
-            bun_core::cwd::get().as_bytes(),
+            bun_core::cwd::get(),
             relative_from_buf,
             &[&relative_to_buf[..norm_len]],
         )
@@ -722,7 +722,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // and disjoint from both threadlocals), then join into relative_to_buf.
         let norm_len = normalize_string_buf::<true, P, true>(to, buf).len();
         join_abs_string_buf::<P>(
-            bun_core::cwd::get().as_bytes(),
+            bun_core::cwd::get(),
             relative_to_buf,
             &[&buf[..norm_len]],
         )

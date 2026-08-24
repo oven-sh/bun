@@ -1463,7 +1463,7 @@ impl<'a> SpawnArgs<'a> {
 
             override_env: false,
             env_array: Vec::new(),
-            cwd: bun_core::cwd::get().as_bytes(),
+            cwd: bun_core::cwd::get(),
             stdio: [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit],
             lazy: false,
             // PATH unset → fall back to _PATH_DEFPATH on POSIX (Android often

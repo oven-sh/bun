@@ -609,7 +609,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     let generic_action = "while initializing development server";
     bun_resolver::fs::FileSystem::init();
-    let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
+    let top_level_dir: &'static [u8] = bun_core::cwd::get();
 
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
     // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does

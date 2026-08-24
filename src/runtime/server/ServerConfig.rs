@@ -914,7 +914,7 @@ impl ServerConfig {
                     // `UserOptions` (lives until `args.bake` is dropped).
                     let arena = bun_alloc::Arena::new();
 
-                    let root = bb::arena_dupe_z(&arena, bun_core::cwd::get().as_bytes());
+                    let root = bb::arena_dupe_z(&arena, bun_core::cwd::get());
 
                     // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
                     // into `bake_body::FileSystemRouterType` (`&'static` slices)

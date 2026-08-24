@@ -18,7 +18,7 @@ use bun_threading::{ThreadPool, WaitGroup};
 use crate::package_installer::NodeModulesFolder;
 use crate::{
     BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
-    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+    TruncatedPackageNameHash, bun_json, buntaghashbuf_make, initialize_store, resolution,
 };
 
 bun_output::declare_scope!(install, hidden);
@@ -1964,7 +1964,7 @@ impl<'a> PackageInstall<'a> {
                 //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
                 //
                 let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    bun_fs::FileSystem::instance().top_level_dir(),
+                    bun_core::cwd::get(),
                     &[&self.node_modules.path, temp_path.as_bytes()],
                 );
                 let task = bun_core::heap::into_raw(Box::new(UninstallTask {

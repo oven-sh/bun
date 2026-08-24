@@ -131,7 +131,7 @@ impl FileSystemRouter {
         let vm = global_this.bun_vm().as_mut();
 
         let mut root_dir_path: ZigStringSlice =
-            ZigStringSlice::from_utf8_never_free(bun_core::cwd::get().as_bytes());
+            ZigStringSlice::from_utf8_never_free(bun_core::cwd::get());
         let mut origin_str: ZigStringSlice = ZigStringSlice::default();
         let mut asset_prefix_slice: ZigStringSlice = ZigStringSlice::default();
 
@@ -166,7 +166,7 @@ impl FileSystemRouter {
                     let parts: [&[u8]; 1] = [path_];
                     root_dir_path = ZigStringSlice::from_utf8_never_free(
                         path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                            Fs::FileSystem::instance().top_level_dir(),
+                            bun_core::cwd::get(),
                             &mut out_buf,
                             &parts,
                         ),
@@ -947,7 +947,7 @@ impl MatchedRoute {
             if let Some(ref base_dir) = this.base_dir {
                 base_dir.leak()
             } else {
-                Fs::FileSystem::get().top_level_dir()
+                bun_core::cwd::get()
             },
             &origin_url,
             if let Some(ref prefix) = this.asset_prefix {

@@ -105,8 +105,6 @@ pub struct Watcher {
     pub watchlist: WatchList,
     pub mutex: Mutex,
 
-    // Storing the `top_level_dir` slice directly avoids a forward-decl
-    // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
     /// Whether `thread_main` is running. Written by the watcher thread, read
     /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value

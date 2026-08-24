@@ -4420,7 +4420,7 @@ impl VirtualMachine {
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
-        let top_level_dir = bun_core::cwd::get().as_bytes();
+        let top_level_dir = bun_core::cwd::get();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 // SAFETY: PORT — `dir_with_trailing_slash()` returns a
@@ -5231,7 +5231,7 @@ impl VirtualMachine {
                 }
                 if let Some(list) = exception_list {
                     let origin = self.is_from_devserver.then_some(&self.origin);
-                    zig_exception.add_to_error_list(list, bun_core::cwd::get().as_bytes(), origin);
+                    zig_exception.add_to_error_list(list, bun_core::cwd::get(), origin);
                 }
                 holder.deinit(self);
             }
@@ -5353,7 +5353,7 @@ impl VirtualMachine {
         } else {
             None
         };
-        let dir = bun_core::cwd::get().as_bytes();
+        let dir = bun_core::cwd::get();
 
         for frame in stack {
             let file_slice = frame.source_url.to_utf8();
@@ -5535,7 +5535,7 @@ impl VirtualMachine {
                 }
                 if let Some(list) = self.exception_list.take() {
                     let origin = this.is_from_devserver.then_some(&this.origin);
-                    exception.add_to_error_list(list, bun_core::cwd::get().as_bytes(), origin);
+                    exception.add_to_error_list(list, bun_core::cwd::get(), origin);
                 }
             }
         }
@@ -6538,7 +6538,7 @@ impl VirtualMachine {
         let frames = exception.stack.frames();
         let top_frame = frames.first();
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir());
+            .unwrap_or_else(|| bun_core::cwd::get());
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

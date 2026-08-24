@@ -683,7 +683,7 @@ fn print_log_errors(log: &bun_ast::Log) {
 fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Result<bool> {
     let quiet = manager.options.log_level == LogLevel::Silent;
     let log = manager.log_mut();
-    let path: &[u8] = manager.root_package_json_path.as_bytes();
+    let path: &[u8] = &manager.root_package_json_path;
     let (source, json) =
         match manager
             .workspace_package_json_cache

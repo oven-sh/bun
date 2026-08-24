@@ -24,7 +24,6 @@ use bun_install::{
 };
 use bun_install_types::DependencyGroup;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
-use bun_resolver::fs::FileSystem;
 // Layering: `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
 // types, NOT `bun_js_parser`. `WorkspacePackageJsonCacheEntry.root` is the
 // logger-tier `Expr` (see WorkspacePackageJSONCache.rs), so the catalog-edit
@@ -328,8 +327,7 @@ impl UpdateInteractiveCommand {
         let mut it = workspace_groups.iter();
         while let Some((workspace_path, workspace_update_idxs)) = it.next() {
             // Build the package.json path for this workspace
-            // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-            let root_dir = FileSystem::get().top_level_dir();
+            let root_dir = bun_core::cwd::get();
             let mut path_buf = PathBuffer::uninit();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
@@ -458,8 +456,7 @@ impl UpdateInteractiveCommand {
         let mut workspace_it = workspace_catalog_updates.iter_mut();
         while let Some((workspace_path, updates_for_workspace)) = workspace_it.next() {
             // Build the package.json path for this workspace
-            // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-            let root_dir = FileSystem::get().top_level_dir();
+            let root_dir = bun_core::cwd::get();
             let mut path_buf = PathBuffer::uninit();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);

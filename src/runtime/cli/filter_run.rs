@@ -785,8 +785,7 @@ pub(crate) fn run_scripts_with_filter(
     post_script_name[0..4].copy_from_slice(b"post");
     post_script_name[4..].copy_from_slice(script_name);
 
-    let _ = bun_resolver::fs::FileSystem::init();
-    let fsinstance = bun_resolver::fs::FileSystem::get();
+    bun_resolver::fs::FileSystem::init();
 
     // TODO(refactor): out-param init — `configureEnvForRun` writes through the
     // out-param. Per PORTING.md this should be reshaped to
@@ -808,7 +807,7 @@ pub(crate) fn run_scripts_with_filter(
     let selected = FilterArg::select_packages(
         &*ctx,
         &mut this_transpiler.resolver,
-        fsinstance.top_level_dir(),
+        bun_core::cwd::get(),
     )?;
 
     let mut scripts: Vec<ScriptConfig> = Vec::new();
@@ -940,7 +939,7 @@ pub(crate) fn run_scripts_with_filter(
             RunCommand::find_shell(
                 // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
                 unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
-                fsinstance.top_level_dir(),
+                bun_core::cwd::get(),
             )
             .ok_or(crate::Error::MissingShell)?
         }

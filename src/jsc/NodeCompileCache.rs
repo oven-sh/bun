@@ -1014,7 +1014,7 @@ fn write_persist_job_locked(
     let basename = cache_basename(job.key);
     let mut tmpname_buf = PathBuffer::uninit();
     let tmpname_zstr: &ZStr =
-        match bun_resolver::fs::FileSystem::tmpname(&basename, &mut tmpname_buf[..], job.key) {
+        match bun_paths::fs::tmpname(&basename, &mut tmpname_buf[..], job.key) {
             Ok(z) => z,
             Err(_) => return Err(()),
         };

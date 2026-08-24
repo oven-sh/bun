@@ -558,7 +558,7 @@ impl AnyRoute {
         let cwd: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
             StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
         } else {
-            FileSystem::instance().top_level_dir()
+            bun_core::cwd::get()
         };
 
         let abs_path = FileSystem::instance().abs(&[path_slice]);

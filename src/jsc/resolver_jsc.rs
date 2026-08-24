@@ -47,7 +47,7 @@ extern "C" fn node_module_paths_js_value(
     let mut buf = bun_paths::path_buffer_pool::get();
 
     let mut full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        bun_core::cwd::get().as_bytes(),
+        bun_core::cwd::get(),
         &mut **buf,
         &[base_path],
     );

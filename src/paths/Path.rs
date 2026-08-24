@@ -622,7 +622,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     // `deinit` → impl Drop (below). Body returns the buffer to the pool.
 
     fn trimmed_top_level_dir() -> &'static [u8] {
-        let top_level_dir = bun_core::cwd::get().as_bytes();
+        let top_level_dir = bun_core::cwd::get();
 
         match Kind::from_u8(KIND) {
             Kind::Abs => {

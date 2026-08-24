@@ -5,7 +5,6 @@ use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_sys::{Fd, File};
 
-use crate::bun_fs::FileSystem;
 use crate::dependency::DependencyExt as _;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
@@ -105,7 +104,7 @@ fn edit_update_targets(
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
 ) -> crate::Result<()> {
-    let top_level = FileSystem::instance().top_level_dir();
+    let top_level = bun_core::cwd::get();
     let mut selected: Vec<WorkspaceTarget> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;

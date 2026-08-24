@@ -525,7 +525,7 @@ fn spawn(
             ZBox::from_vec(v)
         } else {
             let mut name_buf = [0u8; 64];
-            let name = bun_paths::fs::FileSystem::tmpname(
+            let name = bun_paths::fs::tmpname(
                 b"bun-chrome",
                 &mut name_buf,
                 bun_core::fast_random(),

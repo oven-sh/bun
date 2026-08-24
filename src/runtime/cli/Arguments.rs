@@ -810,7 +810,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            bun_core::cwd::init()?.as_bytes()
+            bun_core::cwd::init()?
         };
         let mut spill = Vec::new();
         let out =
@@ -824,7 +824,23 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
     }
-    let cwd: &[u8] = cmd.read_cwd()?.as_bytes();
+    if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
+        ctx.filters = slice_to_owned(args.options(b"--filter"));
+        ctx.workspaces = args.flag(b"--workspaces");
+        ctx.if_present = args.flag(b"--if-present");
+        ctx.parallel = args.flag(b"--parallel");
+        ctx.sequential = args.flag(b"--sequential");
+        ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
+    }
+    // Running workspace scripts acts on a project like `install` does; only a
+    // plain run starts without a readable working directory.
+    let runs_workspace_scripts =
+        !ctx.filters.is_empty() || ctx.workspaces || ctx.parallel || ctx.sequential;
+    let cwd: &[u8] = if cmd.starts_without_cwd() && !runs_workspace_scripts {
+        bun_core::cwd::init_or_exe_dir()
+    } else {
+        bun_core::cwd::init()?
+    };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
     // (uses_global_options=false). bunx picks up no-orphans via the
@@ -839,12 +855,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
-        ctx.filters = slice_to_owned(args.options(b"--filter"));
-        ctx.workspaces = args.flag(b"--workspaces");
-        ctx.if_present = args.flag(b"--if-present");
-        ctx.parallel = args.flag(b"--parallel");
-        ctx.sequential = args.flag(b"--sequential");
-        ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {

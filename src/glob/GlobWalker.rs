@@ -1392,7 +1392,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     ) -> Result<Maybe<Self>, Error> {
         Self::init_with_cwd(
             pattern,
-            bun_core::cwd::get().as_bytes(),
+            bun_core::cwd::get(),
             dot,
             absolute,
             follow_symlinks,

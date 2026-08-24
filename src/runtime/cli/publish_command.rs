@@ -17,7 +17,6 @@ use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIte
 use bun_parsers::json as json_mod;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
 use bun_paths::{self as path, PathBuffer};
-use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
 use bun_sys::dir_iterator as DirIterator;
@@ -142,7 +141,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
         let mut abs_buf = PathBuffer::uninit();
         let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
-            FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get(),
             &mut abs_buf,
             &[tarball_path],
         );

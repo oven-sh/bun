@@ -61,8 +61,7 @@ pub use standalone_module_graph::StandaloneModuleGraph;
 /// `bun_resolver::fs` namespace; re-exports from `fs_full` plus the
 /// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).
 pub mod fs {
-    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-    use std::io::Write as _;
+    use core::sync::atomic::{AtomicBool, Ordering};
 
     use bun_core::ZStr;
 
@@ -184,41 +183,7 @@ pub mod fs {
     #[cfg(not(windows))]
     static MAX_FD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
 
-    static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
-
     impl FileSystem {
-        /// Generates a unique NUL-terminated temp filename into `buf` from
-        /// `extname`, `hash`, a per-process counter, and the current time.
-        pub fn tmpname<'b>(
-            extname: &[u8],
-            buf: &'b mut [u8],
-            hash: u64,
-        ) -> crate::CrateResult<&'b mut ZStr> {
-            // bun_core has no `time` module yet; use std directly.
-            let nanos: u128 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            let hex_value: u64 = hash ^ (nanos as u64);
-
-            let len = buf.len();
-            let mut cursor = &mut buf[..];
-            write!(
-                &mut cursor,
-                ".{:x}-{:X}.{}",
-                hex_value,
-                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                bstr::BStr::new(extname),
-            )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let written = len - cursor.len();
-            if written >= len {
-                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-            }
-            buf[written] = 0;
-            Ok(ZStr::from_buf_mut(buf, written))
-        }
-
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
             // SAFETY: caller guarantees init() was called, so INSTANCE is initialized.
@@ -226,8 +191,8 @@ pub mod fs {
         }
 
         /// Shared-ref accessor for the process-lifetime singleton. Prefer this
-        /// over [`instance`] for read-only access (e.g. `top_level_dir`,
-        /// `dirname_store`): the resolver runs on a thread pool and a `&'static`
+        /// over [`instance`] for read-only access (e.g. `dirname_store`): the
+        /// resolver runs on a thread pool and a `&'static`
         /// is the only sound shape for concurrent readers.
         ///
         /// # Panics (debug)
@@ -300,13 +265,13 @@ pub mod fs {
         /// absolute path slice.
         pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{join_abs_string_buf, platform};
-            join_abs_string_buf::<platform::Loose>(self.top_level_dir(), buf, parts)
+            join_abs_string_buf::<platform::Loose>(bun_core::cwd::get(), buf, parts)
         }
 
         /// Returns `None` on overflow.
         pub fn abs_buf_checked<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-            join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir(), buf, parts)
+            join_abs_string_buf_checked::<platform::Loose>(bun_core::cwd::get(), buf, parts)
         }
 
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
@@ -319,7 +284,7 @@ pub mod fs {
         /// into the resolver-shared threadlocal join buffer.
         pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
             use bun_paths::resolve_path::{join_abs_string, platform};
-            join_abs_string::<platform::Loose>(self.top_level_dir(), parts)
+            join_abs_string::<platform::Loose>(bun_core::cwd::get(), parts)
         }
 
         /// Like `abs`, but interns the joined path into `DirnameStore` and
@@ -329,7 +294,7 @@ pub mod fs {
             parts: &[&[u8]],
         ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
             use bun_paths::resolve_path::{join_abs_string, platform};
-            let joined = join_abs_string::<platform::Loose>(self.top_level_dir(), parts);
+            let joined = join_abs_string::<platform::Loose>(bun_core::cwd::get(), parts);
             // Route through DirnameStore so
             // the resolver's `&'static [u8]` storage contract holds.
             DirnameStore::instance()
@@ -342,19 +307,6 @@ pub mod fs {
         /// before the next call.
         pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
             bun_paths::resolve_path::relative(from, to)
-        }
-
-        /// Relative path from
-        /// `top_level_dir` to `to`. Returns a slice into the resolver-shared
-        /// threadlocal relative buffer; caller must dup before the next call.
-        pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(self.top_level_dir(), to)
-        }
-
-        /// The directory resolution starts from: [`bun_core::cwd`].
-        #[inline]
-        pub fn top_level_dir(&self) -> &'static [u8] {
-            bun_core::cwd::get().as_bytes()
         }
 
         /// Normalizes `str` in the shared scratch space, returning the input
@@ -1315,7 +1267,7 @@ pub mod fs {
             let mut outpath = bun_paths::PathBuffer::uninit();
             let join_capacity = outpath.len() - 2;
             let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
-                bun_core::cwd::get().as_bytes(),
+                bun_core::cwd::get(),
                 &mut outpath[..join_capacity],
                 &combo,
             ) else {
@@ -1621,7 +1573,7 @@ pub mod fs {
                             return out.to_vec();
                         }
                         let root = bun_paths::resolve_path::windows_filesystem_root(
-                            bun_core::cwd::get().as_bytes(),
+                            bun_core::cwd::get(),
                         );
                         let mut out = bun_core::strings::without_trailing_slash(root).to_vec();
                         out.extend_from_slice(b"\\Windows\\Temp");

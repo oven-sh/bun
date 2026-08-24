@@ -255,7 +255,7 @@ impl ExtractTarball {
 
         let mut resolved: &'static [u8] = b"";
         let tmpname =
-            FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
+            bun_paths::fs::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,

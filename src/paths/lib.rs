@@ -503,12 +503,9 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `fs` — TYPE_ONLY subset of resolver fs.
-//
-// The full `FileSystem` (DirEntry cache, RealFS impl, FilenameStore/DirnameStore)
-// stays in `bun_resolver`; only the path-shaped types (`Path`, `PathName`)
-// live here so lower tiers (`bun_logger`, `bun_paths::resolve_path`,
-// `bun_paths::Path`) can use them without a `bun_resolver` edge.
+// `fs` — the path-shaped types (`Path`, `PathName`) and `tmpname`, kept
+// below `bun_resolver` so lower tiers can use them without depending on it;
+// the directory-entry cache and filename stores live in `bun_resolver::fs`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
     use core::sync::atomic::{AtomicU32, Ordering};
@@ -520,39 +517,30 @@ pub mod fs {
 
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
-    /// Namespace for the associated functions the resolver's `FileSystem`
-    /// shares with lower tiers; the working directory itself lives in
-    /// [`bun_core::cwd`].
-    pub struct FileSystem;
+    pub fn tmpname<'b>(
+        extname: &[u8],
+        buf: &'b mut [u8],
+        hash: u64,
+    ) -> crate::Result<&'b mut ZStr> {
+        let hex_value: u64 = hash ^ (bun_core::time::nano_timestamp() as u64);
 
-    impl FileSystem {
-        /// Writes `.<hex(hash^nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
-        /// the NUL-terminated borrow.
-        pub fn tmpname<'b>(
-            extname: &[u8],
-            buf: &'b mut [u8],
-            hash: u64,
-        ) -> crate::Result<&'b mut ZStr> {
-            let hex_value: u64 = hash ^ (bun_core::time::nano_timestamp() as u64);
-
-            let len = buf.len();
-            let mut cursor = &mut buf[..];
-            // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
-            write!(
-                &mut cursor,
-                ".{:016x}-{:08X}.{}",
-                hex_value,
-                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                bun_core::fmt::s(extname),
-            )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let written = len - cursor.len();
-            if written >= len {
-                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-            }
-            buf[written] = 0;
-            Ok(ZStr::from_buf_mut(buf, written))
+        let len = buf.len();
+        let mut cursor = &mut buf[..];
+        // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
+        write!(
+            &mut cursor,
+            ".{:016x}-{:08X}.{}",
+            hex_value,
+            TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
+            bun_core::fmt::s(extname),
+        )
+        .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+        let written = len - cursor.len();
+        if written >= len {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
         }
+        buf[written] = 0;
+        Ok(ZStr::from_buf_mut(buf, written))
     }
 
     /// Parsed (dir, base, ext,

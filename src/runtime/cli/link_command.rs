@@ -169,7 +169,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             {
                 use bun_paths::{platform, resolve_path};
                 // create the junction
-                let link_path = bun_core::cwd::get();
+                let link_path = bun_core::cwd::z();
                 let global_path = pm::global_link_dir_path(manager);
                 let dest_path =
                     resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
@@ -192,7 +192,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             {
                 // create the symlink
                 if let Err(e) = node_modules.sym_link(
-                    bun_core::cwd::get().as_bytes(),
+                    bun_core::cwd::get(),
                     name,
                     // is_directory
                     true,

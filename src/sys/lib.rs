@@ -864,36 +864,14 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         }
     }
 }
-/// Read cwd into a stack
-/// `PathBuffer`, then duplicate into a heap-owned NUL-terminated `ZBox`.
-pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {
-    let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
-    let len = getcwd(&mut buf[..])?;
-    Ok(bun_core::ZBox::from_bytes(&buf[..len]))
-}
-
-/// `getcwd` returning a NUL-terminated
-/// borrow into `buf`. POSIX `getcwd(3)` already NUL-terminates; on Windows
-/// the libuv path does too.
-pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
-    let len = getcwd(&mut buf[..])?;
-    debug_assert!(len < buf.len());
-    buf[len] = 0;
-    // SAFETY: NUL written at buf[len]; slice is within buf.
-    Ok(ZStr::from_buf(&buf[..], len))
-}
-
 /// After the OS working directory changed: re-read it into [`bun_core::cwd`].
 /// An error here (tagged `getcwd`) means the directory did change but its
 /// name could not be read back; the previous record is still in place.
 fn cwd_changed() -> Maybe<()> {
-    if bun_core::cwd::refresh().is_ok() {
-        return Ok(());
-    }
-    #[cfg(windows)]
-    return Err(Error::from_code(windows::get_last_errno(), Tag::getcwd));
-    #[cfg(not(windows))]
-    return Err(Error::from_code_int(last_errno(), Tag::getcwd));
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let len = getcwd(&mut buf[..])?;
+    bun_core::cwd::set(&buf[..len]);
+    Ok(())
 }
 
 /// Change the process working directory; [`bun_core::cwd`] follows. On an

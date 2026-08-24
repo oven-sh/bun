@@ -1772,6 +1772,8 @@ pub mod command {
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_core::ZStr;
 
+        bun_core::cwd::init()?;
+
         // These are templates from the legacy `bun create`
         // most of them aren't useful but these few are kinda nice.
         bun_core::comptime_string_set! {

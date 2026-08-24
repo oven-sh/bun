@@ -617,7 +617,7 @@ fn read_and_extract(
         // through here from the install crate's `FileSystem` shim.
         File::read_from_user_input(
             Fd::cwd(),
-            crate::bun_fs::FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get(),
             tarball_path,
         )?
     } else {

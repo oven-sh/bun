@@ -182,7 +182,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
 
     let mut tmpbuf = PathBuffer::uninit();
     let tmpname =
-        FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
+        bun_paths::fs::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
     let mut timer = if manager.options.log_level != LogLevel::Silent
         && !bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_FILESYSTEM_WARNING
@@ -354,7 +354,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
         unsafe {
             (*this).cache_directory_path =
                 ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                    bun_core::cwd::get(),
                     &[b"node_modules", b".cache"],
                 ))
         };

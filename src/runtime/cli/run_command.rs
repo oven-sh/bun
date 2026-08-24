@@ -622,7 +622,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Self::configure_run_transpiler_linker(this_transpiler);
         }
 
-        let top_level_dir = bun_core::cwd::get().as_bytes();
+        let top_level_dir = bun_core::cwd::get();
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
@@ -1023,7 +1023,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 runner_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
-            let cwd_bytes = bun_core::cwd::get().as_bytes();
+            let cwd_bytes = bun_core::cwd::get();
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
             eval_path.extend_from_slice(cwd_bytes);
             eval_path.extend_from_slice(EVAL_TRIGGER);
@@ -1402,7 +1402,7 @@ impl Run<'_> {
         }
 
         if entry == b"." {
-            let tld = bun_core::cwd::get().as_bytes();
+            let tld = bun_core::cwd::get();
             if !tld.is_empty() {
                 entry = tld;
             }
@@ -2472,7 +2472,7 @@ impl RunCommand {
         // ── module resolution fallback ───────────────────────────────────────
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
-        let fs_top_level_dir = bun_core::cwd::get().as_bytes();
+        let fs_top_level_dir = bun_core::cwd::get();
         bun_core::scoped_log!(
             RUN_LOG,
             "Try resolve `{}` in `{}`",
@@ -2488,7 +2488,7 @@ impl RunCommand {
                     || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
                         .get()
                         .unwrap_or(false);
-            let top_level_dir = bun_core::cwd::get().as_bytes();
+            let top_level_dir = bun_core::cwd::get();
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
@@ -2598,7 +2598,7 @@ impl RunCommand {
             let _ = force_using_bun;
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };
-            let top_level_dir = fs.top_level_dir();
+            let top_level_dir = bun_core::cwd::get();
             let path = env_loader.get(b"PATH").unwrap_or(b"");
             let mut path_for_which = path;
             if bin_dirs_only {
@@ -2815,7 +2815,7 @@ impl RunCommand {
         const STDIN_TRIGGER: &[u8] = b"/[stdin]";
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
-        let cwd_bytes = bun_core::cwd::get().as_bytes();
+        let cwd_bytes = bun_core::cwd::get();
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
         entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
@@ -2875,7 +2875,7 @@ impl RunCommand {
         }
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        let cwd_bytes = bun_core::cwd::get().as_bytes();
+        let cwd_bytes = bun_core::cwd::get();
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
         entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
@@ -2908,7 +2908,7 @@ impl RunCommand {
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-            let cwd_bytes = bun_core::cwd::get().as_bytes();
+            let cwd_bytes = bun_core::cwd::get();
             let cwd_len = cwd_bytes.len();
             entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
             entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
@@ -2938,7 +2938,7 @@ impl RunCommand {
         } else {
             let mut out_buf = PathBuffer::uninit();
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Loose>(
-                bun_core::cwd::get().as_bytes(),
+                bun_core::cwd::get(),
                 &mut out_buf.0,
                 &[&filename],
             );
@@ -3477,7 +3477,7 @@ impl RunCommand {
         this_transpiler.resolver.store_fd = true;
         this_transpiler.configure_linker();
 
-        let top_level_dir = bun_core::cwd::get().as_bytes();
+        let top_level_dir = bun_core::cwd::get();
         let Some(root_dir_info) = this_transpiler
             .resolver
             .read_dir_info(top_level_dir)

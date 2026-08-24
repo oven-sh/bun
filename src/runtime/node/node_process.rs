@@ -442,8 +442,8 @@ mod _impl {
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // Real syscall (not the resolver's cached top_level_dir): Node's
-        // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
+        // Real syscall (not `bun_core::cwd`): Node's process.cwd() calls
+        // uv_cwd(), so a deleted cwd must surface here.
         let mut buf = PathBuffer::uninit();
         match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(len) => Ok(ZigString::init(&buf[..len])
@@ -494,13 +494,13 @@ mod _impl {
             return Err(global_object.throw(format_args!("Invalid path")));
         };
 
-        let prev_cwd = bun_core::cwd::get();
+        let prev_cwd = bun_core::cwd::z();
         match bun_sys::chdir(slice) {
             bun_sys::Result::Ok(()) => {
                 vm.test_isolation_scope(|state| {
                     state.saved_cwd.get_or_insert(prev_cwd);
                 });
-                bun_string_jsc::create_utf8_for_js(global_object, bun_core::cwd::get().as_bytes())
+                bun_string_jsc::create_utf8_for_js(global_object, bun_core::cwd::get())
             }
             bun_sys::Result::Err(e) => {
                 if e.syscall == bun_sys::Tag::getcwd {

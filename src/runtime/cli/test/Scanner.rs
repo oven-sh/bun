@@ -121,9 +121,9 @@ impl<'a> Scanner<'a> {
 
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = PathBuffer::uninit();
-        let parts: [&[u8]; 2] = [bun_core::cwd::get().as_bytes(), path_literal];
+        let parts: [&[u8]; 2] = [bun_core::cwd::get(), path_literal];
         let Some(path) =
-            Self::abs_buf_projected(bun_core::cwd::get().as_bytes(), &parts, &mut scan_dir_buf)
+            Self::abs_buf_projected(bun_core::cwd::get(), &parts, &mut scan_dir_buf)
         else {
             return Err(ScanError::DoesNotExist);
         };
@@ -283,7 +283,7 @@ impl<'a> Scanner<'a> {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
-        let rel_path = bun_paths::resolve_path::relative(bun_core::cwd::get().as_bytes(), abs_path);
+        let rel_path = bun_paths::resolve_path::relative(bun_core::cwd::get(), abs_path);
 
         // Build rel_path + '/' once. rel_path is a relative path from the project
         // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
@@ -350,7 +350,7 @@ impl<'a> Scanner<'a> {
                     // abs_buf and reborrow open_dir_buf immutably so &self methods
                     // can be called with the slice.
                     let Some(dir_path_len) = Self::abs_buf_projected(
-                        bun_core::cwd::get().as_bytes(),
+                        bun_core::cwd::get(),
                         &parts,
                         &mut self.open_dir_buf,
                     )
@@ -389,7 +389,7 @@ impl<'a> Scanner<'a> {
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
                 let Some(path_len) = Self::abs_buf_projected(
-                    bun_core::cwd::get().as_bytes(),
+                    bun_core::cwd::get(),
                     &parts,
                     &mut self.open_dir_buf,
                 )
@@ -400,7 +400,7 @@ impl<'a> Scanner<'a> {
 
                 if !self.does_absolute_path_match_filter(path) {
                     let rel_path =
-                        bun_paths::resolve_path::relative(bun_core::cwd::get().as_bytes(), path);
+                        bun_paths::resolve_path::relative(bun_core::cwd::get(), path);
                     if !self.does_path_match_filter(rel_path) {
                         return;
                     }

@@ -90,7 +90,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     60_000,
   );
 
-  test("--bytecode embeds bytecode for the internal modules the app imports", async () => {
+  test.each([false, true])("--bytecode=%p: internal modules the app imports come from embedded bytecode", async bytecode => {
     using dir = tempDir("build-compile-builtin-bytecode", {
       "app.js": `import { join } from "node:path";
 import http from "node:http";
@@ -99,29 +99,27 @@ const server = http.createServer(() => {});
 console.log(JSON.stringify({ joined: join("a", "b"), fromBytecode: internalModulesLoadedFromBytecode() }));
 server.close();`,
     });
-    for (const bytecode of [false, true]) {
-      const outfile = join(dir + "", bytecode ? "app-bytecode" : "app-source");
-      const result = await Bun.build({
-        entrypoints: [join(dir + "", "app.js")],
-        compile: { outfile },
-        bytecode,
-        format: "esm",
-        target: "bun",
-      });
-      expect(result.success).toBe(true);
-      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      const { joined, fromBytecode } = JSON.parse(stdout.trim());
-      expect(joined).toBe(join("a", "b"));
-      if (bytecode) {
-        // node:path, node:http and what they require at load (node:net, node:events, the stream internals, ...).
-        expect(fromBytecode).toBeGreaterThan(10);
-      } else {
-        expect(fromBytecode).toBe(0);
-      }
-      expect(exitCode).toBe(0);
+    const outfile = join(dir + "", "app");
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "app.js")],
+      compile: { outfile },
+      bytecode,
+      format: "esm",
+      target: "bun",
+    });
+    expect(result.success).toBe(true);
+    await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { joined, fromBytecode } = JSON.parse(stdout.trim());
+    expect(joined).toBe(join("a", "b"));
+    if (bytecode) {
+      // node:path, node:http and what they require at load (node:net, node:events, the stream internals, ...).
+      expect(fromBytecode).toBeGreaterThan(10);
+    } else {
+      expect(fromBytecode).toBe(0);
     }
+    expect(exitCode).toBe(0);
   });
 
   test("compile with invalid target fails gracefully", async () => {

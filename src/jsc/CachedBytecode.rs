@@ -157,10 +157,10 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
 }
 
 /// `bun build --compile --bytecode`: for the builtin module specifiers a bundle imports (e.g. `b"node:fs"`), the
-/// InternalModuleRegistry ids of those modules and everything they statically require, each with bytecode generated the
+/// InternalModuleRegistry ids of those modules and everything they eagerly require, each with bytecode generated the
 /// way InternalModuleRegistry::generateModule consumes it. Specifiers that are not JS internal modules are skipped.
-#[unsafe(no_mangle)]
 /// `depth` bounds nested-function code blocks (`u32::MAX` = all of them; 0 = just each module wrapper's own).
+#[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
     specifiers: &[&[u8]],
     depth: u32,

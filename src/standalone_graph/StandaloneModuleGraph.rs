@@ -2575,8 +2575,6 @@ impl StandaloneModuleGraph {
     }
 }
 
-/// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
-/// populates it from bytes, sets it globally, and returns the pointer.
 /// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins
 /// 8 bytes after a page-aligned address (the length header), so the offset must be 120 mod 128.
 fn append_bytecode_aligned(
@@ -2605,6 +2603,9 @@ fn append_bytecode_aligned(
     }
 }
 
+
+/// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
+/// populates it from bytes, sets it globally, and returns the pointer.
 fn from_bytes_alloc(
     raw_ptr: *mut u8,
     raw_len: usize,

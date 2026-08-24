@@ -7,6 +7,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/Debugger.h>
+#include <atomic>
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
@@ -43,12 +44,12 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
 
-static unsigned s_internalModulesFromBytecode = 0;
+static std::atomic<unsigned> s_internalModulesFromBytecode { 0 };
 
 // bun:internal-for-testing: how many internal modules this process created from embedded bytecode rather than source.
 JSC_DEFINE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
-    return JSValue::encode(jsNumber(s_internalModulesFromBytecode));
+    return JSValue::encode(jsNumber(s_internalModulesFromBytecode.load(std::memory_order_relaxed)));
 }
 
 static SourceCode makeInternalModuleSource(const String& text, const String& moduleName, const String& urlString)
@@ -70,12 +71,12 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     UnlinkedFunctionExecutable* executable = nullptr;
     const uint8_t* cachedBytes = nullptr;
     size_t cachedSize = 0;
-    if (Bun__standaloneInternalModuleBytecode(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), id, &cachedBytes, &cachedSize)) {
+    if (Bun__standaloneInternalModuleBytecode(WebCore::bunVM(globalObject), id, &cachedBytes, &cachedSize)) {
         Ref<JSC::CachedBytecode> cached = JSC::CachedBytecode::create(std::span<uint8_t> { const_cast<uint8_t*>(cachedBytes), cachedSize }, [](const void*) {}, {});
         cached->setPayloadIsPersistent();
         executable = JSC::decodeBuiltinFunction(vm, WTF::move(cached), *source.provider(), InternalModuleRegistryConstants::sourceStamp);
         if (executable)
-            ++s_internalModulesFromBytecode;
+            s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
     }
     if (!executable)
         executable = createInternalModuleExecutable(vm, source, moduleName);
@@ -279,7 +280,7 @@ extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth,
 extern "C" size_t Bun__internalModuleDependencies(uint32_t id, const uint16_t** out)
 {
     using namespace Bun::InternalModuleRegistryConstants;
-    if (id + 1 >= std::size(dependencyOffsets))
+    if (id >= std::size(dependencyOffsets) - 1)
         return 0;
     *out = dependencies + dependencyOffsets[id];
     return dependencyOffsets[id + 1] - dependencyOffsets[id];

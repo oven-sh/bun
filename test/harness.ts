@@ -355,7 +355,11 @@ export async function expectRssDeltaBelow(
       ...bunEnv,
       ...env,
       // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+      ASAN_OPTIONS: [
+        env.ASAN_OPTIONS ?? bunEnv.ASAN_OPTIONS,
+        "quarantine_size_mb=0",
+        "thread_local_quarantine_size_kb=0",
+      ]
         .filter(Boolean)
         .join(":"),
     },

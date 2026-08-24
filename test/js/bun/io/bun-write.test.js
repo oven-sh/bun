@@ -733,11 +733,31 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   });
 
+  // Runs in a subprocess: a regression here blocks the JS thread inside
+  // open(2), which no in-process test timeout can interrupt.
   it.skipIf(isWindows)("an empty Blob source to a FIFO with no reader rejects instead of hanging", async () => {
     using dir = tempDir("empty-blob-fifo", {});
     const fifo = join(String(dir), "fifo");
     mkfifo(fifo, 0o666);
-    await expect(Bun.write(fifo, new Blob([]))).rejects.toThrow();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.write(${JSON.stringify(fifo)}, new Blob([])).then(
+          () => process.exit(1),
+          e => console.log(e.code),
+        )`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode }).toEqual({
+      stdout: "ENXIO",
+      stderr: "",
+      signalCode: null,
+    });
+    expect(exitCode).toBe(0);
   });
 
   // The empty-source path truncates through open + ftruncate. The open must

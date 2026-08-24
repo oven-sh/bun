@@ -11,7 +11,7 @@ use bun_bundler::options;
 use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
@@ -62,7 +62,7 @@ pub mod js_bundler {
             );
         };
 
-        let mut files_iter = jsc::JSPropertyIterator::init(
+        let files_iter = jsc::JSPropertyIterator::init(
             global_this,
             files_obj,
             jsc::JSPropertyIteratorOptions {
@@ -74,9 +74,7 @@ pub mod js_bundler {
 
         this.map.reserve(files_iter.len);
 
-        while let Some(prop) = files_iter.next()? {
-            let property_value = files_iter.value;
-
+        while let Some((prop, property_value)) = files_iter.next()? {
             // Parse the value as BlobOrStringOrBuffer using async mode for thread safety.
             // Async mode `protect()`s any JS-backed buffer; adopt into a
             // `ThreadSafe` so the guard unprotects + drops at end of iteration.
@@ -297,7 +295,7 @@ pub mod js_bundler {
                 }
             };
 
-            if let Some(target) = object.get_own(global_this, &BunString::static_str("target"))? {
+            if let Some(target) = object.get_own(global_this, &BunString::static_("target"))? {
                 this.compile_target = compile_target_from_js(global_this, target)?;
             }
 
@@ -317,7 +315,7 @@ pub mod js_bundler {
             }
 
             if let Some(executable_path) =
-                object.get_own(global_this, &BunString::static_str("executablePath"))?
+                object.get_own(global_this, &BunString::static_("executablePath"))?
             {
                 let slice = executable_path.to_slice(global_this)?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
@@ -340,13 +338,13 @@ pub mod js_bundler {
                 }
 
                 if let Some(hide_console) =
-                    windows.get_own(global_this, &BunString::static_str("hideConsole"))?
+                    windows.get_own(global_this, &BunString::static_("hideConsole"))?
                 {
                     this.windows_hide_console = hide_console.to_boolean();
                 }
 
                 if let Some(windows_icon_path) =
-                    windows.get_own(global_this, &BunString::static_str("icon"))?
+                    windows.get_own(global_this, &BunString::static_("icon"))?
                 {
                     let slice = windows_icon_path.to_slice(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
@@ -363,42 +361,42 @@ pub mod js_bundler {
                 }
 
                 if let Some(windows_title) =
-                    windows.get_own(global_this, &BunString::static_str("title"))?
+                    windows.get_own(global_this, &BunString::static_("title"))?
                 {
                     let slice = windows_title.to_slice(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_publisher) =
-                    windows.get_own(global_this, &BunString::static_str("publisher"))?
+                    windows.get_own(global_this, &BunString::static_("publisher"))?
                 {
                     let slice = windows_publisher.to_slice(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_version) =
-                    windows.get_own(global_this, &BunString::static_str("version"))?
+                    windows.get_own(global_this, &BunString::static_("version"))?
                 {
                     let slice = windows_version.to_slice(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_description) =
-                    windows.get_own(global_this, &BunString::static_str("description"))?
+                    windows.get_own(global_this, &BunString::static_("description"))?
                 {
                     let slice = windows_description.to_slice(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_copyright) =
-                    windows.get_own(global_this, &BunString::static_str("copyright"))?
+                    windows.get_own(global_this, &BunString::static_("copyright"))?
                 {
                     let slice = windows_copyright.to_slice(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
             }
 
-            if let Some(outfile) = object.get_own(global_this, &BunString::static_str("outfile"))? {
+            if let Some(outfile) = object.get_own(global_this, &BunString::static_("outfile"))? {
                 let slice = outfile.to_slice(global_this)?;
                 this.outfile.append_slice_exact(slice.slice())?;
             }
@@ -571,8 +569,6 @@ pub mod js_bundler {
 
                     if let Some(err) = plugin_result.to_error() {
                         return Err(global_this.throw_value(err));
-                    } else if global_this.has_exception() {
-                        return Err(JsError::Thrown);
                     }
 
                     onstart_promise_array = plugin_result;
@@ -815,7 +811,7 @@ pub mod js_bundler {
             if let Some(entry_points) = entry_points_opt {
                 let mut iter = entry_points.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice_or_null(global_this)?;
+                    let slice = entry_point.to_slice(global_this)?;
                     this.entry_points.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -844,13 +840,13 @@ pub mod js_bundler {
 
             if let Some(conditions_value) = config.get_truthy(global_this, "conditions")? {
                 if conditions_value.is_string() {
-                    let slice = conditions_value.to_slice_or_null(global_this)?;
+                    let slice = conditions_value.to_slice(global_this)?;
                     this.conditions.insert(slice.slice())?;
                     drop(slice);
                 } else if conditions_value.js_type().is_array() {
                     let mut iter = conditions_value.array_iterator(global_this)?;
                     while let Some(entry_point) = iter.next()? {
-                        let slice = entry_point.to_slice_or_null(global_this)?;
+                        let slice = entry_point.to_slice(global_this)?;
                         this.conditions.insert(slice.slice())?;
                         drop(slice);
                     }
@@ -934,14 +930,14 @@ pub mod js_bundler {
             if let Some(externals) = config.get_own_array(global_this, "external")? {
                 let mut iter = externals.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice_or_null(global_this)?;
+                    let slice = entry_point.to_slice(global_this)?;
                     this.external.insert(slice.slice())?;
                     drop(slice);
                 }
             }
 
             if let Some(allow_unresolved_val) =
-                config.get_own(global_this, &BunString::static_str("allowUnresolved"))?
+                config.get_own(global_this, &BunString::static_("allowUnresolved"))?
             {
                 if !allow_unresolved_val.is_undefined() && !allow_unresolved_val.is_null() {
                     if !(allow_unresolved_val.is_cell()
@@ -955,7 +951,7 @@ pub mod js_bundler {
                     if allow_unresolved_val.get_length(global_this)? > 0 {
                         let mut iter = allow_unresolved_val.array_iterator(global_this)?;
                         while let Some(entry) = iter.next()? {
-                            let slice = entry.to_slice_or_null(global_this)?;
+                            let slice = entry.to_slice(global_this)?;
                             this.allow_unresolved
                                 .as_mut()
                                 .unwrap()
@@ -969,7 +965,7 @@ pub mod js_bundler {
             if let Some(drops) = config.get_own_array(global_this, "drop")? {
                 let mut iter = drops.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice_or_null(global_this)?;
+                    let slice = entry.to_slice(global_this)?;
                     this.drop.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -978,7 +974,7 @@ pub mod js_bundler {
             if let Some(features) = config.get_own_array(global_this, "features")? {
                 let mut iter = features.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice_or_null(global_this)?;
+                    let slice = entry.to_slice(global_this)?;
                     this.features.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -987,7 +983,7 @@ pub mod js_bundler {
             if let Some(optimize_imports) = config.get_own_array(global_this, "optimizeImports")? {
                 let mut iter = optimize_imports.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice_or_null(global_this)?;
+                    let slice = entry.to_slice(global_this)?;
                     this.optimize_imports.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -1054,7 +1050,7 @@ pub mod js_bundler {
             if let Some(define) = config.get_own_object(global_this, "define")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let define_ref = unsafe { &*define };
-                let mut define_iter = jsc::JSPropertyIterator::init(
+                let define_iter = jsc::JSPropertyIterator::init(
                     global_this,
                     define_ref,
                     jsc::JSPropertyIteratorOptions {
@@ -1064,8 +1060,7 @@ pub mod js_bundler {
                     },
                 )?;
 
-                while let Some(prop) = define_iter.next()? {
-                    let property_value = define_iter.value;
+                while let Some((prop, property_value)) = define_iter.next()? {
                     let value_type = property_value.js_type();
 
                     if !value_type.is_string_like() {
@@ -1075,27 +1070,26 @@ pub mod js_bundler {
                         )));
                     }
 
-                    let mut val = ZigString::init(b"");
-                    property_value.to_zig_string(&mut val, global_this)?;
-                    if val.len == 0 {
-                        val = ZigString::from_utf8(b"\"\"");
-                    }
-
+                    let val = property_value.to_js_string_view(global_this)?;
                     let key = prop.to_owned_slice();
-
-                    // value is always cloned
-                    let value = val.to_slice();
+                    let value = val.to_utf8();
 
                     // .insert clones the value, but not the key
-                    this.define.insert(&key, value.slice())?;
-                    drop(value);
+                    this.define.insert(
+                        &key,
+                        if value.slice().is_empty() {
+                            b"\"\""
+                        } else {
+                            value.slice()
+                        },
+                    )?;
                 }
             }
 
             if let Some(loaders) = config.get_own_object(global_this, "loader")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let loaders_ref = unsafe { &*loaders };
-                let mut loader_iter = jsc::JSPropertyIterator::init(
+                let loader_iter = jsc::JSPropertyIterator::init(
                     global_this,
                     loaders_ref,
                     jsc::JSPropertyIteratorOptions {
@@ -1117,7 +1111,7 @@ pub mod js_bundler {
                 loader_names.reserve_exact(loader_iter.len);
                 loader_values.reserve_exact(loader_iter.len);
 
-                while let Some(prop) = loader_iter.next()? {
+                while let Some((prop, value)) = loader_iter.next()? {
                     let prop_slice = prop.to_utf8();
                     if !prop_slice.slice().starts_with(b".") || prop.length() < 2 {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1126,7 +1120,7 @@ pub mod js_bundler {
                     }
                     drop(prop_slice);
 
-                    loader_values.push(loader_iter.value.to_enum_from_map(
+                    loader_values.push(value.to_enum_from_map(
                         global_this,
                         "loader",
                         &options::LOADER_API_NAMES,
@@ -1147,7 +1141,7 @@ pub mod js_bundler {
 
             // Parse metafile option: boolean | string | { json?: string, markdown?: string }
             if let Some(metafile_value) =
-                config.get_own(global_this, &BunString::static_str("metafile"))?
+                config.get_own(global_this, &BunString::static_("metafile"))?
             {
                 if metafile_value.is_boolean() {
                     this.metafile = metafile_value == JSValue::TRUE;
@@ -1374,19 +1368,15 @@ pub mod js_bundler {
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
         // cannot depend on those).
-        let completion =
-            crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
-                config,
-                plugins.and_then(core::ptr::NonNull::new),
-                global_this,
-            )
-            .map_err(|_| JsError::OutOfMemory)?;
-        // SAFETY: `completion` is the freshly-boxed allocation returned above;
-        // sole owner on the JS thread until enqueued task runs.
-        unsafe {
-            (*completion).promise = jsc::JSPromiseStrong::init(global_this);
-            Ok((*completion).promise.value())
-        }
+        let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
+            config,
+            plugins.and_then(core::ptr::NonNull::new),
+            global_this,
+        );
+        completion.promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = completion.promise.value();
+        completion.schedule();
+        Ok(promise)
     }
 
     /// `Bun.build(config)`
@@ -1457,17 +1447,15 @@ pub mod js_bundler {
             resolve.value = ResolveValue::NoMatch;
         } else {
             let global = bv2_plugin(resolve.bv2).global_object();
-            // `to_slice_clone` already heap-allocates; `into_vec` moves that
-            // buffer out instead of allocating a second copy.
             let path = path_value
-                .to_slice_clone(global)
+                .to_bun_string(global)
                 .expect("Unexpected: path is not a string")
-                .into_vec()
+                .to_owned_slice()
                 .into_boxed_slice();
             let namespace = namespace_value
-                .to_slice_clone(global)
+                .to_bun_string(global)
                 .expect("Unexpected: namespace is not a string")
-                .into_vec()
+                .to_owned_slice()
                 .into_boxed_slice();
             resolve.value = ResolveValue::Success(ResolveSuccess {
                 path,

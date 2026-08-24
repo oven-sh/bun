@@ -2295,10 +2295,13 @@ private:
             return m_identifier;
         }
 
-        JSValue jsString(JSGlobalObject* lexicalGlobalObject)
+        JSValue jsString(CloneDeserializer& deserializer)
         {
-            if (!m_jsString)
-                m_jsString = JSC::jsString(lexicalGlobalObject->vm(), m_string);
+            if (!m_jsString) {
+                m_jsString = JSC::jsString(deserializer.m_lexicalGlobalObject->vm(), m_string);
+                // m_constantPool is not scanned by the GC.
+                deserializer.m_gcBuffer.appendWithCrashOnOverflow(m_jsString);
+            }
             return m_jsString;
         }
         const String& string() { return m_string; }
@@ -3564,6 +3567,7 @@ private:
         // read bun types
         if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end)) {
             JSValue deserialized = JSValue::decode(value.value());
+            // Empty: the record was malformed, or the hook threw (the caller checks its scope first).
             if (deserialized.isEmpty()) {
                 fail();
                 return JSValue();
@@ -3640,7 +3644,7 @@ private:
             CachedStringRef cachedString;
             if (!readStringData(cachedString))
                 return JSValue();
-            return cachedString->jsString(m_lexicalGlobalObject);
+            return cachedString->jsString(*this);
         }
         case EmptyStringTag:
             return jsEmptyString(m_lexicalGlobalObject->vm());
@@ -3648,7 +3652,7 @@ private:
             CachedStringRef cachedString;
             if (!readStringData(cachedString))
                 return JSValue();
-            StringObject* obj = constructString(m_lexicalGlobalObject->vm(), m_globalObject, cachedString->jsString(m_lexicalGlobalObject));
+            StringObject* obj = constructString(m_lexicalGlobalObject->vm(), m_globalObject, cachedString->jsString(*this));
             addToObjectPool(obj);
             return obj;
         }
@@ -4855,9 +4859,12 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     if (didFail) {
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
     }
-    if (throwScope.exception() || throwExceptions == SerializationErrorMode::Throwing) [[unlikely]]
-        maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
+    // Whatever the deserializer itself threw (a Blob/File/native record that failed to rehydrate, OOM) is the error.
     RETURN_IF_EXCEPTION(throwScope, {});
+    if (throwExceptions == SerializationErrorMode::Throwing) {
+        maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
 
     return result.first ? result.first : jsNull();
 }
@@ -5088,13 +5095,12 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     );
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
-    // Deserialize may throw an exception. Similar to serialize (SerializedScriptValue::create),
-    // we'll catch and rethrow.
-    if (scope.exception() || throwExceptions == SerializationErrorMode::Throwing) [[unlikely]]
-        maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, result.second);
-
-    // Rethrow is a bit simpler here since we don't deal with return codes.
+    // Whatever the deserializer itself threw (a Blob/File/native record that failed to rehydrate, OOM) is the error.
     RETURN_IF_EXCEPTION(scope, {});
+    if (throwExceptions == SerializationErrorMode::Throwing) {
+        maybeThrowExceptionIfSerializationFailed(lexicalGlobalObject, result.second);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     return result.first;
 }

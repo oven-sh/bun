@@ -406,7 +406,7 @@ fn win32_errno_name(code: u32) -> Option<&'static str> {
 // Wire the above into bun_core's `ErrnoNames` hook. `()` owner — pure
 // stateless functions; the handle is the const `ErrnoNames::SYS`.
 bun_core::link_impl_ErrnoNames! {
-    Sys for () => |_this| {
+    Sys for extern () => |_this| {
         name(errno) => system_errno_name(errno),
         max_dense() => system_errno_max_dense(),
         win32_name(code) => win32_errno_name(code),

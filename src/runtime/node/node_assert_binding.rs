@@ -64,8 +64,7 @@ fn colors_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<node_asse
         if !v.is_string() {
             return Ok(Vec::new());
         }
-        let s = bstring::OwnedString::new(v.to_bun_string(global)?);
-        Ok(s.to_utf8_without_ref().slice().to_vec())
+        Ok(v.to_bun_string(global)?.to_owned_slice())
     };
     Ok(node_assert::Colors {
         green: get("green")?,
@@ -96,10 +95,8 @@ fn run(
         return Err(global.throw_invalid_argument_type_value("expected", "string", expected_arg));
     }
 
-    // `defer .deref()` — `bun_core::String` is `Copy` (no `Drop`), so wrap in
-    // `OwnedString` for the scope-exit ref-drop.
-    let actual_str = bstring::OwnedString::new(actual_arg.to_bun_string(global)?);
-    let expected_str = bstring::OwnedString::new(expected_arg.to_bun_string(global)?);
+    let actual_str = actual_arg.to_bun_string(global)?;
+    let expected_str = expected_arg.to_bun_string(global)?;
 
     debug_assert!(actual_str.tag() != bstring::Tag::Dead);
     debug_assert!(expected_str.tag() != bstring::Tag::Dead);

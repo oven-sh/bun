@@ -123,9 +123,7 @@ impl ResolveMessage {
                     };
                 };
 
-                let atom = bun_core::String::create_atom(code);
-                // `defer atom.deref()` — `String` derefs on Drop.
-                atom.to_js(global)
+                bun_core::String::create_atom(code).into_js(global)
             }
             _ => Ok(JSValue::UNDEFINED),
         }
@@ -285,7 +283,7 @@ impl ResolveMessage {
                 return Ok(JSValue::NULL);
             }
 
-            let str = args[0].get_zig_string(global)?;
+            let str = args[0].to_bun_string(global)?;
             if str.eql_comptime(b"default") || str.eql_comptime(b"string") {
                 return Ok(this.to_string_fn(global));
             }
@@ -300,7 +298,7 @@ impl ResolveMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_str(b"ResolveMessage").to_js(global)?,
+            bun_core::String::static_(b"ResolveMessage").to_js(global)?,
         );
         object.put(global, b"position", Self::get_position(this, global)?);
         object.put(global, b"message", Self::get_message(this, global)?);

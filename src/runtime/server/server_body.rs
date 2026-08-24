@@ -541,17 +541,11 @@ impl AnyRoute {
         let Some(path_js) = argument.get(init_ctx.global, b"path")? else {
             return Ok(None);
         };
-        let mut path_string = BunString::from_js(path_js, init_ctx.global)?;
         let mut path = Node::PathOrFileDescriptor::Path(Node::PathLike::from_bun_string(
             init_ctx.global,
-            &mut path_string,
+            BunString::from_js(path_js, init_ctx.global)?,
             false,
         )?);
-        // NOTE: `from_bun_string` clones
-        // the bytes (or bumps the WTF ref) into the PathLike payload, so we can
-        // release the source ref immediately — `bun_core::String` has no `Drop`.
-        path_string.deref();
-        // path is dropped at scope end
 
         // Construct the route by stripping paths above the root.
         //
@@ -594,9 +588,6 @@ impl AnyRoute {
                 bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
             }
         });
-        if init_ctx.global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
         let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
@@ -689,30 +680,24 @@ impl AnyRoute {
                 }
             }
 
-            return Ok(AnyRoute::File(
-                NonNull::new(FileRoute::init_from_blob(
-                    blob,
-                    &super::file_route::InitOptions {
-                        server: None,
-                        status_code: 200,
-                        headers,
-                    },
-                ))
-                .expect("FileRoute::init_from_blob returns a fresh heap allocation"),
-            ));
+            return Ok(AnyRoute::File(FileRoute::init_from_blob(
+                blob,
+                &super::file_route::InitOptions {
+                    server: None,
+                    status_code: 200,
+                    headers,
+                },
+            )));
         }
 
-        Ok(AnyRoute::Static(
-            NonNull::new(StaticRoute::init_from_any_blob(
-                AnyBlob::Blob(blob),
-                super::static_route::InitFromBytesOptions {
-                    server: None,
-                    headers,
-                    ..Default::default()
-                },
-            ))
-            .expect("StaticRoute::init_from_any_blob returns a fresh heap allocation"),
-        ))
+        Ok(AnyRoute::Static(StaticRoute::init_from_any_blob(
+            AnyBlob::Blob(blob),
+            super::static_route::InitFromBytesOptions {
+                server: None,
+                headers,
+                ..Default::default()
+            },
+        )))
     }
 
     pub(crate) fn html_route_from_js(
@@ -720,30 +705,21 @@ impl AnyRoute {
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
-        if let Some(html_bundle) = <HTMLBundle as bun_jsc::JsClass>::from_js(argument) {
+        if let Some(html_bundle) = argument.as_class_this_ptr::<HTMLBundle>() {
             let entry = init_ctx
                 .dedupe_html_bundle_map
-                .entry(html_bundle.cast_const());
+                .entry(html_bundle.as_ptr().cast_const());
             // HashMap aborts on OOM (repo-wide abort-on-OOM policy).
             return Ok(Some(match entry {
                 StdEntry::Vacant(v) => {
-                    // The rc=1 `Route::init(..)` goes in the map and
-                    // that same value is returned to the caller (the map slot is a
-                    // non-owning borrow, freed by `dedupe_html_bundle_map.deinit`
-                    // *without* deref). `RefPtr<T>` has no `Drop`, so a bit-copy
-                    // here keeps the net refcount at 1 — bumping for the map
-                    // slot would leak +1 per first-seen HTMLBundle.
-                    // SAFETY: `html_bundle` is the live `RefPtr<HTMLBundle>` from the
-                    // route map; `init` consumes its +1 ref into the new `Route`.
+                    // The rc=1 `Route::init(..)` is returned to the caller; the
+                    // map slot is a non-owning back-reference for deduping later
+                    // entries in this same config.
                     let route = html_bundle::Route::init(html_bundle);
-                    // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
-                    // wrap without bumping so the map slot stays non-owning
-                    // (`RefPtr<T>` has no `Drop`; the map slot is a non-owning bit-copy).
-                    let borrowed = unsafe { RefPtr::from_raw(route.as_ptr()) };
-                    v.insert(borrowed);
+                    v.insert(route.this_ptr().into());
                     AnyRoute::Html(route)
                 }
-                StdEntry::Occupied(o) => AnyRoute::Html(o.get().dupe_ref()),
+                StdEntry::Occupied(o) => AnyRoute::Html(RefPtr::from_this(o.get().this_ptr())),
             }));
         }
 
@@ -802,9 +778,7 @@ impl AnyRoute {
                         url_prefix,
                         stat_cache,
                     )?;
-                    return Ok(Some(AnyRoute::Directory(NonNull::new(route).expect(
-                        "DirectoryRoute::create returns a fresh heap allocation",
-                    ))));
+                    return Ok(Some(AnyRoute::Directory(route)));
                 }
 
                 let style: FrameworkRouter::Style =
@@ -862,22 +836,18 @@ impl AnyRoute {
         }
 
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
-            return Ok(Some(AnyRoute::File(
-                NonNull::new(file_route)
-                    .expect("FileRoute::from_js returns a fresh heap allocation"),
-            )));
+            return Ok(Some(AnyRoute::File(file_route)));
         }
         match StaticRoute::from_js(global, argument)? {
-            Some(s) => Ok(Some(AnyRoute::Static(
-                NonNull::new(s).expect("StaticRoute::from_js returns a fresh heap allocation"),
-            ))),
+            Some(s) => Ok(Some(AnyRoute::Static(s))),
             None => Ok(None),
         }
     }
 }
 
 pub struct ServerInitContext<'a> {
-    pub(crate) dedupe_html_bundle_map: HashMap<*const HTMLBundle, RefPtr<html_bundle::Route>>,
+    pub(crate) dedupe_html_bundle_map:
+        HashMap<*const HTMLBundle, bun_ptr::BackRef<html_bundle::Route, bun_ptr::Root>>,
     pub(crate) js_string_allocations: bake::StringRefList,
     pub global: &'a JSGlobalObject,
     pub(crate) framework_router_list: Vec<bake::FileSystemRouterType>,
@@ -900,7 +870,8 @@ pub(crate) enum ServePluginsState {
         /// Promise may be empty if the plugin load finishes synchronously.
         plugin: Box<JSBundler::Plugin>,
         promise: jsc::JSPromiseStrong,
-        html_bundle_routes: Vec<*mut html_bundle::Route>,
+        /// Each holds a ref, released once the route is told the outcome.
+        html_bundle_routes: Vec<RefPtr<html_bundle::Route>>,
         // LIFETIMES.tsv classifies this BORROW_PARAM (`Option<&'a DevServer>`),
         // but `ServePlugins` is a refcounted heap object handed across FFI as
         // a raw promise-context pointer with dynamic lifetime, so a borrowed
@@ -923,12 +894,7 @@ pub enum GetOrStartLoadResult<'a> {
 
 #[derive(Clone, Copy)]
 pub enum ServePluginsCallback<'a> {
-    /// Raw `*mut` because the route is stored in
-    /// `ServePluginsState::Pending.html_bundle_routes` and later resolved via
-    /// `on_plugins_resolved`/`on_plugins_rejected`. R-2: those now take `&self`
-    /// (mutation goes through `Cell`/`JsCell`), so the `*mut` spelling is
-    /// signature-only; callers pass `Route::as_ctx_ptr(&self)`.
-    HtmlBundleRoute(*mut html_bundle::Route),
+    HtmlBundleRoute(bun_ptr::ThisPtr<html_bundle::Route>),
     DevServer(&'a DevServer),
 }
 
@@ -997,12 +963,7 @@ impl ServePlugins {
                 } => {
                     match cb {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
-                            // SAFETY: caller passed a live `&mut Route` coerced to `*mut`; we
-                            // bump its intrusive refcount before storing so it outlives the
-                            // pending state. Write provenance is preserved for the later
-                            // `&mut *route` in handle_on_resolve/handle_on_reject.
-                            unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(route) };
-                            html_bundle_routes.push(route);
+                            html_bundle_routes.push(RefPtr::from_this(route));
                         }
                         ServePluginsCallback::DevServer(server) => {
                             debug_assert!(
@@ -1142,15 +1103,11 @@ impl ServePlugins {
         };
 
         for route in html_bundle_routes {
-            // BACKREF: route was ref'd when stored (intrusive +1 keeps it alive
-            // for this call). R-2: `on_plugins_resolved` takes `&self`.
-            let route_nn = NonNull::new(route).expect("html_bundle::Route ref'd when stored");
-            bun_core::handle_oom(
-                bun_ptr::BackRef::from(route_nn)
-                    .on_plugins_resolved(Some(NonNull::from(plugin_ref))),
-            );
-            // SAFETY: paired with the `ref_` taken when the route was pushed.
-            unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
+            bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(
+                route.this_ptr(),
+                Some(NonNull::from(plugin_ref)),
+            ));
+            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load (stored as a back-reference
@@ -1177,12 +1134,8 @@ impl ServePlugins {
         drop(promise); // Drop on JscStrong releases the slot.
 
         for route in html_bundle_routes {
-            // BACKREF: route was ref'd when stored (intrusive +1 keeps it alive
-            // for this call). R-2: `on_plugins_rejected` takes `&self`.
-            let route_nn = NonNull::new(route).expect("html_bundle::Route ref'd when stored");
-            bun_core::handle_oom(bun_ptr::BackRef::from(route_nn).on_plugins_rejected());
-            // SAFETY: route was ref'd when stored; pair with that ref
-            unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
+            bun_core::handle_oom(route.on_plugins_rejected());
+            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load
@@ -1466,7 +1419,8 @@ where
             )));
         }
 
-        let topic = topic_value.to_slice(global)?;
+        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic = topic_view.to_utf8();
 
         if topic.slice().is_empty() {
             return Ok(JSValue::js_number(0.0));
@@ -1538,19 +1492,17 @@ where
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        // Converting `message_value` can run user JS / GC; the JSString keeps the
-        // topic bytes alive across it.
-        let topic_string = topic_value.to_js_string(global)?;
-        let topic = topic_string.view(global).to_slice();
+        // Converting `message_value` can run user JS / GC; `topic_view` keeps
+        // the topic bytes alive across it.
+        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic = topic_view.to_utf8();
         // jsc.JSValue
         let message_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
         // ?jsc.JSValue
         let compress_value = iter.next_eat();
-        let result = self.publish(global, topic.slice(), message_value, compress_value);
-        topic_string.ensure_still_alive();
-        result
+        self.publish(global, topic.slice(), message_value, compress_value)
     }
 
     /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
@@ -1679,7 +1631,7 @@ where
         // Resolve the payload before reading `self.app`: `to_js_string` can run
         // user JS that stops the server.
         let array_buffer = message_value.as_array_buffer(global);
-        let mut js_string: Option<&jsc::JSString> = None;
+        let message_view;
         let string_slice;
         let (buffer, opcode): (&[u8], uws_sys::Opcode) = if let Some(buffer) = &array_buffer {
             (buffer.slice(), uws_sys::Opcode::Binary)
@@ -1688,9 +1640,8 @@ where
         {
             (slice, uws_sys::Opcode::Binary)
         } else {
-            let js_str = message_value.to_js_string(global)?;
-            js_string = Some(js_str);
-            string_slice = js_str.view(global).to_slice();
+            message_view = message_value.to_js_string_view(global)?;
+            string_slice = message_view.to_utf8();
             (string_slice.slice(), uws_sys::Opcode::Text)
         };
 
@@ -1707,12 +1658,7 @@ where
         );
         let result =
             super::server_web_socket::send_status_to_js(status, buffer.len(), "publish", "bytes");
-        // When the input was not already a JSString, `to_js_string` allocates a
-        // fresh GC cell not reachable from `message_value`; keep both alive.
         message_value.ensure_still_alive();
-        if let Some(js_string) = js_string {
-            js_string.ensure_still_alive();
-        }
         Ok(result)
     }
 
@@ -1804,10 +1750,6 @@ where
                         data_value = headers_value;
                     }
 
-                    if global.has_exception() {
-                        return Err(JsError::Thrown);
-                    }
-
                     if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::headers)? {
                         if headers_value.is_empty_or_undefined_or_null() {
                             break 'getter;
@@ -1826,21 +1768,14 @@ where
                                             break 'brk fetch_headers.as_ptr();
                                         }
                                     }
-                                    if !global.has_exception() {
-                                        return Err(global.throw_invalid_arguments(format_args!(
-                                            "upgrade options.headers must be a Headers or an object"
-                                        )));
-                                    }
-                                    return Err(JsError::Thrown);
+                                    return Err(global.throw_invalid_arguments(format_args!(
+                                        "upgrade options.headers must be a Headers or an object"
+                                    )));
                                 }
                             };
                         // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                         let fetch_headers_to_use =
                             bun_opaque::opaque_deref_mut(fetch_headers_to_use);
-
-                        if global.has_exception() {
-                            return Err(JsError::Thrown);
-                        }
 
                         if let Some(protocol) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
@@ -1872,10 +1807,6 @@ where
                                 raw_response.socket().cast::<c_void>(),
                             );
                         }
-                    }
-
-                    if global.has_exception() {
-                        return Err(JsError::Thrown);
                     }
                 }
             }
@@ -2059,9 +1990,6 @@ where
                 if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? {
                     data_value = v;
                 }
-                if global.has_exception() {
-                    return Err(JsError::Thrown);
-                }
 
                 if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::Headers)? {
                     if headers_value.is_empty_or_undefined_or_null() {
@@ -2070,33 +1998,21 @@ where
                     use jsc::HTTPHeaderName;
                     let fh: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
                         Some(h) => h,
-                        None => {
+                        None => 'brk: {
                             if headers_value.is_object() {
                                 if let Some(created) =
                                     FetchHeaders::create_from_js(global, headers_value)?
                                 {
                                     *fetch_headers_to_deref = Some(created.as_ptr());
-                                    created.as_ptr()
-                                } else if !global.has_exception() {
-                                    return Err(global.throw_invalid_arguments(format_args!(
-                                        "upgrade options.headers must be a Headers or an object"
-                                    )));
-                                } else {
-                                    return Err(JsError::Thrown);
+                                    break 'brk created.as_ptr();
                                 }
-                            } else if !global.has_exception() {
-                                return Err(global.throw_invalid_arguments(format_args!(
-                                    "upgrade options.headers must be a Headers or an object"
-                                )));
-                            } else {
-                                return Err(JsError::Thrown);
                             }
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "upgrade options.headers must be a Headers or an object"
+                            )));
                         }
                     };
                     fetch_headers_to_use = Some(fh);
-                    if global.has_exception() {
-                        return Err(JsError::Thrown);
-                    }
 
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                     let fh = bun_opaque::opaque_deref_mut(fh);
@@ -2112,9 +2028,6 @@ where
                             ZigString::init(_sec_websocket_extensions_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }
-                }
-                if global.has_exception() {
-                    return Err(JsError::Thrown);
                 }
             }
         }
@@ -2372,10 +2285,6 @@ where
                 previous_routes: !self.user_routes.is_empty(),
             },
         )?;
-        if global.has_exception() {
-            drop(new_config);
-            return Err(JsError::Thrown);
-        }
 
         // `on_reload_from_zig` moves `new_config.websocket` into the unscanned
         // `self.config` heap box before `write_ws_handler_slots` roots the 7
@@ -2660,11 +2569,7 @@ where
     pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.config.address {
             server_config::Address::Unix(unix) => {
-                let value = BunString::clone_utf8(unix.as_bytes());
-                // Must release the cloned ref even
-                // on the `to_js` error path.
-                let value = scopeguard::guard(value, |v| v.deref());
-                value.to_js(global)
+                jsc::bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
             }
             server_config::Address::Tcp { port: tcp_port, .. } => {
                 let mut port: u16 = *tcp_port;
@@ -2714,14 +2619,10 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let mut url = self
+        let url = self
             .get_url_as_string()
             .map_err(|_| global.throw_out_of_memory())?;
-        // `to_jsdomurl` may throw (invalid URL → JS TypeError); deref the
-        // backing string on both Ok/Err paths, then propagate.
-        let r = bun_string_jsc::to_jsdomurl(&mut url, global);
-        url.deref();
-        r
+        bun_string_jsc::to_jsdomurl(&url, global)
     }
 
     #[bun_jsc::host_fn(getter)]

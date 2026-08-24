@@ -92,6 +92,18 @@ const files = {
         res("J1", () => appRequire.resolve("app-dep/lib/entry.js"));
         write(path.join("packages", "app", "node_modules", "app-dep", "lib", "entry.js"), "");
         res("J2", () => appRequire.resolve("app-dep/lib/entry.js"));
+        // The same when the importing directory already has a node_modules.
+        fs.mkdirSync(path.join("packages", "web", "node_modules", "local-dep"), { recursive: true });
+        const webRequire = requireFrom(path.join("packages", "web"));
+        res("J3", () => webRequire.resolve("web-dep/lib/entry.js"));
+        write(path.join("packages", "node_modules", "web-dep", "lib", "entry.js"), "");
+        res("J4", () => webRequire.resolve("web-dep/lib/entry.js"));
+        // The same when the importing directory is inside a node_modules.
+        fs.mkdirSync(path.join("tools", "cli", "node_modules", "inner"), { recursive: true });
+        const innerRequire = requireFrom(path.join("tools", "cli", "node_modules", "inner"));
+        res("J5", () => innerRequire.resolve("cli-dep/lib/entry.js"));
+        write(path.join("tools", "node_modules", "cli-dep", "lib", "entry.js"), "");
+        res("J6", () => innerRequire.resolve("cli-dep/lib/entry.js"));
 
         // A relative specifier naming a directory that did not exist.
         res("K1", () => require.resolve("./lib"));
@@ -259,6 +271,10 @@ describe.concurrent("a failed resolution sees files and packages created after t
       I2 OK node_modules/tool/node_modules/@tool-platform/linux-x64/bin/tool.js
       J1 ERR MODULE_NOT_FOUND
       J2 OK packages/app/node_modules/app-dep/lib/entry.js
+      J3 ERR MODULE_NOT_FOUND
+      J4 OK packages/node_modules/web-dep/lib/entry.js
+      J5 ERR MODULE_NOT_FOUND
+      J6 OK tools/node_modules/cli-dep/lib/entry.js
       K1 ERR MODULE_NOT_FOUND
       K2 OK lib/index.js
       L1 ERR MODULE_NOT_FOUND

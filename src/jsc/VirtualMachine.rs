@@ -4419,8 +4419,8 @@ impl VirtualMachine {
                     }
                     retry_on_not_found = false;
 
-                    // The miss may be the cache's, not the disk's. Drop every
-                    // directory this lookup read and resolve once more.
+                    // The miss may be the cache's, not the disk's: drop what
+                    // changed on disk and resolve once more.
                     if self.transpiler.resolver.bust_touched_dirs() {
                         continue;
                     }

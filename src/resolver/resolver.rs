@@ -582,6 +582,11 @@ enum TouchedKind {
     MissingEntry,
     /// A `node_modules` search level whose cached listing has no `node_modules`.
     NoNodeModules,
+    /// Any other `node_modules` search level: one that was searched, or a
+    /// `node_modules` directory itself. Dropped with a `NoNodeModules` level
+    /// above it that gained a `node_modules`, so its cached parent link is
+    /// rebuilt.
+    SearchLevel,
 }
 
 #[derive(Clone, Copy)]
@@ -2553,6 +2558,12 @@ impl<'a> Resolver<'a> {
         record_touched(TouchedKind::NoNodeModules, dir, b"");
     }
 
+    /// `dir` was a `node_modules` search level that was searched or skipped.
+    #[inline]
+    fn record_search_level(&self, dir: &[u8]) {
+        record_touched(TouchedKind::SearchLevel, dir, b"");
+    }
+
     /// After a miss, check on disk each thing the lookup did not find and drop
     /// the cached directories that disagree with the disk, so a retry reads
     /// them again. Returns whether anything was dropped. A lookup that still
@@ -2565,11 +2576,12 @@ impl<'a> Resolver<'a> {
         touched.recording = false;
 
         let mut busted = false;
-        let mut node_modules_appeared = false;
+        // Indices of the `NoNodeModules` records whose directory has one now.
+        let mut gained_node_modules: Vec<usize> = Vec::new();
         {
             let mut buf = bun_paths::path_buffer_pool::get();
             let mut seen: Vec<u64> = Vec::with_capacity(touched.records.len());
-            for record in &touched.records {
+            for (i, record) in touched.records.iter().enumerate() {
                 let dir = record.dir(&touched.bytes);
                 let name = record.name(&touched.bytes);
                 let key =
@@ -2591,18 +2603,26 @@ impl<'a> Resolver<'a> {
                     }
                     TouchedKind::NoNodeModules => {
                         if Self::path_exists(&mut buf, &[dir, b"node_modules"]) {
-                            node_modules_appeared = true;
+                            gained_node_modules.push(i);
                         }
                     }
+                    TouchedKind::SearchLevel => {}
                 }
             }
         }
-        if node_modules_appeared {
-            // `load_node_modules` reaches each level through the cached parent
-            // link of the level below it, so the whole chain is rebuilt.
+        // `load_node_modules` reaches each level through the cached parent
+        // link of the level below it, so every level from the source directory
+        // up to the one that gained a `node_modules` is rebuilt.
+        for &gained in &gained_node_modules {
+            let gained_dir = touched.records[gained].dir(&touched.bytes);
             for record in &touched.records {
-                if record.kind == TouchedKind::NoNodeModules {
-                    busted |= self.bust_dir_cache(record.dir(&touched.bytes));
+                let dir = record.dir(&touched.bytes);
+                if matches!(
+                    record.kind,
+                    TouchedKind::NoNodeModules | TouchedKind::SearchLevel
+                ) && Self::is_dir_or_inside(dir, gained_dir)
+                {
+                    busted |= self.bust_dir_cache(dir);
                 }
             }
         }
@@ -2636,6 +2656,15 @@ impl<'a> Resolver<'a> {
         }
         buf[len] = 0;
         bun_sys::exists_z(bun_core::ZStr::from_buf(&buf[..], len))
+    }
+
+    /// Whether `path` is `ancestor` or a directory inside it. Both are cache
+    /// keys: absolute, and without a trailing separator unless they are a root.
+    fn is_dir_or_inside(path: &[u8], ancestor: &[u8]) -> bool {
+        path.starts_with(ancestor)
+            && (path.len() == ancestor.len()
+                || ResolvePath::is_sep_any(path[ancestor.len()])
+                || ancestor.last().is_some_and(|&c| ResolvePath::is_sep_any(c)))
     }
 
     /// `dir` exists now but was cached as missing. Drop it, then walk up and
@@ -2784,11 +2813,14 @@ impl<'a> Resolver<'a> {
                 // don't ever want to search for "node_modules/node_modules"
                 'node_modules: {
                     if !(dir_info.has_node_modules() || is_self_reference) {
-                        if !dir_info.is_node_modules() {
+                        if dir_info.is_node_modules() {
+                            self.record_search_level(dir_info.abs_path);
+                        } else {
                             self.record_no_node_modules(dir_info.abs_path);
                         }
                         break 'node_modules;
                     }
+                    self.record_search_level(dir_info.abs_path);
                     any_node_modules_folder = true;
                     let abs_path: &[u8] = if is_self_reference {
                         dir_info.abs_path

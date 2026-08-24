@@ -341,16 +341,19 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
 /**
  * Runs `cmd` (a script that prints `{"deltaMiB": number}` as its last stdout
  * line) under bun with ASAN quarantine disabled, and asserts the delta is below
- * `release` MiB (or `debug` MiB under ASAN/debug builds).
+ * `release` MiB (or `debug` MiB under ASAN/debug builds). `env` adds to or
+ * overrides `bunEnv` for the child.
  */
 export async function expectRssDeltaBelow(
   cmd: string[] /* args after bunExe(), e.g. ["--smol", "-e", code] or [fixturePath] */,
   bounds: { release: number; debug: number },
+  env: NodeJS.Dict<string> = {},
 ): Promise<void> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
     env: {
       ...bunEnv,
+      ...env,
       // ASAN's quarantine pins freed blocks and keeps RSS at peak.
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
         .filter(Boolean)

@@ -1,6 +1,6 @@
 import { password } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { expectRssDeltaBelow, isDebug } from "harness";
 
 const placeholder = "hey";
 const argonVariants = ["argon2id", "argon2i", "argon2d"] as const;
@@ -41,7 +41,12 @@ const weakParameters = verifyError("PASSWORD_WEAK_PARAMETERS", "WeakParameters")
 //
 // A debug build hashes about 200x slower, so the suite does not run there.
 describe.skipIf(isDebug)("does not leak", () => {
-  async function expectRssGrowthBelow(calls: string, warmup: number, measured: number, limitMiB: number) {
+  async function expectRssGrowthBelow(
+    calls: string,
+    warmup: number,
+    measured: number,
+    bounds: { release: number; debug: number },
+  ) {
     const code = /* js */ `
       const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
@@ -57,33 +62,18 @@ describe.skipIf(isDebug)("does not leak", () => {
       await run(${measured});
       console.log(JSON.stringify({ deltaMiB: (rss() - before) / 1024 / 1024 }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", "-e", code],
-      env: {
-        ...bunEnv,
-        BUN_JSC_useJIT: "0",
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-          .filter(Boolean)
-          .join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr.trim()).toBe("");
-    const { deltaMiB } = JSON.parse(stdout);
-    expect(deltaMiB).toBeLessThan(limitMiB);
-    expect(exitCode).toBe(0);
+    await expectRssDeltaBelow(["--smol", "-e", code], bounds, { BUN_JSC_useJIT: "0" });
   }
 
-  // Unfixed (Bun 1.3.13): 5.6 to 9.6 MiB. Fixed: 0 +- 0.2 MiB. ASAN's redzones
-  // make a leaked block larger, and its allocator is noisier without a quarantine.
+  // Unfixed (Bun 1.3.13): 5.6 to 9.6 MiB. Fixed: 0 +- 0.2 MiB. The `debug`
+  // bound applies to the ASAN lane: redzones make a leaked block larger, and
+  // the allocator is noisier without a quarantine.
   test("hashSync", async () => {
     await expectRssGrowthBelow(
       /* js */ `for (let i = 0; i < chunk; i++) Bun.password.hashSync("hey", opts);`,
       4_000,
       60_000,
-      isASAN ? 6 : 4,
+      { release: 4, debug: 6 },
     );
   });
 
@@ -98,7 +88,7 @@ describe.skipIf(isDebug)("does not leak", () => {
         }`,
       10_000,
       100_000,
-      isASAN ? 8 : 6,
+      { release: 6, debug: 8 },
     );
   });
 });

@@ -585,7 +585,7 @@ impl JSGlobalObject {
     /// `validators.throwErrInvalidArgType` —
     /// `The "<name>" property must be of type <expected>, got <actual>`
     /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
-    pub(crate) fn throw_invalid_property_type(
+    pub fn throw_invalid_property_type(
         &self,
         name: impl AsRef<[u8]>,
         expected_type: &str,

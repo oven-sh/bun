@@ -907,7 +907,9 @@ pub mod command {
         };
 
         if is_bun_x(argv0) {
-            if let Some(next) = argv.get(1) {
+            // The internal "add"/"exec" keyword sits after the
+            // NODE_OPTIONS-injected window.
+            if let Some(next) = argv.get(1 + bun::node_options_argc()) {
                 let next_bytes = next.as_bytes();
                 if next_bytes == b"add"
                     && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()

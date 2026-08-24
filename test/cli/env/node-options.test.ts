@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 async function run(
   dir: string,
@@ -320,6 +321,25 @@ describe("NODE_OPTIONS environment variable", () => {
     const { stderr, exitCode } = await run(String(dir), ["pm", "trust"], "--title=from-env");
     expect(stderr).toContain("expected package names(s) or --all");
     expect(exitCode).toBe(1);
+  });
+
+  // bunx's internal install child re-enters which() with argv0 = bunx and
+  // BUN_INTERNAL_BUNX_INSTALL=true; the "add" keyword must still be found
+  // after the injected window or the child loops as bunx (#39377 class).
+  test.skipIf(isWindows)("bunx internal add dispatch still finds the keyword", async () => {
+    using dir = tempDir("node-options-bunx", {});
+    symlinkSync(bunExe(), `${String(dir)}/bunx`);
+    await using proc = Bun.spawn({
+      cmd: [`${String(dir)}/bunx`, "add", "--help"],
+      env: { ...bunEnv, NODE_OPTIONS: "--title=from-env", BUN_INTERNAL_BUNX_INSTALL: "true" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("bun add");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("bun whoami still resolves to whoami", async () => {

@@ -438,7 +438,7 @@ When passing an existing `Terminal` object:
 - The `exit` callback fires when you call `terminal.close()`, not when each subprocess exits
 - Use `proc.exited` to detect individual subprocess exits
 
-Exception: a child spawned with `detached: true` is a session leader, and the PTY is torn down when that child exits. Any remaining output is delivered to `data`, then the `exit` callback fires, and the terminal cannot be passed to another spawn afterwards.
+Exception: a child spawned with `detached: true` is a session leader, and the PTY is torn down when that child exits. Any remaining output is delivered to `data`, then the `exit` callback fires, and the terminal cannot be passed to another spawn afterward.
 
 ### Platform differences
 

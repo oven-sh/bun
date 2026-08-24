@@ -7719,7 +7719,7 @@ declare module "bun" {
        * Exception: with `detached: true` the child is a session leader, and
        * the PTY is torn down when it exits. The terminal's `exit` callback
        * fires at that point, and the terminal cannot be passed to another
-       * spawn afterwards.
+       * spawn afterward.
        */
       terminal?: TerminalOptions | Terminal;
     }

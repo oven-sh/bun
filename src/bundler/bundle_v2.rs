@@ -1408,7 +1408,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
-                source_provider_url: &mut bun_core::String,
+                source_provider_url: &bun_core::String,
             ) -> Option<Box<[u8]>>;
         }
 
@@ -1446,7 +1446,7 @@ pub mod bv2_impl {
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_provider_url: &mut bun_core::String,
+            source_provider_url: &bun_core::String,
         ) -> Option<Box<[u8]>> {
             __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
         }

@@ -7,7 +7,7 @@ bun_runtime` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
 - `bun_paths` (`src/paths/`) — path joining/normalization, the path-buffer pool
-- `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports, `URL`
+- `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
 - `bun_runtime::bin_entry` (`src/runtime/bin_entry/`) — the process entry point (`main`) and the
@@ -83,6 +83,12 @@ match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
 are single chars in Latin-1 but invalid UTF-8 — so converting either direction
 requires a real encoder, not a cast.
 
+`String` owns one ref when WTF-backed: `Drop` derefs, `Clone` refs, it is
+not `Copy`. Borrow with `&String` (or `StringView<'_>` when a by-value borrow
+is needed). In an `extern "C"` signature a by-value `String` means ownership
+crosses the boundary (C++ `Bun::toStringRef` return / `transferToWTFString()`
+consumer); `&String` ⇔ `const BunString*`.
+
 ```rust
 use bun_core::String;
 
@@ -91,14 +97,20 @@ let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
 let s = String::static_(b"literal");       // 'static slice, never freed
 
 let utf8: ZigStringSlice = s.to_utf8();    // ref-holding view; falls back to allocating a copy
-let owned: Vec<u8>       = s.to_utf8_bytes();
+let owned: Vec<u8>       = s.to_owned_slice();
 ```
+
+JSValue → string: `value.to_bun_string(global)?` (owned `String`),
+`value.to_slice(global)?` (owned UTF-8 `ZigStringSlice`), or
+`value.to_js_string_view(global)?` (borrowed `JSStringView` guard; derefs to
+`&String` and keeps the `JSString` cell alive while it is in scope).
 
 To/from JS values, use the `bun_jsc::StringJsc` extension trait:
 
 ```rust
 use bun_jsc::StringJsc;
-let js: JSValue = s.to_js(global)?;
+let js: JSValue = s.to_js(global)?;        // JS takes its own ref; `s` still usable
+let js: JSValue = s.into_js(global)?;      // hands `s`'s ref to the JSString
 let s = bun_core::String::from_js(value, global)?;
 let err = s.to_error_instance(global);
 ```
@@ -157,28 +169,28 @@ let joined  = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[a, b]
 `bun_paths::os_path_buffer_pool` selects the wide (`u16`) variant on Windows
 and the narrow (`u8`) variant on POSIX.
 
-## URL Parsing (`bun_jsc::URL`)
+## URL Parsing (`bun_url::whatwg`)
 
-WHATWG-compliant, backed by WebKit's URL parser. Returns `None` for invalid input.
+WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++
+`WTF::URL` (freed on `Drop`) and derefs to `URL` for the getters; parsing
+returns `None` for invalid input. `bun_jsc::url` re-exports both; the
+JS-value entry points (`URL::from_js` → `Option<Parsed>`, `URL::href_from_js`)
+come from the `bun_jsc::URLJsc` trait.
 
 ```rust
-use bun_jsc::URL;
+use bun_url::whatwg::Parsed;
 
-let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
-// caller owns the C++ object — destroy it when done:
-// unsafe { URL::destroy(url.as_ptr()) }
+let url: Parsed = Parsed::from_utf8(href)?;       // or Parsed::from_string(&bun_string)?
 
 url.protocol()   // bun_core::String
 url.pathname()   // bun_core::String
 url.host()       // bun_core::String — the hostname WITHOUT the port (opposite of JS `host`!)
+url.hostname()   // bun_core::String — the host WITH the port (opposite of JS `hostname`!)
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
 ```
 
-`URL::href_from_js`, `URL::file_url_from_string`, `URL::path_from_file_url`
-do whole-string conversions. The JSC-free shim `bun_url::whatwg::URL` exposes
-`hostname()`, which returns the host WITH the port (also the opposite of JS
-`hostname`) — so `bun_jsc::URL::host` and `bun_url::whatwg::URL::hostname`
-are effectively swapped relative to their JS namesakes.
+`bun_url::href_from_string`, `file_url_from_string`, `path_from_file_url`,
+`join` do whole-string conversions.
 
 ## MIME Types (`bun_http_types::MimeType`)
 

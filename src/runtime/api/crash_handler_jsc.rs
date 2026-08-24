@@ -225,8 +225,7 @@ pub(crate) mod js_bindings {
         crash_handler::write_u64_as_two_vlqs(buf.writer(), bits.bits() as usize)
             // there is definitely enough space in the bounded array
             .expect("unreachable");
-        let mut str = BunString::clone_latin1(buf.slice());
-        str.transfer_to_js(global)
+        BunString::clone_latin1(buf.slice()).into_js(global)
     }
 
     #[bun_jsc::host_fn]

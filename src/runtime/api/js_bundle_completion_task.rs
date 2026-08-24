@@ -256,7 +256,7 @@ impl JSBundleCompletionTask {
                 bun_ast_jsc::log_to_js_aggregate_error(
                     &self.log,
                     global_this,
-                    BunString::static_(b"Bundle failed"),
+                    &BunString::static_(b"Bundle failed"),
                 )
             } else {
                 Ok(JSValue::UNDEFINED)
@@ -277,7 +277,7 @@ impl JSBundleCompletionTask {
                 let aggregate_error = bun_ast_jsc::log_to_js_aggregate_error(
                     &self.log,
                     global_this,
-                    BunString::static_(b"Bundle failed"),
+                    &BunString::static_(b"Bundle failed"),
                 );
                 return promise.reject(global_this, aggregate_error);
             } else {

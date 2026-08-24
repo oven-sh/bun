@@ -818,13 +818,12 @@ static JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::JSGlobal
         return {};
     }
 
-    if (auto length = Bun::byteLength(str, lexicalGlobalObject, encoding)) {
+    auto length = Bun::byteLength(str, lexicalGlobalObject, encoding);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (length) {
         return JSValue::encode(jsNumber(*length));
     }
-    if (!scope.exception()) {
-        throwOutOfMemoryError(lexicalGlobalObject, scope);
-    }
-
+    throwOutOfMemoryError(lexicalGlobalObject, scope);
     return {};
 }
 
@@ -1163,7 +1162,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
             Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceEndValue, "sourceEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &sourceEnd);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         [[fallthrough]];
     case 4:
         sourceStartValue = callFrame->uncheckedArgument(3);
@@ -1171,7 +1169,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
             Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &sourceStart);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         [[fallthrough]];
     case 3:
         targetEndValue = callFrame->uncheckedArgument(2);
@@ -1179,7 +1176,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
             Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetEndValue, "targetEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &targetEnd);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         [[fallthrough]];
     case 2:
         targetStartValue = callFrame->uncheckedArgument(1);
@@ -1187,7 +1183,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
             Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &targetStart);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
-        RETURN_IF_EXCEPTION(throwScope, {});
         break;
     case 1:
     case 0:
@@ -3985,9 +3980,9 @@ static JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexicalGlob
             RETURN_IF_EXCEPTION(throwScope, {});
             if (byteLength) {
                 uint8Array->setFromTypedArray(lexicalGlobalObject, 0, view, 0, byteLength, CopyType::LeftToRight);
+                RETURN_IF_EXCEPTION(throwScope, {});
             }
-            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
-            break;
+            return JSC::JSValue::encode(uint8Array);
         }
         case DataViewType:
         case Uint8ArrayType:

@@ -254,8 +254,6 @@ impl HostedGitInfo {
         let Ok(parsed) = parse_url(git_url_mut) else {
             return Ok(None);
         };
-        // `parsed.url` is `Parsed`; Drop handles `defer parsed.url.deinit()`.
-
         let host_provider = match parsed.proto {
             UrlProtocol::WellFormed(p) => p
                 .host_provider()
@@ -332,7 +330,6 @@ impl HostedGitInfo {
 // parse_url
 // ──────────────────────────────────────────────────────────────────────────
 
-// `url` is owned: `jsc.URL.fromString` creates it and the holder deinits.
 pub struct ParsedUrl<'a> {
     pub url: Parsed,
     pub(crate) proto: UrlProtocol<'a>,

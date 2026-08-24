@@ -979,12 +979,7 @@ static JSValue fetchESMSourceCode(
     }
 
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, referrer, res)) {
-        if (!res->success) {
-            throwException(scope, res->result.err, globalObject);
-            auto* exception = scope.exception();
-            (void)scope.tryClearException();
-            RELEASE_AND_RETURN(scope, reject(exception));
-        }
+        ASSERT(res->success);
 
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {

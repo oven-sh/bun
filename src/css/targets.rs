@@ -187,15 +187,14 @@ pub struct Browsers {
 }
 
 // convert_from_string is not const-evaluable; compute once lazily.
+// Vite 7's default build target ("baseline-widely-available"):
+// https://github.com/vitejs/vite/blob/v7.0.0/packages/vite/src/node/constants.ts
+// (ESBUILD_BASELINE_WIDELY_AVAILABLE_TARGET)
+// Note that convert_from_string keeps the LOWEST version per browser, so an
+// es-year entry here would drag every browser down to that year's versions.
 static BROWSER_DEFAULT: std::sync::LazyLock<Browsers> = std::sync::LazyLock::new(|| {
-    Browsers::convert_from_string(&[
-        b"es2020", // support import.meta.url
-        b"edge88",
-        b"firefox78",
-        b"chrome87",
-        b"safari14",
-    ])
-    .expect("unreachable")
+    Browsers::convert_from_string(&[b"chrome107", b"edge107", b"firefox104", b"safari16"])
+        .expect("unreachable")
 });
 
 impl Browsers {

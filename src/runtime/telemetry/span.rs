@@ -31,8 +31,9 @@ unsafe extern "C" {
     safe fn Bun__Telemetry__activeNativeHandle(global: &JSGlobalObject) -> u64;
     safe fn Bun__TelemetrySpan__nativeEnded(cell: JSValue);
     /// Borrowed (not ref'd) header strings of a JS-owned span; Empty otherwise.
-    safe fn Bun__TelemetrySpan__traceState(cell: JSValue) -> bun_core::String;
-    safe fn Bun__TelemetrySpan__baggage(cell: JSValue) -> bun_core::String;
+    /// Valid until the caller next runs JS.
+    safe fn Bun__TelemetrySpan__traceState(cell: JSValue) -> bun_core::StringView<'static>;
+    safe fn Bun__TelemetrySpan__baggage(cell: JSValue) -> bun_core::StringView<'static>;
 }
 
 /// `rt::Hooks::active_span` — `global` is a `JSGlobalObject*`.

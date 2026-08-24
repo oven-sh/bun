@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
@@ -323,4 +323,109 @@ test("Error.appendStackTrace onto an error whose .stack was already read is a no
     src: ["Error: src message", "at srcFn"],
   });
   expect(exitCode).toBe(0);
+});
+
+// An error keeps its captured frames alive until the first .stack read, as in V8. JSC used to hold
+// them weakly: once a frame's callee died, the GC rendered the stack string itself, where
+// Error.prepareStackTrace cannot run. A GC between the throw and the first read must not be observable.
+describe("Error.prepareStackTrace when a GC runs before the first .stack read", () => {
+  async function runScript(script: string, args: string[] = []) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, ...args],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  test("the formatter runs and receives the call sites", async () => {
+    // Each error's frames hold a callee that is garbage right after the call: the per-call closure
+    // of an async function body, and a `new Function` callee. Error.captureStackTrace goes through
+    // Bun's lazy .stack getter over the same frames.
+    const script = `
+      const callSites = {};
+      Error.prepareStackTrace = (error, sites) => {
+        callSites[error.message] = sites.map(site => site.getFunctionName());
+        return "custom:" + error.message;
+      };
+      async function boom() {
+        throw new Error("async");
+      }
+      const fromAsync = await boom().catch(error => error);
+      const fromNewFunction = new Function("return new Error('new-function')")();
+      const fromCaptureStackTrace = new Function(
+        "const error = new Error('capture'); Error.captureStackTrace(error); return error;",
+      )();
+      if (process.argv[1] === "gc") Bun.gc(true);
+      const stacks = {
+        async: fromAsync.stack,
+        newFunction: fromNewFunction.stack,
+        captureStackTrace: fromCaptureStackTrace.stack,
+      };
+      console.log(JSON.stringify({ stacks, callSites }));`;
+
+    const [withoutGC, withGC] = await Promise.all([runScript(script), runScript(script, ["gc"])]);
+    expect(withoutGC).toEqual({
+      result: {
+        stacks: { async: "custom:async", newFunction: "custom:new-function", captureStackTrace: "custom:capture" },
+        callSites: {
+          "async": expect.arrayContaining(["boom"]),
+          "new-function": expect.arrayContaining(["anonymous"]),
+          "capture": expect.arrayContaining(["anonymous"]),
+        },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    // The GC must not be observable.
+    expect(withGC).toEqual(withoutGC);
+  });
+
+  test("a live error keeps its frames' callee alive until the first .stack read", async () => {
+    // Like V8: the frames are released when .stack is materialized. Whether a released callee is
+    // collected by a given GC is not asserted (it depends on the build), only that an unread error
+    // still holds it, and that the formatter in place at the first read is the one that runs.
+    const script = `
+      Error.prepareStackTrace = (error, sites) => "custom:" + error.message;
+      function make(message) {
+        const callee = new Function("return new Error(" + JSON.stringify(message) + ")");
+        return { error: callee(), callee: new WeakRef(callee) };
+      }
+      const unread = make("unread");
+      const read = make("read");
+      const readStack = read.error.stack;
+      Bun.gc(true);
+      const unreadCalleeAlive = unread.callee.deref() !== undefined;
+      const unreadStack = unread.error.stack;
+      Error.prepareStackTrace = undefined;
+      const afterReset = make("after-reset");
+      Bun.gc(true);
+      const afterResetFormatter = afterReset.error.stack.startsWith("custom:") ? "user" : "default";
+      console.log(JSON.stringify({ unreadCalleeAlive, readStack, unreadStack, afterResetFormatter }));`;
+
+    expect(await runScript(script)).toEqual({
+      result: {
+        unreadCalleeAlive: true,
+        readStack: "custom:read",
+        unreadStack: "custom:unread",
+        afterResetFormatter: "default",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("another realm on the same VM resetting its own formatter does not affect this one", async () => {
+    // A ShadowRealm gets its own global object on the same VM, with its own Error.prepareStackTrace.
+    const script = `
+      Error.prepareStackTrace = (error, sites) => "custom:" + error.message;
+      const realm = new ShadowRealm();
+      realm.evaluate("Error.prepareStackTrace = (error, sites) => 'shadow:' + error.message; Error.prepareStackTrace = undefined; 0");
+      const error = new Function("return new Error('main')")();
+      Bun.gc(true);
+      console.log(JSON.stringify({ stack: error.stack }));`;
+
+    expect(await runScript(script)).toEqual({ result: { stack: "custom:main" }, stderr: "", exitCode: 0 });
+  });
 });

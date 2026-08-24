@@ -1314,23 +1314,21 @@ impl HostState {
             match each {
                 Ok(each) => {
                     for message in each {
-                        text.extend_from_slice(
-                            b"
-  ",
-                        );
+                        text.extend_from_slice(b"\n  ");
                         text.extend_from_slice(&message);
                     }
                 }
                 Err(err) => {
-                    text.extend_from_slice(
-                        b"
-  ",
-                    );
-                    text.extend_from_slice(
-                        &self
-                            .failure_from_exception(global, err, "error report")
-                            .message,
-                    );
+                    // Reading `errors` threw (a getter): say what, one level.
+                    let thrown = global.take_error(err);
+                    text.extend_from_slice(b"\n  ");
+                    if thrown.is_termination_exception() {
+                        text.extend_from_slice(b"(terminated while reading .errors)");
+                    } else {
+                        text.extend_from_slice(
+                            &self.failure_from_value_(global, thrown, false).message,
+                        );
+                    }
                 }
             }
         }

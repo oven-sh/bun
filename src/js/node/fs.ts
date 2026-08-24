@@ -53,11 +53,9 @@ function nullcallback(callback) {
 }
 const FunctionPrototypeBind = nullcallback.bind;
 
+// Not `Bun.file`: node never infers the MIME type from the file extension.
 const openAsBlobNative = $newRustFunction("node_fs_binding.rs", "open_as_blob", 2);
 
-// Unlike `Bun.file`, node never infers the MIME type from the file extension
-// (`blob.type` stays "") and stores an explicit `options.type` verbatim, so
-// this goes through a dedicated native constructor.
 function openAsBlob(path, options = kEmptyObject) {
   validateObject(options, "options");
   const type = options.type || "";

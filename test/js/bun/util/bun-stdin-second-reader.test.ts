@@ -152,6 +152,45 @@ test.concurrent.skipIf(!isWindows)(
   },
 );
 
+test.concurrent.skipIf(!isWindows)(
+  "Bun.file(0).stream() fails with EBUSY while net.connect({ fd: 0 }) reads the pipe, and opens once the socket is closed",
+  async () => {
+    await using proc = spawnReader(`
+      ${helpers}
+      const net = require("node:net");
+      const socket = net.connect({ fd: 0 });
+      socket.once("data", async d => {
+        out("net " + d.toString().trim());
+        await nextTurn();
+        try {
+          Bun.file(0).stream().getReader();
+          out("r2 opened");
+        } catch (e) {
+          out("r2 " + fail(e));
+        }
+        socket.once("close", async () => {
+          const r3 = Bun.file(0).stream().getReader();
+          out("r3 opened");
+          out("r3 " + text(await r3.read()));
+          process.exit(0);
+        });
+        socket.destroy();
+      });
+    `);
+    feed(proc, "first");
+    const [lines, stderr, exitCode] = await Promise.all([
+      readLines(proc, line => {
+        if (line === "r3 opened") feed(proc, "third");
+      }),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(lines).toEqual(["net first", "r2 EBUSY open", "r3 opened", "r3 third"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("opening a second reader over a piped stdin does not block the event loop", async () => {
   await using proc = spawnReader(`
     ${helpers}

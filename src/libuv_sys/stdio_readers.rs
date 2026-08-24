@@ -10,10 +10,11 @@
 //!
 //! A reader claims the fd before its `uv_pipe_open` (`Pipe::open_for_reading`)
 //! and gets `UV_EBUSY` while another reader holds it. `UvHandle::close` and
-//! `close_walk_cb` release it before `uv_close`, which cancels the parked read
-//! and closes the handle before it returns, so the next reader needs no loop
-//! turn. Writers do not claim: `process.stdout` and `Bun.stdout.writer()` each
-//! hold a pipe over fd 1, and a `WriteFile` holds its turn only while writing.
+//! `close_walk_cb` release it once `uv_close` has returned: by then the parked
+//! read is cancelled and the handle closed, so the next reader, on this thread
+//! or another, never waits on the old one and needs no loop turn. Writers do
+//! not claim: `process.stdout` and `Bun.stdout.writer()` each hold a pipe over
+//! fd 1, and a `WriteFile` holds its turn only while writing.
 
 use super::*;
 

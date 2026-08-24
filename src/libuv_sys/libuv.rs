@@ -590,8 +590,8 @@ unsafe extern "C" fn log_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
 unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
     // SAFETY: libuv passes a live handle.
     if unsafe { uv_is_closing(handle) } == 0 {
-        stdio_readers::release(handle);
         unsafe { uv_close(handle, None) };
+        stdio_readers::release(handle);
     }
 }
 
@@ -667,7 +667,6 @@ pub unsafe trait UvHandle: Sized {
     #[inline]
     fn close(&mut self, cb: unsafe extern "C" fn(*mut Self)) {
         open_handles::remove(self.as_handle_mut());
-        stdio_readers::release(self.as_handle_mut());
         // SAFETY: `Self` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
         unsafe {
             uv_close(
@@ -678,6 +677,9 @@ pub unsafe trait UvHandle: Sized {
                 >(cb)),
             );
         }
+        // After `uv_close`: a pipe's parked read is cancelled by then, so the
+        // next reader of the fd never waits on it.
+        stdio_readers::release(self.as_handle_mut());
     }
     #[inline]
     fn has_ref(&self) -> bool {

@@ -24,13 +24,13 @@
 
 #![cfg(not(windows))]
 
-use bun_core::{ZStr, fmt as bun_fmt, strings};
-use bun_semver::SlicedString;
-use bun_install::PackageID;
 use crate::lockfile_real::package::PackageColumns as _;
+use bun_core::{ZStr, fmt as bun_fmt, strings};
+use bun_install::PackageID;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver as Semver;
+use bun_semver::SlicedString;
 use bun_sys::{self as sys, Dir, Fd, FdExt};
 
 use super::PackageManager;
@@ -79,7 +79,10 @@ pub(super) fn maybe_store_path(
 
     if sys::lstatat(cache_dir, entry_z).is_err() {
         let mut marker_buf = PathBuffer::uninit();
-        let marker_z = concat_z(&mut marker_buf, &[STORE_DIR, b"/", folder_name, SKIP_SUFFIX]);
+        let marker_z = concat_z(
+            &mut marker_buf,
+            &[STORE_DIR, b"/", folder_name, SKIP_SUFFIX],
+        );
         if sys::lstatat(cache_dir, marker_z).is_ok() {
             return None;
         }
@@ -251,10 +254,7 @@ enum LinkTarget {
     /// Edge not resolved in this process's lockfile (nothing `require`d the
     /// dependency). Pick the best cached version satisfying the range, the
     /// way offline resolution does.
-    FromDiskCache {
-        npm_name: Vec<u8>,
-        dep_index: u32,
-    },
+    FromDiskCache { npm_name: Vec<u8>, dep_index: u32 },
 }
 
 /// Create or refresh `node_modules/<dep>` symlinks in the store entry, one
@@ -339,12 +339,7 @@ fn ensure_dependency_links(
                 continue;
             };
 
-            bun_core::scoped_log!(
-                addon_links,
-                "dep {} alias {}",
-                dep_index,
-                bun_fmt::s(alias)
-            );
+            bun_core::scoped_log!(addon_links, "dep {} alias {}", dep_index, bun_fmt::s(alias));
             links.push(DepLink {
                 alias: alias.to_vec(),
                 target,

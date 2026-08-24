@@ -39,6 +39,11 @@ type OwnedScriptsMap = StringArrayHashMap<Box<[u8]>>;
 struct ScriptConfig {
     label: Box<[u8]>,
     command: Box<[u8]>,
+}
+
+/// A `ScriptConfig` plus what is consumed building its `ProcessHandle`.
+struct PendingScript {
+    config: ScriptConfig,
     cwd: Box<[u8]>,
     /// PATH env var value for this script
     path: Box<[u8]>,
@@ -618,7 +623,7 @@ struct GroupInfo {
 /// workspace path (values are owned `Box<[u8]>` copies, see `MatchedPackage`)
 /// can share this code. The script bytes are only ever read here, never stored.
 fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
-    configs: &mut Vec<ScriptConfig>,
+    configs: &mut Vec<PendingScript>,
     group_infos: &mut Vec<GroupInfo>,
     raw_name: &[u8],
     scripts_map: Option<&StringArrayHashMap<V>>,
@@ -662,9 +667,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(pc.len() + 1);
             RunCommand::replace_package_manager_run(&mut cmd_buf, pc)?;
             cmd_buf.push(0);
-            configs.push(ScriptConfig {
-                label: label.clone(),
-                command: cmd_buf.into_boxed_slice(),
+            configs.push(PendingScript {
+                config: ScriptConfig {
+                    label: label.clone(),
+                    command: cmd_buf.into_boxed_slice(),
+                },
                 cwd: Box::from(cwd),
                 path: Box::from(path),
             });
@@ -675,9 +682,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(content.len() + 1);
             RunCommand::replace_package_manager_run(&mut cmd_buf, content)?;
             cmd_buf.push(0);
-            configs.push(ScriptConfig {
-                label: label.clone(),
-                command: cmd_buf.into_boxed_slice(),
+            configs.push(PendingScript {
+                config: ScriptConfig {
+                    label: label.clone(),
+                    command: cmd_buf.into_boxed_slice(),
+                },
                 cwd: Box::from(cwd),
                 path: Box::from(path),
             });
@@ -687,9 +696,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(pc.len() + 1);
             RunCommand::replace_package_manager_run(&mut cmd_buf, pc)?;
             cmd_buf.push(0);
-            configs.push(ScriptConfig {
-                label,
-                command: cmd_buf.into_boxed_slice(),
+            configs.push(PendingScript {
+                config: ScriptConfig {
+                    label,
+                    command: cmd_buf.into_boxed_slice(),
+                },
                 cwd: Box::from(cwd),
                 path: Box::from(path),
             });
@@ -720,9 +731,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             v.push(0);
             v.into_boxed_slice()
         };
-        configs.push(ScriptConfig {
-            label,
-            command: command_z,
+        configs.push(PendingScript {
+            config: ScriptConfig {
+                label,
+                command: command_z,
+            },
             cwd: Box::from(cwd),
             path: Box::from(path),
         });
@@ -807,7 +820,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // Build ScriptConfigs and ProcessHandles
     // Each script name can produce up to 3 handles (pre, main, post)
-    let mut configs: Vec<ScriptConfig> = Vec::new();
+    let mut configs: Vec<PendingScript> = Vec::new();
     let mut group_infos: Vec<GroupInfo> = Vec::new();
 
     if !ctx.filters.is_empty() || ctx.workspaces {
@@ -1022,7 +1035,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // Compute max label width
     let mut max_label_len: usize = 0;
-    for config in &configs {
+    for PendingScript { config, .. } in &configs {
         if config.label.len() > max_label_len {
             max_label_len = config.label.len();
         }
@@ -1080,17 +1093,16 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // Initialize handles; each points back at `state`, which stays on this
     // (never-returning) frame.
     let mut handles: Vec<OwnedThis<ProcessHandle>> = Vec::with_capacity(configs.len());
-    for (index, config) in configs.into_iter().enumerate() {
+    for (index, PendingScript { config, cwd, path }) in configs.into_iter().enumerate() {
         // The child's environment: the shared one with this script's $PATH.
         let envp = {
             let env = this_transpiler.env_mut();
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
-            let _ = env.map.put(b"PATH", &config.path);
+            let _ = env.map.put(b"PATH", &path);
             let envp = env.map.create_null_delimited_env_map();
             let _ = env.map.put(b"PATH", &original_path);
             envp?
         };
-        let cwd = config.cwd.clone();
         handles.push(OwnedThis::new(ProcessHandle {
             index,
             config,

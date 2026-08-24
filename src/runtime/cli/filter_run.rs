@@ -21,14 +21,10 @@ use bun_sys as sys;
 // The string fields below are owned boxes, except `combined` which is interned
 // in the process-lifetime CLI arena.
 struct ScriptConfig {
-    package_json_path: Box<[u8]>,
     package_name: Box<[u8]>,
     script_name: Box<[u8]>,
     script_content: Box<[u8]>,
     combined: &'static ZStr, // interned via `cli_dupe` into the process-lifetime CLI arena
-    // Owned dep names; `DependencyMap.source_buf` would dangle once the
-    // parsed `PackageJSON` (which owns the file bytes) drops.
-    deps: Vec<Box<[u8]>>,
 
     // The environment block is per script because $PATH must contain
     // node_modules/.bin
@@ -679,7 +675,9 @@ pub(crate) fn run_scripts_with_filter(
     let selected =
         FilterArg::select_packages(ctx, &mut this_transpiler.resolver, fsinstance.top_level_dir)?;
 
-    let mut scripts: Vec<ScriptConfig> = Vec::new();
+    // (config, workspace dependency names, cwd) — the latter two are consumed
+    // when the handles are built.
+    let mut scripts: Vec<(ScriptConfig, Vec<Box<[u8]>>, Box<[u8]>)> = Vec::new();
     for package in &selected.packages {
         let path: &[u8] = &package.dir;
         let Some(pkgscripts) = &package.json.scripts else {
@@ -758,16 +756,22 @@ pub(crate) fn run_scripts_with_filter(
                 envp?
             };
 
-            scripts.push(ScriptConfig {
-                package_json_path: package.package_json_path.clone(),
-                package_name: Box::<[u8]>::from(&package.json.name[..]),
-                script_name: Box::<[u8]>::from(*name),
-                script_content: Box::<[u8]>::from(&interned[0..len_command_only]),
-                combined,
+            let cwd: Box<[u8]> = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                &package.package_json_path,
+            )
+            .into();
+            scripts.push((
+                ScriptConfig {
+                    package_name: Box::<[u8]>::from(&package.json.name[..]),
+                    script_name: Box::<[u8]>::from(*name),
+                    script_content: Box::<[u8]>::from(&interned[0..len_command_only]),
+                    combined,
+                    envp,
+                    elide_count: ctx.bundler_options.elide_lines,
+                },
                 deps,
-                envp,
-                elide_count: ctx.bundler_options.elide_lines,
-            });
+                cwd,
+            ));
         }
     }
 
@@ -826,7 +830,7 @@ pub(crate) fn run_scripts_with_filter(
     let mut remaining_dependencies: Vec<usize> = vec![0; scripts.len()];
     {
         let mut map: StringHashMap<Vec<usize>> = StringHashMap::default();
-        for (i, script) in scripts.iter().enumerate() {
+        for (i, (script, ..)) in scripts.iter().enumerate() {
             let res = map.get_or_put(&script.package_name)?;
             if res.found_existing {
                 res.value_ptr.push(i);
@@ -836,8 +840,8 @@ pub(crate) fn run_scripts_with_filter(
                 *res.value_ptr = vec![i];
             }
         }
-        for (i, script) in scripts.iter().enumerate() {
-            for name in &script.deps {
+        for (i, (_, deps, _)) in scripts.iter().enumerate() {
+            for name in deps {
                 // is it a workspace dependency?
                 if let Some(pkgs) = map.get(&**name) {
                     for &dep in pkgs {
@@ -869,7 +873,7 @@ pub(crate) fn run_scripts_with_filter(
     // set up dependencies between pre/post scripts
     // this is done after the cycle check because we don't want these to be removed if there is a cycle
     for i in 0..scripts.len() - 1 {
-        if scripts[i].package_name == scripts[i + 1].package_name {
+        if scripts[i].0.package_name == scripts[i + 1].0.package_name {
             dependents[i].push(i + 1);
             remaining_dependencies[i + 1] += 1;
         }
@@ -902,48 +906,46 @@ pub(crate) fn run_scripts_with_filter(
         .zip(dependents)
         .zip(remaining_dependencies)
         .enumerate()
-        .map(|(index, ((config, dependents), remaining_dependencies))| {
-            let cwd = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                &config.package_json_path,
-            )
-            .into();
-            OwnedThis::new(ProcessHandle {
-                index,
-                config,
-                state: BackRef::new(&state),
-                stdout: JsCell::new(BufferedReader::init::<ProcessHandle>()),
-                stderr: JsCell::new(BufferedReader::init::<ProcessHandle>()),
-                buffer: RefCell::new(Vec::new()),
-                remaining_fds: Cell::new(0),
-                finished: Cell::new(false),
-                process: OnceCell::new(),
-                options: SpawnOptions {
-                    stdin: spawn::Stdio::Ignore,
-                    #[cfg(unix)]
-                    stdout: spawn::Stdio::Buffer,
-                    #[cfg(not(unix))]
-                    stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                        bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                    ))),
-                    #[cfg(unix)]
-                    stderr: spawn::Stdio::Buffer,
-                    #[cfg(not(unix))]
-                    stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                        bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                    ))),
-                    cwd,
-                    #[cfg(windows)]
-                    windows: spawn::WindowsOptions {
-                        loop_: event_loop.handle(),
+        .map(
+            |(index, (((config, _, cwd), dependents), remaining_dependencies))| {
+                OwnedThis::new(ProcessHandle {
+                    index,
+                    config,
+                    state: BackRef::new(&state),
+                    stdout: JsCell::new(BufferedReader::init::<ProcessHandle>()),
+                    stderr: JsCell::new(BufferedReader::init::<ProcessHandle>()),
+                    buffer: RefCell::new(Vec::new()),
+                    remaining_fds: Cell::new(0),
+                    finished: Cell::new(false),
+                    process: OnceCell::new(),
+                    options: SpawnOptions {
+                        stdin: spawn::Stdio::Ignore,
+                        #[cfg(unix)]
+                        stdout: spawn::Stdio::Buffer,
+                        #[cfg(not(unix))]
+                        stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
+                            bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
+                        ))),
+                        #[cfg(unix)]
+                        stderr: spawn::Stdio::Buffer,
+                        #[cfg(not(unix))]
+                        stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
+                            bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
+                        ))),
+                        cwd,
+                        #[cfg(windows)]
+                        windows: spawn::WindowsOptions {
+                            loop_: event_loop.handle(),
+                            ..Default::default()
+                        },
+                        stream: true,
                         ..Default::default()
                     },
-                    stream: true,
-                    ..Default::default()
-                },
-                remaining_dependencies: Cell::new(remaining_dependencies),
-                dependents,
-            })
-        })
+                    remaining_dependencies: Cell::new(remaining_dependencies),
+                    dependents,
+                })
+            },
+        )
         .collect();
     if state.handles.set(handles).is_err() {
         unreachable!();

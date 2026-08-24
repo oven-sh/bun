@@ -277,14 +277,15 @@ pub fn init_global(log: &'static mut bun_ast::Log, start_time: i128) -> &'static
     // One `ContextData::default()` is constructed and boxed, then the two
     // non-default fields are patched on the live storage — avoids the second
     // `Default` temporary (and its drop) that `..Default::default()` would build.
-    let ctx: *mut ContextData = Box::into_raw(Box::new(ContextData::default()));
+    let mut ctx = Box::new(ContextData::default());
+    ctx.set_log(log);
+    ctx.start_time = start_time;
+    // Publish only once fully initialised.
+    let ctx: *mut ContextData = Box::into_raw(ctx);
     GLOBAL_CLI_CTX.store(ctx, core::sync::atomic::Ordering::Release);
     // SAFETY: freshly leaked allocation; this is the root pointer and the
     // returned `&mut` is its only mutable user (contract above).
-    let ctx = unsafe { &mut *ctx };
-    ctx.set_log(log);
-    ctx.start_time = start_time;
-    ctx
+    unsafe { &mut *ctx }
 }
 
 /// Raw pointer to the process-global CLI context (null before

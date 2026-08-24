@@ -27,7 +27,10 @@ pub struct Scanner<'a> {
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
-    pub(crate) fs: &'static FileSystem,
+    /// Leaf copies from `FileSystem::get()`; no `&FileSystem` is held, since
+    /// `read_dir_with_name` re-enters it mutably.
+    top_level_dir: &'static [u8],
+    filename_store: &'static fs::FilenameStore,
     pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) has_iterated: bool,
@@ -79,7 +82,8 @@ impl<'a> Scanner<'a> {
             path_ignore_patterns: &[],
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
-            fs: FileSystem::get(),
+            top_level_dir: FileSystem::get().top_level_dir,
+            filename_store: FileSystem::get().filename_store,
             test_files: results,
             open_dir_buf: PathBuffer::uninit(),
             has_iterated: false,
@@ -89,18 +93,13 @@ impl<'a> Scanner<'a> {
     }
 
     #[inline]
-    pub(crate) fn fs(&self) -> &'static FileSystem {
-        self.fs
-    }
-
-    #[inline]
-    fn top_level_dir(&self) -> &'static [u8] {
-        self.fs.top_level_dir
+    pub(crate) fn top_level_dir(&self) -> &'static [u8] {
+        self.top_level_dir
     }
 
     #[inline]
     fn filename_store(&self) -> &'static fs::FilenameStore {
-        self.fs.filename_store
+        self.filename_store
     }
 
     #[inline]
@@ -135,8 +134,7 @@ impl<'a> Scanner<'a> {
             if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
                 if self.is_test_file(path) {
                     let stored = self
-                        .fs()
-                        .filename_store
+                        .filename_store()
                         .append_slice(path)
                         .map_err(|_| ScanError::OutOfMemory)?;
                     let rel_path = Interned::from_static(stored);
@@ -168,7 +166,7 @@ impl<'a> Scanner<'a> {
                 // regression/issue/26851 relies on `a_*.test` running before
                 // `b_*.test` under `--bail`.
                 let sorted: Vec<&fs::Entry> = {
-                    let _entries_lock = self.fs.fs.entries_mutex.lock_guard();
+                    let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
                     let mut v: Vec<&fs::Entry> = entries.entries().collect();
                     index_sort::sort_slice_by(&mut v, |a, b| {
                         a.base_lowercase().cmp(b.base_lowercase())
@@ -176,14 +174,16 @@ impl<'a> Scanner<'a> {
                     v
                 };
                 for entry in sorted {
-                    self.next(&self.fs.fs, entry);
+                    self.next(&FileSystem::get().fs, entry);
                 }
             }
         }
 
         while let Some(entry) = self.dirs_to_scan.pop_front() {
             let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
-            let Some(path2) = self.fs().abs_buf_checked(&parts2, &mut scan_dir_buf) else {
+            let Some(path2) =
+                Self::abs_buf_projected(self.top_level_dir(), &parts2, &mut scan_dir_buf)
+            else {
                 continue;
             };
             let (parent, rel_path): (Fd, &[u8]) = match &entry.relative_dir {
@@ -200,8 +200,7 @@ impl<'a> Scanner<'a> {
                 continue;
             };
             let child_dir = Rc::new(Dir::from_fd(child_fd));
-            let path2 = self
-                .fs()
+            let path2 = FileSystem::get()
                 .dirname_store
                 .append_slice(path2)
                 .map_err(|_| ScanError::OutOfMemory)?;

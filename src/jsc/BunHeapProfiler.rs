@@ -1,6 +1,6 @@
 use crate::CrateError as Error;
 use bun_core::Output;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_paths::{AutoAbsPathChecked, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
 
@@ -26,13 +26,11 @@ pub(crate) fn generate_and_write_profile(
     vm: &mut VM,
     config: &HeapProfilerConfig,
 ) -> Result<(), Error> {
-    // `defer profile_string.deref()` — `bun_core::String` is `Copy` (no Drop);
-    // wrap the +1 ref from C++ in `OwnedString` so it's released on every exit path.
-    let profile_string = OwnedString::new(if config.text_format {
+    let profile_string = if config.text_format {
         Bun__generateHeapProfile(vm)
     } else {
         Bun__generateHeapSnapshotV8(vm)
-    });
+    };
 
     if profile_string.is_empty() {
         // No profile data generated

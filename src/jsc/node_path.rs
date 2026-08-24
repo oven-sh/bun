@@ -140,14 +140,14 @@ impl Clone for PathLike {
                 // buffer) alongside the bumped `underlying` ref.
                 Self::SliceWithUnderlyingString(SliceWithUnderlyingString {
                     utf8: s.utf8.clone_ref(),
-                    underlying: s.underlying.dupe_ref(),
+                    underlying: s.underlying.clone(),
                     #[cfg(debug_assertions)]
                     did_report_extra_memory_debug: s.did_report_extra_memory_debug,
                 })
             }
             Self::ThreadsafeString(s) => Self::ThreadsafeString(SliceWithUnderlyingString {
                 utf8: s.utf8.clone_ref(),
-                underlying: s.underlying.dupe_ref(),
+                underlying: s.underlying.clone(),
                 #[cfg(debug_assertions)]
                 did_report_extra_memory_debug: s.did_report_extra_memory_debug,
             }),
@@ -168,9 +168,8 @@ impl Drop for PathLike {
                     b.buffer.unpin();
                 }
             }
-            Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => {
-                core::mem::take(s).deinit();
-            }
+            // `SliceWithUnderlyingString` derefs `underlying` in its own `Drop`.
+            Self::SliceWithUnderlyingString(_) | Self::ThreadsafeString(_) => {}
             // `ZigStringSlice` releases its WTF ref / owned buffer in its own
             // `Drop`.
             Self::EncodedSlice(_) => {}

@@ -54,8 +54,8 @@ extern "C" {
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
-    BunString name,
-    BunString url,
+    const BunString* name,
+    const BunString* url,
     BunString* errorMessage,
     uint32_t parentContextId,
     uint32_t contextId,
@@ -154,11 +154,13 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
+    BunString name = Bun::toString(m_options.name);
+    BunString url = Bun::toString(scriptURL);
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
-        Bun::toString(m_options.name),
-        Bun::toString(scriptURL),
+        &name,
+        &url,
         &errorMessage,
         m_loaderContextIdentifier,
         m_workerContextIdentifier,
@@ -179,7 +181,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     if (!m_workerThread) {
         m_state.store(State::Closed);
         deref();
-        return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
+        return Exception { TypeError, errorMessage.transferToWTFString() };
     }
     return {};
 }
@@ -322,6 +324,8 @@ static constexpr size_t drainBatchLimit = 1024;
 template<typename Dispatch>
 static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
 {
+    auto& vm = globalObject.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     size_t remaining = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
 
     while (true) {
@@ -351,8 +355,15 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
                 return false;
             auto message = batch.takeFirst();
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+            // message port post message steps (7.3): if deserializing throws, catch it and fire messageerror.
             auto event = MessageEvent::create(globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            dispatch(event.event);
+            if (scope.exception()) [[unlikely]] {
+                if (vm.hasPendingTerminationException())
+                    return false;
+                scope.clearException();
+                dispatch(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+            } else
+                dispatch(event->event);
             if (globalObject.drainMicrotasks())
                 return false; // termination pending
         }

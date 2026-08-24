@@ -48,6 +48,8 @@
 #include "JSDOMConvertObject.h"
 #include "JSDOMConvertSequences.h"
 #include "JSMessagePort.h"
+#include "JSMessageChannel.h"
+#include "JSWorker.h"
 #include "MessagePortPipe.h"
 #include "JSBroadcastChannel.h"
 #include "JSStructuredSerializeOptions.h"
@@ -204,10 +206,10 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
 // it to the Worker object.
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString* message, JSC::EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSC::JSValue error = JSC::JSValue::decode(errorValue);
-    String messageStr = message->transferToWTFString();
+    String messageStr = message.transferToWTFString();
     ErrorEvent::Init init;
     init.message = messageStr;
     init.error = error;
@@ -379,7 +381,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 15);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 19);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -394,8 +396,14 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 1, "setStdioPorts"_s, jsFunctionSetNodeWorkerStdioPorts, ImplementationVisibility::Public, NoIntrinsic));
-    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 1, "workerHasRef"_s, jsFunctionWorkerHasRef, ImplementationVisibility::Public, NoIntrinsic));
-    array->putDirectIndex(globalObject, 14, JSFunction::create(vm, globalObject, 1, "workerEventLoopUtilization"_s, jsFunctionWorkerEventLoopUtilization, ImplementationVisibility::Public, NoIntrinsic));
+    // The intrinsic constructors, so worker_threads keeps working when user code
+    // replaces globalThis.MessagePort etc. before the module loads (#40268).
+    array->putDirectIndex(globalObject, 13, JSMessagePort::getConstructor(vm, globalObject));
+    array->putDirectIndex(globalObject, 14, JSMessageChannel::getConstructor(vm, globalObject));
+    array->putDirectIndex(globalObject, 15, JSBroadcastChannel::getConstructor(vm, globalObject));
+    array->putDirectIndex(globalObject, 16, JSWorker::getConstructor(vm, globalObject));
+    array->putDirectIndex(globalObject, 17, JSFunction::create(vm, globalObject, 1, "workerHasRef"_s, jsFunctionWorkerHasRef, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 18, JSFunction::create(vm, globalObject, 1, "workerEventLoopUtilization"_s, jsFunctionWorkerEventLoopUtilization, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 

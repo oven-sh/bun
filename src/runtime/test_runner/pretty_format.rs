@@ -1,4 +1,3 @@
-use core::cell::RefCell;
 use crate::test_runner::expect::JSValueTestExt;
 use core::ffi::c_void;
 
@@ -500,13 +499,10 @@ impl Tag {
         // Is this a react element?
         if js_type.is_object() && js_type != JSType::ProxyObject {
             if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
-                let mut react_element = ZigString::init(b"react.element");
-                let mut react_fragment = ZigString::init(b"react.fragment");
-
                 if typeof_symbol
-                    .is_same_value(JSValue::symbol_for(global_this, &mut react_element), global_this)?
+                    .is_same_value(JSValue::symbol_for(global_this, b"react.element"), global_this)?
                     || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_fragment),
+                        JSValue::symbol_for(global_this, b"react.fragment"),
                         global_this,
                     )?
                 {
@@ -582,10 +578,6 @@ impl Tag {
 
         Ok(TagResult { tag, cell: js_type })
     }
-}
-
-thread_local! {
-    static NAME_BUF: RefCell<[u8; 512]> = const { RefCell::new([0u8; 512]) };
 }
 
 impl<'a> Formatter<'a> {
@@ -712,7 +704,7 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     }
 
     #[inline]
-    pub(crate) fn write_string(&mut self, str: ZigString) {
+    pub(crate) fn write_string(&mut self, str: &bun_core::String) {
         self.print(format_args!("{}", str));
     }
 
@@ -872,16 +864,14 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     ) -> JsResult<()> {
         if !value.js_type().is_function() {
             let mut writer = WrappedWriter::new(self.writer);
-            let mut name_str = ZigString::init(b"");
-
-            value.get_name_property(global_this, &mut name_str)?;
-            if name_str.len > 0 && !name_str.eql_comptime(b"Object") {
+            let name_str = value.get_name_property(global_this)?;
+            if !name_str.is_empty() && !name_str.eql_comptime(b"Object") {
                 writer.print(format_args!("{} ", name_str));
             } else {
-                value
+                let name_str = value
                     .get_prototype(global_this)?
-                    .get_name_property(global_this, &mut name_str)?;
-                if name_str.len > 0 && !name_str.eql_comptime(b"Object") {
+                    .get_name_property(global_this)?;
+                if !name_str.is_empty() && !name_str.eql_comptime(b"Object") {
                     writer.print(format_args!("{} ", name_str));
                 }
             }
@@ -893,9 +883,8 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if self.formatter.indent == 0 {
             let _ = self.writer.write_all(b"\n");
         }
-        let mut classname = ZigString::EMPTY;
-        value.get_class_name(global_this, &mut classname)?;
-        if classname.len > 0 && !classname.eql_comptime(b"Object") {
+        let classname = value.get_class_name(global_this)?;
+        if !classname.is_empty() && !classname.eql_comptime(b"Object") {
             let _ = self.writer.write_fmt(format_args!("{} ", classname));
         }
 
@@ -1109,8 +1098,8 @@ impl<'a> Formatter<'a> {
                     );
                 }
                 Tag::String => {
-                    let mut str = ZigString::init(b"");
-                    value.to_zig_string(&mut str, self.global_this)?;
+                    let view = value.to_js_string_view(self.global_this)?;
+                    let str = view.to_zig_string();
                     self.add_for_new_line(str.len);
 
                     if value.js_type() == JSType::StringObject
@@ -1194,7 +1183,7 @@ impl<'a> Formatter<'a> {
                             }
                         }
 
-                        writer.write_string(remaining);
+                        writer.print(format_args!("{}", remaining));
                         writer.write_all(b"\"");
 
                         if has_newline {
@@ -1251,8 +1240,8 @@ impl<'a> Formatter<'a> {
                     ));
                 }
                 Tag::BigInt => {
-                    let zig_str = value.get_zig_string(self.global_this)?;
-                    let out_str = zig_str.slice();
+                    let view = value.to_js_string_view(self.global_this)?;
+                    let out_str = view.latin1();
                     self.add_for_new_line(out_str.len());
 
                     writer.print(format_args!(
@@ -1328,8 +1317,8 @@ impl<'a> Formatter<'a> {
                     let description = value.get_description(self.global_this);
                     self.add_for_new_line(b"Symbol".len());
 
-                    if description.len > 0 {
-                        self.add_for_new_line(description.len + b"()".len());
+                    if !description.is_empty() {
+                        self.add_for_new_line(description.length() + b"()".len());
                         writer.print(format_args!(
                             "{}Symbol({}){}",
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
@@ -1345,12 +1334,11 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 Tag::Error => {
-                    let mut classname = ZigString::EMPTY;
-                    value.get_class_name(self.global_this, &mut classname)?;
-                    let mut message_string = bun_core::OwnedString::new(bun_core::String::empty());
+                    let classname = value.get_class_name(self.global_this)?;
+                    let mut message_string = bun_core::String::empty();
 
                     if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
-                        message_string = bun_core::OwnedString::new(message_prop.to_bun_string(self.global_this)?);
+                        message_string = message_prop.to_bun_string(self.global_this)?;
                     }
 
                     if message_string.is_empty() {
@@ -1361,11 +1349,10 @@ impl<'a> Formatter<'a> {
                     return Ok(());
                 }
                 Tag::Class => {
-                    let mut printable = NAME_BUF.with_borrow(|b| ZigString::init(&b[..]));
-                    value.get_class_name(self.global_this, &mut printable)?;
-                    self.add_for_new_line(printable.len);
+                    let printable = value.get_class_name(self.global_this)?;
+                    self.add_for_new_line(printable.length());
 
-                    if printable.len == 0 {
+                    if printable.is_empty() {
                         writer.print(format_args!(
                             "{}[class]{}",
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
@@ -1381,10 +1368,9 @@ impl<'a> Formatter<'a> {
                     }
                 }
                 Tag::Function => {
-                    let mut printable = NAME_BUF.with_borrow(|b| ZigString::init(&b[..]));
-                    value.get_name_property(self.global_this, &mut printable)?;
+                    let printable = value.get_name_property(self.global_this)?;
 
-                    if printable.len == 0 {
+                    if printable.is_empty() {
                         writer.print(format_args!(
                             "{}[Function]{}",
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
@@ -1671,11 +1657,9 @@ impl<'a> Formatter<'a> {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         let _ = resolve_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
-                    } else if NAME_BUF.with_borrow(|name_buf| {
-                        JestPrettyFormat::print_asymmetric_matcher::<_, W, ENABLE_ANSI_COLORS>(
-                            self, &mut writer, name_buf, value,
-                        )
-                    })? {
+                    } else if JestPrettyFormat::print_asymmetric_matcher::<_, W, ENABLE_ANSI_COLORS>(
+                        self, &mut writer, value,
+                    )? {
                         return Ok(());
                     } else if js_type != JSType::DOMWrapper {
                         if value.is_callable() {
@@ -1818,9 +1802,7 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let mut str = bun_core::String::empty();
-
-                    value.json_stringify(self.global_this, self.indent, &mut str)?;
+                    let str = value.json_stringify(self.global_this, self.indent)?;
                     self.add_for_new_line(str.length());
                     if js_type == JSType::JSDate {
                         // in the code for printing dates, it never exceeds this amount
@@ -1980,8 +1962,8 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"<");
 
                     let mut needs_space;
-                    let mut tag_name_str = ZigString::init(b"");
 
+                    let tag_name_view;
                     let tag_name_slice: ZigStringSlice;
                     let mut is_tag_kind_primitive = false;
 
@@ -1989,22 +1971,26 @@ impl<'a> Formatter<'a> {
                         let _tag = Tag::get(type_value, self.global_this)?;
 
                         if _tag.cell == JSType::Symbol {
+                            tag_name_slice = ZigStringSlice::EMPTY;
                         } else if _tag.cell.is_string_like() {
-                            type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                            tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                            tag_name_slice = tag_name_view.to_utf8();
                             is_tag_kind_primitive = true;
                         } else if _tag.cell.is_object() || type_value.is_callable() {
-                            type_value.get_name_property(self.global_this, &mut tag_name_str)?;
-                            if tag_name_str.len == 0 {
-                                tag_name_str = ZigString::init(b"NoName");
-                            }
+                            let name = type_value.get_name_property(self.global_this)?;
+                            tag_name_slice = if name.is_empty() {
+                                ZigStringSlice::from_utf8_never_free(b"NoName")
+                            } else {
+                                name.to_utf8()
+                            };
                         } else {
-                            type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                            tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                            tag_name_slice = tag_name_view.to_utf8();
                         }
 
-                        tag_name_slice = tag_name_str.to_slice();
                         needs_space = true;
                     } else {
-                        tag_name_slice = ZigString::init(b"unknown").to_slice();
+                        tag_name_slice = ZigStringSlice::from_utf8_never_free(b"unknown");
 
                         needs_space = true;
                     }
@@ -2060,7 +2046,7 @@ impl<'a> Formatter<'a> {
                         // trailing " />" is skipped) and restore unconditionally afterward.
                         let inner: JsResult<bool> = (|| {
                         let Some(props_obj) = props.get_object() else { return Ok(false); };
-                        let mut props_iter = JSPropertyIterator::init(
+                        let props_iter = JSPropertyIterator::init(
                             self.global_this,
                             props_obj,
                             jsc::PropertyIteratorOptions {
@@ -2080,13 +2066,12 @@ impl<'a> Formatter<'a> {
                                 // `JSPropertyIterator::i` is private upstream;
                                 // track the 1-based iteration index locally.
                                 let mut iter_i: usize = 0;
-                                while let Some(prop) = props_iter.next()? {
+                                while let Some((prop, property_value)) = props_iter.next()? {
                                     iter_i += 1;
                                     if prop.eql_comptime(b"children") {
                                         continue;
                                     }
 
-                                    let property_value = props_iter.value;
                                     let tag = Tag::get(property_value, self.global_this)?;
 
                                     if tag.cell.is_hidden() {
@@ -2160,8 +2145,8 @@ impl<'a> Formatter<'a> {
                                         match tag.tag {
                                             Tag::String => {
                                                 let children_string =
-                                                    children.get_zig_string(self.global_this)?;
-                                                if children_string.len == 0 {
+                                                    children.to_js_string_view(self.global_this)?;
+                                                if children_string.is_empty() {
                                                     break 'print_children;
                                                 }
                                                 if ENABLE_ANSI_COLORS {
@@ -2171,15 +2156,15 @@ impl<'a> Formatter<'a> {
                                                 }
 
                                                 writer.write_all(b">");
-                                                if children_string.len < 128 {
-                                                    writer.write_string(children_string);
+                                                if children_string.length() < 128 {
+                                                    writer.write_string(&children_string);
                                                 } else {
                                                     self.indent += 1;
                                                     writer.write_all(b"\n");
                                                     self.write_indent(writer.ctx)
                                                         .expect("unreachable");
                                                     self.indent = self.indent.saturating_sub(1);
-                                                    writer.write_string(children_string);
+                                                    writer.write_string(&children_string);
                                                     writer.write_all(b"\n");
                                                     self.write_indent(writer.ctx)
                                                         .expect("unreachable");
@@ -2346,8 +2331,7 @@ impl<'a> Formatter<'a> {
                     result?;
 
                     if iter_i == 0 {
-                        let mut object_name = ZigString::EMPTY;
-                        value.get_class_name(self.global_this, &mut object_name)?;
+                        let object_name = value.get_class_name(self.global_this)?;
 
                         if !object_name.eql_comptime(b"Object") {
                             writer.print(format_args!("{} {{}}", object_name));
@@ -2384,9 +2368,8 @@ impl<'a> Formatter<'a> {
                     }
 
                     if js_type == JSType::Uint8Array {
-                        let mut buffer_name = ZigString::EMPTY;
-                        value.get_class_name(self.global_this, &mut buffer_name)?;
-                        if buffer_name.slice() == b"Buffer" {
+                        let buffer_name = value.get_class_name(self.global_this)?;
+                        if buffer_name.eql_comptime(b"Buffer") {
                             // special formatting for 'Buffer' snapshots only
                             if slice.is_empty() && self.indent == 0 {
                                 writer.write_all(b"\n");
@@ -2767,8 +2750,6 @@ impl JestPrettyFormat {
         this: &mut M,
         // The WrappedWriter (caller's instance — `failed` propagates back)
         writer: &mut WrappedWriter<'_, W>,
-        // Buf used to print strings
-        name_buf: &[u8; 512],
         value: JSValue,
     ) -> JsResult<bool>
     where
@@ -2806,9 +2787,8 @@ impl JestPrettyFormat {
                 writer.write_all(b"Any<");
             }
 
-            let mut class_name = ZigString::init(name_buf);
-            constructor_value.get_class_name(this.amf_global_this(), &mut class_name)?;
-            this.amf_add_for_new_line(class_name.len);
+            let class_name = constructor_value.get_class_name(this.amf_global_this())?;
+            this.amf_add_for_new_line(class_name.length());
             writer.print(format_args!(
                 "{}{}{}",
                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),

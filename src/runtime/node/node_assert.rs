@@ -234,7 +234,7 @@ where
         Output::List { .. } => diff_list_to_js(global, diff_list),
         Output::Simple(colors) => {
             let out = render_simple::<C, T>(diff_list, colors);
-            C::to_bun_string(&out).transfer_to_js(global)
+            C::to_bun_string(&out).into_js(global)
         }
         Output::Lines { colors, .. } => {
             let (out, skipped) = render_lines::<C, T>(diff_list, colors);
@@ -242,7 +242,7 @@ where
             result.put(
                 global,
                 BunString::static_(b"message"),
-                C::to_bun_string(&out).transfer_to_js(global)?,
+                C::to_bun_string(&out).into_js(global)?,
             );
             result.put(
                 global,

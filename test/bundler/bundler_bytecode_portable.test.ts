@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "fs";
+import { gzipSync } from "zlib";
 import { bunEnv, bunExe, tempDir } from "harness";
 import vm from "node:vm";
 import { basename, join } from "path";
@@ -104,11 +105,19 @@ async function bundle(outdir: string, entry: string, args: readonly string[]) {
 // The payload starts with GenericCacheEntry { uint32 cacheVersion; uint32 headerSize; uint32 headerChecksum; ... }.
 // cacheVersion is a hash of the WebKit version string and headerChecksum covers it, so both change on every WebKit
 // upgrade whether or not the format did; mask them so the snapshot only moves when the serialized bytes do.
-function fingerprint(bytecode: Uint8Array) {
+const payloads: Record<string, Uint8Array> = {};
+function fingerprint(name: string, bytecode: Uint8Array) {
   const copy = new Uint8Array(bytecode);
   copy.fill(0, 0, 4);
   copy.fill(0, 8, 12);
+  payloads[name] = copy;
   return { sha256: Bun.CryptoHasher.hash("sha256", copy, "hex"), bytes: copy.byteLength };
+}
+
+// A mismatch found on a platform nobody has a shell on is only actionable with the bytes in hand.
+function dumpPayloads() {
+  for (const [name, payload] of Object.entries(payloads))
+    console.log(`payload ${JSON.stringify(name)} (gzip, base64): ${gzipSync(payload).toString("base64")}`);
 }
 
 describe("bytecode cache portability", () => {
@@ -118,18 +127,30 @@ describe("bytecode cache portability", () => {
     for (const [i, { name, entry, args }] of bundlerBuilds.entries()) {
       const { js, jsc } = await bundle(join(String(dir), String(i)), entry, args);
       // If `js` differs between platforms the bundler is at fault, not the bytecode format.
-      outputs[name] = { js: Bun.CryptoHasher.hash("sha256", js, "hex"), jsc: fingerprint(jsc) };
+      outputs[name] = { js: Bun.CryptoHasher.hash("sha256", js, "hex"), jsc: fingerprint(name, jsc) };
     }
     // Program and module code blocks straight from the encoder, without the bundler in between.
     outputs["vm.Script features.js"] = fingerprint(
+      "vm.Script features.js",
       new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
     );
     outputs["vm.SourceTextModule module.js"] = fingerprint(
+      "vm.SourceTextModule module.js",
       new vm.SourceTextModule(moduleSource, { identifier: "module.js" }).createCachedData(),
     );
     outputs["vm.Script big.js"] = fingerprint(
+      "vm.Script big.js",
       new vm.Script(bigSource(), { filename: "big.js", produceCachedData: true }).cachedData!,
     );
+    try {
+      expectOutputs(outputs);
+    } catch (e) {
+      dumpPayloads();
+      throw e;
+    }
+  });
+
+  function expectOutputs(outputs: Record<string, unknown>) {
     expect(
       outputs,
       "serialized bytecode differs from the snapshot — read the comment at the top of this file before updating it",
@@ -170,7 +191,7 @@ describe("bytecode cache portability", () => {
         },
       }
     `);
-  });
+  }
 
   // Identical bytes only help if this platform also decodes what it encodes.
   for (const { name, entry, args } of bundlerBuilds) {
@@ -184,7 +205,7 @@ describe("bytecode cache portability", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr.split("\n")[0]).toBe("[Disk Cache] Cache hit for sourceCode");
+      expect(stderr).toStartWith("[Disk Cache] Cache hit for sourceCode");
       expect(stdout).toBe((entry === "./big.js" ? bigOutput : featuresOutput) + "\n");
       expect(exitCode).toBe(0);
     });

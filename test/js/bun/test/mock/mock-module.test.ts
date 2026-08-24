@@ -156,15 +156,16 @@ test("mocking a package", async () => {
   expect(require("ha-ha-ha").wow()).toBe(43);
 });
 
-// https://github.com/oven-sh/bun/issues/9987
-test("a factory without a default key exports the returned object as default", async () => {
+// The plugin "object" loader adds an implicit default export (#9987). A module
+// mock does not: its export set is exactly what the factory returned.
+test("a factory without a default key does not add a default export", async () => {
   const exports = { wow: () => 42 };
   mock.module("mock-module-no-default", () => exports);
   const ns = await import("mock-module-no-default");
-  expect(ns.default).toBe(exports);
+  expect(Object.keys(ns)).toEqual(["wow"]);
+  expect("default" in ns).toBe(false);
   expect(ns.wow).toBe(exports.wow);
-  expect(Object.keys(ns).sort()).toEqual(["default", "wow"]);
-  expect(require("mock-module-no-default").default).toBe(exports);
+  expect(Object.keys(require("mock-module-no-default"))).toEqual(["wow"]);
 });
 
 test("mocking a builtin", async () => {

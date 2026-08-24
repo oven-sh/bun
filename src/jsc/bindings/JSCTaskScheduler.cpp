@@ -56,7 +56,7 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
     if (scheduler.m_isShuttingDown) [[unlikely]]
         return;
     if (kind == DeferredWorkTimer::WorkType::ImminentlyScheduled) {
-        Bun__VmHandle__refKeepAlive(clientData->vmHandle, 1);
+        Bun__eventLoop__refKeepAlive(clientData->bunVM, 1);
         scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket));
     } else {
         scheduler.m_pendingTicketsOther.add(WTF::move(ticket));

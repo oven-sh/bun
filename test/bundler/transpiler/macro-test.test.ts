@@ -568,6 +568,8 @@ describe("the macro host", () => {
       },
       ["run", "index.ts"],
     );
+    // stderr is not asserted: whether the worker reaches its require() before exit stops it, and which
+    // refusal its macro call then gets, depends on timing. The invariant is only that exit completes.
     expect(lines).toEqual(["value 1"]);
     expect(exitCode).toBe(0);
   });

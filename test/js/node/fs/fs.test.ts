@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -4874,6 +4874,127 @@ describe("utimesSync", () => {
 
     expect(newStats.mtime.getTime() / 1000).toEqual(mtime);
     expect(newStats.atime.getTime() / 1000).toEqual(atime);
+  });
+});
+
+describe("utimes/lutimes/futimes reject an invalid time with node's message", () => {
+  // Node's toUnixTimestamp() passes ["Date", "Time in seconds"] as the expected
+  // types, so its message really does say "an Time in seconds". utimes and
+  // lutimes validate both timestamps under toUnixTimestamp's default name
+  // "time"; only futimes (and so FileHandle.utimes) says "atime"/"mtime".
+  const invalidTime = (name: "time" | "atime" | "mtime", received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `The "${name}" argument must be an instance of Date or an Time in seconds. Received ${received}`,
+  });
+  const pick = ({ name, code, message }: any) => ({ name, code, message });
+  const thrownBy = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      return pick(e);
+    }
+    throw new Error("expected to throw");
+  };
+  const rejectedBy = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (e) {
+      return pick(e);
+    }
+    throw new Error("expected to reject");
+  };
+  const mustNotCall = () => {
+    throw new Error("callback must not be called");
+  };
+
+  const file = join(tempDirWithFiles("fs-utimes-invalid-time", { "f.txt": "x" }), "f.txt");
+  let fd: number;
+  beforeAll(() => {
+    fd = openSync(file, "r");
+  });
+  afterAll(() => closeSync(fd));
+
+  it.each([
+    ["bad", "type string ('bad')"],
+    [{}, "an instance of Object"],
+    [[1], "an instance of Array"],
+    [null, "null"],
+    [undefined, "undefined"],
+    [NaN, "type number (NaN)"],
+    [Infinity, "type number (Infinity)"],
+    [-Infinity, "type number (-Infinity)"],
+    [true, "type boolean (true)"],
+    [1n, "type bigint (1n)"],
+  ] as [time: any, received: string][])("sync forms, time = %p", (time, received) => {
+    expect({
+      utimesAtime: thrownBy(() => fs.utimesSync(file, time, 1)),
+      utimesMtime: thrownBy(() => fs.utimesSync(file, 1, time)),
+      lutimesAtime: thrownBy(() => fs.lutimesSync(file, time, 1)),
+      lutimesMtime: thrownBy(() => fs.lutimesSync(file, 1, time)),
+      futimesAtime: thrownBy(() => fs.futimesSync(fd, time, 1)),
+      futimesMtime: thrownBy(() => fs.futimesSync(fd, 1, time)),
+    }).toEqual({
+      utimesAtime: invalidTime("time", received),
+      utimesMtime: invalidTime("time", received),
+      lutimesAtime: invalidTime("time", received),
+      lutimesMtime: invalidTime("time", received),
+      futimesAtime: invalidTime("atime", received),
+      futimesMtime: invalidTime("mtime", received),
+    });
+  });
+
+  it("callback forms throw synchronously, as in node", () => {
+    expect({
+      utimes: thrownBy(() => fs.utimes(file, "bad", 1, mustNotCall)),
+      lutimes: thrownBy(() => fs.lutimes(file, 1, {} as any, mustNotCall)),
+      futimesAtime: thrownBy(() => fs.futimes(fd, "bad", 1, mustNotCall)),
+      futimesMtime: thrownBy(() => fs.futimes(fd, 1, {} as any, mustNotCall)),
+    }).toEqual({
+      utimes: invalidTime("time", "type string ('bad')"),
+      lutimes: invalidTime("time", "an instance of Object"),
+      futimesAtime: invalidTime("atime", "type string ('bad')"),
+      futimesMtime: invalidTime("mtime", "an instance of Object"),
+    });
+  });
+
+  it("fs/promises forms and FileHandle.utimes reject", async () => {
+    await using handle = await promises.open(file, "r");
+    expect({
+      utimesAtime: await rejectedBy(() => promises.utimes(file, "bad", 1)),
+      utimesMtime: await rejectedBy(() => promises.utimes(file, 1, {} as any)),
+      lutimesAtime: await rejectedBy(() => promises.lutimes(file, "bad", 1)),
+      lutimesMtime: await rejectedBy(() => promises.lutimes(file, 1, {} as any)),
+      handleAtime: await rejectedBy(() => handle.utimes("bad", 1)),
+      handleMtime: await rejectedBy(() => handle.utimes(1, {} as any)),
+    }).toEqual({
+      utimesAtime: invalidTime("time", "type string ('bad')"),
+      utimesMtime: invalidTime("time", "an instance of Object"),
+      lutimesAtime: invalidTime("time", "type string ('bad')"),
+      lutimesMtime: invalidTime("time", "an instance of Object"),
+      handleAtime: invalidTime("atime", "type string ('bad')"),
+      handleMtime: invalidTime("mtime", "an instance of Object"),
+    });
+  });
+
+  it("a missing time is reported as undefined, as in node", () => {
+    expect({
+      utimesNone: thrownBy(() => (fs.utimesSync as any)(file)),
+      utimesOne: thrownBy(() => (fs.utimesSync as any)(file, 1)),
+      lutimesNone: thrownBy(() => (fs.lutimesSync as any)(file)),
+      futimesNone: thrownBy(() => (fs.futimesSync as any)(fd)),
+      futimesOne: thrownBy(() => (fs.futimesSync as any)(fd, 1)),
+    }).toEqual({
+      utimesNone: invalidTime("time", "undefined"),
+      utimesOne: invalidTime("time", "undefined"),
+      lutimesNone: invalidTime("time", "undefined"),
+      futimesNone: invalidTime("atime", "undefined"),
+      futimesOne: invalidTime("mtime", "undefined"),
+    });
+  });
+
+  it("futimes reports atime before looking at mtime", () => {
+    expect(thrownBy(() => fs.futimesSync(fd, "bad", {} as any))).toEqual(invalidTime("atime", "type string ('bad')"));
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync, truncateSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -185,7 +185,7 @@ server.close();`,
     const result = await Bun.build({
       entrypoints: [join(dir + "", "app.js")],
       compile: {
-        outfile: "app-with-resources",
+        outfile: join(dir + "", "app-with-resources"),
       },
     });
 
@@ -537,6 +537,112 @@ if (isLinux) {
       expect(stderr).toBe("");
       expect(stdout).toContain("wsl1-regression-20000");
       expect(exitCode).toBe(0);
+    }, 60_000);
+
+    // A compiled binary cut short by an incomplete download or copy still
+    // passes `execve`: the kernel maps the grown RW PT_LOAD from its program
+    // header alone and never checks that the file has `p_offset + p_filesz`
+    // bytes. The first read of a payload page past EOF is SIGBUS, which the
+    // crash handler reports as a bug in bun (Sentry BUN-4E9B, BUN-4D8P,
+    // BUN-3PTA, BUN-3Q6K: hundreds of events, the same fault address many
+    // times over). The loader must compare the file size with the segment's
+    // file extent and refuse to run with a message instead.
+    test("truncated compiled binary exits with an error instead of SIGBUS", async () => {
+      // A >16KB payload spans several pages. Keeping only its first page
+      // mirrors the crash reports: the length header reads fine and the
+      // trailer read at the end of the payload is what faults.
+      const largeString = Buffer.alloc(20000, "t").toString();
+      using dir = tempDir("build-compile-truncated", {
+        "app.js": `const data = "${largeString}"; console.log("truncated-" + data.length);`,
+      });
+
+      const outfile = join(dir + "", "app-truncated");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile },
+      });
+      expect(result.success).toBe(true);
+      const exe = result.outputs[0].path;
+
+      // Read only the headers: the debug+ASAN binary is about 1GB.
+      const file = Bun.file(exe);
+      const readAt = async (offset: number, length: number) =>
+        new DataView(await file.slice(offset, offset + length).arrayBuffer());
+      const ehdr = await readAt(0, 64);
+      const phoff = Number(ehdr.getBigUint64(32, true));
+      const shoff = Number(ehdr.getBigUint64(40, true));
+      const phentsize = ehdr.getUint16(54, true);
+      const phnum = ehdr.getUint16(56, true);
+      const shentsize = ehdr.getUint16(58, true);
+      const shnum = ehdr.getUint16(60, true);
+      const shstrndx = ehdr.getUint16(62, true);
+
+      // .bun section header: sh_offset @ +24, sh_size @ +32.
+      const shdrs = await readAt(shoff, shnum * shentsize);
+      const strtabOff = Number(shdrs.getBigUint64(shstrndx * shentsize + 24, true));
+      const strtabSize = Number(shdrs.getBigUint64(shstrndx * shentsize + 32, true));
+      const strtab = new Uint8Array((await readAt(strtabOff, strtabSize)).buffer);
+      let bunOffset = 0;
+      let bunSize = 0;
+      for (let i = 0; i < shnum; i++) {
+        const nameIdx = shdrs.getUint32(i * shentsize, true);
+        let end = nameIdx;
+        while (end < strtab.length && strtab[end] !== 0) end++;
+        if (new TextDecoder().decode(strtab.slice(nameIdx, end)) !== ".bun") continue;
+        bunOffset = Number(shdrs.getBigUint64(i * shentsize + 24, true));
+        bunSize = Number(shdrs.getBigUint64(i * shentsize + 32, true));
+        break;
+      }
+      expect(bunOffset).toBeGreaterThan(0);
+      // The trailer must sit past the first page of the payload.
+      expect(bunSize).toBeGreaterThan(4096 + 16);
+
+      // The writable PT_LOAD that holds the payload. Its file extent
+      // (p_offset @ +8 plus p_filesz @ +32) is what the loader must find on
+      // disk. p_flags @ +4, PF_W = 2.
+      const phdrs = await readAt(phoff, phnum * phentsize);
+      let segmentEnd = 0;
+      for (let i = 0; i < phnum; i++) {
+        const off = i * phentsize;
+        if (phdrs.getUint32(off, true) !== 1 /* PT_LOAD */ || (phdrs.getUint32(off + 4, true) & 2) === 0) continue;
+        const pOffset = Number(phdrs.getBigUint64(off + 8, true));
+        const pFilesz = Number(phdrs.getBigUint64(off + 32, true));
+        if (pOffset <= bunOffset && bunOffset + bunSize <= pOffset + pFilesz) segmentEnd = pOffset + pFilesz;
+      }
+      expect(segmentEnd).toBeGreaterThanOrEqual(bunOffset + bunSize);
+
+      const run = async () => {
+        await using proc = Bun.spawn({
+          cmd: [exe],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      };
+
+      // Cut inside the payload: the length header page stays, the trailer is gone.
+      const cutInside = bunOffset + 4096;
+      truncateSync(exe, cutInside);
+      {
+        const [stdout, stderr, exitCode] = await run();
+        expect(stderr).toContain(
+          `This executable is truncated. The file is ${cutInside} bytes, but it needs at least ${segmentEnd} bytes.`,
+        );
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+      }
+
+      // Cut before the payload: not even the length header is left.
+      truncateSync(exe, bunOffset);
+      {
+        const [stdout, stderr, exitCode] = await run();
+        expect(stderr).toContain(
+          `This executable is truncated. The file is ${bunOffset} bytes, but it needs at least ${segmentEnd} bytes.`,
+        );
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+      }
     }, 60_000);
 
     // Regression guard for #31023. On NixOS, `autoPatchelfHook` runs

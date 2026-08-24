@@ -462,9 +462,14 @@ mod elf {
         // Format at target: [u64 payload_len][payload bytes]
         // Synthesize a `*mut u8` directly so the provenance carries write
         // permission for the in-place bytecode mutation done by JSC.
-        let load_bias =
-            bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
+        let module = bun_sys::elf::find_loaded_module(vaddr_ptr as usize);
+        let load_bias = module.as_ref().map_or(0, |m| m.base_address);
         let target = (vaddr as usize).wrapping_add(load_bias) as *mut u8;
+        // `write_bun_section` appends the payload to the PT_LOAD that holds
+        // BUN_COMPILED, so the segment found above is the one backing `target`.
+        if let Some(module) = &module {
+            exit_if_truncated(&module.segment);
+        }
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
@@ -474,6 +479,52 @@ mod elf {
         // SAFETY: payload_len bytes follow the 8-byte header at `target`.
         Some((unsafe { target.add(8) }, payload_len as usize))
     }
+
+    /// `execve` maps the grown RW `PT_LOAD` from its program header alone; the
+    /// kernel never checks that the file really has `p_offset + p_filesz`
+    /// bytes. A truncated copy (a partial download, an interrupted `cp`) thus
+    /// starts fine and dies with SIGBUS on the first payload page past EOF,
+    /// which users then report as a crash in bun. Refuse it up front instead.
+    ///
+    /// The size comes from an `O_PATH` open of `/proc/self/exe`: that needs
+    /// no read permission on the binary (execute-only installs work), and
+    /// qemu-user redirects the open to the emulated binary, while a plain
+    /// `stat` of the magic link reports the emulator's own size there.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn exit_if_truncated(segment: &bun_sys::elf::LoadedSegment) {
+        use bun_sys::FdExt as _;
+
+        let Some(needed) = segment.offset.checked_add(segment.filesz) else {
+            return;
+        };
+        let Ok(fd) = bun_sys::open(
+            bun_core::zstr!("/proc/self/exe"),
+            bun_sys::O::PATH | bun_sys::O::CLOEXEC,
+            0,
+        ) else {
+            return;
+        };
+        let stat = bun_sys::fstat(fd);
+        fd.close();
+        let Ok(stat) = stat else {
+            return;
+        };
+        let Ok(file_size) = u64::try_from(stat.st_size) else {
+            return;
+        };
+        if file_size >= needed {
+            return;
+        }
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> This executable is truncated. The file is {} bytes, but it needs at least {} bytes.\n<d>The embedded application was cut off, most likely by an incomplete download or copy. Download or build it again.<r>",
+            file_size,
+            needed,
+        );
+        bun_core::Global::exit(1);
+    }
+
+    #[cfg(target_os = "freebsd")]
+    fn exit_if_truncated(_segment: &bun_sys::elf::LoadedSegment) {}
 }
 
 pub struct File {

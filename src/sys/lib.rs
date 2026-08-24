@@ -8418,6 +8418,23 @@ pub mod elf {
     pub const PT_LOAD: u32 = 1;
     pub const PT_INTERP: u32 = 3;
 
+    /// The `PT_LOAD` program header that spans the address given to
+    /// [`find_loaded_module`], as the kernel mapped it.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    #[derive(Clone, Copy)]
+    pub struct LoadedSegment {
+        /// `p_vaddr`: the link-time address. Add `base_address` for the runtime one.
+        pub vaddr: u64,
+        /// `p_offset`: file offset of the first mapped byte.
+        pub offset: u64,
+        /// `p_filesz`: how many of the mapped bytes the file backs. The kernel
+        /// takes this from the header alone, so a file shorter than
+        /// `offset + filesz` still maps, and touching a page past EOF is SIGBUS.
+        pub filesz: u64,
+        /// `p_memsz`: the mapping's full size (`memsz - filesz` is zero-fill).
+        pub memsz: u64,
+    }
+
     /// Result of [`find_loaded_module`]: the loaded ELF object whose `PT_LOAD`
     /// segment spans a given address.
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -8428,6 +8445,8 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
+        /// The object's `PT_LOAD` that contains the looked-up address.
+        pub segment: LoadedSegment,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8488,6 +8507,12 @@ pub mod elf {
                     context.result = Some(LoadedModule {
                         base_address: info.dlpi_addr as usize,
                         name,
+                        segment: LoadedSegment {
+                            vaddr: phdr.p_vaddr,
+                            offset: phdr.p_offset,
+                            filesz: phdr.p_filesz,
+                            memsz: phdr.p_memsz,
+                        },
                     });
                     return 1; // error.Found → stop iteration
                 }

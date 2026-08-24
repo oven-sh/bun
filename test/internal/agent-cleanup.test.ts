@@ -46,7 +46,11 @@ const stubs: Record<string, string> = {
 async function runCleanup(env: Record<string, string>) {
   using dir = tempDir("agent-cleanup", {
     bin: stubs,
-    // Files in the agent home, so that the builds/* and cache/* globs expand.
+    // The agent home as `agent.mjs install` leaves it: the service files next
+    // to builds/ and cache/, with content so that the globs expand.
+    "home/agent.mjs": "",
+    "home/utils.mjs": "",
+    "home/agent-cleanup.sh": "",
     "home/builds/job-1/README": "",
     "home/cache/git/bun.git": "",
   });
@@ -82,6 +86,15 @@ async function runCleanup(env: Record<string, string>) {
   };
 }
 
+/**
+ * The rm arguments under a directory outside the fixture. /bin/sh expands the
+ * script's globs against the real host: an entry per file when the directory
+ * has any, the glob itself when it has none. Both count as a target.
+ */
+function under(args: string[], dir: string): string[] {
+  return args.filter(arg => arg.startsWith(dir));
+}
+
 describe.concurrent.skipIf(isWindows)("agent-cleanup.sh", () => {
   test("waits for the running job to finish before it wipes and reboots", async () => {
     const { stdout, stderr, exitCode, calls, tools, home } = await runCleanup({ RUNNING_POLLS: "3" });
@@ -112,12 +125,20 @@ describe.concurrent.skipIf(isWindows)("agent-cleanup.sh", () => {
     expect(rm.slice(0, 2)).toEqual(["rm", "-rf"]);
     expect(rm).toContain(join(home, "builds", "job-1"));
     expect(rm).toContain(join(home, "cache", "git"));
-    expect(rm).toContain("/usr/local/var/buildkite-agent/builds/*");
-    expect(rm).toContain("/usr/local/etc/buildkite-agent/cache/*");
-    // /tmp/* and /var/tmp/* expand to whatever the host has there (the stub only logs it).
-    expect(rm.filter(arg => arg.startsWith("/tmp/"))).not.toBeEmpty();
-    expect(rm.filter(arg => arg.startsWith("/var/tmp/"))).not.toBeEmpty();
+    for (const dir of [
+      "/usr/local/var/buildkite-agent/builds/",
+      "/usr/local/var/buildkite-agent/cache/",
+      "/usr/local/etc/buildkite-agent/builds/",
+      "/usr/local/etc/buildkite-agent/cache/",
+      "/tmp/",
+      "/var/tmp/",
+    ]) {
+      expect(under(rm, dir)).not.toBeEmpty();
+    }
+    // The service files next to builds/ and cache/ stay. The agent starts from them after the reboot.
     expect(rm).not.toContain(join(home, "agent.mjs"));
+    expect(rm).not.toContain(join(home, "utils.mjs"));
+    expect(rm).not.toContain(join(home, "agent-cleanup.sh"));
     expect(calls).toContain(
       "chown -R administrator:admin /usr/local/var/buildkite-agent /usr/local/etc/buildkite-agent",
     );
@@ -151,8 +172,8 @@ describe.concurrent.skipIf(isWindows)("agent-cleanup.sh", () => {
     const { calls } = await runCleanup({ UNAME_M: "arm64" });
 
     const rm = calls.find(call => call.startsWith("rm "))!.split(" ");
-    expect(rm).toContain("/opt/homebrew/var/buildkite-agent/builds/*");
-    expect(rm).not.toContain("/usr/local/var/buildkite-agent/builds/*");
+    expect(under(rm, "/opt/homebrew/var/buildkite-agent/builds/")).not.toBeEmpty();
+    expect(under(rm, "/usr/local/")).toBeEmpty();
     expect(calls).toContain(
       "chown -R administrator:admin /opt/homebrew/var/buildkite-agent /opt/homebrew/etc/buildkite-agent",
     );

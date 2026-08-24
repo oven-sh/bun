@@ -97,6 +97,14 @@ describe("fake node cli", () => {
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/13984
+  test("a bare -- after the script is kept in process.argv", () => {
+    using temp = tempDir("fake-node", {
+      "index.js": "console.log(JSON.stringify(process.argv.slice(2)))",
+    });
+    expect(fakeNodeRun(temp, ["index.js", "--", "a"]).stdout).toBe(JSON.stringify(["--", "a"]));
+  });
+
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a
   // non-TTY stdin (pipe) prints "Missing script". fakeNodeRun's default
   // stdin is platform-dependent (Windows may inherit a console), so pin

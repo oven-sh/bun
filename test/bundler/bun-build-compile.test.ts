@@ -800,15 +800,11 @@ if (process.platform === "android") {
   });
 }
 
-// A standalone compiled binary bypasses `Arguments::parse` (no `--cwd`/global
-// flags, no baked exec-argv), so `absolute_working_dir` stays unset and the
-// FIRST `getcwd` of the whole startup is the one inside `Transpiler::init`.
-// When the cwd has been deleted that `getcwd` fails with ENOENT; the bug was
-// that the per-VM init hook swallowed the error and left `vm.transpiler`
-// zeroed, so the next read (`configure_defines` → `run_env_loader`) hit a null
-// deref and the binary crashed (the segfault users saw launching a compiled
-// CLI from a directory that had been removed). It must instead exit cleanly
-// with the ENOENT message.
+// A compiled executable launched from a directory that has been removed
+// starts like any other program (and like `node app.js`): the executable's
+// directory stands in for the unreadable one, and `process.cwd()` reports the
+// error if the program asks. It once segfaulted here, and later refused to
+// start.
 //
 // POSIX-only: a process can keep a deleted directory as its cwd until the last
 // fd to it closes, whereas Windows refuses to remove a directory that is any
@@ -817,10 +813,10 @@ if (process.platform === "android") {
 // shell wrapper `cd`s in, `rmdir`s, then execs the binary (how a user hits it).
 describe("compiled binary in a deleted cwd", () => {
   test.if(isPosix)(
-    "exits cleanly instead of crashing",
+    "starts, and process.cwd() reports the error",
     async () => {
       using dir = tempDir("build-compile-deleted-cwd", {
-        "app.js": `console.log("should-not-run");`,
+        "app.js": `let code; try { process.cwd(); } catch (e) { code = e.code; } console.log(JSON.stringify({ ran: true, code }));`,
       });
       const outfile = join(String(dir), "app");
 
@@ -848,9 +844,9 @@ describe("compiled binary in a deleted cwd", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toBe("");
-      expect(stderr).toContain("The current working directory was deleted");
-      expect(exitCode).toBe(1);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ ran: true, code: "ENOENT" });
+      expect(exitCode).toBe(0);
     },
     60_000,
   );

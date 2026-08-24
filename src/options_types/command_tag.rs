@@ -91,12 +91,11 @@ impl Tag {
     }
 
     /// Whether this command starts when the working directory cannot be
-    /// read (deleted while a shell sat in it): running code does, like Node,
-    /// with the executable's directory standing in and `process.cwd()`
-    /// reporting the error; commands that act on a project refuse to guess
-    /// which one, and so does a standalone executable without embedded
-    /// arguments. Applied at each command's first read of the directory,
-    /// which comes after any `--cwd`/`--global` it accepts has moved it.
+    /// read (removed, or an ancestor is not searchable): running code does —
+    /// like Node and like any native executable — with the executable's
+    /// directory standing in and `process.cwd()` reporting the error;
+    /// commands that act on a project refuse to guess which one. Standalone
+    /// executables always start.
     pub fn starts_without_cwd(self) -> bool {
         matches!(
             self,

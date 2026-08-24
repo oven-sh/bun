@@ -1010,8 +1010,7 @@ impl UpgradeCommand {
                     // The spawn path may report a missing file as either
                     // `FileNotFound` or `ENOENT`; accept both.
                     if err_name == b"FileNotFound" || err_name == b"ENOENT" {
-                        // We already chdir'd to tmpdir, so the relative `exe` path works.
-                        if sys::exists(exe) {
+                        if sys::exists_at(&save_dir, &bun_core::ZBox::from_bytes(exe)) {
                             // On systems like NixOS, the FileNotFound is actually the system-wide linker,
                             // as they do not have one (most systems have it at a known path). This is how
                             // ChildProcess returns FileNotFound despite the actual

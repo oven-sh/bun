@@ -1388,7 +1388,7 @@ pub mod command {
             // If no compile_exec_argv, skip executable name if present
             offset_for_passthrough = 1.min(bun::argv().len());
 
-            bun_core::cwd::init()?;
+            bun_core::cwd::init_or_exe_dir();
             break 'brk write_context_no_parse(log);
         };
 

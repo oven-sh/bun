@@ -549,10 +549,6 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = test.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    if self.ctx.test_options.retry != 0 {
-                        self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
-                        return Ok(());
-                    }
                     self.ctx.test_options.repeat_count =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }

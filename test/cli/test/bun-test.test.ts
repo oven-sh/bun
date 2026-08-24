@@ -1814,19 +1814,19 @@ describe("bun test", () => {
   describe.concurrent("process.argv", () => {
     // Each file reports what it sees next to its own path, so the assertions
     // hold whichever file runs first. The same array is reachable as process.argv,
-    // Bun.argv, and the node:process named and namespace exports.
+    // Bun.argv, and the exports of the node:process and bun modules.
     const argvProbe = /* ts */ `
       import { test } from "bun:test";
       import { argv } from "node:process";
       import * as nodeProcess from "process";
+      import { argv as bunModuleArgv } from "bun";
       test("argv", () => {
+        const copies = [Bun.argv, argv, nodeProcess.argv, bunModuleArgv];
         console.log("ARGV " + JSON.stringify({
           file: import.meta.path,
           argv1: process.argv[1],
-          bunArgv1: Bun.argv[1],
-          namedArgv1: argv[1],
-          namespaceArgv1: nodeProcess.argv[1],
-          same: Bun.argv === process.argv && argv === process.argv && nodeProcess.argv === process.argv,
+          copies1: copies.map(copy => copy[1]),
+          same: copies.every(copy => copy === process.argv),
         }));
       });
     `;
@@ -1839,7 +1839,7 @@ describe("bun test", () => {
     }
 
     function expectedProbe(file: string) {
-      return { file, argv1: file, bunArgv1: file, namedArgv1: file, namespaceArgv1: file, same: true };
+      return { file, argv1: file, copies1: [file, file, file, file], same: true };
     }
 
     test("argv[1] is the current file, not the first file that read process.argv", async () => {

@@ -1960,11 +1960,14 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
 });
 
 // The swap has to reach every copy of process.env that already exists: Bun.env and
-// the `env` export of node:process, both of which are bound on first read.
+// the `env` export of node:process, both of which are bound on first read. An
+// `import { env } from "bun"` is not one: the transpiler turns it into a
+// destructure of globalThis.Bun, a snapshot like `const { env } = Bun`.
 test("Bun.env and the node:process env export follow the SHARE_ENV swap", async () => {
   using dir = tempDir("share-env-copies", {
     "main.mjs": /* js */ `
       import { env } from "node:process";
+      import * as bunModule from "bun";
       import { Worker, SHARE_ENV } from "node:worker_threads";
       const before = { named: env, bun: Bun.env };
       const worker = new Worker("process.env.FROM_WORKER = 'yes'", { eval: true, env: SHARE_ENV });
@@ -1973,7 +1976,8 @@ test("Bun.env and the node:process env export follow the SHARE_ENV swap", async 
         swapped: process.env !== before.named,
         named: env === process.env,
         bun: Bun.env === process.env,
-        fromWorker: env.FROM_WORKER,
+        bunModule: bunModule.env === process.env,
+        fromWorker: [env.FROM_WORKER, Bun.env.FROM_WORKER],
       }));
     `,
   });
@@ -1985,7 +1989,13 @@ test("Bun.env and the node:process env export follow the SHARE_ENV swap", async 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ swapped: true, named: true, bun: true, fromWorker: "yes" });
+  expect(JSON.parse(stdout)).toEqual({
+    swapped: true,
+    named: true,
+    bun: true,
+    bunModule: true,
+    fromWorker: ["yes", "yes"],
+  });
   expect(exitCode).toBe(0);
 });
 

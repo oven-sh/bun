@@ -3152,7 +3152,7 @@ static void repointOwnDataProperty(VM& vm, JSObject* object, const Identifier& n
     object->putDirect(vm, name, value, attributes);
 }
 
-// process and Bun reify the property into an own value on first read; node:process binds it on first import.
+// process and Bun reify the property into an own value on first read; the node:process and bun modules bind it on first import.
 void repointProcessProperty(Zig::GlobalObject* globalObject, const Identifier& name, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3165,14 +3165,16 @@ void repointProcessProperty(Zig::GlobalObject* globalObject, const Identifier& n
         repointOwnDataProperty(vm, globalObject->bunObject(), name, value);
     }
 
-    auto* entry = globalObject->moduleLoader()->registryEntry(Identifier::fromString(vm, "node:process"_s));
-    if (!entry || !isModuleEvaluated(entry->record())) {
-        return;
+    for (auto moduleKey : { "node:process"_s, "bun"_s }) {
+        auto* entry = globalObject->moduleLoader()->registryEntry(Identifier::fromString(vm, moduleKey));
+        if (!entry || !isModuleEvaluated(entry->record())) {
+            continue;
+        }
+        auto* moduleNamespace = entry->record()->getModuleNamespace(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        moduleNamespace->overrideExportValue(globalObject, name, value);
+        RETURN_IF_EXCEPTION(scope, void());
     }
-    auto* moduleNamespace = entry->record()->getModuleNamespace(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    scope.release();
-    moduleNamespace->overrideExportValue(globalObject, name, value);
 }
 
 // argv[1] is the VM's entry point, which the test runner changes for every file.

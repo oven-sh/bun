@@ -6738,7 +6738,7 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     const MSG_1: &str = "This error originated either by throwing inside of an async function \
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";
-    if reason_str.is_string() {
+    if reason_str.is_string_literal() {
         let view = reason_str.as_string().view(global_object)?;
         return Ok(global_object
             .err(

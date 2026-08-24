@@ -1289,6 +1289,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
+    // Only `StandaloneModuleGraph::to_bytes` reads `load_order`.
+    if is_compile {
+        for (chunk_index, &position) in chunk_load_order(c, chunks).iter().enumerate() {
+            output_files.output_files[chunk_index].load_order = position;
+        }
+    }
+
     if is_standalone {
         // For standalone mode, filter to HTML output files plus the .map files
         // of the inlined chunks (linked/external sourcemaps).
@@ -1310,6 +1317,69 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     Ok(output_files.take())
+}
+
+/// Position of each chunk in the order a `--compile` executable is expected to
+/// load it: the entry point's static cross-chunk imports in evaluation order,
+/// then the closures of its dynamic imports, breadth-first. The standalone
+/// module graph lays modules out by this so booting faults in one run of pages
+/// rather than one page per chunk scattered across the payload.
+fn chunk_load_order(c: &LinkerContext, chunks: &[Chunk]) -> Vec<u32> {
+    let entry_point_kinds = c.graph.files.items_entry_point_kind();
+    let mut visited = AutoBitSet::init_empty(chunks.len()).expect("oom");
+    let mut order: Vec<u32> = Vec::with_capacity(chunks.len());
+    let mut dynamic_frontier: std::collections::VecDeque<u32> = chunks
+        .iter()
+        .enumerate()
+        .filter(|(_, chunk)| {
+            chunk.entry_point.is_entry_point()
+                && entry_point_kinds[chunk.entry_point.source_index() as usize].output_kind()
+                    == options::OutputKind::EntryPoint
+        })
+        .map(|(i, _)| i as u32)
+        .collect();
+
+    let mut stack: Vec<(u32, usize)> = Vec::new();
+    while let Some(root) = dynamic_frontier.pop_front() {
+        if visited.is_set(root as usize) {
+            continue;
+        }
+        visited.set(root as usize);
+        stack.push((root, 0));
+        // Post-order over static imports: a module's dependencies evaluate before it.
+        while let Some(&(chunk_index, next_import)) = stack.last() {
+            match chunks[chunk_index as usize]
+                .cross_chunk_imports
+                .get(next_import)
+            {
+                Some(import) => {
+                    stack.last_mut().unwrap().1 += 1;
+                    let dep = import.chunk_index;
+                    if import.import_kind == bun_ast::ImportKind::Dynamic {
+                        dynamic_frontier.push_back(dep);
+                    } else if !visited.is_set(dep as usize) {
+                        visited.set(dep as usize);
+                        stack.push((dep, 0));
+                    }
+                }
+                None => {
+                    stack.pop();
+                    order.push(chunk_index);
+                }
+            }
+        }
+    }
+    for chunk_index in 0..chunks.len() as u32 {
+        if !visited.is_set(chunk_index as usize) {
+            order.push(chunk_index);
+        }
+    }
+
+    let mut position = vec![0u32; chunks.len()];
+    for (i, &chunk_index) in order.iter().enumerate() {
+        position[chunk_index as usize] = i as u32;
+    }
+    position
 }
 
 use crate::EntryPoint;

@@ -1999,7 +1999,7 @@ fn import_windows_socket_payload(
     else {
         return Ok(None);
     };
-    let hex_view = info_value.as_string().view(global)?;
+    let hex_view = info_value.to_js_string_view(global)?;
     let hex = hex_view.to_utf8();
     let expected = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
     let mut info = vec![0u8; expected];

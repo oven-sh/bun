@@ -249,7 +249,7 @@ impl JSValkeyClient {
         let Some(callbacks) = self.get_callbacks(global_object, channel_name)? else {
             debug!(
                 "No callbacks found for channel {}",
-                channel_name.as_string().view(global_object)?
+                channel_name.to_js_string_view(global_object)?
             );
             return Ok(());
         };

@@ -335,7 +335,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let atype = address_type.to_int32();
 
         let host_owned: Vec<u8> = if address.is_string() {
-            let mut v = address.as_string().view(global)?.to_owned_slice();
+            let mut v = address.to_js_string_view(global)?.to_owned_slice();
             v.push(0);
             v
         } else {
@@ -423,7 +423,10 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let atype: i32;
         if address_type.is_string() {
             is_udp = true;
-            atype = if address_type.as_string().view(global)?.eql_comptime(b"udp6") {
+            atype = if address_type
+                .to_js_string_view(global)?
+                .eql_comptime(b"udp6")
+            {
                 6
             } else {
                 4
@@ -450,7 +453,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             if !address.is_string() {
                 return Err(global.throw_invalid_argument_type_value("address", "string", address));
             }
-            let path_view = address.as_string().view(global)?;
+            let path_view = address.to_js_string_view(global)?;
             let path_slice = path_view.to_utf8();
             let path_bytes = path_slice.slice();
             // SAFETY: sockaddr_un is plain C data; all-zero is a valid value.
@@ -603,7 +606,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let fd: c_int;
         let bound_family: c_int;
         if address.is_string() {
-            let addr_view = address.as_string().view(global)?;
+            let addr_view = address.to_js_string_view(global)?;
             let addr_slice = addr_view.to_utf8();
             let addr_bytes = addr_slice.slice();
             let mut addr_z: [u8; 256] = [0; 256];

@@ -943,8 +943,9 @@ describe.concurrent("--css-target", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('Invalid --css-target "netscape4"');
+    expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
 });

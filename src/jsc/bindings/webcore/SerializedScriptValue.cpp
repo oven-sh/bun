@@ -2295,14 +2295,16 @@ private:
             return m_identifier;
         }
 
-        JSValue jsString(JSGlobalObject* lexicalGlobalObject)
+        JSValue jsString(CloneDeserializer& deserializer)
         {
-            if (!m_jsString)
-                m_jsString = JSC::jsString(lexicalGlobalObject->vm(), m_string);
+            if (!m_jsString) {
+                m_jsString = JSC::jsString(deserializer.m_lexicalGlobalObject->vm(), m_string);
+                // m_constantPool is not scanned by the GC.
+                deserializer.m_gcBuffer.appendWithCrashOnOverflow(m_jsString);
+            }
             return m_jsString;
         }
         const String& string() { return m_string; }
-        String takeString() { return WTF::move(m_string); }
 
     private:
         String m_string;
@@ -3641,7 +3643,7 @@ private:
             CachedStringRef cachedString;
             if (!readStringData(cachedString))
                 return JSValue();
-            return cachedString->jsString(m_lexicalGlobalObject);
+            return cachedString->jsString(*this);
         }
         case EmptyStringTag:
             return jsEmptyString(m_lexicalGlobalObject->vm());
@@ -3649,7 +3651,7 @@ private:
             CachedStringRef cachedString;
             if (!readStringData(cachedString))
                 return JSValue();
-            StringObject* obj = constructString(m_lexicalGlobalObject->vm(), m_globalObject, cachedString->jsString(m_lexicalGlobalObject));
+            StringObject* obj = constructString(m_lexicalGlobalObject->vm(), m_globalObject, cachedString->jsString(*this));
             addToObjectPool(obj);
             return obj;
         }
@@ -4305,6 +4307,23 @@ size_t SerializedScriptValue::computeMemoryCost() const
     }
 
     return cost;
+}
+
+static void markObjectWithPrivateName(VM& vm, JSObject& object, const Identifier& privateName)
+{
+    if (object.getDirect(vm, privateName))
+        return;
+    object.putDirect(vm, privateName, jsBoolean(true), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+}
+
+void markAsUncloneable(VM& vm, JSObject& object)
+{
+    markObjectWithPrivateName(vm, object, builtinNames(vm).isUncloneablePrivateName());
+}
+
+void markAsUntransferable(VM& vm, JSObject& object)
+{
+    markObjectWithPrivateName(vm, object, builtinNames(vm).isUntransferablePrivateName());
 }
 
 static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffers(VM& vm, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers)

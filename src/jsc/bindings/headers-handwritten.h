@@ -3,11 +3,12 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ArgList.h"
+#include <wtf/Noncopyable.h>
+#include <wtf/Vector.h>
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN
 #define HEADERS_HANDWRITTEN
-typedef uint16_t ZigErrorCode;
 typedef struct VirtualMachine VirtualMachine;
 // exists to make headers.h happy
 typedef struct CppWebSocket CppWebSocket;
@@ -68,8 +69,6 @@ typedef struct BunString {
     // If it's not a WTFStringImpl, this does nothing
     inline void deref();
 
-    static size_t utf8ByteLength(const WTF::String&);
-
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
     // We don't clone it if it was marked as static
@@ -96,54 +95,69 @@ typedef struct BunString {
 
 } BunString;
 
-typedef struct ZigErrorType {
-    ZigErrorCode code;
-    JSC::EncodedJSValue value;
-} ZigErrorType;
-typedef union ErrorableZigStringResult {
-    ZigString value;
-    ZigErrorType err;
-} ErrorableZigStringResult;
-typedef struct ErrorableZigString {
-    ErrorableZigStringResult result;
-    bool success;
-} ErrorableZigString;
 typedef union ErrorableStringResult {
     BunString value;
-    ZigErrorType err;
+    JSC::EncodedJSValue err;
 } ErrorableStringResult;
 typedef struct ErrorableString {
-    ErrorableStringResult result;
-    bool success;
+    ErrorableStringResult result {};
+    bool success { false };
 } ErrorableString;
+static_assert(sizeof(ErrorableString) == 32 && alignof(ErrorableString) == 8, "ErrorableString layout is mirrored in src/jsc/Errorable.rs");
+struct bun_ModuleInfoDeserialized;
+// Every BunString here is owned by whichever frame holds the struct (see
+// ~ErrorableResolvedSource / Rust `Drop`). Consumers that keep a string take it
+// with `transferToWTFString()`, which leaves the field empty.
 typedef struct ResolvedSource {
-    BunString specifier;
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
     JSC::EncodedJSValue cjsCustomExtension;
-    void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
-    bool needsDeref;
     bool already_bundled;
     // -- Bytecode cache fields --
+    // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
+    // borrowed from the standalone module graph / compile cache.
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
-    void* module_info;
+    bool bytecode_cache_owned;
+    // Owned; Zig::SourceProvider takes it (nulling the field).
+    bun_ModuleInfoDeserialized* module_info;
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
 } ResolvedSource;
+static_assert(sizeof(ResolvedSource) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
-    ZigErrorType err;
+    JSC::EncodedJSValue err;
 } ErrorableResolvedSourceResult;
-typedef struct ErrorableResolvedSource {
-    ErrorableResolvedSourceResult result;
-    bool success;
-} ErrorableResolvedSource;
+extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized* info);
+extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
+struct ErrorableResolvedSource {
+    WTF_MAKE_NONCOPYABLE(ErrorableResolvedSource);
+
+public:
+    ErrorableResolvedSourceResult result {};
+    bool success { false };
+
+    ErrorableResolvedSource() = default;
+    ~ErrorableResolvedSource()
+    {
+        if (!success)
+            return;
+        result.value.source_code.deref();
+        result.value.source_url.deref();
+        result.value.bytecode_origin_path.deref();
+        if (result.value.bytecode_cache_owned && result.value.bytecode_cache)
+            ResolvedSource__freeBytecode(result.value.bytecode_cache);
+        if (result.value.module_info)
+            zig__ModuleInfoDeserialized__deinit(result.value.module_info);
+    }
+};
+static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 
 typedef struct SystemError {
     int errno_;
@@ -311,8 +325,6 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
-BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
-BunString toString(const char* bytes, size_t length);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);
@@ -342,15 +354,13 @@ typedef struct {
 
 extern "C" const char* Bun__userAgent;
 
-extern "C" ZigErrorCode Zig_ErrorCodeParserError;
-
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
-    ZigString* sourceCode,
+    const ZigString* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
 
@@ -361,8 +371,8 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
 extern "C" JSC::JSPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    BunString* specifier,
-    BunString* referrer,
+    const BunString* specifier,
+    const BunString* referrer,
     const BunString* typeAttribute,
     ErrorableResolvedSource* result,
     bool allowPromise,
@@ -373,10 +383,8 @@ extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,
     const BunString* specifier,
-    const BunString* referrer,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
-    void* bunVM,
     const BunString* specifier,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
@@ -384,11 +392,6 @@ extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 // Used in process.version
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
-
-// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
-// Only keep the ones still exported from native code
-extern "C" const char* Bun__versions_uws;
-extern "C" const char* Bun__versions_usockets;
 
 extern "C" const char* Bun__version_sha;
 
@@ -473,6 +476,39 @@ ALWAYS_INLINE void BunString::deref()
         this->impl.wtf->deref();
     }
 }
+
+namespace Bun {
+
+// Frames built here for Bun__remapStackFramePositions, which may swap in a freshly allocated source_url; frames behind ZigStackTrace::frames_ptr are released by Rust instead.
+class OwnedZigStackFrames {
+    WTF_MAKE_NONCOPYABLE(OwnedZigStackFrames);
+
+public:
+    explicit OwnedZigStackFrames(size_t count)
+        : m_frames(count)
+    {
+    }
+
+    ~OwnedZigStackFrames()
+    {
+        for (ZigStackFrame& frame : m_frames) {
+            frame.function_name.deref();
+            frame.source_url.deref();
+        }
+    }
+
+    ZigStackFrame& operator[](size_t index) { return m_frames[index]; }
+
+    void remap(void* bunVM)
+    {
+        Bun__remapStackFramePositions(bunVM, m_frames.begin(), m_frames.size());
+    }
+
+private:
+    WTF::Vector<ZigStackFrame, 8> m_frames;
+};
+
+} // namespace Bun
 
 #define CLEAR_IF_EXCEPTION(scope__) (void)scope__.tryClearException();
 

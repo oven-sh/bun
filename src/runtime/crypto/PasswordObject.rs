@@ -2,8 +2,7 @@ use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
-use bun_core::ZigString;
-use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::ZigStringJsc as _;
@@ -23,16 +22,12 @@ use bun_sha_hmac::SHA512;
 
 pub(crate) struct PasswordObject;
 
-#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Copy, Clone)]
 #[repr(u8)]
 pub enum Algorithm {
-    #[strum(serialize = "argon2i")]
     Argon2i,
-    #[strum(serialize = "argon2d")]
     Argon2d,
-    #[strum(serialize = "argon2id")]
     Argon2id,
-    #[strum(serialize = "bcrypt")]
     Bcrypt,
 }
 
@@ -61,10 +56,9 @@ impl AlgorithmValue {
                     ));
                 }
 
-                let algorithm_string = algorithm_value.get_zig_string(global_object)?;
+                let algorithm_string = algorithm_value.to_js_string_view(global_object)?;
 
-                // ZigString may be UTF-16; compare each label via `eql_comptime`.
-                let Some(algo) = algorithm_from_zig_string(&algorithm_string) else {
+                let Some(algo) = algorithm_from_string(&algorithm_string) else {
                     return Err(global_object.throw_invalid_argument_type(
                         "hash",
                         "algorithm",
@@ -167,9 +161,9 @@ impl AlgorithmValue {
                 ));
             }
         } else if value.is_string() {
-            let algorithm_string = value.get_zig_string(global_object)?;
+            let algorithm_string = value.to_js_string_view(global_object)?;
 
-            let Some(algo) = algorithm_from_zig_string(&algorithm_string) else {
+            let Some(algo) = algorithm_from_string(&algorithm_string) else {
                 return Err(global_object.throw_invalid_argument_type(
                     "hash",
                     "algorithm",
@@ -197,9 +191,7 @@ impl AlgorithmValue {
     }
 }
 
-/// `bun_core::ZigString` may be UTF-16 so a direct byte-map lookup is
-/// unsound; compare each (4-entry) label via the encoding-aware `eql_comptime`.
-fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
+fn algorithm_from_string(s: &bun_core::String) -> Option<Algorithm> {
     if s.eql_comptime(b"argon2i") {
         Some(Algorithm::Argon2i)
     } else if s.eql_comptime(b"argon2d") {
@@ -719,7 +711,6 @@ fn js_password_object_hash_sync(
             "string or TypedArray",
         ));
     };
-    // defer string_or_buffer.deinit() — Drop at scope exit.
 
     if string_or_buffer.slice().is_empty() {
         return Err(
@@ -757,21 +748,16 @@ fn js_password_object_verify(
             return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
-        let algorithm_string = arguments[2].get_zig_string(global_object)?;
+        let algorithm_string = arguments[2].to_js_string_view(global_object)?;
 
-        algorithm = match algorithm_from_zig_string(&algorithm_string) {
-            Some(a) => Some(a),
-            None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "verify",
-                        "algorithm",
-                        UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    ));
-                }
-                return Err(JsError::Thrown);
-            }
+        let Some(a) = algorithm_from_string(&algorithm_string) else {
+            return Err(global_object.throw_invalid_argument_type(
+                "verify",
+                "algorithm",
+                UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
+            ));
         };
+        algorithm = Some(a);
     }
 
     // TODO: this most likely should error like `verifySync` instead of stringifying.
@@ -837,21 +823,16 @@ fn js_password_object_verify_sync(
             return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
-        let algorithm_string = arguments[2].get_zig_string(global_object)?;
+        let algorithm_string = arguments[2].to_js_string_view(global_object)?;
 
-        algorithm = match algorithm_from_zig_string(&algorithm_string) {
-            Some(a) => Some(a),
-            None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "verify",
-                        "algorithm",
-                        UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    ));
-                }
-                return Ok(JSValue::ZERO);
-            }
+        let Some(a) = algorithm_from_string(&algorithm_string) else {
+            return Err(global_object.throw_invalid_argument_type(
+                "verify",
+                "algorithm",
+                UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
+            ));
         };
+        algorithm = Some(a);
     }
 
     let Some(mut password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
@@ -874,8 +855,6 @@ fn js_password_object_verify_sync(
     if let StringOrBuffer::Buffer(buffer) = &mut password {
         buffer.buffer = ArrayBuffer::from_typed_array(global_object, buffer.buffer.value);
     }
-
-    // defer password.deinit() / hash_.deinit() — Drop at scope exit.
 
     if hash_.slice().is_empty() {
         return Ok(JSValue::FALSE);

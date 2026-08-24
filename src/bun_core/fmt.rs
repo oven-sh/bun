@@ -1178,19 +1178,32 @@ impl Display for URLFormatter<'_> {
 // HostFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Writes `host`, then `:port` unless `host` already carries one or `port` is the scheme default.
 pub struct HostFormatter<'a> {
+    /// `example.com`, `example.com:8080`, `[::1]` or `[::1]:8080`.
     pub host: &'a [u8],
     pub port: Option<u16>,
     pub is_https: bool,
 }
 
+impl HostFormatter<'_> {
+    fn host_has_port(&self) -> bool {
+        // The colons inside an IPv6 literal's brackets are not a port separator.
+        let after_brackets = match self.host.first() {
+            Some(b'[') => crate::strings::index_of_char_usize(self.host, b']')
+                .map_or(self.host, |end| &self.host[end + 1..]),
+            _ => self.host,
+        };
+        crate::strings::contains_char(after_brackets, b':')
+    }
+}
+
 impl Display for HostFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if crate::strings::index_of_char_usize(self.host, b':').is_some() {
-            return write_bytes(f, self.host);
-        }
-
         write_bytes(f, self.host)?;
+        if self.host_has_port() {
+            return Ok(());
+        }
 
         let is_port_optional = self.port.is_none()
             || (self.is_https && self.port == Some(443))
@@ -3354,29 +3367,12 @@ impl OutOfRangeValue for i64 {
         "i64"
     }
 }
-impl OutOfRangeValue for i32 {
-    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", self)
-    }
-    fn type_name() -> &'static str {
-        "i32"
-    }
-}
 impl<'a> OutOfRangeValue for &'a [u8] {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", bstr::BStr::new(self))
     }
     fn type_name() -> &'static str {
         "[]const u8"
-    }
-}
-// MOVE_DOWN: bun_core::String → bun_alloc (T0). Re-import from there.
-impl OutOfRangeValue for bun_alloc::String {
-    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", self)
-    }
-    fn type_name() -> &'static str {
-        "bun.String"
     }
 }
 

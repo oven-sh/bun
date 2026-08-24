@@ -51,8 +51,7 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
 
 /// Integer types usable as the codepoint result of [`decode_wtf8_rune_t`].
 /// Sealed to two instantiations (`i32` aka `CodePoint`, and `u32`);
-/// every caller in-tree is one of these. `ZERO_VALUE` is the per-type sentinel
-/// (`-1` for i32, `0` for u32).
+/// every caller in-tree is one of these.
 ///
 /// Bounds widened from `From<u8>` to include the bit-ops needed by
 /// `decode_wtf8_rune_t_multibyte` plus a `from_u32` constructor (folds in the
@@ -66,8 +65,6 @@ pub trait CodePointZero:
     + core::ops::BitOr<Output = Self>
     + core::ops::BitAnd<Output = Self>
 {
-    const ZERO_VALUE: Self;
-    const MAX: Self;
     fn from_u32(v: u32) -> Self;
     /// Alias kept for `decode_wtf8_rune_t_multibyte` integer-literal compares.
     #[inline]
@@ -77,8 +74,6 @@ pub trait CodePointZero:
 }
 
 impl CodePointZero for CodePoint {
-    const ZERO_VALUE: Self = -1;
-    const MAX: Self = CodePoint::MAX;
     #[inline]
     fn from_u32(v: u32) -> Self {
         v as i32
@@ -86,8 +81,6 @@ impl CodePointZero for CodePoint {
 }
 
 impl CodePointZero for u32 {
-    const ZERO_VALUE: Self = 0;
-    const MAX: Self = u32::MAX;
     #[inline]
     fn from_u32(v: u32) -> Self {
         v
@@ -146,16 +139,11 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
 
         let count: usize = replacement.utf8_width() as usize;
         #[cfg(not(target_family = "wasm"))]
-        {
-            let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
-            list.reserve_exact((i + count + list.len() + extra).saturating_sub(list.len()));
-        }
+        let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
         #[cfg(target_family = "wasm")]
-        {
-            list.reserve_exact(
-                (i + count + list.len() + utf16_remaining.len() + 4).saturating_sub(list.len()),
-            );
-        }
+        let extra = utf16_remaining.len() + 4;
+        list.try_reserve_exact(i + count + extra)
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, to_copy);
 
         if SKIP_TRAILING_REPLACEMENT {
@@ -174,8 +162,8 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     }
 
     if !utf16_remaining.is_empty() {
-        let need = utf16_remaining.len() + list.len();
-        list.reserve_exact(need.saturating_sub(list.len()));
+        list.try_reserve_exact(utf16_remaining.len())
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, utf16_remaining);
     }
 

@@ -113,7 +113,8 @@ extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord
 static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JavaScript) == 1, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
 static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::WebAssembly) == 2, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
 static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JSON) == 3, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
-static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::HostDefined) == 4, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::Text) == 4, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::HostDefined) == 5, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
 
 extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName, uint8_t moduleRequestType)
 {
@@ -169,10 +170,10 @@ void Bun::releaseModuleInfoAfterLink(JSC::VM& vm, Zig::GlobalObject* globalObjec
         return;
     if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM()))
         return;
-    auto& resolvedSource = static_cast<Zig::SourceProvider*>(provider)->m_resolvedSource;
-    if (resolvedSource.module_info) {
-        zig__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(resolvedSource.module_info));
-        resolvedSource.module_info = nullptr;
+    auto* zigProvider = static_cast<Zig::SourceProvider*>(provider);
+    if (zigProvider->m_moduleInfo) {
+        zig__ModuleInfoDeserialized__deinit(zigProvider->m_moduleInfo);
+        zigProvider->m_moduleInfo = nullptr;
     }
 }
 
@@ -196,11 +197,11 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     // than once (require(esm) sync replay re-issues makeModule on an entry whose
     // modulePromise is still pending; --isolate reuses providers across globals),
     // and every call must produce the same record. See releaseModuleInfoAfterLink.
-    ASSERT_WITH_MESSAGE(provider->m_resolvedSource.module_info, "BunTranspiledModule provider without module_info: %s", moduleKey.utf8().data());
-    if (provider->m_resolvedSource.module_info == nullptr) [[unlikely]]
+    ASSERT_WITH_MESSAGE(provider->m_moduleInfo, "BunTranspiledModule provider without module_info: %s", moduleKey.utf8().data());
+    if (provider->m_moduleInfo == nullptr) [[unlikely]]
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise));
 
-    auto* moduleInfo = static_cast<bun_ModuleInfoDeserialized*>(provider->m_resolvedSource.module_info);
+    auto* moduleInfo = provider->m_moduleInfo;
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, moduleInfo);
     // On a pending exception (worker termination) hand back the still-pending
     // promise: JSModuleLoader::makeModule downcasts our return value before its

@@ -232,6 +232,28 @@ describe("bun:jsc", () => {
     expect(result3.stackTraces).toBeDefined();
     expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
   });
+
+  it("profile accepts a callable Proxy", async () => {
+    // functionRunProfiler used to uncheckedDowncast<JSFunction> the callback after only
+    // checking isCallable(), which aborts asserts builds when the callable is a ProxyObject.
+    const script = `
+      const { profile } = require("bun:jsc");
+      const result = profile(new Proxy(function () { return 1; }, {}));
+      if (!result || typeof result.functions !== "string" || !("stackTraces" in result)) {
+        throw new Error("unexpected profile() result keys: " + JSON.stringify(result && Object.keys(result)));
+      }
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("deserialize rejects an object reference index outside the deserialized object pool", async () => {

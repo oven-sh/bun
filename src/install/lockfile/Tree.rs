@@ -1,7 +1,7 @@
 use core::marker::ConstParamTy;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
+use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList, index_sort};
 use bun_core::Output;
 use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
@@ -449,6 +449,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
     pub(crate) install_root_dependencies: bool,
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
+    /// Workspace package ids that are hoisting barriers (self-contained node_modules).
+    pub(crate) self_contained: Vec<PackageID>,
 }
 
 pub struct BuilderEntry {
@@ -659,6 +661,18 @@ impl Tree {
 
         // reshaped for borrowck.
         let next_id = (builder.list.len() - 1) as Id;
+        // A self-contained workspace is a hoisting barrier: nothing below it may be
+        // placed above its own node_modules.
+        let hoist_root_id = if dependency_id != ROOT_DEP_ID
+            && builder.dependencies[dependency_id as usize]
+                .behavior
+                .is_workspace()
+            && builder.self_contained.contains(&parent_pkg_id)
+        {
+            next_id
+        } else {
+            hoist_root_id
+        };
 
         // Copy the `ParentRef` out (it's `Copy`) so the resulting `&Lockfile`
         // is borrowed from a local, not `&builder` — subsequent `&mut builder`
@@ -682,10 +696,10 @@ impl Tree {
 
         {
             let sorter = DepSorter { lockfile };
-            builder.sort_buf.sort_unstable_by(|a, b| {
-                if DepSorter::is_less_than(&sorter, *a, *b) {
+            index_sort::sort_indices_unstable(&mut builder.sort_buf, &mut |a, b| {
+                if DepSorter::is_less_than(&sorter, a, b) {
                     core::cmp::Ordering::Less
-                } else if DepSorter::is_less_than(&sorter, *b, *a) {
+                } else if DepSorter::is_less_than(&sorter, b, a) {
                     core::cmp::Ordering::Greater
                 } else {
                     core::cmp::Ordering::Equal
@@ -1073,6 +1087,7 @@ impl Tree {
 // FillItem / TreeFiller
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
 pub struct FillItem {
     pub(crate) tree_id: Id,
     pub(crate) dependency_id: DependencyID,

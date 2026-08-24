@@ -142,7 +142,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = BunString::static_("ipv4").to_js(global)?;
         }
         let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -169,7 +169,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = BunString::static_("ipv4").to_js(global)?;
         }
         let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -212,7 +212,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [network_js, prefix_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = BunString::static_("ipv4").to_js(global)?;
         }
         let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -260,7 +260,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = BunString::static_("ipv4").to_js(global)?;
         }
         let address_val;
         let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
@@ -374,7 +374,7 @@ impl BlockList {
         let array = JSValue::create_empty_array(global, rules.len())?;
 
         for (i, rule) in rules.iter().enumerate() {
-            let mut s = match rule {
+            let s = match rule {
                 Rule::Addr(a) => {
                     let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
                     BunString::create_format(format_args!(
@@ -403,7 +403,7 @@ impl BlockList {
                     ))
                 }
             };
-            array.put_index(global, i as u32, s.transfer_to_js(global)?)?;
+            array.put_index(global, i as u32, s.into_js(global)?)?;
         }
         Ok(array)
     }

@@ -1056,7 +1056,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
       const locked = js();
       locked.getReader();
-      expect(Bun.write(viaJs, locked)).rejects.toThrow(expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }));
+      await expect(Bun.write(viaJs, locked)).rejects.toThrow(expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }));
       expect(await Bun.file(viaJs).text()).toBe("one two");
     });
 

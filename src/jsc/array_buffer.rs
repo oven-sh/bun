@@ -1067,14 +1067,6 @@ pub(crate) unsafe fn make_array_buffer_with_bytes_no_copy(
     })
 }
 
-/// Wrap caller-provided bytes in a JS typed array of `array_type` without
-/// copying. JSC adopts `ptr..ptr+len` as the backing store of the returned
-/// object and calls `deallocator(ptr, deallocator_context)` on the JS thread
-/// when it is collected (never, if `deallocator` is `None`).
-///
-/// # Safety
-///
-/// Same contract as [`make_array_buffer_with_bytes_no_copy`].
 /// A `Uint8Array` over `map`'s bytes. JSC takes over the mapping and unmaps it
 /// when the buffer is collected.
 #[cfg(not(windows))]
@@ -1105,6 +1097,14 @@ pub fn uint8_array_from_mapped_file(
     }
 }
 
+/// Wrap caller-provided bytes in a JS typed array of `array_type` without
+/// copying. JSC adopts `ptr..ptr+len` as the backing store of the returned
+/// object and calls `deallocator(ptr, deallocator_context)` on the JS thread
+/// when it is collected (never, if `deallocator` is `None`).
+///
+/// # Safety
+///
+/// Same contract as [`make_array_buffer_with_bytes_no_copy`].
 pub unsafe fn make_typed_array_with_bytes_no_copy(
     global: &JSGlobalObject,
     array_type: TypedArrayType,

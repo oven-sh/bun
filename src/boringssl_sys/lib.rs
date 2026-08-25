@@ -50,9 +50,17 @@ pub fn err_error_string_n(packed_error: u32, buf: &mut [u8]) -> &[u8] {
     &buf[..end]
 }
 
+/// `ERR_GET_LIB` — the library component of a packed error code.
+pub const fn err_get_lib(packed_error: u32) -> u32 {
+    (packed_error >> 24) & 0xff
+}
+
+/// `ERR_LIB_SYS` (`openssl/err.h`).
+pub const ERR_LIB_SYS: u32 = 2;
+
 fn static_cstr(ptr: *const core::ffi::c_char) -> Option<&'static core::ffi::CStr> {
-    // SAFETY: BoringSSL's `ERR_*_error_string` return NUL-terminated entries
-    // from its static string tables (or null).
+    // SAFETY: null, or a NUL-terminated string literal from BoringSSL's error
+    // tables (callers exclude the one `strerror` case).
     (!ptr.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(ptr) })
 }
 
@@ -67,6 +75,20 @@ pub fn err_func_error_string(packed_error: u32) -> Option<&'static core::ffi::CS
 }
 
 /// `ERR_reason_error_string` — the reason string for `packed_error`, if known.
-pub fn err_reason_error_string(packed_error: u32) -> Option<&'static core::ffi::CStr> {
-    static_cstr(boringssl::ERR_reason_error_string(packed_error))
+/// Owned for `ERR_LIB_SYS`, whose reason is `strerror()` output.
+pub fn err_reason_error_string(
+    packed_error: u32,
+) -> Option<std::borrow::Cow<'static, core::ffi::CStr>> {
+    let ptr = boringssl::ERR_reason_error_string(packed_error);
+    if ptr.is_null() {
+        return None;
+    }
+    if err_get_lib(packed_error) == ERR_LIB_SYS {
+        // SAFETY: `strerror` returned a NUL-terminated string that stays valid at
+        // least until the next `strerror` call; it is copied before returning.
+        return Some(std::borrow::Cow::Owned(
+            unsafe { core::ffi::CStr::from_ptr(ptr) }.to_owned(),
+        ));
+    }
+    static_cstr(ptr).map(std::borrow::Cow::Borrowed)
 }

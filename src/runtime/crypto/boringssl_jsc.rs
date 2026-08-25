@@ -41,7 +41,7 @@ fn lib_short_name(lib: u32) -> &'static str {
     }
 }
 
-fn non_empty(s: Option<&'static core::ffi::CStr>) -> Option<&'static [u8]> {
+fn non_empty(s: Option<&core::ffi::CStr>) -> Option<&[u8]> {
     s.map(core::ffi::CStr::to_bytes).filter(|b| !b.is_empty())
 }
 
@@ -71,10 +71,11 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     if let Some(function) = non_empty(boring::err_func_error_string(err_code)) {
         err.put(global, b"function", EncodedSlice::latin1(function).to_js(global));
     }
-    if let Some(reason) = non_empty(boring::err_reason_error_string(err_code)) {
+    let reason = boring::err_reason_error_string(err_code);
+    if let Some(reason) = non_empty(reason.as_deref()) {
         err.put(global, b"reason", EncodedSlice::latin1(reason).to_js(global));
 
-        let lib = lib_short_name((err_code >> 24) & 0xff);
+        let lib = lib_short_name(boring::err_get_lib(err_code));
         // Don't generate codes like "ERR_OSSL_SSL_".
         let prefix = if lib == "SSL_" { "" } else { "OSSL_" };
         let mut code = Vec::with_capacity(4 + prefix.len() + lib.len() + reason.len());

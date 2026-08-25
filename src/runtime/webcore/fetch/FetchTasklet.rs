@@ -162,6 +162,7 @@ pub struct FetchTasklet {
     pub(crate) upgraded_connection: bool,
     // Custom Hostname
     pub(crate) hostname: Option<Box<[u8]>>,
+    pub(crate) unix_socket_path: Utf8Bytes<'static>,
     pub(crate) is_waiting_body: bool,
     /// Set by `on_start_buffering_callback` (JS thread) and read by
     /// `callback()` (HTTP thread, under `mutex`): the body is being
@@ -479,6 +480,7 @@ impl FetchTasklet {
         if let Some(_hostname) = self.hostname.take() {
             // dropped by Box
         }
+        self.unix_socket_path = Utf8Bytes::EMPTY;
 
         if let Some(certificate) = self.result.certificate_info.take() {
             drop(certificate);
@@ -2041,6 +2043,7 @@ impl FetchTasklet {
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             hostname: fetch_options.hostname,
+            unix_socket_path: fetch_options.unix_socket_path,
             is_waiting_body: false,
             is_buffering_body: AtomicBool::new(false),
             is_waiting_abort: false,
@@ -2103,21 +2106,22 @@ impl FetchTasklet {
 
         // This task gets queued on the HTTP thread.
         // `AsyncHTTP::init` takes several `&'static [u8]` borrows
-        // (headers_buf, request_body, hostname) that point into
-        // FetchTasklet-owned storage. The tasklet is heap-pinned via
+        // (headers_buf, request_body, hostname, unix_socket_path) that point
+        // into FetchTasklet-owned storage. The tasklet is heap-pinned via
         // `heap::alloc`, so erase the borrow lifetimes through raw pointers.
         // SAFETY: `fetch_tasklet_ptr` is a stable heap allocation that outlives
         // the AsyncHTTP (dropped together in `deinit`); the slices below borrow
-        // its `request_headers.buf`, `request_body`, and `hostname` fields
-        // which are not reallocated for the lifetime of the request.
+        // its `request_headers.buf`, `request_body`, `hostname`, and
+        // `unix_socket_path` fields which are not reallocated for the lifetime
+        // of the request.
         // SAFETY (`Interned::assume` — Population B, holder-backed):
         // `fetch_tasklet_ptr` is a `heap::alloc`'d `FetchTasklet` whose
-        // `request_headers.buf` / `request_body` / `hostname` fields are not
-        // reallocated for the request's lifetime, and the tasklet is freed in
-        // `deinit` only after the owned `AsyncHTTP` is dropped. NOT
-        // process-lifetime — these should become `RawSlice<u8>` once
-        // `AsyncHTTP::init` accepts holder-lifetime slices; `assume` names the
-        // owner so the widen is grep-able until then.
+        // `request_headers.buf` / `request_body` / `hostname` /
+        // `unix_socket_path` fields are not reallocated for the request's
+        // lifetime, and the tasklet is freed in `deinit` only after the owned
+        // `AsyncHTTP` is dropped. NOT process-lifetime — these should become
+        // `RawSlice<u8>` once `AsyncHTTP::init` accepts holder-lifetime slices;
+        // `assume` names the owner so the widen is grep-able until then.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
                 .as_bytes();
@@ -2129,6 +2133,9 @@ impl FetchTasklet {
             .as_deref()
             // SAFETY: see block note above — same `FetchTasklet` owner.
             .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
+        // SAFETY: see block note above — same `FetchTasklet` owner.
+        let unix_socket_path: &'static [u8] =
+            unsafe { bun_ptr::Interned::assume(fetch_tasklet.unix_socket_path.slice()) }.as_bytes();
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
         let header_entries = bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
@@ -2157,7 +2164,7 @@ impl FetchTasklet {
                 proxy_headers: fetch_options.proxy_headers,
                 hostname,
                 signals: Some(fetch_tasklet.signals),
-                unix_socket_path: Some(fetch_options.unix_socket_path),
+                unix_socket_path: Some(unix_socket_path),
                 disable_timeout: Some(fetch_options.disable_timeout),
                 idle_timeout_seconds: fetch_options.idle_timeout_seconds,
                 disable_keepalive: Some(fetch_options.disable_keepalive),

@@ -1479,7 +1479,7 @@ mod vm_loader_ctx {
             is_blob_url(spec) => crate::webcore::object_url_registry::is_blob_url(spec),
             resolve_blob(spec) => {
                 crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-                    .resolve_and_dupe(spec)
+                    .resolve_and_dupe(spec, &*(*this).global)
                     .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>())
             },
             blob_loader(b) => blob(b).get_loader(&*this),
@@ -3996,7 +3996,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // `blob:` ObjectURL → in-memory virtual source.
     if crate::webcore::object_url_registry::is_blob_url(specifier) {
         match crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-            .resolve_and_dupe(&specifier[b"blob:".len()..])
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            .resolve_and_dupe(&specifier[b"blob:".len()..], unsafe { &*jsc_vm }.global())
         {
             Some(blob) => {
                 *blob_to_deinit = Some(blob);

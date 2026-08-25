@@ -580,6 +580,54 @@ describe("web worker", () => {
       expect(stdout).toBe("PASS\n");
       expect(exitCode).toBe(0);
     });
+
+    // A blob: URL registered on one thread and consumed (fetch, import,
+    // blob().name, revoke) on another, with a named File; and `$1` in a
+    // worker's shell reading the worker's own argv.
+    test("named File object URL is usable from another thread; worker shell sees its argv", async () => {
+      using dir = tempDir("worker-object-url", {
+        "main.mjs": `import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+          if (isMainThread) {
+            const url = URL.createObjectURL(new File(['export default "módule"'], "nämé.mjs", { type: "text/javascript" }));
+            const w = new Worker(new URL(import.meta.url), { workerData: url, argv: ["ärg-one", "arg-two-longer-than-eight"] });
+            w.on("message", async m => {
+              console.log(JSON.stringify(m));
+              const back = await (await fetch(m.fromWorker)).blob();
+              console.log(back.name, await back.text());
+              URL.revokeObjectURL(url);
+              URL.revokeObjectURL(m.fromWorker);
+              Bun.gc(true);
+              await w.terminate();
+            });
+          } else {
+            const blob = await (await fetch(workerData)).blob();
+            const mod = (await import(workerData)).default;
+            const sh = (await Bun.$\`echo $1 $2\`.text()).trim();
+            const fromWorker = URL.createObjectURL(new File(["wörker"], "wörker.txt"));
+            Bun.gc(true);
+            parentPort.postMessage({ name: blob.name, type: blob.type, text: await blob.text(), mod, sh, fromWorker });
+          }`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [line1, line2] = stdout.trim().split("\n");
+      expect(JSON.parse(line1)).toEqual({
+        name: "nämé.mjs",
+        type: "text/javascript;charset=utf-8",
+        text: 'export default "módule"',
+        mod: "módule",
+        sh: expect.stringMatching(/ ärg-one$/),
+        fromWorker: expect.stringMatching(/^blob:/),
+      });
+      expect(line2).toBe("wörker.txt wörker");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

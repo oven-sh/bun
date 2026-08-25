@@ -142,10 +142,12 @@ pub struct Blob {
     pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
-// SAFETY: `Blob` holds a raw `global_this` pointer which defaults to
-// `!Send`/`!Sync`. `Blob` moves across threads under `ObjectURLRegistry`'s
-// mutex and via the work-pool read/write tasks; `global_this` is an opaque
-// JSC handle only ever dereferenced on its owning JS thread.
+// SAFETY: a `Blob` reaches another thread only as an `ObjectURLRegistry`
+// entry (process-global, behind its mutex) or via the work-pool read/write
+// tasks that hand it back to the owning JS thread. Registry entries carry a
+// null `global_this` and a `to_thread_safe()` `name`, and every dupe handed
+// out is stamped with the resolving thread's global; `store` (`StoreRef`) and
+// `content_type` (`Arc<[u8]>`) are atomically refcounted.
 unsafe impl Send for Blob {}
 // SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
 // mutex or on the single owning JS thread; the `Cell` fields are never raced.

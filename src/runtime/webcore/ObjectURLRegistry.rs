@@ -39,9 +39,10 @@ const _: fn() = || {
 
 impl Entry {
     pub(crate) fn init(blob: &Blob) -> Box<Entry> {
-        Box::new(Entry {
-            blob: blob.dupe_with_content_type(true),
-        })
+        let blob = blob.dupe_with_content_type(true);
+        blob.global_this.set(core::ptr::null());
+        blob.name.with_mut(|name| name.to_thread_safe());
+        Box::new(Entry { blob })
     }
 }
 
@@ -66,11 +67,20 @@ impl ObjectURLRegistry {
         REGISTRY.get_or_init(ObjectURLRegistry::default)
     }
 
-    pub(crate) fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
+    pub(crate) fn resolve_and_dupe(
+        &self,
+        pathname: &[u8],
+        global_object: &JSGlobalObject,
+    ) -> Option<Blob> {
         let uuid = uuid_from_pathname(pathname)?;
-        let map = self.map.lock();
-        map.get(&uuid.bytes)
-            .map(|e| e.blob.dupe_with_content_type(true))
+        let blob = self
+            .map
+            .lock()
+            .get(&uuid.bytes)?
+            .blob
+            .dupe_with_content_type(true);
+        blob.global_this.set(global_object);
+        Some(blob)
     }
 
     pub(crate) fn resolve_and_dupe_to_js(
@@ -78,7 +88,7 @@ impl ObjectURLRegistry {
         pathname: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
-        let blob = Blob::new(self.resolve_and_dupe(pathname)?);
+        let blob = Blob::new(self.resolve_and_dupe(pathname, global_object)?);
         // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
         Some(unsafe { (*blob).to_js(global_object) })
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, tmpdirSync } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -24,6 +24,14 @@ const CERT_LOCALHOST_ONLY = {
 // Budget for a test whose fixture subprocess performs dozens of TLS
 // handshakes: a debug+ASAN child can exceed the 5s default.
 const fixtureTimeout = isASAN ? 20_000 : 10_000;
+
+// Runs a bun child that prints one JSON line and returns that line parsed as
+// `outcome`. When the child dies first there is no line, so `outcome` is its
+// stderr and the failing assertion shows the error instead of a bare mismatch.
+async function runJsonFixture(args: string[], env?: Record<string, string | undefined>) {
+  const { stdout, stderr, exitCode } = await bunRun(args, env);
+  return { outcome: stdout ? JSON.parse(stdout) : stderr, stderr, exitCode };
+}
 
 // Note: Do not use bun.sh as the example domain
 // Cloudflare sometimes blocks automated requests to it.
@@ -327,18 +335,9 @@ describe.concurrent("fetch-tls", () => {
   describe("client-side TLS session resumption", () => {
     const fixture = join(import.meta.dir, "fetch.tls.session-resumption-fixture.ts");
     async function run(version: string, env: Record<string, string> = {}) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), fixture, version],
-        env: { ...bunEnv, ...env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // The fixture prints one JSON line. When it dies first there is none,
-      // so the assertion shows stderr (the error or the crash) instead.
-      expect(stdout.trim() || stderr).toStartWith("{");
-      expect(exitCode).toBe(0);
-      return JSON.parse(stdout.trim()) as {
+      const r = await runJsonFixture([fixture, version], env);
+      expect(r).toEqual({ outcome: expect.any(Object), stderr: "", exitCode: 0 });
+      return r.outcome as {
         default: boolean[];
         mismatch: boolean[];
         checkServerIdentity: boolean[];
@@ -404,28 +403,23 @@ describe.concurrent("fetch-tls", () => {
   it(
     "rejects a trusted cert with a mismatched hostname cleanly under abort/timeout/keepalive churn",
     async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(import.meta.dir, "fetch.tls.cert-mismatch-churn.fixture.ts")],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // The fixture prints one JSON line. When it dies first there is none,
-      // so the assertion shows stderr (the error or the crash) instead.
-      const summary = stdout ? JSON.parse(stdout) : stderr;
+      const r = await runJsonFixture([join(import.meta.dir, "fetch.tls.cert-mismatch-churn.fixture.ts")]);
       // 16 batches of 4 fetches per class, plus 3 stalled handshakes.
-      expect(summary).toEqual({
-        mismatch: { altname: 64 },
-        racedMismatch: { altname: expect.any(Number), aborted: expect.any(Number) },
-        keepalive: { ok: expect.any(Number), churn: expect.any(Number) },
-        stalled: { aborted: 3 },
-        failures: [],
+      expect(r).toEqual({
+        outcome: {
+          mismatch: { altname: 64 },
+          racedMismatch: { altname: expect.any(Number), aborted: expect.any(Number) },
+          keepalive: { ok: expect.any(Number), churn: expect.any(Number) },
+          stalled: { aborted: 3 },
+          failures: [],
+        },
+        stderr: "",
+        exitCode: 0,
       });
       // Which side wins a race is timing-dependent; the total is not.
-      expect(summary.racedMismatch.altname + summary.racedMismatch.aborted).toBe(64);
-      expect(summary.keepalive.ok + summary.keepalive.churn).toBe(64);
-      expect(exitCode).toBe(0);
+      const { racedMismatch, keepalive } = r.outcome;
+      expect(racedMismatch.altname + racedMismatch.aborted).toBe(64);
+      expect(keepalive.ok + keepalive.churn).toBe(64);
     },
     fixtureTimeout,
   );
@@ -863,22 +857,16 @@ describe.concurrent("fetch-tls", () => {
   it("fetch should respect rejectUnauthorized env", async () => {
     await createServer(CERT_EXPIRED, async port => {
       const results = await Promise.all(
-        ["0", "1"].map(async rejectUnauthorized => {
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), join(import.meta.dir, "fetch-reject-authorized-env-fixture.js")],
-            env: { ...bunEnv, SERVER: `https://localhost:${port}`, NODE_TLS_REJECT_UNAUTHORIZED: rejectUnauthorized },
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          // The fixture prints one JSON line; when it dies first there is
-          // none, so `outcome` is stderr instead.
-          return { outcome: stdout ? JSON.parse(stdout) : stderr, exitCode };
-        }),
+        ["0", "1"].map(rejectUnauthorized =>
+          runJsonFixture([join(import.meta.dir, "fetch-reject-authorized-env-fixture.js")], {
+            SERVER: `https://localhost:${port}`,
+            NODE_TLS_REJECT_UNAUTHORIZED: rejectUnauthorized,
+          }),
+        ),
       );
       expect(results).toEqual([
-        { outcome: { body: "Hello World" }, exitCode: 0 },
-        { outcome: { code: "CERT_HAS_EXPIRED" }, exitCode: 0 },
+        { outcome: { body: "Hello World" }, stderr: "", exitCode: 0 },
+        { outcome: { code: "CERT_HAS_EXPIRED" }, stderr: "", exitCode: 0 },
       ]);
     });
   });
@@ -929,22 +917,16 @@ describe.concurrent("fetch-tls", () => {
         worker.on("exit", code => { if (code !== 0) process.exit(code); });
       `
           : steps + `console.log(JSON.stringify(await run()));`;
-      const { NODE_TLS_REJECT_UNAUTHORIZED: _, ...env } = bunEnv as Record<string, string | undefined>;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: { ...env, SERVER: `https://127.0.0.1:${server.port}` },
-        stdout: "pipe",
-        stderr: "pipe",
+      // The child starts without the variable: `undefined` unsets it.
+      const r = await runJsonFixture(["-e", script], {
+        SERVER: `https://127.0.0.1:${server.port}`,
+        NODE_TLS_REJECT_UNAUTHORIZED: undefined,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout ? JSON.parse(stdout) : stderr).toEqual([
-        "Hello World",
-        "undefined",
-        "CERT_HAS_EXPIRED",
-        "Hello World",
-        "CERT_HAS_EXPIRED",
-      ]);
-      expect(exitCode).toBe(0);
+      expect(r).toEqual({
+        outcome: ["Hello World", "undefined", "CERT_HAS_EXPIRED", "Hello World", "CERT_HAS_EXPIRED"],
+        stderr: "",
+        exitCode: 0,
+      });
     });
   }
 
@@ -985,24 +967,16 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
-  // Spawns fetch.tls.extra-cert.fixture.js against `url` with the given
-  // NODE_EXTRA_CA_CERTS. The fixture prints one JSON line, the body or the
-  // error code; when it dies first there is none, so `outcome` is stderr.
-  async function fetchWithExtraCaCerts(url: string, extraCaCerts: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fetch.tls.extra-cert.fixture.js")],
-      env: { ...bunEnv, SERVER: url, NODE_EXTRA_CA_CERTS: extraCaCerts },
-      stdout: "pipe",
-      stderr: "pipe",
+  // Fetches `url` with strict verification in a child whose NODE_EXTRA_CA_CERTS
+  // is `extraCaCerts`; the outcome is the body or the error code.
+  function fetchWithExtraCaCerts(url: string, extraCaCerts: string) {
+    return runJsonFixture([join(import.meta.dir, "fetch.tls.extra-cert.fixture.js")], {
+      SERVER: url,
+      NODE_EXTRA_CA_CERTS: extraCaCerts,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return {
-      outcome: stdout ? JSON.parse(stdout) : stderr,
-      // bun warns on stderr when it cannot load the file and ignores it.
-      ignored: stderr.includes("ignoring extra certs from"),
-      exitCode,
-    };
   }
+  // bun warns once on stderr when it cannot load the file and ignores it.
+  const ignoredExtraCerts = expect.stringContaining("ignoring extra certs from");
 
   it("fetch should use NODE_EXTRA_CA_CERTS", async () => {
     using server = Bun.serve({
@@ -1016,7 +990,7 @@ describe.concurrent("fetch-tls", () => {
     await Bun.write(cert_path, validTls.cert);
 
     const result = await fetchWithExtraCaCerts(server.url, cert_path);
-    expect(result).toEqual({ outcome: { body: "OK" }, ignored: false, exitCode: 0 });
+    expect(result).toEqual({ outcome: { body: "OK" }, stderr: "", exitCode: 0 });
   });
 
   it("fetch should use NODE_EXTRA_CA_CERTS even if the used CA is not first in bundle", async () => {
@@ -1033,7 +1007,7 @@ describe.concurrent("fetch-tls", () => {
     await Bun.write(bundlePath, bundleContent);
 
     const result = await fetchWithExtraCaCerts(server.url, bundlePath);
-    expect(result).toEqual({ outcome: { body: "OK" }, ignored: false, exitCode: 0 });
+    expect(result).toEqual({ outcome: { body: "OK" }, stderr: "", exitCode: 0 });
   });
 
   it("fetch should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
@@ -1051,9 +1025,9 @@ describe.concurrent("fetch-tls", () => {
     // An empty value means "unset" and is skipped without a warning; the
     // other two name files that cannot be opened.
     expect(results).toEqual([
-      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, ignored: true, exitCode: 0 },
-      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, ignored: false, exitCode: 0 },
-      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, ignored: true, exitCode: 0 },
+      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, stderr: ignoredExtraCerts, exitCode: 0 },
+      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, stderr: "", exitCode: 0 },
+      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, stderr: ignoredExtraCerts, exitCode: 0 },
     ]);
   });
 
@@ -1080,8 +1054,8 @@ describe.concurrent("fetch-tls", () => {
       ),
     );
     expect(results).toEqual([
-      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, ignored: true, exitCode: 0 },
-      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, ignored: true, exitCode: 0 },
+      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, stderr: ignoredExtraCerts, exitCode: 0 },
+      { outcome: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, stderr: ignoredExtraCerts, exitCode: 0 },
     ]);
   });
 });

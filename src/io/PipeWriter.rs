@@ -1153,6 +1153,11 @@ pub trait BaseWindowsPipeWriter: Sized {
     }
 
     fn close(&mut self) {
+        self.close_impl(true);
+    }
+
+    /// `cancel_inflight_write`: cancel a `uv_fs_write` not yet started, or let it complete.
+    fn close_impl(&mut self, cancel_inflight_write: bool) {
         self.set_is_done(true);
         let Some(source) = self.source_mut().take() else {
             return;
@@ -1187,13 +1192,24 @@ pub trait BaseWindowsPipeWriter: Sized {
                         // Use state machine to handle close after operation completes.
                         // detach() schedules start_close() (now or after the pending
                         // op completes); on_close_complete heap::take()s `raw`.
-                        (*raw).detach();
-                    } else if !(*raw).detach_borrowed_fd() {
+                        if cancel_inflight_write {
+                            (*raw).detach();
+                        } else {
+                            (*raw).detach_after_inflight();
+                        }
+                    } else {
+                        let pending = if cancel_inflight_write {
+                            (*raw).detach_borrowed_fd()
+                        } else {
+                            (*raw).detach_borrowed_fd_after_inflight()
+                        };
                         // Idle and the fd is parent-owned: nothing pending,
-                        // nothing to close. Reclaim and drop the Box.
-                        drop(bun_core::heap::take(raw));
+                        // nothing to close. Reclaim and drop the Box. Otherwise
+                        // on_fs_write_complete heap::take()s the detached Box.
+                        if !pending {
+                            drop(bun_core::heap::take(raw));
+                        }
                     }
-                    // else: on_fs_write_complete heap::take()s the detached Box.
                 }
             }
             Source::Pipe(pipe) => {
@@ -1272,7 +1288,8 @@ pub trait BaseWindowsPipeWriter: Sized {
             Some(Source::Pipe(_) | Source::Tty(_)) if self.has_inflight_stream_write() => {
                 return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
             }
-            Some(_) => self.close(),
+            // A write in flight lands in the old file; cancelling it would drop its bytes.
+            Some(_) => self.close_impl(false),
         }
         // Left by a failed write. `close()` parked any payload libuv still reads.
         drop(self.take_write_payload());

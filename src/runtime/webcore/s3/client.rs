@@ -475,8 +475,12 @@ pub(crate) fn writable_stream(
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
     // MultiPartUpload.
     fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsResult<()> {
-        // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
-        wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
+        let sink = ctx.cast::<NetworkSink>();
+        // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below; the upload's hold
+        // on the box ends with this callback.
+        let r = wrapper_callback(result, unsafe { &mut *sink });
+        unsafe { NetworkSink::release_writer_holder(sink) };
+        r
     }
     fn on_writable_thunk(task: &MultiPartUpload, ctx: *mut c_void, flushed: u64) {
         NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed);
@@ -543,6 +547,7 @@ pub(crate) fn writable_stream(
             task: Some(unsafe { bun_ptr::BackRef::from_raw_mut(task_ptr) }),
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             high_water_mark: part_size as BlobSizeType,
+            writer_holders: Cell::new(2),
             ..Default::default()
         }));
 

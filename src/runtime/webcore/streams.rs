@@ -2141,6 +2141,10 @@ pub struct NetworkSink {
     pub(crate) upstream_error: jsc::strong::Optional,
     pub(crate) ended: bool,
     pub(crate) done: bool,
+    /// `s3file.writer()`: the box is referenced by the JS wrapper (`finalize`) and by the upload's
+    /// completion callback; whichever lets go last frees it. 0 = owned elsewhere
+    /// (`S3UploadStreamWrapper`).
+    pub(crate) writer_holders: core::cell::Cell<u8>,
 }
 
 impl Default for NetworkSink {
@@ -2156,6 +2160,7 @@ impl Default for NetworkSink {
             upstream_error: jsc::strong::Optional::empty(),
             ended: false,
             done: false,
+            writer_holders: core::cell::Cell::new(0),
         }
     }
 }
@@ -2211,6 +2216,24 @@ impl NetworkSink {
 
     pub fn finalize(&mut self) {
         self.detach_writable();
+    }
+
+    /// One of the `writer_holders` is done with the box.
+    ///
+    /// # Safety
+    /// `this` is the live heap box from `writable()`; not used by the caller afterwards.
+    pub(crate) unsafe fn release_writer_holder(this: *mut NetworkSink) {
+        // SAFETY: fn contract.
+        unsafe {
+            let holders = (*this).writer_holders.get();
+            if holders == 0 {
+                return;
+            }
+            (*this).writer_holders.set(holders - 1);
+            if holders == 1 {
+                drop(bun_core::heap::take(this));
+            }
+        }
     }
 
     fn detach_writable(&mut self) {
@@ -2505,10 +2528,11 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     crate::impl_js_sink_forwarders!();
 
     unsafe fn finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is live, and the inherent `finalize`
-        // only releases the ref on the separate `MultiPartUpload`, never this
-        // sink, so the `&mut` scoped to this call stays valid throughout.
-        unsafe { (*this).finalize() }
+        // SAFETY: trait contract — `this` is live and not used after this call.
+        unsafe {
+            (*this).finalize();
+            Self::release_writer_holder(this);
+        }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

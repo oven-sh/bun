@@ -956,29 +956,19 @@ describe("S3 receive backpressure", () => {
     while (!(await Promise.race([closed, Bun.sleep(10).then(() => false)]))) Bun.gc(true);
   }, 30_000);
 
-  // An error body is collected whole before it is reported, with nothing delivered to JS in
-  // between. The high-water mark must not pause it: nothing would ever resume the transport.
-  test("an error response longer than the mark still rejects", async () => {
-    const body = Buffer.alloc(2 * 256 * 1024, "x").toString();
-    await using server = Bun.serve({
+  // An error body is collected whole for the error message; the mark must not pause it.
+  test("a non-2xx response larger than the mark rejects instead of stalling", async () => {
+    const message = Buffer.alloc(400 * 1024, "e").toString();
+    await using bucket = Bun.serve({
       port: 0,
-      fetch: () => new Response(body, { status: 403, headers: { "content-type": "application/xml" } }),
+      fetch: () =>
+        new Response(`<Error><Code>AccessDenied</Code><Message>${message}</Message></Error>`, { status: 403 }),
     });
-    const s3 = new S3Client({ accessKeyId: "test", secretAccessKey: "test", endpoint: server.url.href, bucket: "b" });
-    const outcome = await Promise.race([
-      s3
-        .file("k")
-        .stream()
-        .getReader()
-        .read()
-        .then(
-          () => "resolved",
-          e => e.name,
-        ),
-      Bun.sleep(isASAN || isDebug ? 15_000 : 3000).then(() => "never settled"),
-    ]);
-    expect(outcome).toBe("S3Error");
-  }, 30_000);
+    const s3 = new S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint: bucket.url.href, bucket: "b" });
+    await expect(s3.file("denied").stream().getReader().read()).rejects.toThrow(
+      expect.objectContaining({ code: "AccessDenied" }),
+    );
+  });
 
   // The other direction: a fetch body uploaded to S3. The multipart sink's queue back-pressures
   // the fetch, and both `Bun.write(s3file, res)` and `s3file.writer()` resolve with the bytes sent.

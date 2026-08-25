@@ -895,6 +895,11 @@ describe("Query Execution", () => {
     // CREATE does not inherit the previous write's sqlite3_changes()
     const create = await sql`CREATE TABLE gadgets2 (id INTEGER)`;
     expect(create.affectedRows).toBe(0);
+
+    // EXPLAIN of a write returns plan rows and changes nothing
+    const explained = await sql`EXPLAIN UPDATE gadgets SET price = 1`;
+    expect(explained.length).toBeGreaterThan(0);
+    expect(explained.affectedRows).toBe(0);
   });
 
   test("SELECT with various clauses", async () => {

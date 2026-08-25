@@ -457,7 +457,9 @@ declare module "bun" {
        * The number of rows in the result set. On PostgreSQL and SQLite, a
        * write without `RETURNING` reports the number of affected rows here
        * instead. On MySQL it is always the number of rows returned, so it is
-       * `0` for a plain `INSERT`, `UPDATE`, or `DELETE`.
+       * `0` for a plain `INSERT`, `UPDATE`, or `DELETE`. On SQLite, a
+       * statement that neither returns rows nor writes (for example
+       * `CREATE TABLE`) can report the previous write's count here.
        */
       count: number | null;
       /**

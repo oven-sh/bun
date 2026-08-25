@@ -277,8 +277,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const count = $isArray(result) ? result.length : 1;
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = count;
-        // A write with RETURNING emits one row per affected row.
-        sqlResult.affectedRows = affectedRowsForCommand(sqlResult.command, count);
+        // A write with RETURNING emits one row per affected row. lastToken is
+        // the first token of the statement: EXPLAIN <write> classifies as the
+        // inner write command but returns plan rows and changes nothing.
+        sqlResult.affectedRows =
+          parsedInfo.lastToken === "EXPLAIN" ? 0 : affectedRowsForCommand(sqlResult.command, count);
 
         query.resolve(sqlResult);
       } else {

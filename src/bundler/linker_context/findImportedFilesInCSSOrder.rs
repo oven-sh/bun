@@ -619,35 +619,28 @@ pub(crate) fn find_imported_files_in_css_order<'r, 'a>(
 
     // Finally, merge adjacent "@layer" rules with identical conditions together.
     {
-        let mut did_clone: i32 = -1;
-        for entry in order.slice() {
-            if matches!(entry.kind, CssImportOrderKind::Layers(_)) && wip_order.len() > 0 {
-                let prev_index = wip_order.len() - 1;
-                let prev = wip_order.at(prev_index as usize);
-                if matches!(prev.kind, CssImportOrderKind::Layers(_))
-                    && import_conditions_are_equal(
-                        prev.conditions.slice(),
-                        entry.conditions.slice(),
-                    )
-                {
-                    let prev_index_i32 = prev_index as i32;
-                    if did_clone != prev_index_i32 {
-                        did_clone = prev_index_i32;
-                    }
-                    // need to clone the layers here as they could be references to css ast
-                    if let CssImportOrderKind::Layers(prev_layers) =
-                        &mut wip_order.mut_(prev_index as usize).kind
-                    {
-                        if let CssImportOrderKind::Layers(entry_layers) = &entry.kind {
+        wip_order.clear();
+        for entry in order.drain(..) {
+            if let CssImportOrderKind::Layers(entry_layers) = &entry.kind {
+                if let Some(prev) = wip_order.last_mut() {
+                    if let CssImportOrderKind::Layers(prev_layers) = &mut prev.kind {
+                        if import_conditions_are_equal(
+                            prev.conditions.slice(),
+                            entry.conditions.slice(),
+                        ) {
+                            // `to_owned` clones a borrowed list (it may point
+                            // into a stylesheet's AST) before appending to it.
                             prev_layers
                                 .to_owned()
-                                .append_slice(entry_layers.inner().slice_const());
+                                .extend(entry_layers.inner().iter().cloned());
+                            continue;
                         }
                     }
                 }
             }
+            wip_order.push(entry);
         }
-        let _ = did_clone;
+        core::mem::swap(&mut order, &mut wip_order);
     }
     debug_css_order(
         this,

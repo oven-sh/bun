@@ -90,6 +90,7 @@ crosses the boundary (C++ `Bun::toStringRef` return / `transferToWTFString()`
 consumer); `&String` ⇔ `const BunString*`.
 
 C++ consumes a `BunString`/`EncodedSlice` through exactly one of:
+
 - `toWTFString()` / `transferToWTFString()` / `Zig::toStringCopy(slice)` — result may be retained (shares the WTF impl, atomizes `static_`, copies borrowed bytes, adopts a globally-allocated buffer).
 - `view()` / `Zig::toStringView(slice)` — borrows in place; call-scoped only.
 - `Bun::toIdentifier(vm, s)` / `Zig::toIdentifier(vm, slice)` — property key from the bytes.

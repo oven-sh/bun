@@ -992,6 +992,11 @@ describe("Query Execution", () => {
     const writeFirst = await sql.unsafe("INSERT INTO weird VALUES (3); SELECT * FROM weird");
     expect(writeFirst.command).toBe("INSERT");
     expect(writeFirst.affectedRows).toBe(1);
+
+    // a quoted identifier is a token boundary even with no surrounding spaces
+    const noSpaces = await sql.unsafe('UPDATE"weird"SET [a;b] = 4 WHERE [a;b] = 2');
+    expect(noSpaces.command).toBe("UPDATE");
+    expect(noSpaces.affectedRows).toBe(1);
   });
 
   test("SELECT with various clauses", async () => {

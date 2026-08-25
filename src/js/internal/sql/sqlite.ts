@@ -283,11 +283,16 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         }
       }
       default: {
-        // skip quoted spans: strings and quoted identifiers
+        // skip quoted spans: strings and quoted identifiers. A quote is also a
+        // token boundary: UPDATE"t"SET is three tokens.
         if (char === '"' || char === "'" || char === "`") {
           if (quoted === char) {
             quoted = false;
           } else if (!quoted) {
+            if (token) {
+              lastToken = token;
+              token = "";
+            }
             quoted = char;
           }
           continue;
@@ -301,6 +306,10 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         if (!quoted) {
           if (char === "]") {
             // the reverse scan sees "]" first: it opens a bracket-quoted identifier, "[" closes it
+            if (token) {
+              lastToken = token;
+              token = "";
+            }
             quoted = "]";
             continue;
           }

@@ -56,9 +56,15 @@ fn run_grouped<T: GroupTask>(task: *mut Task) {
 /// Counts the [`GroupTask`]s it has queued; [`wait`](Self::wait) (and `Drop`)
 /// block until every one has run.
 pub struct TaskGroup {
-    /// Boxed so queued tasks can point at it while `self` moves.
-    group: Box<WaitGroup>,
+    /// Heap-allocated (a leaked box, freed in `Drop`) so queued tasks can
+    /// point at it while `self` moves.
+    group: core::ptr::NonNull<WaitGroup>,
 }
+
+// SAFETY: owns its `WaitGroup` (which is `Send + Sync`) like a `Box` would.
+unsafe impl Send for TaskGroup {}
+// SAFETY: as above; `&TaskGroup` only counts/waits on the `WaitGroup`.
+unsafe impl Sync for TaskGroup {}
 
 impl Default for TaskGroup {
     fn default() -> Self {
@@ -69,13 +75,19 @@ impl Default for TaskGroup {
 impl TaskGroup {
     pub fn new() -> Self {
         Self {
-            group: Box::new(WaitGroup::init()),
+            group: core::ptr::NonNull::from(Box::leak(Box::new(WaitGroup::init()))),
         }
     }
 
     /// Block until every task queued so far has run.
     pub fn wait(&self) {
-        self.group.wait();
+        self.group().wait();
+    }
+
+    #[inline]
+    fn group(&self) -> &WaitGroup {
+        // SAFETY: leaked in `new`, freed only in `Drop`.
+        unsafe { self.group.as_ref() }
     }
 
     /// Add `task` to `batch`; the pool that runs the batch owns the box until
@@ -83,8 +95,8 @@ impl TaskGroup {
     pub fn push<T: GroupTask>(&self, batch: &mut Batch, mut task: Box<T>) {
         let node: &mut GroupedTask = task.field_mut();
         node.task.callback = run_grouped::<T>;
-        node.group = &raw const *self.group;
-        self.group.add_one();
+        node.group = self.group.as_ptr();
+        self.group().add_one();
         let raw = Box::into_raw(task);
         // SAFETY: `raw` is the live allocation just leaked; `field_of` projects
         // to its embedded node, whose first member is the `Task`.
@@ -109,6 +121,8 @@ impl TaskGroup {
 
 impl Drop for TaskGroup {
     fn drop(&mut self) {
-        self.group.wait();
+        self.group().wait();
+        // SAFETY: from `Box::leak` in `new`; every task has finished with it.
+        drop(unsafe { Box::from_raw(self.group.as_ptr()) });
     }
 }

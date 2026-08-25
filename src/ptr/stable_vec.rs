@@ -116,7 +116,10 @@ mod tests {
     #[test]
     fn pointer_recorded_at_push_survives_owner_get_mut() {
         let mut v = StableVec::new();
-        let i = v.push(Box::new(Request { this: None, hits: 0 }));
+        let i = v.push(Box::new(Request {
+            this: None,
+            hits: 0,
+        }));
         let this = v.ptr(i);
         v.get_mut(i).this = Some(this);
         // What `run_on_js_thread(&mut self)` hands to C++:
@@ -137,7 +140,10 @@ mod tests {
     #[ignore = "demonstrates UB; `cargo miri test -- --ignored` rejects it"]
     fn pointer_derived_from_a_borrow_does_not_survive_owner_get_mut() {
         let mut v = StableVec::new();
-        let i = v.push(Box::new(Request { this: None, hits: 0 }));
+        let i = v.push(Box::new(Request {
+            this: None,
+            hits: 0,
+        }));
         let handed_out: *mut Request = {
             let me: &mut Request = v.get_mut(i);
             core::ptr::from_mut(me)

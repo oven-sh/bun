@@ -1986,7 +1986,20 @@ export class VerdaccioRegistry {
 
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
+    const proc = this.process;
+    this.process = undefined;
+    if (!proc) return;
+    // kill(0) sends the signal to the whole process GROUP (POSIX pid 0),
+    // which does not reach the verdaccio child — it leaked one process per
+    // test file, each burning ~35% CPU until the run script's pkill. Send
+    // SIGTERM to the child, with a SIGKILL fallback if it ignores it.
+    proc.kill();
+    const timer = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {}
+    }, 2000);
+    proc.on("exit", () => clearTimeout(timer));
   }
 
   /**

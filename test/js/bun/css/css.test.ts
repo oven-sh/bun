@@ -5693,6 +5693,194 @@ describe("css tests", () => {
       },
     );
 
+    // Selector lists with selectors the targets do not support. A browser
+    // drops the whole rule when one selector is invalid, so the unsupported
+    // selectors are moved out of the rule. Chrome 80 supports neither
+    // :is()/:where() (88) nor :has() (105) nor :focus-visible (86).
+    // https://github.com/oven-sh/bun/issues/40364
+    prefix_test(
+      ":where(.a), :where(.b) { color: red; padding: 4px }",
+      `
+      :where(.a), :where(.b) {
+        color: red;
+        padding: 4px;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":has(.a), :has(.b) { color: red }",
+      `
+      :has(.a), :has(.b) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":where(.a), .c { color: red }",
+      `
+      .c {
+        color: red;
+      }
+
+      :where(.a) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":where(.a), :has(.b), :where(.c), :has(.d) { color: red }",
+      `
+      :where(.a), :where(.c) {
+        color: red;
+      }
+
+      :has(.b), :has(.d) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ':where(.a)::before, :where(.c)::before, :where(.a)::after, :where(.c)::after { content: "" }',
+      `
+      :where(.a):before, :where(.c):before, :where(.a):after, :where(.c):after {
+        content: "";
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":hover, :focus-visible { color: red }",
+      `
+      :hover {
+        color: red;
+      }
+
+      :focus-visible {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ":focus-within, :focus-visible { color: red }",
+      `
+      :focus-within {
+        color: red;
+      }
+
+      :focus-visible {
+        color: red;
+      }
+      `,
+      { safari: 9 << 16 },
+    );
+
+    prefix_test(
+      "a::unknown-a, a::unknown-b { color: red }",
+      `
+      a::unknown-a {
+        color: red;
+      }
+
+      a::unknown-b {
+        color: red;
+      }
+      `,
+      { safari: 14 << 16 },
+    );
+
+    prefix_test(
+      ":hover, :focus-visible { color: red }",
+      `
+      :is(:hover, :focus-visible) {
+        color: red;
+      }
+      `,
+      { safari: 14 << 16 },
+    );
+
+    prefix_test(
+      ":is(.a, .b), :where(.c) { color: red }",
+      `
+      :-webkit-any(.a, .b) {
+        color: red;
+      }
+
+      :is(.a, .b) {
+        color: red;
+      }
+
+      :where(.c) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    // A single simple selector inside :is() is printed unwrapped, so the rule
+    // needs what the inner selector needs, not :is() itself.
+    prefix_test(
+      ".foo :is(.bar), .bar :is(.baz) { color: red }",
+      `
+      .foo .bar, .bar .baz {
+        color: red;
+      }
+      `,
+      { chrome: 87 << 16 },
+    );
+
+    prefix_test(
+      ".foo :is(.bar:focus-visible), .bar :is(.baz:hover) { color: red }",
+      `
+      .bar .baz:hover {
+        color: red;
+      }
+
+      .foo .bar:focus-visible {
+        color: red;
+      }
+      `,
+      { chrome: 85 << 16 },
+    );
+
+    prefix_test(
+      ".a, .b:is(:focus-visible) { color: red }",
+      `
+      .a {
+        color: red;
+      }
+
+      .b:focus-visible {
+        color: red;
+      }
+      `,
+      { safari: 14 << 16 },
+    );
+
+    prefix_test(
+      ":where(.a), :where(.b) { margin-inline-start: 24px }",
+      `
+      :where(.a):not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)), :where(.b):not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        margin-left: 24px;
+      }
+
+      :where(.a):lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi), :where(.b):lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        margin-right: 24px;
+      }
+      `,
+      { safari: 11 << 16 },
+    );
+
     minify_test(".foo::cue {color: red}", ".foo::cue{color:red}");
     minify_test(".foo::cue-region {color: red}", ".foo::cue-region{color:red}");
     minify_test(".foo::cue(b) {color: red}", ".foo::cue(b){color:red}");

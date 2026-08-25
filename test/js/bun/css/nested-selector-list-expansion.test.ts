@@ -168,17 +168,19 @@ test.each(CONTEXT_PRESERVING_AT_RULES)("shallow nesting spanning %s still compil
   const src = nestedAcrossAtRule(atRule, ".a, .b", 1, 2);
   const out = minifyTest(src, "", OLD_TARGETS);
   expect(out.length).toBeLessThan(10_000);
-  // The inner rules resolve against the outer `.a, .b` chain (cartesian product).
-  expect(out).toContain(":is(.a,.b) .b .b");
+  // The inner rules resolve against the outer `.a, .b` chain. Both nested
+  // selectors need `:is()` for their `&`, which the targets lack, so they stay
+  // in one rule and the chain nests as `:is()` instead of fanning out.
+  expect(out).toContain(":is(:is(.a,.b) .a,:is(.a,.b) .b) .b");
 });
 
 test("shallow nesting spanning @starting-style still compiles for old targets", () => {
   const src = nestedAcrossStartingStyle('[foo="bar"], .bar', 1, 2);
   const out = prefixTest(src, "", { safari: 11 << 16, firefox: 60 << 16, chrome: 50 << 16 });
-  // The `&` chain flows through `@starting-style`, so the inner rules expand to
-  // the cartesian product of the two-selector lists.
+  // The `&` chain flows through `@starting-style`, so the inner rules resolve
+  // against the outer two-selector list.
   expect(out).toContain("@starting-style");
-  expect(out).toContain(':is([foo="bar"], .bar) .bar .bar');
+  expect(out).toContain(':is(:is([foo="bar"], .bar) [foo="bar"], :is([foo="bar"], .bar) .bar) .bar');
   expect(out.length).toBeLessThan(10_000);
 });
 

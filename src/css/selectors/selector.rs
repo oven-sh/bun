@@ -79,6 +79,20 @@ pub(crate) fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool 
     true
 }
 
+/// Returns the vendor prefixes a rule with these selectors is printed with.
+/// When the targets need it, this also downlevels the selectors in place.
+pub(crate) fn update_prefix<'bump>(
+    bump: &'bump Bump,
+    selectors: &mut [Selector],
+    targets: &Targets,
+) -> VendorPrefix {
+    let prefix = get_prefix(selectors);
+    if prefix.contains(VendorPrefix::NONE) && targets.should_compile_selectors() {
+        return downlevel_selectors(bump, selectors, targets);
+    }
+    prefix
+}
+
 /// Downlevels the given selectors to be compatible with the given browser targets.
 /// Returns the necessary vendor prefixes.
 pub(crate) fn downlevel_selectors<'bump>(
@@ -224,9 +238,9 @@ fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) ->
 
 /// Returns the vendor prefix (if any) used in the given selector list.
 /// If multiple vendor prefixes are seen, this is invalid, and an empty result is returned.
-pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
+pub(crate) fn get_prefix(selectors: &[Selector]) -> VendorPrefix {
     let mut prefix = VendorPrefix::empty();
-    for selector in selectors.v.slice() {
+    for selector in selectors {
         for component in selector.components.iter() {
             let component: &Component = component;
             let p = match component {
@@ -261,10 +275,73 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     prefix
 }
 
+/// A set of [`Feature`]s, one bit per discriminant.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct FeatureSet([u64; Feature::COUNT.div_ceil(64)]);
+
+impl FeatureSet {
+    fn insert(&mut self, feature: Feature) {
+        let bit = feature as usize;
+        self.0[bit / 64] |= 1 << (bit % 64);
+    }
+}
+
+/// Why a selector is incompatible with the targets. See [`incompatibility`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Incompatibility {
+    /// The features the selector needs that some target does not support.
+    Features(FeatureSet),
+    /// The selector has a component with no support data: an unknown or
+    /// vendor-prefixed pseudo-class or pseudo-element, `:nth-col()`, ...
+    Unknown,
+}
+
+/// Returns why the targets do not all support `selector`, or `None` when
+/// they do.
+///
+/// A browser drops a whole rule when one selector in its list is invalid, so
+/// the minifier moves the selectors some target cannot parse into rules of
+/// their own. Two selectors with equal `Features` are invalid in exactly the
+/// same target browsers, so they can share one rule. An `Unknown` selector
+/// never shares one: nothing says which browsers accept it.
+pub(crate) fn incompatibility(
+    selector: &parser::Selector,
+    targets: &Targets,
+) -> Option<Incompatibility> {
+    let mut features = FeatureSet::default();
+    let mut unknown = false;
+    visit_incompatible(core::slice::from_ref(selector), targets, &mut |feature| {
+        match feature {
+            Some(feature) => features.insert(feature),
+            None => unknown = true,
+        }
+        !unknown
+    });
+    if unknown {
+        Some(Incompatibility::Unknown)
+    } else if features == FeatureSet::default() {
+        None
+    } else {
+        Some(Incompatibility::Features(features))
+    }
+}
+
 pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
+    visit_incompatible(selectors, targets, &mut |_| false)
+}
+
+/// Reports each requirement of `selectors` that the targets do not meet to
+/// `sink`: `Some(feature)` for an unsupported compat feature, `None` for a
+/// component with no support data. `sink` returns `false` to stop the walk.
+/// Returns `false` when the walk was stopped.
+fn visit_incompatible(
+    selectors: &[parser::Selector],
+    targets: &Targets,
+    sink: &mut impl FnMut(Option<Feature>) -> bool,
+) -> bool {
     use Feature as F;
     for selector in selectors {
-        for component in selector.components.iter() {
+        'components: for component in selector.components.iter() {
             let feature = match component {
                 Component::Id(_) | Component::Class(_) | Component::LocalName(_) => continue,
 
@@ -320,7 +397,9 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                 Component::Empty | Component::Root => F::Selectors3,
                 Component::Negation(sels) => {
                     // :not() selector list is not forgiving.
-                    if !targets.is_compatible(F::Selectors3) || !is_compatible(sels, targets) {
+                    if !require(F::Selectors3, targets, sink)
+                        || !visit_incompatible(sels, targets, sink)
+                    {
                         return false;
                     }
                     continue;
@@ -331,13 +410,16 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                         break 'brk F::Selectors2;
                     }
                     if data.ty == parser::NthType::Col || data.ty == parser::NthType::LastCol {
-                        return false;
+                        if !sink(None) {
+                            return false;
+                        }
+                        continue 'components;
                     }
                     F::Selectors3
                 }
                 Component::NthOf(n) => {
-                    if !targets.is_compatible(F::NthChildOf)
-                        || !is_compatible(&n.selectors, targets)
+                    if !require(F::NthChildOf, targets, sink)
+                        || !visit_incompatible(&n.selectors, targets, sink)
                     {
                         return false;
                     }
@@ -346,16 +428,27 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
 
                 // These support forgiving selector lists, so no need to check nested selectors.
                 Component::Is(sels) => {
-                    // ... except if we are going to unwrap them.
-                    if should_unwrap_is(sels) && is_compatible(sels, targets) {
+                    // ... except if we are going to unwrap them: the printer then
+                    // writes the inner selector in place of the `:is()`.
+                    if should_unwrap_is(sels) {
+                        if !visit_incompatible(sels, targets, sink) {
+                            return false;
+                        }
                         continue;
                     }
                     F::IsSelector
                 }
                 Component::Where(_) | Component::Nesting => F::IsSelector,
-                Component::Any { .. } => return false,
+                Component::Any { .. } => {
+                    if !sink(None) {
+                        return false;
+                    }
+                    continue;
+                }
                 Component::Has(sels) => {
-                    if !targets.is_compatible(F::HasSelector) || !is_compatible(sels, targets) {
+                    if !require(F::HasSelector, targets, sink)
+                        || !visit_incompatible(sels, targets, sink)
+                    {
                         return false;
                     }
                     continue;
@@ -438,13 +531,16 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                         | PseudoClass::Blank
                         | PseudoClass::UserInvalid
                         | PseudoClass::UserValid
-                        | PseudoClass::Defined => return false,
+                        | PseudoClass::Defined => {}
 
                         PseudoClass::Custom { .. } => {}
 
                         _ => {}
                     }
-                    return false;
+                    if !sink(None) {
+                        return false;
+                    }
+                    continue 'components;
                 }
 
                 Component::PseudoElement(pseudo) => 'brk: {
@@ -470,10 +566,13 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                         }
                         PseudoElement::Cue => break 'brk F::Cue,
                         PseudoElement::CueFunction { .. } => break 'brk F::CueFunction,
-                        PseudoElement::Custom { .. } => return false,
+                        PseudoElement::Custom { .. } => {}
                         _ => {}
                     }
-                    return false;
+                    if !sink(None) {
+                        return false;
+                    }
+                    continue 'components;
                 }
 
                 Component::Combinator(combinator) => match combinator {
@@ -483,13 +582,23 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                 },
             };
 
-            if !targets.is_compatible(feature) {
+            if !require(feature, targets, sink) {
                 return false;
             }
         }
     }
 
     true
+}
+
+/// Reports `feature` to `sink` when the targets do not support it. Returns
+/// `false` when `sink` stopped the walk.
+fn require(
+    feature: Feature,
+    targets: &Targets,
+    sink: &mut impl FnMut(Option<Feature>) -> bool,
+) -> bool {
+    targets.is_compatible(feature) || sink(Some(feature))
 }
 
 /// Determines whether a selector list contains only unused selectors.

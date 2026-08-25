@@ -652,6 +652,9 @@ pub enum Feature {
 }
 
 impl Feature {
+    /// The number of variants. Discriminants run from \`0\` to \`COUNT - 1\`.
+    pub(crate) const COUNT: usize = ${variants.length};
+
     /// Returns whether every browser in \`browsers\` supports this feature
     /// natively, without fallback.
     pub(crate) fn is_compatible(self, browsers: &Browsers) -> bool {

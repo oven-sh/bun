@@ -83,8 +83,11 @@ impl PluginRunner {
         &specifier[..colon]
     }
 
-    /// Cheap pre-filter that rules
-    /// out `./` / `../` / absolute paths before hitting the resolve hook.
+    /// Cheap pre-filter for the `onLoad` hook on an already resolved module
+    /// key: true for a key with a file extension or an `ns:` prefix.
+    ///
+    /// Not for `onResolve`: a bare package specifier (`react`, `pkg/sub`)
+    /// has neither, and the plugin's own filter decides what it matches.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
         if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
             let ext = &specifier[last_dot + 1..];

@@ -4585,27 +4585,39 @@ impl VirtualMachine {
         let jsc_vm_ptr = global.bun_vm_ptr();
         // SAFETY: per-thread VM is live (caller is on the JS thread).
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
-        let specifier_utf8 = specifier.to_utf8();
+        let mut specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
         if jsc_vm.plugin_runner.is_some() {
             use bun_bundler::transpiler::PluginRunner;
-            let spec = specifier_utf8.slice();
-            if PluginRunner::could_be_plugin(spec) {
+            let plugin_result = {
+                let spec = specifier_utf8.slice();
                 let namespace = PluginRunner::extract_namespace(spec);
                 let after_namespace = if namespace.is_empty() {
                     spec
                 } else {
                     &spec[namespace.len() + 1..]
                 };
-                if let Some(resolved_path) = plugin_runner_on_resolve_jsc(
+                plugin_runner_on_resolve_jsc(
                     global,
                     &bun_core::String::from_bytes(namespace),
                     &bun_core::String::borrow_utf8(after_namespace),
                     source,
                     crate::BunPluginTarget::Bun,
-                )? {
-                    return Ok(resolved_path);
+                )?
+            };
+            match plugin_result {
+                None => {}
+                Some(Err(err)) => return Ok(Err(err)),
+                Some(Ok(PluginResolvedPath::Namespaced(path))) => return Ok(Ok(path)),
+                Some(Ok(PluginResolvedPath::File(path))) => {
+                    if on_resolve_file_path_is_final(path.to_utf8().slice()) {
+                        return Ok(Ok(path));
+                    }
+                    // A relative path or a bare specifier is a new specifier,
+                    // not a resolved module: run it through the resolver
+                    // relative to the same importer.
+                    specifier_utf8 = path.into_utf8();
                 }
             }
         }
@@ -6816,6 +6828,25 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
+/// What a `Bun.plugin()` `onResolve` callback answered with.
+pub(crate) enum PluginResolvedPath {
+    /// A `file`-namespace result (the default namespace): the `path` as the
+    /// callback returned it, with no namespace prefix.
+    File(bun_core::String),
+    /// An `ns:path` key for any other namespace. The module loader hands it
+    /// to that namespace's `onLoad` callbacks as-is.
+    Namespaced(bun_core::String),
+}
+
+/// Whether a `file`-namespace `onResolve` result is already a module key.
+/// An absolute path is. So is anything with a scheme or a namespace
+/// (`file://`, `data:`, `ns:path`), which the module loader dispatches on
+/// directly. A relative path or a bare specifier is not: the resolver still
+/// has to turn it into a file.
+fn on_resolve_file_path_is_final(path: &[u8]) -> bool {
+    bun_paths::is_absolute(path) || bun_core::strings::contains_char(path, b':')
+}
+
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
@@ -6823,7 +6854,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     specifier: &bun_core::String,
     importer: &bun_core::String,
     target: crate::BunPluginTarget,
-) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
+) -> JsResult<Option<Result<PluginResolvedPath, JSValue>>> {
     let empty = bun_core::String::EMPTY;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         if namespace.length() > 0 && !namespace.eq_ascii(b"file") {
@@ -6894,15 +6925,11 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         break 'brk bun_core::String::static_("file");
     };
 
-    // A `file`-namespace result (the default) is a filesystem path, not a new
-    // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
-    // form the module loader dispatches on.
     if user_namespace.eq_ascii(b"file") {
-        return Ok(Some(Ok(file_path)));
+        return Ok(Some(Ok(PluginResolvedPath::File(file_path))));
     }
 
-    Ok(Some(Ok(bun_core::String::create_format(format_args!(
-        "{}:{}",
-        user_namespace, file_path
-    )))))
+    Ok(Some(Ok(PluginResolvedPath::Namespaced(
+        bun_core::String::create_format(format_args!("{}:{}", user_namespace, file_path)),
+    ))))
 }

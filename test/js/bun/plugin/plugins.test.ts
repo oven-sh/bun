@@ -885,6 +885,134 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/40397
+it.concurrent("onResolve is consulted for bare package specifiers", async () => {
+  using dir = tempDir("plugin-onresolve-bare-specifier", {
+    "entry.js": `
+      Bun.plugin({
+        name: "bare-specifiers",
+        setup(build) {
+          build.onResolve({ filter: /^host-package(\\/.*)?$/ }, args => ({ path: args.path, namespace: "host" }));
+          build.onResolve({ filter: /^@scope\\/pkg$/ }, args => ({ path: args.path, namespace: "host" }));
+          build.onLoad({ filter: /.*/, namespace: "host" }, ({ path }) => ({
+            exports: { value: "host:" + path },
+            loader: "object",
+          }));
+          // A catch-all that claims nothing must stay transparent.
+          build.onResolve({ filter: /.*/ }, () => undefined);
+        },
+      });
+
+      async function attempt(fn) {
+        try {
+          return await fn();
+        } catch (error) {
+          return "threw: " + error.message;
+        }
+      }
+
+      console.log(
+        JSON.stringify({
+          dynamicBare: await attempt(async () => (await import("host-package")).value),
+          dynamicSubpath: await attempt(async () => (await import("host-package/subpath")).value),
+          dynamicScoped: await attempt(async () => (await import("@scope/pkg")).value),
+          staticInSecondFile: await attempt(async () => (await import("./static.js")).value),
+          requireBare: await attempt(() => require("host-package/required").value),
+          relativeWithoutExtension: await attempt(async () => (await import("./real-dep")).value),
+          resolveSync: await attempt(() => Bun.resolveSync("host-package/sub", import.meta.dir)),
+          importMetaResolve: await attempt(() => import.meta.resolve("host-package/sub")),
+        }),
+      );
+    `,
+    "static.js": `
+      import { value } from "host-package/static-subpath";
+      export { value };
+    `,
+    "real-dep.js": `export const value = "real";`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The fixture catches its own failures, so empty stdout means it crashed.
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    dynamicBare: "host:host-package",
+    dynamicSubpath: "host:host-package/subpath",
+    dynamicScoped: "host:@scope/pkg",
+    staticInSecondFile: "host:host-package/static-subpath",
+    requireBare: "host:host-package/required",
+    relativeWithoutExtension: "real",
+    resolveSync: "host:host-package/sub",
+    importMetaResolve: "host:host-package/sub",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("a relative or bare path returned in the file namespace is resolved from the importer", async () => {
+  using dir = tempDir("plugin-onresolve-file-namespace-specifier", {
+    "node_modules/real-pkg/package.json": `{ "name": "real-pkg", "main": "index.js" }`,
+    "node_modules/real-pkg/index.js": `module.exports = { value: "real-pkg" };`,
+    "lib/real.js": `export const value = "lib/real.js";`,
+    "lib/entry.js": `
+      import { relative } from "node:path";
+
+      Bun.plugin({
+        name: "redirects",
+        setup(build) {
+          build.onResolve({ filter: /^alias-pkg$/ }, () => ({ path: "real-pkg" }));
+          build.onResolve({ filter: /^alias-relative$/ }, () => ({ path: "./real.js" }));
+          build.onResolve({ filter: /^alias-relative-no-ext$/ }, () => ({ path: "./real", namespace: "file" }));
+          build.onResolve({ filter: /^alias\\.mod$/ }, () => ({ path: "./real.js" }));
+        },
+      });
+
+      async function attempt(fn) {
+        try {
+          return await fn();
+        } catch (error) {
+          return "threw: " + error.message;
+        }
+      }
+
+      console.log(
+        JSON.stringify({
+          bareToBare: await attempt(async () => (await import("alias-pkg")).value),
+          bareToRelative: await attempt(async () => (await import("alias-relative")).value),
+          bareToRelativeWithoutExtension: await attempt(async () => (await import("alias-relative-no-ext")).value),
+          withExtensionToRelative: await attempt(async () => (await import("alias.mod")).value),
+          requireRelative: await attempt(() => require("alias-relative").value),
+          resolveSync: await attempt(() => relative(import.meta.dir, Bun.resolveSync("alias-relative", import.meta.dir))),
+        }),
+      );
+    `,
+  });
+
+  // cwd is the parent of the importer's directory: "./real.js" only exists
+  // relative to lib/entry.js, not relative to cwd.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "lib/entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    bareToBare: "real-pkg",
+    bareToRelative: "lib/real.js",
+    bareToRelativeWithoutExtension: "lib/real.js",
+    withExtensionToRelative: "lib/real.js",
+    requireRelative: "lib/real.js",
+    resolveSync: "real.js",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // Spawned in a subprocess because clearAll() would wipe the plugins the rest of this file relies on.
 describe.concurrent("Bun.plugin.clearAll()", () => {
   async function run(src: string) {

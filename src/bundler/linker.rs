@@ -20,7 +20,7 @@ use bun_url::URL;
 use crate::options::{self, BundleOptions, ImportPathFormat};
 use crate::options_impl::Target as BundleTarget;
 use crate::transpiler::{
-    BunPluginTarget, ParseResult, PluginResolver, PluginRunner, ResolveQueue, ResolveResults,
+    BunPluginTarget, ParseResult, PluginResolver, ResolveQueue, ResolveResults,
 };
 
 pub struct Linker {
@@ -439,39 +439,37 @@ impl Linker {
 
                     if let Some(runner) = self.plugin_runner {
                         let import_record = &mut result.ast.import_records.as_mut_slice()[record_i];
-                        if PluginRunner::could_be_plugin(import_record.path.text) {
-                            // SAFETY: `plugin_runner` is `Some` only when set
-                            // by the owning `Transpiler` to a live JSC-heap
-                            // `PluginRunner`; the transpiler is single-threaded
-                            // and holds no other borrow of it for the duration
-                            // of `on_resolve`, so shared access is sound.
-                            let runner = unsafe { &*runner };
-                            if let Some(path) = runner.on_resolve(
-                                import_record.path.text,
-                                file_path.text,
-                                self.log_mut(),
-                                import_record.range.loc,
-                                if IS_BUN {
-                                    BunPluginTarget::Bun
-                                } else if target == options::Target::Browser {
-                                    BunPluginTarget::Browser
-                                } else {
-                                    BunPluginTarget::Node
-                                },
-                            )? {
-                                import_record.path = self.generate_import_path(
-                                    source_dir,
-                                    path.text,
-                                    false,
-                                    path.namespace,
-                                    origin,
-                                    import_path_format,
-                                )?;
-                                import_record
-                                    .flags
-                                    .insert(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH);
-                                continue;
-                            }
+                        // SAFETY: `plugin_runner` is `Some` only when set
+                        // by the owning `Transpiler` to a live JSC-heap
+                        // `PluginRunner`; the transpiler is single-threaded
+                        // and holds no other borrow of it for the duration
+                        // of `on_resolve`, so shared access is sound.
+                        let runner = unsafe { &*runner };
+                        if let Some(path) = runner.on_resolve(
+                            import_record.path.text,
+                            file_path.text,
+                            self.log_mut(),
+                            import_record.range.loc,
+                            if IS_BUN {
+                                BunPluginTarget::Bun
+                            } else if target == options::Target::Browser {
+                                BunPluginTarget::Browser
+                            } else {
+                                BunPluginTarget::Node
+                            },
+                        )? {
+                            import_record.path = self.generate_import_path(
+                                source_dir,
+                                path.text,
+                                false,
+                                path.namespace,
+                                origin,
+                                import_path_format,
+                            )?;
+                            import_record
+                                .flags
+                                .insert(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH);
+                            continue;
                         }
                     }
                 }

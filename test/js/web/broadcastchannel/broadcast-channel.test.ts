@@ -244,8 +244,9 @@ test("array of objects posted to channels in two workers", async () => {
         parentPort.postMessage("ready");
       }`,
   });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe("50 50");
   expect(exitCode).toBe(0);
 });

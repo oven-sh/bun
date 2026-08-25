@@ -170,8 +170,9 @@ test("object URL created in one worker is usable and revocable across threads", 
       }
       `,
   });
-  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe('{"count":100,"ok":true}\na exited 0');
   expect(exitCode).toBe(0);
 });

@@ -362,19 +362,9 @@ pub(crate) struct S3BlobStatTask {
 }
 
 impl S3BlobStatTask {
-    fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
-    fn on_s3_exists_resolved(
-        result: s3::S3StatResult,
-        this: *mut core::ffi::c_void,
-    ) -> JsResult<()> {
-        // SAFETY: `this` was allocated via heap::alloc in `exists`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
-        // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
-        let global_ref = this.global;
-        let global = global_ref.get();
+    fn on_s3_exists_resolved(self, result: s3::S3StatResult) -> JsResult<()> {
+        let mut this = self;
+        let global = this.global.get();
         match result {
             s3::S3StatResult::NotFound(_) => {
                 this.promise.resolve(global, JSValue::FALSE)?;
@@ -400,13 +390,9 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    fn on_s3_size_resolved(result: s3::S3StatResult, this: *mut core::ffi::c_void) -> JsResult<()> {
-        // SAFETY: `this` was allocated via heap::alloc in `size`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
-        // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
-        let global_ref = this.global;
-        let global = global_ref.get();
-
+    fn on_s3_size_resolved(self, result: s3::S3StatResult) -> JsResult<()> {
+        let mut this = self;
+        let global = this.global.get();
         match result {
             s3::S3StatResult::Success(stat_result) => {
                 this.promise
@@ -425,12 +411,9 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    fn on_s3_stat_resolved(result: s3::S3StatResult, this: *mut core::ffi::c_void) -> JsResult<()> {
-        // SAFETY: `this` was allocated via heap::alloc in `stat`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
-        // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
-        let global_ref = this.global;
-        let global = global_ref.get();
+    fn on_s3_stat_resolved(self, result: s3::S3StatResult) -> JsResult<()> {
+        let mut this = self;
+        let global = this.global.get();
         match result {
             s3::S3StatResult::Success(stat_result) => {
                 let s3_stat = match S3Stat::init(
@@ -460,88 +443,43 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    pub(crate) fn exists(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
-        let this = S3BlobStatTask::new(S3BlobStatTask {
+    /// HEAD the blob's object and settle a new promise with `on_resolved`.
+    fn run(
+        global: &JSGlobalObject,
+        blob: &Blob,
+        on_resolved: fn(Self, s3::S3StatResult) -> JsResult<()>,
+    ) -> JsResult<JSValue> {
+        let this = S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.get().as_ref().unwrap().clone(),
             global: bun_ptr::BackRef::new(global),
-        });
-        // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
-        // callback below. Scoped shared access.
-        let promise = unsafe { (*this).promise.value() };
+        };
+        let promise = this.promise.value();
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
-        let credentials = s3_store.get_credentials();
-        let path = s3_store.path();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init).
         let env = global.bun_vm().as_mut().transpiler.env_mut();
-
         s3::stat(
-            credentials,
-            path,
-            S3BlobStatTask::on_s3_exists_resolved,
-            this.cast::<core::ffi::c_void>(),
+            s3_store.get_credentials(),
+            s3_store.path(),
+            move |result| on_resolved(this, result),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
+    }
+
+    pub(crate) fn exists(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
+        Self::run(global, blob, Self::on_s3_exists_resolved)
     }
 
     pub(crate) fn stat(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
-        let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
-            store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
-        });
-        // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
-        // callback below. Scoped shared access.
-        let promise = unsafe { (*this).promise.value() };
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
-        let credentials = s3_store.get_credentials();
-        let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
-
-        s3::stat(
-            credentials,
-            path,
-            S3BlobStatTask::on_s3_stat_resolved,
-            this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
-            s3_store.request_payer,
-        )?;
-        Ok(promise)
+        Self::run(global, blob, Self::on_s3_stat_resolved)
     }
 
     pub(crate) fn size(global: &JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
-        let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(global),
-            store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
-        });
-        // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
-        // callback below. Scoped shared access.
-        let promise = unsafe { (*this).promise.value() };
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
-        let credentials = s3_store.get_credentials();
-        let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
-
-        s3::stat(
-            credentials,
-            path,
-            S3BlobStatTask::on_s3_size_resolved,
-            this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
-            s3_store.request_payer,
-        )?;
-        Ok(promise)
+        Self::run(global, blob, Self::on_s3_size_resolved)
     }
-
-    // Teardown (store deref, promise deinit, freeing the box) is handled by Box<Self> Drop.
 }
 
 // `Method.fromJS` lives in `bun_http_jsc` so `bun_http_types` stays

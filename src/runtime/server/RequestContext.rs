@@ -2425,16 +2425,6 @@ where
         // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
     }
 
-    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsResult<()>`.
-    fn on_s3_size_resolved_thunk(
-        result: S3::simple_request::S3StatResult<'_>,
-        this: *mut c_void,
-    ) -> JsResult<()> {
-        let stat_ref = RequestContextRef::adopt(this.cast::<Self>());
-        stat_ref.ctx().on_s3_size_resolved(result);
-        Ok(())
-    }
-
     pub(crate) fn on_s3_size_resolved(&self, result: S3::simple_request::S3StatResult<'_>) {
         if let Some(resp) = self.resp.get() {
             let size = match result {
@@ -2558,9 +2548,8 @@ where
                 if shim::blob_is_s3(blob) {
                     // we need to read the size asynchronously
                     // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                    // Ref for the S3 stat; adopted and released by
-                    // `on_s3_size_resolved_thunk`.
                     this.ref_();
+                    let stat_ref = RequestContextRef::adopt(this.as_ctx_ptr());
 
                     let crate::webcore::blob::store::Data::S3(s3) =
                         &blob.store.get().as_ref().unwrap().data
@@ -2582,8 +2571,10 @@ where
                     let _ = S3::client::stat(
                         credentials,
                         path,
-                        Self::on_s3_size_resolved_thunk,
-                        this.as_ctx_ptr().cast::<c_void>(),
+                        move |result| {
+                            stat_ref.ctx().on_s3_size_resolved(result);
+                            Ok(())
+                        },
                         proxy_url,
                         s3.request_payer,
                     ); // TODO: properly propagate exception upwards

@@ -61,8 +61,7 @@ bun_core::declare_scope!(S3UploadStream, visible);
 pub(crate) fn stat(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3StatResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: impl FnOnce(S3StatResult<'_>) -> JsResult<()> + 'static,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -76,16 +75,14 @@ pub(crate) fn stat(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Stat(callback),
-        callback_context,
+        s3_simple_request::Callback::Stat(Box::new(callback)),
     )
 }
 
 pub(crate) fn download(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: impl FnOnce(S3DownloadResult<'_>) -> JsResult<()> + 'static,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -99,8 +96,7 @@ pub(crate) fn download(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Download(callback),
-        callback_context,
+        s3_simple_request::Callback::Download(Box::new(callback)),
     )
 }
 
@@ -109,8 +105,7 @@ pub(crate) fn download_slice(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: impl FnOnce(S3DownloadResult<'_>) -> JsResult<()> + 'static,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -143,16 +138,14 @@ pub(crate) fn download_slice(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Download(callback),
-        callback_context,
+        s3_simple_request::Callback::Download(Box::new(callback)),
     )
 }
 
 pub(crate) fn delete(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: impl FnOnce(S3DeleteResult<'_>) -> JsResult<()> + 'static,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -166,16 +159,14 @@ pub(crate) fn delete(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Delete(callback),
-        callback_context,
+        s3_simple_request::Callback::Delete(Box::new(callback)),
     )
 }
 
 pub(crate) fn list_objects(
     this: &S3Credentials,
     list_options: &S3ListObjectsOptions,
-    callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: impl FnOnce(S3ListObjectsResult<'_>) -> JsResult<()> + 'static,
     proxy_url: Option<&[u8]>,
 ) -> JsResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
@@ -272,15 +263,10 @@ pub(crate) fn list_objects(
             drop(search_params);
 
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
-            callback(
-                S3ListObjectsResult::Failure(Error::S3Error {
-                    code: error_code_and_message.code,
-                    message: error_code_and_message.message,
-                }),
-                callback_context,
-            )?;
-
-            return Ok(());
+            return callback(S3ListObjectsResult::Failure(Error::S3Error {
+                code: error_code_and_message.code,
+                message: error_code_and_message.message,
+            }));
         }
     };
 
@@ -292,8 +278,7 @@ pub(crate) fn list_objects(
         // Written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
         sign_result: result,
-        callback_context,
-        callback: s3_simple_request::Callback::ListObjects(callback),
+        callback: Some(s3_simple_request::Callback::ListObjects(Box::new(callback))),
         headers,
         http_ticket: None,
         response_buffer: MutableString::default(),
@@ -385,8 +370,7 @@ pub(crate) fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
-    callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
-    callback_context: *mut c_void,
+    callback: impl FnOnce(S3UploadResult<'_>) -> JsResult<()> + 'static,
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -403,8 +387,7 @@ pub(crate) fn upload(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Upload(callback),
-        callback_context,
+        s3_simple_request::Callback::Upload(Box::new(callback)),
     )
 }
 
@@ -572,8 +555,7 @@ pub struct S3UploadStreamWrapper {
     pub sink: Option<NonNull<NetworkSink>>,
     pub task: *mut MultiPartUpload,
     pub(crate) end_promise: bun_jsc::JSPromiseStrong,
-    pub callback: Option<fn(S3UploadResult, *mut c_void)>,
-    pub(crate) callback_context: *mut c_void,
+    pub callback: Option<Box<dyn FnOnce(S3UploadResult<'_>)>>,
     /// this is owned by the task not by the wrapper
     pub path: bun_ptr::RawSlice<u8>,
     /// Pins the source ReadableStream when the native ByteStream fast-path is
@@ -759,8 +741,8 @@ impl S3UploadStreamWrapper {
             }
         }
 
-        if let Some(callback) = self_.callback {
-            callback(result, self_.callback_context);
+        if let Some(callback) = self_.callback.take() {
+            callback(result);
         }
         settled
     }
@@ -847,8 +829,7 @@ pub(crate) fn upload_stream(
     content_encoding: Option<&[u8]>,
     proxy: Option<&[u8]>,
     request_payer: bool,
-    callback: Option<fn(S3UploadResult, *mut c_void)>,
-    callback_context: *mut c_void,
+    callback: Option<Box<dyn FnOnce(S3UploadResult<'_>)>>,
 ) -> JsResult<JSValue> {
     let proxy_url = proxy.unwrap_or(b"");
     if readable_stream.is_disturbed(global_this) {
@@ -994,7 +975,6 @@ pub(crate) fn upload_stream(
             ref_count: Cell::new(2), // +1 for the stream pump (released by the .then shim / handle_*_stream)
             sink: None,
             callback,
-            callback_context,
             path: bun_ptr::RawSlice::new(&task.path),
             task: task_ptr,
             end_promise: bun_jsc::JSPromiseStrong::init(global_this),

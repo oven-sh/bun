@@ -563,28 +563,29 @@ impl BlobExt for Blob {
             return Ok(());
         }
         if self.is_s3() {
-            struct Task<H> {
-                ctx: *mut H,
+            /// `H` erased to a pointer + fn so the download closure is `'static`.
+            struct Task {
+                ctx: *mut (),
+                on_read_bytes: unsafe fn(*mut (), ReadBytesResult) -> JsResult<()>,
                 blob: Blob, // dupe for store ref + offset/size
                 poll: bun_io::KeepAlive,
             }
-            impl<H: ReadBytesHandler> Task<H> {
+            impl Task {
                 fn done(mut self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
                     self.poll.unref(bun_io::js_vm_ctx());
                     self.blob.deinit();
-                    let ctx = self.ctx;
+                    let (ctx, on_read_bytes) = (self.ctx, self.on_read_bytes);
                     drop(self);
                     // SAFETY: `ctx` is the pointer handed to `read_bytes_to_handler`;
                     // the download callback (and so `done`) runs exactly once, and
                     // the `Task` that held the pointer is gone.
-                    unsafe { H::on_read_bytes(ctx, r) }
+                    unsafe { on_read_bytes(ctx, r) }
                 }
                 fn cb(
+                    self: Box<Self>,
                     result: crate::webcore::__s3_client::S3DownloadResult,
-                    opaque_self: *mut c_void,
                 ) -> JsResult<()> {
-                    // SAFETY: `opaque_self` was heap-allocated below.
-                    let t = unsafe { bun_core::heap::take(opaque_self.cast::<Task<H>>()) };
+                    let t = self;
                     match result {
                         // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
                         crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
@@ -611,17 +612,19 @@ impl BlobExt for Blob {
                     }
                 }
             }
-            let mut t = Box::new(Task::<H> {
-                ctx,
+            let mut t = Box::new(Task {
+                ctx: ctx.cast(),
+                // SAFETY: only called with the `ctx` erased on the line above.
+                on_read_bytes: |ctx, r| unsafe { H::on_read_bytes(ctx.cast::<H>(), r) },
                 blob: self.dupe(),
                 poll: bun_io::KeepAlive::default(),
             });
             t.poll.ref_(bun_io::js_vm_ctx());
             let proxy = http_proxy_href(global);
-            // reshaped for borrowck — `heap::alloc(t)` moves `t`,
+            // reshaped for borrowck — the callback closure moves `t`,
             // so clone the `Rc<S3Credentials>` out (cheap ref bump)
             // and stash `path` as a raw `*const [u8]` whose backing store is
-            // kept alive by the same `t.blob` now owned by the heap task.
+            // kept alive by the same `t.blob` now owned by the closure.
             let (cred, path, payer);
             {
                 let s3 = t
@@ -637,7 +640,6 @@ impl BlobExt for Blob {
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
             // it stays valid until `Task::done` deinits the blob in the callback.
             let path = unsafe { &*path };
-            let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {
                 let len: Option<usize> = if self.size.get() != MAX_SIZE {
                     Some(self.size.get() as usize)
@@ -649,8 +651,7 @@ impl BlobExt for Blob {
                     path,
                     self.offset.get() as usize,
                     len,
-                    Task::<H>::cb,
-                    t_ptr,
+                    move |result| t.cb(result),
                     proxy.as_deref(),
                     payer,
                 )?;
@@ -658,8 +659,7 @@ impl BlobExt for Blob {
                 crate::webcore::__s3_client::download(
                     &cred,
                     path,
-                    Task::<H>::cb,
-                    t_ptr,
+                    move |result| t.cb(result),
                     proxy.as_deref(),
                     payer,
                 )?;
@@ -1427,7 +1427,6 @@ impl BlobExt for Blob {
                 proxy_url,
                 aws_options.request_payer,
                 None,
-                core::ptr::null_mut(),
             );
         }
 
@@ -4449,38 +4448,13 @@ fn write_file_with_empty_source_to_destination(
                 }
             };
 
-            struct Wrapper {
-                promise: jsc::JSPromiseStrong,
-                store: RefPtr<Store>,
-                global: bun_ptr::BackRef<JSGlobalObject>,
-            }
-            impl Wrapper {
-                fn resolve(result: S3UploadResult, opaque_this: *mut c_void) -> JsResult<()> {
-                    // SAFETY: opaque_this was heap-allocated in the caller below.
-                    let mut this = unsafe { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
-                    let global = this.global.get();
-                    match result {
-                        S3UploadResult::Success => {
-                            this.promise.resolve(global, JSValue::js_number(0.0))?
-                        }
-                        S3UploadResult::Failure(err) => {
-                            let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                &err,
-                                global,
-                                this.store.get_path(),
-                                this.promise.get(),
-                            );
-                            this.promise.reject(global, Ok(err_js))?;
-                        }
-                    }
-                    Ok(())
-                }
-            }
-
             let promise = jsc::JSPromiseStrong::init(ctx);
             let promise_value = promise.value();
             let proxy_owned = http_proxy_href(ctx);
             let proxy_url = proxy_owned.as_deref();
+            let store = destination_store.clone();
+            // The global outlives any in-flight request (VM-owned).
+            let global = bun_ptr::BackRef::new(ctx);
             s3_client::upload(
                 &aws_options.credentials,
                 s3.path(),
@@ -4492,13 +4466,22 @@ fn write_file_with_empty_source_to_destination(
                 proxy_url,
                 aws_options.storage_class,
                 aws_options.request_payer,
-                Wrapper::resolve,
-                bun_core::heap::into_raw(Box::new(Wrapper {
-                    promise,
-                    store: destination_store.clone(),
-                    global: bun_ptr::BackRef::new(ctx),
-                }))
-                .cast::<c_void>(),
+                move |result| {
+                    let mut promise = promise;
+                    let global = global.get();
+                    match result {
+                        S3UploadResult::Success => promise.resolve(global, JSValue::js_number(0.0)),
+                        S3UploadResult::Failure(err) => {
+                            let err = s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                                &err,
+                                global,
+                                store.get_path(),
+                                promise.get(),
+                            );
+                            promise.reject(global, Ok(err))
+                        }
+                    }
+                },
             )?;
             return Ok(promise_value);
         }
@@ -4693,7 +4676,6 @@ pub(crate) fn write_file_with_source_destination(
                             proxy_url,
                             aws_options.request_payer,
                             None,
-                            core::ptr::null_mut(),
                         );
                     } else {
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -4702,43 +4684,11 @@ pub(crate) fn write_file_with_source_destination(
                         ));
                     }
                 } else {
-                    struct Wrapper {
-                        store: RefPtr<Store>,
-                        promise: jsc::JSPromiseStrong,
-                        global: bun_ptr::BackRef<JSGlobalObject>,
-                    }
-                    impl Wrapper {
-                        fn resolve(
-                            result: S3UploadResult,
-                            opaque_self: *mut c_void,
-                        ) -> JsResult<()> {
-                            // SAFETY: opaque_self is the heap::alloc(Wrapper) we passed to S3::upload below.
-                            let mut this =
-                                unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                            let global = this.global.get();
-                            match result {
-                                S3UploadResult::Success => {
-                                    this.promise.resolve(
-                                        global,
-                                        JSValue::js_number(this.store.data.as_bytes().len() as f64),
-                                    )?;
-                                }
-                                S3UploadResult::Failure(err) => {
-                                    let err_js =
-                                        s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                            &err,
-                                            global,
-                                            this.store.get_path(),
-                                            this.promise.get(),
-                                        );
-                                    this.promise.reject(global, Ok(err_js))?;
-                                }
-                            }
-                            Ok(())
-                        }
-                    }
                     let promise = jsc::JSPromiseStrong::init(ctx);
                     let promise_value = promise.value();
+                    let store = source_store.clone();
+                    // The global outlives any in-flight request (VM-owned).
+                    let global = bun_ptr::BackRef::new(ctx);
                     s3_client::upload(
                         &aws_options.credentials,
                         s3.path(),
@@ -4750,13 +4700,25 @@ pub(crate) fn write_file_with_source_destination(
                         proxy_url,
                         aws_options.storage_class,
                         aws_options.request_payer,
-                        Wrapper::resolve,
-                        bun_core::heap::into_raw(Box::new(Wrapper {
-                            store: source_store.clone(),
-                            promise,
-                            global: bun_ptr::BackRef::new(ctx),
-                        }))
-                        .cast::<c_void>(),
+                        move |result| {
+                            let mut promise = promise;
+                            let global = global.get();
+                            match result {
+                                S3UploadResult::Success => promise.resolve(
+                                    global,
+                                    JSValue::js_number(store.data.as_bytes().len() as f64),
+                                ),
+                                S3UploadResult::Failure(err) => {
+                                    let err = s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                                        &err,
+                                        global,
+                                        store.get_path(),
+                                        promise.get(),
+                                    );
+                                    promise.reject(global, Ok(err))
+                                }
+                            }
+                        },
                     )?;
                     return Ok(promise_value);
                 }
@@ -4789,7 +4751,6 @@ pub(crate) fn write_file_with_source_destination(
                         proxy_url,
                         aws_options.request_payer,
                         None,
-                        core::ptr::null_mut(),
                     );
                 } else {
                     return Ok(
@@ -5076,7 +5037,6 @@ pub(crate) fn write_file_internal(
                                 proxy_url,
                                 aws_options.request_payer,
                                 None,
-                                core::ptr::null_mut(),
                             )?));
                         }
                         destination_blob.detach();
@@ -5791,24 +5751,17 @@ impl S3BlobDownloadTask {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
-        let this = bun_core::heap::into_raw(Box::new(S3BlobDownloadTask {
+        let mut this = Box::new(S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(global_this),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(global_this),
             poll_ref: bun_io::KeepAlive::default(),
             handler,
-        }));
-        // SAFETY: just allocated; sole pointer until handed to the s3 callback
-        // below. Exclusive access scoped to the call.
-        unsafe { (*this).poll_ref.ref_(bun_io::js_vm_ctx()) };
-        // SAFETY: as above; shared access only from here on.
-        let this_ref = unsafe { &*this };
-        let promise = this_ref.promise.value();
-        let store::Data::S3(s3_store) = &this_ref
-            .blob
-            .store()
-            .expect("infallible: store present")
-            .data
+        });
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
+        let promise = this.promise.value();
+        // `this.blob` shares this store.
+        let store::Data::S3(s3_store) = &blob.store().expect("infallible: store present").data
         else {
             unreachable!("S3BlobDownloadTask::init on non-S3 blob")
         };
@@ -5817,15 +5770,9 @@ impl S3BlobDownloadTask {
 
         let proxy_owned = http_proxy_href(global_this);
         let proxy = proxy_owned.as_deref();
-
-        fn s3_cb(
-            result: crate::webcore::__s3_client::S3DownloadResult<'_>,
-            ctx: *mut c_void,
-        ) -> JsResult<()> {
-            // SAFETY: `ctx` is the box leaked in `init()`; the download callback fires once.
-            let task = unsafe { bun_core::heap::take(ctx.cast::<S3BlobDownloadTask>()) };
-            S3BlobDownloadTask::on_s3_download_resolved(result, task)
-        }
+        let s3_cb = move |result: crate::webcore::__s3_client::S3DownloadResult<'_>| {
+            S3BlobDownloadTask::on_s3_download_resolved(result, this)
+        };
 
         if blob.offset.get() > 0 {
             let len: Option<usize> = if blob.size.get() != MAX_SIZE {
@@ -5840,7 +5787,6 @@ impl S3BlobDownloadTask {
                 offset,
                 len,
                 s3_cb,
-                this.cast::<c_void>(),
                 proxy,
                 s3_store.request_payer,
             )?;
@@ -5849,7 +5795,6 @@ impl S3BlobDownloadTask {
                 credentials,
                 path,
                 s3_cb,
-                this.cast::<c_void>(),
                 proxy,
                 s3_store.request_payer,
             )?;
@@ -5862,7 +5807,6 @@ impl S3BlobDownloadTask {
                 offset,
                 Some(len),
                 s3_cb,
-                this.cast::<c_void>(),
                 proxy,
                 s3_store.request_payer,
             )?;

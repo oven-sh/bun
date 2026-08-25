@@ -5,7 +5,6 @@
 //! this module re-exports them and layers the `bun_runtime`-tier behaviour
 //! (S3 I/O, async file ops, structured-clone serialize) via extension traits.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::node::fs as node_fs;
@@ -15,8 +14,7 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::client::S3ErrorJsc as _;
 use crate::webcore::s3::client::{
-    S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
-    S3ListObjectsResult,
+    S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsResult,
 };
 use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
@@ -276,44 +274,6 @@ impl S3Ext for S3 {
         global_this: &JSGlobalObject,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        struct Wrapper {
-            promise: bun_jsc::JSPromiseStrong,
-            store: RefPtr<Store>,
-            // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject. `BackRef` so the heap
-            // wrapper can outlive the constructing frame while reads stay safe.
-            global: bun_ptr::BackRef<JSGlobalObject>,
-        }
-
-        impl Wrapper {
-            #[inline]
-            fn new(init: Wrapper) -> Box<Wrapper> {
-                Box::new(init)
-            }
-
-            fn resolve(result: S3DeleteResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
-                // SAFETY: opaque_self was created via heap::alloc(Wrapper::new(..)) below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                // `defer self.deinit()` → Box drops at scope exit.
-                let global_object = self_.global.get();
-                match result {
-                    S3DeleteResult::Success => {
-                        self_.promise.resolve(global_object, JSValue::TRUE)?;
-                    }
-                    S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
-                        // Split borrows: `reject` takes `&mut promise`, so
-                        // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
-                            global_object,
-                            self_.store.get_path(),
-                            self_.promise.get(),
-                        );
-                        self_.promise.reject(global_object, err_val)?;
-                    }
-                }
-                Ok(())
-            }
-        }
-
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
@@ -326,18 +286,25 @@ impl S3Ext for S3 {
             .get_http_proxy(true, None, None);
         let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
-        // `defer aws_options.deinit()` → Drop handles it.
 
+        let store = store.clone();
+        // The global outlives any in-flight request (VM-owned).
+        let global = bun_ptr::BackRef::new(global_this);
         s3_client::delete(
             &aws_options.credentials,
             self.path(),
-            Wrapper::resolve,
-            bun_core::heap::into_raw(Wrapper::new(Wrapper {
-                promise,
-                store: store.clone(),
-                global: bun_ptr::BackRef::new(global_this),
-            }))
-            .cast::<c_void>(),
+            move |result| {
+                let mut promise = promise;
+                let global = global.get();
+                match result {
+                    S3DeleteResult::Success => promise.resolve(global, JSValue::TRUE),
+                    S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
+                        let err =
+                            err.to_js_with_async_stack(global, store.get_path(), promise.get());
+                        promise.reject(global, err)
+                    }
+                }
+            },
             proxy,
             aws_options.request_payer,
         )?;
@@ -358,48 +325,6 @@ impl S3Ext for S3 {
             )));
         }
 
-        struct Wrapper {
-            promise: bun_jsc::JSPromiseStrong,
-            store: RefPtr<Store>,
-            resolved_list_options: S3ListObjectsOptions,
-            // LIFETIMES.tsv: JSC_BORROW. `BackRef` for safe deref across the async callback.
-            global: bun_ptr::BackRef<JSGlobalObject>,
-        }
-
-        impl Wrapper {
-            fn resolve(result: S3ListObjectsResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
-                // SAFETY: opaque_self was created via heap::alloc below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                // `defer self.deinit()` → Box drops at scope exit.
-                let global_object = self_.global.get();
-
-                match result {
-                    S3ListObjectsResult::Success(list_result) => {
-                        // `defer list_result.deinit()` → Drop handles it.
-                        let list_result_js = match list_result.to_js(global_object) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                return self_.promise.reject(global_object, Err(e));
-                            }
-                        };
-                        self_.promise.resolve(global_object, list_result_js)?;
-                    }
-
-                    S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
-                        // Split borrows: `reject` takes `&mut promise`, so
-                        // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
-                            global_object,
-                            self_.store.get_path(),
-                            self_.promise.get(),
-                        );
-                        self_.promise.reject(global_object, err_val)?;
-                    }
-                }
-                Ok(())
-            }
-        }
-
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
@@ -412,28 +337,29 @@ impl S3Ext for S3 {
             .get_http_proxy(true, None, None);
         let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
-        // `defer aws_options.deinit()` → Drop handles it.
-
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
-        // Box the wrapper first so the options live on the heap, then hand a
-        // borrow to `list_objects` (which only reads them synchronously to
-        // build the search-params string). The wrapper retains ownership for
-        // `Drop` after the async callback.
-        let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
-            promise,
-            store: store.clone(),
-            resolved_list_options: options,
-            global: bun_ptr::BackRef::new(global_this),
-        }));
-
+        let store = store.clone();
+        // The global outlives any in-flight request (VM-owned).
+        let global = bun_ptr::BackRef::new(global_this);
         s3_client::list_objects(
             &aws_options.credentials,
-            // SAFETY: `wrapper` is freshly leaked and untouched until the
-            // callback; this borrow ends before any other access.
-            unsafe { &(*wrapper).resolved_list_options },
-            Wrapper::resolve,
-            wrapper.cast::<c_void>(),
+            &options,
+            move |result| {
+                let mut promise = promise;
+                let global = global.get();
+                match result {
+                    S3ListObjectsResult::Success(list_result) => match list_result.to_js(global) {
+                        Ok(v) => promise.resolve(global, v),
+                        Err(e) => promise.reject(global, Err(e)),
+                    },
+                    S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
+                        let err =
+                            err.to_js_with_async_stack(global, store.get_path(), promise.get());
+                        promise.reject(global, err)
+                    }
+                }
+            },
             proxy,
         )?;
 

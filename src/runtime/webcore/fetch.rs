@@ -46,7 +46,7 @@ use bun_core::{String as BunString, Tag as BunStringTag, Utf8Bytes};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
+use bun_jsc::{GlobalRef, HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -1765,16 +1765,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 url: url_static,
                 _url_proxy_buffer: owned_buffer,
                 promise,
-                global: global_this,
+                global: GlobalRef::from(global_this),
             });
-            // Shim: erases both the payload type and the `Result` return when
-            // coercing to the `fn (S3UploadResult, *mut c_void)` callback shape.
-            fn s3_stream_wrapper_resolve(result: s3::S3UploadResult<'_>, ctx: *mut libc::c_void) {
-                // SAFETY: ctx was produced by `heap::alloc(s3_stream)` below; the
-                // 'static lifetime is a raw-pointer fiction (the pointee's real
-                // lifetime is managed by the resolve callback itself).
-                let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
-            }
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
@@ -1791,8 +1783,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
-                Some(s3_stream_wrapper_resolve),
-                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
+                Some(Box::new(move |result| {
+                    let _ = s3_stream.resolve(result);
+                })),
             )?;
             // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
@@ -1949,21 +1942,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 // `impl` blocks inside fn bodies for types referenced by external fn pointers.
 // ──────────────────────────────────────────────────────────────────────────
 
-struct S3StreamWrapper<'a> {
+struct S3StreamWrapper {
     promise: jsc::JSPromiseStrong,
-    url: ZigURL<'a>,
+    /// Borrows `_url_proxy_buffer`.
+    url: ZigURL<'static>,
     _url_proxy_buffer: Box<[u8]>,
-    global: &'a JSGlobalObject,
+    global: GlobalRef,
 }
 
-impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
-        // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
-        // ownership here exactly once on the resolve callback.
-        let mut self_ = unsafe { bun_core::heap::take(self_) };
-        let global = self_.global;
-        // `defer bun.destroy(self)` + `defer free(url_proxy_buffer)` →
-        // Box<Self> and Box<[u8]> Drop at end of scope.
+impl S3StreamWrapper {
+    fn resolve(self: Box<Self>, result: s3::S3UploadResult) -> JsResult<()> {
+        let mut self_ = self;
+        let global: &JSGlobalObject = &self_.global;
         match result {
             s3::S3UploadResult::Success => {
                 let response = Box::new(Response::init(

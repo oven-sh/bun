@@ -40,9 +40,9 @@ pub enum WriteFileResultType {
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
-// SAFETY: the two blobs are native values holding store refs (atomic counts);
-// io-loop registration state and an opaque completion ctx that only the
-// JS-thread completion dereferences — nothing used off-thread is thread-affine.
+// SAFETY: the two blobs are native values holding store refs (atomic counts)
+// and io-loop registration state; `on_complete` (a JS promise handle) is only
+// touched on the JS thread, where every `WriteFile` completes or is released.
 unsafe impl Send for WriteFile {}
 
 impl bun_jsc::JobContext for WriteFile {

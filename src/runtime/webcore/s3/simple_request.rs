@@ -525,9 +525,8 @@ impl Drop for S3HttpSimpleTask {
     }
 }
 
-// callers in `client.rs` / `multipart.rs` were translated with three different
-// names for the request-options struct (`Options`, `S3RequestOptions`, `S3SimpleRequestOptions`)
-// and two for the callback enum. Alias them here so the call sites compile without churn.
+// callers in `client.rs` / `multipart.rs` use three different names for the
+// request-options struct (`Options`, `S3RequestOptions`, `S3SimpleRequestOptions`).
 pub(crate) type Options<'a> = S3SimpleRequestOptions<'a>;
 pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
 

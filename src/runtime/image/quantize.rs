@@ -5,10 +5,9 @@
 //! is GPL, so we roll a small permissive one. Median-cut is the classic
 //! Heckbert '82 algorithm: treat the RGBA pixels as points in a 4-D box,
 //! repeatedly split the box with the largest channel range at that channel's
-//! median (nudged to a run boundary so one colour never straddles the cut,
-//! see `cut_point`) until you have N boxes, then each box's mean becomes a
-//! palette entry. Mapping is nearest-entry by squared RGBA distance,
-//! optionally with Floyd–Steinberg error diffusion (`dither: true`).
+//! median until you have N boxes, then each box's mean becomes a palette
+//! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
+//! Floyd–Steinberg error diffusion (`dither: true`).
 
 use bun_alloc::AllocError;
 
@@ -263,18 +262,12 @@ fn clamp255(v: i32) -> i32 {
     v.clamp(0, 255)
 }
 
-/// Index in `sorted` (a box's pixel indices, sorted by channel `ch`) at
-/// which to split the box.
-///
-/// Classic median cut splits at the count midpoint. When the midpoint lands
-/// inside a run of pixels that share the key, the same colour ends up in
-/// both halves and each half's mean is a blend of it with its neighbours:
-/// 75% white / 25% black at `colors: 2` came out as white + mid-grey. So
-/// when the midpoint is not already on a run boundary, cut at whichever
-/// boundary of that run (its start or its end) is nearer, the start on a
-/// tie. A boundary at the edge of `sorted` would leave one half empty and is
-/// never picked. The caller only splits a box whose range on `ch` is > 0, so
-/// the run never covers the whole slice and the other boundary is available.
+/// Where to split `sorted` (a box's pixel indices, sorted by channel `ch`):
+/// the count midpoint, moved to the nearer boundary of the run of equal keys
+/// it lands in (the start on a tie) so one colour never sits in both halves.
+/// A boundary at the slice edge would leave a half empty and is never picked.
+/// The caller only splits a box whose range on `ch` is > 0, so the run never
+/// covers the whole slice and the other boundary exists.
 fn cut_point(rgba: &[u8], sorted: &[u32], ch: u8) -> usize {
     let key = |p: u32| rgba[p as usize * 4 + ch as usize];
     let mid = sorted.len() / 2;

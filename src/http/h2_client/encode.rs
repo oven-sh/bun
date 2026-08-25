@@ -179,14 +179,9 @@ pub(crate) fn write_request(
 
     // request_body points into original_request_body.bytes (lives in client.state).
     let body = client.state.request_body;
-    let has_inline_body = matches!(
-        client.state.original_request_body,
-        Body::Bytes(_)
-    ) && !body.is_empty();
-    let is_streaming = matches!(
-        client.state.original_request_body,
-        Body::Stream(_)
-    );
+    let has_inline_body =
+        matches!(client.state.original_request_body, Body::Bytes(_)) && !body.is_empty();
+    let is_streaming = matches!(client.state.original_request_body, Body::Stream(_));
 
     if has_expect_continue && (has_inline_body || is_streaming) {
         stream.awaiting_continue.set(true);

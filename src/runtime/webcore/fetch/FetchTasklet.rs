@@ -2131,16 +2131,16 @@ impl FetchTasklet {
             )
         });
         request.with_http_mut(|http_client| {
-            http_client.client.flags.is_streaming_request_body = is_stream;
-            http_client.client.flags.forced_protocol = forced_protocol;
-            http_client.client.flags.is_node_http_client = is_node_http_client;
+            http_client.client_mut().flags.is_streaming_request_body = is_stream;
+            http_client.client_mut().flags.forced_protocol = forced_protocol;
+            http_client.client_mut().flags.is_node_http_client = is_node_http_client;
             if let Some(stream) = request_body_buffer {
                 http_client.set_request_body(http::HTTPRequestBody::Stream(stream));
             }
             // TODO is this necessary? the http client already sets the redirect type,
             // so manually setting it here seems redundant
             if redirect_type != FetchRedirect::Follow {
-                http_client.client.remaining_redirect_count = 0;
+                http_client.client_mut().remaining_redirect_count = 0;
             }
             if let Some(sendfile) = sendfile {
                 http_client.set_request_body(http::HTTPRequestBody::Sendfile(sendfile));

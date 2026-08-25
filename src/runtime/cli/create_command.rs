@@ -1940,8 +1940,9 @@ impl Example {
             http_proxy,
             HTTP::FetchRedirect::Follow,
         ));
-        async_http.client.progress_node = Some(bun_ptr::BackRef::new(&*progress));
-        async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
+        async_http.client_mut().progress_node = Some(bun_ptr::BackRef::new(&*progress));
+        async_http.client_mut().flags.reject_unauthorized =
+            env_loader.get_tls_reject_unauthorized();
 
         let response = async_http.send_sync(mutable)?;
 
@@ -2042,8 +2043,9 @@ impl Example {
                 http_proxy,
                 HTTP::FetchRedirect::Follow,
             ));
-        async_http.client.progress_node = Some(bun_ptr::BackRef::new(&*progress));
-        async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
+        async_http.client_mut().progress_node = Some(bun_ptr::BackRef::new(&*progress));
+        async_http.client_mut().flags.reject_unauthorized =
+            env_loader.get_tls_reject_unauthorized();
 
         let mut response = async_http.send_sync(mutable)?;
 
@@ -2134,8 +2136,9 @@ impl Example {
             http_proxy,
             HTTP::FetchRedirect::Follow,
         );
-        async_http.client.progress_node = Some(bun_ptr::BackRef::new(&*progress));
-        async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
+        async_http.client_mut().progress_node = Some(bun_ptr::BackRef::new(&*progress));
+        async_http.client_mut().flags.reject_unauthorized =
+            env_loader.get_tls_reject_unauthorized();
 
         refresher.maybe_refresh();
 
@@ -2178,10 +2181,12 @@ impl Example {
             http_proxy,
             HTTP::FetchRedirect::Follow,
         ));
-        async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
+        async_http.client_mut().flags.reject_unauthorized =
+            env_loader.get_tls_reject_unauthorized();
 
         if Output::enable_ansi_colors_stdout() {
-            async_http.client.progress_node = progress_node.map(|p| bun_ptr::BackRef::new(&*p));
+            async_http.client_mut().progress_node =
+                progress_node.map(|p| bun_ptr::BackRef::new(&*p));
         }
 
         let response = match async_http.send_sync(mutable) {

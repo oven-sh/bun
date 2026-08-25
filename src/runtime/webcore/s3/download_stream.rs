@@ -378,13 +378,9 @@ impl S3HttpDownloadStreamingTask {
     }
 
     fn release_portable(&mut self) {
-        // SAFETY: `http` is always initialised before the task is scheduled / dropped.
-        let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
-        http.request_headers = Default::default();
-        if http.client.is_present() {
-            http.client.header_entries = Default::default();
-        }
+        // SAFETY: `http` is always initialised before the task is scheduled /
+        // dropped; this runs once, from `Drop`.
+        unsafe { self.http.assume_init_drop() };
     }
 }
 

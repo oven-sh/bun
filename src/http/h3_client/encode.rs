@@ -36,10 +36,7 @@ pub(crate) fn write_request(
     let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
     let body_len = client.body_len_for_send();
     let is_streaming = client.state.original_request_body.is_stream();
-    let is_bytes = matches!(
-        client.state.original_request_body,
-        Body::Bytes(_)
-    );
+    let is_bytes = matches!(client.state.original_request_body, Body::Bytes(_));
 
     let thread = client.thread();
     let mut request_headers = thread.request_headers_buf.borrow_mut();

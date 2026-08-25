@@ -22,9 +22,11 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 
 /// A configured request, as its caller holds it. Queue it with
 /// [`AsyncHTTP::schedule`] + [`crate::HTTPThread::schedule`]; the HTTP thread
-/// builds its own working copy ([`crate::RequestCell`]) and delivers results
-/// through `result_callback`. Between scheduling and the terminal result the
-/// caller keeps this value (and the inputs `'a` covers) alive and in place.
+/// takes its [`crate::RequestCell`], results come through `result_callback`,
+/// and the cell comes back with the terminal one, so the request can be
+/// scheduled again (from this configuration). Between scheduling and the
+/// terminal result the caller keeps this value (and the inputs `'a` covers)
+/// alive and in place.
 ///
 /// Lifetime `'a` covers every borrowed input the caller hands in: `url`,
 /// `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
@@ -42,9 +44,8 @@ pub struct AsyncHTTP<'a> {
     pub(crate) task: thread_pool::Task,
     pub(crate) result_callback: HTTPClientResultCallback,
 
-    pub client: crate::ClientSlot,
-    /// The HTTP thread's working cell, built when the request is scheduled and
-    /// taken by the thread when it starts it.
+    /// The client and the HTTP thread's working state; `None` while the
+    /// thread has it (between `start` and the terminal result).
     pub(crate) cell: core::cell::Cell<Option<Box<crate::RequestCell>>>,
     pub async_http_id: u32,
 
@@ -259,11 +260,20 @@ impl<'a> AsyncHTTP<'a> {
         self.request_body = body.erase();
     }
 
+    /// The request's client, to finish configuring it before `schedule()`.
+    /// Panics while the request is in flight.
+    #[inline]
+    pub fn client_mut(&mut self) -> &mut HTTPClient {
+        self.cell
+            .get_mut()
+            .as_mut()
+            .expect("request is in flight")
+            .client_mut()
+    }
+
     pub fn clear_data(&mut self) {
-        // Note: `ZigStringSlice` Drop releases WTF/owned variants;
-        // assigning EMPTY runs Drop on the old value.
-        if self.client.is_present() {
-            self.client.unix_socket_path = ZigStringSlice::EMPTY;
+        if let Some(cell) = self.cell.get_mut() {
+            cell.clear_data();
         }
     }
 
@@ -281,7 +291,6 @@ impl<'a> AsyncHTTP<'a> {
             next: self.next,
             task: self.task,
             result_callback: self.result_callback,
-            client: self.client,
             cell: self.cell,
             async_http_id: self.async_http_id,
             signals: self.signals,
@@ -347,9 +356,11 @@ impl PreparedPreconnect {
             Options::default(),
         )
         .detach();
-        async_http.url = RequestUrl::owned(url.clone());
-        async_http.client.url = RequestUrl::owned(url);
-        async_http.client.flags.is_preconnect_only = true;
+        async_http.url = RequestUrl::owned(url);
+        let lent = async_http.url.lend_inner();
+        let client = async_http.client_mut();
+        client.url = lent;
+        client.flags.is_preconnect_only = true;
         Box::new(async_http)
     }
 }
@@ -401,9 +412,10 @@ impl<'a> AsyncHTTP<'a> {
             (None, None) => None,
         };
 
-        let client = make_client(
+        let url = RequestUrl::new(&url);
+        let mut client = make_client(
             method,
-            RequestUrl::new(&url),
+            url.lend_inner(),
             // Note: the same `headers` value goes in both `AsyncHTTP.request_headers`
             // and `client.header_entries`; `MultiArrayList` owns its allocation, so clone here.
             headers.clone().expect("OOM"),
@@ -415,60 +427,56 @@ impl<'a> AsyncHTTP<'a> {
             options.proxy_headers,
             redirect_type,
         );
+        if let Some(val) = options.unix_socket_path {
+            debug_assert!(client.unix_socket_path.slice().is_empty());
+            client.unix_socket_path = val;
+        }
+        if let Some(val) = options.disable_timeout {
+            client.flags.disable_timeout = val;
+        }
+        if let Some(val) = options.idle_timeout_seconds {
+            client.idle_timeout_seconds = Some(crate::normalize_idle_timeout_seconds(val.into()));
+        }
+        if let Some(val) = options.verbose {
+            client.verbose = val;
+        }
+        if let Some(val) = options.disable_decompression {
+            client.flags.disable_decompression = val;
+        }
+        if let Some(val) = options.max_redirects {
+            client.remaining_redirect_count = (val.min(126) + 1) as i8;
+        }
+        if let Some(val) = options.disable_keepalive {
+            client.flags.disable_keepalive = val;
+        }
+        if let Some(val) = options.reject_unauthorized {
+            client.flags.reject_unauthorized = val;
+        }
+        if let Some(val) = options.tls_props {
+            client.tls_props = Some(val);
+        }
+        client.compress = options.compress;
+        client.proxy_settings = options.proxy_settings;
+        // `client.proxy_authorization` stays `None` here; the HTTP thread
+        // derives it on its working copy so redirects can reassign it.
 
-        let mut this = AsyncHTTP {
+        AsyncHTTP {
             request_headers: headers,
             request_body: HTTPRequestBody::Bytes(request_body).erase(),
             method,
-            url: RequestUrl::new(&url),
+            url,
             next: bun_threading::Link::new(),
             task: thread_pool::Task {
                 node: thread_pool::Node::default(),
                 callback: never_run,
             },
             result_callback: callback,
-            client: crate::ClientSlot::filled(client),
-            cell: core::cell::Cell::new(None),
+            cell: core::cell::Cell::new(Some(crate::RequestCell::new(client))),
             async_http_id,
             signals,
             handed_back: AtomicBool::new(false),
             _marker: core::marker::PhantomData,
-        };
-        if let Some(val) = options.unix_socket_path {
-            debug_assert!(this.client.unix_socket_path.slice().is_empty());
-            this.client.unix_socket_path = val;
         }
-        if let Some(val) = options.disable_timeout {
-            this.client.flags.disable_timeout = val;
-        }
-        if let Some(val) = options.idle_timeout_seconds {
-            this.client.idle_timeout_seconds =
-                Some(crate::normalize_idle_timeout_seconds(val.into()));
-        }
-        if let Some(val) = options.verbose {
-            this.client.verbose = val;
-        }
-        if let Some(val) = options.disable_decompression {
-            this.client.flags.disable_decompression = val;
-        }
-        if let Some(val) = options.max_redirects {
-            this.client.remaining_redirect_count = (val.min(126) + 1) as i8;
-        }
-        if let Some(val) = options.disable_keepalive {
-            this.client.flags.disable_keepalive = val;
-        }
-        if let Some(val) = options.reject_unauthorized {
-            this.client.flags.reject_unauthorized = val;
-        }
-        if let Some(val) = options.tls_props {
-            this.client.tls_props = Some(val);
-        }
-        this.client.compress = options.compress;
-        this.client.proxy_settings = options.proxy_settings;
-
-        // `client.proxy_authorization` stays `None` here; the HTTP thread
-        // derives it on its working copy so redirects can reassign it.
-        this
     }
 
     /// Construct an `AsyncHTTP` for a synchronous request driven via
@@ -507,12 +515,8 @@ impl<'a> AsyncHTTP<'a> {
 
     pub fn schedule(&mut self, batch: &mut Batch) {
         self.handed_back.store(false, Ordering::Relaxed);
-        // First time: move the client into a fresh cell. Re-scheduled after a
-        // result: the cell came back with it (`RequestCell::finish`).
-        let cell = match self.cell.take() {
-            Some(cell) => cell,
-            None => crate::RequestCell::new_for(self),
-        };
+        let mut cell = self.cell.take().expect("request already in flight");
+        cell.arm(self);
         self.cell.set(Some(cell));
         batch.push(Batch::from(core::ptr::addr_of_mut!(self.task)));
     }

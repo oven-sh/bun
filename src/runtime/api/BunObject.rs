@@ -892,7 +892,7 @@ pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     true
 }
 
-fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     node::process::get_argv(global_this)
 }
 

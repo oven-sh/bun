@@ -96,6 +96,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
 
     plugin.append(vm, filter->regExp(), func.getObject(), namespaceString);
     callback(ctx, globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -216,6 +217,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
 
     plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
     callback(ctx, globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -379,9 +381,13 @@ void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* fu
 
 JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, StringView path)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     size_t count = filters.size();
     for (size_t i = 0; i < count; i++) {
-        if (filters[i].get()->match(globalObject, path, 0)) {
+        auto matchResult = filters[i].get()->match(globalObject, path, 0);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (matchResult) {
             return callbacks[i].get();
         }
     }
@@ -556,7 +562,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
             RETURN_IF_EXCEPTION(scope, );
 
             if (result.isString()) {
-                auto* specifierStr = result.toString(globalObject);
+                auto* specifierStr = asString(result);
                 if (specifierStr->length() > 0) {
                     specifierString = specifierStr;
                     specifier = specifierString->value(globalObject);

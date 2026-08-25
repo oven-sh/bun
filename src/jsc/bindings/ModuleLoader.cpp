@@ -252,6 +252,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             }
             if (loaderJSString) {
                 WTF::String loaderString = loaderJSString->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, result);
                 if (loaderString == "js"_s) {
                     loader = BunLoaderTypeJS;
                 } else if (loaderString == "object"_s) {
@@ -296,8 +297,11 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     }
     if (contentsValue) {
         if (contentsValue.isString()) {
-            if (JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject)) {
+            JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject);
+            RETURN_IF_EXCEPTION(scope, result);
+            if (contentsJSString) {
                 result.value.sourceText.string = Zig::toEncodedSlice(contentsJSString, globalObject);
+                RETURN_IF_EXCEPTION(scope, result);
                 result.value.sourceText.value = contentsValue;
             }
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
@@ -1233,13 +1237,19 @@ using namespace Bun;
 BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue arg = callFrame->argument(0);
     if (arg.isUndefined()) {
         Bun::IsolatedModuleCache::clear(vm);
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
-    if (auto* str = arg.toStringOrNull(globalObject))
-        Bun::IsolatedModuleCache::evict(vm, str->value(globalObject));
+    auto* str = arg.toStringOrNull(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (str) {
+        WTF::String key = str->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        Bun::IsolatedModuleCache::evict(vm, key);
+    }
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

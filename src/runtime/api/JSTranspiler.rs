@@ -49,9 +49,6 @@ pub struct JSTranspiler {
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
-    // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`:
-    // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
-    // crosses FFI as `m_ctx` (per PORTING.md §Pointers; not `Arc`).
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -1087,7 +1084,6 @@ impl Drop for JSTranspiler {
         // buffer_writer.?.buffer.deinit() → Option<BufferWriter>: Drop
         // config.tsconfig.deinit() → Option<Box<TSConfigJSON>>: Drop
         // arena.deinit() → Arena: Drop
-        // bun.destroy(this) → handled by Box owner / IntrusiveRc.
     }
 }
 

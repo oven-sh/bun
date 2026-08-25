@@ -68,14 +68,13 @@ macro_rules! impl_timer_object {
 
         // Intrusive single-thread refcount mixin.
         impl ::bun_ptr::RefCounted for $T {
-            type DestructorCtx = ();
             #[inline]
             unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
                 // SAFETY: caller contract — `this` points to a live `Self`.
                 unsafe { &raw mut (*this).ref_count }
             }
             #[inline]
-            unsafe fn destructor(this: *mut Self, _ctx: ()) {
+            unsafe fn destructor(this: *mut Self) {
                 // SAFETY: `raw_count == 0` ⇒ unique ownership; `deinit`
                 // consumes the `heap::alloc`'d allocation from `init_with()`.
                 unsafe { Self::deinit(this) }

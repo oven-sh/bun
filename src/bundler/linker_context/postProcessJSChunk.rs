@@ -156,8 +156,6 @@ pub(crate) fn post_process_js_chunk(
         for import_record in chunk.cross_chunk_imports.slice() {
             cross_chunk_import_records.push(ImportRecord {
                 kind: import_record.import_kind,
-                // `ctx.chunks` is a `BackRef<[Chunk]>` (safe `Deref`); chunk_index is
-                // in-bounds (produced by the linker for this chunks slice).
                 path: bun_paths::fs::Path::init(
                     ctx.chunk_unique_keys[import_record.chunk_index as usize],
                 ),

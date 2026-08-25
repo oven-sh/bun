@@ -2,7 +2,7 @@
 
 use bun_core::StackCheck;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, MarkedArgumentBuffer,
     RangeErrorOptions,
 };
 // Note: the `bun_md` crate's lib.rs is a
@@ -11,6 +11,8 @@ use bun_jsc::{
 use crate::node::StringOrBuffer;
 use bun_md::parser::{MAX_INPUT_LEN, ParserError};
 use bun_md::root as md;
+use bun_parsers::toml::TOML;
+use bun_parsers::yaml::{YAML, YamlParseError};
 
 // `bun_core::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
 // (tier-6), not on `bun_core::String` itself.
@@ -103,6 +105,7 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
             ("ansi", __jsc_host_render_to_ansi, 2),
             ("render", __jsc_host_render, 3),
             ("react", __jsc_host_render_react, 3),
+            ("frontmatter", __jsc_host_frontmatter, 1),
         ],
     )
 }
@@ -163,7 +166,11 @@ pub(crate) fn render_to_ansi(
         remote_image_paths: None,
         image_base_dir: None,
     };
+    let mut options = md::Options::TERMINAL;
     if theme_value.is_object() {
+        if let Some(v) = theme_value.get_boolean_loose(global_this, "frontmatter")? {
+            options.frontmatter = v;
+        }
         if let Some(v) = theme_value.get_boolean_loose(global_this, "colors")? {
             theme.colors = v;
         }
@@ -188,7 +195,7 @@ pub(crate) fn render_to_ansi(
         }
     }
 
-    let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
+    let result = match md::render_to_ansi(input, options, theme) {
         Ok(Some(r)) => r,
         Ok(None) => {
             // The parser can only return null via JSError
@@ -300,6 +307,196 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
     Ok(options)
 }
 
+// ========================================
+// Front matter
+// ========================================
+//
+// Detection is structural and lives in `bun_md::frontmatter`; the renderers
+// never parse the metadata. This section is only `Bun.markdown.frontmatter`,
+// the one consumer that does.
+
+enum MetaShape {
+    Mapping,
+    Empty,
+    Other,
+}
+
+fn classify_meta_root(root: bun_ast::Expr) -> MetaShape {
+    use bun_ast::expr::Data;
+    match root.data {
+        Data::EObject(_) => MetaShape::Mapping,
+        Data::ENull(_) | Data::EMissing(_) => MetaShape::Empty,
+        _ => MetaShape::Other,
+    }
+}
+
+enum MetaParseError {
+    Syntax,
+    StackOverflow,
+    OutOfMemory,
+}
+
+fn map_parsers_error(e: bun_parsers::Error) -> MetaParseError {
+    match e {
+        bun_parsers::Error::StackOverflow => MetaParseError::StackOverflow,
+        bun_parsers::Error::Alloc(_) => MetaParseError::OutOfMemory,
+        _ => MetaParseError::Syntax,
+    }
+}
+
+/// Parse front-matter metadata with the parser `lang` selects. Allocates
+/// from `arena`; the caller holds the `ASTMemoryAllocator` scope.
+fn parse_meta(
+    arena: &bun_alloc::Arena,
+    log: &mut bun_ast::Log,
+    lang: md::frontmatter::Lang,
+    source_text: &[u8],
+) -> Result<bun_ast::Expr, MetaParseError> {
+    match lang {
+        md::frontmatter::Lang::Yaml => {
+            let source = bun_ast::Source::init_path_string(b"input.yaml", source_text);
+            YAML::parse(&source, log, arena).map_err(|e| match e {
+                YamlParseError::OutOfMemory => MetaParseError::OutOfMemory,
+                YamlParseError::StackOverflow => MetaParseError::StackOverflow,
+                YamlParseError::SyntaxError => MetaParseError::Syntax,
+            })
+        }
+        md::frontmatter::Lang::Toml => {
+            let source = bun_ast::Source::init_path_string(b"input.toml", source_text);
+            TOML::parse(&source, log, arena, false).map_err(map_parsers_error)
+        }
+    }
+}
+
+fn frontmatter_result(
+    global_this: &JSGlobalObject,
+    data: JSValue,
+    input_value: JSValue,
+    input: &[u8],
+    body_start: usize,
+) -> JsResult<JSValue> {
+    // Nothing split off: hand back the original string instead of
+    // re-encoding the bytes.
+    let content = if body_start == 0 && input_value.is_string() {
+        input_value
+    } else {
+        create_utf8_for_js(global_this, &input[body_start..])?
+    };
+    let result = JSValue::create_empty_object(global_this, 2);
+    result.put(global_this, b"data", data);
+    result.put(global_this, b"content", content);
+    Ok(result)
+}
+
+/// `Bun.markdown.frontmatter(text)` — split a leading front-matter block
+/// (`---` YAML, `+++` TOML) into `{ data, content }`. `data` is `null` when
+/// no structural block is present; metadata that fails to parse or is not a
+/// mapping throws.
+#[bun_jsc::host_fn]
+fn frontmatter(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let [input_value] = callframe.arguments_as_array::<1>();
+
+    if input_value.is_empty_or_undefined_or_null() {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to parse")));
+    }
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to parse")));
+    };
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    };
+
+    // The YAML/TOML parsers index with i32 offsets; bound the input like
+    // `Bun.YAML.parse` does.
+    if input.len() > i32::MAX as usize {
+        return Err(global_this.throw_range_error(
+            input.len() as i64,
+            RangeErrorOptions {
+                max: i64::from(i32::MAX),
+                field_name: b"input.byteLength",
+                ..Default::default()
+            },
+        ));
+    }
+
+    let Some(block) = md::frontmatter::detect(input) else {
+        return frontmatter_result(global_this, JSValue::NULL, input_value, input, 0);
+    };
+
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let mut log = bun_ast::Log::init();
+
+    // Error positions should land in the document the user is reading, so
+    // the parsed source starts at the top of the input: the opening `---`
+    // line is a YAML document-start marker (parsed as-is, BOM included),
+    // and for TOML the BOM and fence become a comment in a private copy.
+    let mut toml_buf: Vec<u8> = Vec::new();
+    let source_text: &[u8] = match block.lang {
+        md::frontmatter::Lang::Yaml => &input[..block.meta.end],
+        md::frontmatter::Lang::Toml => {
+            toml_buf.extend_from_slice(&input[..block.meta.end]);
+            toml_buf[..block.start].fill(b' ');
+            toml_buf[block.start] = b'#';
+            toml_buf[block.start + 1..block.start + 3].fill(b' ');
+            &toml_buf
+        }
+    };
+
+    let root = match parse_meta(&arena, &mut log, block.lang, source_text) {
+        Ok(root) => root,
+        Err(MetaParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
+        Err(MetaParseError::StackOverflow) => return Err(global_this.throw_stack_overflow()),
+        Err(MetaParseError::Syntax) => {
+            // The renderers skip an unparseable block; the extractor was
+            // asked for the metadata, so surface the typo.
+            let (what, fallback) = match block.lang {
+                md::frontmatter::Lang::Toml => ("TOML", "Unable to parse TOML"),
+                md::frontmatter::Lang::Yaml => ("YAML", "Unable to parse YAML string"),
+            };
+            let err = if let Some(first_msg) = log.msgs.first() {
+                global_this.create_syntax_error_instance(format_args!(
+                    "{} Parse error: {}",
+                    what,
+                    bstr::BStr::new(&first_msg.data.text)
+                ))
+            } else {
+                global_this.create_syntax_error_instance(format_args!(
+                    "{} Parse error: {}",
+                    what, fallback
+                ))
+            };
+            return Err(global_this.throw_value(err));
+        }
+    };
+
+    let data = match classify_meta_root(root) {
+        MetaShape::Mapping => match block.lang {
+            md::frontmatter::Lang::Yaml => super::yaml_object::yaml_expr_to_js(global_this, root)?,
+            md::frontmatter::Lang::Toml => super::expr_to_js(root, global_this)?,
+        },
+        MetaShape::Empty => JSValue::create_empty_object(global_this, 0),
+        // The fences make the author's intent unambiguous, so metadata that
+        // parses to a scalar or sequence is an error, not content — same as
+        // the missing-colon typo (`title Hello`), which is a valid scalar.
+        MetaShape::Other => {
+            let msg = match block.lang {
+                md::frontmatter::Lang::Yaml => "YAML front matter must be a mapping",
+                md::frontmatter::Lang::Toml => "TOML front matter must be a table",
+            };
+            return Err(global_this
+                .throw_value(global_this.create_syntax_error_instance(format_args!("{msg}"))));
+        }
+    };
+
+    frontmatter_result(global_this, data, input_value, input, block.body_start)
+}
+
 /// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
 ///
 /// Each callback receives the accumulated children as a string plus an optional
@@ -327,6 +524,9 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
+    // `render_with_renderer` leaves the strip to us: the renderer below
+    // captures `input` as its source text.
+    let input = options.strip_frontmatter(input);
 
     // Create JS callback renderer
     let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.heading_ids) {
@@ -420,6 +620,9 @@ fn render_ast(
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
+    // `render_with_renderer` leaves the strip to us: the renderer below
+    // captures `input` as its source text.
+    let input = options.strip_frontmatter(input);
 
     let mut renderer = match ParseRenderer::init(
         global_this,

@@ -970,7 +970,9 @@ describe("Query Execution", () => {
     expect(replaceAlias.affectedRows).toBe(0);
 
     // a later statement's RETURNING does not leak across a statement boundary
-    const firstOfBatch = await sql.unsafe("WITH c AS (SELECT 1 AS x) SELECT x FROM c; DELETE FROM gadgets RETURNING id");
+    const firstOfBatch = await sql.unsafe(
+      "WITH c AS (SELECT 1 AS x) SELECT x FROM c; DELETE FROM gadgets RETURNING id",
+    );
     expect(firstOfBatch.command).toBe("WITH");
     expect(firstOfBatch.affectedRows).toBe(0);
   });

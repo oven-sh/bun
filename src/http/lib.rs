@@ -865,9 +865,8 @@ pub struct RequestCell {
     /// The caller's request, lent until the terminal result (see
     /// [`http_thread::LentRequest`]); `None` from then on.
     origin: Cell<Option<http_thread::LentRequest>>,
-    /// `origin`'s address, for the raw callback's `async_http` argument; never
-    /// dereferenced here.
-    /// Identifies the caller's request to `ThreadState::free_owned_request`.
+    /// `origin`'s address; identifies the caller's request to
+    /// `ThreadState::free_owned_request`. Never dereferenced here.
     origin_ptr: *const AsyncHTTP<'static>,
     client: RefCell<HTTPClient>,
     /// Set the first time the request is scheduled.
@@ -1550,12 +1549,8 @@ pub struct HTTPClient {
     /// the request's reference on the tunnel (taken by `ProxyTunnel::start` /
     /// `adopt`, released on drop / handed to the keep-alive pool).
     pub(crate) proxy_tunnel: Option<proxy_tunnel::RefPtr>,
-    /// Set when this request is bound to a stream on an HTTP/2 session.
-    /// Owned by the session; cleared by the session when the stream completes.
     /// Whether an HTTP/2 stream currently carries this request.
     pub(crate) h2_attached: bool,
-    /// Set when this request is bound to an HTTP/3 stream. Owned by the H3
-    /// session; cleared by the session when the stream completes.
     /// Set while this request is the leader of a fresh TLS connect that other
     /// h2-capable requests have coalesced onto. Resolved (and freed) once ALPN
     /// is known or the connect fails. Points into the owning
@@ -4470,25 +4465,10 @@ impl HTTPClient {
             return;
         }
 
-        if let Some(proxy) = self.proxy_tunnel_this() {
-            // Body phase only, mirroring the non-proxy dispatch below (header
-            // phase is an absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
-            debug_assert!(!self.state.flags.receive_paused); // maybe_pause_receive bails on proxy_tunnel
-            if matches!(
-                self.state.response_stage,
-                ResponseStage::Body | ResponseStage::BodyChunk
-            ) {
-                self.set_timeout(&socket);
-            }
-            ProxyTunnel::receive(proxy, incoming_data);
-            self.drain_tunnel_events();
-            return;
-        }
-
-        // While parked waiting for the JS `checkServerIdentity` verdict, no
-        // request has been written, so any data is unexpected. Must stay below
-        // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
-        // records must keep reaching the SSLWrapper while parked.
+        // Tunneled data never reaches here (`RequestCell::on_data` routes it to
+        // the tunnel). While parked waiting for the JS `checkServerIdentity`
+        // verdict, no request has been written, so any data is unexpected.
+        debug_assert!(self.proxy_tunnel.is_none());
         if self.state.flags.is_waiting_for_cert_check {
             self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
             return;

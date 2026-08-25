@@ -67,6 +67,6 @@ pub fn err_error_string_n(packed_error: u32, buf: &mut [u8]) -> &[u8] {
     unsafe {
         boringssl::ERR_error_string_n(packed_error, buf.as_mut_ptr().cast(), buf.len());
     }
-    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    let end = bun_core::strings::index_of_char_usize(buf, 0).unwrap_or(buf.len());
     &buf[..end]
 }

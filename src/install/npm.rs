@@ -1254,7 +1254,7 @@ pub mod package_manifest {
             tmpdir: Fd,
             cache_dir: Fd,
         ) {
-            use bun_threading::thread_pool::Task as PoolTask;
+            use bun_threading::WorkPoolTask;
 
             struct SaveTask {
                 manifest: PackageManifest,
@@ -1264,26 +1264,23 @@ pub mod package_manifest {
                 tmpdir: Fd,
                 cache_dir: Fd,
 
-                task: PoolTask,
+                task: WorkPoolTask,
             }
 
             bun_threading::owned_task!(SaveTask, task);
 
             impl SaveTask {
+                #[allow(clippy::boxed_local)] // `owned_task!`'s required signature
                 fn run_owned(self: Box<Self>) {
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
-                    let save_task = self;
 
-                    if let Err(err) = Serializer::save(
-                        &save_task.manifest,
-                        &save_task.scope,
-                        save_task.tmpdir,
-                        save_task.cache_dir,
-                    ) {
+                    if let Err(err) =
+                        Serializer::save(&self.manifest, &self.scope, self.tmpdir, self.cache_dir)
+                    {
                         if PackageManager::verbose_install() {
                             bun_core::warn!(
                                 "Error caching manifest for {}: {}",
-                                bstr::BStr::new(save_task.manifest.name()),
+                                bstr::BStr::new(self.manifest.name()),
                                 err.name(),
                             );
                             Output::flush();
@@ -1299,7 +1296,7 @@ pub mod package_manifest {
                     scope: scope.clone(),
                     tmpdir,
                     cache_dir,
-                    task: PoolTask::default(),
+                    task: WorkPoolTask::default(),
                 }));
         }
 

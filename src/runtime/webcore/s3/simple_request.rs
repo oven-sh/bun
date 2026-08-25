@@ -18,6 +18,7 @@ use bun_s3_signing::storage_class::StorageClass;
 use bun_threading::thread_pool;
 use bun_url::URL;
 
+use crate::webcore::s3::multipart::{MultiPartUpload, UploadPart};
 use crate::webcore::s3::{list_objects, xml_response};
 
 // The result/options structs below carry borrowed slices that are valid only for the
@@ -149,46 +150,71 @@ impl Taskable for S3HttpSimpleTask {
 }
 
 /// How a finished request is delivered. The closure owns whatever it needs
-/// to settle (promise, store ref, …) and runs exactly once — or is dropped if
-/// the request is abandoned.
+/// to settle (promise, store ref, …) and runs exactly once. The multipart
+/// state machine's own requests carry its pointer instead (it holds a ref on
+/// itself across each one).
 pub enum Callback {
     Stat(Box<dyn FnOnce(S3StatResult<'_>) -> bun_jsc::JsResult<()>>),
     Download(Box<dyn FnOnce(S3DownloadResult<'_>) -> bun_jsc::JsResult<()>>),
     Upload(Box<dyn FnOnce(S3UploadResult<'_>) -> bun_jsc::JsResult<()>>),
     Delete(Box<dyn FnOnce(S3DeleteResult<'_>) -> bun_jsc::JsResult<()>>),
     ListObjects(Box<dyn FnOnce(S3ListObjectsResult<'_>) -> bun_jsc::JsResult<()>>),
-    Commit(Box<dyn FnOnce(S3CommitResult<'_>) -> bun_jsc::JsResult<()>>),
-    Part(Box<dyn FnOnce(S3PartResult<'_>) -> bun_jsc::JsResult<()>>),
+    /// → [`MultiPartUpload::start_multi_part_request_result`]
+    MultipartStart(*mut MultiPartUpload),
+    /// → [`MultiPartUpload::single_send_upload_response`]
+    MultipartUpload(*mut MultiPartUpload),
+    /// → [`MultiPartUpload::on_commit_multi_part_request`]
+    MultipartCommit(*mut MultiPartUpload),
+    /// → [`MultiPartUpload::on_rollback_multi_part_request`]
+    MultipartRollback(*mut MultiPartUpload),
+    /// → [`UploadPart::on_part_response`]
+    MultipartPart(*mut UploadPart),
 }
 
 impl Callback {
-    pub(crate) fn fail(self, code: &[u8], message: &[u8]) -> bun_jsc::JsResult<()> {
+    fn fail(self, code: &[u8], message: &[u8]) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
-            Callback::Upload(callback) => callback(S3UploadResult::Failure(err)),
-            Callback::Download(callback) => callback(S3DownloadResult::Failure(err)),
             Callback::Stat(callback) => callback(S3StatResult::Failure(err)),
+            Callback::Download(callback) => callback(S3DownloadResult::Failure(err)),
+            Callback::Upload(callback) => callback(S3UploadResult::Failure(err)),
             Callback::Delete(callback) => callback(S3DeleteResult::Failure(err)),
             Callback::ListObjects(callback) => callback(S3ListObjectsResult::Failure(err)),
-            Callback::Commit(callback) => callback(S3CommitResult::Failure(err)),
-            Callback::Part(callback) => callback(S3PartResult::Failure(err)),
+            Callback::MultipartStart(this) => MultiPartUpload::start_multi_part_request_result(
+                this,
+                S3DownloadResult::Failure(err),
+            ),
+            Callback::MultipartUpload(this) => {
+                MultiPartUpload::single_send_upload_response(this, S3UploadResult::Failure(err))
+            }
+            Callback::MultipartCommit(this) => {
+                MultiPartUpload::on_commit_multi_part_request(this, S3CommitResult::Failure(err))
+            }
+            Callback::MultipartRollback(this) => {
+                MultiPartUpload::on_rollback_multi_part_request(this, S3UploadResult::Failure(err))
+            }
+            Callback::MultipartPart(this) => {
+                UploadPart::on_part_response(this, S3PartResult::Failure(err))
+            }
         }
     }
 
     fn not_found(self, code: &[u8], message: &[u8]) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
-            Callback::Download(callback) => callback(S3DownloadResult::NotFound(err)),
             Callback::Stat(callback) => callback(S3StatResult::NotFound(err)),
+            Callback::Download(callback) => callback(S3DownloadResult::NotFound(err)),
             Callback::Delete(callback) => callback(S3DeleteResult::NotFound(err)),
             Callback::ListObjects(callback) => callback(S3ListObjectsResult::NotFound(err)),
+            Callback::MultipartStart(this) => MultiPartUpload::start_multi_part_request_result(
+                this,
+                S3DownloadResult::NotFound(err),
+            ),
             _ => self.fail(code, message),
         }
     }
 }
 
-// `error_type` is a runtime parameter — the
-// branch is on an error path, no perf concern.
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum ErrorType {
     NotFound,
@@ -203,8 +229,7 @@ impl S3HttpSimpleTask {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    fn error_with_body(&mut self, error_type: ErrorType) -> bun_jsc::JsResult<()> {
-        let callback = self.callback.take().expect("delivered once");
+    fn error_with_body(&self, callback: Callback, error_type: ErrorType) -> bun_jsc::JsResult<()> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
         let mut has_error_code = false;
@@ -240,10 +265,13 @@ impl S3HttpSimpleTask {
         }
     }
 
-    /// A commit can answer 200 and still carry an `<Error>` document; on
-    /// `Ok(Some(callback))` it did not and the callback is still to run.
-    fn fail_if_contains_error(&mut self, status: u32) -> bun_jsc::JsResult<Option<Callback>> {
-        let callback = self.callback.take().expect("delivered once");
+    /// A commit can answer 200 and still carry an `<Error>` document; hands
+    /// the callback back if it did not.
+    fn fail_if_contains_error(
+        &self,
+        callback: Callback,
+        status: u32,
+    ) -> bun_jsc::JsResult<Option<Callback>> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
         let parsed;
@@ -283,76 +311,105 @@ impl S3HttpSimpleTask {
         // reclaimed here exactly once via the ConcurrentTask `AutoDeinit::ManualDeinit` contract;
         // `this` is dropped at scope exit.
         let mut this = unsafe { bun_core::heap::take(this) };
+        let callback = this.callback.take().expect("delivered once");
 
         if !this.result.is_success() {
-            this.error_with_body(ErrorType::Failure)?;
-            return Ok(());
+            return this.error_with_body(callback, ErrorType::Failure);
         }
         debug_assert!(this.result.metadata.is_some());
-        let status = this.result.metadata.as_ref().unwrap().response.status_code;
-        let error_type = match (this.callback.as_ref().expect("delivered once"), status) {
-            (Callback::Stat(_) | Callback::ListObjects(_) | Callback::Upload(_), 200)
-            | (Callback::Delete(_), 200 | 204)
-            | (Callback::Download(_), 200 | 204 | 206)
-            | (Callback::Commit(_) | Callback::Part(_), _) => None,
-            (
-                Callback::Stat(_)
-                | Callback::ListObjects(_)
-                | Callback::Delete(_)
-                | Callback::Download(_),
-                404,
-            ) => Some(ErrorType::NotFound),
-            _ => Some(ErrorType::Failure),
-        };
-        if let Some(error_type) = error_type {
-            return this.error_with_body(error_type);
-        }
-        let callback = match this.callback.as_ref().unwrap() {
-            // Commit / part uploads can answer 200 and still carry an error.
-            Callback::Commit(_) | Callback::Part(_) => match this.fail_if_contains_error(status)? {
-                Some(callback) => callback,
-                None => return Ok(()),
-            },
-            _ => this.callback.take().unwrap(),
-        };
         let response = &this.result.metadata.as_ref().unwrap().response;
+        let status = response.status_code;
         match callback {
-            Callback::Stat(callback) => callback(S3StatResult::Success(S3StatSuccess {
-                etag: response.headers.get(b"etag").unwrap_or(b""),
-                last_modified: response.headers.get(b"last-modified").unwrap_or(b""),
-                content_type: response.headers.get(b"content-type").unwrap_or(b""),
-                size: response
-                    .headers
-                    .get(b"content-length")
-                    .map(bun_http_types::parse_content_length)
-                    .unwrap_or(0),
-            })),
-            Callback::Delete(callback) => callback(S3DeleteResult::Success),
-            Callback::ListObjects(callback) => {
-                let body = this.response_buffer.list.as_slice();
-                callback(match list_objects::parse_s3_list_objects_result(body) {
-                    Some(listing) => S3ListObjectsResult::Success(Box::new(listing)),
-                    // Half a listing is worse than none: S3 emits keys
-                    // with control characters as (ill-formed) XML
-                    // unless asked to URL-encode them.
-                    None => S3ListObjectsResult::Failure(S3Error {
-                        code: b"InvalidResponse",
-                        message: b"ListObjectsV2 response is not a well-formed <ListBucketResult> document (if keys can contain control characters, pass encodingType: \"url\")",
-                    }),
-                })
-            }
-            Callback::Upload(callback) => callback(S3UploadResult::Success),
-            Callback::Download(callback) => {
-                let body = core::mem::take(&mut this.response_buffer);
-                callback(S3DownloadResult::Success(S3DownloadSuccess { body }))
-            }
-            Callback::Commit(callback) => callback(S3CommitResult::Success),
-            Callback::Part(callback) => match response.headers.get(b"etag") {
-                Some(etag) => callback(S3PartResult::Etag(etag)),
-                None => {
-                    this.callback = Some(Callback::Part(callback));
-                    this.error_with_body(ErrorType::Failure)
+            Callback::Stat(callback) => match status {
+                200 => callback(S3StatResult::Success(S3StatSuccess {
+                    etag: response.headers.get(b"etag").unwrap_or(b""),
+                    last_modified: response.headers.get(b"last-modified").unwrap_or(b""),
+                    content_type: response.headers.get(b"content-type").unwrap_or(b""),
+                    size: response
+                        .headers
+                        .get(b"content-length")
+                        .map(bun_http_types::parse_content_length)
+                        .unwrap_or(0),
+                })),
+                404 => this.error_with_body(Callback::Stat(callback), ErrorType::NotFound),
+                _ => this.error_with_body(Callback::Stat(callback), ErrorType::Failure),
+            },
+            Callback::Delete(callback) => match status {
+                200 | 204 => callback(S3DeleteResult::Success),
+                404 => this.error_with_body(Callback::Delete(callback), ErrorType::NotFound),
+                _ => this.error_with_body(Callback::Delete(callback), ErrorType::Failure),
+            },
+            Callback::ListObjects(callback) => match status {
+                200 => {
+                    let body = this.response_buffer.list.as_slice();
+                    callback(match list_objects::parse_s3_list_objects_result(body) {
+                        Some(listing) => S3ListObjectsResult::Success(Box::new(listing)),
+                        // Half a listing is worse than none: S3 emits keys
+                        // with control characters as (ill-formed) XML
+                        // unless asked to URL-encode them.
+                        None => S3ListObjectsResult::Failure(S3Error {
+                            code: b"InvalidResponse",
+                            message: b"ListObjectsV2 response is not a well-formed <ListBucketResult> document (if keys can contain control characters, pass encodingType: \"url\")",
+                        }),
+                    })
                 }
+                404 => this.error_with_body(Callback::ListObjects(callback), ErrorType::NotFound),
+                _ => this.error_with_body(Callback::ListObjects(callback), ErrorType::Failure),
+            },
+            Callback::Upload(_) | Callback::MultipartUpload(_) | Callback::MultipartRollback(_) => {
+                match status {
+                    200 => match callback {
+                        Callback::Upload(callback) => callback(S3UploadResult::Success),
+                        Callback::MultipartUpload(this) => {
+                            MultiPartUpload::single_send_upload_response(
+                                this,
+                                S3UploadResult::Success,
+                            )
+                        }
+                        Callback::MultipartRollback(this) => {
+                            MultiPartUpload::on_rollback_multi_part_request(
+                                this,
+                                S3UploadResult::Success,
+                            )
+                        }
+                        _ => unreachable!(),
+                    },
+                    _ => this.error_with_body(callback, ErrorType::Failure),
+                }
+            }
+            Callback::Download(_) | Callback::MultipartStart(_) => match status {
+                200 | 204 | 206 => {
+                    let body = core::mem::take(&mut this.response_buffer);
+                    let result = S3DownloadResult::Success(S3DownloadSuccess { body });
+                    match callback {
+                        Callback::Download(callback) => callback(result),
+                        Callback::MultipartStart(this) => {
+                            MultiPartUpload::start_multi_part_request_result(this, result)
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                404 => this.error_with_body(callback, ErrorType::NotFound),
+                _ => this.error_with_body(callback, ErrorType::Failure),
+            },
+            // commit multipart upload can fail with status 200
+            Callback::MultipartCommit(upload) => match this
+                .fail_if_contains_error(callback, status)?
+            {
+                Some(_) => {
+                    MultiPartUpload::on_commit_multi_part_request(upload, S3CommitResult::Success)
+                }
+                None => Ok(()),
+            },
+            Callback::MultipartPart(part) => match this.fail_if_contains_error(callback, status)? {
+                Some(callback) => {
+                    let response = &this.result.metadata.as_ref().unwrap().response;
+                    match response.headers.get(b"etag") {
+                        Some(etag) => UploadPart::on_part_response(part, S3PartResult::Etag(etag)),
+                        None => this.error_with_body(callback, ErrorType::Failure),
+                    }
+                }
+                None => Ok(()),
             },
         }
     }
@@ -484,7 +541,6 @@ impl Drop for S3HttpSimpleTask {
 // and two for the callback enum. Alias them here so the call sites compile without churn.
 pub(crate) type Options<'a> = S3SimpleRequestOptions<'a>;
 pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
-pub(crate) type S3Callback = Callback;
 
 pub struct S3SimpleRequestOptions<'a> {
     // signing options

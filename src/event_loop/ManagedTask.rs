@@ -45,7 +45,7 @@ impl ManagedTask {
     ///
     /// # Safety
     /// As [`run`](Self::run).
-    pub unsafe fn release(this: *mut ManagedTask) {
+    pub(crate) unsafe fn release_unrun(this: *mut ManagedTask) {
         // SAFETY: fn contract.
         unsafe { ((*this).release)(this) }
     }

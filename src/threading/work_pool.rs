@@ -39,8 +39,8 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
 }
 
 /// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
-/// (`Box<Self>`). [`WorkPool::schedule_owned`] performs the `Box` →
-/// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
+/// (`Box<Self>`). [`ThreadPool::schedule_owned`](crate::ThreadPool::schedule_owned) performs the
+/// `Box` → raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
 /// `Box<Self>` via [`IntrusiveWorkTask::from_task_ptr`], so call sites never
 /// touch `Box::into_raw`/`from_raw` directly.
 ///
@@ -59,7 +59,7 @@ pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     #[doc(hidden)]
     unsafe fn __callback(task: *mut Task) {
         // SAFETY: `task` points to the `Task` field inside a `Box<Self>` that
-        // `WorkPool::schedule_owned` leaked. The thread pool guarantees this
+        // `ThreadPool::schedule_owned` leaked. The thread pool guarantees this
         // callback fires exactly once per scheduled task, so reclaiming the
         // `Box` here is sound.
         let this = unsafe { Box::from_raw(Self::from_task_ptr(task)) };

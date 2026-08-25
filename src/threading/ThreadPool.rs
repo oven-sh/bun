@@ -365,7 +365,7 @@ unsafe impl Send for Task {}
 
 impl Default for Task {
     /// Placeholder for fields where the callback is installed later
-    /// (e.g. by [`crate::work_pool::WorkPool::schedule_owned`]). The
+    /// (e.g. by [`ThreadPool::schedule_owned`]). The
     /// `unreachable` callback panics if scheduled un-initialized.
     #[inline]
     fn default() -> Self {

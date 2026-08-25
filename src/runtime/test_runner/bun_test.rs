@@ -883,7 +883,6 @@ impl BunTest {
 
     pub(crate) fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
         let vm = global_this.bun_vm().as_mut();
-        // Check liveness before allocating so the early return doesn't strand a Box.
         let Some(strong) = weak.upgrade() else {
             debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
             return; // but just in case
@@ -1520,21 +1519,20 @@ pub struct RunTestsTask {
 }
 impl RunTestsTask {
     pub fn call(self) -> JsResult<()> {
-        let this = self;
-        let Some(strong) = this.weak.upgrade() else { return Ok(()) };
-        if let Err(e) = BunTest::run(&strong, &this.global_this) {
+        let Some(strong) = self.weak.upgrade() else { return Ok(()) };
+        if let Err(e) = BunTest::run(&strong, &self.global_this) {
             // A termination is the tick's to fold, not a test failure.
-            if this.global_this.has_pending_termination_exception() {
+            if self.global_this.has_pending_termination_exception() {
                 return Err(e);
             }
             // SAFETY: `&mut` derived via `UnsafeCell` after `run` returned; sole
             // borrow at this point.
             let bt = strong.get();
             bt.on_uncaught_exception(
-                &this.global_this,
-                Some(this.global_this.take_exception(e)),
+                &self.global_this,
+                Some(self.global_this.take_exception(e)),
                 false,
-                &this.phase,
+                &self.phase,
             );
         }
         Ok(())

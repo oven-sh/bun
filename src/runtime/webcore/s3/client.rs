@@ -555,7 +555,7 @@ pub struct S3UploadStreamWrapper {
     pub sink: Option<NonNull<NetworkSink>>,
     pub task: *mut MultiPartUpload,
     pub(crate) end_promise: bun_jsc::JSPromiseStrong,
-    pub callback: Option<Box<dyn FnOnce(S3UploadResult<'_>)>>,
+    pub callback: Option<Box<dyn FnOnce(S3UploadResult<'_>) -> JsResult<()>>>,
     /// this is owned by the task not by the wrapper
     pub path: bun_ptr::RawSlice<u8>,
     /// Pins the source ReadableStream when the native ByteStream fast-path is
@@ -742,7 +742,11 @@ impl S3UploadStreamWrapper {
         }
 
         if let Some(callback) = self_.callback.take() {
-            callback(result);
+            if settled.is_ok() {
+                settled = callback(result);
+            } else {
+                let _ = callback(result);
+            }
         }
         settled
     }
@@ -829,7 +833,7 @@ pub(crate) fn upload_stream(
     content_encoding: Option<&[u8]>,
     proxy: Option<&[u8]>,
     request_payer: bool,
-    callback: Option<Box<dyn FnOnce(S3UploadResult<'_>)>>,
+    callback: Option<Box<dyn FnOnce(S3UploadResult<'_>) -> JsResult<()>>>,
 ) -> JsResult<JSValue> {
     let proxy_url = proxy.unwrap_or(b"");
     if readable_stream.is_disturbed(global_this) {

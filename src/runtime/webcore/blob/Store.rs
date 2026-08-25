@@ -288,14 +288,13 @@ impl S3Ext for S3 {
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
 
         let store = store.clone();
-        // The global outlives any in-flight request (VM-owned).
-        let global = bun_ptr::BackRef::new(global_this);
+        let global = bun_jsc::GlobalRef::from(global_this);
         s3_client::delete(
             &aws_options.credentials,
             self.path(),
             move |result| {
                 let mut promise = promise;
-                let global = global.get();
+                let global: &JSGlobalObject = &global;
                 match result {
                     S3DeleteResult::Success => promise.resolve(global, JSValue::TRUE),
                     S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
@@ -340,14 +339,13 @@ impl S3Ext for S3 {
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
         let store = store.clone();
-        // The global outlives any in-flight request (VM-owned).
-        let global = bun_ptr::BackRef::new(global_this);
+        let global = bun_jsc::GlobalRef::from(global_this);
         s3_client::list_objects(
             &aws_options.credentials,
             &options,
             move |result| {
                 let mut promise = promise;
-                let global = global.get();
+                let global: &JSGlobalObject = &global;
                 match result {
                     S3ListObjectsResult::Success(list_result) => match list_result.to_js(global) {
                         Ok(v) => promise.resolve(global, v),

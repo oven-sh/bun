@@ -1761,12 +1761,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 None
             };
 
-            let s3_stream = Box::new(S3StreamWrapper {
+            let s3_stream = S3StreamWrapper {
                 url: url_static,
                 _url_proxy_buffer: owned_buffer,
                 promise,
                 global: GlobalRef::from(global_this),
-            });
+            };
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
@@ -1783,9 +1783,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
-                Some(Box::new(move |result| {
-                    let _ = s3_stream.resolve(result);
-                })),
+                Some(Box::new(move |result| s3_stream.resolve(result))),
             )?;
             // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
@@ -1938,8 +1936,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// S3 ReadableStream upload Wrapper — module level because Rust does not allow
-// `impl` blocks inside fn bodies for types referenced by external fn pointers.
+// S3 ReadableStream upload wrapper
 // ──────────────────────────────────────────────────────────────────────────
 
 struct S3StreamWrapper {
@@ -1951,9 +1948,8 @@ struct S3StreamWrapper {
 }
 
 impl S3StreamWrapper {
-    fn resolve(self: Box<Self>, result: s3::S3UploadResult) -> JsResult<()> {
-        let mut self_ = self;
-        let global: &JSGlobalObject = &self_.global;
+    fn resolve(mut self, result: s3::S3UploadResult) -> JsResult<()> {
+        let global: &JSGlobalObject = &self.global;
         match result {
             s3::S3UploadResult::Success => {
                 let response = Box::new(Response::init(
@@ -1963,7 +1959,7 @@ impl S3StreamWrapper {
                         ..Default::default()
                     },
                     Body::new(BodyValue::Empty),
-                    BunString::create_atom_if_possible(self_.url.href),
+                    BunString::create_atom_if_possible(self.url.href),
                     false,
                 ));
                 // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
@@ -1971,7 +1967,7 @@ impl S3StreamWrapper {
                 let response_js =
                     Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
                 response_js.ensure_still_alive();
-                self_.promise.resolve(global, response_js)?;
+                self.promise.resolve(global, response_js)?;
             }
             s3::S3UploadResult::Failure(err) => {
                 let response = Box::new(Response::init(
@@ -1985,7 +1981,7 @@ impl S3StreamWrapper {
                         bytes: err.message.to_vec(),
                         was_string: true,
                     })),
-                    BunString::create_atom_if_possible(self_.url.href),
+                    BunString::create_atom_if_possible(self.url.href),
                     false,
                 ));
 
@@ -1994,7 +1990,7 @@ impl S3StreamWrapper {
                 let response_js =
                     Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
                 response_js.ensure_still_alive();
-                self_.promise.resolve(global, response_js)?;
+                self.promise.resolve(global, response_js)?;
             }
         }
         Ok(())

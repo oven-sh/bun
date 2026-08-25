@@ -14,8 +14,8 @@ use core::mem;
 use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
+use crate::webcore::blob::ReadBytesResult;
 use crate::webcore::blob::store as blob_store;
-use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
 use bun_core::base64;
@@ -1248,18 +1248,18 @@ impl Image {
 /// Promise-of-promise flattens, so the caller sees one `await` for
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
-struct BlobReadChain<'a> {
+struct BlobReadChain {
     image: *const Image,
-    global: &'a JSGlobalObject,
+    global: jsc::GlobalRef,
     kind: Kind,
     deliver: Deliver,
     outer: jsc::JSPromiseStrong,
 }
 
-impl<'a> BlobReadChain<'a> {
+impl BlobReadChain {
     fn start(
         image: &Image,
-        global: &'a JSGlobalObject,
+        global: &JSGlobalObject,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
@@ -1287,23 +1287,21 @@ impl<'a> BlobReadChain<'a> {
         }
         image.pending_tasks.set(image.pending_tasks.get() + 1);
 
-        let chain = Box::new(BlobReadChain {
+        let chain = BlobReadChain {
             image: std::ptr::from_ref::<Image>(image),
-            global,
+            global: jsc::GlobalRef::from(global),
             kind,
             deliver,
             outer: jsc::JSPromiseStrong::init(global),
-        });
+        };
         let promise = chain.outer.value();
-        // `on_read_bytes` runs on the JS thread (sync for in-memory, async for
-        // file/S3).
-        blob.read_bytes_to_handler(chain, global)?;
+        blob.read_bytes_to_handler(move |result| chain.on_read_bytes(result), global)?;
         Ok(promise)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    fn on_read_bytes_impl(self, r: ReadBytesResult) -> JsResult<()> {
-        let global = self.global;
+    fn on_read_bytes(self, r: ReadBytesResult) -> JsResult<()> {
+        let global: &JSGlobalObject = &self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —
         // mutation goes through `Cell`/`JsCell`.
@@ -1353,12 +1351,6 @@ impl<'a> BlobReadChain<'a> {
                 outer.reject(global, Ok(e.to_error_instance(global)))
             }
         }
-    }
-}
-
-impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    fn on_read_bytes(self: Box<Self>, result: ReadBytesResult) -> JsResult<()> {
-        self.on_read_bytes_impl(result)
     }
 }
 

@@ -8,6 +8,8 @@ use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, Store, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
+#[cfg(windows)]
+use bun_jsc::event_loop::ConcurrentTaskItem;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_paths::PathBuffer;
 use bun_ptr::RefPtr;
@@ -1918,15 +1920,13 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
         bun_sys::Result::Ok(()) => None,
     };
     let this: *mut CopyFileWindows<'static> = core::ptr::from_mut(this).cast();
-    ticket.post(jsc::event_loop::ConcurrentTaskItem::from_callback(
-        move || {
-            // SAFETY: `this` is the heap-allocated `CopyFileWindows`;
-            // `on_mkdirp_complete` may free it via `throw`, so it is not touched
-            // afterward.
-            unsafe { (*this).on_mkdirp_complete() };
-            Ok(())
-        },
-    ));
+    ticket.post(ConcurrentTaskItem::from_callback(move || {
+        // SAFETY: `this` is the heap-allocated `CopyFileWindows`;
+        // `on_mkdirp_complete` may free it via `throw`, so it is not touched
+        // afterward.
+        unsafe { (*this).on_mkdirp_complete() };
+        Ok(())
+    }));
 }
 
 // ───────────────────────────────────────────────────────────────────────────

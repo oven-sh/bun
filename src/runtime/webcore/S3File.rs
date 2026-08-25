@@ -362,12 +362,11 @@ pub(crate) struct S3BlobStatTask {
 }
 
 impl S3BlobStatTask {
-    fn on_s3_exists_resolved(self, result: s3::S3StatResult) -> JsResult<()> {
-        let mut this = self;
-        let global = this.global.get();
+    fn on_s3_exists_resolved(mut self, result: s3::S3StatResult) -> JsResult<()> {
+        let global = self.global.get();
         match result {
             s3::S3StatResult::NotFound(_) => {
-                this.promise.resolve(global, JSValue::FALSE)?;
+                self.promise.resolve(global, JSValue::FALSE)?;
             }
             s3::S3StatResult::Success(_) => {
                 // calling .exists() should not prevent it to download a bigger file
@@ -375,45 +374,43 @@ impl S3BlobStatTask {
                 // if (this.blob.size == Blob.max_size) {
                 //     this.blob.size = @truncate(stat.size);
                 // }
-                this.promise.resolve(global, JSValue::TRUE)?;
+                self.promise.resolve(global, JSValue::TRUE)?;
             }
             s3::S3StatResult::Failure(err) => {
                 let value = s3_error_to_js_with_async_stack(
                     &err,
                     global,
-                    Some(this.store.data.as_s3().path()),
-                    this.promise.get(),
+                    Some(self.store.data.as_s3().path()),
+                    self.promise.get(),
                 );
-                this.promise.reject(global, Ok(value))?;
+                self.promise.reject(global, Ok(value))?;
             }
         }
         Ok(())
     }
 
-    fn on_s3_size_resolved(self, result: s3::S3StatResult) -> JsResult<()> {
-        let mut this = self;
-        let global = this.global.get();
+    fn on_s3_size_resolved(mut self, result: s3::S3StatResult) -> JsResult<()> {
+        let global = self.global.get();
         match result {
             s3::S3StatResult::Success(stat_result) => {
-                this.promise
+                self.promise
                     .resolve(global, JSValue::js_number(stat_result.size as f64))?;
             }
             s3::S3StatResult::NotFound(err) | s3::S3StatResult::Failure(err) => {
                 let value = s3_error_to_js_with_async_stack(
                     &err,
                     global,
-                    Some(this.store.data.as_s3().path()),
-                    this.promise.get(),
+                    Some(self.store.data.as_s3().path()),
+                    self.promise.get(),
                 );
-                this.promise.reject(global, Ok(value))?;
+                self.promise.reject(global, Ok(value))?;
             }
         }
         Ok(())
     }
 
-    fn on_s3_stat_resolved(self, result: s3::S3StatResult) -> JsResult<()> {
-        let mut this = self;
-        let global = this.global.get();
+    fn on_s3_stat_resolved(mut self, result: s3::S3StatResult) -> JsResult<()> {
+        let global = self.global.get();
         match result {
             s3::S3StatResult::Success(stat_result) => {
                 let s3_stat = match S3Stat::init(
@@ -425,19 +422,19 @@ impl S3BlobStatTask {
                 ) {
                     Ok(b) => (*b).to_js(global),
                     Err(_) => {
-                        return this.promise.reject(global, Err(JsError::Thrown));
+                        return self.promise.reject(global, Err(JsError::Thrown));
                     }
                 };
-                this.promise.resolve(global, s3_stat)?;
+                self.promise.resolve(global, s3_stat)?;
             }
             s3::S3StatResult::NotFound(err) | s3::S3StatResult::Failure(err) => {
                 let value = s3_error_to_js_with_async_stack(
                     &err,
                     global,
-                    Some(this.store.data.as_s3().path()),
-                    this.promise.get(),
+                    Some(self.store.data.as_s3().path()),
+                    self.promise.get(),
                 );
-                this.promise.reject(global, Ok(value))?;
+                self.promise.reject(global, Ok(value))?;
             }
         }
         Ok(())
@@ -447,7 +444,7 @@ impl S3BlobStatTask {
     fn run(
         global: &JSGlobalObject,
         blob: &Blob,
-        on_resolved: fn(Self, s3::S3StatResult) -> JsResult<()>,
+        on_resolved: impl FnOnce(Self, s3::S3StatResult<'_>) -> JsResult<()> + 'static,
     ) -> JsResult<JSValue> {
         let this = S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),

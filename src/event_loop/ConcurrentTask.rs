@@ -200,7 +200,7 @@ impl Taskable for crate::ManagedTask::ManagedTask {
     const TAG: TaskTag = task_tag::ManagedTask;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — a queued ManagedTask is the heap box `new` made.
-        unsafe { crate::ManagedTask::ManagedTask::release(this) }
+        unsafe { crate::ManagedTask::ManagedTask::release_unrun(this) }
     }
 }
 // ────────────────────────────────────────────────────────────────────────────
@@ -287,7 +287,7 @@ impl ConcurrentTask {
         Self::create(Task::init(task))
     }
 
-    /// Heap task that runs `f` once on the JS thread (see [`ManagedTask`]).
+    /// Heap task that runs `f` once on the JS thread (see [`ManagedTask::ManagedTask`]).
     pub fn from_callback<F: FnOnce() -> crate::JsResult<()> + 'static>(
         f: F,
     ) -> core::ptr::NonNull<ConcurrentTask> {
@@ -338,7 +338,7 @@ impl ConcurrentTask {
         // closure behind `task.ptr` as well.
         if inner.tag == crate::task_tag::ManagedTask {
             // SAFETY: as above; refused ⇒ ours.
-            unsafe { crate::ManagedTask::ManagedTask::release(inner.ptr.cast()) };
+            unsafe { crate::ManagedTask::ManagedTask::release_unrun(inner.ptr.cast()) };
         }
     }
 

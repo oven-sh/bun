@@ -958,18 +958,17 @@ impl PipeEvent {
 #[cfg(windows)]
 impl QueuedEvent {
     fn deliver(self) -> bun_jsc::JsResult<()> {
-        let queued = self;
-        if queued.generation != GENERATION.load(Ordering::Relaxed) {
+        if self.generation != GENERATION.load(Ordering::Relaxed) {
             scoped_log!(
                 Chrome,
                 "dropping event from replaced chrome (generation {})",
-                queued.generation
+                self.generation
             );
             return Ok(());
         }
         // SAFETY: plain FFI; onData copies `bytes` before returning.
         unsafe {
-            match queued.event {
+            match self.event {
                 PipeEvent::Data(bytes) => Bun__Chrome__onPipeData(bytes.as_ptr(), bytes.len()),
                 PipeEvent::Closed => Bun__Chrome__onPipeClosed(),
                 PipeEvent::Exited { signo } => Bun__Chrome__died(signo),

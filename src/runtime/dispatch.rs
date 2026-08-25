@@ -310,8 +310,8 @@ pub(crate) fn run_task(
             }?;
         }
         task_tag::ManagedTask => {
-            // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
-            // and enqueued under `task_tag::ManagedTask`; `run` consumes/frees it.
+            // SAFETY: `task.ptr` is the task `ManagedTask::new` built, enqueued
+            // under `task_tag::ManagedTask`; `run` consumes it.
             unsafe { ManagedTask::run(cast_ptr!(ManagedTask)) }?;
         }
         task_tag::CppTask => {

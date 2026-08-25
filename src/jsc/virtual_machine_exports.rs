@@ -142,15 +142,12 @@ struct HandledPromiseContext {
 
 impl HandledPromiseContext {
     fn callback(self) -> bun_event_loop::JsResult<()> {
-        let context = self;
-        let global: &JSGlobalObject = &context.global_this;
+        let global: &JSGlobalObject = &self.global_this;
         // JSGlobalObject::bun_vm contract.
         let _ = global
             .bun_vm()
             .as_mut()
-            .handled_promise(global, context.promise.get());
-        // drop(context) — Box freed at scope exit (replaces `default_allocator.destroy`);
-        // Strong's Drop replaces the explicit `.unprotect()`.
+            .handled_promise(global, self.promise.get());
         Ok(())
     }
 }

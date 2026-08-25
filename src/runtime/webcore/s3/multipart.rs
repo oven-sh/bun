@@ -255,7 +255,7 @@ impl UploadPart {
         unsafe { &*self.data.get() }
     }
 
-    fn on_part_response(result: S3PartResult, this: *mut Self) -> bun_jsc::JsResult<()> {
+    pub(crate) fn on_part_response(this: *mut Self, result: S3PartResult) -> bun_jsc::JsResult<()> {
         // SAFETY: callback context — `this` is the queue slot passed in `perform()`; the
         // ref this part holds on `ctx` keeps the queue alive until the tail `deref_` below.
         let this = unsafe { &*this };
@@ -342,9 +342,7 @@ impl UploadPart {
                 request_payer: ctx.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Part(Box::new(move |result| {
-                Self::on_part_response(result, this)
-            })),
+            s3_simple_request::Callback::MultipartPart(this),
         )
     }
 
@@ -388,8 +386,8 @@ impl Drop for MultiPartUpload {
 
 impl MultiPartUpload {
     pub(crate) fn single_send_upload_response(
-        result: S3UploadResult,
         this: *mut Self,
+        result: S3UploadResult,
     ) -> bun_jsc::JsResult<()> {
         // SAFETY: callback context — `this` is live; this takes over the ref
         // `process_buffered` (or the retry path) took for this request.
@@ -426,9 +424,7 @@ impl MultiPartUpload {
                             request_payer: self_.request_payer,
                             ..Default::default()
                         },
-                        s3_simple_request::S3Callback::Upload(Box::new(move |result| {
-                            Self::single_send_upload_response(result, this)
-                        })),
+                        s3_simple_request::Callback::MultipartUpload(this),
                     )
                 } else {
                     scoped_log!(S3MultiPartUpload, "singleSendUploadResponse failed");
@@ -630,8 +626,8 @@ impl MultiPartUpload {
 
     /// Result of the Multipart request, after this we can start draining the parts
     pub(crate) fn start_multi_part_request_result(
-        result: S3DownloadResult,
         this: *mut Self,
+        result: S3DownloadResult,
     ) -> bun_jsc::JsResult<()> {
         // SAFETY: callback context — takes over the ref taken before the request was queued.
         let _guard = unsafe { RefPtr::from_raw(this) };
@@ -707,8 +703,8 @@ impl MultiPartUpload {
 
     /// We do a best effort to commit the multipart upload, if it fails we will retry, if it still fails we will fail the upload
     pub(crate) fn on_commit_multi_part_request(
-        result: S3CommitResult,
         this: *mut Self,
+        result: S3CommitResult,
     ) -> bun_jsc::JsResult<()> {
         // SAFETY: callback context — `this` is live; the request owns the final-step ref,
         // released as the tail statement below.
@@ -752,8 +748,8 @@ impl MultiPartUpload {
 
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
     pub(crate) fn on_rollback_multi_part_request(
-        result: S3UploadResult,
         this: *mut Self,
+        result: S3UploadResult,
     ) -> bun_jsc::JsResult<()> {
         // SAFETY: callback context — `this` is live; the request owns the final-step ref,
         // released as the tail statement below.
@@ -808,9 +804,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Commit(Box::new(move |result| {
-                Self::on_commit_multi_part_request(result, this)
-            })),
+            s3_simple_request::Callback::MultipartCommit(this),
         )
     }
 
@@ -839,9 +833,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Upload(Box::new(move |result| {
-                Self::on_rollback_multi_part_request(result, this)
-            })),
+            s3_simple_request::Callback::MultipartRollback(this),
         )
     }
 
@@ -876,9 +868,7 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
-                s3_simple_request::S3Callback::Download(Box::new(move |result| {
-                    Self::start_multi_part_request_result(result, this)
-                })),
+                s3_simple_request::Callback::MultipartStart(this),
             )?;
         } else if self.state.get() == State::MultipartCompleted {
             part.start()?;
@@ -1011,9 +1001,7 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
-                s3_simple_request::S3Callback::Upload(Box::new(move |result| {
-                    Self::single_send_upload_response(result, this)
-                })),
+                s3_simple_request::Callback::MultipartUpload(this),
             ); // TODO: properly propagate exception upwards
         } else {
             // we need to split

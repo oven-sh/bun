@@ -96,7 +96,8 @@ pub struct WriteFile {
     pub(crate) io_parking: super::IoParking,
     pub(crate) state: AtomicU8, // ClosingState
 
-    pub(crate) on_complete: WriteFilePromise,
+    /// `None` once delivered.
+    pub(crate) on_complete: Option<WriteFilePromise>,
     pub(crate) total_written: usize,
 
     #[cfg(not(windows))]
@@ -290,7 +291,7 @@ impl WriteFile {
             #[cfg(not(windows))]
             io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
-            on_complete,
+            on_complete: Some(on_complete),
             total_written: 0,
             could_block: false,
             close_after_io: false,
@@ -330,7 +331,7 @@ impl WriteFile {
     }
 
     pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> jsc::JsResult<()> {
-        let on_complete = core::mem::take(&mut this.on_complete);
+        let on_complete = this.on_complete.take().expect("delivered once");
         let system_error = this.system_error.take();
         let total_written = this.total_written;
         drop(this);
@@ -531,7 +532,7 @@ mod windows_impl {
     use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
     // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
     // re-exports); the structs live one level deeper.
-    use bun_jsc::{ConcurrentTask, event_loop::EventLoop};
+    use bun_jsc::event_loop::{ConcurrentTaskItem, EventLoop};
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
@@ -539,7 +540,7 @@ mod windows_impl {
         pub(crate) io_request: uv::fs_t,
         pub(crate) file_blob: Blob,
         pub(crate) bytes_blob: Blob,
-        pub(crate) on_complete: WriteFilePromise,
+        pub(crate) on_complete: Option<WriteFilePromise>,
         pub(crate) mkdirp_if_not_exists: bool,
         pub(crate) uv_bufs: [uv::uv_buf_t; 1],
 
@@ -590,7 +591,7 @@ mod windows_impl {
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
-                on_complete,
+                on_complete: Some(on_complete),
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {
@@ -766,7 +767,7 @@ mod windows_impl {
             let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
             debug_assert!(core::ptr::eq(
                 this,
-                // SAFETY: req == &(*this).io_request; data was set to `this` in create_with_ctx/open.
+                // SAFETY: req == &(*this).io_request; data was set to `this` in create/open.
                 unsafe { (*req).data }.cast::<WriteFileWindows>()
             ));
             // SAFETY: `this` is live (libuv invokes us with the req we registered).
@@ -922,7 +923,7 @@ mod windows_impl {
                 bun_sys::Result::Ok(()) => None,
             };
             let this: *mut WriteFileWindows = this;
-            ticket.post(ConcurrentTask::ConcurrentTask::from_callback(move || {
+            ticket.post(ConcurrentTaskItem::from_callback(move || {
                 // SAFETY: `this` is the live Box-allocated `WriteFileWindows`; the
                 // JS thread is the sole accessor at this point. `*this` may be
                 // freed inside; not accessed afterward.
@@ -995,7 +996,7 @@ mod windows_impl {
             // need before `deinit` frees the allocation.
             let (on_complete, result) = unsafe {
                 (
-                    core::mem::take(&mut (*this).on_complete),
+                    (*this).on_complete.take().expect("delivered once"),
                     match (*this).to_system_error() {
                         Some(err) => WriteFileResultType::Err(Box::new(err)),
                         None => WriteFileResultType::Result((*this).total_written as SizeType),
@@ -1151,20 +1152,21 @@ mod windows_impl {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Where a finished `WriteFile` delivers its byte count or error.
-#[derive(Default)]
 pub struct WriteFilePromise {
     pub(crate) promise: jsc::JSPromiseStrong,
-    pub global_this: Option<GlobalRef>,
+    pub(crate) global_this: GlobalRef,
 }
 
 impl WriteFilePromise {
-    pub(crate) fn run(mut self, count: WriteFileResultType) -> jsc::JsResult<()> {
-        // `swap()` releases the Strong's handle slot and yields a GC-owned
-        // `*mut JSPromise`, which stays valid past dropping `self`.
-        let promise = std::ptr::from_mut::<JSPromise>(self.promise.swap());
-        let global_this = self.global_this.take().expect("set at creation");
+    pub(crate) fn run(self, count: WriteFileResultType) -> jsc::JsResult<()> {
+        let Self {
+            mut promise,
+            global_this,
+        } = self;
         let global_this: &JSGlobalObject = &global_this;
-        drop(self);
+        // `swap()` releases the Strong's handle slot and yields a GC-owned
+        // `*mut JSPromise`.
+        let promise = std::ptr::from_mut::<JSPromise>(promise.swap());
         // SAFETY: GC-owned cell (kept alive below); scoped shared access.
         let value = unsafe { (*promise).to_js() };
         value.ensure_still_alive();

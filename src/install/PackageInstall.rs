@@ -658,19 +658,18 @@ impl UninstallTask {
             }
         }
 
-        let uninstall_task = self;
+        let this = self;
         let mut debug_timer = Output::DebugTimer::start();
 
-        let dirname =
-            path::resolve_path::dirname::<path::platform::Auto>(&uninstall_task.absolute_path);
+        let dirname = path::resolve_path::dirname::<path::platform::Auto>(&this.absolute_path);
         if dirname.is_empty() {
             bun_core::debug_warn!(
                 "Unexpectedly failed to get dirname of {}",
-                bstr::BStr::new(&uninstall_task.absolute_path)
+                bstr::BStr::new(&this.absolute_path)
             );
             return;
         }
-        let basename = bun_paths::basename(&uninstall_task.absolute_path);
+        let basename = bun_paths::basename(&this.absolute_path);
 
         let dir = match open_dir_a(Fd::cwd(), dirname) {
             Ok(d) => d,
@@ -678,7 +677,7 @@ impl UninstallTask {
                 if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
                     bun_core::debug_warn!(
                         "Failed to delete {}: {}",
-                        bstr::BStr::new(&uninstall_task.absolute_path),
+                        bstr::BStr::new(&this.absolute_path),
                         bstr::BStr::new(err.name())
                     );
                 }

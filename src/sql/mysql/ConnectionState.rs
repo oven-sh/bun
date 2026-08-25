@@ -5,8 +5,7 @@ pub enum ConnectionState {
     Handshaking,
     Authenticating,
     AuthenticationAwaitingPk,
-    /// Authenticated; waiting for the OK of the session-setup query
-    /// (`SET time_zone`) sent before the connection joins the pool.
+    /// Authenticated; awaiting the OK of the session-setup `SET time_zone`.
     SessionSetup,
     Connected,
     Failed,

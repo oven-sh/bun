@@ -959,7 +959,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // connection so the error is actionable.
         use my_sql_connection::Status as S;
         let (message, err): (&'static [u8], AnyMySQLErrorT) = match this.connection.get().status {
-            S::Connecting | S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => (
+            S::Connecting
+            | S::Handshaking
+            | S::Authenticating
+            | S::AuthenticationAwaitingPk
+            | S::SessionSetup => (
                 b"Connection closed before the connection was established",
                 AnyMySQLErrorT::ConnectionFailed,
             ),

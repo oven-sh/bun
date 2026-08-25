@@ -950,11 +950,8 @@ impl MySQLConnection {
         Ok(())
     }
 
-    /// The Date codec (`MySQLValue.rs`) encodes and decodes DATETIME/TIMESTAMP
-    /// wall clocks as UTC, but the server converts TIMESTAMP values through
-    /// `@@session.time_zone`. Align the session with the codec before the
-    /// connection becomes ready for user queries, or every `Date` written to a
-    /// TIMESTAMP column stores an instant shifted by the session's UTC offset.
+    /// The Date codec (`MySQLValue.rs`) is UTC on both ends, but the server
+    /// converts TIMESTAMP columns through `@@session.time_zone` (#40435).
     fn send_session_setup(&mut self) -> Result<(), AnyMySQLError> {
         self.set_status(ConnectionState::SessionSetup);
         mysql_request::execute_query(b"SET time_zone = '+00:00'", self.writer())?;

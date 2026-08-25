@@ -2134,7 +2134,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive,
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -2152,19 +2152,20 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destination The file to write to. If the file doesn't exist, it is
    * created; if it does, it is overwritten. If `input` is smaller than
    * `destination`, `destination` is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destination: BunFile,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -2178,17 +2179,18 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destinationPath The file path to write to. If the file doesn't
    * exist, it is created; if it does, it is overwritten. If `input` is
    * smaller than the existing file, the file is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destinationPath: PathLike,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -2740,7 +2742,7 @@ declare module "bun" {
      * @param options - The options to use for the write.
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | ReadableStream,
       options?: { highWaterMark?: number },
     ): Promise<number>;
 

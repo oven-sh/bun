@@ -397,7 +397,7 @@ impl Entry {
         );
 
         self.output_code = if self.metadata.output_byte_length == 0 {
-            BunString::empty()
+            BunString::EMPTY
         } else {
             match self.metadata.output_encoding {
                 Encoding::UTF8 => {
@@ -958,7 +958,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             debug_assert!(this.entry.is_none());
 
             // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
-            // tag (unmarked 8-bit ZigString -> Encoding::LATIN1, same as clone_latin1),
+            // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
             // and `output_code_bytes` outlives the synchronous `to_file` call.
             let output_code = BunString::ascii(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(

@@ -106,6 +106,8 @@ Ref<SourceProvider> SourceProvider::create(
             // Borrowed from the standalone module graph / compile cache.
             const auto destructorNoOp = [](const void*) {};
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(std::exchange(resolvedSource.bytecode_cache, nullptr), resolvedSource.bytecode_cache_size), resolvedSource.bytecode_cache_owned ? destructorOwned : destructorNoOp, {});
+            if (resolvedSource.bytecode_cache_persistent)
+                bytecode->setPayloadIsPersistent();
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),
                 resolvedSource,
@@ -114,6 +116,7 @@ Ref<SourceProvider> SourceProvider::create(
                 origin,
                 WTF::move(sourceURLString), TextPosition(),
                 sourceType));
+            provider->m_hash = resolvedSource.source_code_hash;
             provider->m_cachedBytecode = WTF::move(bytecode);
             return provider;
         }
@@ -166,7 +169,8 @@ extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)
     cachedBytecode->deref();
 }
 
-static JSC::VM& getVMForBytecodeCache()
+JSC::VM& vmForBytecodeCache();
+JSC::VM& vmForBytecodeCache()
 {
     static thread_local JSC::VM* vmForBytecodeCache = nullptr;
     if (!vmForBytecodeCache) {
@@ -179,12 +183,34 @@ static JSC::VM& getVMForBytecodeCache()
     return *vmForBytecodeCache;
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" JSC::EncoderStringTable* Bun__EncoderStringTable__create()
+{
+    return new JSC::EncoderStringTable();
+}
+
+extern "C" void Bun__EncoderStringTable__destroy(JSC::EncoderStringTable* table)
+{
+    delete table;
+}
+
+extern "C" void Bun__EncoderStringTable__serialize(JSC::EncoderStringTable* table, void* ctx, void (*append)(void* ctx, const uint8_t* bytes, size_t len))
+{
+    Vector<uint8_t> bytes = table->serialize();
+    append(ctx, bytes.span().data(), bytes.size());
+}
+
+extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* bytes, size_t len)
+{
+    ASSERT(vm->clientData);
+    static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(std::span<const uint8_t>(bytes, len));
+}
+
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
-    JSC::VM& vm = getVMForBytecodeCache();
+    JSC::VM& vm = vmForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
@@ -202,7 +228,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
 
     dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateModule url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", inputSourceCodeSize, " keyHash=", key.hash());
 
-    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock);
+    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock, externalStrings);
     if (!cachedBytecode)
         return false;
 
@@ -214,12 +240,12 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
 
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
-    JSC::VM& vm = getVMForBytecodeCache();
+    JSC::VM& vm = vmForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = NoLexicallyScopedFeatures;
@@ -237,7 +263,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunStr
 
     dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateCJS url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", inputSourceCodeSize, " keyHash=", key.hash());
 
-    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock);
+    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock, externalStrings);
     if (!cachedBytecode)
         return false;
 
@@ -264,3 +290,9 @@ extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 }
 
 }; // namespace Zig
+
+// What StringImpl::hash() returns for an 8-bit string with these bytes; `bun build --compile` records it per module.
+extern "C" uint32_t Bun__WTFStringHashLatin1(const Latin1Character* characters, size_t length)
+{
+    return StringHasher::computeHashAndMaskTop8Bits(std::span { characters, length });
+}

@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 250,
       "files": 1513,
-      "excluded": 361
+      "excluded": 366
     }
   },
   "dirs": [
@@ -302,9 +302,11 @@
     "cli/env/bun-options.test.ts",
     "cli/hot/hot.test.ts",
     "cli/hot/watch-many-dirs.test.ts",
+    "cli/inspect/bun-inspector-protocol.test.ts",
     "cli/inspect/BunFrontendDevServer.test.ts",
     "cli/inspect/inspect.test.ts",
     "cli/install/migration/complex-workspace.test.ts",
+    "cli/install/migration/migrate.test.ts",
     "cli/install/migration/pnpm-lock-v9.test.ts",
     "cli/install/migration/pnpm-migration.test.ts",
     "cli/run/as-node.test.ts",
@@ -383,6 +385,7 @@
     "js/bun/net/socket-retention.test.ts",
     "js/bun/net/socket.test.ts",
     "js/bun/plugin/plugins.test.ts",
+    "js/bun/resolve/bun-main-entry-point.test.ts",
     "js/bun/resolve/import-custom-condition.test.ts",
     "js/bun/resolve/resolve-ts.test.ts",
     "js/bun/resolve/resolve.test.ts",
@@ -483,6 +486,7 @@
     "js/node/tls/node-tls-getpeercert-leak.test.ts",
     "js/node/tls/node-tls-namedpipes.test.ts",
     "js/node/tls/node-tls-server.test.ts",
+    "js/node/tls/renegotiation.test.ts",
     "js/node/util/bun-inspect.test.ts",
     "js/node/util/mime-api.test.ts",
     "js/node/util/util.test.js",
@@ -501,6 +505,7 @@
     "js/sql/postgres-pgsslmode-env.test.ts",
     "js/sql/postgres-prepared-pipeline-reorder.test.ts",
     "js/sql/postgres-simple-query-pipeline.test.ts",
+    "js/sql/postgres-tls-ctx-leak.test.ts",
     "js/sql/sql-mariadb-json.test.ts",
     "js/sql/sql-mysql-auth-short-nonce.test.ts",
     "js/sql/sql-mysql-bigint-out-of-range.test.ts",

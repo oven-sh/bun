@@ -347,7 +347,7 @@ for (const { dir, crate } of scanRoots) {
           continue;
         }
         const top = inlineMods[inlineMods.length - 1];
-        if (top && lines[m] === `${top.indent}}`) inlineMods.pop();
+        if (top && new RegExp(`^${top.indent}\\}\\s*(//.*)?$`).test(lines[m])) inlineMods.pop();
       }
       for (const im of inlineMods) modPath += `::${im.name}`;
 

@@ -993,6 +993,42 @@ describe.concurrent("--isolate experimental global reuse", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a Symbol key in require.cache does not break the boundary", async () => {
+    using dir = tempDir("isolate-reuse-symbol-cache-key", {
+      "preload.ts": `
+        (require.cache as any)[Symbol.for("from-preload")] = { exports: {} };
+      `,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a", () => {
+          // The require.cache proxy forwards Symbol keys to the map unfiltered.
+          (require.cache as any)[Symbol.for("from-a")] = { exports: {} };
+          expect(1).toBe(1);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { testIsolationResetStats } from "bun:internal-for-testing";
+        test("b", () => {
+          console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
+          expect(1).toBe(1);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 1, swap: 0 });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("a fake-timer marker on a spied setTimeout is removed at the boundary", async () => {
     using dir = tempDir("isolate-reuse-spied-clock", {
       "a.test.ts": `

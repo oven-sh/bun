@@ -306,23 +306,26 @@ test.concurrent(
     // make the failure reliable on the unfixed code. Each attempt installs
     // into a project and cache of its own so that both run at the same time:
     // a cold install of 16 git packages spawns about 60 git processes, which
-    // is what this test costs on Windows.
-    await Promise.all(
+    // is what this test costs on Windows. The checks wait for both installs,
+    // so no child process is still inside `dir` if one of them throws.
+    const attempts = await Promise.all(
       [0, 1].map(async attempt => {
         const attemptRoot = join(root, `attempt-${attempt}`);
         const project = writeProject(attemptRoot, dependencies);
-        const { stdout, stderr, exitCode } = await runInstall(project, join(attemptRoot, "cache"), {});
-        expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
-          "Resolving dependencies
-          Resolved, downloaded and extracted [17]
-          Saved lockfile"
-        `);
-        expectInstalled(stdout, resolutions);
-        expect(await installedVersions(project, letters.map(nameOf))).toEqual(markers(letters));
-        expect(await lockedPackages(project)).toEqual(locked);
-        expect(exitCode).toBe(0);
+        return { project, ...(await runInstall(project, join(attemptRoot, "cache"), {})) };
       }),
     );
+    for (const { project, stdout, stderr, exitCode } of attempts) {
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "Resolving dependencies
+        Resolved, downloaded and extracted [17]
+        Saved lockfile"
+      `);
+      expectInstalled(stdout, resolutions);
+      expect(await installedVersions(project, letters.map(nameOf))).toEqual(markers(letters));
+      expect(await lockedPackages(project)).toEqual(locked);
+      expect(exitCode).toBe(0);
+    }
   },
   30_000,
 );

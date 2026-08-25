@@ -857,14 +857,27 @@ describe("Bun.Image", () => {
         expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
         return;
       }
-      const prof = extractIsobmffColr(out).find(c => c.type === "prof" || c.type === "rICC");
-      // The encoder may re-serialise the profile, so assert a well-formed
-      // RGB ICC profile rather than byte equality: data colour space
-      // "RGB " at offset 16, signature "acsp" at offset 36.
-      expect(prof).toBeDefined();
-      const p = prof!.payload;
-      expect(String.fromCharCode(p[16], p[17], p[18], p[19])).toBe("RGB ");
-      expect(String.fromCharCode(p[36], p[37], p[38], p[39])).toBe("acsp");
+      const colrs = extractIsobmffColr(out);
+      const prof = colrs.find(c => c.type === "prof" || c.type === "rICC");
+      if (prof) {
+        // The encoder may re-serialise the profile, so assert a well-formed
+        // RGB ICC profile rather than byte equality: data colour space
+        // "RGB " at offset 16, signature "acsp" at offset 36.
+        const p = prof.payload;
+        expect(String.fromCharCode(p[16], p[17], p[18], p[19])).toBe("RGB ");
+        expect(String.fromCharCode(p[36], p[37], p[38], p[39])).toBe("acsp");
+      } else {
+        // ImageIO may normalise a recognised profile to CICP instead of
+        // embedding it. That still carries the colour meaning — but sRGB
+        // primaries (1) here would mean the P3 profile was dropped and the
+        // no-profile fallback tag won, and unspecified (2) is the bug.
+        const nclx = colrs.find(c => c.type === "nclx");
+        expect(nclx).toBeDefined();
+        const dv = new DataView(nclx!.payload.buffer, nclx!.payload.byteOffset, nclx!.payload.byteLength);
+        expect(dv.getUint16(0)).not.toBe(2);
+        expect(dv.getUint16(0)).not.toBe(1);
+        expect(dv.getUint16(2)).not.toBe(2);
+      }
     });
 
     // macOS only: WIC exposes no CICP control, so the "tag sane defaults

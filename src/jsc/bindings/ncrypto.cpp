@@ -1280,6 +1280,7 @@ bool EqualNoCase(const WTF::StringView a, const WTF::StringView b)
     return a.startsWithIgnoringASCIICase(b);
 }
 
+#ifdef OPENSSL_IS_BORINGSSL
 bool MatchesPrime(const BIGNUM* p, BIGNUM* (*getPrime)(BIGNUM*))
 {
     BignumPointer known(getPrime(nullptr));
@@ -1325,6 +1326,7 @@ bool IsWellKnownGroup(const DH* dh)
         return false;
     }
 }
+#endif // OPENSSL_IS_BORINGSSL
 } // namespace
 
 DHPointer::DHPointer(DH* dh)
@@ -1437,7 +1439,9 @@ DHPointer::CheckResult DHPointer::check()
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (!dh_) return DHPointer::CheckResult::NONE;
+#ifdef OPENSSL_IS_BORINGSSL
     if (IsWellKnownGroup(dh_.get())) return DHPointer::CheckResult::NONE;
+#endif
     int codes = 0;
     if (DH_check(dh_.get(), &codes) != 1)
         return DHPointer::CheckResult::CHECK_FAILED;

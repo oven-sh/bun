@@ -1,4 +1,4 @@
-import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "path";
 const assert = require("assert");
@@ -520,16 +520,46 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       }
       ac.abort(reason);
       write(Buffer.from("x"), 0);
-      expect.assertions(4);
-      try {
-        await promise;
-      } catch (err) {
-        expectNodeAbortError(err, reason);
-      }
+      // A deadline, not a wait: a loop that ignores the abort keeps the pool thread in read()
+      // until the FIFO is closed below, and the test has to get there to close it.
+      const outcome = await Promise.race([
+        promise.then(
+          () => "resolved",
+          err => err,
+        ),
+        Bun.sleep(4000),
+      ]);
+      expect(outcome).toBeInstanceOf(Error);
+      expectNodeAbortError(outcome, reason);
     } finally {
       fs.closeSync(out);
       fs.closeSync(hold);
     }
+  });
+
+  // The same loop holds up the exit of the main thread when the VM is torn down on exit
+  // (BUN_DESTRUCT_VM_ON_EXIT=1, the CI runner's setting): teardown waits for the pool job, and a
+  // device never reaches EOF. Teardown closes the gate the loop now checks.
+  test.skipIf(isWindows)("process.exit() with a readFile of /dev/urandom in flight exits", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("node:fs");
+        fs.promises.readFile("/dev/urandom").then(() => console.log("resolved"), () => console.log("rejected"));
+        // The pool thread is into the read by the time the next loop turn runs.
+        setImmediate(() => { console.log("exiting"); process.exit(0); });
+      `,
+      ],
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("exiting\n");
+    expect(exitCode).toBe(0);
   });
 
   test("appendFile with a pre-aborted signal", async () => {

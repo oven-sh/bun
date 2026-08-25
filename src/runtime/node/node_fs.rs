@@ -144,6 +144,8 @@ use bun_event_loop::ConcurrentTask;
 type BlobSizeType = u64;
 /// `maxInt(u52)` == 2^52 - 1.
 const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
+/// One `read` of a readFile's read-until-EOF tail (Node reads 64 KiB there).
+const TAIL_READ_CHUNK: usize = 1024 * 1024;
 
 /// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer.
 /// Backed by `bun_ptr::ExternalShared<AbortSignal>` (alias re-exported
@@ -6889,13 +6891,23 @@ impl NodeFS {
         }
     }
 
-    /// Nobody wants the next chunk: the caller's `signal` aborted, or the VM this read serves stopped.
-    fn read_abandoned(&self, args: &args::ReadFile) -> bool {
-        args.aborted()
-            || self
-                .vm_handle
-                .as_ref()
-                .is_some_and(|vm| !vm.script_allowed())
+    /// Nobody wants the next chunk: the caller's `signal` aborted, or the VM this read serves
+    /// stopped (`EINTR`: the read was interrupted, as by a signal).
+    fn read_interrupted(&self, args: &args::ReadFile) -> Option<sys::Error> {
+        if args.aborted() {
+            return Some(abort_err());
+        }
+        if self
+            .vm_handle
+            .as_ref()
+            .is_some_and(|vm| !vm.script_allowed())
+        {
+            return Some(with_path_like(
+                sys::Error::from_code(E::EINTR, sys::Tag::read),
+                &args.path,
+            ));
+        }
+        None
     }
 
     pub(crate) fn read_file_with_options(
@@ -6904,6 +6916,10 @@ impl NodeFS {
         flavor: Flavor,
         string_type: ReadFileStringType,
     ) -> Maybe<ret::ReadFileWithOptions> {
+        // Before `open` as well: a FIFO with no writer blocks there for good.
+        if let Some(err) = self.read_interrupted(args) {
+            return Err(err);
+        }
         let path_is_path = matches!(args.path, PathOrFileDescriptor::Path(_));
         let fd_maybe_windows: FD = match &args.path {
             PathOrFileDescriptor::Path(p) => {
@@ -6974,8 +6990,8 @@ impl NodeFS {
             }
         });
 
-        if self.read_abandoned(args) {
-            return Err(abort_err());
+        if let Some(err) = self.read_interrupted(args) {
+            return Err(err);
         }
 
         // Only used in DOMFormData
@@ -7027,8 +7043,8 @@ impl NodeFS {
                 }
                 total += amt;
                 available = &mut available[amt..];
-                if self.read_abandoned(args) {
-                    return Err(abort_err());
+                if let Some(err) = self.read_interrupted(args) {
+                    return Err(err);
                 }
             }
             &pre_stat_buf[..total]
@@ -7155,17 +7171,22 @@ impl NodeFS {
         unsafe { buf.expand_to_capacity() };
 
         // Two-phase read: first up to `size`, then keep going until EOF.
-        // `phase == 0` is the size-bounded loop, `phase == 1` is the unbounded tail.
-        let mut phase: u8 = if (total as u64) < size { 0 } else { 1 };
         loop {
-            if self.read_abandoned(args) {
-                return Err(abort_err());
+            if let Some(err) = self.read_interrupted(args) {
+                return Err(err);
             }
             // When `total == min(buf.capacity, max_size)`
             // the next read receives an empty slice → returns 0 → `did_succeed = true; break`.
             // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
             // !has_max_size` arm below.
             let upper = (buf.capacity() as u64).min(max_size) as usize;
+            // Past `size` the tail reads a pipe, a device or a file that outgrew its stat size:
+            // one chunk at a time, so the stop check above is never further away than one chunk.
+            let upper = if (total as u64) >= size {
+                upper.min(total + TAIL_READ_CHUNK)
+            } else {
+                upper
+            };
             let amt = Syscall::read(fd, &mut buf[total..upper])?;
             total += amt;
 
@@ -7202,13 +7223,7 @@ impl NodeFS {
                 did_succeed = true;
                 break;
             }
-
-            if phase == 0 && (total as u64) >= size {
-                // fall through into the unbounded tail loop
-                phase = 1;
-            }
         }
-        let _ = phase; // silence the unused-assignment lint on the final phase value
 
         let final_len = if string_type == ReadFileStringType::NullTerminated {
             total + 1

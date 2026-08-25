@@ -997,6 +997,10 @@ describe.skipIf(isWindows)("terminate() stops a readFile of a FIFO that never en
           const code = await Promise.race([w.terminate(), Bun.sleep(${timeout / 2}).then(() => "hung")]);
           clearInterval(feed);
           console.log("terminated", code);
+          // Both ends closed: a worker still in its read loop gets EOF, so the exit's VM teardown
+          // (BUN_DESTRUCT_VM_ON_EXIT=1 joins it) does not wait on the FIFO.
+          fs.closeSync(out);
+          fs.closeSync(hold);
           process.exit(code === "hung" ? 2 : 0);
         });
       `,
@@ -1008,6 +1012,64 @@ describe.skipIf(isWindows)("terminate() stops a readFile of a FIFO that never en
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout).toBe("reading\nfed\nexit 1\nterminated 1\n");
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // A device never blocks, so the loop only sees the stop between two reads, and the tail's read
+  // size used to double with the buffer (a 2 GiB read of /dev/urandom takes seconds). The tail now
+  // reads 1 MiB at a time. /proc/self/io gives the process's read count and bytes, so the average
+  // read size over a window of reading is observable (Linux only; reported as 0 elsewhere).
+  // Sequential: a build without the stop reads gigabytes before the watchdog fires.
+  test.each(["readFileSync", "promises.readFile"])(
+    "%s of /dev/urandom",
+    async api => {
+      const read =
+        api === "readFileSync"
+          ? `fs.readFileSync("/dev/urandom"); parentPort.postMessage("returned");`
+          : `fs.promises.readFile("/dev/urandom").then(() => parentPort.postMessage("resolved"), e => parentPort.postMessage("rejected " + e.code));`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const fs = require("node:fs");
+        const { Worker } = require("node:worker_threads");
+        const io = () => {
+          if (process.platform !== "linux") return { bytes: 0, reads: 1 };
+          const text = fs.readFileSync("/proc/self/io", "utf8");
+          return { bytes: Number(/rchar: (\\d+)/.exec(text)[1]), reads: Number(/syscr: (\\d+)/.exec(text)[1]) };
+        };
+        const w = new Worker(
+          'const fs = require("node:fs"); const { parentPort } = require("node:worker_threads");' +
+          'parentPort.postMessage("reading"); ${read}',
+          { eval: true },
+        );
+        w.on("error", e => { console.error("worker error:", e); process.exit(1); });
+        w.on("exit", code => console.log("exit", code));
+        w.on("message", async m => {
+          console.log(m);
+          if (m !== "reading") process.exit(1);
+          // A window of reading: long enough that a doubling read size would have passed 2 MiB.
+          const a = io();
+          await Bun.sleep(200);
+          const b = io();
+          const code = await Promise.race([w.terminate(), Bun.sleep(${timeout / 2}).then(() => "hung")]);
+          console.log("terminated", code, "bytes per read:", Math.round((b.bytes - a.bytes) / Math.max(1, b.reads - a.reads)));
+          process.exit(code === "hung" ? 2 : 0);
+        });
+      `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const m = /^reading\nexit 1\nterminated 1 bytes per read: (\d+)\n$/.exec(stdout);
+      expect(m, stdout).not.toBeNull();
+      expect(Number(m![1])).toBeLessThanOrEqual(1024 * 1024);
       expect(exitCode).toBe(0);
     },
     timeout,

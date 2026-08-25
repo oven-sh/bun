@@ -981,12 +981,10 @@ impl Diff {
         )
     }
 
-    /// `Dependency::eql`, plus one normalization case: bun.lock
-    /// (`map_dep_to_pkg`) and the npm-lock migration store a dependency that
-    /// resolved to a workspace package as a workspace edge, while the
-    /// package.json reparse keeps the textual npm range (or the other way
-    /// around). A star range matches any workspace, so when the literal is
-    /// unchanged the manifest edge did not change.
+    /// `Dependency::eql`, plus one case: the two sides can tag the same edge
+    /// `workspace` and `npm` (`map_dep_to_pkg` and the npm-lock migration
+    /// disagree with the package.json reparse). A star range matches any
+    /// workspace, so an unchanged literal is the same manifest edge.
     fn deps_match(
         to_dep: &Dependency,
         from_dep: &Dependency,

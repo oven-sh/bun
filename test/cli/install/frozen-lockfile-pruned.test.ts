@@ -1,7 +1,7 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists, lstat, readdir } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { dirname, join } from "path";
 
 type Linker = "hoisted" | "isolated";
@@ -11,11 +11,9 @@ type Tree = { root: PackageJson; packages: Record<string, PackageJson>; files?: 
 const linkers: Linker[] = ["hoisted", "isolated"];
 const registry = new VerdaccioRegistry();
 
-// The shared installs run here rather than inside the first tests that need them, so this hook outgrows the 5s default.
 beforeAll(async () => {
   await registry.start();
-  await primeSharedFixtures();
-}, 60_000);
+});
 
 afterAll(() => {
   registry.stop();
@@ -329,51 +327,6 @@ async function prunedTree(linker: Linker) {
   return { packageDir, pruned, full };
 }
 
-const verbatimInstalls = new Map<Linker, ReturnType<typeof installVerbatimTree>>();
-
-async function installVerbatimTree(linker: Linker) {
-  const { packageDir, full } = await verbatimTree(linker);
-  const { stdout, stderr } = await frozen(packageDir, linker, [prunedNote]);
-  return { packageDir, full, stdout, stderr };
-}
-
-// One --frozen-lockfile install of the verbatim tree, shared by the tests that only read what it left behind.
-function installedVerbatimTree(linker: Linker) {
-  let installed = verbatimInstalls.get(linker);
-  if (!installed) {
-    installed = installVerbatimTree(linker);
-    verbatimInstalls.set(linker, installed);
-  }
-  return installed;
-}
-
-// The runner's own --max-concurrency default, so that the setup never has more live children than the tests do.
-const setupConcurrency = isASAN ? 5 : 20;
-
-// Builds the fixtures more than one test starts from, so that no test sits idle waiting for another test's setup.
-async function primeSharedFixtures() {
-  const shared = [
-    ...linkers.flatMap(linker => [
-      () => fullInstall(linker, monorepo),
-      () => fullInstall(linker, explicitMonorepo),
-      () => fullInstall(linker, catalogTree),
-      () => fullInstall(linker, survivorTree),
-      () => fullInstall(linker, hookTree),
-    ]),
-    () => fullInstall("hoisted", rootSurvivorTree),
-    () => fullInstall("hoisted", namedCatalogTree),
-    () => fullInstall("hoisted", singleCatalogEntryTree),
-    () => fullLockb(),
-    ...linkers.map(linker => () => installedVerbatimTree(linker)),
-  ];
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: setupConcurrency }, async () => {
-      while (next < shared.length) await shared[next++]();
-    }),
-  );
-}
-
 // A fresh checkout of the whole tree whose bun.lock also lists the one catalog entry under `"catalogs": {"default": ...}`.
 async function doubleListedScenario() {
   const { full } = await fullInstall("hoisted", singleCatalogEntryTree);
@@ -461,7 +414,9 @@ describe.each(linkers)("linker: %s", linker => {
   );
 
   test.concurrent("verbatim full lockfile with a workspace folder missing passes --frozen-lockfile", async () => {
-    const { packageDir, full } = await installedVerbatimTree(linker);
+    const { packageDir, full } = await verbatimTree(linker);
+
+    await frozen(packageDir, linker, [prunedNote]);
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await installedPackages(packageDir, linker)).toEqual(survivorsInstalled(linker));
@@ -582,7 +537,9 @@ describe.each(linkers)("linker: %s", linker => {
 
   // pnpm#7823: the relaxation is not silent, so a stale bun.lock is greppable in CI logs.
   test.concurrent("--frozen-lockfile names how many workspaces it skipped", async () => {
-    const { stderr } = await installedVerbatimTree(linker);
+    const { packageDir } = await verbatimTree(linker);
+
+    const { stderr } = await frozen(packageDir, linker, [prunedNote]);
 
     expect(stderr).toBe(`${prunedNote}\n`);
   });
@@ -738,7 +695,8 @@ describe.each(linkers)("linker: %s", linker => {
 
   // docs/pm/cli/install.mdx: the skipped workspaces stay in bun.lock, so lockfile-driven commands still see them.
   test.concurrent("bun pm ls --all still lists the skipped workspace and its exclusive dependency", async () => {
-    const { packageDir, full } = await installedVerbatimTree(linker);
+    const { packageDir, full } = await verbatimTree(linker);
+    await frozen(packageDir, linker, [prunedNote]);
 
     const { stdout, stderr, exitCode } = await spawnBun(packageDir, ["pm", "ls", "--all"]);
 
@@ -757,7 +715,8 @@ describe.each(linkers)("linker: %s", linker => {
   });
 
   test.concurrent("bun audit still submits the skipped workspace's exclusive dependency", async () => {
-    const { packageDir, full } = await installedVerbatimTree(linker);
+    const { packageDir, full } = await verbatimTree(linker);
+    await frozen(packageDir, linker, [prunedNote]);
     const bodies: unknown[] = [];
     await using auditServer = Bun.serve({
       port: 0,
@@ -959,6 +918,38 @@ describe("hoisted", () => {
             at <dir>/package.json:1:63"
       `);
       expect(await lockText(packageDir)).toBe(pruned);
+      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test.concurrent(
+    "--frozen-lockfile tolerates a workspace pruned from disk but still rejects an unknown one listed next to it",
+    async () => {
+      const tree: Tree = {
+        root: { name: "mono", workspaces: ["packages/app", "packages/shared"] },
+        packages: {
+          "packages/app": { name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } },
+          "packages/shared": { name: "shared", version: "1.0.0" },
+        },
+      };
+      const checkout: Tree = {
+        ...tree,
+        root: { ...tree.root, workspaces: ["packages/app", "packages/shared", "packages/api"] },
+      };
+      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"], checkout);
+      expect(full).toContain('"packages/shared"');
+      expect(full).not.toContain('"packages/api"');
+
+      const { stderr, exitCode } = await run(packageDir, linker, frozenInstall);
+
+      expect(normalizeBunSnapshot(stderr, packageDir)).toMatchInlineSnapshot(`
+        "1 | {"name":"mono","workspaces":["packages/app","packages/shared","packages/api"]}
+                                                                          ^
+        error: Workspace not found "packages/api"
+            at <dir>/package.json:1:63"
+      `);
+      expect(await lockText(packageDir)).toBe(full);
       expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
       expect(exitCode).toBe(1);
     },

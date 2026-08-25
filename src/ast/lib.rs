@@ -1782,6 +1782,26 @@ impl Log {
         )
     }
 
+    /// `add_error_fmt_opts` at warning level.
+    #[cold]
+    pub fn add_warning_fmt_opts(&mut self, args: fmt::Arguments<'_>, opts: AddErrorOptions<'_>) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        let text = alloc_print(args);
+        self.add_formatted_msg(
+            Kind::Warn,
+            opts.source,
+            Range {
+                loc: opts.loc,
+                len: opts.len,
+            },
+            text,
+            Box::default(),
+            opts.redact_sensitive_information,
+        )
+    }
+
     // TODO(dylan-conway): rename and replace `addErrorFmt`
     #[inline]
     pub fn add_error_fmt_opts(&mut self, args: fmt::Arguments<'_>, opts: AddErrorOptions<'_>) {

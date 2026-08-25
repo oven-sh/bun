@@ -213,6 +213,29 @@ describe.concurrent("redact", async () => {
       expected: "supplies no credentials",
     },
     {
+      // A quoted key is a string literal, not an identifier, so it took a different
+      // path through the highlighter and the value came out verbatim under color.
+      // The misspelt option name is what makes a diagnostic print this line at all.
+      title: "quoted _authToken key",
+      npmrc: '"//registry.npmjs.org/:_authtoken"=npm_notarealtokenvalue',
+      expected: "*",
+      secret: "npm_notarealtokenvalue",
+    },
+    {
+      title: "quoted _auth key",
+      npmrc: 'registry=https://registry.example.com/api/\n"//registry.example.com/:_auth_"=does-not-decode',
+      expected: "*",
+      secret: "does-not-decode",
+    },
+    {
+      // Unquoted twin of the above: the identifier path must redact after a
+      // misspelt option too, since the warning prints the line.
+      title: "misspelt _authToken key",
+      npmrc: "//registry.npmjs.org/:_authtoken=npm_notarealtokenvalue",
+      expected: "is not a known .npmrc option",
+      secret: "npm_notarealtokenvalue",
+    },
+    {
       // The most common .npmrc authoring mistake, and the value is always a live secret.
       // npm decodes _password with Buffer.from(v, "base64"), which never throws — it
       // skips invalid bytes — so there is no diagnostic and nothing may reach stderr.

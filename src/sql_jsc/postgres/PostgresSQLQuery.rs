@@ -47,7 +47,7 @@ pub struct PostgresSQLQuery {
 
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
     // `#[derive(CellRefCounted)]` provides `ref_()`/`deref()` and the `AnyRefCounted`
-    // bridge so `ScopedRef<PostgresSQLQuery>` brackets re-entrant callback paths.
+    // bridge so `RefPtr<PostgresSQLQuery>` brackets re-entrant callback paths.
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
@@ -128,14 +128,14 @@ impl PostgresSQLQuery {
     }
 
     /// RAII `ref()`/`deref()` bracket around `self`. One audited
-    /// `ScopedRef::new` here replaces N per-site
-    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
+    /// `RefPtr::init_ref` here replaces N per-site
+    /// `unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }` — `&self` is the live
     /// `heap::alloc` payload (held by the connection's request FIFO), so the
-    /// [`ScopedRef::new`] precondition (live, non-null) is always satisfied.
+    /// [`RefPtr::init_ref`] precondition (live, non-null) is always satisfied.
     #[inline]
-    pub(crate) fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
+    pub(crate) fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
         // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+        unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
     /// Dereference the intrusive `statement` pointer as `&mut`. Mirrors
@@ -198,7 +198,7 @@ impl PostgresSQLQuery {
         queries_array: JSValue,
     ) {
         // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
-        // is sufficient and `noalias` is suppressed. `ScopedRef` brackets the
+        // is sufficient and `noalias` is suppressed. `RefPtr` brackets the
         // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
         // `*self` mid-body.
         let _deref = self.ref_guard();
@@ -234,7 +234,7 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
-        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
+        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(Status::Fail);
         let Some(this_value) = self.this_value.get().try_get() else {
@@ -291,7 +291,7 @@ impl PostgresSQLQuery {
         connection: JSValue,
         is_last: bool,
     ) {
-        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
+        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(if is_last {
             Status::Success

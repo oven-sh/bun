@@ -481,12 +481,11 @@ impl BunTestRoot {
         // any reaction that is still queued is dropped wholesale by
         // `Zig__GlobalObject__destructOnExit`.
         for ptr in self.pending_then_refs.borrow_mut().drain(..) {
-            // SAFETY: `ptr` was produced by `IntrusiveRc::into_raw` in
+            // SAFETY: `ptr` was produced by `RefPtr::into_raw` in
             // `BunTest::run_test_callback`; it is live because the promise
             // never settled (the settle path removes the entry before
-            // `deref()`). `RefPtr<T>` has no `Drop`, so explicitly `.deref()`
-            // to release the `+1` and destroy the box. Single-threaded.
-            unsafe { RefDataPtr::from_raw(ptr.cast_mut()) }.deref();
+            // releasing). Single-threaded.
+            drop(unsafe { RefDataPtr::from_raw(ptr.cast_mut()) });
         }
     }
 
@@ -725,7 +724,7 @@ impl BunTest {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
-        bun_ptr::IntrusiveRc::new(RefData {
+        bun_ptr::RefPtr::new(RefData {
             buntest_weak: Rc::downgrade(this_strong),
             phase,
             ref_count: bun_ptr::RefCount::init(),
@@ -745,21 +744,18 @@ impl BunTest {
         }
 
         let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
-        // SAFETY: `raw_ref` was produced by `IntrusiveRc::into_raw` in `run_test_callback`
+        // SAFETY: `raw_ref` was produced by `RefPtr::into_raw` in `run_test_callback`
         // and round-tripped via `as_promise_ptr`; we adopt the +1 it carried.
-        let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(raw_ref) };
-        // Remove the pending_then_refs entry before `deref()` so a freed `RefData` never lingers.
+        let refdata: RefDataPtr = unsafe { bun_ptr::RefPtr::from_raw(raw_ref) };
+        // Remove the pending_then_refs entry before `refdata` drops so a freed `RefData` never lingers.
         if let Some(runner) = Jest::runner() {
             let mut pending = runner.bun_test_root.pending_then_refs.borrow_mut();
             if let Some(pos) = pending.iter().position(|p| *p == raw_ref.cast_const()) {
                 pending.swap_remove(pos);
             }
         }
-        // refdata.deref() at scope exit — RefPtr<T> currently has NO Drop impl (src/ptr/ref_count.rs),
-        // so scope-exit drop is a silent no-op. Decrement the intrusive count explicitly so
-        // (a) RefData::destructor frees the box + Weak<BunTest>, and (b) a paired done() callback
-        // observes has_one_ref()==true on its turn instead of hanging.
-        let refdata = scopeguard::guard(refdata, |r: RefDataPtr| r.deref());
+        // `refdata` drops at scope exit, so a paired done() callback observes
+        // has_one_ref()==true on its turn.
         let has_one_ref = refdata.has_one_ref();
         let Some(this_strong) = refdata.buntest_weak.upgrade() else {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
@@ -831,11 +827,8 @@ impl BunTest {
         let Some(ref_in) = ref_in else {
             return Ok(JSValue::UNDEFINED);
         };
-        // `this.ref` was already taken above.
-        // RefPtr<T> currently has NO Drop impl, so decrement the
-        // intrusive count explicitly at scope exit. Without this the
-        // paired promise then/catch path never sees has_one_ref()==true and the RefData leaks.
-        let ref_in = scopeguard::guard(ref_in, |r: RefDataPtr| r.deref());
+        // `this.ref` was already taken above; it drops at scope exit so the
+        // paired promise then/catch path sees has_one_ref()==true.
 
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
@@ -1190,9 +1183,9 @@ impl BunTest {
         // counted handle. The single +1 from `ref()` is owned by
         // `dcb_data.ref`; `dcb_ref` just remembers the address so the
         // pending-promise branch can `dupe()` it and the tail can branch on
-        // "wait for done callback". `RefPtr<T>` has no `Drop`, so holding a
-        // second `RefDataPtr` here would over-count and the done-callback path
-        // would never observe `has_one_ref()`.
+        // "wait for done callback". Holding a second `RefDataPtr` here would
+        // over-count and the done-callback path would never observe
+        // `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
         if !done_callback.is_empty() && !result.is_empty() {
             if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
@@ -1228,12 +1221,12 @@ impl BunTest {
                             // owned by `dcb_data.r#ref` (set just above; GC
                             // roots `done_callback` for this frame). Bump the
                             // refcount 1→2.
-                            unsafe { bun_ptr::IntrusiveRc::init_ref(dcb_ref_value.as_ptr()) }
+                            unsafe { bun_ptr::RefPtr::init_ref(dcb_ref_value.as_ptr()) }
                         } else {
                             Self::ref_(this_strong, cfg_data)
                         };
                         // Track the `+1` handed to `Promise.then()` in case the promise never settles.
-                        let raw_ref: *mut RefData = bun_ptr::IntrusiveRc::into_raw(this_ref);
+                        let raw_ref: *mut RefData = bun_ptr::RefPtr::into_raw(this_ref);
                         this_strong
                             .bun_test_root
                             .get()
@@ -1505,8 +1498,8 @@ pub struct RefData {
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
-// `*RefData` crosses FFI (`as_promise_ptr`), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
-pub type RefDataPtr = bun_ptr::IntrusiveRc<RefData>;
+// `*RefData` crosses FFI (`as_promise_ptr`), so this MUST be `bun_ptr::RefPtr`, never `Rc`.
+pub type RefDataPtr = bun_ptr::RefPtr<RefData>;
 impl RefData {
     /// `RefCounted` destructor — last ref dropped.
     ///

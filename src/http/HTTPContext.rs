@@ -6,13 +6,15 @@ use crate::Error;
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
-    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, get_cert_error_from_no, h2,
+    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, ProxyTunnel,
+    get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
 use bun_core::{self, FeatureFlags};
+use bun_ptr::RefPtr;
 use bun_uws as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);
@@ -64,7 +66,6 @@ pub struct HTTPContext<const SSL: bool> {
 // PORTING.md this stays intrusive rather than `Rc<T>`. Derived via
 // `#[derive(CellRefCounted)]` above; default `destroy` (`heap::take`) applies
 // (this struct is Box-allocated for custom-SSL entries; statics never hit 0).
-pub(crate) type HTTPContextRc<const SSL: bool> = bun_ptr::IntrusiveRc<HTTPContext<SSL>>;
 
 pub(crate) type PooledSocketHiveAllocator<const SSL: bool> =
     HiveArray<PooledSocket<SSL>, POOL_SIZE>;
@@ -205,7 +206,7 @@ pub struct PooledSocket<const SSL: bool> {
     /// an HTTP proxy), the tunnel is preserved here. The pool owns one
     /// strong ref while the socket is parked (the `RefPtr` *is* that ref).
     /// None for direct connections.
-    pub(crate) proxy_tunnel: Option<crate::proxy_tunnel::RefPtr>,
+    pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
     /// Target (origin) hostname the tunnel connects to. `hostname_buf`
     /// above holds the PROXY hostname; this is the upstream we CONNECTed
     /// to. Heap-allocated only when proxy_tunnel is set; empty otherwise.
@@ -279,10 +280,7 @@ impl<const SSL: bool> PooledSocket<SSL> {
         // pool-key matching.
         self.ssl_config = None;
         self.target_hostname = Box::default();
-        if let Some(rp) = self.proxy_tunnel.take() {
-            // The pool's strong ref *is* this `RefPtr`; release it.
-            rp.deref();
-        }
+        self.proxy_tunnel = None;
         if let Some(s) = self.h2_session.take() {
             // SAFETY: pool owns one strong ref while parked.
             unsafe { h2::ClientSession::deref(s.as_ptr()) };
@@ -294,7 +292,7 @@ struct ExistingSocket<const SSL: bool> {
     socket: HTTPSocket<SSL>,
     /// Present if the socket carries an established CONNECT tunnel.
     /// Ownership (one strong ref) is transferred to the caller.
-    tunnel: Option<crate::proxy_tunnel::RefPtr>,
+    tunnel: Option<RefPtr<ProxyTunnel>>,
     /// Non-null if the socket negotiated "h2"; ownership transferred.
     h2_session: Option<NonNull<h2::ClientSession>>,
     verification: PeerVerification,
@@ -627,7 +625,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<&ssl_config::SharedPtr>,
-        tunnel: Option<crate::proxy_tunnel::RefPtr>,
+        tunnel: Option<RefPtr<ProxyTunnel>>,
         target_hostname: &[u8],
         target_port: u16,
         proxy_auth_hash: u64,
@@ -707,12 +705,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         bun_core::scoped_log!(HTTPContext, "close socket");
         if let Some(t) = tunnel {
-            crate::proxy_tunnel::ProxyTunnel::shutdown(t.data);
-            // `t` is the strong ref the caller transferred; releasing it
-            // through the handle (usually the last ref) mirrors
-            // `HTTPClient::close_proxy_tunnel`.
+            crate::proxy_tunnel::ProxyTunnel::shutdown(t.as_non_null());
             crate::proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
-            t.deref();
         }
         if let Some(s) = h2_session {
             // SAFETY: live intrusive-refcounted ClientSession; deref releases
@@ -820,7 +814,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 // Release the pool's strong ref (caller has its own via tls_props)
                 socket.ssl_config = None;
                 // Transfer tunnel ownership (the parked strong ref) to the caller.
-                let tunnel: Option<crate::proxy_tunnel::RefPtr> = socket.proxy_tunnel.take();
+                let tunnel: Option<RefPtr<ProxyTunnel>> = socket.proxy_tunnel.take();
                 socket.target_hostname = Box::default();
                 let h2_session = socket.h2_session.take();
                 let verification = socket.verification;
@@ -1133,7 +1127,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             }
         }
         // Note: `bun.default_allocator.destroy(this)` is the Box drop
-        // performed by IntrusiveRc when refcount hits 0; not repeated here.
+        // performed by RefPtr when refcount hits 0; not repeated here.
     }
 }
 

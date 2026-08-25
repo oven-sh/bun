@@ -169,6 +169,7 @@ pub use bun_http_types::{ETag, MimeType};
 
 use bun_core::MutableString;
 use bun_http_types::FetchRedirect::CommonAbortReason;
+use bun_ptr::RefPtr;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 #[repr(u8)]
@@ -834,8 +835,8 @@ pub struct HTTPClient<'a> {
     /// Set by HTTPThread.connect() when using custom TLS configs.
     /// Holds one owned strong ref (taken in `set_custom_ssl_ctx`, released on
     /// drop). `HttpsContext` is intrusive-refcounted (also recovered from socket
-    /// ext), so this is an `IntrusiveRc`, not an `Arc`.
-    pub(crate) custom_ssl_ctx: Option<http_context::HTTPContextRc<true>>,
+    /// ext), so this is a `RefPtr`, not an `Arc`.
+    pub(crate) custom_ssl_ctx: Option<RefPtr<HttpsContext>>,
     pub(crate) result_callback: HTTPClientResultCallback,
 
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
@@ -853,9 +854,9 @@ pub struct HTTPClient<'a> {
     /// Set while this request is tunneling through an HTTP proxy (CONNECT).
     /// Holds one owned strong ref on the intrusive-refcounted `ProxyTunnel`
     /// (taken by `ProxyTunnel::start` / `adopt`, released on drop / pool
-    /// hand-off), so this is an `IntrusiveRc`, not an `Arc`. The pointee is
+    /// hand-off), so this is a `RefPtr`, not an `Arc`. The pointee is
     /// also recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
-    pub(crate) proxy_tunnel: Option<proxy_tunnel::RefPtr>,
+    pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
     /// Set when this request is bound to a stream on an HTTP/2 session.
     /// Owned by the session; cleared by the session when the stream completes.
     pub(crate) h2: Option<NonNull<h2::Stream>>,
@@ -932,11 +933,6 @@ impl Drop for HTTPClient<'_> {
         // The session detaches `h2` before any terminal callback, so this should
         // be None by the time the result callback's deinit path runs.
         debug_assert!(self.h2.is_none());
-        // tls_props: Option<SharedPtr> — Drop releases strong ref.
-        if let Some(ctx) = self.custom_ssl_ctx.take() {
-            // Release the strong ref taken in set_custom_ssl_ctx.
-            ctx.deref();
-        }
     }
 }
 
@@ -1623,7 +1619,7 @@ impl<'a> HTTPClient<'a> {
     /// handle while they run (`ProxyTunnel::on_writable` / `receive`).
     #[inline]
     fn proxy_tunnel_ptr(&self) -> Option<NonNull<ProxyTunnel>> {
-        self.proxy_tunnel.as_ref().map(|p| p.data)
+        self.proxy_tunnel.as_ref().map(|p| p.as_non_null())
     }
     /// Detach the proxy tunnel, if one is attached, and release this client's
     /// ref on it through the handle that holds it.
@@ -1631,10 +1627,9 @@ impl<'a> HTTPClient<'a> {
     fn close_proxy_tunnel(&mut self, shutdown: bool) {
         if let Some(t) = self.proxy_tunnel.take() {
             if shutdown {
-                proxy_tunnel::ProxyTunnel::shutdown(t.data);
+                proxy_tunnel::ProxyTunnel::shutdown(t.as_non_null());
             }
             proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
-            t.deref();
         }
     }
     /// Common tail of `fail` / `fail_from_h2` / `complete_connecting_process`:
@@ -2394,11 +2389,7 @@ impl<'a> HTTPClient<'a> {
         // Intrusive-refcounted: this fn takes ownership of one strong ref by
         // bumping it here. Callers do NOT pre-bump.
         // SAFETY: ctx points at a live HttpsContext.
-        let new_ref = unsafe { http_context::HTTPContextRc::<true>::init_ref(ctx.as_ptr()) };
-        if let Some(old) = self.custom_ssl_ctx.replace(new_ref) {
-            // Release the ref we previously held.
-            old.deref();
-        }
+        self.custom_ssl_ctx = Some(unsafe { RefPtr::init_ref(ctx.as_ptr()) });
     }
 
     pub(crate) fn header_str(&self, ptr: StringPointer) -> &'a [u8] {

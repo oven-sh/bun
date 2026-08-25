@@ -860,7 +860,7 @@ pub struct ServePlugins {
 }
 
 // Reference count is incremented while there are other objects waiting on plugin loads.
-// Maps to bun_ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
+// Maps to bun_ptr::RefPtr<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
 
 pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
@@ -1105,7 +1105,6 @@ impl ServePlugins {
                 route.this_ptr(),
                 Some(NonNull::from(plugin_ref)),
             ));
-            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load (stored as a back-reference
@@ -1133,7 +1132,6 @@ impl ServePlugins {
 
         for route in html_bundle_routes {
             bun_core::handle_oom(route.on_plugins_rejected());
-            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load

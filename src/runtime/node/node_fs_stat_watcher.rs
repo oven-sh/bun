@@ -763,7 +763,6 @@ impl StatWatcher {
         let this = ParentRef::from(NonNull::new(this_ptr).expect("finalize: watcher"));
         this.this_value.with_mut(|r| r.finalize());
         this.closed.store(true, Ordering::Relaxed);
-        this.scheduler.deref();
         // but don't deinit until the scheduler drops its reference.
         // SAFETY: `this_ptr` was just leaked from `Box`; we own one ref.
         Self::deref(this_ptr);

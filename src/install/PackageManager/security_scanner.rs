@@ -959,8 +959,6 @@ pub struct SecurityScanSubprocess<'a> {
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
-    /// Intrusive `RefPtr`. `StaticPipeWriter<P>` is
-    /// `RefCounted`; `Rc` would double-count against the embedded refcount.
     json_writer: Option<RefPtr<StaticPipeWriter>>,
 }
 
@@ -977,7 +975,7 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::SecurityScanStaticPipeWriter;
     unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
         // SAFETY: `this` is the `parent` backref passed to `StaticPipeWriter::create`;
-        // the subprocess outlives its writer (it `deref`s the writer in `deinit`/Drop).
+        // the subprocess outlives its writer (it owns the writer ref in `json_writer`).
         // `finish_spawn` holds no Rust borrow on `self.json_writer` across `start()`
         // (it clones the `Rc` first), so this `&mut` is unique for the call.
         unsafe { (*this).on_close_io(kind) };
@@ -1003,13 +1001,6 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
                 ThreadSafeRefCount::<Process>::deref(p);
             }
         }
-        if let Some(w) = self.json_writer.take() {
-            // `on_close_io` normally takes the field first; guard for the case
-            // where it didn't run. `RefPtr` has no auto-`Drop`, so the ref we
-            // hold must be released with an explicit `deref()`.
-            w.deref();
-        }
-        // code, json_data drop automatically (Box<[u8]>)
     }
 }
 
@@ -1247,10 +1238,10 @@ impl<'a> SecurityScanSubprocess<'a> {
         // exact `StaticPipeWriter::create` call site inside `finish_spawn`. If
         // `finish_spawn` errors before that point (`ipc_reader.start()`), the
         // closure drops as a no-op and the still-armed cleanup guard performs
-        // `close_and_destroy`. After the writer takes
-        // the pipe, post-create errors leave the writer leaked at refcount >= 1
-        // (RefPtr has no Drop), so the Box is never auto-freed and the guard's
-        // `close_and_destroy` remains the sole cleanup.
+        // `close_and_destroy`. After the writer takes the pipe, post-create
+        // errors detach it from the writer (`finish_spawn`'s guard) before the
+        // writer's refs drop, so the guard's `close_and_destroy` remains the
+        // sole cleanup.
         self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
             // SAFETY: `pipe_ptr` is the same allocation produced by
             // heap::alloc above and has not been freed; ownership transfers
@@ -1339,7 +1330,6 @@ impl<'a> SecurityScanSubprocess<'a> {
             if let Some(w) = unsafe { (*parent).json_writer.take() } {
                 // SAFETY: `w` holds the field's ref; sole live access path.
                 unsafe { (*w.as_ptr()).source.detach() };
-                w.deref();
             }
         });
 
@@ -1351,18 +1341,14 @@ impl<'a> SecurityScanSubprocess<'a> {
         unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
         // SAFETY: `writer_local` keeps `*writer_ptr` live.
         unsafe { (*writer_ptr).started = false };
-        match start_result {
-            Err(e) => {
-                writer_local.deref();
-                Output::err_generic(
-                    "Failed to start security scanner JSON pipe writer: {}",
-                    (e,),
-                );
-                return Err(crate::Error::JSONPipeWriterFailed);
-            }
-            Ok(()) => {}
+        drop(writer_local);
+        if let Err(e) = start_result {
+            Output::err_generic(
+                "Failed to start security scanner JSON pipe writer: {}",
+                (e,),
+            );
+            return Err(crate::Error::JSONPipeWriterFailed);
         }
-        writer_local.deref();
 
         // SAFETY: `process` is live (we hold a ref); reached via the local raw
         // ptr per the single-provenance note. `watch_or_reap` may re-enter
@@ -1381,7 +1367,6 @@ impl<'a> SecurityScanSubprocess<'a> {
             // SAFETY: `writer` holds the field's intrusive ref; sole access path
             // (single-threaded event loop callback).
             unsafe { (*writer.as_ptr()).source.detach() };
-            writer.deref();
             self.remaining_fds -= 1;
         }
     }

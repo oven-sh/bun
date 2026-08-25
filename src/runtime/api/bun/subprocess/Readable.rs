@@ -9,7 +9,7 @@ use crate::node::types::FdJsc as _;
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
 use bun_io::max_buf::MaxBuf;
-use bun_ptr::IntrusiveRc;
+use bun_ptr::RefPtr;
 use bun_ptr::cow_slice::CowSlice;
 
 use super::subprocess_pipe_reader::PipeReader;
@@ -22,8 +22,8 @@ pub type CowString = CowSlice<u8>;
 pub enum Readable {
     Fd(Fd),
     Memfd(Fd),
-    // LIFETIMES.tsv: SHARED → IntrusiveRc<PipeReader> (PipeReader has intrusive RefCount; detach() → deref()).
-    Pipe(IntrusiveRc<PipeReader>),
+    // LIFETIMES.tsv: SHARED → RefPtr<PipeReader> (PipeReader has intrusive RefCount; detach() → deref()).
+    Pipe(RefPtr<PipeReader>),
     Inherit,
     Ignore,
     Closed,
@@ -39,35 +39,28 @@ pub enum Readable {
 impl Readable {
     /// Mutable borrow of the `Pipe` payload's `PipeReader`.
     ///
-    /// Centralises the `IntrusiveRc → &mut T` deref so the per-match-arm
+    /// Centralises the `RefPtr → &mut T` deref so the per-match-arm
     /// `unsafe` blocks (`ref_`/`unref`/`close` and the `Subprocess` callers in
     /// `on_close_io`/`on_process_exit`/`testing_apis`) collapse to this one
-    /// site. `IntrusiveRc` (= `RefPtr`) deliberately has no `DerefMut`; the
+    /// site. `RefPtr` deliberately has no `DerefMut`; the
     /// invariant that makes `&mut` sound here is that `Readable::Pipe` holds
     /// the owning strong ref for the variant's lifetime (created by
-    /// `PipeReader::create`, released by `detach()`/`deref()` only after the
-    /// variant is moved out), the reader lives in its own heap allocation
+    /// `PipeReader::create`, dropped only after the variant is moved out),
+    /// the reader lives in its own heap allocation
     /// disjoint from `Readable`/`Subprocess`, and access is
     /// single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(in crate::api) fn pipe_reader_mut(pipe: &IntrusiveRc<PipeReader>) -> &mut PipeReader {
-        // SAFETY: see fn doc — owning IntrusiveRc, heap-disjoint, single-thread.
+    pub(in crate::api) fn pipe_reader_mut(pipe: &RefPtr<PipeReader>) -> &mut PipeReader {
+        // SAFETY: see fn doc — owning RefPtr, heap-disjoint, single-thread.
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Clear the `PipeReader`'s `process` backref and release the caller's ref.
-    /// Centralises what was the `into_raw()` +
-    /// `unsafe { PipeReader::detach(raw) }` dance so the three callers in
-    /// `finalize` / `to_js` / `to_buffered_value` stay safe — the caller's
-    /// `IntrusiveRc` encodes the "live + one ref" invariant `detach()` needs,
-    /// and `RefPtr::deref` is the safe drop. Callers pass the `IntrusiveRc`
-    /// they just moved out of `self` and drop it (a no-op — `RefPtr` has no
-    /// `Drop`) immediately after.
+    /// Clear the `PipeReader`'s `process` backref and release the ref the
+    /// `Readable::Pipe` variant held.
     #[inline]
-    fn pipe_detach(pipe: &IntrusiveRc<PipeReader>) {
-        Self::pipe_reader_mut(pipe).process = None;
-        pipe.deref();
+    fn pipe_detach(pipe: RefPtr<PipeReader>) {
+        Self::pipe_reader_mut(&pipe).process = None;
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -226,7 +219,7 @@ impl Readable {
                         unsafe { PipeReader::deref(pipe.as_ptr()) };
                     }
                 }
-                Self::pipe_detach(&pipe);
+                Self::pipe_detach(pipe);
             }
             Readable::Buffer(_) => {
                 // Dropping the CowString (via the overwrite) frees the buffer;
@@ -248,7 +241,7 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_js(global);
-                Self::pipe_detach(&pipe);
+                Self::pipe_detach(pipe);
                 result
             }
             Readable::Buffer(_) => {
@@ -288,7 +281,7 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
-                Self::pipe_detach(&pipe);
+                Self::pipe_detach(pipe);
                 result
             }
             Readable::Buffer(_) => {

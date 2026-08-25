@@ -451,7 +451,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             pending_slot: None,
             head: CAresLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+                resolver: resolver.map(|r| unsafe { bun_ptr::RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
@@ -585,7 +585,7 @@ impl GetHostByAddrInfoRequest {
             pending_slot: None,
             head: CAresReverse {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+                resolver: resolver.map(|r| unsafe { bun_ptr::RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
@@ -1156,7 +1156,7 @@ impl GetAddrInfoRequest {
             pending_slot: None,
             head: DNSLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+                resolver: resolver.map(|r| unsafe { bun_ptr::RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
@@ -1431,7 +1431,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct CAresReverse {
-    pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub resolver: Option<bun_ptr::RefPtr<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -1461,7 +1461,7 @@ impl CAresReverse {
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+            resolver: resolver.map(|r| unsafe { bun_ptr::RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
@@ -1522,7 +1522,7 @@ impl CAresReverse {
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this);
             if let Some(resolver) = (*this).resolver.as_ref() {
-                // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
+                // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
@@ -1547,11 +1547,6 @@ impl Drop for CAresReverse {
     fn drop(&mut self) {
         let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
-        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
-        // by `init_ref` in `init()` / `GetHostByAddrInfoRequest::init()`.
-        if let Some(resolver) = self.resolver.take() {
-            resolver.deref();
-        }
         // self.name freed by Box<[u8]> Drop
     }
 }
@@ -1561,7 +1556,7 @@ impl Drop for CAresReverse {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct CAresLookup<T: CAresRecordType> {
-    pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub resolver: Option<bun_ptr::RefPtr<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -1586,7 +1581,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         poll_ref.ref_(js_event_loop_ctx());
         Self::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+            resolver: resolver.map(|r| unsafe { bun_ptr::RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
@@ -1660,7 +1655,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this);
             if let Some(resolver) = (*this).resolver.as_ref() {
-                // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
+                // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
@@ -1685,11 +1680,6 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
         let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
-        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
-        // by `init_ref` in `init()` / `ResolveInfoRequest::init()`.
-        if let Some(resolver) = self.resolver.take() {
-            resolver.deref();
-        }
         // self.name freed by Box<[u8]> Drop
     }
 }
@@ -1699,7 +1689,7 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct DNSLookup {
-    pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub resolver: Option<bun_ptr::RefPtr<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub allocated: bool,
@@ -1729,7 +1719,7 @@ impl DNSLookup {
 
         bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-            resolver: Some(unsafe { bun_ptr::IntrusiveRc::init_ref(resolver) }),
+            resolver: Some(unsafe { bun_ptr::RefPtr::init_ref(resolver) }),
             global_this: bun_ptr::BackRef::new(global_this),
             poll_ref,
             promise: JSPromiseStrong::init(global_this),
@@ -1833,7 +1823,7 @@ impl DNSLookup {
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this);
             if let Some(resolver) = (*this).resolver.as_ref() {
-                // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
+                // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
@@ -1920,11 +1910,6 @@ impl Drop for DNSLookup {
         self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
             Async::AllocatorType::Js,
         ));
-        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
-        // by `init_ref` in `init()` / `GetAddrInfoRequest::init()`.
-        if let Some(resolver) = self.resolver.take() {
-            resolver.deref();
-        }
     }
 }
 
@@ -3621,14 +3606,13 @@ impl Drop for ResolverRefGuard {
     }
 }
 
-// `pub const ref/deref` from RefCount mixin → provided by `bun_ptr::IntrusiveRc<Self>`.
+// `pub const ref/deref` from RefCount mixin → provided by `bun_ptr::RefPtr<Self>`.
 impl bun_ptr::RefCounted for Resolver {
-    type DestructorCtx = ();
     unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
         // SAFETY: caller contract — `this` points to a live Self.
         unsafe { &raw mut (*this).ref_count }
     }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+    unsafe fn destructor(this: *mut Self) {
         Self::deinit(this);
     }
 }
@@ -3971,7 +3955,7 @@ impl Resolver {
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
 
-    /// `self`'s address as `*mut Self` for c-ares / `FilePoll` / `IntrusiveRc`
+    /// `self`'s address as `*mut Self` for c-ares / `FilePoll` / `RefPtr`
     /// ctx slots and `Self::deref`. Callbacks deref it as `&*const` (shared) —
     /// see `on_dns_poll`, `on_cares_complete` — so no write provenance is
     /// required; the `*mut` spelling is purely to match the C signature. All
@@ -4119,7 +4103,7 @@ impl Resolver {
         scopeguard::defer! {
             // SAFETY: `this` is the heap allocation from `init`. This releases
             // the ref taken by `add_timer`. Every caller holds at least one
-            // other ref for the duration of this call (an `IntrusiveRc`, a
+            // other ref for the duration of this call (a `RefPtr`, a
             // `ref_scope` guard, or the global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
             unsafe {

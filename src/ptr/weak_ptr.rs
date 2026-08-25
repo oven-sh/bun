@@ -107,6 +107,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         }
     }
 
+    /// Release this handle's weak ref now (idempotent; `Drop` does the same).
     pub fn deref(&mut self) {
         if let Some(value) = self.raw_ptr {
             // SAFETY: `raw_ptr` was set by `init_ref` and not yet released;
@@ -152,6 +153,12 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
             // is dead here, so freeing through `value` disturbs no live borrow.
             drop(unsafe { bun_core::heap::take(value.as_ptr()) });
         }
+    }
+}
+
+impl<T: HasWeakPtrData> Drop for WeakPtr<T> {
+    fn drop(&mut self) {
+        self.deref();
     }
 }
 

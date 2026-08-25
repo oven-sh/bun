@@ -151,14 +151,8 @@ impl<'a> Writable<'a> {
         // (== false) instead of a just-deref'd `Buffer` (== true) inside
         // `update_has_pending_activity`, which is the state it converges to
         // immediately after anyway.
-        match process.stdin.replace(Writable::Ignore) {
-            Writable::Buffer(buffer) => {
-                buffer.deref();
-            }
-            Writable::Pipe(pipe) => {
-                Self::pipe_release(pipe);
-            }
-            _ => {}
+        if let Writable::Pipe(pipe) = process.stdin.replace(Writable::Ignore) {
+            Self::pipe_release(pipe);
         }
 
         // `on_stdin_destroyed` may `deref()` and free `process` as its last
@@ -508,8 +502,6 @@ impl<'a> Writable<'a> {
             }
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(&buffer).update_ref(false);
-                // RefPtr::deref drops the held ref.
-                buffer.deref();
             }
             Writable::Memfd(fd) => {
                 fd.close();

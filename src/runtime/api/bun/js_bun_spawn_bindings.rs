@@ -53,11 +53,11 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
-/// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
+/// `Terminal.CreateResult` — local mirror that flattens `RefPtr<Terminal>`
 /// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
 struct TerminalCreateResult {
-    /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
+    /// BACKREF — the `RefPtr<Terminal>` pointer leaked via `into_raw()`
     /// when this struct was populated; the +1 ref is held until
     /// `Subprocess::finalize` (or the spawn-error scopeguard's
     /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
@@ -67,7 +67,7 @@ struct TerminalCreateResult {
 
 impl TerminalCreateResult {
     /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
-    /// IntrusiveRc, live while this struct is held).
+    /// RefPtr, live while this struct is held).
     #[inline]
     fn term(&self) -> &Terminal {
         self.terminal.get()
@@ -850,7 +850,7 @@ fn spawn_maybe_sync(
                                     // Transfer the +1 ref to `Subprocess.terminal` (released
                                     // in `Subprocess::finalize`); the scopeguard's
                                     // `abandon_from_spawn` path covers the error case.
-                                    // `IntrusiveRc::into_raw` is never null (NonNull-backed).
+                                    // `RefPtr::into_raw` is never null (NonNull-backed).
                                     // SAFETY: `into_raw()` yields the live heap pointer
                                     // (write provenance, non-null); ref released later.
                                     terminal: unsafe {

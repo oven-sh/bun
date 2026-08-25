@@ -28,7 +28,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
 };
-use bun_ptr::IntrusiveRc;
+use bun_ptr::RefPtr;
 
 bun_output::declare_scope!(H2FrameParser, visible);
 
@@ -96,7 +96,7 @@ enum BunSocket {
     #[default]
     None,
     // BACKREF — the socket strictly outlives the H2FrameParser while attached:
-    // `Tls`/`Tcp` are kept alive by the `IntrusiveRc<H2FrameParser>` stored in
+    // `Tls`/`Tcp` are kept alive by the `RefPtr<H2FrameParser>` stored in
     // the socket's `native_callback` slot (released in `detach_native_socket`),
     // and `*Writeonly` are kept alive by the manual `ref_()`/`deref()` pair in
     // `attach_to_native_socket` / `detach_native_socket`. `BackRef` makes the
@@ -1246,7 +1246,7 @@ pub(crate) struct SignalRef {
     signal: bun_ptr::BackRef<AbortSignal>,
     // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
     // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
-    // `Cell<u32>` ref count (not `bun_ptr::RefCount<Self>`), so `IntrusiveRc`'s
+    // `Cell<u32>` ref count (not `bun_ptr::RefCount<Self>`), so `RefPtr`'s
     // `RefCounted` bound is unsatisfiable. `ParentRef` captures the backref
     // invariant (parser is `ref_()`'d in `attach_signal` and outlives the
     // `SignalRef` until `Drop` calls `deref()`), so reads go through safe
@@ -7444,7 +7444,7 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `attach_native_callback` stores an `IntrusiveRc<H2FrameParser>` (the
+    /// `attach_native_callback` stores a `RefPtr<H2FrameParser>` (the
     /// `init_ref` bumps `ref_count`); the matching `deref` happens in
     /// `NewSocket::detach_native_callback`. When the socket already has a
     /// native callback attached we fall back to write-only mode and take a
@@ -7455,9 +7455,9 @@ impl H2FrameParser {
     ) -> BunSocket {
         // SAFETY: `self` is a live heap allocation (HiveArray slot or boxed); `init_ref`
         // increments the intrusive refcount (Cell-backed) and wraps the pointer. The
-        // `*mut` spelling is signature-only — `IntrusiveRc` only ever derefs as shared
+        // `*mut` spelling is signature-only — `RefPtr` only ever derefs as shared
         // (`on_native_*` callbacks take `&self`).
-        let h2 = unsafe { IntrusiveRc::init_ref(self.as_ctx_ptr()) };
+        let h2 = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
         // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by the
         // caller's `socket_js`; it strictly outlives the returned `BunSocket` via the
         // attach/detach refcount protocol (see `BunSocket` docs). `NonNull::new` panics on
@@ -7471,8 +7471,6 @@ impl H2FrameParser {
                 BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
             }
         } else {
-            // attach_native_callback failed: balance the init_ref taken above.
-            self.deref();
             socket_ref.ref_();
             if SSL {
                 BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))

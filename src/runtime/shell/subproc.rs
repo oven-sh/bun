@@ -406,14 +406,11 @@ impl ShellSubprocess {
                 }
                 Writable::Buffer(_) => {
                     self.on_static_pipe_writer_done();
-                    // RefPtr has no Drop — move it out before reassigning so the
-                    // create ref is actually released.
                     if let Writable::Buffer(buffer) =
                         core::mem::replace(&mut self.stdin, Writable::Ignore)
                     {
                         // SAFETY: single-threaded; sole borrow of the payload.
                         unsafe { buffer_mut(&buffer) }.source.detach();
-                        buffer.deref();
                     }
                 }
                 _ => {}
@@ -1215,8 +1212,7 @@ impl Writable {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
                 unsafe { buffer_mut(buffer) }.update_ref(false);
                 // Intentionally does NOT reassign `*self` — the variant tag is
-                // left as `Writable::Buffer`. RefPtr's Drop (on
-                // Subprocess teardown) handles the final deref.
+                // left as `Writable::Buffer`; its ref drops with the Subprocess.
             }
             Writable::Memfd(fd) => {
                 fd.close();

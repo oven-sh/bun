@@ -9,7 +9,7 @@ use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
 use bun_jsc::bun_string_jsc;
-use bun_ptr::IntrusiveRc;
+use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
@@ -293,7 +293,7 @@ pub struct NewSocket<const SSL: bool> {
     pub(crate) owned_ssl_ctx: Cell<Option<*mut SSL_CTX>>,
 
     pub(crate) flags: Cell<Flags>,
-    pub(crate) ref_count: bun_ptr::RefCount<Self>, // intrusive — see `bun_ptr::IntrusiveRc<Self>`
+    pub(crate) ref_count: bun_ptr::RefCount<Self>, // intrusive — see `bun_ptr::RefPtr<Self>`
     /// The callbacks this socket dispatches to: shared with its listener and
     /// sibling sockets (server), or with its own reconnects and TLS twin
     /// (client). `None` once the socket has gone idle or been detached, which
@@ -327,8 +327,8 @@ pub struct NewSocket<const SSL: bool> {
     /// no second context.
     // LIFETIMES.tsv says `Option<Rc<Self>>`, but `*Self` is stored in
     // a uws ext slot (FFI) and is intrusively refcounted — PORTING.md mandates
-    // IntrusiveRc, never Rc, when *T crosses FFI.
-    pub(crate) twin: JsCell<Option<IntrusiveRc<Self>>>,
+    // RefPtr, never Rc, when *T crosses FFI.
+    pub(crate) twin: JsCell<Option<RefPtr<Self>>>,
     /// Owned copy of the handshake verify error, so `getAuthorizationError()`
     /// keeps its verdict after detach (the live error borrows the `SSL`, and
     /// EPROTO reasons are stack-copied in uSockets).
@@ -340,12 +340,11 @@ pub(super) type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 // Intrusive refcount mixin.
 impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
-    type DestructorCtx = ();
     unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
         // SAFETY: caller contract — `this` points to a live Self.
         unsafe { &raw mut (*this).ref_count }
     }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+    unsafe fn destructor(this: *mut Self) {
         // SAFETY: refcount reached zero; we are the unique owner of the
         // `heap::alloc` allocation and `this` is not used after.
         unsafe { Self::deinit_and_destroy(this) };
@@ -554,12 +553,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             + ssl_cost
     }
 
+    /// On `false` the rejected `callback` (and the ref it holds) is dropped.
     pub(crate) fn attach_native_callback(&self, callback: NativeCallbacks) -> bool {
         if !matches!(self.native_callback.get(), NativeCallbacks::None) {
             return false;
         }
-        // IntrusiveRc holds the +1 by construction (caller
-        // passes ownership of the handle), so no explicit inc here.
         self.native_callback.set(callback);
         true
     }
@@ -567,12 +565,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn detach_native_callback(&self) {
         let native_callback = self.native_callback.replace(NativeCallbacks::None);
         match native_callback {
-            NativeCallbacks::H2(h2) => {
-                // `RefPtr: Deref<Target = H2FrameParser>`; `on_native_close`
-                // takes `&self`, so no raw-pointer reach-through is needed.
-                h2.on_native_close();
-                h2.deref();
-            }
+            NativeCallbacks::H2(h2) => h2.on_native_close(),
             NativeCallbacks::None => {}
         }
     }
@@ -2119,7 +2112,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // recurse, and `onClose` derefs the +1 we took at creation.
         if let Some(raw) = this.twin.with_mut(|t| t.take()) {
             // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
-            // hand over the raw pointer rather than letting `IntrusiveRc::drop`
+            // hand over the raw pointer rather than letting `RefPtr::drop`
             // release it a second time. This frame is the twin's trampoline for
             // the event, so what its handlers left pending is folded here and
             // this socket's own close proceeds regardless.
@@ -2618,7 +2611,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let args = callframe.arguments_undef::<2>();
         // `write_or_end_buffered` reaches `internal_flush`, which re-enters JS.
         // SAFETY: the JS wrapper holds a ref for the whole host-fn call.
-        let _keepalive = unsafe { bun_ptr::ScopedRef::new(this.as_ctx_ptr()) };
+        let _keepalive = unsafe { bun_ptr::RefPtr::init_ref(this.as_ctx_ptr()) };
         let result = match this.write_or_end_buffered::<true>(global, args.ptr[0], args.ptr[1]) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
@@ -3233,7 +3226,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
         // SAFETY: the JS wrapper holds a ref for the whole host-fn call.
-        let _keepalive = unsafe { bun_ptr::ScopedRef::new(this.as_ctx_ptr()) };
+        let _keepalive = unsafe { bun_ptr::RefPtr::init_ref(this.as_ctx_ptr()) };
         let result = match this.write_or_end::<true>(global, args.mut_(), false) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
@@ -3680,7 +3673,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // including the `?` early-returns below.
         // SAFETY: `this` owns the outstanding ref this guard consumes; the JS
         // wrapper's own +1 keeps the allocation alive across the whole call.
-        let _this_deref = unsafe { bun_ptr::ScopedRef::adopt(this.as_ctx_ptr()) };
+        let _this_deref = unsafe { bun_ptr::RefPtr::from_raw(this.as_ctx_ptr()) };
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
@@ -3720,7 +3713,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         raw_ref.ref_();
         // SAFETY: `raw` came from `TLSSocket::new` (heap::alloc); intrusive +1 held.
         tls.twin
-            .set(Some(unsafe { IntrusiveRc::from_raw(raw.as_ptr()) }));
+            .set(Some(unsafe { RefPtr::from_raw(raw.as_ptr()) }));
         // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(new_raw.as_ptr()).set_ssl_raw_tap(true);
 
@@ -4088,7 +4081,7 @@ impl_socket_js_class!(TLSSocket, js_TLSSocket);
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum NativeCallbacks {
-    H2(IntrusiveRc<H2FrameParser>),
+    H2(RefPtr<H2FrameParser>),
     None,
 }
 
@@ -4269,7 +4262,7 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
 pub(crate) struct DuplexUpgradeContext {
     pub upgrade: UpgradedDuplex,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
-    pub tls: JsCell<Option<IntrusiveRc<TLSSocket>>>,
+    pub tls: JsCell<Option<RefPtr<TLSSocket>>>,
     // task used to deinit the context in the next tick, vm is used to enqueue the task
     /// JSC_BORROW: process-lifetime per-thread VM (immortal). Stored as
     /// `&'static` so [`enqueue_self_task`](Self::enqueue_self_task) routes
@@ -4393,7 +4386,7 @@ impl DuplexUpgradeContext {
             // `start_tls()` enqueues anything and before any duplex
             // callback can dispatch), so `handle_connect_error`'s
             // `needs_deref = !is_detached()` is `true` and it consumes
-            // the owner's +1 we hold. Do NOT let `IntrusiveRc::Drop`
+            // the owner's +1 we hold. Do NOT let `RefPtr::Drop`
             // fire on top of that (over-deref → UAF on the JS wrapper's
             // pointee).
             //
@@ -4571,10 +4564,7 @@ impl DuplexUpgradeContext {
         {
             // SAFETY: `this` is live; this borrow ends with the block, before the `heap::take` free below.
             let ctx = unsafe { &*this };
-            if let Some(tls) = ctx.tls.replace(None) {
-                // Release the owner's +1.
-                tls.deref();
-            }
+            ctx.tls.set(None);
             // Close raced ahead of StartTLS — drop the unconsumed config.
             ctx.ssl_config.set(None);
             if let Some(ssl_ctx) = ctx.owned_ctx.take() {
@@ -4783,7 +4773,7 @@ pub fn js_upgrade_duplex_to_tls(
     // below before any read or `&mut DuplexUpgradeContext` is formed.
     unsafe {
         ptr::addr_of_mut!((*duplex_context).tls)
-            .write(JsCell::new(Some(IntrusiveRc::from_raw(tls.as_ptr()))));
+            .write(JsCell::new(Some(RefPtr::from_raw(tls.as_ptr()))));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
         ptr::addr_of_mut!((*duplex_context).task_event).write(Cell::new(EventState::StartTLS));
         ptr::addr_of_mut!((*duplex_context).queued).write(Cell::new(false));

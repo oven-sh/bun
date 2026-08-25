@@ -54,14 +54,14 @@ pub struct JSMySQLQuery {
 
 impl JSMySQLQuery {
     /// RAII `ref()`/`deref()` bracket around `self`. One audited
-    /// `ScopedRef::new` here replaces N per-site
-    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
-    /// m_ctx payload by construction, so the [`ScopedRef::new`] precondition
+    /// `RefPtr::init_ref` here replaces N per-site
+    /// `unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }` — `&self` is the live
+    /// m_ctx payload by construction, so the [`RefPtr::init_ref`] precondition
     /// (live, non-null) is always satisfied.
     #[inline]
-    pub(crate) fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
+    pub(crate) fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
         // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+        unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
     pub fn estimated_size(&self) -> usize {

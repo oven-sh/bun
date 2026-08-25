@@ -281,7 +281,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         // layer), so we can't share the existing intrusive allocation —
         // deep-clone the value instead and let `init_s3` `Rc::new` it.
         // PERF: profile if hot once Store.rs migrates
-        // `Rc<S3Credentials>` → `IntrusiveRc`.
+        // `Rc<S3Credentials>` → `RefPtr`.
         default_credentials.clone()
     };
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");

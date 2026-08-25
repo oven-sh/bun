@@ -752,16 +752,11 @@ impl<'a> AsyncHTTP<'a> {
                     if let Some(tunnel) = client.proxy_tunnel.take() {
                         // SAFETY: tunnel was created by ProxyTunnel::start
                         // (heap::alloc) and is refcounted; detach the socket
-                        // (the first half of the old `detach_and_deref`)
-                        // before releasing the clone's strong ref below.
+                        // before the clone's strong ref drops.
                         (*tunnel.as_ptr()).detach_socket();
-                        tunnel.deref();
                     }
                     debug_assert!(client.h2.is_none());
-                    if let Some(ctx) = client.custom_ssl_ctx.take() {
-                        // Release the strong ref the clone took in set_custom_ssl_ctx.
-                        ctx.deref();
-                    }
+                    client.custom_ssl_ctx = None;
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.

@@ -215,7 +215,7 @@ pub fn comptime_string_set_impl(input: TokenStream) -> TokenStream {
 // Replaces the former `impl_cell_ref_counted` declarative macro and
 // the ~80 hand-written `ref_count: Cell<u32>` + `unsafe impl` pairs. The
 // derive locates the intrusive refcount field and emits the trait impl, the
-// `AnyRefCounted` bridge (so `RefPtr`/`ScopedRef` accept the type), and
+// `AnyRefCounted` bridge (so `RefPtr` accepts the type), and
 // inherent `ref_()`/`deref()` forwarders so existing call sites keep working
 // without importing the trait.
 //
@@ -342,7 +342,6 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
             #destroy_impl
         }
         impl #impl_g ::bun_ptr::AnyRefCounted for #name #ty_g #where_g {
-            type DestructorCtx = ();
             #[inline]
             unsafe fn rc_ref(this: *mut Self) {
                 // SAFETY: caller contract — `this` is live. Raw field
@@ -351,7 +350,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
                 rc.set(rc.get() + 1);
             }
             #[inline]
-            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+            unsafe fn rc_deref(this: *mut Self) {
                 // SAFETY: caller contract — `this` is live.
                 unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
             }
@@ -444,14 +443,13 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
             #destroy_impl
         }
         impl #impl_g ::bun_ptr::AnyRefCounted for #name #ty_g #where_g {
-            type DestructorCtx = ();
             #[inline]
             unsafe fn rc_ref(this: *mut Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) }
             }
             #[inline]
-            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+            unsafe fn rc_deref(this: *mut Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::deref(this) }
             }
@@ -489,8 +487,8 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 // ──────────────────────────────────────────────────────────────────────────
 //
 // Third sibling of CellRefCounted / ThreadSafeRefCounted — replaces the ~17
-// hand-rolls that all spell out `type DestructorCtx = (); get_ref_count =
-// &raw mut (*this).ref_count; destructor = drop(heap::take(this))`.
+// hand-rolls that all spell out `get_ref_count = &raw mut (*this).ref_count;
+// destructor = drop(heap::take(this))`.
 //
 // Struct-level attribute:
 //   #[ref_count(destroy = <path>)]      — `unsafe fn(*mut Self)`; default is
@@ -581,7 +579,6 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
 
     quote! {
         impl #impl_g ::bun_ptr::RefCounted for #name #ty_g #where_g {
-            type DestructorCtx = ();
             #debug_name_impl
             #[inline]
             unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
@@ -589,7 +586,7 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
                 unsafe { &raw mut (*this).#field }
             }
             #[inline]
-            unsafe fn destructor(this: *mut Self, _ctx: ()) {
+            unsafe fn destructor(this: *mut Self) {
                 #destructor_body
             }
         }

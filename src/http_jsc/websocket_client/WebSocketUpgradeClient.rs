@@ -410,7 +410,7 @@ where
                     this.tcp.set(socket);
                     if this.state.get() == State::Failed {
                         socket.take_ext_owner::<Self>();
-                        client.deref();
+                        drop(client);
                         return None;
                     }
                     bun_analytics::features::web_socket
@@ -434,7 +434,7 @@ where
                 }
                 Err(_) => {
                     // Never installed as userdata on the Err path.
-                    client.deref();
+                    drop(client);
                 }
             }
             return None;
@@ -454,7 +454,7 @@ where
                 // I don't think this case gets reached.
                 if this.state.get() == State::Failed {
                     sock.take_ext_owner::<Self>();
-                    client.deref();
+                    drop(client);
                     return None;
                 }
                 bun_analytics::features::web_socket
@@ -475,7 +475,7 @@ where
             }
             Err(_) => {
                 // Never installed as userdata on the Err path.
-                client.deref();
+                drop(client);
                 None
             }
         }
@@ -499,16 +499,12 @@ where
     /// C++ let go of `m_upgradeClient`: forget the back-reference and release
     /// the ref held on its behalf. May free `self`.
     fn release_cpp_ref(&self) {
-        if let Some((_, cpp_ref)) = self.outgoing_websocket.replace(None) {
-            cpp_ref.deref();
-        }
+        self.outgoing_websocket.set(None);
     }
 
     /// Release the ref held for the socket's userdata pointer. May free `self`.
     fn release_socket_ref(&self) {
-        if let Some(r) = self.socket_ref.take() {
-            r.deref();
-        }
+        self.socket_ref.set(None);
     }
 
     /// Write the unsent suffix of `input_body_buf` via `write` (which returns
@@ -590,9 +586,8 @@ where
     /// handlers and may re-enter via C++ `cancel()`, and the trailing `deref`
     /// may free `this`.
     fn dispatch_abrupt_close(this: ThisPtr<Self>, code: ErrorCode) {
-        if let Some((ws, cpp_ref)) = this.outgoing_websocket.replace(None) {
+        if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
             ws.did_abrupt_close(code);
-            cpp_ref.deref();
         }
     }
 
@@ -974,7 +969,7 @@ where
 
         // Start TLS handshake
         if WebSocketProxyTunnel::start(tunnel.this_ptr(), &ssl_options, initial_data).is_err() {
-            tunnel.deref();
+            drop(tunnel);
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         }
@@ -990,7 +985,7 @@ where
         });
         if let Some(tunnel) = unattached {
             // Nothing else holds the tunnel.
-            tunnel.deref();
+            drop(tunnel);
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         }
@@ -1365,7 +1360,7 @@ where
                     },
                 );
 
-                cpp_ref.deref();
+                drop(cpp_ref);
             } else if tcp.is_closed() {
                 Self::terminate(this, ErrorCode::Cancel);
             } else if !has_ws {
@@ -1413,7 +1408,7 @@ where
             // Two refs are released here (C++'s, then the TCP socket's — the
             // socket now belongs to the connected WebSocket). The second may
             // free `this`.
-            cpp_ref.deref();
+            drop(cpp_ref);
             this.release_socket_ref();
         } else if tcp.is_closed() {
             Self::terminate(this, ErrorCode::Cancel);

@@ -58,8 +58,6 @@ fn type_base_name(name: &'static str) -> &'static str {
 
 /// Implemented by types that embed a [`RefCount`] field.
 pub trait RefCounted: Sized {
-    type DestructorCtx;
-
     /// Defaults to the type basename.
     fn debug_name() -> &'static str {
         type_base_name(core::any::type_name::<Self>())
@@ -82,7 +80,7 @@ pub trait RefCounted: Sized {
     ///
     /// # Safety
     /// `this` must point to a live `Self` with `raw_count == 0`.
-    unsafe fn destructor(this: *mut Self, ctx: Self::DestructorCtx);
+    unsafe fn destructor(this: *mut Self);
 }
 
 /// Implemented by types that embed a [`ThreadSafeRefCount`] field.
@@ -120,27 +118,12 @@ pub trait ThreadSafeRefCounted: Sized {
 
 /// Unifying trait so `RefPtr<T>` works with either ref-count flavor.
 pub trait AnyRefCounted: Sized {
-    type DestructorCtx;
-
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn rc_ref(this: *mut Self);
     /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn rc_deref_with_context(this: *mut Self, ctx: Self::DestructorCtx);
-    /// Forwards `Default::default()` as the ctx. Types with a non-unit
-    /// `DestructorCtx` must call `rc_deref_with_context` explicitly.
-    ///
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    #[inline]
-    unsafe fn rc_deref(this: *mut Self)
-    where
-        Self::DestructorCtx: Default,
-    {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { Self::rc_deref_with_context(this, Default::default()) }
-    }
+    /// `this` must point to a live `Self` and the caller must own one ref.
+    unsafe fn rc_deref(this: *mut Self);
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn rc_has_one_ref(this: *const Self) -> bool;
@@ -174,7 +157,6 @@ pub trait AnyRefCounted: Sized {
 pub fn finalize_js_box<T, F>(boxed: Box<T>, before: F)
 where
     T: AnyRefCounted,
-    T::DestructorCtx: Default,
     F: FnOnce(&T),
 {
     let ptr: *mut T = Box::into_raw(boxed);
@@ -188,11 +170,7 @@ where
 /// [`finalize_js_box`] with no pre-release work — just hands ownership back to
 /// the intrusive refcount and drops the JS wrapper's `+1`.
 #[inline]
-pub fn finalize_js_box_noop<T>(boxed: Box<T>)
-where
-    T: AnyRefCounted,
-    T::DestructorCtx: Default,
-{
+pub fn finalize_js_box_noop<T: AnyRefCounted>(boxed: Box<T>) {
     let ptr: *mut T = Box::into_raw(boxed);
     // SAFETY: `ptr` was just leaked from `Box`; ref_count >= 1.
     unsafe { T::rc_deref(ptr) };
@@ -214,11 +192,10 @@ where
 ///     other_field: u32,
 /// }
 /// impl RefCounted for Thing {
-///     type DestructorCtx = ();
 ///     unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
 ///         unsafe { &raw mut (*this).ref_count }
 ///     }
-///     unsafe fn destructor(this: *mut Self, _: ()) {
+///     unsafe fn destructor(this: *mut Self) {
 ///         println!("deinit {}", unsafe { (*this).other_field });
 ///         drop(unsafe { heap::take(this) });
 ///     }
@@ -284,17 +261,7 @@ impl<T: RefCounted> RefCount<T> {
 
     /// # Safety
     /// `self_` must point to a live `T`.
-    pub unsafe fn deref(self_: *mut T)
-    where
-        T: RefCounted<DestructorCtx = ()>,
-    {
-        // SAFETY: caller contract
-        unsafe { Self::deref_with_context(self_, ()) }
-    }
-
-    /// # Safety
-    /// `self_` must point to a live `T`.
-    pub(crate) unsafe fn deref_with_context(self_: *mut T, ctx: T::DestructorCtx) {
+    pub unsafe fn deref(self_: *mut T) {
         // SAFETY: caller contract
         let count = unsafe { &*T::get_ref_count(self_) };
         #[cfg(debug_assertions)]
@@ -320,7 +287,7 @@ impl<T: RefCounted> RefCount<T> {
                 unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
             }
             // SAFETY: raw_count == 0, sole owner
-            unsafe { T::destructor(self_, ctx) };
+            unsafe { T::destructor(self_) };
         }
     }
 
@@ -353,15 +320,13 @@ impl<T: RefCounted> RefCount<T> {
 }
 
 impl<T: RefCounted> AnyRefCounted for T {
-    type DestructorCtx = <T as RefCounted>::DestructorCtx;
-
     unsafe fn rc_ref(this: *mut Self) {
         // SAFETY: caller contract — `this` points to a live T
         unsafe { RefCount::<T>::ref_(this) }
     }
-    unsafe fn rc_deref_with_context(this: *mut Self, ctx: Self::DestructorCtx) {
+    unsafe fn rc_deref(this: *mut Self) {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { RefCount::<T>::deref_with_context(this, ctx) }
+        unsafe { RefCount::<T>::deref(this) }
     }
     unsafe fn rc_has_one_ref(this: *const Self) -> bool {
         // SAFETY: caller contract — `this` points to a live T
@@ -542,7 +507,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 /// the canonical inc/dec/destroy-at-zero logic.
 ///
 /// Use `#[derive(CellRefCounted)]` to derive this trait together with the
-/// [`AnyRefCounted`] bridge (so [`RefPtr`] / [`ScopedRef`] accept the type)
+/// [`AnyRefCounted`] bridge (so [`RefPtr`] accepts the type)
 /// and inherent `ref_()`/`deref()` forwarders (so existing call sites that
 /// invoke them as inherent methods keep compiling without importing the
 /// trait).
@@ -705,38 +670,36 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 // RefPtr
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A pointer to an object implementing `RefCount` or `ThreadSafeRefCount`.
-/// The benefit of this over `*mut T` is that instances of `RefPtr` are tracked.
+/// An owned strong reference to an intrusively refcounted `T` (`RefCount`,
+/// `ThreadSafeRefCount`, or `CellRefCounted`).
 ///
-/// By using this, you gain the following memory debugging tools:
+/// Holding a `RefPtr` *is* holding one ref: `Drop` releases it (destroying `T`
+/// if it was the last), `Clone` takes another. To hand the ref to a raw-pointer
+/// consumer (C++ `m_ctx`, a uws/libuv userdata slot) use
+/// [`into_raw`](Self::into_raw) and reclaim it later with
+/// [`from_raw`](Self::from_raw).
 ///
-/// - `T.ref_count.dump_active_refs()` to dump all active references.
-///
-/// If you want to enforce usage of RefPtr for memory management, you
-/// can remove the forwarded `ref` and `deref` methods from `RefCount`.
-///
-/// # ⚠️ No `Drop` impl — the owned ref must be released *manually*
-///
-/// `RefPtr` does **not** implement `Drop`: dropping a `RefPtr`
-/// value — including `Option::take()`-then-drop, or letting a struct field
-/// holding one go out of scope — **leaks** the strong ref it owns. On every
-/// path that gives up a `RefPtr` you must explicitly call one of:
-///
-/// - [`deref`](Self::deref) / [`deref_with_context`](Self::deref_with_context)
-///   — release the ref (and destroy `T` if it was the last);
-/// - [`leak`](Self::leak) / [`into_raw`](Self::into_raw) — hand the ref off to
-///   someone else (the inverse of [`from_raw`](Self::from_raw)).
-///
-/// Any new struct field of `RefPtr<T>` type must document, at the field site,
-/// which of its owners' methods discharges this obligation. (Newtypes like
-/// `CookieMapRef` wrap a single owned ref *and* implement `Drop` themselves —
-/// `RefPtr` itself does not.)
-///
-/// See [`RefCount`]'s comment for examples & best practices.
+/// In debug builds every `RefPtr` is tracked in `T`'s `DebugData`, so
+/// `T.ref_count.dump_active_refs()` lists the acquisition site of each live one.
+#[must_use = "dropping a RefPtr releases its ref"]
 pub struct RefPtr<T: AnyRefCounted> {
-    pub data: NonNull<T>,
+    data: NonNull<T>,
     #[cfg(debug_assertions)]
     debug: TrackedRefId,
+}
+
+impl<T: AnyRefCounted> Drop for RefPtr<T> {
+    #[inline]
+    fn drop(&mut self) {
+        let ptr = self.data.as_ptr();
+        #[cfg(debug_assertions)]
+        {
+            // SAFETY: we still own a ref, so `ptr` is live.
+            unsafe { (*T::rc_debug_data(ptr)).release(self.debug, return_address()) };
+        }
+        // SAFETY: we own a ref, so `ptr` is live; this releases it.
+        unsafe { T::rc_deref(ptr) };
+    }
 }
 
 impl<T: AnyRefCounted> RefPtr<T> {
@@ -749,33 +712,6 @@ impl<T: AnyRefCounted> RefPtr<T> {
         unsafe { T::rc_ref(raw_ptr) };
         // SAFETY: caller contract
         unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
-    }
-
-    // NOTE: would be nice to use a const for deref dispatch, but keep two
-    // methods for clarity.
-
-    /// Decrement the reference count, and destroy the object if the count is 0.
-    pub fn deref(&self)
-    where
-        T::DestructorCtx: Default,
-    {
-        self.deref_with_context(Default::default());
-    }
-
-    /// Decrement the reference count, and destroy the object if the count is 0.
-    pub(crate) fn deref_with_context(&self, ctx: T::DestructorCtx) {
-        #[cfg(debug_assertions)]
-        {
-            // SAFETY: data is live (we hold a ref)
-            unsafe { (*T::rc_debug_data(self.as_ptr())).release(self.debug, return_address()) };
-        }
-        // SAFETY: data is live (we hold a ref)
-        unsafe { T::rc_deref_with_context(self.as_ptr(), ctx) };
-        // The handle is not poisoned after release: that would require
-        // mutating through `&self` (UnsafeCell), and `&self` is load-bearing
-        // here: hundreds of call sites (including Drop impls and ScopedRef)
-        // deref through a borrow they cannot move out of, so a by-value
-        // signature is not an option.
     }
 
     pub fn dupe_ref(&self) -> Self {
@@ -840,25 +776,34 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// WITHOUT incrementing the refcount. The caller gives up their ref;
     /// this RefPtr now owns it. Unlike `adopt_ref`, this does not assert
     /// `has_one_ref()` — the pointer may have other outstanding refs.
-    /// This is the inverse of `leak()` / `into_raw()`.
-    ///
-    /// Std-conventional alias for [`take_ref`] (matches `Arc::from_raw` /
-    /// `Rc::from_raw` semantics) so call sites that reach for the idiomatic
-    /// Rust name compile without churn.
+    /// Inverse of [`into_raw`](Self::into_raw) (`Arc::from_raw` semantics).
     ///
     /// # Safety
     /// `raw_ptr` must point to a live `T` and the caller must own one ref.
     #[inline]
     pub unsafe fn from_raw(raw_ptr: *mut T) -> Self {
-        // SAFETY: forwarded caller contract
-        unsafe { Self::take_ref(raw_ptr) }
+        #[cfg(debug_assertions)]
+        {
+            // SAFETY: caller contract
+            unsafe { (*T::rc_debug_data(raw_ptr)).assert_valid_dyn() };
+        }
+        // SAFETY: caller contract
+        unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
     }
 
-    /// Std-conventional alias for [`leak`]. Extract the raw pointer, giving up
-    /// ownership WITHOUT decrementing the refcount. Inverse of [`from_raw`].
+    /// Extract the raw pointer, giving up ownership WITHOUT decrementing the
+    /// refcount; whoever holds the pointer now owns the ref. Inverse of
+    /// [`from_raw`](Self::from_raw) (`Arc::into_raw` semantics).
     #[inline]
     pub fn into_raw(self) -> *mut T {
-        self.leak()
+        let this = core::mem::ManuallyDrop::new(self);
+        let ptr = this.data.as_ptr();
+        #[cfg(debug_assertions)]
+        {
+            // SAFETY: data is live (we hold a ref)
+            unsafe { (*T::rc_debug_data(ptr)).release(this.debug, return_address()) };
+        }
+        ptr
     }
 
     /// Borrow the inner `*mut T` without affecting the refcount (analogous to
@@ -877,10 +822,12 @@ impl<T: AnyRefCounted> RefPtr<T> {
         self.data.as_ptr()
     }
 
-    /// Borrow the pointee immutably. Named accessor equivalent to
-    /// `<RefPtr<T> as Deref>::deref` — provided so call sites can be explicit
-    /// (the inherent `RefPtr::deref` *decrements the refcount*, so `r.deref()`
-    /// is not the borrow you want).
+    #[inline]
+    pub fn as_non_null(&self) -> NonNull<T> {
+        self.data
+    }
+
+    /// Borrow the pointee (same as `<RefPtr<T> as Deref>::deref`).
     #[inline]
     pub fn data(&self) -> &T {
         // SAFETY: holding a `RefPtr` means we own at least one ref, so the
@@ -888,40 +835,6 @@ impl<T: AnyRefCounted> RefPtr<T> {
         // !Send/!Sync so no concurrent mutation; thread-safe hosts coordinate
         // their own interior mutability.
         unsafe { self.data.as_ref() }
-    }
-
-    /// Wrap a raw pointer whose ref is being transferred to this RefPtr
-    /// WITHOUT incrementing the refcount. The caller gives up their ref;
-    /// this RefPtr now owns it. Unlike `adopt_ref`, this does not assert
-    /// `has_one_ref()` — the pointer may have other outstanding refs.
-    /// This is the inverse of `leak()`.
-    ///
-    /// # Safety
-    /// `raw_ptr` must point to a live `T` and the caller must own one ref.
-    pub(crate) unsafe fn take_ref(raw_ptr: *mut T) -> Self {
-        #[cfg(debug_assertions)]
-        {
-            // SAFETY: caller contract
-            unsafe { (*T::rc_debug_data(raw_ptr)).assert_valid_dyn() };
-        }
-        // SAFETY: caller contract
-        unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
-    }
-
-    /// Extract the raw pointer, giving up ownership WITHOUT decrementing
-    /// the refcount. The caller is responsible for the ref that this
-    /// RefPtr was holding. After calling this, the RefPtr is invalid
-    /// and must not be used. This is the inverse of `take_ref()`.
-    pub fn leak(self) -> *mut T {
-        let ptr = self.data.as_ptr();
-        #[cfg(debug_assertions)]
-        {
-            // mark debug tracking as released without actually derefing
-            // SAFETY: data is live (we hold a ref)
-            unsafe { (*T::rc_debug_data(ptr)).release(self.debug, return_address()) };
-        }
-        // Taking `self` by value makes the RefPtr unusable afterwards.
-        ptr
     }
 
     /// # Safety
@@ -952,72 +865,6 @@ impl<T: AnyRefCounted> core::ops::Deref for RefPtr<T> {
     #[inline]
     fn deref(&self) -> &T {
         self.data()
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// ScopedRef
-// ──────────────────────────────────────────────────────────────────────────
-
-/// RAII scope guard for an intrusive refcount: bumps on construction, derefs
-/// on `Drop`. Use to bracket a `ref_()`/`deref()` pair that protects `*T`
-/// across a re-entrant call.
-///
-/// Unlike [`RefPtr`] this is not a smart-pointer handle (no `Deref`, not
-/// stored in fields) — it exists solely so the paired deref runs on every
-/// exit path. Requires `DestructorCtx: Default` (the common unit case).
-#[must_use = "dropping immediately releases the ref"]
-pub struct ScopedRef<T: AnyRefCounted>(NonNull<T>)
-where
-    T::DestructorCtx: Default;
-
-impl<T: AnyRefCounted> ScopedRef<T>
-where
-    T::DestructorCtx: Default,
-{
-    /// Bump the intrusive refcount and return a guard that derefs on `Drop`.
-    ///
-    /// # Safety
-    /// `ptr` must point to a live `T` and remain a valid allocation until the
-    /// guard is dropped (the guard's own ref keeps it alive past that point).
-    #[inline]
-    pub unsafe fn new(ptr: *mut T) -> Self {
-        // SAFETY: caller contract — `ptr` is live.
-        unsafe { T::rc_ref(ptr) };
-        // SAFETY: caller contract — `ptr` is non-null.
-        Self(unsafe { NonNull::new_unchecked(ptr) })
-    }
-
-    /// Adopt an already-held ref: does **not** bump on construction, but still
-    /// derefs on `Drop`. Use when the matching `ref()` was taken earlier (e.g.
-    /// by an in-flight async op) and this scope is responsible for releasing
-    /// it.
-    ///
-    /// # Safety
-    /// `ptr` must point to a live `T` for which the caller owns one outstanding
-    /// ref that this guard will consume.
-    #[inline]
-    pub unsafe fn adopt(ptr: *mut T) -> Self {
-        // SAFETY: caller contract — `ptr` is non-null and live.
-        Self(unsafe { NonNull::new_unchecked(ptr) })
-    }
-
-    /// Defuse the guard without derefing, handing the ref to whatever adopts
-    /// it next. Inverse of [`adopt`](Self::adopt).
-    #[inline]
-    pub fn forget(self) {
-        let _ = core::mem::ManuallyDrop::new(self);
-    }
-}
-
-impl<T: AnyRefCounted> Drop for ScopedRef<T>
-where
-    T::DestructorCtx: Default,
-{
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `new` took a ref, so the pointee is live until this deref.
-        unsafe { T::rc_deref(self.0.as_ptr()) };
     }
 }
 
@@ -1204,13 +1051,12 @@ mod tests {
     }
 
     impl RefCounted for Thing {
-        type DestructorCtx = ();
         unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
             // SAFETY: caller contract — `this` is in-bounds of a `Thing`
             // allocation. Pure field projection, no read.
             unsafe { &raw mut (*this).ref_count }
         }
-        unsafe fn destructor(this: *mut Self, _: ()) {
+        unsafe fn destructor(this: *mut Self) {
             // SAFETY: caller contract — refcount hit zero, sole owner.
             drop(unsafe { bun_core::heap::take(this) });
         }
@@ -1266,27 +1112,27 @@ mod tests {
         let r = p.clone();
         assert_eq!(p.as_ptr(), q.as_ptr());
         assert_eq!(p.as_ptr(), r.as_ptr());
-        r.deref();
-        q.deref();
+        drop(r);
+        drop(q);
         assert_eq!(drops(), before);
 
-        // `leak` hands the ref off without decrementing; `from_raw` takes it back.
-        let raw = p.leak();
+        // `into_raw` hands the ref off without decrementing; `from_raw` takes it back.
+        let raw = p.into_raw();
         // SAFETY: `raw` still owns the ref `p` gave up.
         let p = unsafe { RefPtr::from_raw(raw) };
         assert_eq!(*p.payload, 42);
-        p.deref();
+        drop(p);
         assert_eq!(drops(), before + 1);
     }
 
     #[test]
-    fn scoped_ref_releases_on_drop() {
+    fn ref_ptr_init_ref_releases_on_drop() {
         let _serial = serial();
         let before = drops();
         let t = Thing::new(3);
         {
             // SAFETY: `t` is live; the guard's ref keeps it alive for the scope.
-            let _g = unsafe { ScopedRef::new(t) };
+            let _g = unsafe { RefPtr::init_ref(t) };
             // SAFETY: two refs outstanding.
             assert_eq!(unsafe { (*RefCounted::get_ref_count(t)).get() }, 2);
         }
@@ -1298,12 +1144,12 @@ mod tests {
     }
 
     #[test]
-    fn scoped_ref_adopt_consumes_caller_ref() {
+    fn ref_ptr_from_raw_consumes_caller_ref() {
         let _serial = serial();
         let before = drops();
         let t = Thing::new(3);
-        // SAFETY: `t` is live and we own the one ref the guard will consume.
-        drop(unsafe { ScopedRef::adopt(t) });
+        // SAFETY: `t` is live and we own the one ref the RefPtr will consume.
+        drop(unsafe { RefPtr::from_raw(t) });
         assert_eq!(drops(), before + 1);
     }
 

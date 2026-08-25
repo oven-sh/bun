@@ -249,10 +249,9 @@ impl LinuxMemFdAllocator {
             }
         }
 
-        // `Self::new` returns refcount=1; `into_raw()` extracts the
-        // `heap::alloc` pointer and transfers the +1 to us (RefPtr has no
-        // `Drop`). On `Ok` that ref moves into `res.allocator`; on `Err`
-        // we `deref` it explicitly.
+        // `Self::new` returns refcount=1; `into_raw()` transfers that +1 to
+        // us. On `Ok` it moves into `res.allocator`; on `Err` we `deref` it
+        // explicitly.
         let memfd: *mut Self = Self::new(fd, bytes.len()).into_raw();
 
         // SAFETY: `memfd` is the `heap::alloc` pointer

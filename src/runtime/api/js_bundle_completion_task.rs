@@ -557,7 +557,7 @@ impl JSBundleCompletionTask {
         crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(ctx).expect("completion")).unregister();
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
         // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
-        let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
+        let _drop_ref = unsafe { bun_ptr::RefPtr::<Self>::from_raw(ctx) };
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`,
         // dispatched exactly once per task on the JS thread. Exclusive: the
         // task has no JS-visible handle, the bundle thread's access ended when
@@ -601,6 +601,7 @@ impl JSBundleCompletionTask {
                 }
                 (*this).promise = jsc::JSPromiseStrong::default();
                 (*this).bundle_ticket = None;
+                (*this).html_build_task = None;
                 // Publish only now: from here the bundle thread may free `this`.
                 (*this)
                     .stage
@@ -631,7 +632,6 @@ impl JSBundleCompletionTask {
         if let Some(html_build_task) = this.html_build_task.take() {
             this.plugins = None;
             html_build_task.on_complete(this);
-            html_build_task.deref();
             return Ok(());
         }
 

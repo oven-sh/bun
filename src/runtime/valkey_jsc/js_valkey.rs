@@ -11,7 +11,7 @@ use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
     JsRef, JsResult,
 };
-use bun_ptr::{AsCtxPtr, BackRef, ScopedRef};
+use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
 use bun_uws as uws;
 
 use super::protocol_jsc;
@@ -401,12 +401,12 @@ impl RefCountedTimer {
 
     /// Mark fired and hand the keep-alive ref (if held) to the callback scope.
     /// Returns `None` when no ref was held, so a stray fire cannot over-release.
-    fn take_fire_ref(&self, owner: &JSValkeyClient) -> Option<ScopedRef<JSValkeyClient>> {
+    fn take_fire_ref(&self, owner: &JSValkeyClient) -> Option<RefPtr<JSValkeyClient>> {
         self.event_loop_timer
             .with_mut(|t| t.state = Timer::State::FIRED);
         self.ref_held.replace(false).then(|| {
             // SAFETY: `arm`'s `ref_()` set `ref_held`; this scope consumes it.
-            unsafe { ScopedRef::adopt(owner.as_ctx_ptr()) }
+            unsafe { RefPtr::from_raw(owner.as_ctx_ptr()) }
         })
     }
 }
@@ -421,12 +421,11 @@ bun_event_loop::impl_timer_owner!(JSValkeyClient;
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive refcount.
 impl bun_ptr::RefCounted for JSValkeyClient {
-    type DestructorCtx = ();
     unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
         // SAFETY: caller contract — `this` is live.
         unsafe { &raw mut (*this).ref_count }
     }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+    unsafe fn destructor(this: *mut Self) {
         // SAFETY: last ref dropped; sole owner.
         unsafe { JSValkeyClient::deinit(this) };
     }
@@ -458,9 +457,9 @@ impl JSValkeyClient {
     /// RAII scoped ref: bumps on construction, derefs on `Drop`. Keeps `*self`
     /// alive across re-entrant connect/close/fail paths.
     #[inline]
-    pub(crate) fn ref_scope(&self) -> ScopedRef<Self> {
+    pub(crate) fn ref_scope(&self) -> RefPtr<Self> {
         // SAFETY: `self` is live; the guard's own ref keeps it alive past Drop.
-        unsafe { ScopedRef::new(self.as_ctx_ptr()) }
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
     #[inline]
     pub(crate) fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
@@ -1446,7 +1445,7 @@ impl JSValkeyClient {
         // ownership back to the raw refcount.
         let this: &Self = bun_core::heap::release(self);
         // SAFETY: the JS wrapper owned one ref; this scope consumes it.
-        let _guard = unsafe { ScopedRef::adopt(this.as_ctx_ptr()) };
+        let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
 
         this.stop_timers();
         this.this_value.with_mut(|t| t.finalize());
@@ -1552,7 +1551,7 @@ impl JSValkeyClient {
         self.client_mut().socket = socket;
         // Disarm on success: the socket now owns the keep-alive ref.
         scopeguard::ScopeGuard::into_inner(errdefer_status);
-        socket_ref.forget();
+        let _ = socket_ref.into_raw();
         Ok(())
     }
 
@@ -1872,7 +1871,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // SAFETY: adopts the keep-alive ref `connect()` forgot for this
         // socket; this is its one close event. Released after `_defer` runs,
         // while `_guard` still holds the client.
-        let _socket_ref = unsafe { ScopedRef::adopt(this.as_ctx_ptr()) };
+        let _socket_ref = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         // Before `on_close()`: it runs `onclose` and settles the connect()
@@ -1901,7 +1900,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         let _guard = this.ref_scope();
         // SAFETY: as in `on_close`; a dial that fails gets this event instead.
-        let _socket_ref = unsafe { ScopedRef::adopt(this.as_ctx_ptr()) };
+        let _socket_ref = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         this.client_mut().status = valkey::Status::Disconnected;
         let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
@@ -2041,7 +2040,7 @@ impl ValkeyDeferredClose {
     pub(crate) fn run(self: Box<Self>) {
         // SAFETY: adopts the ref `enqueue_deferred_close` took, which kept the
         // client alive until now; released when this scope ends.
-        let _enqueue_ref = unsafe { ScopedRef::adopt(self.ctx) };
+        let _enqueue_ref = unsafe { RefPtr::from_raw(self.ctx) };
         // SAFETY: live per the ref above; tasks run on the JS thread.
         let this = unsafe { &*self.ctx };
         match self.what {
@@ -2075,7 +2074,7 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
             // give back what `close_without_socket_next_tick` took.
             DeferredClose::WithoutSocket => {
                 // SAFETY: as in `run`.
-                let _enqueue_ref = unsafe { ScopedRef::adopt(task.ctx) };
+                let _enqueue_ref = unsafe { RefPtr::from_raw(task.ctx) };
                 // SAFETY: live per the ref above.
                 unsafe { &*task.ctx }.poll_ref.with_mut(|r| r.disable());
             }

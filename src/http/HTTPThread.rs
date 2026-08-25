@@ -1012,11 +1012,8 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.proxy_authorization));
                 if let Some(tunnel) = client.proxy_tunnel.take() {
                     (*tunnel.as_ptr()).detach_socket();
-                    tunnel.deref();
                 }
-                if let Some(ctx) = client.custom_ssl_ctx.take() {
-                    ctx.deref();
-                }
+                client.custom_ssl_ctx = None;
                 drop(core::mem::take(&mut client.state));
                 if let Some(f) = release.release_at_shutdown {
                     f(release.ctx);

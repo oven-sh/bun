@@ -32,7 +32,7 @@ mod _impl {
     // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
 
     /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
-    /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
+    /// `ref`/`deref` are provided by `bun_ptr::RefPtr<NativeZlib>`; when the count hits
     /// zero it invokes [`NativeZlib::deinit`].
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
@@ -264,7 +264,7 @@ mod _impl {
         /// Not `Drop` because this is an intrusive-refcounted `m_ctx` payload whose
         /// box is freed here.
         fn deinit(this: *mut Self) {
-            // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
+            // SAFETY: called exactly once by RefPtr when refcount hits 0; `this`
             // is the heap::alloc pointer produced at construction. `this_value`
             // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
             // heap::take below.

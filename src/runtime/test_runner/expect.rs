@@ -678,18 +678,6 @@ impl Expect {
         Ok(buf)
     }
 
-    // Codegen's `host_fn_finalize` calls this via `|b| Expect::finalize(b)`
-    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
-    // false positive on that contract.
-    #[allow(clippy::boxed_local)]
-    pub fn finalize(mut self: Box<Self>) {
-        // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
-        // so the Box drop below would leak the +1 — release explicitly.
-        if let Some(parent) = self.parent.take() {
-            parent.deref();
-        }
-    }
-
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();

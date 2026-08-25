@@ -69,7 +69,7 @@ mod _impl {
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
-    // Intrusive refcount: the handle type is `bun_ptr::IntrusiveRc<NativeBrotli>`; the
+    // Intrusive refcount: the handle type is `bun_ptr::RefPtr<NativeBrotli>`; the
     // `ref_count` field below is read/written by that wrapper, and `deinit` is the
     // drop body invoked when the count reaches zero.
 
@@ -343,7 +343,7 @@ mod _impl {
                 bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => s.close(),
                 _ => {}
             });
-            // Freeing self is handled by IntrusiveRc / heap::take.
+            // Freeing self is handled by RefPtr / heap::take.
         }
     }
 

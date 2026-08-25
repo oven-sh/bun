@@ -41,7 +41,7 @@ pub use tagged_pointer::TaggedPtr;
 
 pub mod ref_count;
 pub use ref_count::{
-    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ScopedRef, ThreadSafeRefCount,
+    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ThreadSafeRefCount,
     ThreadSafeRefCounted, destroy_box_with, finalize_js_box, finalize_js_box_noop,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
@@ -51,9 +51,6 @@ pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
 pub mod parent_ref;
 pub use parent_ref::ParentRef;
-// Compat alias for callers that use the pointer-typedef name.
-pub type IntrusiveRc<T> = RefPtr<T>;
-
 pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;
 
@@ -573,7 +570,7 @@ impl core::fmt::Debug for Interned {
 // across the websocket-client family. `ThisPtr` centralises that pattern under
 // ONE constructor SAFETY contract: wrap the raw pointer once at fn entry, then
 // read fields via `Deref` and bracket the body with `ref_guard()` (RAII
-// `ScopedRef`) instead of hand-paired `ref_()`/`deref()` at every early-exit.
+// `RefPtr`) instead of hand-paired `ref_()`/`deref()` at every early-exit.
 //
 // Unlike [`BackRef`] (owner-outlives-holder back-reference), a `ThisPtr` is for
 // the *callee-is-the-allocation* case: the pointee is an intrusively-refcounted
@@ -648,23 +645,15 @@ impl<T> core::ops::Deref for ThisPtr<T> {
     }
 }
 
-impl<T: AnyRefCounted> ThisPtr<T>
-where
-    T::DestructorCtx: Default,
-{
-    /// Bump the intrusive refcount and return an RAII guard that derefs on
-    /// `Drop`. Replaces the hand-rolled
-    /// `this.ref_(); scopeguard::guard(this_ptr, |p| Self::deref(p))` /
-    /// `this.ref_(); … defer this.deref()` bracket: the guard runs the paired
-    /// `deref()` on every exit path, so manual `Self::deref(this)` at each
-    /// early return goes away.
+impl<T: AnyRefCounted> ThisPtr<T> {
+    /// Take a ref on the pointee, held for as long as the returned `RefPtr`
+    /// lives — brackets a re-entrant call that may otherwise drop the last ref.
     ///
     /// Safe: the [`new`](Self::new) invariant already established that the
-    /// pointee is live, which is exactly [`ScopedRef::new`]'s precondition.
+    /// pointee is live, which is exactly [`RefPtr::init_ref`]'s precondition.
     #[inline]
-    pub fn ref_guard(self) -> ScopedRef<T> {
-        // SAFETY: `ThisPtr::new` invariant — `self.0` points to a live `T`.
-        unsafe { ScopedRef::new(self.0.as_ptr()) }
+    pub fn ref_guard(self) -> RefPtr<T> {
+        RefPtr::from_this(self)
     }
 }
 
@@ -786,7 +775,7 @@ impl<T> Default for DetachablePtr<T> {
 // The returned pointer carries **shared (read-only) provenance** — it is
 // derived from `&self`, so writing through it directly is UB. The `*mut`
 // spelling exists purely to match C-shaped signatures (`void *`, uSockets
-// ext slots, `ScopedRef` / `DerefOnDrop` ctx, vtable thunks, intrusive
+// ext slots, `RefPtr` guard ctx, vtable thunks, intrusive
 // `RefCount::deref`). Consumers must deref as `&*p` and route mutation
 // through `Cell` / `JsCell` / `UnsafeCell` interior-mutability fields.
 //

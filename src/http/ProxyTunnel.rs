@@ -15,10 +15,7 @@ use crate::{AlpnOffer, HTTPClient};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
 
-// Intrusive single-thread refcount (bun.ptr.RefCount). `ref_count` field at
-// matching offset; deref() hitting 0 calls ProxyTunnel::deinit (mapped to Drop
-// + dealloc via IntrusiveRc).
-pub type RefPtr = bun_ptr::IntrusiveRc<ProxyTunnel>;
+use bun_ptr::RefPtr;
 
 /// Upgrade a `*mut ProxyTunnel` (obtained from [`RefPtr::as_ptr`]) to
 /// `&'a mut ProxyTunnel`.
@@ -169,14 +166,14 @@ impl ProxyTunnel {
     /// eventual release, which is the last one whenever the guarded call
     /// released the client's ref, goes through the holder's own pointer
     /// rather than through a `&mut self` that would still be live at that
-    /// point. `ScopedRef::new` bumps via raw `CellRefCounted::ref_count_raw`
+    /// point. `RefPtr::init_ref` bumps via raw `CellRefCounted::ref_count_raw`
     /// field projection — touching only `ref_count`, never the whole tunnel —
     /// so it does not alias the caller's `&SSLWrapper` (see ALIASING NOTE).
     /// HTTP-thread-only.
     #[inline]
-    fn ref_scope(this: NonNull<Self>) -> bun_ptr::ScopedRef<Self> {
+    fn ref_scope(this: NonNull<Self>) -> bun_ptr::RefPtr<Self> {
         // SAFETY: see INVARIANT above.
-        unsafe { bun_ptr::ScopedRef::new(this.as_ptr()) }
+        unsafe { bun_ptr::RefPtr::init_ref(this.as_ptr()) }
     }
 }
 
@@ -213,7 +210,7 @@ fn on_open(ctx: *mut HTTPClient) {
     bun_analytics::features::http_client_proxy.fetch_add(1, Ordering::Relaxed);
     this.state.response_stage = HTTPStage::ProxyHandshake;
     this.state.request_stage = HTTPStage::ProxyHandshake;
-    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else {
+    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.as_non_null()) else {
         return;
     };
     // Live intrusive-refcounted tunnel allocated in `start()`. Do NOT form
@@ -264,7 +261,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // ends this borrow before any reentrant call below that re-derives
     // `&mut *ctx` (close → on_close, progress_update).
     let this = client_from_ctx(ctx);
-    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else {
+    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.as_non_null()) else {
         return;
     };
     let _guard = ProxyTunnel::ref_scope(proxy_nn);
@@ -353,7 +350,7 @@ fn on_handshake(
 ) {
     // NLL ends `this` before any reentrant call below.
     let this = client_from_ctx(ctx);
-    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else {
+    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.as_non_null()) else {
         return;
     };
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
@@ -456,7 +453,11 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     // is the sole live borrow, dropped immediately after copying out the
     // tunnel's `data` `NonNull`. The pointee is alive: this client holds a
     // strong ref to the tunnel for the duration of tunneling.
-    let Some(proxy_nn) = client_from_ctx(ctx).proxy_tunnel.as_ref().map(|p| p.data) else {
+    let Some(proxy_nn) = client_from_ctx(ctx)
+        .proxy_tunnel
+        .as_ref()
+        .map(|p| p.as_non_null())
+    else {
         return;
     };
     // Live intrusive-refcounted tunnel. Access `write_buffer` and `socket` via
@@ -501,12 +502,12 @@ fn on_close(ctx: *mut HTTPClient) {
             "tunnel exists"
         }
     );
-    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else {
+    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.as_non_null()) else {
         return;
     };
     let proxy_ptr = proxy_nn.as_ptr();
     // bump refcount via the disjoint Cell projection.
-    // Not a ScopedRef — the matching deref is deferred via
+    // Not a RefPtr — the matching deref is deferred via
     // `schedule_proxy_deref` to avoid freeing within the callback.
     {
         let rc = ProxyTunnel::ref_count_of(proxy_nn);
@@ -765,7 +766,7 @@ impl ProxyTunnel {
     /// `tunnel` is the pool's handle; it moves into `client.proxy_tunnel` as
     /// is, so the ref the client later releases is the one the pool held.
     pub(crate) fn adopt<const IS_SSL: bool>(
-        tunnel: RefPtr,
+        tunnel: RefPtr<ProxyTunnel>,
         client: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
     ) {

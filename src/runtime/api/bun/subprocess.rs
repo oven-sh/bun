@@ -497,7 +497,6 @@ impl Subprocess<'_> {
                         unreachable!()
                     };
                     Writable::buffer_writer_mut(&buffer).source.detach();
-                    buffer.deref();
                 }
                 _ => {}
             }),
@@ -522,8 +521,6 @@ impl Subprocess<'_> {
                         // pipe.state was emptied via take()
                     }
                     // else: *out stays Readable::Ignore (set by replace above).
-                    // RefPtr has no Drop — release the ref this Readable held.
-                    pipe.deref();
                 }
             }
         }

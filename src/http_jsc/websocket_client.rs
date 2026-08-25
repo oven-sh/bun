@@ -152,16 +152,12 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// C++ let go of `m_connectedWebSocket`: forget the back-reference and
     /// release the ref held on its behalf. May free `self`.
     fn release_cpp_ref(&self) {
-        if let Some((_, cpp_ref)) = self.outgoing_websocket.replace(None) {
-            cpp_ref.deref();
-        }
+        self.outgoing_websocket.set(None);
     }
 
     /// Release the I/O layer's ref. May free `self`.
     fn release_io_ref(&self) {
-        if let Some(r) = self.io_ref.take() {
-            r.deref();
-        }
+        self.io_ref.set(None);
     }
 
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {
@@ -192,7 +188,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if let Some(tunnel) = self.proxy_tunnel.replace(None) {
             tunnel.data().clear_connected_web_socket();
             WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
-            tunnel.deref();
+            drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the
             // non-tunnel path this same ref is released by handle_close()
@@ -237,10 +233,9 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// or the tunnel callback), so `self` outlives the releases below.
     pub(crate) fn fail(&self, code: ErrorCode) {
         jsc::mark_binding!();
-        if let Some((ws, cpp_ref)) = self.outgoing_websocket.replace(None) {
+        if let Some((ws, _cpp_ref)) = self.outgoing_websocket.replace(None) {
             log!("fail ({})", <&'static str>::from(code));
             ws.did_abrupt_close(code);
-            cpp_ref.deref();
         }
 
         self.cancel_guarded();
@@ -1333,24 +1328,22 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// May free `self`.
     fn dispatch_abrupt_close(&self, code: ErrorCode) {
-        let Some((out, cpp_ref)) = self.outgoing_websocket.replace(None) else {
+        let Some((out, _cpp_ref)) = self.outgoing_websocket.replace(None) else {
             return;
         };
         self.unref_keep_alive();
         jsc::mark_binding!();
         out.did_abrupt_close(code);
-        cpp_ref.deref();
     }
 
     /// May free `self`.
     fn dispatch_close(&self, code: u16, reason: bun_core::String) {
-        let Some((out, cpp_ref)) = self.outgoing_websocket.replace(None) else {
+        let Some((out, _cpp_ref)) = self.outgoing_websocket.replace(None) else {
             return;
         };
         self.unref_keep_alive();
         jsc::mark_binding!();
         out.did_close(code, reason);
-        cpp_ref.deref();
     }
 
     pub(crate) fn close(this: ThisPtr<Self>, code: u16, reason: Option<&EncodedSlice>) {
@@ -1482,7 +1475,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             |_, sock| this.tcp.set(sock),
         ) {
             // Sole owner on this failure path.
-            ws.deref();
+            drop(ws);
             return core::ptr::null_mut();
         }
 
@@ -1569,10 +1562,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !this.tcp.get().is_closed() {
             this.tcp.get().close(uws::CloseKind::Failure);
         }
-        if let Some((_, cpp_ref)) = cpp {
-            // The ref held on behalf of the C++ object.
-            cpp_ref.deref();
-        }
+        // The ref held on behalf of the C++ object.
+        drop(cpp);
     }
 
     pub(crate) fn memory_cost(&self) -> usize {

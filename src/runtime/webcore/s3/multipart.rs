@@ -127,14 +127,14 @@ pub struct MultiPartUpload {
     pub(crate) available: Cell<IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>>,
 
     pub(crate) current_part_number: Cell<u16>,
-    pub(crate) ref_count: Cell<u32>, // intrusive refcount — see bun_ptr::IntrusiveRc
+    pub(crate) ref_count: Cell<u32>, // intrusive refcount — see bun_ptr::RefPtr
     pub(crate) ended: Cell<bool>,
 
     pub(crate) options: Cell<MultiPartUploadOptions>,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-    pub(crate) credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub(crate) credentials: bun_ptr::RefPtr<S3Credentials>,
     pub poll_ref: JsCell<KeepAlive>,
     pub(crate) vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
@@ -385,13 +385,6 @@ impl Drop for MultiPartUpload {
                 bun_io::AllocatorType::Js,
             ))
         });
-        // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
-        // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
-        // constructing `writable_stream`/`upload_stream` adopted.
-        self.credentials.deref();
-        // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
-        // multipart_upload_list: Vec<u8> — Drop
-        // bun.destroy(this) — handled by deref_() via heap::take
     }
 }
 
@@ -404,7 +397,7 @@ impl MultiPartUpload {
         // `adopt` consumes the ref `process_buffered` (or the retry path)
         // took for this request.
         // SAFETY: callback context — `this` is the live allocation ref'd before dispatch.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        let _deref_guard = unsafe { bun_ptr::RefPtr::<Self>::from_raw(this) };
         // SAFETY: `this` is live for at least the guard's duration.
         let self_ = unsafe { &*this };
         if self_.state.get() == State::Finished {
@@ -646,7 +639,7 @@ impl MultiPartUpload {
         let this = this.cast::<Self>();
         // `adopt` consumes the prior +1 on Drop.
         // SAFETY: callback context — a ref was taken before the request was queued.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        let _deref_guard = unsafe { bun_ptr::RefPtr::<Self>::from_raw(this) };
         // SAFETY: `this` is live for at least the adopted ref's duration.
         let self_ = unsafe { &*this };
         if self_.state.get() == State::Finished {
@@ -1083,9 +1076,9 @@ impl MultiPartUpload {
             return Ok(UploadBackpressure::Done); // no backpressure since we are done
         }
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
-        // SAFETY: `self` is the live IntrusiveRc allocation; `ScopedRef` bumps the count
+        // SAFETY: `self` is the live RefPtr allocation; `RefPtr` bumps the count
         // and derefs on every exit path.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::new(self.root_ptr()) };
+        let _deref_guard = unsafe { bun_ptr::RefPtr::init_ref(self.root_ptr()) };
 
         if self.state.get() == State::WaitStreamCheck && chunk.is_empty() && is_last {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case

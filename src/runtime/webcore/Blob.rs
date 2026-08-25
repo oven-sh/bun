@@ -1404,7 +1404,7 @@ impl BlobExt for Blob {
 
             // When no JS overrides were supplied, hand the store's *base*
             // credentials to the upload (`upload_stream` consumes an
-            // `IntrusiveRc` by value, so the else-arm heap-dupes from the
+            // `RefPtr` by value, so the else-arm heap-dupes from the
             // store's `Arc` instead of from the `aws_options` clone).
             return crate::webcore::__s3_client::upload_stream(
                 if extra_options.is_some() {

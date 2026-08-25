@@ -178,17 +178,7 @@ pub enum State {
     Html(RefPtr<StaticRoute>),
 }
 
-// `State::deinit` is *only* invoked from `Route::drop` and the dev-mode reset
-// in `on_any_request`; ordinary `state.set(...)` overwrites in
-// `on_complete`/`on_plugins_resolved`/etc. never replace a `State::Html`, so
-// they do not need it.
 impl State {
-    fn deinit(self) {
-        if let State::Html(html) = self {
-            html.deref();
-        }
-    }
-
     fn memory_cost(&self) -> usize {
         match self {
             State::Pending => 0,
@@ -263,7 +253,7 @@ impl Route {
             // R-2: swap the state out *before* releasing what it holds so no
             // borrow into `route.state` is live across `StaticRoute`'s deref.
             if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
-                route.state.replace(State::Pending).deinit();
+                route.state.set(State::Pending);
             }
         }
 
@@ -300,7 +290,7 @@ impl Route {
                     let pending = PendingResponse {
                         method,
                         resp,
-                        route: RefPtr::from_this(this),
+                        _route: RefPtr::from_this(this),
                         is_response_pending: Cell::new(true),
                     };
                     route.pending_responses.with_mut(|v| v.push(pending));
@@ -726,8 +716,6 @@ impl Drop for Route {
     fn drop(&mut self) {
         // pending responses keep a ref to the route
         debug_assert!(self.pending_responses.get().is_empty());
-        self.state.replace(State::Pending).deinit();
-        self.bundle.deref();
     }
 }
 
@@ -736,8 +724,8 @@ pub struct PendingResponse {
     method: Method,
     resp: AnyResponse,
     is_response_pending: Cell<bool>,
-    /// Released in `Drop`.
-    route: RefPtr<Route>,
+    /// Keeps the route alive while this response waits on it.
+    _route: RefPtr<Route>,
 }
 
 impl Drop for PendingResponse {
@@ -747,7 +735,6 @@ impl Drop for PendingResponse {
             self.resp.clear_on_writable();
             self.resp.end_without_body(true);
         }
-        self.route.deref();
     }
 }
 

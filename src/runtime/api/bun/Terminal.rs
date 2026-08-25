@@ -89,10 +89,10 @@ pub mod js {
 /// 2. Reader (released in onReaderDone/onReaderError)
 /// 3. Writer (released in onWriterClose)
 ///
-// `bun.ptr.RefCount` is intrusive single-thread → `bun_ptr::IntrusiveRc<Terminal>`.
+// `bun.ptr.RefCount` is intrusive single-thread → `bun_ptr::RefPtr<Terminal>`.
 // Never `Rc`/`Arc` here: `*mut Terminal` crosses FFI as the `.classes.ts` m_ctx
 // payload and is recovered by raw pointer in finalize/host fns. (LIFETIMES.tsv
-// marks CreateResult.terminal as SHARED, but the RefCount→IntrusiveRc rule wins;
+// marks CreateResult.terminal as SHARED, but the RefCount→RefPtr rule wins;
 // the TSV row is for plain `*T` fields, not intrusive mixins.)
 //
 // `no_construct, no_finalize`: this class uses `constructNeedsThis: true` (3-arg
@@ -303,7 +303,7 @@ impl Options {
 pub(crate) struct CreateResult {
     // Intrusive single-thread refcount that crosses FFI as `*mut Terminal`; see
     // ref_count comment on `Terminal` for why this is not `Arc`.
-    pub terminal: bun_ptr::IntrusiveRc<Terminal>,
+    pub terminal: bun_ptr::RefPtr<Terminal>,
     pub js_value: JSValue,
 }
 
@@ -412,7 +412,7 @@ impl Terminal {
         let pty_result = create_pty(options.cols, options.rows)?;
 
         // Heap-allocate the Terminal; the intrusive ref_count
-        // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
+        // field starts at 1 (JS side's ref). Wrapped as RefPtr on success.
         let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             master_fd: Cell::new(pty_result.master),
@@ -545,8 +545,8 @@ impl Terminal {
 
         Ok(CreateResult {
             // SAFETY: `parent_ptr` is the heap-allocated allocation above with
-            // ref_count >= 1; IntrusiveRc::from_raw adopts one existing ref.
-            terminal: unsafe { bun_ptr::IntrusiveRc::from_raw(parent_ptr) },
+            // ref_count >= 1; RefPtr::from_raw adopts one existing ref.
+            terminal: unsafe { bun_ptr::RefPtr::from_raw(parent_ptr) },
             js_value: this_value,
         })
     }
@@ -576,7 +576,7 @@ impl Terminal {
             Ok(result) => {
                 // Hand the intrusive ref to the JS wrapper as m_ctx; finalize()
                 // releases it via deref_().
-                Ok(bun_ptr::IntrusiveRc::into_raw(result.terminal))
+                Ok(bun_ptr::RefPtr::into_raw(result.terminal))
             }
             Err(err) => Err(match err {
                 InitError::OpenPtyFailed => global_object.throw(format_args!("Failed to open PTY")),

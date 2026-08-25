@@ -14,9 +14,9 @@ pub use bun_sql::mysql::mysql_param::Param;
 bun_core::declare_scope!(MySQLStatement, hidden);
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive single-thread refcount.
-// Shared ownership is expressed as `bun_ptr::IntrusiveRc<MySQLStatement>`; the
-// `ref_count` field below is the embedded counter that `IntrusiveRc` manipulates.
-// `ref()`/`deref()` are methods on `IntrusiveRc`, not on this struct.
+// Shared ownership is expressed as `bun_ptr::RefPtr<MySQLStatement>`; the
+// `ref_count` field below is the embedded counter that `RefPtr` manipulates.
+// `ref()`/`deref()` are methods on `RefPtr`, not on this struct.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MySQLStatement {
     pub(crate) cached_structure: CachedStructure,

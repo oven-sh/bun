@@ -295,7 +295,7 @@ impl MySQLRequestQueue {
     }
 
     /// [`current`] as a [`bun_ptr::ThisPtr`] — one audited deref site here
-    /// replaces the per-caller `unsafe { &*ptr }` / `ScopedRef::new(ptr)` pair.
+    /// replaces the per-caller `unsafe { &*ptr }` / `RefPtr::init_ref(ptr)` pair.
     /// The queue holds a ref on every stored request, so the pointee is live;
     /// `JSMySQLQuery` is a separate heap allocation (never aliases the queue or
     /// its embedding connection) and is fully interior-mutable (R-2: every

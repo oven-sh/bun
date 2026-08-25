@@ -821,10 +821,11 @@ impl AsyncModule {
             }
             Ok(())
         };
-        let error_instance = match put_properties() {
-            Ok(()) => error_instance,
-            Err(err) => global_this.take_exception(err),
-        };
+        // Building a property value threw (e.g. STRING_TOO_LONG): reject with
+        // the error as built so far rather than an error about the error.
+        if put_properties().is_err() {
+            let _ = global_this.clear_exception_except_termination();
+        }
 
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
@@ -1022,10 +1023,11 @@ impl AsyncModule {
             );
             Ok(())
         };
-        let error_instance = match put_properties() {
-            Ok(()) => error_instance,
-            Err(err) => global_this.take_exception(err),
-        };
+        // Building a property value threw (e.g. STRING_TOO_LONG): reject with
+        // the error as built so far rather than an error about the error.
+        if put_properties().is_err() {
+            let _ = global_this.clear_exception_except_termination();
+        }
 
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();

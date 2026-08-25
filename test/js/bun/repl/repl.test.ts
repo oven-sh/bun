@@ -191,7 +191,7 @@ function formatScreen({ rows, cursor }: Screen): string {
 async function withTerminalRepl(
   fn: (helpers: {
     terminal: Bun.Terminal;
-    proc: Bun.ChildProcess;
+    proc: Bun.Subprocess;
     send: (text: string) => void;
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
     /** Resolves with the rendered screen once `ready` accepts it. */
@@ -309,10 +309,11 @@ async function withTerminalRepl(
 
   // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
   // the line, wherever the cursor is, so `.exit` is not appended to it (which
-  // would leave the REPL running until the kill below).
-  send("\x01\x0b.exit\n");
-  await Promise.race([proc.exited, Bun.sleep(2000)]);
-  if (!proc.killed) proc.kill();
+  // would leave the REPL running until the test times out).
+  if (proc.exitCode === null) {
+    send("\x01\x0b.exit\n");
+    await proc.exited;
+  }
 }
 
 describe.concurrent("Bun REPL", () => {
@@ -1142,8 +1143,8 @@ describe.concurrent("Bun REPL", () => {
   });
 });
 
-// Interactive terminal-based REPL tests
-describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
+// Interactive terminal-based REPL tests. Each test drives its own pty, so they run concurrently.
+describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
   test("shows welcome message and prompt", async () => {
     await withTerminalRepl(async ({ allOutput }) => {
       const output = allOutput();
@@ -1189,10 +1190,9 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
   });
 
   test("Ctrl+D exits on empty line", async () => {
-    await withTerminalRepl(async ({ terminal, proc }) => {
-      terminal.write("\x04"); // Ctrl+D
-      const exitCode = await Promise.race([proc.exited, Bun.sleep(3000).then(() => -1)]);
-      expect(exitCode).toBe(0);
+    await withTerminalRepl(async ({ send, proc }) => {
+      send("\x04"); // Ctrl+D
+      expect(await proc.exited).toBe(0);
     });
   });
 
@@ -1218,9 +1218,9 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send("111 + 222\n");
       await waitFor("333");
-      // Press up arrow to recall previous command
-      send("\x1b[A"); // Up arrow escape sequence
-      await Bun.sleep(100);
+      // Up arrow redraws the line with the previous command.
+      send("\x1b[A");
+      await waitFor("111 + 222");
       send("\n");
       // Should evaluate the same expression again
       await waitFor("333");
@@ -1941,7 +1941,7 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
 
 // History file written on REPL exit must be owner-only (0600), since it can
 // contain pasted credentials. See src/runtime/cli/repl.rs History::save.
-describe.skipIf(isWindows)("REPL history file permissions", () => {
+describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
   test("persists history readable only by the owner", async () => {
     using dir = tempDir("repl-history-perms", {});
     const home = String(dir);
@@ -2353,7 +2353,7 @@ describe.concurrent("--interactive", () => {
 // repl.start/repl.Recoverable inside createRepl(); those (plus the REPL_MODE
 // symbols and isValidSyntax) are data properties so the destructure is free,
 // and only calling start() or reading REPLServer/writer loads the body.
-test("require('node:repl') is hollow until start() or REPLServer is used", async () => {
+test.concurrent("require('node:repl') is hollow until start() or REPLServer is used", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

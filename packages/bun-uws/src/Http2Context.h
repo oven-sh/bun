@@ -439,8 +439,8 @@ struct Http2Connection {
     /* A control frame the peer's input obliged us to send; see MAX_QUEUED_CONTROL. */
     void writeControlFrame(uint8_t type, uint8_t flags, uint32_t streamId, const char *payload, uint32_t length) {
         queuedControl += http2::FRAME_HEADER_SIZE + length;
-        controlEnd = out.length();
         writeFrame(type, flags, streamId, payload, length);
+        controlEnd = out.length();
     }
 
     inline void writeSettings();
@@ -449,17 +449,17 @@ struct Http2Connection {
         char payload[4];
         http2::writeU32BE(payload, increment & 0x7fffffff);
         queuedControl += http2::FRAME_HEADER_SIZE + 4;
-        controlEnd = out.length();
         writeFrame(http2::WINDOW_UPDATE, 0, streamId, payload, 4);
+        controlEnd = out.length();
     }
 
     void writeRstStream(uint32_t streamId, http2::ErrorCode code) {
         queuedControl += http2::FRAME_HEADER_SIZE + 4;
-        controlEnd = out.length();
         noteResetByUs(streamId);
         char payload[4];
         http2::writeU32BE(payload, code);
         writeFrame(http2::RST_STREAM, 0, streamId, payload, 4);
+        controlEnd = out.length();
     }
 
     void writeGoaway(http2::ErrorCode code) {

@@ -23,6 +23,7 @@ const { getTimerDuration } = require("internal/timers");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const finished = require("internal/streams/end-of-stream");
 const dc = require("node:diagnostics_channel");
+const { errorMonitor } = require("node:events");
 
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
@@ -224,6 +225,9 @@ function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
   const span = otel.startClientSpan(req.method, callerTraceparent);
   if (!span) return arrayHeaders;
   req[kOtelSpan] = span;
+  // The span's tracestate is the active span's (replacing the caller's); a
+  // span parented under the caller's own traceparent has none, so the
+  // caller's tracestate header stays as given.
   const [traceparent, tracestate, baggage] = otel.propagationHeaders(span, true);
   if (arrayHeaders !== undefined) {
     const set: [string, string][] = [];
@@ -248,16 +252,25 @@ function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
   }
   if (span.isRecording()) {
     const defaultPort = protocol === "https:" ? 443 : 80;
+    const known = otel.isKnownMethod(req.method);
     span.setAttributes({
-      "http.request.method": req.method,
+      "http.request.method": known ? req.method : "_OTHER",
       "server.address": host,
       "server.port": +port || defaultPort,
       "url.full": protocol + "//" + formatAuthority(host, port, defaultPort) + otel.redactQuery(req.path),
     });
+    if (!known) span.setAttribute("http.request.method_original", req.method);
   }
   return arrayHeaders;
 }
 const kOtelFinish = Symbol("kOtelFinish");
+function otelClientUpgradeEnd(req, res) {
+  const span = req[kOtelSpan];
+  if (span === undefined) return;
+  req[kOtelSpan] = undefined;
+  span.setAttribute("http.response.status_code", res.statusCode);
+  span.end();
+}
 function otelClientRequestEnd(req, res, err) {
   const span = req[kOtelSpan];
   if (span === undefined) return;
@@ -272,6 +285,10 @@ function otelClientRequestEnd(req, res, err) {
     // fetch() and @opentelemetry/instrumentation-http.
     const code = res.statusCode;
     span.setAttribute("http.response.status_code", code);
+    span.setAttribute(
+      "network.protocol.version",
+      res.httpVersionMajor === 1 && res.httpVersionMinor === 0 ? "1.0" : "1.1",
+    );
     if (code >= 400) {
       span.setAttribute("error.type", String(code));
       span.setStatus(2);
@@ -282,17 +299,21 @@ function otelClientRequestEnd(req, res, err) {
       done = true;
       req[kOtelSpan] = undefined;
       req[kOtelFinish] = undefined;
-      if (e) {
-        span.setAttribute("error.type", e?.code || e?.name || "Error");
-        span.setStatus(2, e?.message);
-      } else if (res.aborted || !res.complete) {
-        span.setAttribute("error.type", "aborted");
-        span.setStatus(2, "response aborted before it completed");
+      // A response that completed is never an error, whatever closed the socket later.
+      if (!res.complete) {
+        if (e) {
+          span.setAttribute("error.type", e?.code || e?.name || "Error");
+          span.setStatus(2, e?.message);
+        } else {
+          span.setAttribute("error.type", "aborted");
+          span.setStatus(2, "response aborted before it completed");
+        }
       }
       span.end();
     });
     res.once("end", () => finish());
-    res.once("error", finish);
+    // errorMonitor: observing must not change whether 'error' counts as handled.
+    res.once(errorMonitor, finish);
     res.once("close", () => finish());
     return;
   }
@@ -859,6 +880,8 @@ function processClientData(socket, d, parser) {
 
       const bodyHead = d.slice(bytesParsed, d.length);
 
+      // 101 / CONNECT: the HTTP exchange is over; the tunnel is not this span's.
+      otelClientUpgradeEnd(req, res);
       const eventName = req.method === "CONNECT" ? "connect" : "upgrade";
       if (req.listenerCount(eventName) > 0) {
         req.upgradeOrConnect = true;

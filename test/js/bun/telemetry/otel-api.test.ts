@@ -178,6 +178,93 @@ describe("Bun.otel", () => {
     expect(got.find(s => s.name === "rejects").status.code).toBe(2);
   });
 
+  test("end() from another async frame (timer, Promise.all branch) does not leave the span active in the owning block", async () => {
+    let inTimer: string | undefined, afterBlock: string | undefined, afterWith: string | undefined;
+    {
+      using s = Bun.otel.span("a");
+      setTimeout(() => {
+        s.end();
+        inTimer = Bun.otel.activeSpan()?.name;
+      }, 0);
+      await Bun.sleep(10);
+    }
+    afterBlock = Bun.otel.activeSpan()?.name;
+    const s2 = Bun.otel.span("b");
+    Bun.otel.with(s2, () => s2.end());
+    s2.exit();
+    afterWith = Bun.otel.activeSpan()?.name;
+    expect([inTimer, afterBlock, afterWith]).toEqual([undefined, undefined, undefined]);
+    await collect();
+  });
+
+  test("a span kept past its block does not pin the AsyncLocalStorage stores it was created under once it ends", async () => {
+    const { AsyncLocalStorage } = require("node:async_hooks");
+    const als = new AsyncLocalStorage();
+    let ref!: WeakRef<object>;
+    const kept: any[] = [];
+    als.run({ big: Buffer.alloc(1024) }, () => {
+      ref = new WeakRef(als.getStore() as object);
+      const s = Bun.otel.span("session");
+      kept.push(s);
+      s.end();
+    });
+    await Bun.sleep(0);
+    Bun.gc(true);
+    await Bun.sleep(0);
+    Bun.gc(true);
+    expect(ref.deref()).toBeUndefined();
+    expect(kept.length).toBe(1);
+    await collect();
+  });
+
+  test("context.with(suppressTracing(ctx)) suppresses native spans, and exporter callbacks run suppressed", async () => {
+    const { context, createContextKey } = require("@opentelemetry/api");
+    // = @opentelemetry/core suppressTracing()
+    const suppressTracing = (ctx: any) =>
+      ctx.setValue(createContextKey("OpenTelemetry SDK Context Key SUPPRESS_TRACING"), true);
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], instrumentations: ["fetch"] });
+    await context.with(suppressTracing(context.active()), async () => {
+      await (await fetch(server.url)).text();
+      Bun.otel.span("inner", () => {});
+    });
+    expect((await collect()).filter(s => s.scope.name === "bun.http.client" || s.name === "inner")).toEqual([]);
+    // an exporter that fetch()es does not trace its own export
+    let exported = 0;
+    Bun.otel.start({
+      exporters: [
+        {
+          async export(b: any[]) {
+            exported += b.length;
+            await (await fetch(server.url)).text();
+          },
+        },
+      ],
+      instrumentations: ["fetch"],
+    });
+    Bun.otel.span("one", () => {});
+    await Bun.otel.forceFlush();
+    await Bun.otel.forceFlush();
+    expect([exported, Bun.otel.stats().spansPending]).toEqual([1, 0]);
+  });
+
+  test("after shutdown() nothing is recorded or delivered until the next start()", async () => {
+    let delivered = 0;
+    Bun.otel.start({ exporters: [{ export: (b: any[]) => (delivered += b.length) }] });
+    Bun.otel.span("before", () => {});
+    await Bun.otel.shutdown();
+    expect(delivered).toBe(1);
+    const late = Bun.otel.span("after-shutdown");
+    expect(late.isRecording()).toBe(false);
+    late.end();
+    Bun.otel.tracer("t").startSpan("after2").end();
+    await Bun.otel.forceFlush();
+    expect(delivered).toBe(1);
+    restore();
+    Bun.otel.span("revived", () => {});
+    expect((await collect()).map(s => s.name)).toEqual(["revived"]);
+  });
+
   test("tracer() with no name is the default 'bun' scope", async () => {
     expect(Bun.otel.tracer().name).toBe("bun");
     Bun.otel.tracer().startSpan("t").end();

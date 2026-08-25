@@ -38,6 +38,7 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypeJoin = Array.prototype.join;
 const SafeMap = Map;
+const SafeSet = Set;
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
@@ -164,10 +165,21 @@ let emptySpan: any;
 function placeholderSpan() {
   return (emptySpan ??= wrapSpanContext());
 }
+// @opentelemetry/core suppressTracing(): the SDK's own exporters (and ours)
+// run under it so their I/O does not produce spans.
+const SUPPRESS_TRACING_KEY = Symbol.for("OpenTelemetry SDK Context Key SUPPRESS_TRACING");
+let suppressedSpan: any;
+function suppressedPlaceholder() {
+  return (suppressedSpan ??= wrapSpanContext(undefined, undefined, -1));
+}
 
 function runWithContext(ctx: any, fn: Function, thisArg: unknown, args: any[]) {
   const [span, extras] = unpackContext(ctx);
-  const prev = enterContext(span ?? (extras ? placeholderSpan() : undefined), extras);
+  const header =
+    extras?.get(SUPPRESS_TRACING_KEY) === true
+      ? suppressedPlaceholder()
+      : (span ?? (extras ? placeholderSpan() : undefined));
+  const prev = enterContext(header, extras);
   try {
     return fn.$apply(thisArg, args);
   } finally {
@@ -236,7 +248,7 @@ function getTracer(name?: string, version?: string): Tracer {
 const tracerProvider = {
   getTracer,
   forceFlush: () => nativeForceFlush(),
-  shutdown: () => nativeForceFlush(),
+  shutdown: () => shutdown(),
 };
 
 // ── W3C propagator (api TextMapPropagator) ────────────────────────────────
@@ -302,7 +314,6 @@ function parseBaggage(header: string): Baggage | undefined {
   return m.size ? new Baggage(m) : undefined;
 }
 
-/** W3C `baggage` header for the Baggage in an active-slot extras Map, or "" (used natively). */
 /** W3C `baggage` header for the Baggage in an active-slot extras Map (used natively):
  * the header, `""` when the Context says nothing about baggage (fall back to
  * what the request carried in), or `null` when it says "none" (deleted/empty). */
@@ -400,13 +411,17 @@ const propagator = {
  * (its registerGlobal() compares the global's `version` for strict equality;
  * getGlobal() only needs the same major and minor >= its own). */
 function installedApiVersion(): string {
-  try {
-    const from = (Bun.main || process.cwd() + "/") + "";
-    const path = Bun.resolveSync("@opentelemetry/api/package.json", from);
-    const { readFileSync } = require("node:fs");
-    const pkg = JSON.parse(readFileSync(path, "utf8"));
-    if (typeof pkg?.version === "string") return pkg.version;
-  } catch {}
+  // The entry point's view first, then the cwd's (a `bun build --compile`
+  // binary's Bun.main is inside /$bunfs/, next to no node_modules).
+  const { readFileSync } = require("node:fs");
+  for (const from of [Bun.main, process.cwd() + "/"]) {
+    if (!from) continue;
+    try {
+      const path = Bun.resolveSync("@opentelemetry/api/package.json", from + "");
+      const pkg = JSON.parse(readFileSync(path, "utf8"));
+      if (typeof pkg?.version === "string") return pkg.version;
+    } catch {}
+  }
   return "1.9.0";
 }
 
@@ -431,11 +446,15 @@ function installGlobal() {
 
 /** An async function exporter returned `promise`: report its settlement natively. */
 function awaitExport(promise: Promise<unknown>, exporterId: number, payloadId: number) {
-  promise.then(
+  $Promise.prototype.$then.$call(
+    promise,
     () => nativeExportSettled(exporterId, payloadId, true),
     (e: any) => {
-      console.warn("[otel] exporter callback failed:", e?.message ?? e);
+      // settle first: a throwing console.warn / message getter must not strand the payload
       nativeExportSettled(exporterId, payloadId, false);
+      try {
+        console.warn("[otel] exporter callback failed:", e?.message ?? e);
+      } catch {}
     },
   );
 }
@@ -443,8 +462,16 @@ function awaitExport(promise: Promise<unknown>, exporterId: number, payloadId: n
 // ── node:http client (see _http_client.ts) ────────────────────────────────
 
 const httpClientInstrument = nativeInstrumentId("fetch") as number;
-/** A CLIENT span under the active span, or undefined when disabled. */
-const REDACTED_QUERY_KEYS = ["sig", "Signature", "AWSAccessKeyId", "X-Goog-Signature"];
+// Mirrors bun_telemetry::otlp::REDACTED_QUERY_KEYS.
+const REDACTED_QUERY_KEYS = [
+  "AWSAccessKeyId",
+  "Signature",
+  "sig",
+  "X-Goog-Signature",
+  "X-Amz-Signature",
+  "X-Amz-Credential",
+  "X-Amz-Security-Token",
+];
 /** `path` with credential query values (presigned URLs) replaced by REDACTED. */
 function redactQuery(path: string): string {
   const q = StringPrototypeIndexOf.$call(path, "?");
@@ -472,8 +499,26 @@ function redactQuery(path: string): string {
   );
 }
 
-function startClientSpan(name: string, callerTraceparent?: string) {
-  return startInstrumentSpan(httpClientInstrument, name + "", SpanKind.CLIENT, callerTraceparent);
+const KNOWN_METHODS = new SafeSet([
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "DELETE",
+  "CONNECT",
+  "OPTIONS",
+  "TRACE",
+  "PATCH",
+  "QUERY",
+]);
+function isKnownMethod(method: string) {
+  return KNOWN_METHODS.has(method);
+}
+/** A CLIENT span under the active span (or, with none, under a traceparent
+ * the caller set), or undefined when disabled. Named like fetch()'s. */
+function startClientSpan(method: string, callerTraceparent?: string) {
+  const name = KNOWN_METHODS.has(method) ? method : "HTTP";
+  return startInstrumentSpan(httpClientInstrument, name, SpanKind.CLIENT, callerTraceparent);
 }
 
 // ── Bun.otel ──────────────────────────────────────────────────────────────
@@ -484,7 +529,8 @@ function start(options?: any) {
 
 async function shutdown() {
   await nativeForceFlush();
-  nativeSetEnabled(0, 0);
+  // (mask 0, and the second argument omitted = shut down, not just "disable instrumentations")
+  nativeSetEnabled(0);
 }
 
 // W3C tracestate as an @opentelemetry/api `TraceState` (immutable; set/unset
@@ -603,6 +649,7 @@ export default {
   installGlobal,
   startClientSpan,
   redactQuery,
+  isKnownMethod,
   awaitExport,
   propagationHeaders,
   unpackContext,

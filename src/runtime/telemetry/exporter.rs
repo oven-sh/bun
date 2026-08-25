@@ -30,10 +30,10 @@ pub struct OtlpHttpExporter {
     compression: Compression,
     timeout_seconds: u32,
     warned: core::sync::atomic::AtomicBool,
-    /// In-flight requests (`async_http_id`) and when each must be done by:
-    /// the idle timeout re-arms on every body read, so a collector trickling
-    /// its response could otherwise hold the one export slot indefinitely.
-    inflight: bun_threading::Guarded<Vec<(u32, u64)>>,
+    /// In-flight requests (`async_http_id`, abort flag, deadline): the idle
+    /// timeout re-arms on every body read, so a collector trickling its
+    /// response could otherwise hold the one export slot indefinitely.
+    inflight: bun_threading::Guarded<Vec<(u32, Arc<bun_http::signals::Store>, u64)>>,
 }
 
 const MAX_ATTEMPTS: u32 = 5;
@@ -172,12 +172,12 @@ impl OtlpHttpExporter {
     /// Abort in-flight exports that have run past the export timeout; they
     /// then complete with an error and take the retry path.
     fn abort_overdue(&self, now_ns: u64) {
-        let overdue: Vec<u32> = {
+        let overdue: Vec<(u32, Arc<bun_http::signals::Store>)> = {
             let mut list = self.inflight.lock();
             let mut out = Vec::new();
-            list.retain(|(id, deadline)| {
+            list.retain(|(id, store, deadline)| {
                 if now_ns >= *deadline {
-                    out.push(*id);
+                    out.push((*id, Arc::clone(store)));
                     false
                 } else {
                     true
@@ -185,19 +185,22 @@ impl OtlpHttpExporter {
             });
             out
         };
-        for id in overdue {
+        for (id, store) in overdue {
+            // The abort tracker only knows requests whose `aborted` signal is
+            // wired; set it, then have the HTTP thread act on it.
+            store.aborted.store(true, core::sync::atomic::Ordering::Relaxed);
             bun_http::http_thread().schedule_shutdown_by_id(id);
         }
     }
 
     fn finished(&self, async_http_id: u32) {
-        self.inflight.lock().retain(|(id, _)| *id != async_http_id);
+        self.inflight.lock().retain(|(id, _, _)| *id != async_http_id);
     }
 
     fn send_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> Result<(), SendError> {
         // Bound the request by whichever is sooner: the exporter timeout or the deadline.
         let left =
-            deadline_ns.saturating_sub(bun_telemetry::clock::now_unix_nanos()) / 1_000_000_000;
+            deadline_ns.saturating_sub(bun_telemetry::clock::mono_now()) / 1_000_000_000;
         let timeout = self.timeout_seconds.min((left as u32).max(1));
         let mut req = self.request(
             &payload.body,
@@ -251,6 +254,8 @@ struct InflightExport {
     processor: &'static Processor,
     payload: Arc<ExportPayload>,
     attempt: u32,
+    /// Backs the request's `Signals.aborted` (export timeout).
+    signals: Arc<bun_http::signals::Store>,
 }
 
 /// The HTTP thread works on a bitwise copy of this client, so only its owned
@@ -294,10 +299,12 @@ impl InflightExport {
             processor,
             payload,
             attempt,
+            signals,
         } = *unsafe { Box::from_raw(this) };
         // SAFETY: initialized in `export` before scheduling.
         exporter.finished(unsafe { http.0.assume_init_ref() }.async_http_id);
         drop(http);
+        drop(signals);
         match outcome {
             Ok(()) => processor.export_done(&payload, ExportResult::Success),
             Err(err) => exporter.failed(processor, payload, attempt, &err),
@@ -326,12 +333,14 @@ impl Exporter for OtlpHttpExporter {
         unsafe {
             let me: &'static OtlpHttpExporter = bun_ptr::detach_lifetime_ref(&*self);
             let body: &'static [u8] = bun_ptr::detach_lifetime(payload.body.as_slice());
+            let signals: Arc<bun_http::signals::Store> = Arc::new(Default::default());
             let task = Box::into_raw(Box::new(InflightExport {
                 http: RequestSlot(MaybeUninit::uninit()),
                 exporter: self,
                 processor,
                 payload,
                 attempt,
+                signals: Arc::clone(&signals),
             }));
             let http = me.request(
                 body,
@@ -341,12 +350,17 @@ impl Exporter for OtlpHttpExporter {
                     InflightExport::release_at_shutdown,
                 ),
                 me.timeout_seconds,
-                None,
+                // (`Store::to` wants `&mut`; the Arc is shared with `inflight`.)
+                Some(bun_http::Signals {
+                    aborted: Some(core::ptr::NonNull::from(&signals.aborted)),
+                    ..Default::default()
+                }),
             );
-            let now = bun_telemetry::clock::now_unix_nanos();
+            let now = bun_telemetry::clock::mono_now();
             me.abort_overdue(now);
             me.inflight.lock().push((
                 http.async_http_id,
+                signals,
                 now + u64::from(me.timeout_seconds) * 1_000_000_000,
             ));
             (*task).http.0.write(http);
@@ -362,7 +376,7 @@ impl Exporter for OtlpHttpExporter {
     }
 
     fn export_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> ExportResult {
-        if bun_telemetry::clock::now_unix_nanos() >= deadline_ns {
+        if bun_telemetry::clock::mono_now() >= deadline_ns {
             return ExportResult::Failure;
         }
         match self.send_blocking(payload, deadline_ns) {
@@ -642,9 +656,16 @@ pub struct JsExporter {
     /// settled as abandoned instead of letting shutdown wait for them.
     queued: bun_threading::Guarded<Vec<Arc<ExportPayload>>>,
     /// Payloads whose `export()` returned a still-pending promise (owner
-    /// thread only); settled by `export_settled` or abandoned at VM exit.
-    awaiting: RefCell<Vec<Arc<ExportPayload>>>,
+    /// thread only), with their ticket and deadline; settled by
+    /// `export_settled`, failed by `tick` past the export timeout, or
+    /// abandoned at VM exit.
+    awaiting: RefCell<Vec<(u64, u64, Arc<ExportPayload>)>>,
+    next_ticket: core::cell::Cell<u64>,
+    /// Identity for `exportSettled` (never an address: exporters come and go).
+    pub(crate) id: u64,
 }
+
+static NEXT_JS_EXPORTER_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
 // SAFETY: `vm` is a `VmHandle` (holds the VM's Ticket while tasks are in
 // flight); `callback` is only touched on the owner VM's thread (checked
@@ -676,6 +697,8 @@ impl JsExporter {
             owner: core::ptr::from_ref(super::vm_state_or_init(global)),
             queued: bun_threading::Guarded::new(Vec::new()),
             awaiting: RefCell::new(Vec::new()),
+            next_ticket: core::cell::Cell::new(1),
+            id: NEXT_JS_EXPORTER_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
         })
     }
 
@@ -686,7 +709,7 @@ impl JsExporter {
             super::processor().export_abandoned(&p);
         }
         // (owner thread: settle_stranded_for_vm / detach_all_for_vm run there)
-        for p in core::mem::take(&mut *self.awaiting.borrow_mut()) {
+        for (_, _, p) in core::mem::take(&mut *self.awaiting.borrow_mut()) {
             super::processor().export_abandoned(&p);
         }
     }
@@ -722,10 +745,23 @@ impl JsExporter {
             Some(cb) => (cb.function.get(), cb.this.get()),
             None => return Err(()),
         };
+        // Under suppression: an exporter that fetch()es the collector must not
+        // trace its own export (one span per batch, forever).
+        let suppressed = s.enter_suppressed();
         let result = self
             .format
             .payload_to_js(global, payload)
             .and_then(|arg| function.call(global, this, &[arg]));
+        drop(suppressed);
+        // A thenable that is not a Promise (a query builder) is adopted so its
+        // `then` runs, as wrap()/span() do.
+        let result = result.map(|v| {
+            if v.as_any_promise().is_none() && v.is_object() && v.get(global, "then").ok().flatten().is_some_and(|t| t.is_callable()) {
+                bun_jsc::JSPromise::resolved_promise_value(global, v)
+            } else {
+                v
+            }
+        });
         match result {
             Ok(v) => match v.as_any_promise() {
                 Some(p) => match p.status() {
@@ -795,23 +831,26 @@ impl JsExporter {
             return;
         };
         let global = s.global();
-        let payload_id = Arc::as_ptr(&payload) as usize;
-        let exporter_id = Arc::as_ptr(self) as usize;
-        self.awaiting.borrow_mut().push(payload);
-        // Both ids ride as f64 (pointers fit 53 bits on every supported target).
-        if Bun__Telemetry__awaitExport(global, promise, exporter_id as f64, payload_id as f64) {
+        let ticket = self.next_ticket.get();
+        self.next_ticket.set(ticket + 1);
+        let timeout_ms = u64::from(super::processor().config().export_timeout_ms);
+        let deadline = bun_telemetry::clock::mono_now() + timeout_ms * 1_000_000;
+        self.awaiting.borrow_mut().push((ticket, deadline, payload));
+        // Both ids ride as f64 (counters, well inside 53 bits).
+        if Bun__Telemetry__awaitExport(global, promise, self.id as f64, ticket as f64) {
             return;
         }
         // Could not attach (exception building the reaction): settle now.
-        self.export_settled(payload_id, false);
+        self.export_settled(ticket, false);
     }
 
     /// `awaitExport`'s continuation: the async exporter's promise settled.
-    pub(crate) fn export_settled(&self, payload_id: usize, ok: bool) {
+    /// A ticket already failed by `tick` (timeout) is ignored.
+    pub(crate) fn export_settled(&self, ticket: u64, ok: bool) {
         let payload = {
             let mut a = self.awaiting.borrow_mut();
-            match a.iter().position(|p| Arc::as_ptr(p) as usize == payload_id) {
-                Some(i) => a.swap_remove(i),
+            match a.iter().position(|(t, _, _)| *t == ticket) {
+                Some(i) => a.swap_remove(i).2,
                 None => return,
             }
         };
@@ -823,6 +862,31 @@ impl JsExporter {
                 ExportResult::Failure
             },
         );
+    }
+
+    /// Fail exports whose promise outlived the export timeout (owner thread),
+    /// so one exporter that never settles cannot hold the pipeline.
+    fn fail_overdue(&self, now_ns: u64) {
+        if !super::current_vm_state().is_some_and(|s| core::ptr::eq(s, self.owner)) {
+            return;
+        }
+        let overdue: Vec<Arc<ExportPayload>> = {
+            let mut a = self.awaiting.borrow_mut();
+            let mut out = Vec::new();
+            a.retain(|(_, deadline, p)| {
+                if now_ns >= *deadline {
+                    out.push(Arc::clone(p));
+                    false
+                } else {
+                    true
+                }
+            });
+            out
+        };
+        for p in overdue {
+            bun_core::warn!("[otel] an async exporter did not settle within the export timeout; counting the batch as failed");
+            super::processor().export_done(&p, ExportResult::Failure);
+        }
     }
 
     /// Claim `payload`'s queued entry; false if it was already settled.
@@ -873,39 +937,34 @@ impl Exporter for JsExporter {
             Ok(None) => ExportResult::Success,
             Err(()) => ExportResult::Failure,
             Ok(Some(promise)) => {
-                // Exit-time flush of an async exporter: drive the event loop
-                // until its promise settles or the export timeout passes.
+                // Exit-time flush of an async exporter. Like Node after 'exit',
+                // nothing asynchronous runs any more: microtasks are drained
+                // (an `async export()` that only awaits already-settled work
+                // completes), but sockets and timers are not serviced. An
+                // exporter that needs I/O here should be flushed with
+                // `await Bun.otel.shutdown()` before exiting.
+                let _ = deadline_ns;
                 let Some(s) = super::current_vm_state() else {
                     return ExportResult::Failure;
                 };
                 let global = s.global();
-                let vm = global.bun_vm().as_mut();
-                loop {
-                    match promise.as_any_promise().map(|p| p.status()) {
-                        Some(bun_jsc::js_promise::Status::Fulfilled) => {
-                            return ExportResult::Success;
+                if !global.vm().execution_forbidden() {
+                    global.vm().drain_microtasks();
+                }
+                match promise.as_any_promise().map(|p| p.status()) {
+                    Some(bun_jsc::js_promise::Status::Fulfilled) => ExportResult::Success,
+                    Some(bun_jsc::js_promise::Status::Rejected) => {
+                        if let Some(p) = promise.as_any_promise() {
+                            p.set_handled(global.vm());
+                            Self::report_failure(global, p.result(global.vm()));
                         }
-                        Some(bun_jsc::js_promise::Status::Rejected) => {
-                            if let Some(p) = promise.as_any_promise() {
-                                p.set_handled(global.vm());
-                                Self::report_failure(global, p.result(global.vm()));
-                            }
-                            return ExportResult::Failure;
-                        }
-                        Some(bun_jsc::js_promise::Status::Pending) => {}
-                        None => return ExportResult::Failure,
+                        ExportResult::Failure
                     }
-                    if bun_telemetry::clock::now_unix_nanos() >= deadline_ns {
+                    _ => {
                         bun_core::warn!(
-                            "[otel] an async exporter did not settle before the export timeout at exit"
+                            "[otel] an async exporter was still pending at process exit; its batch was not exported (await Bun.otel.shutdown() before exiting)"
                         );
-                        return ExportResult::Failure;
-                    }
-                    vm.tick();
-                    if promise.as_any_promise().map(|p| p.status())
-                        == Some(bun_jsc::js_promise::Status::Pending)
-                    {
-                        vm.auto_tick_active();
+                        ExportResult::Failure
                     }
                 }
             }
@@ -914,6 +973,10 @@ impl Exporter for JsExporter {
 
     fn owner(&self) -> Option<usize> {
         Some(self.owner as usize)
+    }
+
+    fn tick(&self, now_ns: u64) {
+        self.fail_overdue(now_ns);
     }
 }
 

@@ -68,6 +68,36 @@ pub fn tracestate_is_reasonable(h: &[u8]) -> bool {
         && bun_core::strings::split(h, b",").count() <= 32
 }
 
+/// An inbound `tracestate` bounded to what the spec asks a vendor to keep
+/// (32 list-members, 512 bytes): printable-ASCII only, and when over budget
+/// truncated by dropping whole entries from the end rather than discarded.
+/// `None` when nothing usable is left.
+pub fn tracestate_bounded(h: &[u8]) -> Option<&[u8]> {
+    let h = bun_core::strings::trim(h, b" \t");
+    if h.is_empty() || !h.iter().all(|&c| c == b'\t' || (c >= 0x20 && c < 0x7f)) {
+        return None;
+    }
+    if h.len() <= 512 && bun_core::strings::split(h, b",").count() <= 32 {
+        return Some(h);
+    }
+    let mut end = 0usize;
+    let mut members = 0usize;
+    let mut pos = 0usize;
+    for entry in bun_core::strings::split(h, b",") {
+        let entry_end = pos + entry.len();
+        if members == 32 || entry_end > 512 {
+            break;
+        }
+        if !bun_core::strings::trim(entry, b" \t").is_empty() {
+            members += 1;
+            end = entry_end;
+        }
+        pos = entry_end + 1;
+    }
+    let kept = bun_core::strings::trim(&h[..end], b" \t,");
+    if kept.is_empty() { None } else { Some(kept) }
+}
+
 /// Same idea for `baggage` (W3C Baggage): forward opaque, bounded, printable.
 pub fn baggage_is_reasonable(h: &[u8]) -> bool {
     let h = bun_core::strings::trim(h, b" \t");
@@ -77,6 +107,18 @@ pub fn baggage_is_reasonable(h: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tracestate_truncates_whole_entries() {
+        assert_eq!(tracestate_bounded(b"a=1,b=2"), Some(&b"a=1,b=2"[..]));
+        let long: Vec<u8> = (0..40).map(|i| format!("k{i}=v")).collect::<Vec<_>>().join(",").into_bytes();
+        let kept = tracestate_bounded(&long).unwrap();
+        assert_eq!(bun_core::strings::split(kept, b",").count(), 32);
+        assert!(kept.starts_with(b"k0=v,") && kept.ends_with(b"k31=v"));
+        let big = [b"a=1,".as_slice(), &vec![b'x'; 600], b"=1"].concat();
+        assert_eq!(tracestate_bounded(&big), Some(&b"a=1"[..]));
+        assert_eq!(tracestate_bounded(b"a=\r\nX: 1"), None);
+    }
 
     #[test]
     fn roundtrip() {

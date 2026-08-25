@@ -133,9 +133,19 @@ impl Default for InitOptions {
 }
 
 /// Installed by `bun_runtime::telemetry` once tracing is configured; run from
-/// [`VirtualMachine::on_exit`] on every exit path (see there).
-pub static TELEMETRY_EXIT_HOOK: std::sync::OnceLock<fn(&mut VirtualMachine)> =
+/// [`VirtualMachine::on_exit`] on every exit path (see there), and with
+/// `reload = true` (bounded to ~1 s so a dead collector cannot stall the dev
+/// loop) before `--watch` re-execs. `vm` is None off the JS thread.
+pub static TELEMETRY_EXIT_HOOK: std::sync::OnceLock<fn(Option<&mut VirtualMachine>, bool)> =
     std::sync::OnceLock::new();
+
+/// Flush native telemetry before the process image is replaced or exits
+/// without `on_exit` (watch-mode execve, `bun test --bail`).
+pub fn telemetry_flush_now(vm: Option<&mut VirtualMachine>, reload: bool) {
+    if let Some(hook) = TELEMETRY_EXIT_HOOK.get() {
+        hook(vm, reload);
+    }
+}
 
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
@@ -1749,7 +1759,7 @@ impl VirtualMachine {
         // the exporters) on every way out — process.exit() and fatal errors
         // skip the cleanup-hook list below on the main thread.
         if let Some(hook) = TELEMETRY_EXIT_HOOK.get() {
-            hook(self);
+            hook(Some(self), false);
         }
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
@@ -1811,6 +1821,10 @@ impl VirtualMachine {
 
     pub fn global_exit(&mut self) -> ! {
         debug_assert!(self.is_shutting_down());
+        if !self.has_run_cleanup_hooks {
+            // Left without on_exit (e.g. `bun test --bail`).
+            telemetry_flush_now(Some(self), false);
+        }
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
@@ -3911,6 +3925,7 @@ impl VirtualMachine {
             // execve will not reach on_exit; flush the compile cache here like
             // node's child does via AtExit(FlushCompileCache) on every restart.
             crate::node_compile_cache::persist_now();
+            telemetry_flush_now(Some(self), true);
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }

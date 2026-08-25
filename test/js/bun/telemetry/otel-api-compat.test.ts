@@ -11,7 +11,7 @@ import {
   trace,
 } from "@opentelemetry/api";
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
 import http from "node:http";
@@ -303,7 +303,7 @@ describe("@opentelemetry/api", () => {
     await collect();
   });
 
-  test("the api global's version matches the installed @opentelemetry/api, so its registerGlobal() calls succeed", () => {
+  test("the api global's version matches the installed @opentelemetry/api, so its registerGlobal() calls succeed", async () => {
     const { diag, metrics, DiagLogLevel } = require("@opentelemetry/api");
     const version = require("@opentelemetry/api/package.json").version;
     expect((globalThis as any)[Symbol.for("opentelemetry.js.api.1")].version).toBe(version);
@@ -313,6 +313,25 @@ describe("@opentelemetry/api", () => {
     expect(metrics.setGlobalMeterProvider({ getMeter: () => ({}) as any })).toBe(true);
     metrics.disable();
     diag.disable();
+    // …and it is the *resolved* package's version, not a baked-in constant
+    using dir = tempDir("otel-api-version", {
+      "node_modules/@opentelemetry/api/package.json": JSON.stringify({
+        name: "@opentelemetry/api",
+        version: "9.8.7",
+        main: "index.js",
+      }),
+      "node_modules/@opentelemetry/api/index.js": "module.exports = {};",
+      "index.js": `Bun.otel.start({ exporters: [{ export() {} }] }); console.log(globalThis[Symbol.for("opentelemetry.js.api.1")].version);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    expect((await proc.stdout.text()).trim()).toBe("9.8.7");
+    expect(await proc.exited).toBe(0);
   });
 
   test("baggage set or deleted on the Context wins over what the request carried in, for fetch and node:http alike", async () => {

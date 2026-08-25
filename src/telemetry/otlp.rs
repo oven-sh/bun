@@ -304,32 +304,33 @@ pub fn write_str_kv_small(out: &mut Vec<u8>, field: u32, key: &'static str, v: &
     out.extend_from_slice(v);
 }
 
-/// Query-string keys whose values are credentials (semconv url.full/url.query
-/// "SHOULD be redacted"; the same set @opentelemetry/instrumentation-http uses).
-const REDACTED_QUERY_KEYS: [&[u8]; 4] =
-    [b"sig", b"Signature", b"AWSAccessKeyId", b"X-Goog-Signature"];
+/// Query-string keys whose values are credentials (the semconv url.full /
+/// url.query redaction set; also what @opentelemetry/instrumentation-http uses).
+/// Mirrored in src/js/internal/telemetry.ts `REDACTED_QUERY_KEYS`.
+pub const REDACTED_QUERY_KEYS: [&[u8]; 7] = [
+    b"AWSAccessKeyId",
+    b"Signature",
+    b"sig",
+    b"X-Goog-Signature",
+    b"X-Amz-Signature",
+    b"X-Amz-Credential",
+    b"X-Amz-Security-Token",
+];
 
-/// `url` (a full URL or just a query string) with the values of
+/// A bare query string (`a=1&sig=2`, no leading `?`) with the values of
 /// [`REDACTED_QUERY_KEYS`] replaced by `REDACTED`. Borrows when there is
-/// nothing to redact (no `?`, or no such key), which is nearly always.
-pub fn redact_query(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+/// nothing to redact, which is nearly always.
+pub fn redact_query(query: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     use bun_core::strings;
-    let q = match strings::index_of_char_usize(url, b'?') {
-        Some(i) => i + 1,
-        None if strings::contains_char(url, b'=') && !strings::contains(url, b"://") => 0,
-        None => return std::borrow::Cow::Borrowed(url),
-    };
-    let end = strings::index_of_char_usize(&url[q..], b'#').map_or(url.len(), |i| q + i);
-    let hit = |pair: &[u8]| {
+    let is_secret = |pair: &[u8]| {
         let key = strings::split_once_char(pair, b'=').map_or(pair, |(k, _)| k);
         REDACTED_QUERY_KEYS.contains(&key)
     };
-    if !strings::split(&url[q..end], b"&").any(hit) {
-        return std::borrow::Cow::Borrowed(url);
+    if !strings::split(query, b"&").any(is_secret) {
+        return std::borrow::Cow::Borrowed(query);
     }
-    let mut out = Vec::with_capacity(url.len());
-    out.extend_from_slice(&url[..q]);
-    for (i, pair) in strings::split(&url[q..end], b"&").enumerate() {
+    let mut out = Vec::with_capacity(query.len());
+    for (i, pair) in strings::split(query, b"&").enumerate() {
         if i != 0 {
             out.push(b'&');
         }
@@ -341,8 +342,26 @@ pub fn redact_query(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
             _ => out.extend_from_slice(pair),
         }
     }
-    out.extend_from_slice(&url[end..]);
     std::borrow::Cow::Owned(out)
+}
+
+/// A full URL with its query (first `?` to `#`/end) run through [`redact_query`].
+pub fn redact_url(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    use bun_core::strings;
+    let Some(q) = strings::index_of_char_usize(url, b'?').map(|i| i + 1) else {
+        return std::borrow::Cow::Borrowed(url);
+    };
+    let end = strings::index_of_char_usize(&url[q..], b'#').map_or(url.len(), |i| q + i);
+    match redact_query(&url[q..end]) {
+        std::borrow::Cow::Borrowed(_) => std::borrow::Cow::Borrowed(url),
+        std::borrow::Cow::Owned(rq) => {
+            let mut out = Vec::with_capacity(url.len());
+            out.extend_from_slice(&url[..q]);
+            out.extend_from_slice(&rq);
+            out.extend_from_slice(&url[end..]);
+            std::borrow::Cow::Owned(out)
+        }
+    }
 }
 
 /// Longest prefix of `s` that is at most `max` bytes and does not split a
@@ -407,6 +426,8 @@ pub fn find_attribute(attrs: &[u8], key: &[u8]) -> Option<(usize, usize)> {
 pub struct SpanWriter<'a> {
     out: &'a mut Vec<u8>,
     nested: Nested<SPAN_LEN_RESERVE>,
+    /// For clamping a late `end_time` (see `begin`).
+    start_ns: u64,
     /// `attributeValueLengthLimit` for string values written through
     /// `attr*`/`fail` (leaf spans); `usize::MAX` when the caller already
     /// truncated (pooled, JS-owned and HTTP-server spans).
@@ -452,6 +473,9 @@ impl<'a> SpanWriter<'a> {
         b[n + 1..n + 9].copy_from_slice(&stub.start_ns.to_le_bytes());
         n += 9;
         if end_ns != 0 {
+            // Never export end < start (an epoch re-anchor after a backward
+            // clock step between the two reads; see clock.rs).
+            let end_ns = end_ns.max(stub.start_ns);
             b[n] = (f::END_TIME << 3 | 1) as u8;
             b[n + 1..n + 9].copy_from_slice(&end_ns.to_le_bytes());
             n += 9;
@@ -466,13 +490,14 @@ impl<'a> SpanWriter<'a> {
         SpanWriter {
             out,
             nested,
+            start_ns: stub.start_ns,
             value_limit: usize::MAX,
         }
     }
 
     #[inline]
     pub fn end_time(&mut self, end_ns: u64) -> &mut Self {
-        proto::write_fixed64(self.out, f::END_TIME, end_ns);
+        proto::write_fixed64(self.out, f::END_TIME, end_ns.max(self.start_ns));
         self
     }
 
@@ -754,4 +779,27 @@ pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>]) -> Vec<u8> {
     }
     rs.finish(&mut out);
     out
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::{redact_query, redact_url};
+
+    #[test]
+    fn bare_query_is_never_reparsed_as_a_url() {
+        assert_eq!(&*redact_query(b"redirect_uri=https://app.example.com&sig=SECRET"), b"redirect_uri=https://app.example.com&sig=REDACTED");
+        assert_eq!(&*redact_query(b"sig=SECRET&next=/a?b=c"), b"sig=REDACTED&next=/a?b=c");
+        assert_eq!(&*redact_query(b"a=1&b=2"), b"a=1&b=2");
+        assert!(matches!(redact_query(b"a=1"), std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn url_query_and_fragment() {
+        assert_eq!(
+            &*redact_url(b"https://s3/x?X-Amz-Date=1&X-Amz-Signature=abc&X-Amz-Credential=c&X-Amz-Security-Token=t#frag"),
+            b"https://s3/x?X-Amz-Date=1&X-Amz-Signature=REDACTED&X-Amz-Credential=REDACTED&X-Amz-Security-Token=REDACTED#frag"
+        );
+        assert!(matches!(redact_url(b"https://h/p?q=1"), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(redact_url(b"https://h/p"), std::borrow::Cow::Borrowed(_)));
+    }
 }

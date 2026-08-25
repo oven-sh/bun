@@ -254,14 +254,23 @@ void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, ui
         return;
     span->setState((state | JSTelemetrySpan::Ended) & ~JSTelemetrySpan::Recording);
     // A span that made itself active (`span(name)`, `startActiveSpan(name)`,
-    // `enter()`) and still is stops being active when it ends. (An entered
-    // span ended while a later one is active leaves the context alone; its
-    // `[Symbol.dispose]` / `exit()` still restores in LIFO order.)
-    if (span->get(JSTelemetrySpan::Field::Restore)) {
+    // `enter()`) and still is — in this async frame — stops being active here
+    // when it ends. Activation is per frame, so `Restore` is kept for the
+    // owning frame's `[Symbol.dispose]` / `exit()` (an `end()` from a timer
+    // or a Promise.all branch must not disarm it), minus any
+    // AsyncLocalStorage stores it captured: from here on only the previous
+    // span header/extras are needed, and the stores would otherwise stay
+    // reachable for as long as the span object does.
+    if (JSValue prev = span->get(JSTelemetrySpan::Field::Restore)) {
         auto current = TelemetryContextSlot::current(globalObject);
         bool isActive = current.header == JSValue(span) || (span->m_native && current.poolHandle() == span->m_native);
         if (isActive)
-            telemetryExitSpan(globalObject, span);
+            Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
+        auto before = TelemetryContextSlot::read(prev);
+        if (before.storeValueCount()) {
+            JSValue trimmed = TelemetryContextSlot::build(globalObject, before.header, before.extras, TelemetryContextSlot {});
+            span->field(JSTelemetrySpan::Field::Restore).set(globalObject->vm(), span, trimmed ? trimmed : jsUndefined());
+        }
     }
     if (span->m_native) {
         Bun__Telemetry__nativeEnd(globalObject, span->m_native, endNs);
@@ -561,12 +570,18 @@ bool telemetrySpanSetAttributes(Zig::GlobalObject* globalObject, JSTelemetrySpan
     return true;
 }
 
+// `exit()` / `[Symbol.dispose]`: undo `enter()` in this async frame (only if
+// the span is what is active here — another frame's `end()` may have already
+// restored this one, or a later span may be active) and disarm.
 void telemetryExitSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span)
 {
     JSValue prev = span->get(JSTelemetrySpan::Field::Restore);
     if (!prev)
         return;
-    Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
+    auto current = TelemetryContextSlot::current(globalObject);
+    bool isActive = current.header == JSValue(span) || (span->m_native && current.poolHandle() == span->m_native);
+    if (isActive)
+        Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
     span->field(JSTelemetrySpan::Field::Restore).setWithoutWriteBarrier(JSValue());
 }
 static ALWAYS_INLINE void exitSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span) { telemetryExitSpan(globalObject, span); }

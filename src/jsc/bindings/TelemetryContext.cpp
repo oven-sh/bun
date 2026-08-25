@@ -173,8 +173,10 @@ extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject* global
 extern "C" const Bun::TelemetrySpanStub* Bun__Telemetry__activeSpanStub(Zig::GlobalObject* globalObject)
 {
     auto slot = TelemetryContextSlot::current(globalObject);
+    // A pooled (request) span that ended is nobody's parent, whether it is
+    // seen as the bare handle or through its materialized cell.
     if (auto* span = Bun::toTelemetrySpan(slot.header))
-        return &span->m_stub;
+        return span->m_native && span->ended() ? nullptr : &span->m_stub;
     if (uint64_t handle = slot.poolHandle())
         return Bun__Telemetry__poolStub(globalObject, handle);
     return nullptr;

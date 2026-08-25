@@ -296,11 +296,26 @@ impl Route {
                         resp.end_without_body(true);
                         return;
                     };
+                    let otel = if bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
+                        let global = server.global_this();
+                        crate::telemetry::server::begin(global, Some(method), &req, resp, matches!(resp, AnyResponse::SSL(_)))
+                            .map(|(span, entered)| {
+                                drop(entered);
+                                let url = req.url();
+                                let path = bun_core::strings::index_of_char_usize(url, b'?').map_or(url, |q| &url[..q]);
+                                crate::telemetry::server::set_route(global, span, path);
+                                span
+                            })
+                            .unwrap_or(bun_telemetry::NativeSpan::NONE)
+                    } else {
+                        bun_telemetry::NativeSpan::NONE
+                    };
                     let pending = PendingResponse {
                         method,
                         resp,
                         route: RefPtr::from_this(this),
                         is_response_pending: Cell::new(true),
+                        otel: Cell::new(otel),
                     };
                     route.pending_responses.with_mut(|v| v.push(pending));
                     resp.on_aborted_this(Self::on_pending_response_aborted, this);
@@ -691,6 +706,7 @@ impl Route {
                     } else {
                         StaticRoute::on(html.this_ptr(), resp);
                     }
+                    pending_response.otel_end(html.status_code, false);
                 }
                 State::Err(_log) => {
                     if self
@@ -711,10 +727,12 @@ impl Route {
                     resp.write_status(b"500 Build Failed");
                     resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
+                    pending_response.otel_end(500, false);
                 }
                 _ => {
                     resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
+                    pending_response.otel_end(200, false);
                 }
             }
         }
@@ -737,6 +755,20 @@ pub struct PendingResponse {
     is_response_pending: Cell<bool>,
     /// Released in `Drop`.
     route: RefPtr<Route>,
+    /// SERVER span for a request parked while the bundle builds; ends when
+    /// it is answered (or aborted).
+    otel: Cell<bun_telemetry::NativeSpan>,
+}
+
+impl PendingResponse {
+    fn otel_end(&self, status: u16, aborted: bool) {
+        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
+            if let Some(server) = self.route.server.get() {
+                crate::telemetry::server::end(server.global_this(), span, status, aborted);
+            }
+        }
+    }
 }
 
 impl Drop for PendingResponse {
@@ -767,6 +799,7 @@ impl Route {
         if let Some(pending_response) = removed {
             debug_assert!(pending_response.is_response_pending.get());
             pending_response.is_response_pending.set(false);
+            pending_response.otel_end(0, true);
             drop(pending_response);
         }
     }

@@ -685,6 +685,116 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(attrs.team).toBe("x");
   });
 
+  test("an export that outlives OTEL_EXPORTER_OTLP_TIMEOUT (collector trickling its response) is aborted and counted as failed", async () => {
+    // first request: headers immediately, then one body byte every 200 ms
+    // for ~20 s; the retry is answered normally
+    let n = 0;
+    using slow = Bun.serve({
+      port: 0,
+      idleTimeout: 60,
+      fetch() {
+        if (n++ > 0) return new Response("");
+        return new Response(
+          new ReadableStream({
+            async start(c) {
+              for (let i = 0; i < 100; i++) {
+                c.enqueue(new Uint8Array([32]));
+                await Bun.sleep(200);
+              }
+              c.close();
+            },
+          }),
+          { headers: { "content-type": "application/x-protobuf" } },
+        );
+      },
+    });
+    const { stdout, exitCode } = await run(
+      `Bun.otel.start({ exporters: [{ type: "otlp", url: process.env.C, timeoutMs: 1000 }] });
+       Bun.otel.tracer("t").startSpan("s").end();
+       const t0 = performance.now();
+       await Bun.otel.forceFlush();
+       const s = Bun.otel.stats();
+       console.log(s.spansExported, s.exportsSucceeded, performance.now() - t0 < 8000);`,
+      { C: slow.url.href, OTEL_BSP_SCHEDULE_DELAY: "200" },
+    );
+    // aborted at the timeout, retried, delivered — instead of hanging on the trickle
+    expect(stdout.trim()).toBe("1 1 true");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an async function exporter that never settles is failed after the export timeout instead of stalling the pipeline", async () => {
+    const { stdout, exitCode } = await run(
+      `let calls = 0;
+       Bun.otel.start({ exporters: [{ export() { calls++; return new Promise(() => {}); } }] });
+       Bun.otel.tracer("t").startSpan("a").end();
+       await Bun.otel.forceFlush();
+       Bun.otel.tracer("t").startSpan("b").end();
+       await Bun.otel.forceFlush();
+       const s = Bun.otel.stats();
+       console.log(calls, s.exportsFailed, s.exportsInflight);`,
+      { OTEL_BSP_EXPORT_TIMEOUT: "300", OTEL_BSP_SCHEDULE_DELAY: "100" },
+    );
+    expect(stdout.trim()).toBe("2 2 0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("OTEL_BSP_MAX_EXPORT_BATCH_SIZE bounds every export request, including under forceFlush", async () => {
+    using c = collector();
+    const { stdout, exitCode } = await run(
+      `Bun.otel.start({ endpoint: process.env.C });
+       const t = Bun.otel.tracer("t");
+       for (let i = 0; i < 25; i++) t.startSpan("s" + i).end();
+       await Bun.otel.forceFlush();
+       console.log(Bun.otel.stats().spansExported);`,
+      { C: c.url, OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "10" },
+    );
+    expect(stdout.trim()).toBe("25");
+    expect(
+      c.received.map(r => r.body.resourceSpans[0].scopeSpans.reduce((n: number, s: any) => n + s.spans.length, 0)),
+    ).toEqual([10, 10, 5]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a payload parked for retry by two failing exporters counts against the queue once, and a healthy exporter keeps receiving", async () => {
+    using down1 = collector(() => new Response("no", { status: 503 }));
+    using down2 = collector(() => new Response("no", { status: 503 }));
+    const { stdout, exitCode } = await run(
+      `const seen = [];
+       Bun.otel.start({ exporters: [{ type: "otlp", url: process.env.A }, { type: "otlp", url: process.env.B }, { export(b) { seen.push(...b.map(s => s.name)); } }] });
+       const t = Bun.otel.tracer("t");
+       for (let i = 0; i < 20; i++) t.startSpan("a" + i).end();
+       await Bun.otel.forceFlush().catch(() => {});
+       // 20 spans parked (once, not twice) against a queue of 48: 20 more still fit
+       for (let i = 0; i < 20; i++) t.startSpan("b" + i).end();
+       await Bun.sleep(150);
+       const s = Bun.otel.stats();
+       console.log(seen.length, s.spansDropped);`,
+      { A: down1.url, B: down2.url, OTEL_BSP_MAX_QUEUE_SIZE: "48", OTEL_BSP_SCHEDULE_DELAY: "50" },
+    );
+    expect(stdout.trim()).toBe("40 0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a repeat start() flushes what was recorded under the previous resource first", async () => {
+    using c = collector();
+    const { exitCode } = await run(
+      `Bun.otel.tracer("t").startSpan("early").end();
+       Bun.otel.start({ serviceName: "b" });
+       Bun.otel.tracer("t").startSpan("late").end();
+       await Bun.otel.forceFlush();`,
+      { BUN_OTEL: "1", OTEL_SERVICE_NAME: "a", OTEL_EXPORTER_OTLP_ENDPOINT: c.url },
+    );
+    expect(exitCode).toBe(0);
+    const bySvc = c.received.map(r => [
+      r.body.resourceSpans[0].resource.attributes.find((a: any) => a.key === "service.name").value.stringValue,
+      r.body.resourceSpans[0].scopeSpans.flatMap((s: any) => s.spans.map((x: any) => x.name)),
+    ]);
+    expect(bySvc).toEqual([
+      ["a", ["early"]],
+      ["b", ["late"]],
+    ]);
+  });
+
   test("OTEL_SDK_DISABLED=true makes Bun.otel.start() a no-op", async () => {
     using c = collector();
     const { stdout, exitCode } = await run(

@@ -3237,6 +3237,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
         this.close_and_detach(uws::CloseCode::Failure);
         if is_semi_connect {
+            // No open/close callback follows; a cancelled attempt is not
+            // exported (like an aborted fetch), and a reuse of this wrapper is
+            // then not reported as "replaced".
+            this.otel_connect.set(bun_telemetry::SpanStub::NONE);
             this.poll_ref.with_mut(|p| {
                 p.unref(bun_io::posix_event_loop::get_vm_ctx(
                     bun_io::AllocatorType::Js,
@@ -3309,6 +3313,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             ))
         });
         if is_semi_connect {
+            // No open/close callback follows; a cancelled attempt (incl. the
+            // one net.ts autoSelectFamily abandons on timeout) is not exported,
+            // and a reuse of this wrapper is then not reported as "replaced".
+            this.otel_connect.set(bun_telemetry::SpanStub::NONE);
             if !matches!(this.this_value.get(), JsRef::Finalized) {
                 this.this_value.with_mut(|r| r.downgrade());
             }

@@ -117,7 +117,11 @@ pub fn start_leaf(global: *mut c_void, i: Instrument) -> SpanStub {
     let Some(h) = HOOKS.get() else {
         return SpanStub::NONE;
     };
-    let parent = active_context(global);
+    let active = active_span(global);
+    if active.is_some_and(|s| s.ctx.flags.suppressed()) {
+        return SpanStub::NONE;
+    }
+    let parent = active.map(|s| s.ctx).filter(SpanContext::is_valid);
     if parent.is_none() && !crate::allows_root(i) {
         return SpanStub::NONE;
     }

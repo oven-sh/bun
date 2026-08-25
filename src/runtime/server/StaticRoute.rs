@@ -32,6 +32,9 @@ pub struct StaticRoute {
     // not ensure it is alive while sending a large blob.
     pub(crate) server: Cell<Option<AnyServer>>,
     pub(crate) status_code: u16,
+    /// What `do_write_status` last sent (304/412/405 differ from `status_code`);
+    /// read synchronously by `traced` for the request span.
+    last_written_status: Cell<u16>,
     pub(crate) blob: AnyBlob,
     pub(crate) cached_blob_size: u64,
     pub(crate) has_date: bool,
@@ -74,6 +77,7 @@ impl StaticRoute {
             headers,
             server: Cell::new(server),
             status_code,
+            last_written_status: Cell::new(0),
         }
     }
 
@@ -135,6 +139,7 @@ impl StaticRoute {
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
             status_code: self.status_code,
+            last_written_status: Cell::new(0),
         })
     }
 
@@ -313,15 +318,24 @@ impl StaticRoute {
                     matches!(resp, AnyResponse::SSL(_)),
                 )
                 .map(|(span, entered)| {
-                    crate::telemetry::server::set_route(global, span, req.url());
-                    (span, entered, global, this.status_code)
+                    // Static routes match exactly, so the path (query stripped) is the route.
+                    let url = req.url();
+                    let path = bun_core::strings::index_of_char_usize(url, b'?').map_or(url, |q| &url[..q]);
+                    crate::telemetry::server::set_route(global, span, path);
+                    (span, entered, global)
                 })
             }
             _ => None,
         };
+        this.last_written_status.set(0);
         f(req);
-        if let Some((span, entered, global, status)) = span {
+        if let Some((span, entered, global)) = span {
             drop(entered);
+            // The status actually written (304/412 from a precondition, 405), else the route's.
+            let status = match this.last_written_status.get() {
+                0 => this.status_code,
+                s => s,
+            };
             crate::telemetry::server::end(global, span, status, false);
         }
     }
@@ -467,6 +481,7 @@ impl StaticRoute {
     }
 
     fn do_write_status(&self, status: u16, resp: AnyResponse) {
+        self.last_written_status.set(status);
         match resp {
             AnyResponse::SSL(r) => write_status::<true>(r, status),
             AnyResponse::TCP(r) => write_status::<false>(r, status),

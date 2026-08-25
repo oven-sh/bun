@@ -88,8 +88,10 @@ static ALWAYS_INLINE JSTelemetrySpan* telemetryCreateSpan(Zig::GlobalObject* glo
     auto active = TelemetryContextSlot::current(globalObject);
     JSTelemetrySpan* parentCell = toTelemetrySpan(active.header);
     uint64_t parentHandle = active.poolHandle();
-    const TelemetrySpanStub* parent = parentCell ? &parentCell->m_stub : parentHandle ? Bun__Telemetry__poolStub(globalObject, parentHandle)
-                                                                                      : nullptr;
+    // (a pooled span that ended is nobody's parent, cell or handle alike)
+    const TelemetrySpanStub* parent = parentCell ? (parentCell->m_native && parentCell->ended() ? nullptr : &parentCell->m_stub)
+        : parentHandle                           ? Bun__Telemetry__poolStub(globalObject, parentHandle)
+                                                 : nullptr;
     TelemetrySpanStub stub;
     Bun__Telemetry__stubStart(globalObject, &stub, parent, 0);
     auto* span = JSTelemetrySpan::create(vm, globalObject, stub, scopeId, kind, name, 0);
@@ -622,7 +624,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryWrapSpanContext, (JSGlobalObject * lexicalGl
         BunString t = telemetryBorrow(asString(traceId));
         BunString s = telemetryBorrow(asString(spanId));
         Bun__Telemetry__stubFromHexIds(&stub, &t, &s, traceFlags.isInt32() ? static_cast<uint8_t>(traceFlags.asInt32()) : TelemetrySpanStub::Sampled, isRemote.isBoolean() ? isRemote.asBoolean() : true);
-    }
+    } else if (traceFlags.isInt32() && traceFlags.asInt32() == -1)
+        stub.flags |= TelemetrySpanStub::Suppressed; // telemetry.ts suppressedPlaceholder()
     return JSValue::encode(createCarrier(globalObject, stub, callFrame->argument(4)));
 }
 

@@ -18,6 +18,9 @@ pub struct ExportPayload {
     /// spans are counted exported/dropped once, when the last one reports.
     pending: core::sync::atomic::AtomicU32,
     any_ok: core::sync::atomic::AtomicBool,
+    /// Exporters that currently have this payload parked for retry (its
+    /// spans count against the queue once while this is non-zero).
+    parked: core::sync::atomic::AtomicU32,
 }
 
 impl ExportPayload {
@@ -27,6 +30,7 @@ impl ExportPayload {
             span_count,
             pending: core::sync::atomic::AtomicU32::new(0),
             any_ok: core::sync::atomic::AtomicBool::new(false),
+            parked: core::sync::atomic::AtomicU32::new(0),
         }
     }
     fn expect(&self, exporters: usize) {
@@ -110,7 +114,7 @@ struct Pending {
     /// Buffers from the previous payload, kept for their capacity.
     spare: Vec<Vec<u8>>,
     count: u32,
-    /// `clock::now_unix_nanos()` when the oldest pending span arrived; 0 if empty.
+    /// `clock::mono_now()` when the oldest pending span arrived; 0 if empty.
     oldest_ns: u64,
 }
 
@@ -133,6 +137,9 @@ pub struct Processor {
     /// instead of recursing into `export()`.
     dispatching: AtomicUsize,
     chain_requested: core::sync::atomic::AtomicBool,
+    /// `take_payload` left part of the batch pending (size cap): the next
+    /// completion chains it regardless of size.
+    split_remainder: core::sync::atomic::AtomicBool,
     idle: Condvar,
     idle_lock: Guarded<()>,
     pub stats: Stats,
@@ -188,6 +195,7 @@ impl Processor {
             inflight: AtomicUsize::new(0),
             dispatching: AtomicUsize::new(0),
             chain_requested: core::sync::atomic::AtomicBool::new(false),
+            split_remainder: core::sync::atomic::AtomicBool::new(false),
             idle: Condvar::new(),
             idle_lock: Guarded::new(()),
             stats: Stats::default(),
@@ -216,8 +224,7 @@ impl Processor {
         *retries = kept;
         drop(retries);
         for r in dropped {
-            self.parked_spans
-                .fetch_sub(r.payload.span_count, Ordering::Relaxed);
+            self.unpark(&r.payload);
             self.record_result(&r.payload, ExportResult::Failure);
         }
     }
@@ -243,8 +250,7 @@ impl Processor {
         *retries = kept;
         drop(retries);
         for r in dropped {
-            self.parked_spans
-                .fetch_sub(r.payload.span_count, Ordering::Relaxed);
+            self.unpark(&r.payload);
             self.record_result(&r.payload, ExportResult::Failure);
         }
     }
@@ -267,9 +273,12 @@ impl Processor {
         attempt: u32,
         backoff: Duration,
     ) {
-        let due_ns = clock::now_unix_nanos().saturating_add(backoff.as_nanos() as u64);
-        self.parked_spans
-            .fetch_add(payload.span_count, Ordering::Relaxed);
+        let due_ns = clock::mono_now().saturating_add(backoff.as_nanos() as u64);
+        // Counted against the queue once, however many exporters park it.
+        if payload.parked.fetch_add(1, Ordering::AcqRel) == 0 {
+            self.parked_spans
+                .fetch_add(payload.span_count, Ordering::Relaxed);
+        }
         self.retries.lock().push(ParkedRetry {
             exporter,
             payload,
@@ -284,9 +293,8 @@ impl Processor {
         self.dispatch_retries(RetryFilter::All);
     }
 
-    /// `Due`: the single oldest due retry (one per tick, so a recovering
-    /// collector is not hit with every parked payload at once); `All`: every
-    /// parked retry now (forceFlush / shutdown).
+    /// `Due`: retries whose backoff has elapsed; `All`: every parked retry
+    /// now (forceFlush / shutdown). Backoff already staggers them.
     fn dispatch_retries(&'static self, filter: RetryFilter) {
         let due: Vec<ParkedRetry> = {
             let mut q = self.retries.lock();
@@ -296,25 +304,27 @@ impl Processor {
             match filter {
                 RetryFilter::All => q.drain(..).collect(),
                 RetryFilter::Due => {
-                    let now = clock::now_unix_nanos();
-                    let oldest = q
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, r)| r.due_ns <= now)
-                        .min_by_key(|(_, r)| r.due_ns)
-                        .map(|(i, _)| i);
-                    match oldest {
-                        Some(i) => vec![q.remove(i)],
-                        None => return,
+                    let now = clock::mono_now();
+                    let (due, later): (Vec<_>, Vec<_>) = q.drain(..).partition(|r| r.due_ns <= now);
+                    *q = later;
+                    if due.is_empty() {
+                        return;
                     }
+                    due
                 }
             }
         };
         self.inflight.fetch_add(due.len(), Ordering::AcqRel);
         for r in due {
-            self.parked_spans
-                .fetch_sub(r.payload.span_count, Ordering::Relaxed);
+            self.unpark(&r.payload);
             r.exporter.export(self, r.payload, r.attempt);
+        }
+    }
+
+    fn unpark(&self, payload: &ExportPayload) {
+        if payload.parked.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.parked_spans
+                .fetch_sub(payload.span_count, Ordering::Relaxed);
         }
     }
 
@@ -358,6 +368,12 @@ impl Processor {
     /// (after releasing its own borrow); otherwise the next `tick` past the
     /// schedule delay exports.
     pub fn accept(&'static self, batch: &LocalBatch) -> bool {
+        if crate::is_shut_down() {
+            self.stats
+                .spans_dropped
+                .fetch_add(batch.count as u64, Ordering::Relaxed);
+            return false;
+        }
         let cfg = *self.config.read();
         let mut p = self.pending.lock();
         if p.count
@@ -387,7 +403,7 @@ impl Processor {
             dst.extend_from_slice(buf);
         }
         if p.count == 0 {
-            p.oldest_ns = clock::now_unix_nanos();
+            p.oldest_ns = clock::mono_now();
         }
         p.count += batch.count;
         // One export in flight at a time (like the SDK's BatchSpanProcessor):
@@ -400,39 +416,69 @@ impl Processor {
     /// after flushing its VM's local batch. Returns true if an export was
     /// started.
     pub fn tick(&'static self) -> bool {
-        let now = clock::now_unix_nanos();
+        let now = clock::mono_now();
         for e in self.exporters.read().iter() {
             e.tick(now);
         }
-        self.dispatch_retries(RetryFilter::Due);
         let cfg = *self.config.read();
+        // Decide the timer export before releasing retries, so a parked
+        // payload going out does not starve the pending batch.
         let due = self.inflight() == 0 && {
             let p = self.pending.lock();
             p.count > 0
-                && clock::now_unix_nanos().saturating_sub(p.oldest_ns)
-                    >= (cfg.scheduled_delay_ms as u64) * 1_000_000
+                && now.saturating_sub(p.oldest_ns) >= (cfg.scheduled_delay_ms as u64) * 1_000_000
         };
+        self.dispatch_retries(RetryFilter::Due);
         if due {
             self.export();
         }
         due
     }
 
+    /// The next export request: at most `max_export_batch_size` spans (the
+    /// knob bounds every request body, as OTEL_BSP_MAX_EXPORT_BATCH_SIZE is
+    /// defined); the rest stays pending for the chained/next export.
     fn take_payload(&self) -> Option<Arc<ExportPayload>> {
+        let max = self.config.read().max_export_batch_size.max(1);
         let (scopes, count) = {
             let mut p = self.pending.lock();
             let p = &mut *p;
             if p.count == 0 {
                 return None;
             }
-            let count = p.count;
-            p.count = 0;
-            p.oldest_ns = 0;
             let mut spare = core::mem::take(&mut p.spare);
             for v in &mut spare {
                 v.clear();
             }
-            (core::mem::replace(&mut p.scopes, spare), count)
+            if p.count <= max {
+                let count = p.count;
+                p.count = 0;
+                p.oldest_ns = 0;
+                (core::mem::replace(&mut p.scopes, spare), count)
+            } else {
+                // Split at a span boundary: each encoded span is
+                // tag(SS_SPANS) + varint length + body.
+                let mut taken = 0u32;
+                let mut out = spare;
+                out.resize_with(p.scopes.len().max(out.len()), Vec::new);
+                for (i, buf) in p.scopes.iter_mut().enumerate() {
+                    if taken == max || buf.is_empty() {
+                        continue;
+                    }
+                    let mut at = 0usize;
+                    while at < buf.len() && taken < max {
+                        let (len, hdr) = crate::proto::read_len_prefixed(&buf[at + 1..]);
+                        at += 1 + hdr + len;
+                        taken += 1;
+                    }
+                    out[i].extend_from_slice(&buf[..at]);
+                    buf.drain(..at);
+                }
+                p.count -= taken;
+                self.split_remainder.store(true, Ordering::Release);
+                // `oldest_ns` stays: the remainder is at least that old.
+                (out, taken)
+            }
         };
         let body = {
             let resource = self.resource();
@@ -555,9 +601,12 @@ impl Processor {
             for (_, h) in self.idle_hooks.read().iter() {
                 h();
             }
-            // A full batch accumulated while this export was running: chain.
+            // A full batch accumulated while this export was running, or the
+            // previous request was cut at max_export_batch_size: chain.
             let cfg = *self.config.read();
-            if self.pending_count() >= cfg.max_export_batch_size {
+            if self.pending_count() >= cfg.max_export_batch_size
+                || self.split_remainder.swap(false, Ordering::AcqRel)
+            {
                 if self.dispatching.load(Ordering::Acquire) != 0 {
                     // Inside export()'s dispatch (synchronous exporter): let
                     // its loop run the next batch instead of recursing.
@@ -577,9 +626,9 @@ impl Processor {
     /// Block until no exports are in flight or `timeout` elapses.
     pub fn wait_idle(&self, timeout: Duration) -> bool {
         let mut g = self.idle_lock.lock();
-        let deadline = clock::now_unix_nanos().saturating_add(timeout.as_nanos() as u64);
+        let deadline = clock::mono_now().saturating_add(timeout.as_nanos() as u64);
         while self.inflight.load(Ordering::Acquire) != 0 {
-            let now = clock::now_unix_nanos();
+            let now = clock::mono_now();
             if now >= deadline
                 || self
                     .idle
@@ -592,19 +641,54 @@ impl Processor {
         true
     }
 
+    pub fn config(&self) -> BatchConfig {
+        *self.config.read()
+    }
+
+    /// Worker-exit path: the pending batch goes synchronously to exporters
+    /// owned by `owner` (their event loop is about to disappear) and through
+    /// the normal async path to everyone else.
+    pub fn flush_for_owner(&'static self, owner: usize) {
+        let deadline =
+            clock::mono_now() + (self.config.read().export_timeout_ms as u64) * 1_000_000;
+        while let Some(payload) = self.take_payload() {
+            let exporters = self.exporters.read().clone();
+            if exporters.is_empty() {
+                self.stats
+                    .spans_dropped
+                    .fetch_add(payload.span_count as u64, Ordering::Relaxed);
+                return;
+            }
+            payload.expect(exporters.len());
+            for e in exporters {
+                if e.owner() == Some(owner) {
+                    let result = e.export_blocking(&payload, deadline);
+                    self.record_result(&payload, result);
+                } else {
+                    self.inflight.fetch_add(1, Ordering::AcqRel);
+                    e.export(self, Arc::clone(&payload), 0);
+                }
+            }
+        }
+    }
+
     /// Process-exit path (caller flushed its VM's local batch): deliver parked
     /// retries and the pending batch synchronously through each exporter's
     /// blocking path, bounded by `export_timeout_ms`.
     pub fn shutdown_blocking(&'static self) {
-        let cfg = *self.config.read();
-        let deadline = clock::now_unix_nanos() + (cfg.export_timeout_ms as u64) * 1_000_000;
+        let ms = self.config.read().export_timeout_ms as u64;
+        self.shutdown_blocking_bounded(Duration::from_millis(ms))
+    }
+
+    pub fn shutdown_blocking_bounded(&'static self, budget: Duration) {
+        let deadline = clock::mono_now() + budget.as_nanos() as u64;
         let parked = core::mem::take(&mut *self.retries.lock());
-        self.parked_spans.store(0, Ordering::Relaxed);
         for r in parked {
+            self.unpark(&r.payload);
             let result = r.exporter.export_blocking(&r.payload, deadline);
             self.record_result(&r.payload, result);
         }
-        if let Some(payload) = self.take_payload() {
+        while let Some(payload) = self.take_payload() {
             let exporters = self.exporters.read().clone();
             if exporters.is_empty() {
                 self.stats
@@ -616,9 +700,12 @@ impl Processor {
                 let result = e.export_blocking(&payload, deadline);
                 self.record_result(&payload, result);
             }
+            if clock::mono_now() >= deadline {
+                break;
+            }
         }
         // Anything already handed to async exporters gets the same budget.
-        let remaining = deadline.saturating_sub(clock::now_unix_nanos());
+        let remaining = deadline.saturating_sub(clock::mono_now());
         if self.inflight() > 0 && remaining > 0 {
             self.wait_idle(Duration::from_nanos(remaining));
         }

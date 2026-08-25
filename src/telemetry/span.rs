@@ -137,6 +137,9 @@ impl Flags {
     /// A propagation-only wrapper around a (usually remote) context: never
     /// exported, but keeps the sampled bit so children inherit the decision.
     pub const NON_RECORDING: u8 = 0x40;
+    /// Marks the carrier that `context.with(suppressTracing(ctx))` makes
+    /// active: nothing (root or child) starts under it.
+    pub const SUPPRESSED: u8 = 0x80;
     #[inline]
     pub fn sampled(self) -> bool {
         self.0 & Self::SAMPLED != 0
@@ -144,6 +147,10 @@ impl Flags {
     #[inline]
     pub fn remote(self) -> bool {
         self.0 & Self::REMOTE != 0
+    }
+    #[inline]
+    pub fn suppressed(self) -> bool {
+        self.0 & Self::SUPPRESSED != 0
     }
     #[inline]
     pub fn parent_remote(self) -> bool {

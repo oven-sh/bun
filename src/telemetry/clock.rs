@@ -1,12 +1,14 @@
 //! Unix-epoch nanosecond timestamps derived from the monotonic clock plus an
-//! `epoch - monotonic` offset. Within a trace every timestamp comes from the
-//! monotonic clock, so durations and parent/child ordering never see a wall
-//! clock step. The offset itself is re-measured when a new root span starts
-//! (at most once a second), so a clock step, NTP `makestep` or a suspend —
-//! after which CLOCK_MONOTONIC and CLOCK_REALTIME have drifted apart — is
-//! picked up by the next trace instead of skewing every later span for the
-//! life of the process. (`@opentelemetry/sdk-trace-base` similarly re-derives
-//! its offset per span from `Date.now()`; Java's SDK anchors per root span.)
+//! `epoch - monotonic` offset. The offset is re-measured when a new trace
+//! starts in this process (at most once a second), so a clock step, NTP
+//! `makestep` or a suspend — after which CLOCK_MONOTONIC and CLOCK_REALTIME
+//! have drifted apart — is picked up by the next trace instead of skewing
+//! every later span for the life of the process. The offset is process-wide,
+//! so a span open *across* such a step sees the old offset at start and the
+//! new one at end: its exported duration is off by the step (the encoder
+//! clamps end >= start), the same exposure `@opentelemetry/sdk-trace-base`
+//! has by deriving its offset from `Date.now()` per span. Everything else —
+//! export deadlines, retry backoff — is a duration and uses [`mono_now`].
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -16,8 +18,9 @@ static OFFSET: AtomicU64 = AtomicU64::new(0);
 static ANCHORED_AT: AtomicU64 = AtomicU64::new(0);
 const REANCHOR_INTERVAL_NS: u64 = 1_000_000_000;
 
+/// CLOCK_MONOTONIC nanoseconds, for deadlines and durations.
 #[inline]
-fn mono_now() -> u64 {
+pub fn mono_now() -> u64 {
     bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns()
 }
 

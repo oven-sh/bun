@@ -73,11 +73,12 @@ pub fn begin_message(
 }
 
 /// End a message span after the handler returned `result`.
+/// Returns true when the span was left open to cover a pending promise.
 pub fn end_message(
     span: NativeSpan,
     global: &JSGlobalObject,
     result: JSValue,
-) -> bun_jsc::JsResult<()> {
+) -> bun_jsc::JsResult<bool> {
     if let Some(p) = result.as_any_promise() {
         match p.status() {
             bun_jsc::js_promise::Status::Pending => {
@@ -85,19 +86,39 @@ pub fn end_message(
                 // rejection, like Bun.otel.span(name, async fn).
                 let cell = super::span::Bun__Telemetry__poolMaterialize(global, span.0);
                 if Bun__Telemetry__observeSettlement(global, result, cell) {
-                    return Ok(());
+                    return Ok(true);
                 }
             }
             bun_jsc::js_promise::Status::Rejected => {
                 let r = super::span::record_exception(global, span, p.result(global.vm()));
                 super::end_native(global, span, 0, |_| {});
-                return r;
+                return r.map(|()| false);
             }
             bun_jsc::js_promise::Status::Fulfilled => {}
         }
     }
     super::end_native(global, span, 0, |_| {});
-    Ok(())
+    Ok(false)
+}
+
+pub fn is_live(global: &JSGlobalObject, span: NativeSpan) -> bool {
+    local(global).is_some_and(|l| pool::is_live(&l.pool, span))
+}
+
+/// The socket closed while an async handler for this message was pending.
+pub fn end_message_unsettled(span: NativeSpan, global: &JSGlobalObject) {
+    if !is_live(global, span) {
+        return;
+    }
+    if let Some(mut l) = local(global) {
+        pool::with(&mut l.pool, span, |s| {
+            s.set_status(
+                bun_telemetry::StatusCode::Error,
+                b"connection closed before the message handler settled",
+            )
+        });
+    }
+    super::end_native(global, span, 0, |_| {});
 }
 
 /// End a message span after the handler threw `err` (the thrown value).

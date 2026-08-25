@@ -16,20 +16,21 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
         return SpanStub::NONE;
     }
     let st = state();
-    // A `traceparent` the caller set names the span this request continues:
-    // the CLIENT span becomes its child and the header is re-pointed at the
-    // CLIENT span, so caller → CLIENT → downstream SERVER stitch.
-    let caller_parent = headers
-        .get(b"traceparent")
-        .and_then(propagation::parse_traceparent)
-        .map(|mut c| {
-            c.flags = bun_telemetry::Flags(c.flags.0 | bun_telemetry::Flags::REMOTE);
-            c
-        });
-    let parent_ctx = caller_parent.or_else(|| super::active_context(global));
-    if parent_ctx.is_none() && !bun_telemetry::allows_root(Instrument::HttpClient) {
+    // Parent: the active span; failing that (manual propagation, no active
+    // span) a `traceparent` the caller put on the request — which then also
+    // supplies the tracestate. Either way the header is (re)written to name
+    // the CLIENT span, as @opentelemetry/instrumentation-undici does.
+    let active_stub = super::span::active(global);
+    if active_stub.is_some_and(|s| s.ctx.flags.suppressed()) {
         return SpanStub::NONE;
     }
+    let active = active_stub.map(|s| s.ctx).filter(bun_telemetry::SpanContext::is_valid);
+    if active.is_none() && !bun_telemetry::allows_root(Instrument::HttpClient) {
+        // "nested": only under an active span (a caller-set header is not one).
+        return SpanStub::NONE;
+    }
+    let from_caller = active.is_none();
+    let parent_ctx = active.or_else(|| headers.get(b"traceparent").and_then(propagation::parse_traceparent));
     let Some(mut l) = local(global) else {
         return SpanStub::NONE;
     };
@@ -46,18 +47,23 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
         propagation::format_traceparent(&stub.ctx, &mut tp);
         headers.set(b"traceparent", &tp);
     }
-    // tracestate rides with the traceparent; baggage is its own propagator
-    // (it can be active with no span, or with trace context off).
-    if (inject_traceparent && parent_ctx.is_some()) || st.propagate_baggage {
+    // tracestate rides with the traceparent (the active span's; a caller's
+    // header is left as is); baggage is its own propagator (it can be active
+    // with no span, or with trace context off). Values are re-validated: they
+    // may come from a JS carrier and go into the request head verbatim.
+    let want_tracestate = inject_traceparent && !from_caller;
+    if want_tracestate || st.propagate_baggage {
         super::with_active_propagation(global, |trace_state, baggage| {
-            if inject_traceparent
-                && parent_ctx.is_some()
-                && !trace_state.is_empty()
-                && headers.get(b"tracestate").is_none()
-            {
-                headers.append(b"tracestate", trace_state);
+            if want_tracestate {
+                if !trace_state.is_empty() && propagation::tracestate_is_reasonable(trace_state) {
+                    headers.set(b"tracestate", trace_state);
+                }
             }
-            if st.propagate_baggage && !baggage.is_empty() && headers.get(b"baggage").is_none() {
+            if st.propagate_baggage
+                && !baggage.is_empty()
+                && headers.get(b"baggage").is_none()
+                && propagation::baggage_is_reasonable(baggage)
+            {
                 headers.append(b"baggage", baggage);
             }
         });
@@ -108,7 +114,7 @@ pub fn end(
                 .map(|i| i + scheme_end)
                 .unwrap_or(url.len());
             // …nor credential-bearing query values (presigned URLs).
-            let url_q = bun_telemetry::otlp::redact_query(url);
+            let url_q = bun_telemetry::otlp::redact_url(url);
             let url: &[u8] = &url_q;
             match bun_core::strings::last_index_of_char(&url[scheme_end..authority_end], b'@') {
                 None => {

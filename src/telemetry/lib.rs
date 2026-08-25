@@ -200,6 +200,20 @@ pub fn set_enabled_mask(enabled: u32, roots: u32) {
     ENABLED.store(enabled, Ordering::Release);
 }
 
+/// `Bun.otel.shutdown()` / `tracerProvider.shutdown()` ran (and no `start()`
+/// since): nothing records — instrumentations are off via the mask, user
+/// spans are non-recording — and nothing is delivered to exporters.
+static SHUT_DOWN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+#[inline]
+pub fn is_shut_down() -> bool {
+    SHUT_DOWN.load(Ordering::Relaxed)
+}
+
+pub fn set_shut_down(v: bool) {
+    SHUT_DOWN.store(v, Ordering::Release);
+}
+
 pub fn enabled_mask() -> u32 {
     ENABLED.load(Ordering::Relaxed)
 }

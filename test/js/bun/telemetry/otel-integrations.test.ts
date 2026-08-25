@@ -180,6 +180,19 @@ describe("Bun.spawn", () => {
 });
 
 describe("net", () => {
+  test("a connect attempt destroyed before it opens is not exported (and a later attempt on the wrapper is not 'replaced')", async () => {
+    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, open() {} } });
+    const net = require("node:net");
+    const s = net.connect(listener.port, "127.0.0.1");
+    s.destroy();
+    await new Promise<void>(r => s.once("close", r));
+    const ok = net.connect(listener.port, "127.0.0.1");
+    await new Promise<void>(r => ok.once("connect", r));
+    ok.destroy();
+    const got = (await collect()).filter(s => s.name === "tcp.connect");
+    expect(got.map(s => s.status.code)).toEqual([0]);
+  });
+
   test("tcp.connect span for Bun.connect / node:net, success and failure", async () => {
     using listener = Bun.listen({
       hostname: "127.0.0.1",
@@ -277,6 +290,38 @@ describe("WebSocket", () => {
     // linked, not parented, to the upgrade request
     expect(message.parentSpanId).toBeUndefined();
     expect(message.links).toEqual([expect.objectContaining({ traceId: upgrade.traceId, spanId: upgrade.spanId })]);
+  });
+
+  test("a message handler still pending when the socket closes is ended then, not leaked", async () => {
+    using dir = tempDir("otel-ws-pending", {
+      "index.js": `
+        const spans = [];
+        Bun.otel.start({ exporters: [{ export(b) { spans.push(...b); } }], instrumentations: ["websocket"] });
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, srv) { if (srv.upgrade(req)) return; return new Response("no"); },
+          websocket: { message() { return new Promise(() => {}); } },
+        });
+        for (let i = 0; i < 3; i++) {
+          const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
+          await new Promise(r => (ws.onopen = r));
+          ws.send("x");
+          await Bun.sleep(20);
+          ws.close();
+          await new Promise(r => (ws.onclose = r));
+        }
+        await Bun.sleep(20);
+        await Bun.otel.forceFlush();
+        const m = spans.filter(s => s.name === "websocket.message");
+        console.log(JSON.stringify([m.length, m[0]?.status.code, Bun.otel.stats().spansPending]));
+        server.stop(true);
+        process.exit(0);
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify([3, 2, 0]));
+    expect(exitCode).toBe(0);
   });
 
   test("an async message handler's span covers its promise and records a late rejection", async () => {

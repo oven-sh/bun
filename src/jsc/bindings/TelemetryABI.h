@@ -27,6 +27,8 @@ struct TelemetrySpanStub {
     static constexpr uint8_t Sampled = 0x01;
     static constexpr uint8_t Remote = 0x10;
     static constexpr uint8_t NonRecording = 0x40;
+    // The api's SUPPRESS_TRACING context: no span (root or child) starts under it.
+    static constexpr uint8_t Suppressed = 0x80;
     bool isRecording() const { return startNs != 0 && (flags & (Sampled | NonRecording)) == Sampled; }
     // Mirrors Rust TraceId::is_valid / SpanId::is_valid: all-zero ids are invalid (W3C).
     bool hasTraceId() const { return !isAllZero(traceId); }

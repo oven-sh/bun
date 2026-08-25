@@ -306,3 +306,19 @@ mod tests {
         }
     }
 }
+
+/// `(body_len, varint_bytes)` of a length-delimited field body starting at
+/// `buf[0]` (the varint right after the tag). For walking our own encoding.
+#[inline]
+pub fn read_len_prefixed(buf: &[u8]) -> (usize, usize) {
+    let mut len = 0usize;
+    let mut shift = 0;
+    for (i, &b) in buf.iter().enumerate() {
+        len |= ((b & 0x7f) as usize) << shift;
+        if b & 0x80 == 0 {
+            return (len, i + 1);
+        }
+        shift += 7;
+    }
+    (len, buf.len())
+}

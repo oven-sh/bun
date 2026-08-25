@@ -491,15 +491,21 @@ impl FetchTasklet {
                 )
             })
             .unwrap_or((0, None));
+        // An intentional cancellation (AbortSignal) is not an error per the
+        // HTTP semconv; the span just ends without a response, as
+        // @opentelemetry/instrumentation-undici does.
+        let aborted = self.abort_reason.has()
+            || self.signal_store.aborted.load(Ordering::Relaxed)
+            || matches!(
+                self.result.fail,
+                Some(http::Error::Aborted | http::Error::AbortedBeforeConnecting)
+            );
         let error = match self.result.fail {
+            _ if aborted => None,
             Some(e) => {
                 let e = fetch_error_strings(e, &BunString::EMPTY);
                 Some((e.code.to_owned_slice(), e.message.to_owned_slice()))
             }
-            None if self.abort_reason.has() => Some((
-                b"AbortError".to_vec(),
-                b"The operation was aborted.".to_vec(),
-            )),
             None => None,
         };
         let url =

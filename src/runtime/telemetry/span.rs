@@ -652,6 +652,12 @@ pub extern "C" fn Bun__Telemetry__stubStart(
         // SAFETY: C++ passes null or a live stub.
         Some(unsafe { (*parent).ctx })
     };
+    if parent.is_some_and(|c| c.flags.suppressed()) {
+        // Under suppressTracing(): a no-op span that keeps suppressing.
+        *out = carrier(SpanStub::NONE.ctx, false);
+        out.ctx.flags = Flags(out.ctx.flags.0 | Flags::SUPPRESSED);
+        return;
+    }
     let now = clock::or_now(start_ns);
     let Some(mut l) = local(global) else {
         *out = SpanStub::NONE;
@@ -663,11 +669,33 @@ pub extern "C" fn Bun__Telemetry__stubStart(
         &super::state().sampler,
         now,
     );
-    if !super::configured() {
+    if !super::configured() || bun_telemetry::is_shut_down() {
         // No pipeline (no BUN_OTEL / bunfig / start()): the span still carries
         // ids for propagation but records nothing and is never buffered.
         out.ctx.flags = Flags(out.ctx.flags.0 | Flags::NON_RECORDING);
     }
+}
+
+/// `f(trace_state)` of the active span (no baggage work; for leaf spans that
+/// only inherit tracestate: sql, redis, sqlite, spawn).
+pub fn with_active_trace_state<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8]) -> R) -> R {
+    let native = active_native(global);
+    if native.is_some() {
+        let owned = local(global)
+            .and_then(|l| pool::with_ref(&l.pool, native, |s| s.trace_state.clone()))
+            .unwrap_or_default();
+        return f(&owned);
+    }
+    let ts = Bun__TelemetrySpan__traceState(active_js(global));
+    let ts = ts.to_utf8_without_ref();
+    f(ts.slice())
+}
+
+/// A non-recording carrier cell with the SUPPRESSED bit (see VmState::enter_suppressed).
+pub(crate) fn suppressed_carrier_cell(global: &JSGlobalObject) -> JSValue {
+    let mut stub = carrier(SpanStub::NONE.ctx, false);
+    stub.ctx.flags = Flags(stub.ctx.flags.0 | Flags::SUPPRESSED);
+    Bun__TelemetrySpan__createNative(global, &stub, 0, 0, 0)
 }
 
 fn carrier(ctx: SpanContext, remote: bool) -> SpanStub {
@@ -859,7 +887,7 @@ pub extern "C" fn Bun__Telemetry__nativeEnd(
     live
 }
 
-/// Identity of a pooled span (tolerates ended-but-not-reused slots), or null.
+/// Identity of a live pooled span, or null once it has ended.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__poolStub(
     global: &JSGlobalObject,
@@ -871,9 +899,8 @@ pub extern "C" fn Bun__Telemetry__poolStub(
     }
 }
 
-/// The JS cell for a pooled span, creating (and pinning) it on first use.
-/// After the span has ended this yields a fresh non-recording carrier of its
-/// identity, or undefined once the slot was reused.
+/// The JS cell for a pooled span, creating (and pinning) it on first use;
+/// undefined once the span has ended.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handle: u64) -> JSValue {
     let native = NativeSpan(handle);
@@ -897,14 +924,7 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
         }
         return v;
     }
-    let p = pool::stub_ptr(&l.pool, native);
-    if p.is_null() {
-        return JSValue::UNDEFINED;
-    }
-    // SAFETY: non-null `stub_ptr` points at a pool slot; copied while the pool is borrowed.
-    let stub = unsafe { *p };
-    drop(l);
-    Bun__TelemetrySpan__createNative(global, &carrier(stub.ctx, false), 0, 0, 0)
+    JSValue::UNDEFINED
 }
 
 /// Apply every `pool.items` entry as a span attribute (last write wins per key).
@@ -1066,31 +1086,25 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
     else {
         return JSValue::UNDEFINED;
     };
-    // node:http with a caller-set `traceparent`: that context is the parent
-    // (same rule as fetch); otherwise the active span.
-    let remote = if remote_parent.is_empty() {
-        None
-    } else {
-        bun_telemetry::propagation::parse_traceparent(remote_parent.to_utf8_without_ref().slice())
-            .map(|mut c| {
-                c.flags = Flags(c.flags.0 | Flags::REMOTE);
-                c
-            })
-    };
-    let stub = match remote {
-        Some(parent) if bun_telemetry::enabled(i) => match local(global) {
-            Some(mut l) => SpanStub::start(
-                &mut l.rng,
-                Some(&parent),
-                &super::state().sampler,
-                clock::now_unix_nanos(),
-            ),
-            None => SpanStub::NONE,
-        },
-        _ => super::start_leaf(global, i),
-    };
+    // Same rule as fetch(): the active span is the parent; with none (and
+    // root spans allowed) a `traceparent` the caller set (node:http) is.
+    let mut stub = super::start_leaf(global, i);
     if !stub.is_some() {
         return JSValue::UNDEFINED;
+    }
+    if stub.parent == bun_telemetry::SpanId::INVALID && !remote_parent.is_empty() {
+        if let Some(parent) =
+            bun_telemetry::propagation::parse_traceparent(remote_parent.to_utf8_without_ref().slice())
+        {
+            if let Some(mut l) = local(global) {
+                stub = SpanStub::start(
+                    &mut l.rng,
+                    Some(&parent),
+                    &super::state().sampler,
+                    clock::now_unix_nanos(),
+                );
+            }
+        }
     }
     let name = name.to_utf8_without_ref();
     let name = name.slice();

@@ -290,8 +290,66 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         }
     }
 
-    // Exporter selection.
+    // Exporter selection. The OTLP endpoint/headers/compression/timeout
+    // from OTEL_EXPORTER_OTLP_* (and bunfig endpoint/headers) apply to the
+    // plain `otlp` exporter and to vendor presets alike.
+    match get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
+        .or_else(|| get("OTEL_EXPORTER_OTLP_PROTOCOL"))
+        .as_deref()
+        .map(<[u8]>::trim_ascii)
+    {
+        None | Some(b"" | b"http/protobuf") => {}
+        Some(v @ (b"http/json" | b"grpc")) => warnings.push(format!(
+            "OTEL_EXPORTER_OTLP_PROTOCOL={} is not supported yet; using http/protobuf on the same endpoint",
+            s(v)
+        )),
+        Some(other) => warnings.push(format!(
+            "unknown OTEL_EXPORTER_OTLP_PROTOCOL {:?}; using http/protobuf",
+            s(other)
+        )),
+    }
+    let explicit_url = if let Some(v) = get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") {
+        Some(s(&v))
+    } else if let Some(v) = get("OTEL_EXPORTER_OTLP_ENDPOINT") {
+        Some(traces_endpoint(&s(&v)))
+    } else {
+        bunfig.and_then(|b| b.endpoint.as_deref()).map(traces_endpoint)
+    };
+    let mut env_headers = bunfig.map(|b| b.headers.clone()).unwrap_or_default();
+    for (k, val) in get("OTEL_EXPORTER_OTLP_HEADERS")
+        .map(|v| parse_kv_list(&v))
+        .unwrap_or_default()
+    {
+        env_headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(&k));
+        env_headers.push((k, val));
+    }
+    if let Some(v) = get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") {
+        for (k, val) in parse_kv_list(&v) {
+            env_headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(&k));
+            env_headers.push((k, val));
+        }
+    }
+    let compression = match get("OTEL_EXPORTER_OTLP_TRACES_COMPRESSION")
+        .or_else(|| get("OTEL_EXPORTER_OTLP_COMPRESSION"))
+        .as_deref()
+        .map(<[u8]>::trim_ascii)
+    {
+        Some(b"gzip") => Some(Compression::Gzip),
+        Some(b"none") | Some(b"") => Some(Compression::None),
+        None => None,
+        Some(other) => {
+            warnings.push(format!(
+                "unknown OTEL_EXPORTER_OTLP_COMPRESSION {:?}; using none",
+                s(other)
+            ));
+            Some(Compression::None)
+        }
+    };
+    let timeout_ms = num("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", &mut warnings)
+        .or_else(|| num("OTEL_EXPORTER_OTLP_TIMEOUT", &mut warnings));
+
     let mut want_otlp = true;
+    let mut have_preset = false;
     let preset = get("BUN_OTEL_EXPORTER")
         .map(|v| ("BUN_OTEL_EXPORTER", v))
         .or_else(|| {
@@ -306,15 +364,29 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
                 continue;
             }
             want_otlp = false;
+            have_preset = true;
             let input = crate::presets::PresetInput {
                 name: &s(name),
                 api_key: None,
                 site: None,
                 id: None,
-                endpoint: None,
+                endpoint: explicit_url.clone(),
             };
             match crate::presets::resolve(&input, &|k| get(k).map(|v| s(&v))) {
-                Ok(x) => c.otlp_exporters.push(x),
+                Ok(mut x) => {
+                    // Explicit headers add to / override the preset's.
+                    for (k, val) in &env_headers {
+                        x.headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(k));
+                        x.headers.push((k.clone(), val.clone()));
+                    }
+                    if let Some(c) = compression {
+                        x.compression = c;
+                    }
+                    if let Some(t) = timeout_ms {
+                        x.timeout_ms = t;
+                    }
+                    c.otlp_exporters.push(x)
+                }
                 Err(e) => warnings.push(format!("{source}: {e}")),
             }
         }
@@ -324,9 +396,15 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         c.exporters_from_env = true;
         for e in bun_core::strings::split(&v, b",") {
             match e.trim_ascii() {
-                b"otlp" => want_otlp = true,
+                // With a preset, that *is* the OTLP exporter.
+                b"otlp" => want_otlp = !have_preset,
                 b"console" => c.console_exporter = true,
-                b"none" | b"" => {}
+                b"none" | b"" => {
+                    // OTEL_* overrides bunfig/BUN_*: none means none.
+                    c.otlp_exporters.clear();
+                    c.console_exporter = false;
+                    want_otlp = false;
+                }
                 other => warnings.push(format!(
                     "OTEL_TRACES_EXPORTER: {:?} is not supported",
                     s(other)
@@ -335,70 +413,19 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         }
     }
     if want_otlp {
-        match get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
-            .or_else(|| get("OTEL_EXPORTER_OTLP_PROTOCOL"))
-            .as_deref()
-            .map(<[u8]>::trim_ascii)
-        {
-            None | Some(b"" | b"http/protobuf") => {}
-            Some(v @ (b"http/json" | b"grpc")) => warnings.push(format!(
-                "OTEL_EXPORTER_OTLP_PROTOCOL={} is not supported yet; using http/protobuf on the same endpoint",
-                s(v)
-            )),
-            Some(other) => warnings.push(format!(
-                "unknown OTEL_EXPORTER_OTLP_PROTOCOL {:?}; using http/protobuf",
-                s(other)
-            )),
-        }
-        let url = if let Some(v) = get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") {
-            Some(s(&v))
-        } else if let Some(v) = get("OTEL_EXPORTER_OTLP_ENDPOINT") {
-            Some(traces_endpoint(&s(&v)))
-        } else if let Some(v) = bunfig.and_then(|b| b.endpoint.as_deref()) {
-            Some(traces_endpoint(v))
-        } else if enabled {
-            Some("http://localhost:4318/v1/traces".to_string())
-        } else {
-            None
-        };
+        let url = explicit_url.or_else(|| {
+            if enabled {
+                Some("http://localhost:4318/v1/traces".to_string())
+            } else {
+                None
+            }
+        });
         if let Some(url) = url {
-            let mut headers = bunfig.map(|b| b.headers.clone()).unwrap_or_default();
-            for (k, val) in get("OTEL_EXPORTER_OTLP_HEADERS")
-                .map(|v| parse_kv_list(&v))
-                .unwrap_or_default()
-            {
-                headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(&k));
-                headers.push((k, val));
-            }
-            if let Some(v) = get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") {
-                for (k, val) in parse_kv_list(&v) {
-                    headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(&k));
-                    headers.push((k, val));
-                }
-            }
-            let compression = match get("OTEL_EXPORTER_OTLP_TRACES_COMPRESSION")
-                .or_else(|| get("OTEL_EXPORTER_OTLP_COMPRESSION"))
-                .as_deref()
-                .map(<[u8]>::trim_ascii)
-            {
-                Some(b"gzip") => Compression::Gzip,
-                None | Some(b"none") | Some(b"") => Compression::None,
-                Some(other) => {
-                    warnings.push(format!(
-                        "unknown OTEL_EXPORTER_OTLP_COMPRESSION {:?}; using none",
-                        s(other)
-                    ));
-                    Compression::None
-                }
-            };
-            let timeout_ms = num("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", &mut warnings)
-                .or_else(|| num("OTEL_EXPORTER_OTLP_TIMEOUT", &mut warnings))
-                .unwrap_or(10000);
             c.otlp_exporters.push(OtlpExporterConfig {
                 url,
-                headers,
-                compression,
-                timeout_ms,
+                headers: env_headers,
+                compression: compression.unwrap_or(Compression::None),
+                timeout_ms: timeout_ms.unwrap_or(10000),
             });
         }
     }
@@ -535,6 +562,35 @@ mod tests {
             r.config.otlp_exporters[0].url,
             "http://localhost:4318/v1/traces"
         );
+    }
+
+    #[test]
+    fn preset_combined_with_otel_env() {
+        // none wins over a preset
+        let e = env(&[("BUN_OTEL", "1"), ("BUN_OTEL_EXPORTER", "datadog"), ("DD_API_KEY", "k"), ("OTEL_TRACES_EXPORTER", "none")]);
+        let r = from_env(&e);
+        assert!(r.config.otlp_exporters.is_empty());
+        // otlp + preset: the preset is the OTLP exporter, no localhost twin
+        let e = env(&[("BUN_OTEL", "1"), ("BUN_OTEL_EXPORTER", "datadog"), ("DD_API_KEY", "k"), ("OTEL_TRACES_EXPORTER", "otlp")]);
+        let r = from_env(&e);
+        assert_eq!(r.config.otlp_exporters.len(), 1);
+        assert!(r.config.otlp_exporters[0].url.contains("datadoghq"), "{}", r.config.otlp_exporters[0].url);
+        // preset `otlp` takes endpoint/headers/compression/timeout from OTEL_EXPORTER_OTLP_*
+        let e = env(&[
+            ("BUN_OTEL", "1"),
+            ("BUN_OTEL_EXPORTER", "otlp"),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector"),
+            ("OTEL_EXPORTER_OTLP_HEADERS", "authorization=x"),
+            ("OTEL_EXPORTER_OTLP_COMPRESSION", "none"),
+            ("OTEL_EXPORTER_OTLP_TIMEOUT", "1234"),
+        ]);
+        let r = from_env(&e);
+        assert_eq!(r.config.otlp_exporters.len(), 1);
+        let x = &r.config.otlp_exporters[0];
+        assert_eq!(x.url, "https://collector/v1/traces");
+        assert!(x.headers.iter().any(|(k, v)| k == "authorization" && v == "x"));
+        assert_eq!(x.compression, Compression::None);
+        assert_eq!(x.timeout_ms, 1234);
     }
 
     #[test]

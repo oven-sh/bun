@@ -273,6 +273,16 @@ size_t uws_h3_req_get_header(uws_h3_req_t* req, const char* lower, size_t lower_
     return ffi_sv(((Http3Request*)req)->getHeader(sv(lower, lower_len)), dest);
 }
 
+/* Every value of `lower` (repeatable headers), in order. */
+void uws_h3_req_for_each_header_value(uws_h3_req_t* req, const char* lower, size_t lower_len, void (*handler)(const char*, size_t, void*), void* user_data)
+{
+    auto name = sv(lower, lower_len);
+    ((Http3Request*)req)->forEachHeader([&](std::string_view k, std::string_view v) {
+        if (k.size() == name.size() && std::equal(k.begin(), k.end(), name.begin(), [](char a, char b) { return (a | 0x20) == (b | 0x20); }))
+            handler(v.data(), v.size(), user_data);
+    });
+}
+
 #pragma clang attribute pop
 
 } // extern "C"

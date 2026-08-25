@@ -594,6 +594,7 @@ where
         // handlers on kill); otherwise execve immediately (node's default kill).
         if RELOAD_IMMEDIATELY && !crate::posix_signal_handle::watch_kill_signal_has_listeners() {
             crate::node_compile_cache::persist_now();
+            crate::virtual_machine::telemetry_flush_now(None, true);
             Output::flush();
             flush_changed_paths_for_reload();
             bun_core::reload_process(
@@ -660,6 +661,7 @@ fn arm_watch_reload_grace_timer() {
         // flush the compile cache first (safe off the JS thread; generation
         // runs on its own worker VM).
         crate::node_compile_cache::persist_now();
+        crate::virtual_machine::telemetry_flush_now(None, true);
         Output::flush();
         bun_core::reload_process(
             CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),

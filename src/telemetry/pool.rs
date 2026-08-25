@@ -127,6 +127,15 @@ impl Slot {
         }
     }
 
+    /// A slot that will never be handed out again: no buffers.
+    fn retired(generation: u32) -> Slot {
+        Slot {
+            generation,
+            attrs: Vec::new(),
+            ..Slot::new()
+        }
+    }
+
     fn reset(&mut self) {
         self.live = false;
         self.js_cell = JsCellRef::NONE;
@@ -318,11 +327,14 @@ impl Pool {
 
     fn release(&mut self, handle: NativeSpan) {
         let slot = &mut self.slots[handle.index()];
-        slot.reset();
         // A slot whose generation is about to wrap is retired rather than
-        // reused, so a stale handle can never alias a later span.
+        // reused, so a stale handle can never alias a later span; a retired
+        // slot gives its buffers back so it costs only its inline bytes.
         if slot.generation < GENERATION_MASK {
+            slot.reset();
             self.free.push_back(handle.index() as u32);
+        } else {
+            *slot = Slot::retired(slot.generation);
         }
     }
 }
@@ -460,16 +472,15 @@ pub fn discard(p: &mut Pool, handle: NativeSpan) -> JsCellRef {
     cell
 }
 
-/// Identity of a span by handle, tolerating spans that already ended as long
-/// as their slot has not been reused (callbacks captured during a request can
-/// outlive it). Pointer is valid until the pool is next mutated.
+/// Identity of a live span by handle; null once it has ended (an ended span
+/// is nobody's parent: its slot and ids may be reused at any moment, so the
+/// answer must not depend on whether they have been yet). Pointer is valid
+/// until the pool is next mutated.
 pub fn stub_ptr(p: &Pool, handle: NativeSpan) -> *const SpanStub {
     if !handle.is_some() {
         return core::ptr::null();
     }
     match p.slots.get(handle.index()) {
-        // An ended span is nobody's parent: its slot (and ids) may be reused at
-        // any moment, so the answer must not depend on whether it has been yet.
         Some(slot) if slot.live && slot.generation == handle.generation() => &raw const slot.stub,
         _ => core::ptr::null(),
     }

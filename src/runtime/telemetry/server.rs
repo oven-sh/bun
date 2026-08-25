@@ -27,15 +27,19 @@ pub fn begin(
     let st = state();
     let h = req.telemetry_headers();
     let mut parent = None;
+    let mut joined_trace_state: Option<Vec<u8>> = None;
     let mut trace_state: &[u8] = b"";
     if st.propagate_trace_context {
         if let Some(tp) = h.traceparent() {
             parent = propagation::parse_traceparent(tp);
             if parent.is_some() {
-                if let Some(ts) = h.tracestate() {
-                    if propagation::tracestate_is_reasonable(ts) {
-                        trace_state = ts;
-                    }
+                if h.tracestate_repeated != 0 {
+                    // W3C: several tracestate fields are one list, in order.
+                    joined_trace_state = req.header_joined(b"tracestate");
+                }
+                let raw = joined_trace_state.as_deref().or_else(|| h.tracestate());
+                if let Some(ts) = raw.and_then(propagation::tracestate_bounded) {
+                    trace_state = ts;
                 }
             }
         }

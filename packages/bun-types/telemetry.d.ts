@@ -440,7 +440,11 @@ declare module "bun" {
   const otel: {
     /**
      * Enable tracing (or reconfigure it). Options not given fall back to the
-     * `OTEL_*` environment variables, then to defaults.
+     * `OTEL_*` environment variables, then to defaults — also on a repeat
+     * call, which is a process-wide reconfiguration (from a worker too):
+     * spans already recorded are flushed with the previous configuration,
+     * and only the exporter list is kept when `exporters`/`endpoint` are
+     * omitted. A no-op under `OTEL_SDK_DISABLED=true`.
      */
     start(options?: otel.StartOptions): void;
 
@@ -563,12 +567,15 @@ declare module "bun" {
     };
 
     /**
-     * `@opentelemetry/api`-compatible `TracerProvider`. Bun registers it as
-     * the API's global provider when tracing is enabled; pass it to
-     * `trace.setGlobalTracerProvider()` yourself only if you have disabled
-     * that.
+     * `@opentelemetry/api`-compatible `TracerProvider` (with `forceFlush()`
+     * and `shutdown()`). Bun registers it as the API's global provider when
+     * tracing is enabled, unless something else registered first.
      */
-    readonly tracerProvider: { getTracer(name?: string, version?: string): otel.Tracer };
+    readonly tracerProvider: {
+      getTracer(name?: string, version?: string): otel.Tracer;
+      forceFlush(): Promise<void>;
+      shutdown(): Promise<void>;
+    };
     /** `@opentelemetry/api`-compatible `ContextManager`. */
     readonly contextManager: {
       active(): otel.Context;

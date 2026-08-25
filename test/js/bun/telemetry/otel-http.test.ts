@@ -572,10 +572,19 @@ describe("node:http", () => {
         ["x-a", "2"],
       ]),
     );
-    // caller-supplied traceparent in the array wins
+    // a caller-supplied traceparent in the array: under an active span it is
+    // replaced (the active span is the parent); with none it becomes the parent
     await Bun.otel.with(span, () =>
       get(["Host", "localhost", "x-a", "3", "TraceParent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"]),
     );
+    await get([
+      "Host",
+      "localhost",
+      "x-a",
+      "4",
+      "TraceParent",
+      "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+    ]);
     span.end();
     await collect();
     const traceId = span.spanContext().traceId;
@@ -587,12 +596,16 @@ describe("node:http", () => {
       traceparent: expect.stringMatching(new RegExp(`^00-${traceId}-[0-9a-f]{16}-01$`)),
       xa: "2",
     });
-    // a caller-set traceparent: same trace, re-pointed at the request's own CLIENT span
     expect(seen[2]).toEqual({
-      traceparent: expect.stringMatching(/^00-0af7651916cd43dd8448eb211c80319c-[0-9a-f]{16}-01$/),
+      traceparent: expect.stringMatching(new RegExp(`^00-${traceId}-[0-9a-f]{16}-01$`)),
       xa: "3",
     });
-    expect(seen[2].traceparent).not.toBe("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+    // no active span: the caller's trace, re-pointed at the request's own CLIENT span
+    expect(seen[3]).toEqual({
+      traceparent: expect.stringMatching(/^00-0af7651916cd43dd8448eb211c80319c-[0-9a-f]{16}-01$/),
+      xa: "4",
+    });
+    expect(seen[3].traceparent).not.toBe("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
   });
 
   test("node:http client span ends with the response body, and reports a body cut short as an error", async () => {
@@ -631,6 +644,85 @@ describe("node:http", () => {
     expect(got.map(s => [s.attributes["http.response.status_code"], s.status.code])).toEqual([
       [200, 0],
       [200, 2],
+    ]);
+  });
+
+  test("node:http: a complete response whose socket is closed later is not an error; no 'error' listener semantics change", async () => {
+    // a server that answers completely and then drops the connection
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(s) {
+          s.write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nwhole");
+          s.end();
+        },
+      },
+    });
+    const sawErrorEvent = false;
+    const res: any = await new Promise(resolve => http.get(`http://127.0.0.1:${server.port}/`, resolve));
+    // no resume(): the app never reads the body, so 'end' does not fire before the socket closes
+    await new Promise<void>(r => (res.socket?.destroyed ? r() : res.req.once("close", r)));
+    const [client] = byName(await collect(), "bun.http.client");
+    expect([
+      client.attributes["http.response.status_code"],
+      client.status.code,
+      client.attributes["error.type"],
+    ]).toEqual([200, 0, undefined]);
+    expect([res.errored, sawErrorEvent]).toEqual([null, false]);
+  });
+
+  test("node:http: an Upgrade / CONNECT response ends the CLIENT span with its status", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        if (srv.upgrade(req)) return;
+        return new Response("no");
+      },
+      websocket: { message() {} },
+    });
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request({
+        host: "127.0.0.1",
+        port: server.port,
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+          "Sec-WebSocket-Version": "13",
+        },
+      });
+      req.on("upgrade", (res, socket) => {
+        socket.destroy();
+        resolve();
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    const [client] = byName(await collect(), "bun.http.client");
+    expect([client.attributes["http.response.status_code"], client.status.code]).toEqual([101, 0]);
+    expect(Bun.otel.stats().spansPending).toBe(0);
+  });
+
+  test("node:http and fetch describe an unknown method the same way", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    await (await fetch(server.url, { method: "PROPFIND" })).text();
+    await new Promise<void>(r =>
+      http
+        .request({ host: "127.0.0.1", port: server.port, method: "PROPFIND" }, res => res.resume().on("end", r))
+        .end(),
+    );
+    const got = byName(await collect(), "bun.http.client");
+    expect(
+      got.map(s => [
+        s.name,
+        s.attributes["http.request.method"],
+        s.attributes["http.request.method_original"],
+        s.attributes["network.protocol.version"],
+      ]),
+    ).toEqual([
+      ["HTTP", "_OTHER", "PROPFIND", "1.1"],
+      ["HTTP", "_OTHER", "PROPFIND", "1.1"],
     ]);
   });
 
@@ -743,18 +835,52 @@ describe("live request span", () => {
 });
 
 describe("static routes", () => {
-  test("a static Response route gets a SERVER span with its route and status", async () => {
+  test("a static Response route gets a SERVER span with its route and the status actually written", async () => {
+    asExternalClient();
     using server = Bun.serve({
       port: 0,
-      routes: { "/static": new Response("hello", { status: 202 }), "/dyn": () => new Response("d") },
+      routes: {
+        "/static": new Response("hello", { status: 202 }),
+        "/etag": new Response("cached"),
+        "/dyn": () => new Response("d"),
+      },
       fetch: () => new Response("f"),
     });
-    await (await fetch(new URL("/static", server.url))).text();
+    await (await fetch(new URL("/static?sig=SECRET&x=1", server.url))).text();
     await (await fetch(new URL("/static", server.url), { method: "HEAD" })).text();
+    const first = await fetch(new URL("/etag", server.url));
+    await first.text();
+    const etag = first.headers.get("etag")!;
+    expect((await fetch(new URL("/etag", server.url), { headers: { "if-none-match": etag } })).status).toBe(304);
     const got = byName(await collect(), "bun.http.server");
-    expect(got.map(s => [s.name, s.attributes["http.response.status_code"], s.attributes["http.route"]])).toEqual([
-      ["GET /static", 202, "/static"],
-      ["HEAD /static", 202, "/static"],
+    expect(
+      got.map(s => [
+        s.name,
+        s.attributes["http.response.status_code"],
+        s.attributes["http.route"],
+        s.attributes["url.query"],
+      ]),
+    ).toEqual([
+      ["GET /static", 202, "/static", "sig=REDACTED&x=1"],
+      ["HEAD /static", 202, "/static", undefined],
+      ["GET /etag", 200, "/etag", undefined],
+      ["GET /etag", 304, "/etag", undefined],
+    ]);
+  });
+
+  test("requests parked while an HTML bundle builds get a SERVER span too", async () => {
+    using dir = tempDir("otel-html", { "index.html": "<!doctype html><title>x</title><p>hi" });
+    const { default: html } = await import(require("node:path").join(String(dir), "index.html"));
+    asExternalClient();
+    using server = Bun.serve({ port: 0, development: false, routes: { "/": html }, fetch: () => new Response("f") });
+    // the first requests arrive while the bundle is still building
+    await Promise.all([fetch(server.url).then(r => r.text()), fetch(server.url).then(r => r.text())]);
+    await (await fetch(server.url)).text();
+    const got = byName(await collect(), "bun.http.server");
+    expect(got.map(s => [s.name, s.attributes["http.response.status_code"]])).toEqual([
+      ["GET /", 200],
+      ["GET /", 200],
+      ["GET /", 200],
     ]);
   });
 });
@@ -818,6 +944,93 @@ describe("request facts", () => {
       redacted,
     ]);
     expect(byName(got, "bun.http.server").map(s => s.attributes["url.query"])).toEqual([redacted, redacted]);
+  });
+});
+
+describe("fetch client", () => {
+  test("inside a handler, fetch(url, { headers: req.headers }) is a child of the SERVER span even though the headers carry the caller's traceparent", async () => {
+    let forwarded: string | null = null;
+    using upstream = Bun.serve({
+      port: 0,
+      fetch(req) {
+        forwarded = req.headers.get("traceparent");
+        return new Response("u");
+      },
+    });
+    using proxy = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(await (await fetch(upstream.url, { headers: req.headers })).text());
+      },
+    });
+    asExternalClient();
+    const tp = "00-11111111111111111111111111111111-2222222222222222-01";
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { http: true, fetch: true },
+    });
+    // (this fetch has no active span, so the caller header is its parent — see the test above)
+    await (await fetch(proxy.url, { headers: { traceparent: tp } })).text();
+    const got = await collect();
+    const proxySrv = byName(got, "bun.http.server").find(s => s.attributes["server.port"] === proxy.port)!;
+    const inner = byName(got, "bun.http.client").find(c => c.attributes["url.full"].includes(String(upstream.port)))!;
+    expect(inner.parentSpanId).toBe(proxySrv.spanId);
+    expect(forwarded).toBe(`00-${"1".repeat(32)}-${inner.spanId}-01`);
+  });
+
+  test('with fetch: "nested" a caller-set traceparent alone does not start a CLIENT span (fetch and node:http alike)', async () => {
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { http: false, fetch: "nested" },
+    });
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const tp = "00-11111111111111111111111111111111-2222222222222222-01";
+    await (await fetch(server.url, { headers: { traceparent: tp } })).text();
+    await new Promise<void>(r =>
+      http.get(`http://127.0.0.1:${server.port}/`, { headers: { traceparent: tp } }, res => res.resume().on("end", r)),
+    );
+    expect(byName(await collect(), "bun.http.client")).toEqual([]);
+  });
+
+  test("an AbortSignal abort ends the fetch CLIENT span without an error status", async () => {
+    const { promise: hit, resolve } = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        resolve();
+        await Bun.sleep(60_000);
+        return new Response("late");
+      },
+    });
+    const ac = new AbortController();
+    const req = fetch(server.url, { signal: ac.signal }).then(r => r.text());
+    await hit;
+    ac.abort();
+    await expect(req).rejects.toThrow();
+    const [client] = byName(await collect(), "bun.http.client");
+    expect([
+      client.status.code,
+      client.attributes["error.type"],
+      client.attributes["http.response.status_code"],
+    ]).toEqual([0, undefined, undefined]);
+  });
+
+  test("a tracestate extracted from a carrier with control characters is not written into outgoing requests", async () => {
+    let seen: (string | null)[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push(req.headers.get("tracestate"), req.headers.get("x-injected"));
+        return new Response("x");
+      },
+    });
+    const ctx = apiPropagation.extract(apiContext.active(), {
+      traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
+      tracestate: "a=1\r\nX-Injected: 1",
+    });
+    await apiContext.with(ctx, () => fetch(server.url).then(r => r.text()));
+    expect(seen).toEqual([null, null]);
+    await collect();
   });
 });
 

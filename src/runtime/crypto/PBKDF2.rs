@@ -10,8 +10,8 @@ use crate::node::{Flavor, StringObjects, StringOrBuffer};
 use crate::crypto::evp::{self, Algorithm};
 
 pub(crate) struct PBKDF2 {
-    pub password: StringOrBuffer,
-    pub salt: StringOrBuffer,
+    pub password: StringOrBuffer<'static>,
+    pub salt: StringOrBuffer<'static>,
     pub iteration_count: u32,
     pub length: usize,
     algorithm: Algorithm,
@@ -153,7 +153,7 @@ impl PBKDF2 {
             }
 
             'invalid: {
-                let slice = arg4.to_slice(global_this)?;
+                let slice = arg4.to_utf8(global_this)?;
                 match evp::lookup_ignore_case(slice.slice()) {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
@@ -164,7 +164,7 @@ impl PBKDF2 {
                 }
             }
 
-            let slice = arg4.to_slice(global_this)?;
+            let slice = arg4.to_utf8(global_this)?;
             let name = slice.slice();
             return Err(global_this
                 .err(

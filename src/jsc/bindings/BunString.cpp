@@ -121,7 +121,7 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
         return jsString(vm, WTF::move(str));
     }
 
-    // ZigString / StaticZigString: copies (the bytes are borrowed).
+    // EncodedSlice / StaticEncodedSlice: copies (the bytes are borrowed).
     WTF::String str = this->toWTFString();
     *this = { .tag = BunStringTag::Dead };
     return jsString(vm, WTF::move(str));
@@ -130,6 +130,41 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
     return JSValue::encode(bunString->transferToJS(globalObject));
+}
+
+// `message` for an Error built from a BunString: a WTF-backed string shares
+// its impl, a static one is atomized, a borrowed EncodedSlice is copied.
+static WTF::String errorMessage(const BunString* str)
+{
+    if (str->tag == BunStringTag::EncodedSlice)
+        return Zig::toStringCopy(str->impl.encoded);
+    return str->toWTFString(BunString::ZeroCopy);
+}
+
+extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, JSC::JSGlobalObject* globalObject, BunErrorKind kind)
+{
+    WTF::String message = errorMessage(str);
+    if (message.isNull() && !str->isEmpty()) [[unlikely]] {
+        // Allocation failed or the message exceeds the maximum string length.
+        return {};
+    }
+    JSC::JSObject* result = nullptr;
+    switch (kind) {
+    case BunErrorKind::Error:
+        result = JSC::createError(globalObject, message);
+        break;
+    case BunErrorKind::TypeError:
+        result = JSC::createTypeError(globalObject, message);
+        break;
+    case BunErrorKind::SyntaxError:
+        result = JSC::createSyntaxError(globalObject, message);
+        break;
+    case BunErrorKind::RangeError:
+        result = JSC::createRangeError(globalObject, message);
+        break;
+    }
+    JSC::EnsureStillAliveScope ensureAlive(result);
+    return JSValue::encode(result);
 }
 
 namespace Bun {
@@ -154,12 +189,12 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
         return JSC::jsString(globalObject->vm(), String(bunString.impl.wtf));
     }
 
-    if (bunString.tag == BunStringTag::StaticZigString) {
-        return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.zig));
+    if (bunString.tag == BunStringTag::StaticEncodedSlice) {
+        return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.encoded));
     }
 
-    if (bunString.tag == BunStringTag::ZigString) {
-        return Zig::toJSStringGC(bunString.impl.zig, globalObject);
+    if (bunString.tag == BunStringTag::EncodedSlice) {
+        return Zig::toJSStringGC(bunString.impl.encoded, globalObject);
     }
 
     UNREACHABLE();
@@ -244,8 +279,8 @@ BunString toStringRef(WTF::StringImpl* wtfString)
 BunString toStringView(StringView view)
 {
     return {
-        BunStringTag::ZigString,
-        { .zig = toZigString(view) }
+        BunStringTag::EncodedSlice,
+        { .encoded = toEncodedSlice(view) }
     };
 }
 
@@ -653,14 +688,14 @@ extern "C" BunString URL__pathname(WTF::URL* url)
 
 WTF::String BunString::toWTFString() const
 {
-    if (this->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedExternalPtr(this->impl.zig.ptr)) {
-            return Zig::toString(this->impl.zig);
+    if (this->tag == BunStringTag::EncodedSlice) {
+        if (Zig::isTaggedExternalPtr(this->impl.encoded.ptr)) {
+            return Zig::toString(this->impl.encoded);
         } else {
-            return Zig::toStringCopy(this->impl.zig);
+            return Zig::toStringCopy(this->impl.encoded);
         }
-    } else if (this->tag == BunStringTag::StaticZigString) {
-        return Zig::toStringCopy(this->impl.zig);
+    } else if (this->tag == BunStringTag::StaticEncodedSlice) {
+        return Zig::toStringCopy(this->impl.encoded);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
         return WTF::String(this->impl.wtf);
     }
@@ -675,8 +710,8 @@ void BunString::appendToBuilder(WTF::StringBuilder& builder) const
         return;
     }
 
-    if (this->tag == BunStringTag::ZigString || this->tag == BunStringTag::StaticZigString) {
-        Zig::appendToBuilder(this->impl.zig, builder);
+    if (this->tag == BunStringTag::EncodedSlice || this->tag == BunStringTag::StaticEncodedSlice) {
+        Zig::appendToBuilder(this->impl.encoded, builder);
         return;
     }
 
@@ -685,14 +720,14 @@ void BunString::appendToBuilder(WTF::StringBuilder& builder) const
 
 WTF::String BunString::toWTFString(ZeroCopyTag) const
 {
-    if (this->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedUTF8Ptr(this->impl.zig.ptr)) {
-            return Zig::toStringCopy(this->impl.zig);
+    if (this->tag == BunStringTag::EncodedSlice) {
+        if (Zig::isTaggedUTF8Ptr(this->impl.encoded.ptr)) {
+            return Zig::toStringCopy(this->impl.encoded);
         } else {
-            return Zig::toString(this->impl.zig);
+            return Zig::toString(this->impl.encoded);
         }
-    } else if (this->tag == BunStringTag::StaticZigString) {
-        return Zig::toStringStatic(this->impl.zig);
+    } else if (this->tag == BunStringTag::StaticEncodedSlice) {
+        return Zig::toStringStatic(this->impl.encoded);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
         ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
         return WTF::String(this->impl.wtf);
@@ -714,18 +749,18 @@ WTF::String BunString::toWTFString(NonNullTag) const
 
 WTF::String BunString::transferToWTFString()
 {
-    if (this->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedUTF8Ptr(this->impl.zig.ptr)) {
-            auto str = Zig::toStringCopy(this->impl.zig);
+    if (this->tag == BunStringTag::EncodedSlice) {
+        if (Zig::isTaggedUTF8Ptr(this->impl.encoded.ptr)) {
+            auto str = Zig::toStringCopy(this->impl.encoded);
             *this = Zig::BunStringEmpty;
             return str;
         } else {
-            auto str = Zig::toString(this->impl.zig);
+            auto str = Zig::toString(this->impl.encoded);
             *this = Zig::BunStringEmpty;
             return str;
         }
-    } else if (this->tag == BunStringTag::StaticZigString) {
-        auto str = Zig::toStringStatic(this->impl.zig);
+    } else if (this->tag == BunStringTag::StaticEncodedSlice) {
+        auto str = Zig::toStringStatic(this->impl.encoded);
         *this = Zig::BunStringEmpty;
         return str;
     } else if (this->tag == BunStringTag::WTFStringImpl) {
@@ -844,9 +879,9 @@ bool BunString::isEmpty() const
     switch (this->tag) {
     case BunStringTag::WTFStringImpl:
         return impl.wtf->isEmpty();
-    case BunStringTag::ZigString:
-    case BunStringTag::StaticZigString:
-        return impl.zig.len == 0;
+    case BunStringTag::EncodedSlice:
+    case BunStringTag::StaticEncodedSlice:
+        return impl.encoded.len == 0;
     default:
         return true;
     }

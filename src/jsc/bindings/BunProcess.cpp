@@ -139,7 +139,7 @@ extern "C" bool Bun__Node__ProcessTraceDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" BunString Bun__Node__getRedirectWarnings();
 extern "C" size_t Bun__Node__getDisabledWarnings(const uint8_t** bufs, size_t* lens, size_t cap);
-extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
+extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" void Bun__writeProfilesBeforeSelfKill();
@@ -988,7 +988,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     Bun::V::validateString(scope, globalObject, value, "directory"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    ZigString str = Zig::toZigString(value.toWTFString(globalObject));
+    EncodedSlice str = Zig::toEncodedSlice(value.toWTFString(globalObject));
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1664,8 +1664,8 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     if (redirect.tag != BunStringTag::Dead) {
         redirectPath = jsString(vm, redirect.transferToWTFString());
     } else {
-        ZigString name = toZigString("NODE_REDIRECT_WARNINGS"_s);
-        ZigString value = { nullptr, 0 };
+        EncodedSlice name = toEncodedSlice("NODE_REDIRECT_WARNINGS"_s);
+        EncodedSlice value = { nullptr, 0 };
         if (Bun__getEnvValue(globalObject, &name, &value) && value.len > 0)
             redirectPath = jsString(vm, Zig::toStringCopy(value));
     }

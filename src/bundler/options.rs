@@ -1285,6 +1285,9 @@ pub struct BundleOptions<'a> {
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
     pub bytecode: bool,
+    /// `--compile --bytecode` for another platform: the executable's internal-module sources (and their bytecode) are that
+    /// platform's, not this one's, so don't embed bytecode generated from ours.
+    pub compile_target_is_host: bool,
 
     pub code_coverage: bool,
     pub debugger: bool,
@@ -1475,6 +1478,7 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
+            compile_target_is_host: self.compile_target_is_host,
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
@@ -1719,6 +1723,7 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
             bytecode: false,
+            compile_target_is_host: true,
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,

@@ -241,7 +241,7 @@ pub fn toml_datetime_to_js(
 
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     if bytes.is_empty() {
-        return BunString::EMPTY.to_js(global).map_err(js_err);
+        return Ok(JSValue::js_empty_string(global));
     }
     if let Some(utf16) = strings::wtf8_to_utf16_alloc(bytes) {
         let (out, chars) = BunString::create_uninitialized_utf16(utf16.len());
@@ -281,7 +281,7 @@ macro_rules! impl_string_to_js {
             }
 
             if !s.is_present() {
-                return BunString::EMPTY.to_js(global).map_err(js_err);
+                return Ok(JSValue::js_empty_string(global));
             }
 
             if s.is_utf8() {

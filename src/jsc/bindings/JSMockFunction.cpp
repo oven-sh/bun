@@ -1407,7 +1407,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
 }
 
-extern "C" void Bun__FakeTimers__setSystemTime(double ms);
+extern "C" void Bun__FakeTimers__setSystemTime(JSC::JSGlobalObject* globalObject, double ms);
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
@@ -1425,7 +1425,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     globalObject->overridenDateNow = ms;
     // Rebase the Rust-side fake-timers offset so advanceTimersByTime ticks
     // from this value instead of the activation-time clock.
-    Bun__FakeTimers__setSystemTime(ms);
+    Bun__FakeTimers__setSystemTime(globalObject, ms);
 
     return JSValue::encode(callframe->thisValue());
 }

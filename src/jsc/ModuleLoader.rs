@@ -242,10 +242,7 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
 
-    // A resolved absolute path is a file, so it belongs to the `file` namespace:
-    // no extension check, and no `extract_namespace`, which would read a colon
-    // inside the path as a namespace. Other keys (`ns:path`, or a bare builtin
-    // name under `bun test`) still go through the pre-filter.
+    // A resolved absolute path is a file, whatever its extension or colons.
     let (namespace, after_namespace): (&[u8], &[u8]) = if bun_paths::is_absolute(specifier) {
         (b"", specifier)
     } else {

@@ -995,6 +995,8 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     globalObject->mockModule.activeMocks.clear();
     // The listener half of the swap path's prepareForDestruction(); the context itself stays live.
     globalObject->scriptExecutionContext()->removeAllEventListeners();
+    // A WebView is not an ActiveDOMObject, so the candidate check cannot see it; retire the file's views as the swap path does.
+    Bun::retireWebViewsForTestIsolation(globalObject);
     // A fresh global starts with empty user-timing and resource-timing buffers.
     if (auto* performance = globalObject->existingPerformance()) {
         performance->clearMarks(String());

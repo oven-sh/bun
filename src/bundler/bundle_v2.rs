@@ -228,7 +228,8 @@ pub struct BundleV2<'a> {
 
     /// One task, out of line: the JS thread holds its address while a hop
     /// is out, so it is never touched through `self`'s own storage.
-    pub(crate) drain_defer_task: bun_ptr::StableVec<crate::DeferredBatchTask::DeferredBatchTask<'a>>,
+    pub(crate) drain_defer_task:
+        bun_ptr::StableVec<crate::DeferredBatchTask::DeferredBatchTask<'a>>,
 
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` CLI) runs at the top of an event loop. When this is true,

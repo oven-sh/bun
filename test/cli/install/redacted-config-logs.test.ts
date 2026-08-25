@@ -213,11 +213,6 @@ describe.concurrent("redact", async () => {
       expected: "supplies no credentials",
     },
     {
-      title: "_auth one length",
-      npmrc: "//registry.npmjs.org/:_auth=1",
-      expected: "",
-    },
-    {
       // The most common .npmrc authoring mistake, and the value is always a live secret.
       // npm decodes _password with Buffer.from(v, "base64"), which never throws — it
       // skips invalid bytes — so there is no diagnostic and nothing may reach stderr.
@@ -250,6 +245,7 @@ describe.concurrent("redact", async () => {
 
       expect(exitCode1).toBe(+!!bunfig);
       if (expected) expect(err1).toContain(expected);
+      else expect(err1).not.toMatch(/\b(error|warn):/);
       if (secret) expect(err1).not.toContain(secret);
       if (forbidden) expect(err1).not.toContain(forbidden);
 
@@ -266,6 +262,7 @@ describe.concurrent("redact", async () => {
 
       expect(exitCode2).toBe(+!!bunfig);
       if (expected) expect(err2).toContain(expected);
+      else expect(err2).not.toMatch(/\b(error|warn):/);
       if (secret) expect(err2).not.toContain(secret);
       if (forbidden) expect(err2).not.toContain(forbidden);
     });

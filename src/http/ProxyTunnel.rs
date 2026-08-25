@@ -726,9 +726,9 @@ impl ProxyTunnel {
         Err(crate::Error::ConnectionClosed)
     }
 
-    /// Forget the outer socket. Holders call this before releasing their
-    /// handle (`RefPtr::deref`), so a tunnel that outlives them (a deferred
-    /// `on_close` deref is still pending) never retains a dangling socket.
+    /// Forget the outer socket. Holders call this before dropping their
+    /// `RefPtr`, so a tunnel that outlives them (a deferred `on_close` deref
+    /// is still pending) never retains a dangling socket.
     #[inline]
     pub(crate) fn detach_socket(&mut self) {
         self.socket = Socket::None;

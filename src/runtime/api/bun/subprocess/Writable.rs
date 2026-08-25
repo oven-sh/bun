@@ -76,8 +76,8 @@ impl<'a> Writable<'a> {
     /// `on_process_exit`) collapse to this one site. `RefPtr` deliberately has
     /// no `DerefMut` (shared ownership); the invariant that makes `&mut` sound
     /// here is that `Writable::Buffer` holds the *only* strong ref for the
-    /// variant's lifetime (created by `StaticPipeWriter::create`, released by
-    /// `buffer.deref()` only after the variant is overwritten), the writer
+    /// variant's lifetime (created by `StaticPipeWriter::create`, dropped
+    /// only after the variant is moved out), the writer
     /// lives in its own heap allocation disjoint from `Writable`/`Subprocess`,
     /// and access is single-JS-mutator-thread.
     #[inline]

@@ -242,14 +242,15 @@ pub enum TestingBatchEvents {
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
 pub struct CurrentBundle {
-    /// Owns the bundle heap; holds back-references to the dev server's three
-    /// boxed `Transpiler<'static>`s, which outlive every bundle.
-    pub bv2: Box<BundleV2<'static>>,
+    /// The bundle and the heap it allocates from. Taken out (`None`) while
+    /// its inbox is drained / it is finalized, so dev-server borrows made
+    /// from bundler callbacks never alias it.
+    pub bv2: Option<bundler::bundle_v2::OwnedBundle>,
     /// Backs the small `AstVec`s built during bundle setup
     /// (`start_async_bundle`'s AST scope); dropped with the bundle.
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
     /// Information BundleV2 needs to finalize the bundle
-    pub(crate) start_data: bundler::bundle_v2::DevServerInput,
+    pub(crate) start_data: Option<bundler::bundle_v2::DevServerInput>,
     /// Started when the bundle was queued
     pub(crate) timer: Instant,
     /// If any files in this bundle were due to hot-reloading, some extra work
@@ -2627,14 +2628,14 @@ impl DevServer {
         // AST nodes built while the entry points are enqueued live exactly as
         // long as the bundle: the `AstAllocState` is taken into `CurrentBundle`
         // below (or released when the allocator drops on an error path).
-        let mut ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(bv2.heap());
+        let mut ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(bv2.owner());
         let ast_scope = ast_memory_store.enter();
 
         // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
         // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
         // can name it without depending on `bun_runtime`). Convert by value —
         // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
-        let started = bv2.start_from_bake_dev_server(&{
+        let bake_entry_points = {
             let mut bt = bundler::bake_types::EntryPointList::empty();
             for (k, v) in entry_points.set.iter() {
                 bun_core::handle_oom(
@@ -2643,20 +2644,25 @@ impl DevServer {
                 );
             }
             bt
-        });
+        };
+        let started = bv2.with_mut(|bv2| bv2.start_from_bake_dev_server(&bake_entry_points));
+        drop(bake_entry_points);
         drop(entry_points);
 
         let start_data = cell.with_mut(|dev| -> crate::Result<_> {
             let (start_data, resolve_failures) = started?;
-            for failure in resolve_failures {
-                dev.handle_parse_task_failure(
-                    &crate::Error::from(failure.err),
-                    failure.graph,
-                    &failure.abs_path,
-                    &failure.log,
-                    &mut bv2,
-                )?;
-            }
+            bv2.with_mut(|bv2| -> crate::Result<()> {
+                for failure in resolve_failures {
+                    dev.handle_parse_task_failure(
+                        &crate::Error::from(failure.err),
+                        failure.graph,
+                        &failure.abs_path,
+                        &failure.log,
+                        bv2,
+                    )?;
+                }
+                Ok(())
+            })?;
             Ok(start_data)
         })?;
         // End the AST scope and move its state into the bundle so the small
@@ -2665,12 +2671,21 @@ impl DevServer {
         let ast_alloc_state = ast_memory_store.take_ast_state();
         drop(ast_memory_store);
 
+        // Nothing left to parse (every file was cached or failed to
+        // resolve): the bundle is finished already.
+        let finished = bv2.with_mut(|bv2| bv2.take_finished());
+        let (bv2, finished_bv2) = if finished {
+            (None, Some(bv2))
+        } else {
+            (Some(bv2), None)
+        };
+
         cell.with_mut(move |dev| {
             dev.current_bundle = Some(CurrentBundle {
                 bv2,
                 ast_alloc_state,
                 timer,
-                start_data,
+                start_data: Some(start_data),
                 had_reload_event,
                 requests: ::core::mem::take(&mut dev.next_bundle.requests),
                 promise: ::core::mem::take(&mut dev.next_bundle.promise),
@@ -2681,6 +2696,9 @@ impl DevServer {
             dev.next_bundle.requests = deferred_request::List::default();
             dev.next_bundle.route_queue.clear_retaining_capacity();
         });
+        if let Some(bv2) = finished_bv2 {
+            finish_current_bundle(cell, bv2);
+        }
         Ok(())
     }
 
@@ -2689,7 +2707,7 @@ impl DevServer {
     fn start_async_bundle_setup(
         &mut self,
         entry_points: &EntryPointList,
-    ) -> crate::Result<Box<BundleV2<'static>>> {
+    ) -> crate::Result<bundler::bundle_v2::OwnedBundle> {
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
@@ -2709,41 +2727,29 @@ impl DevServer {
         self.server.on_pending_request();
 
         // Owned by `bv2` (dropped after everything allocated from it).
-        let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
-        // The bundler stores `Option<NonNull<AnyEventLoop>>`; park the value
-        // in `heap` so it lives exactly as long as `bv2`.
-        let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(::core::ptr::NonNull::from(heap.alloc(
-                bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
-            )));
-        let client_transpiler = ::core::ptr::NonNull::from(&mut *self.client_transpiler);
-        let ssr_transpiler = self
-            .ssr_transpiler
-            .as_deref_mut()
-            .map(::core::ptr::NonNull::from);
-
-        // The three boxed transpilers outlive every bundle. The dev server
-        // keeps resolving through `server_transpiler` between bundler turns.
-        let mut bv2: Box<BundleV2<'static>> = BundleV2::init_with_owned_heap(
-            bun_ptr::ParentRef::from_ref_mut(&mut *self.server_transpiler),
-            Some(bundler::bundle_v2::BakeOptions {
-                framework: self.framework.as_bundler_view(),
-                client_transpiler,
-                ssr_transpiler,
-                plugins: self.bundler_options.plugin,
-            }),
-            heap,
-            event_loop,
-            false, // watching is handled separately
-            Some(::core::ptr::NonNull::from(
-                bun_threading::work_pool::WorkPool::get(),
-            )),
-        )?;
-        bv2.bun_watcher = Some(::core::ptr::NonNull::from(self.watcher()));
-        bv2.asynchronous = true;
+        let heap: Box<bundler::bundle_v2::BundleHeap> =
+            Box::new(bundler::bundle_v2::BundleHeap::new());
         let dev_handle = self.bundler_handle();
-        bv2.dev_server = Some(dev_handle);
-        bv2.linker.dev_server = Some(dev_handle);
+        let mut config = bundler::bundle_v2::BundleConfig::new(bun_event_loop::AnyEventLoop::js(
+            self.vm().event_loop().cast(),
+        ));
+        config.bake = Some(bundler::bundle_v2::BakeOptions {
+            framework: self.framework.as_bundler_view(),
+            client_transpiler: bun_ptr::LentMut::new(&mut *self.client_transpiler),
+            ssr_transpiler: self.ssr_transpiler.as_deref_mut().map(bun_ptr::LentMut::new),
+        });
+        config.thread_pool = Some(bun_threading::work_pool::WorkPool::get());
+        config.plugins = self.bundler_options.plugin.map(bun_ptr::BackRef::from);
+        config.dev_server = Some(dev_handle);
+        // The bundler adds the files it reads to the dev server's watcher (through the handle).
+        config.watcher = Some(Box::new(dev_handle));
+
+        // The three transpilers are lent to the bundle until it is finalized
+        // (`finish_current_bundle`) or dropped. The bundle drives them from
+        // this thread, as the dev server does; its parse threads only read
+        // their options (to clone their own).
+        let mut bv2 = BundleV2::init_with_owned_heap(&mut self.server_transpiler, config, heap)?;
+        bv2.with_mut(|bv2| bv2.asynchronous = true);
 
         {
             self.graph_safety_lock.lock();
@@ -3270,7 +3276,8 @@ fn finalize_bundle_cleanup(
     if let Some(cb) = &mut dev.current_bundle {
         cb.promise.deinit_idempotently();
     }
-    // Drops `bv2` and, last, the bundle heap it owns.
+    // The caller owns `bv2` (taken out of `current_bundle`) and drops it —
+    // and, last, the bundle heap — once this returns.
     dev.current_bundle = None;
     dev.log.clear_and_free();
 
@@ -3301,6 +3308,62 @@ fn finalize_bundle_cleanup(
     dev.start_next_bundle_if_present()
 }
 
+/// The current bundle has results waiting in its inbox (a parse finished, a
+/// plugin answered): apply them, and once nothing is pending, finish the
+/// bundle. JS thread, from the bundle's wake task.
+pub(crate) fn drain_bundle_inbox(cell: &DevServerCell) {
+    // Taken out of `current_bundle` while worked on: the bundler calls back
+    // into the dev server (through `cell`) as it applies results.
+    let Some(mut bv2) =
+        cell.with_mut(|dev| dev.current_bundle.as_mut().and_then(|cb| cb.bv2.take()))
+    else {
+        // A wake for a bundle that has already been finalized.
+        return;
+    };
+    let finished = bv2.with_mut(|bv2| {
+        bv2.drain_inbox();
+        bv2.take_finished()
+    });
+    if !finished {
+        cell.with_mut(|dev| {
+            dev.current_bundle
+                .as_mut()
+                .expect("infallible: bundle active")
+                .bv2 = Some(bv2)
+        });
+        return;
+    }
+    finish_current_bundle(cell, bv2);
+}
+
+/// Every file of the current bundle is parsed: run the linker's HMR subset
+/// and hand the output to `finalize_bundle`. Consumes (and frees) the bundle.
+pub(crate) fn finish_current_bundle(
+    cell: &DevServerCell,
+    mut bv2: bundler::bundle_v2::OwnedBundle,
+) {
+    let mut start_data = cell
+        .with_mut(|dev| {
+            dev.current_bundle
+                .as_mut()
+                .and_then(|cb| cb.start_data.take())
+        })
+        .expect("infallible: bundle active");
+    let global = cell.get().global();
+    let result = bv2.with_mut(|bv2| -> JsResult<()> {
+        let mut output = match bv2.finish_from_bake_dev_server(&mut start_data) {
+            Ok(output) => output,
+            Err(_) => bun_alloc::out_of_memory(),
+        };
+        finalize_bundle(cell, bv2, &mut output)
+    });
+    // The bundle heap goes with it, after everything allocated from it.
+    drop(bv2);
+    if let Err(err) = result {
+        VirtualMachine::get_mut().print_error_like_object_to_console(global.take_exception(err));
+    }
+}
+
 /// Called at the end of BundleV2 to index bundle contents into the
 /// `IncrementalGraph`s. This function does not recover DevServer state if it
 /// fails (allocation failure).
@@ -3320,10 +3383,6 @@ pub(crate) fn finalize_bundle(
     let event_loop_scope = vm.enter_event_loop_scope();
     let mut had_sent_hmr_event = false;
     let finalized = finalize_bundle_phases(cell, bv2, result, &mut had_sent_hmr_event);
-    // The chunks live in the bundle's arena, which does not run their destructors.
-    for chunk in result.chunks.iter_mut() {
-        drop(::core::mem::take(chunk));
-    }
     let unanswered = cell.with_mut(|dev| {
         ::core::mem::take(
             &mut dev
@@ -3586,7 +3645,7 @@ fn finalize_bundle_phases(
                     &bv2.linker.graph,
                     b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
                     &result.chunks[i],
-                    result.chunks,
+                    &result.chunks,
                     None,
                     bundler::chunk::ReferencePathStyle::ImporterRelative,
                     bundler::chunk::SourceMapShiftTracking::Disabled,
@@ -3687,7 +3746,7 @@ fn finalize_bundle_phases(
                 code: compile_result_code,
                 script_injection_offset: compile_result_offset,
                 ..
-            } = chunk.compile_results_for_chunk.get_mut(0)
+            } = &mut chunk.compile_results_for_chunk[0]
             else {
                 unreachable!()
             };

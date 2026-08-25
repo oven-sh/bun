@@ -2,14 +2,12 @@
 //! running through the js_parser. It emits a ParseTask.Result and joins
 //! with the same logic that it runs though.
 
-use core::mem::offset_of;
 use std::fmt::Write as _;
 
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_collections::VecExt;
 
 use bun_ast::{Loc, Log, Source};
-use bun_threading::thread_pool::Task as ThreadPoolTask;
 
 use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
@@ -18,24 +16,26 @@ use bun_ast::{ImportKind, ImportRecordFlags};
 
 use crate::AstBuilder::AstBuilder;
 use crate::JSAst;
-use crate::Worker;
-use crate::bundle_v2::BundleV2;
+use crate::bundle_v2::ParseShared;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
-use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
+use crate::parse_task::{self, ResultValue, Success, WatcherData};
 
-pub(crate) struct ServerComponentParseTask {
-    pub task: ThreadPoolTask,
+pub(crate) struct ServerComponentParseTask<'a> {
+    pub task: bun_threading::GroupedTask,
     pub data: Data,
-    // BACKREF (LIFETIMES.tsv) — written through in `on_complete`.
-    // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
-    // so deref sites are safe; `None` only for the FRU `Default` placeholder.
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    pub ctx: std::sync::Arc<ParseShared<'a>>,
     pub source: Source,
 }
 
-// `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
-// would leak. The size diff is acceptable.
+bun_core::intrusive_field!(['a] ServerComponentParseTask<'a>, task: bun_threading::GroupedTask);
+impl bun_threading::GroupTask for ServerComponentParseTask<'_> {
+    #[inline]
+    fn run(self: Box<Self>) {
+        Self::run_task(self);
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
 pub enum Data {
     /// Generate server-side code for a "use client" module. Given the
@@ -55,140 +55,62 @@ pub struct ClientEntryWrapper {
     pub(crate) path: Box<[u8]>,
 }
 
-/// Raw thread-pool callback. Recovers `&mut ServerComponentParseTask` from the
-/// intrusive `task` field and dispatches the parse, then posts the result back
-/// to the owning event loop.
-// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-// `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
-// own fields + `Log` (local) + result is posted via
-// `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
-// `ServerComponentParseTask` is `Send` because `ctx: *mut BundleV2` is a
-// backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
-// slices.
-fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
-    // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
-    // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
-    let task: &mut ServerComponentParseTask = unsafe {
-        &mut *(bun_core::from_field_ptr!(ServerComponentParseTask, task, thread_pool_task))
-    };
+impl<'a> ServerComponentParseTask<'a> {
+    /// Worker-thread entry point (see [`bun_threading::GroupTask`]): build the
+    /// AST, then hand the result to the bundle thread.
+    fn run_task(mut self: Box<Self>) {
+        let ctx = std::sync::Arc::clone(&self.ctx);
+        let ctx: &ParseShared<'a> = &ctx;
+        let worker = ctx.pool.get_worker();
+        let mut log = Log::new();
+        let arena: &'a Arena = worker.arena();
 
-    // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
-    let ctx = task
-        .ctx
-        .expect("ServerComponentParseTask.ctx set at enqueue");
-    let worker = Worker::get(ctx.get());
-    // `defer worker.unget()` — handled at end of fn (no early returns).
-    let mut log = Log::new();
+        let value = match task_callback(&mut self, &mut log, arena) {
+            Ok(success) => ResultValue::Success(success),
+            // Only possible error is OOM; abort like `bun.outOfMemory()`.
+            Err(_oom) => bun_core::out_of_memory(),
+        };
 
-    // SAFETY: `worker.arena` is set in `Worker::create` to point at the
-    // worker-owned bump arena; lives for the worker's lifetime.
-    let arena: &Arena = worker.arena();
-
-    let value = match task_callback(task, &mut log, arena) {
-        Ok(success) => ResultValue::Success(success),
-        // Only possible error is OOM; abort like `bun.outOfMemory()`.
-        Err(_oom) => bun_core::out_of_memory(),
-    };
-
-    let result = Box::new(parse_task::Result {
-        // `ctx` already a `ParentRef<BundleV2>` with write provenance
-        // (constructed from `NonNull::from(&mut self)` in `bundle_v2.rs`).
-        ctx,
-        // Placeholder; consumer overwrites before read.
-        task: Default::default(),
-        value,
-        external: ExternalFreeFunction::NONE,
-        watcher_data: WatcherData::NONE,
-    });
-    let result = bun_core::heap::into_raw(result);
-
-    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-    // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
-    //
-    // The loop is effectively non-optional — `BundleV2::init`
-    // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
-    // Running `on_complete` inline on the worker thread would violate
-    // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
-    // bundler graph, which is owned by the main/bundler thread).
-    match worker
-        .ctx
-        .linker
-        .any_loop_mut()
-        .expect("BundleV2.linker.loop must be set before scheduling ServerComponentParseTask")
-    {
-        bun_event_loop::AnyEventLoop::Js { .. } => {
-            let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                // SAFETY: `p` is the `result` Box leaked above; ownership
-                // transfers to `on_complete`, which deallocates it.
-                unsafe { on_complete(p) };
-                Ok(())
-            });
-            let poster = worker
-                .ctx
-                .js_poster
-                .as_ref()
-                .expect("JS-owned bundle has a poster");
-            if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                // Owning JS VM torn down mid-bundle: free the hop and the result.
-                // SAFETY: refused ⇒ we own the task box and the leaked result.
-                unsafe {
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                    drop(bun_core::heap::take(result));
-                }
-            }
-        }
-        bun_event_loop::AnyEventLoop::Mini(mini) => {
-            // SAFETY: `result` is a freshly Box-leaked `parse_task::Result` (above) and
-            // `offset_of!(parse_task::Result, task)` is the intrusive task field within it.
-            unsafe {
-                mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
-                    result,
-                    on_complete_mini,
-                    offset_of!(parse_task::Result, task),
-                );
-            }
-        }
+        // After the send: `on_parse_task_complete` mutates the graph on the
+        // bundle thread.
+        ctx.inbox
+            .push(crate::inbox::Incoming::ParseTask(parse_task::Result {
+                parse_task: None,
+                value,
+                external: ExternalFreeFunction::NONE,
+                watcher_data: WatcherData::NONE,
+            }));
+        drop(worker);
     }
-    // Runs at function exit, i.e. after enqueue.
-    worker.unget();
 }
 
-fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static>) {
-    // `on_complete` already recovers `ctx` from `result.ctx`.
-    // SAFETY: callback contract — `result` is the uniquely-owned Box leaked in
-    // `run_from_thread_pool`; ownership transfers to `on_complete`.
-    unsafe { on_complete(result) };
-}
-
-fn task_callback(
-    task: &mut ServerComponentParseTask,
+fn task_callback<'a>(
+    task: &mut ServerComponentParseTask<'a>,
     log: &mut Log,
-    bump: &'static Arena,
-) -> Result<Success, OOM> {
-    // `ctx` is a `ParentRef` BACKREF to the owning BundleV2; safe `Deref`.
-    let ctx: &BundleV2 = task
-        .ctx
-        .as_deref()
-        .expect("ServerComponentParseTask.ctx set at enqueue");
+    bump: &'a Arena,
+) -> Result<Success<'a>, OOM> {
+    let ctx = std::sync::Arc::clone(&task.ctx);
+    let ctx: &ParseShared<'a> = &ctx;
+    let options = &ctx.pool.seed().options;
     // `Source` is not `Clone`; the original is consumed here.
     // Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
     let source = core::mem::take(&mut task.source);
-    let mut ab = AstBuilder::init(bump, &source, ctx.transpiler().options.hot_module_reloading)?;
+    let mut ab = AstBuilder::init(bump, &source, options.hot_module_reloading)?;
 
     match &task.data {
         Data::ClientReferenceProxy(data) => generate_client_reference_proxy(ctx, data, &mut ab)?,
-        Data::ClientEntryWrapper(data) => generate_client_entry_wrapper(data, &mut ab)?,
+        Data::ClientEntryWrapper(data) => generate_client_entry_wrapper(data, bump, &mut ab)?,
     }
 
     let target = match &task.data {
         // Server-side
-        Data::ClientReferenceProxy(_) => ctx.transpiler().options.target,
+        Data::ClientReferenceProxy(_) => options.target,
         // Client-side,
         Data::ClientEntryWrapper(_) => Target::Browser,
     };
     let hmr_api_ref = ab.hmr_api_ref;
-    let mut bundled_ast: JSAst = ab.to_bundled_ast(target)?;
+    let mut bundled_ast: JSAst<'a> = ab.to_bundled_ast(target)?;
 
     // `wrapper_ref` is used to hold the HMR api ref.
     bundled_ast.wrapper_ref = hmr_api_ref;
@@ -206,30 +128,17 @@ fn task_callback(
     })
 }
 
-impl Default for ServerComponentParseTask {
-    /// Callers (`bundle_v2.rs`) supply `data`/`ctx`/`source`
-    /// via FRU and rely on this for the intrusive `task` link.
-    fn default() -> Self {
-        Self {
-            task: ThreadPoolTask {
-                node: Default::default(),
-                callback: task_callback_wrap,
-            },
-            data: Data::ClientEntryWrapper(ClientEntryWrapper {
-                path: Box::default(),
-            }),
-            ctx: None,
-            source: Source::default(),
-        }
-    }
-}
-
-fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) -> Result<(), OOM> {
-    // `add_import_record` stores the slice raw in the `ImportRecord`; `data.path`
-    // outlives the bundle pass (owned by the heap-allocated task). Route through
-    // `StoreStr` so the lifetime erasure goes through one audited unsafe.
-    let path = bun_ast::StoreStr::new(&data.path[..]);
-    let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
+fn generate_client_entry_wrapper<'a>(
+    data: &ClientEntryWrapper,
+    bump: &'a Arena,
+    b: &mut AstBuilder<'a, '_>,
+) -> Result<(), OOM> {
+    // `add_import_record` stores the slice in the `ImportRecord`; copy it into
+    // the worker arena so it lives as long as the AST.
+    let record = b.add_import_record(
+        bun_ast::StoreStr::new(bump.alloc_slice_copy(&data.path)).slice(),
+        ImportKind::Stmt,
+    )?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
     b.append_stmt(S::Import {
         namespace_ref,
@@ -244,11 +153,12 @@ fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) 
 }
 
 fn generate_client_reference_proxy(
-    ctx: &BundleV2,
+    ctx: &ParseShared,
     data: &ReferenceProxy,
     b: &mut AstBuilder,
 ) -> Result<(), OOM> {
-    let server_components = ctx
+    let options = &ctx.pool.seed().options;
+    let server_components = options
         .framework
         .as_ref()
         .unwrap()
@@ -274,7 +184,7 @@ fn generate_client_reference_proxy(
         // In production, the path here must be the final chunk path, but
         // that information is not yet available since chunks are not
         // computed. The unique_key replacement system is used here.
-        if ctx.transpiler().options.has_dev_server() {
+        if options.has_dev_server() {
             b.bump.alloc_slice_copy(data.other_source.path.pretty)
         } else {
             let mut buf = bun_alloc::ArenaString::new_in(b.bump);

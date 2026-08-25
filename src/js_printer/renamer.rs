@@ -134,7 +134,7 @@ impl<'a> NoOpRenamer<'a> {
         }
     }
 
-    pub(crate) fn to_renamer(&mut self) -> Renamer<'_, 'a> {
+    pub(crate) fn to_renamer(&self) -> Renamer<'_, 'a> {
         Renamer::NoOpRenamer(self)
     }
 }
@@ -143,10 +143,11 @@ impl<'a> NoOpRenamer<'a> {
 // `'src` is `NoOpRenamer`'s borrow of the `Source`. Erasing both with a
 // single lifetime via `&'a mut NoOpRenamer<'a>` would make
 // `'a` invariant and lock the source borrow to the renamer borrow.
+#[derive(Clone, Copy)]
 pub enum Renamer<'r, 'src> {
-    NumberRenamer(&'r mut NumberRenamer),
-    NoOpRenamer(&'r mut NoOpRenamer<'src>),
-    MinifyRenamer(&'r mut MinifyRenamer),
+    NumberRenamer(&'r NumberRenamer),
+    NoOpRenamer(&'r NoOpRenamer<'src>),
+    MinifyRenamer(&'r MinifyRenamer),
 }
 
 impl<'r, 'src> Renamer<'r, 'src> {
@@ -158,8 +159,8 @@ impl<'r, 'src> Renamer<'r, 'src> {
         }
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
-        match self {
+    pub fn name_for_symbol(&self, ref_: Ref) -> &'r [u8] {
+        match *self {
             Renamer::NumberRenamer(r) => r.name_for_symbol(ref_),
             Renamer::NoOpRenamer(r) => r.name_for_symbol(ref_),
             Renamer::MinifyRenamer(r) => r.name_for_symbol(ref_),
@@ -215,10 +216,7 @@ impl InlineString {
         this
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    fn slice(&mut self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         &self.bytes[0..self.len as usize]
     }
 }
@@ -240,10 +238,7 @@ impl TinyString {
         }
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    fn slice(&mut self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         match self {
             TinyString::InlineString(s) => s.slice(),
             // `StoreStr::slice` centralises the arena-backed deref; the payload
@@ -306,7 +301,7 @@ impl MinifyRenamer {
         }))
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
+    pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         let ref_ = self.symbols.follow(ref_);
         let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
 
@@ -793,7 +788,7 @@ impl NumberRenamer {
 
     pub fn add_top_level_declared_symbols(
         &mut self,
-        declared_symbols: &mut js_ast::DeclaredSymbolList,
+        declared_symbols: &js_ast::DeclaredSymbolList,
     ) {
         js_ast::DeclaredSymbol::for_each_top_level_symbol(declared_symbols, self, |r, ref_| {
             r.add_top_level_symbol(ref_)

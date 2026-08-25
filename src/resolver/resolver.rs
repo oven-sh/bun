@@ -602,15 +602,9 @@ impl<'a> Resolver<'a> {
     /// constructed so nothing the parent owns is aliased into the worker.
     ///
     /// `opts` and `log` are supplied by the caller (the worker projects a
-    /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
-    ///
-    /// # Safety
-    /// `from`'s `standalone_module_graph` / `env_loader` borrow data that
-    /// outlives the returned resolver (process-lifetime singletons in every
-    /// caller). The lifetime is widened from `'from` to `'a` here; callers
-    /// must uphold that the borrowed data outlives `'a`.
-    pub unsafe fn for_worker(
-        from: &Resolver<'_>,
+    /// fresh `BundleOptions` subset and allocates its own `Log`).
+    pub fn for_worker(
+        from: &Resolver<'a>,
         log: NonNull<bun_ast::Log>,
         opts: options::BundleOptions,
     ) -> Resolver<'a> {
@@ -633,16 +627,7 @@ impl<'a> Resolver<'a> {
             on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
             store_fd: from.store_fd,
-            // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
-            // vtable layout is identical (only the borrow-checker tag differs);
-            // a raw-pointer `as`-cast cannot change the `+ 'b` bound, so widen
-            // via a layout-preserving transmute on the `Option<&dyn>`.
-            standalone_module_graph: unsafe {
-                core::mem::transmute::<
-                    Option<&'_ dyn StandaloneModuleGraph>,
-                    Option<&'a dyn StandaloneModuleGraph>,
-                >(from.standalone_module_graph)
-            },
+            standalone_module_graph: from.standalone_module_graph,
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,

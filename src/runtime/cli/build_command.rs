@@ -565,16 +565,19 @@ impl BuildCommand {
                     this_transpiler.options.define.drop_debugger,
                     this_transpiler.options.dead_code_elimination
                         && this_transpiler.options.minify_syntax,
-                )?;
+                )?
+                .into();
             }
 
             crate::bake::bake_body::add_import_meta_defines(
-                &mut this_transpiler.options.define,
+                std::sync::Arc::get_mut(&mut this_transpiler.options.define)
+                    .expect("not shared before the bundle starts"),
                 crate::bake::Mode::Development,
                 crate::bake::Side::Server,
             )?;
             crate::bake::bake_body::add_import_meta_defines(
-                &mut ct.options.define,
+                std::sync::Arc::get_mut(&mut ct.options.define)
+                    .expect("not shared before the bundle starts"),
                 crate::bake::Mode::Development,
                 crate::bake::Side::Client,
             )?;
@@ -653,15 +656,16 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
-            // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
-            // drop at scope exit; the arena bulk-free skips Drop. Outlives the
-            // BACKREF passed to `generate_from_cli`.
-            let mut event_loop = bun_event_loop::AnyEventLoop::init();
+            // Process-lifetime like the CLI arena `this_transpiler` lives in
+            // (and, under `--watch`, referenced by the watcher thread for as long).
+            let heap: &'static bun_bundler::bundle_v2::BundleHeap =
+                Box::leak(Box::new(bun_bundler::bundle_v2::BundleHeap::new()));
+            let _ = arena;
 
             let build_result = match BundleV2::generate_from_cli(
-                bun_ptr::ParentRef::from_ref_mut(this_transpiler),
-                arena,
-                Some(core::ptr::NonNull::from(&mut event_loop)),
+                this_transpiler,
+                heap,
+                bun_event_loop::AnyEventLoop::init(),
                 ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,

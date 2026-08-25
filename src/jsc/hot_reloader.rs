@@ -1324,13 +1324,10 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
-        let handle = self
-            .bun_watcher
-            .expect("bun_watcher_mut on un-enabled BundleV2 reloader");
-        // SAFETY: `Box<Watcher>` leaked via `into_raw` in `install_bun_watcher`;
-        // live for the process (BundleV2 is leaked under --watch — see
-        // `generate_from_cli`).
-        unsafe { &mut *handle.as_ptr() }
+        self.bun_watcher
+            .as_deref_mut()
+            .and_then(bun_bundler::bundle_v2::BundleWatcher::as_watcher_mut)
+            .expect("bun_watcher_mut on un-enabled BundleV2 reloader")
     }
 
     fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
@@ -1365,14 +1362,11 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         watcher: Box<Watcher>,
         _reload_immediately: bool,
     ) -> *mut Watcher {
-        // `watcher_nn` is a fresh non-null heap allocation; live for the
-        // process (BundleV2 is leaked under --watch — see `generate_from_cli`).
-        let watcher_nn = bun_core::heap::into_raw_nn(watcher);
-        let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
-        self.bun_watcher = Some(watcher_nn);
-        // SAFETY: `watcher_ptr` was just installed; live for the process.
-        self.transpiler_mut().resolver.watcher =
-            Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        let mut watcher = watcher;
+        self.transpiler_mut().resolver.watcher = Some(watcher.get_resolve_watcher());
+        let watcher_ptr: *mut Watcher = &raw mut *watcher;
+        // Owned by the bundle, which `bun build --watch` leaks for the process.
+        self.bun_watcher = Some(watcher);
         watcher_ptr
     }
 

@@ -1,13 +1,6 @@
-// This pass works over ~20 simultaneous mutable column slices
-// (`this.graph.ast.items(.field)`) freely interleaved with
-// `&mut LinkerContext` method calls. Rust's borrowck forbids both holding
-// overlapping `&mut [T]` columns from the same `MultiArrayList` and holding
-// any `&mut` column across a `&mut self` call into `this.graph`. The columns
-// are physically disjoint (SoA layout) and the underlying `MultiArrayList`
-// never reallocates inside this function, so we cache the column
-// base pointers once via `Slice::items_raw` and dereferences them at each
-// use site through `*mut [T]`. This is the documented escape hatch in
-// `bun_collections::multi_array_list::Slice::items_raw`.
+// This pass works over ~20 SoA columns of `this.graph.{ast,meta,files}`
+// interleaved with `&mut LinkerGraph` method calls, so columns are fetched at
+// each use rather than held.
 
 use crate::mal_prelude::*;
 use bun_ast::Source;
@@ -15,16 +8,17 @@ use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
 use bun_collections::{HashMap, VecExt};
 use bun_core::FeatureFlags;
 
-use crate::bundled_ast::{self, NamedExports, NamedImports};
-use crate::options::{self, Format, Loader};
+use crate::bundled_ast::{self, NamedExports};
+use crate::options::{self, Format};
 use crate::perf;
 use crate::{
-    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext, Part,
-    RefImportData, ResolvedExports, WrapKind, js_meta,
+    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext, LinkerGraph,
+    Part, RefImportData, ResolvedExports, WrapKind, js_meta,
 };
 use bun_ast::symbol::{self, Kind as SymbolKind};
-use bun_ast::{Dependency, ExportsKind, PartList, Ref};
+use bun_ast::{Dependency, ExportsKind, Ref};
 
+use crate::Graph::Graph;
 use crate::linker_context_mod::LinkerCtx;
 
 type AstFlags = bundled_ast::Flags;
@@ -48,83 +42,17 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
     }
 }
 
-/// Short-lived `&mut [T]` deref of a `split_raw()` column pointer at a single
-/// use site.
-///
-/// SoA columns are physically disjoint (`COLUMN_OFFSET_PER_CAP`); the backing
-/// buffer is never reallocated inside this function (only column *element*
-/// contents grow, e.g. `Vec<Part>::append`). The pointers come from
-/// `split_raw()`, which derives them by raw `add` on the heap buffer base —
-/// root/SharedRW provenance, no `&mut` intermediate — so they survive the
-/// interleaved `&mut LinkerContext` method calls in steps 3-5 under Stacked
-/// Borrows. (Decaying `split_mut()`'s `&mut [T]` to raw would *not*: the child
-/// Unique tag is popped the first time another column accessor runs.)
-macro_rules! col {
-    ($p:expr) => {
-        // SAFETY: see module-level note. Caller ensures no aliasing `&mut` to
-        // the *same* column is live across this deref.
-        unsafe { &mut *$p }
-    };
-}
-
-/// Short-lived `&[T]` deref of a `split_raw()` column pointer.
-macro_rules! col_ref {
-    ($p:expr) => {
-        // SAFETY: see `col!`.
-        unsafe { &*$p }
-    };
-}
-
-pub(crate) fn scan_imports_and_exports(
-    this: &mut LinkerContext,
+pub(crate) fn scan_imports_and_exports<'a>(
+    this: &mut LinkerContext<'a>,
+    pg: &Graph<'a>,
+    pool: &crate::ThreadPool<'a>,
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
     let output_format = this.options.output_format;
 
     // `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
-    let mut reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
-
-    // ── cache SoA column base pointers ────────────────────────────────────
-    // `MultiArrayList` never reallocates inside this function (only column
-    // *element* contents grow, e.g. `Vec<Part>::append`). So these raw
-    // column pointers are valid for the whole body. `split_raw()` derives
-    // each `*mut [T]` directly from the buffer base (root provenance) — see
-    // the `col!` doc-comment for why `split_mut()` is not used here.
-    let ast = this.graph.ast.split_raw();
-    let meta = this.graph.meta.split_raw();
-    let files = this.graph.files.split_raw();
-    // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the
-    // lifetime of the link step. Read-only — this function never writes to it.
-    let input = this.parse_graph().input_files.split_raw();
-
-    use crate::bundled_ast::CssCol;
-    let import_records_list: *mut [ImportRecordList<'_>] = ast.import_records;
-    let exports_kind: *mut [ExportsKind] = ast.exports_kind;
-    let entry_point_kinds: *mut [EntryPoint::Kind] = files.entry_point_kind;
-    let named_imports: *mut [NamedImports] = ast.named_imports;
-    let named_exports: *mut [NamedExports] = ast.named_exports;
-    let flags: *mut [js_meta::Flags] = meta.flags;
-    let ast_flags_list: *mut [AstFlags] = ast.flags;
-    let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
-    let exports_refs: *mut [Ref] = ast.exports_ref;
-    let module_refs: *mut [Ref] = ast.module_ref;
-    let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
-    let parts_list: *mut [PartList] = ast.parts;
-    // Element is a *mutable* nullable
-    // pointer (`BundledAst.css: Option<*mut BundlerStyleSheet>`).
-    let css_asts: *mut [CssCol] = ast.css;
-
-    let input_files: *mut [Source] = input.source;
-    let loaders: *mut [Loader] = input.loader;
-
-    let resolved_exports: *mut [ResolvedExports] = meta.resolved_exports;
-    let resolved_export_stars: *mut [ExportData] = meta.resolved_export_star;
-    let imports_to_bind_list: *mut [RefImportData] = meta.imports_to_bind;
-    let wrapper_part_indices: *mut [Index] = meta.wrapper_part_index;
-    let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
-        meta.sorted_and_filtered_export_aliases;
-    let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
+    let reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -133,48 +61,48 @@ pub(crate) fn scan_imports_and_exports(
             let id = source_index_.get() as usize;
 
             // does it have a JS AST?
-            if !(id < col_ref!(import_records_list).len()) {
+            if !(id < this.graph.ast.items_import_records().len()) {
                 continue;
             }
 
             // Is it CSS?
-            if col_ref!(css_asts)[id].is_some() {
+            if this.graph.ast.items_css()[id].is_some() {
                 // Inline URLs for non-CSS files into the CSS file
                 let _ = LinkerContext::scan_css_imports(
                     id as u32,
-                    col_ref!(import_records_list)[id].as_slice(),
-                    css_asts,
-                    col_ref!(input_files),
-                    col_ref!(loaders),
-                    // `log_disjoint`: split-borrow with the SoA column refs above.
-                    this.log_disjoint(),
+                    this.graph.ast.items_import_records()[id].as_slice(),
+                    this.graph.ast.items_css(),
+                    pg.input_files.items_source(),
+                    pg.input_files.items_loader(),
+                    &mut this.log,
                 );
 
                 // Validate cross-file "composes: ... from" named imports and
                 // composes-from property collisions.
-                __css_validation::validate_css_import_composes(
-                    this,
-                    id,
-                    css_asts,
-                    import_records_list,
-                    input_files,
-                );
+                __css_validation::validate_css_import_composes(this, pg, id);
 
                 continue;
             }
 
-            for record in col_ref!(import_records_list)[id].as_slice() {
+            let code_splitting = this.graph.code_splitting;
+            let ast = this.graph.ast.split_mut();
+            let import_records: &[ImportRecordList<'_>] = ast.import_records;
+            let ast_flags: &[AstFlags] = ast.flags;
+            let exports_kind: &mut [ExportsKind] = ast.exports_kind;
+            let meta_flags: &mut [js_meta::Flags] = this.graph.meta.items_flags_mut();
+            let entry_point_kinds = this.graph.files.items_entry_point_kind();
+            for record in import_records[id].as_slice() {
                 if !record.source_index.is_valid() {
                     continue;
                 }
 
                 let other_file = record.source_index.get() as usize;
-                let other_flags = col_ref!(ast_flags_list)[other_file];
+                let other_flags = ast_flags[other_file];
                 // other file is empty
-                if other_file >= col_ref!(exports_kind).len() {
+                if other_file >= exports_kind.len() {
                     continue;
                 }
-                let other_kind = col_ref!(exports_kind)[other_file];
+                let other_kind = exports_kind[other_file];
 
                 match record.kind {
                     ImportKind::Stmt => {
@@ -206,10 +134,10 @@ pub(crate) fn scan_imports_and_exports(
                                 .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS))
                             && !other_flags.contains(AstFlags::HAS_LAZY_EXPORT)
                             && !other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
-                            && col_ref!(exports_kind)[other_file] == ExportsKind::None
+                            && exports_kind[other_file] == ExportsKind::None
                         {
-                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
-                            col!(flags)[other_file].wrap = WrapKind::Cjs;
+                            exports_kind[other_file] = ExportsKind::Cjs;
+                            meta_flags[other_file].wrap = WrapKind::Cjs;
                         }
 
                         if record
@@ -217,8 +145,8 @@ pub(crate) fn scan_imports_and_exports(
                             .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
                             && other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                         {
-                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
-                            col!(flags)[other_file].wrap = WrapKind::Cjs;
+                            exports_kind[other_file] = ExportsKind::Cjs;
+                            meta_flags[other_file].wrap = WrapKind::Cjs;
                         }
                     }
                     ImportKind::Require =>
@@ -226,26 +154,34 @@ pub(crate) fn scan_imports_and_exports(
                     // unless a split `require()` loads the file at runtime as its own
                     // chunk (no wrapper, the same as a cross-chunk `import()` below).
                     {
-                        if !this.is_external_dynamic_import(record, id as u32) {
+                        // Inline `LinkerContext::is_external_dynamic_import` (the
+                        // columns are split-borrowed here).
+                        let is_external = code_splitting
+                            && other_file != id
+                            && record
+                                .flags
+                                .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+                            && entry_point_kinds[other_file].is_entry_point();
+                        if !is_external {
                             if other_kind == ExportsKind::Esm {
-                                col!(flags)[other_file].wrap = WrapKind::Esm;
+                                meta_flags[other_file].wrap = WrapKind::Esm;
                             } else {
                                 // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
-                                col!(flags)[other_file].wrap = WrapKind::Cjs;
-                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                                meta_flags[other_file].wrap = WrapKind::Cjs;
+                                exports_kind[other_file] = ExportsKind::Cjs;
                             }
                         }
                     }
                     ImportKind::Dynamic => {
-                        if !this.graph.code_splitting {
+                        if !code_splitting {
                             // If we're not splitting, then import() is just a require() that
                             // returns a promise, so the imported file must be a CommonJS module
-                            if col_ref!(exports_kind)[other_file] == ExportsKind::Esm {
-                                col!(flags)[other_file].wrap = WrapKind::Esm;
+                            if exports_kind[other_file] == ExportsKind::Esm {
+                                meta_flags[other_file].wrap = WrapKind::Esm;
                             } else {
                                 // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
-                                col!(flags)[other_file].wrap = WrapKind::Cjs;
-                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                                meta_flags[other_file].wrap = WrapKind::Cjs;
+                                exports_kind[other_file] = ExportsKind::Cjs;
                             }
                         }
                     }
@@ -253,18 +189,18 @@ pub(crate) fn scan_imports_and_exports(
                 }
             }
 
-            let kind = col_ref!(exports_kind)[id];
+            let kind = exports_kind[id];
 
             // If the output format doesn't have an implicit CommonJS wrapper, any file
             // that uses CommonJS features will need to be wrapped, even though the
             // resulting wrapper won't be invoked by other files. An exception is
             // made for entry point files in CommonJS format (or when in pass-through mode).
             if kind == ExportsKind::Cjs
-                && (!col_ref!(entry_point_kinds)[id].is_entry_point()
+                && (!this.graph.files.items_entry_point_kind()[id].is_entry_point()
                     || output_format == Format::Iife
                     || output_format == Format::Esm)
             {
-                col!(flags)[id].wrap = WrapKind::Cjs;
+                meta_flags[id].wrap = WrapKind::Cjs;
             }
         }
 
@@ -274,22 +210,16 @@ pub(crate) fn scan_imports_and_exports(
         // bundle time.
         {
             let _trace = perf::trace("Bundler.WrapDependencies");
-            // SAFETY: `split_raw()`-derived column ptrs carry root provenance
-            // from the `MultiArrayList` heap buffer; this block holds no other
-            // borrow into ast/meta/files and makes no `&mut this` calls, so
-            // the reborrows are exclusive for the block. All five derefs share
-            // the same invariant, so they are grouped under one `unsafe`.
-            let mut dependency_wrapper = unsafe {
-                DependencyWrapper {
-                    flags: &mut *flags,
-                    import_records: &*import_records_list,
-                    exports_kind: &mut *exports_kind,
-                    entry_point_kinds: &*entry_point_kinds,
-                    export_star_map: HashMap::default(),
-                    export_star_records: &*export_star_import_records,
-                    output_format,
-                    wrap_stack: Vec::new(),
-                }
+            let ast = this.graph.ast.split_mut();
+            let mut dependency_wrapper = DependencyWrapper {
+                flags: this.graph.meta.items_flags_mut(),
+                import_records: &*ast.import_records,
+                exports_kind: ast.exports_kind,
+                entry_point_kinds: this.graph.files.items_entry_point_kind(),
+                export_star_map: HashMap::default(),
+                export_star_records: &*ast.export_star_import_records,
+                output_format,
+                wrap_stack: Vec::new(),
             };
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
@@ -333,7 +263,7 @@ pub(crate) fn scan_imports_and_exports(
         // discover all modules that can have dynamic exports because export stars
         // are ignored for those modules.
         {
-            let mut export_star_ctx: Option<ExportStarContext> = None;
+            let mut source_index_stack: Vec<IndexInt> = Vec::new();
             let _trace = perf::trace("Bundler.ResolveExportStarStatements");
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
@@ -342,36 +272,37 @@ pub(crate) fn scan_imports_and_exports(
                 // Expression-style loaders defer code generation until linking. Code
                 // generation is done here because at this point we know that the
                 // "ExportsKind" field has its final value and will not be changed.
-                if col_ref!(ast_flags_list)[id].contains(AstFlags::HAS_LAZY_EXPORT) {
-                    this.generate_code_for_lazy_export(id as u32)?;
+                if this.graph.ast.items_flags()[id].contains(AstFlags::HAS_LAZY_EXPORT) {
+                    crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export(
+                        this, pg, id as u32,
+                    )?;
                 }
 
                 // Propagate exports for export star statements
-                if col_ref!(export_star_import_records)[id].len() > 0 {
-                    if export_star_ctx.is_none() {
-                        export_star_ctx = Some(ExportStarContext {
-                            import_records_list,
-                            export_star_records: export_star_import_records,
-                            imports_to_bind: imports_to_bind_list,
-                            source_index_stack: Vec::with_capacity(32),
-                            exports_kind,
-                            named_exports,
-                        });
+                if this.graph.ast.items_export_star_import_records()[id].len() > 0 {
+                    if source_index_stack.capacity() == 0 {
+                        source_index_stack.reserve(32);
                     }
-                    export_star_ctx.as_mut().unwrap().add_exports(
-                        resolved_exports,
-                        id,
-                        source_index,
-                    );
+                    let ast = this.graph.ast.split_mut();
+                    let meta = this.graph.meta.split_mut();
+                    ExportStarContext {
+                        import_records_list: &*ast.import_records,
+                        export_star_records: &*ast.export_star_import_records,
+                        imports_to_bind: meta.imports_to_bind,
+                        source_index_stack: &mut source_index_stack,
+                        exports_kind: &*ast.exports_kind,
+                        named_exports: &*ast.named_exports,
+                    }
+                    .add_exports(meta.resolved_exports, id, source_index);
                 }
 
                 // Also add a special export so import stars can bind to it. This must be
                 // done in this step because it must come after CommonJS module discovery
                 // but before matching imports with exports.
-                col!(resolved_export_stars)[id] = ExportData {
+                this.graph.meta.items_resolved_export_star_mut()[id] = ExportData {
                     data: ImportTracker {
                         source_index: Index::source(source_index),
-                        import_ref: col_ref!(exports_refs)[id],
+                        import_ref: this.graph.ast.items_exports_ref()[id],
                         ..Default::default()
                     },
                     ..Default::default()
@@ -392,66 +323,66 @@ pub(crate) fn scan_imports_and_exports(
                 let source_index = source_index_.get() as usize;
 
                 // not a JS ast or empty
-                if source_index >= col_ref!(named_imports).len() {
+                if source_index >= this.graph.ast.items_named_imports().len() {
                     continue;
                 }
 
-                if col_ref!(named_imports)[source_index].count() > 0 {
-                    this.match_imports_with_exports_for_file(
-                        // SAFETY: `named_imports` is a raw column ptr;
-                        // pass the element by raw `*const` so no `&mut`
-                        // protector spans the `&mut this` call (the callee
-                        // re-reads this same column via `self.graph.ast`).
-                        unsafe { core::ptr::addr_of!((*named_imports)[source_index]) },
-                        &mut col!(imports_to_bind_list)[source_index],
-                        source_index_.get(),
-                    );
+                if this.graph.ast.items_named_imports()[source_index].count() > 0 {
+                    this.match_imports_with_exports_for_file(pg, source_index_.get());
 
-                    if this.log().errors > 0 {
+                    if this.log.errors > 0 {
                         return Err(ScanImportsAndExportsError::ImportResolutionFailed);
                     }
                 }
-                let export_kind = col_ref!(exports_kind)[source_index];
-                let mut flag = col_ref!(flags)[source_index];
+                let export_kind = this.graph.ast.items_exports_kind()[source_index];
+                let mut flag = this.graph.meta.items_flags()[source_index];
                 // If we're exporting as CommonJS and this file was originally CommonJS,
                 // then we'll be using the actual CommonJS "exports" and/or "module"
                 // symbols. In that case make sure to mark them as such so they don't
                 // get minified.
                 if (output_format == Format::Cjs)
-                    && col_ref!(entry_point_kinds)[source_index].is_entry_point()
+                    && this.graph.files.items_entry_point_kind()[source_index].is_entry_point()
                     && export_kind == ExportsKind::Cjs
                     && flag.wrap == WrapKind::None
                 {
                     let exports_ref = this
                         .graph
                         .symbols
-                        .follow(col_ref!(exports_refs)[source_index]);
+                        .follow(this.graph.ast.items_exports_ref()[source_index]);
                     let module_ref = this
                         .graph
                         .symbols
-                        .follow(col_ref!(module_refs)[source_index]);
-                    // SAFETY: `follow` returns a valid in-bounds `Ref`; no other
-                    // borrow into `this.graph.symbols` is live across this write.
-                    unsafe { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
-                    // SAFETY: same as above; `module_ref` is a distinct slot.
-                    unsafe { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
+                        .follow(this.graph.ast.items_module_ref()[source_index]);
+                    this.graph
+                        .symbols
+                        .get_mut(exports_ref)
+                        .expect("infallible: followed ref")
+                        .kind = SymbolKind::Unbound;
+                    this.graph
+                        .symbols
+                        .get_mut(module_ref)
+                        .expect("infallible: followed ref")
+                        .kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
                 {
                     flag.needs_exports_variable = true;
-                    col!(flags)[source_index] = flag;
+                    this.graph.meta.items_flags_mut()[source_index] = flag;
                 }
 
-                let wrapped_ref = col_ref!(wrapper_refs)[source_index];
+                let wrapped_ref = this.graph.ast.items_wrapper_ref()[source_index];
 
                 // Create the wrapper part for wrapped files. This is needed by a later step.
+                let mut wrapper_part_index =
+                    this.graph.meta.items_wrapper_part_index()[source_index];
                 this.create_wrapper_for_file(
                     flag.wrap,
                     // if this one is null, the AST does not need to be wrapped.
                     wrapped_ref,
-                    &mut col!(wrapper_part_indices)[source_index],
+                    &mut wrapper_part_index,
                     source_index_.get(),
                 );
+                this.graph.meta.items_wrapper_part_index_mut()[source_index] = wrapper_part_index;
             }
         }
 
@@ -459,46 +390,7 @@ pub(crate) fn scan_imports_and_exports(
         // for CommonJS files, and is also necessary for other files if they are
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
-        //
-        // `do_step5` only touches distinct SoA rows per `source_index` (the
-        // columns are pre-sized and never reallocate during this step).
-        // We pass `*mut LinkerContext` through a
-        // `Sync` wrapper; the callee derefs it to `&LinkerContext` (shared)
-        // for reads and writes per-row cells via raw `split_raw()` pointers —
-        // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
-        // forms `&mut LinkerContext`).
-        {
-            #[repr(transparent)]
-            struct Step5Ctx<'a>(*mut LinkerContext<'a>);
-            // SAFETY: the pointer is only dereferenced to `&LinkerContext` for
-            // reads plus raw `*mut` per-row SoA cells for disjoint-row writes
-            // (see `do_step5` doc); lifetime is bounded by the blocking
-            // `each()` call below. The `ThreadPool::Worker` it acquires is
-            // per-OS-thread.
-            unsafe impl core::marker::Sync for Step5Ctx<'_> {}
-
-            let ctx = Step5Ctx(core::ptr::from_mut::<LinkerContext<'_>>(this));
-            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
-            // the link step); `pool` is the arena-allocated bundler ThreadPool
-            // set in `BundleV2::init`.
-            let worker_pool = this.worker_pool();
-            // `each` requires `&mut [V]`; `reachable` is a private snapshot Vec
-            // so reborrow it mutably (not actually mutated by the by-value
-            // variant). Step 6 reuses it afterwards.
-            worker_pool.each(
-                ctx,
-                |ctx: &Step5Ctx<'_>, source_index: Index, i: usize| {
-                    // SAFETY: see `Step5Ctx` Sync justification above.
-                    unsafe { LinkerContext::do_step5(ctx.0, source_index, i) };
-                },
-                &mut reachable[..],
-            );
-        }
-
-        // No post-fan-out ownership transfer is needed: `do_step5` only grows
-        // global-allocator `Vec`s (`part.dependencies`, `declared_symbols`),
-        // which are thread-safe to grow per-row, and never pushes to the
-        // arena-backed `PartList`/import-record columns.
+        crate::linker_context::do_step5::do_step5(this, pool, &reachable);
     }
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
@@ -519,15 +411,15 @@ pub(crate) fn scan_imports_and_exports(
             let source_index = source_index_.get();
             let id = source_index as usize;
 
-            let is_entry_point = col_ref!(entry_point_kinds)[id].is_entry_point();
-            let aliases = &col_ref!(sorted_aliases)[id];
-            let flag = col_ref!(flags)[id];
+            let is_entry_point = this.graph.files.items_entry_point_kind()[id].is_entry_point();
+            let aliases_len = this.graph.meta.items_sorted_and_filtered_export_aliases()[id].len();
+            let flag = this.graph.meta.items_flags()[id];
             let wrap = flag.wrap;
-            let export_kind = col_ref!(exports_kind)[id];
-            let source: &Source = &col_ref!(input_files)[id];
+            let export_kind = this.graph.ast.items_exports_kind()[id];
+            let source: &Source = &pg.input_files.items_source()[id];
 
-            let exports_ref = col_ref!(exports_refs)[id];
-            let module_ref = col_ref!(module_refs)[id];
+            let exports_ref = this.graph.ast.items_exports_ref()[id];
+            let module_ref = this.graph.ast.items_module_ref()[id];
 
             // Format the source identifier once into a reusable scratch so the
             // per-file `init_/exports_/module_` writes below are plain memcpys
@@ -547,7 +439,9 @@ pub(crate) fn scan_imports_and_exports(
             let string_buffer_len: usize = 'brk: {
                 let mut count: usize = 0;
                 if is_entry_point && output_format == Format::Esm {
-                    for alias in aliases.iter() {
+                    for alias in
+                        this.graph.meta.items_sorted_and_filtered_export_aliases()[id].iter()
+                    {
                         count += bun_core::fmt::count(format_args!(
                             "export_{}",
                             bun_core::fmt::fmt_identifier(alias)
@@ -557,7 +451,7 @@ pub(crate) fn scan_imports_and_exports(
 
                 let ident_fmt_len = ident.len();
 
-                if wrap == WrapKind::Esm && col_ref!(wrapper_refs)[id].is_valid() {
+                if wrap == WrapKind::Esm && this.graph.ast.items_wrapper_ref()[id].is_valid() {
                     count += "init_".len() + ident_fmt_len;
                 }
 
@@ -596,11 +490,12 @@ pub(crate) fn scan_imports_and_exports(
             // mutated later due to parallelism.
             if is_entry_point && output_format == Format::Esm {
                 let mut copies: bun_alloc::AstVec<Ref> =
-                    bun_alloc::AstAlloc::vec_with_capacity(aliases.len());
-                copies.resize(aliases.len(), Ref::NONE);
+                    bun_alloc::AstAlloc::vec_with_capacity(aliases_len);
+                copies.resize(aliases_len, Ref::NONE);
 
-                debug_assert_eq!(aliases.len(), copies.len());
-                for (alias, copy) in aliases.iter().zip(copies.iter_mut()) {
+                for (i, copy) in copies.iter_mut().enumerate() {
+                    let alias: &[u8] =
+                        &this.graph.meta.items_sorted_and_filtered_export_aliases()[id][i];
                     let original_name = builder.fmt(format_args!(
                         "export_{}",
                         bun_core::fmt::fmt_identifier(alias)
@@ -611,22 +506,23 @@ pub(crate) fn scan_imports_and_exports(
                         original_name,
                     );
                 }
-                col!(cjs_export_copies)[id] = copies;
+                this.graph.meta.items_cjs_export_copies_mut()[id] = copies;
             }
 
             // Use "init_*" for ESM wrappers instead of "require_*"
             if wrap == WrapKind::Esm {
-                let r#ref = col_ref!(wrapper_refs)[id];
+                let r#ref = this.graph.ast.items_wrapper_ref()[id];
                 if r#ref.is_valid() {
                     let start = builder.len;
                     builder.append(b"init_");
                     builder.append(ident);
                     let end = builder.len;
                     let original_name = &builder.allocated_slice()[start..end];
-                    // SAFETY: `r#ref` was checked `is_valid()` above; no other
-                    // borrow into `this.graph.symbols` is live across this write.
-                    unsafe { this.graph.symbol_mut(r#ref) }.original_name =
-                        bun_ast::StoreStr::new(original_name);
+                    this.graph
+                        .symbols
+                        .get_mut(r#ref)
+                        .expect("infallible: valid ref")
+                        .original_name = bun_ast::StoreStr::new(original_name);
                 }
             }
 
@@ -653,15 +549,13 @@ pub(crate) fn scan_imports_and_exports(
                 // Note: it's possible for the symbols table to be resized
                 // so we cannot call .get() above this scope.
                 if exports_ref.is_valid() {
-                    if let Some(s) = this.graph.symbols.get(exports_ref) {
-                        // SAFETY: `Map::get` returns a stable `*mut Symbol`.
-                        unsafe { (*s).original_name = exports_name };
+                    if let Some(s) = this.graph.symbols.get_mut(exports_ref) {
+                        s.original_name = exports_name;
                     }
                 }
                 if module_ref.is_valid() {
-                    if let Some(s) = this.graph.symbols.get(module_ref) {
-                        // SAFETY: `Map::get` returns a stable `*mut Symbol`.
-                        unsafe { (*s).original_name = module_name };
+                    if let Some(s) = this.graph.symbols.get_mut(module_ref) {
+                        s.original_name = module_name;
                     }
                 }
             }
@@ -690,50 +584,39 @@ pub(crate) fn scan_imports_and_exports(
             }
 
             {
-                let imports_to_bind = &col_ref!(imports_to_bind_list)[id];
-                debug_assert_eq!(imports_to_bind.keys().len(), imports_to_bind.values().len());
-                // Iterate by index so we can
-                // re-borrow `parts` after each `top_level_symbol_to_parts` call.
-                for itb_i in 0..imports_to_bind.keys().len() {
-                    let r#ref: Ref = col_ref!(imports_to_bind_list)[id].keys()[itb_i];
-                    let import_source_index;
-                    let import_ref;
-                    // `BackRef<[Dependency]>` — points into the `imports_to_bind`
-                    // value column, which is not mutated for the rest of this
-                    // loop body; the backref invariant (pointee outlives holder)
-                    // lets the inner-loop reads go through safe `Deref`.
-                    let re_exports_ptr: bun_ptr::BackRef<[Dependency]>;
-                    {
-                        let import: &ImportData =
-                            &col_ref!(imports_to_bind_list)[id].values()[itb_i];
-                        import_source_index = import.data.source_index.get();
-                        import_ref = import.data.import_ref;
-                        re_exports_ptr = bun_ptr::BackRef::new(import.re_exports.slice());
-                    }
+                // Everything read below comes from `meta` columns or other
+                // `ast` columns than `parts`, the one written.
+                let LinkerGraph {
+                    ast, meta, symbols, ..
+                } = &mut this.graph;
+                let ast = ast.split_mut();
+                let imports_to_bind = &meta.items_imports_to_bind()[id];
+                let tlsp_overlay = meta.items_top_level_symbol_to_parts_overlay();
+                let named_imports = &ast.named_imports[id];
+                let file_parts = ast.parts[id].as_mut_slice();
+                for (&r#ref, import) in imports_to_bind.keys().iter().zip(imports_to_bind.values()) {
+                    let import: &ImportData = import;
+                    let import_source_index = import.data.source_index.get();
+                    let import_ref = import.data.import_ref;
+                    let re_exports: &[Dependency] = import.re_exports.slice();
 
-                    if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
-                        // `local_parts_with_uses` and the `top_level_symbol_to_parts`
-                        // result are both arena-backed AstVec slices that this loop
-                        // body never resizes; capture them as BackRefs (same
-                        // discipline as `re_exports_ptr` above) so we can take
-                        // `&mut col!(parts_list)[id]` without cloning.
-                        let local_parts: bun_ptr::BackRef<[u32]> =
-                            bun_ptr::BackRef::new(named_import.local_parts_with_uses.slice());
-                        let parts_declaring_symbol: bun_ptr::BackRef<[u32]> = bun_ptr::BackRef::new(
-                            this.graph
-                                .top_level_symbol_to_parts(import_source_index, import_ref),
-                        );
-                        for &part_index in &*local_parts {
-                            let part: &mut Part =
-                                &mut col!(parts_list)[id].as_mut_slice()[part_index as usize];
-                            let re_exports: &[Dependency] = &re_exports_ptr;
+                    if let Some(named_import) = named_imports.get(&r#ref) {
+                        let parts_declaring_symbol: &[u32] =
+                            crate::linker_graph::top_level_symbol_to_parts(
+                                tlsp_overlay,
+                                &*ast.top_level_symbols_to_parts,
+                                import_source_index,
+                                import_ref,
+                            );
+                        for &part_index in named_import.local_parts_with_uses.slice() {
+                            let part: &mut Part = &mut file_parts[part_index as usize];
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
                                 + part.dependencies.len() as usize;
                             part.dependencies.ensure_total_capacity(total_len);
 
                             // Depend on the file containing the imported symbol
-                            for &resolved_part_index in &*parts_declaring_symbol {
+                            for &resolved_part_index in parts_declaring_symbol {
                                 part.dependencies.append_assume_capacity(Dependency {
                                     source_index: bun_ast::Index::source(
                                         import_source_index as usize,
@@ -748,7 +631,7 @@ pub(crate) fn scan_imports_and_exports(
                         }
                     }
 
-                    let _ = this.graph.symbols.merge(r#ref, import_ref);
+                    let _ = symbols.merge(r#ref, import_ref);
                 }
             }
 
@@ -762,13 +645,14 @@ pub(crate) fn scan_imports_and_exports(
                 let mut dependencies =
                     bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
 
-                for alias in col_ref!(sorted_aliases)[id].iter() {
-                    let exp = col_ref!(resolved_exports)[id].get(alias).unwrap();
+                let meta = &this.graph.meta;
+                for alias in meta.items_sorted_and_filtered_export_aliases()[id].iter() {
+                    let exp = meta.items_resolved_exports()[id].get(alias).unwrap();
                     let mut target_source_index = exp.data.source_index;
                     let mut target_ref = exp.data.import_ref;
 
                     // If this is an import, then target what the import points to
-                    if let Some(import_data) = col_ref!(imports_to_bind_list)
+                    if let Some(import_data) = this.graph.meta.items_imports_to_bind()
                         [target_source_index.get() as usize]
                         .get(&target_ref)
                     {
@@ -810,7 +694,7 @@ pub(crate) fn scan_imports_and_exports(
                 if add_wrapper {
                     dependencies.push(Dependency {
                         source_index: bun_ast::Index::source(source_index as usize),
-                        part_index: col_ref!(wrapper_part_indices)[id].get(),
+                        part_index: this.graph.meta.items_wrapper_part_index()[id].get(),
                     });
                 }
 
@@ -839,12 +723,12 @@ pub(crate) fn scan_imports_and_exports(
             bun_core::scoped_log!(
                 LinkerCtx,
                 "Binding {} imports for file {} (#{})",
-                col_ref!(import_records_list)[id].len(),
+                this.graph.ast.items_import_records()[id].len(),
                 bstr::BStr::new(&source.path.text),
                 id
             );
 
-            let parts_len = col_ref!(parts_list)[id].len() as usize;
+            let parts_len = this.graph.ast.items_parts()[id].len() as usize;
             for part_index in 0..parts_len {
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
@@ -853,15 +737,17 @@ pub(crate) fn scan_imports_and_exports(
                 // Imports of wrapped files must depend on the wrapper
                 // Iterate by index so each iteration re-borrows
                 // `import_records` (the body calls `&mut this.graph` methods).
-                let import_record_indices_len = col_ref!(parts_list)[id].as_slice()[part_index]
+                let import_record_indices_len = this.graph.ast.items_parts()[id].as_slice()
+                    [part_index]
                     .import_record_indices
                     .len() as usize;
                 for iri in 0..import_record_indices_len {
-                    let import_record_index = col_ref!(parts_list)[id].as_slice()[part_index]
+                    let import_record_index = this.graph.ast.items_parts()[id].as_slice()
+                        [part_index]
                         .import_record_indices
                         .slice()[iri];
                     let (kind, rec_source_index, rec_flags) = {
-                        let record = &col_ref!(import_records_list)[id].as_slice()
+                        let record = &this.graph.ast.items_import_records()[id].as_slice()
                             [import_record_index as usize];
                         (record.kind, record.source_index, record.flags)
                     };
@@ -871,7 +757,7 @@ pub(crate) fn scan_imports_and_exports(
                     // Short-circuit: `is_external_dynamic_import` indexes by
                     // `record.source_index`, so it must only run when that index is valid.
                     let is_external_dyn = rec_source_index.is_valid() && {
-                        let record = &col_ref!(import_records_list)[id].as_slice()
+                        let record = &this.graph.ast.items_import_records()[id].as_slice()
                             [import_record_index as usize];
                         this.is_external_dynamic_import(record, source_index)
                     };
@@ -887,7 +773,7 @@ pub(crate) fn scan_imports_and_exports(
                         {
                             if rec_source_index.is_valid()
                                 && kind == ImportKind::Dynamic
-                                && col_ref!(ast_flags_list)[other_id]
+                                && this.graph.ast.items_flags()[other_id]
                                     .contains(AstFlags::FORCE_CJS_TO_ESM)
                             {
                                 // If the CommonJS module was converted to ESM
@@ -897,8 +783,11 @@ pub(crate) fn scan_imports_and_exports(
                                 // We create a default object with getters for each statically-known export
                                 // This is kind of similar to what Node.js does
                                 // Once we track usages of the dynamic import, we can remove this.
-                                if !col_ref!(named_exports)[other_id].contains(b"default") {
-                                    col!(flags)[other_id].needs_synthetic_default_export = true;
+                                if !this.graph.ast.items_named_exports()[other_id]
+                                    .contains(b"default")
+                                {
+                                    this.graph.meta.items_flags_mut()[other_id]
+                                        .needs_synthetic_default_export = true;
                                 }
 
                                 continue;
@@ -940,18 +829,21 @@ pub(crate) fn scan_imports_and_exports(
                                     // For other cases (static imports, truly external), use standard wrapping.
                                     if rec_source_index.is_valid()
                                         && is_external_dyn
-                                        && col_ref!(exports_kind)[rec_source_index.get() as usize]
+                                        && this.graph.ast.items_exports_kind()
+                                            [rec_source_index.get() as usize]
                                             == ExportsKind::Cjs
                                     {
                                         // Cross-chunk dynamic import to CJS - needs special handling in printer
-                                        col!(import_records_list)[id].as_mut_slice()
+                                        this.graph.ast.items_import_records_mut()[id]
+                                            .as_mut_slice()
                                             [import_record_index as usize]
                                             .flags
                                             .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
                                         to_esm_uses += 1;
                                     } else if kind != ImportKind::Dynamic {
                                         // Static imports to external CJS modules need __toESM wrapping
-                                        col!(import_records_list)[id].as_mut_slice()
+                                        this.graph.ast.items_import_records_mut()[id]
+                                            .as_mut_slice()
                                             [import_record_index as usize]
                                             .flags
                                             .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
@@ -965,13 +857,13 @@ pub(crate) fn scan_imports_and_exports(
                     }
 
                     debug_assert!(other_id < this.graph.meta.len());
-                    let other_flags = col_ref!(flags)[other_id];
-                    let other_export_kind = col_ref!(exports_kind)[other_id];
+                    let other_flags = this.graph.meta.items_flags()[other_id];
+                    let other_export_kind = this.graph.ast.items_exports_kind()[other_id];
                     let other_source_index = other_id as u32;
 
                     if other_flags.wrap != WrapKind::None {
                         // Depend on the automatically-generated require wrapper symbol
-                        let wrapper_ref = col_ref!(wrapper_refs)[other_id];
+                        let wrapper_ref = this.graph.ast.items_wrapper_ref()[other_id];
                         if wrapper_ref.is_valid() {
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
@@ -988,7 +880,7 @@ pub(crate) fn scan_imports_and_exports(
                             && other_export_kind == ExportsKind::Cjs
                             && output_format != Format::InternalBakeDev
                         {
-                            col!(import_records_list)[id].as_mut_slice()
+                            this.graph.ast.items_import_records_mut()[id].as_mut_slice()
                                 [import_record_index as usize]
                                 .flags
                                 .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
@@ -1004,7 +896,7 @@ pub(crate) fn scan_imports_and_exports(
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
                                 part_index as u32,
-                                col_ref!(exports_refs)[other_id],
+                                this.graph.ast.items_exports_ref()[other_id],
                                 1,
                                 Index::source(other_source_index),
                             )?;
@@ -1019,7 +911,7 @@ pub(crate) fn scan_imports_and_exports(
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
                             if kind == ImportKind::Require {
-                                col!(import_records_list)[id].as_mut_slice()
+                                this.graph.ast.items_import_records_mut()[id].as_mut_slice()
                                     [import_record_index as usize]
                                     .flags
                                     .insert(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
@@ -1037,7 +929,7 @@ pub(crate) fn scan_imports_and_exports(
                         this.graph.generate_symbol_import_and_use(
                             source_index,
                             part_index as u32,
-                            col_ref!(exports_refs)[other_id],
+                            this.graph.ast.items_exports_ref()[other_id],
                             1,
                             Index::source(other_source_index),
                         )?;
@@ -1048,9 +940,12 @@ pub(crate) fn scan_imports_and_exports(
                 // going to need the "__reExport" symbol from the runtime
                 let mut re_export_uses: u32 = 0;
 
-                for import_record_index in col_ref!(export_star_import_records)[id].iter() {
+                for star_index in 0..this.graph.ast.items_export_star_import_records()[id].len() {
+                    let import_record_index: u32 =
+                        this.graph.ast.items_export_star_import_records()[id][star_index];
+                    let import_record_index = &import_record_index;
                     let (rec_source_index,) = {
-                        let record = &col_ref!(import_records_list)[id].as_slice()
+                        let record = &this.graph.ast.items_import_records()[id].as_slice()
                             [*import_record_index as usize];
                         (record.source_index,)
                     };
@@ -1061,7 +956,7 @@ pub(crate) fn scan_imports_and_exports(
                         let other_source_index = rec_source_index.get();
                         let other_id = other_source_index as usize;
                         debug_assert!(other_id < this.graph.meta.len());
-                        let other_export_kind = col_ref!(exports_kind)[other_id];
+                        let other_export_kind = this.graph.ast.items_exports_kind()[other_id];
                         if other_source_index != source_index && other_export_kind.is_dynamic() {
                             happens_at_runtime = true;
                         }
@@ -1074,7 +969,7 @@ pub(crate) fn scan_imports_and_exports(
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
                                 part_index as u32,
-                                col_ref!(exports_refs)[other_id],
+                                this.graph.ast.items_exports_ref()[other_id],
                                 1,
                                 Index::source(other_source_index),
                             )?;
@@ -1086,12 +981,13 @@ pub(crate) fn scan_imports_and_exports(
                         this.graph.generate_symbol_import_and_use(
                             source_index,
                             part_index as u32,
-                            col_ref!(exports_refs)[id],
+                            this.graph.ast.items_exports_ref()[id],
                             1,
                             Index::source(source_index),
                         )?;
-                        col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
-                        col!(import_records_list)[id].as_mut_slice()[*import_record_index as usize]
+                        this.graph.ast.items_flags_mut()[id].insert(AstFlags::USES_EXPORTS_REF);
+                        this.graph.ast.items_import_records_mut()[id].as_mut_slice()
+                            [*import_record_index as usize]
                             .flags
                             .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
                         re_export_uses += 1;
@@ -1148,18 +1044,18 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // DependencyWrapper
 // ──────────────────────────────────────────────────────────────────────────
-struct DependencyWrapper<'a> {
-    flags: &'a mut [js_meta::Flags],
-    exports_kind: &'a mut [ExportsKind],
-    import_records: &'a [ImportRecordList<'a>],
+struct DependencyWrapper<'r, 'a> {
+    flags: &'r mut [js_meta::Flags],
+    exports_kind: &'r mut [ExportsKind],
+    import_records: &'r [ImportRecordList<'a>],
     export_star_map: HashMap<IndexInt, ()>,
-    entry_point_kinds: &'a [EntryPoint::Kind],
-    export_star_records: &'a [bun_alloc::AstVec<u32>],
+    entry_point_kinds: &'r [EntryPoint::Kind],
+    export_star_records: &'r [bun_alloc::AstVec<u32>],
     output_format: options::Format,
     wrap_stack: Vec<IndexInt>,
 }
 
-impl DependencyWrapper<'_> {
+impl DependencyWrapper<'_, '_> {
     fn has_dynamic_exports_due_to_export_star(&mut self, source_index: IndexInt) -> bool {
         // Terminate the traversal now if this file already has dynamic exports
         let export_kind = self.exports_kind[source_index as usize];
@@ -1238,23 +1134,23 @@ impl DependencyWrapper<'_> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ExportStarContext — holds raw column ptrs.
+// ExportStarContext
 // ──────────────────────────────────────────────────────────────────────────
-struct ExportStarContext<'a> {
-    import_records_list: *mut [ImportRecordList<'a>],
-    source_index_stack: Vec<IndexInt>,
-    exports_kind: *mut [ExportsKind],
-    named_exports: *mut [NamedExports],
-    imports_to_bind: *mut [RefImportData],
-    export_star_records: *mut [bun_alloc::AstVec<u32>],
+struct ExportStarContext<'r, 'a> {
+    import_records_list: &'r [ImportRecordList<'a>],
+    source_index_stack: &'r mut Vec<IndexInt>,
+    exports_kind: &'r [ExportsKind],
+    named_exports: &'r [NamedExports],
+    imports_to_bind: &'r mut [RefImportData],
+    export_star_records: &'r [bun_alloc::AstVec<u32>],
 }
 
-impl<'a> ExportStarContext<'a> {
+impl ExportStarContext<'_, '_> {
     /// Recursively merge re-exports from `source_index` into
     /// `resolved_exports[target_id]`.
     fn add_exports(
         &mut self,
-        resolved_exports: *mut [ResolvedExports],
+        resolved_exports: &mut [ResolvedExports],
         target_id: usize,
         source_index: IndexInt,
     ) {
@@ -1267,14 +1163,14 @@ impl<'a> ExportStarContext<'a> {
         self.source_index_stack.push(source_index);
         let stack_end_pos = self.source_index_stack.len();
 
-        for import_id in col_ref!(self.export_star_records)[source_index as usize].iter() {
-            let other_source_index = col_ref!(self.import_records_list)[source_index as usize]
-                .as_slice()[*import_id as usize]
+        for import_id in self.export_star_records[source_index as usize].iter() {
+            let other_source_index = self.import_records_list[source_index as usize].as_slice()
+                [*import_id as usize]
                 .source_index
                 .get();
 
             let other_id = other_source_index as usize;
-            if other_id >= col_ref!(self.named_exports).len() {
+            if other_id >= self.named_exports.len() {
                 // this AST was empty or it wasn't a JS AST
                 continue;
             }
@@ -1286,36 +1182,31 @@ impl<'a> ExportStarContext<'a> {
             // exports even though it still uses CommonJS features. However, when
             // doing this we'd also have to rewrite any imports of these export star
             // re-exports as property accesses off of a generated require() call.
-            if col_ref!(self.exports_kind)[other_id] == ExportsKind::Cjs {
+            if self.exports_kind[other_id] == ExportsKind::Cjs {
                 continue;
             }
 
             // Collect (alias, name) pairs so the
             // loop body can mutably borrow `resolved_exports` / `imports_to_bind`.
-            let exports_len = col_ref!(self.named_exports)[other_id].keys().len();
+            let exports_len = self.named_exports[other_id].keys().len();
             'next_export: for ne_i in 0..exports_len {
-                // `BackRef<[u8]>` — points into the `named_exports` key
-                // storage, which is not mutated in this loop; the backref
-                // invariant lets reads go through safe `Deref`.
-                let alias: bun_ptr::BackRef<[u8]> = bun_ptr::BackRef::new(
-                    col_ref!(self.named_exports)[other_id].keys()[ne_i].as_ref(),
-                );
-                let name = col_ref!(self.named_exports)[other_id].values()[ne_i];
+                let named_exports: &[NamedExports] = self.named_exports;
+                let alias_slice: &[u8] = named_exports[other_id].keys()[ne_i].as_ref();
+                let name = named_exports[other_id].values()[ne_i];
 
                 // ES6 export star statements ignore exports named "default"
-                let alias_slice: &[u8] = &alias;
                 if alias_slice == b"default" {
                     continue;
                 }
 
                 // This export star is shadowed if any file in the stack has a matching real named export
                 for prev in &self.source_index_stack[0..stack_end_pos] {
-                    if col_ref!(self.named_exports)[*prev as usize].contains(alias_slice) {
+                    if named_exports[*prev as usize].contains(alias_slice) {
                         continue 'next_export;
                     }
                 }
 
-                let gop = col!(resolved_exports)[target_id]
+                let gop = resolved_exports[target_id]
                     .get_or_put(alias_slice)
                     .expect("oom");
                 if !gop.found_existing {
@@ -1331,7 +1222,7 @@ impl<'a> ExportStarContext<'a> {
 
                     // Make sure the symbol is marked as imported so that code splitting
                     // imports it correctly if it ends up being shared with another chunk
-                    col!(self.imports_to_bind)[source_index as usize]
+                    self.imports_to_bind[source_index as usize]
                         .put(
                             name.ref_,
                             ImportData {
@@ -1360,7 +1251,7 @@ impl<'a> ExportStarContext<'a> {
             }
 
             // Search further through this file's export stars
-            self.add_exports(resolved_exports, target_id, other_source_index);
+            self.add_exports(&mut *resolved_exports, target_id, other_source_index);
         }
 
         // Scope-end truncation (no early returns after the push).
@@ -1384,17 +1275,17 @@ mod __css_validation {
     use crate::bundled_ast::CssCol;
 
     pub(super) fn validate_css_import_composes(
-        this: &mut LinkerContext,
+        this: &mut LinkerContext<'_>,
+        pg: &Graph<'_>,
         id: usize,
-        css_asts: *mut [CssCol],
-        import_records_list: *mut [ImportRecordList<'_>],
-        input_files: *mut [Source],
     ) {
-        // `css_asts[id]` checked Some by caller. We only *read* the AST here;
-        // `other_css_ast` below may alias the same allocation when a file
-        // composes from itself, so bind as shared.
-        let css_ast: &BundlerStyleSheet = col_ref!(css_asts)[id].as_deref().unwrap();
-        let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].as_slice();
+        let LinkerContext { graph, log, .. } = this;
+        let css_asts: &[CssCol] = graph.ast.items_css();
+        let import_records_list: &[ImportRecordList<'_>] = graph.ast.items_import_records();
+        let input_files: &[Source] = pg.input_files.items_source();
+        // `css_asts[id]` checked Some by caller.
+        let css_ast: &BundlerStyleSheet = css_asts[id].as_deref().unwrap();
+        let import_records: &[ImportRecord] = import_records_list[id].as_slice();
 
         // Validate cross-file "composes: ... from" named imports
         for composes in css_ast.composes.values() {
@@ -1409,25 +1300,21 @@ mod __css_validation {
                 }
                 // Read-only; may alias `css_ast` if a file composes from
                 // itself (both `&`).
-                let Some(other_css_ast) =
-                    col_ref!(css_asts)[record.source_index.get() as usize].as_deref()
+                let Some(other_css_ast) = css_asts[record.source_index.get() as usize].as_deref()
                 else {
                     continue;
                 };
                 for name in compose.names.slice() {
                     let name_v = name.v();
                     if !other_css_ast.local_scope.contains(name_v) {
-                        // Split-borrow — see `LinkerContext::log_disjoint`.
-                        let _ = this.log_disjoint().add_error_fmt(
-                            &col_ref!(input_files)[record.source_index.get() as usize],
+                        let _ = log.add_error_fmt(
+                            &input_files[record.source_index.get() as usize],
                             compose.loc,
                             format_args!(
                                 "The name \"{}\" never appears in \"{}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                 bstr::BStr::new(name_v),
                                 bstr::BStr::new(
-                                    &col_ref!(input_files)[record.source_index.get() as usize]
-                                        .path
-                                        .pretty
+                                    &input_files[record.source_index.get() as usize].path.pretty
                                 ),
                             ),
                         );
@@ -1435,7 +1322,15 @@ mod __css_validation {
                 }
             }
         }
-        validate_composes_from_properties(this, id as u32, css_ast, import_records_list, css_asts);
+        validate_composes_from_properties(
+            &graph.symbols,
+            log,
+            input_files,
+            id as u32,
+            css_ast,
+            import_records_list,
+            css_asts,
+        );
     }
 
     /// CSS modules spec says that the following is undefined behavior:
@@ -1465,11 +1360,13 @@ mod __css_validation {
     ///
     /// We should find a way to do this without incurring performance penalties to the common cases.
     fn validate_composes_from_properties(
-        this: &mut LinkerContext,
+        symbols: &symbol::Map,
+        log: &mut Log,
+        all_sources: &[Source],
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
-        import_records_list: *mut [ImportRecordList<'_>],
-        all_css_asts: *mut [CssCol],
+        import_records_list: &[ImportRecordList<'_>],
+        all_css_asts: &[CssCol],
     ) {
         #[derive(Default)]
         struct PropertyInFile {
@@ -1480,10 +1377,10 @@ mod __css_validation {
         struct Visitor<'a, 'bump> {
             visited: ArrayHashMap<bun_ast::Ref, ()>,
             properties: StringArrayHashMap<PropertyInFile>,
-            all_import_records: *mut [ImportRecordList<'bump>],
-            all_css_asts: *mut [CssCol],
+            all_import_records: &'a [ImportRecordList<'bump>],
+            all_css_asts: &'a [CssCol],
             all_symbols: &'a symbol::Map,
-            all_sources: *mut [Source],
+            all_sources: &'a [Source],
             log: &'a mut Log,
         }
 
@@ -1521,7 +1418,7 @@ mod __css_validation {
                 let _ = self.log.add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Err,
                     data: bun_ast::range_data(
-                        Some(&col_ref!(self.all_sources)[source_index as usize]),
+                        Some(&self.all_sources[source_index as usize]),
                         range,
                         bun_ast::alloc_print!(
                             "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
@@ -1534,7 +1431,7 @@ mod __css_validation {
                         &[
                             bun_ast::range_data(
                                 Some(
-                                    &col_ref!(self.all_sources)
+                                    &self.all_sources
                                         [entry.value_ptr.source_index as usize],
                                 ),
                                 entry.value_ptr.range,
@@ -1586,14 +1483,14 @@ mod __css_validation {
                         // is an import
                         if let Some(from) = compose.from.as_ref() {
                             if let Specifier::ImportRecordIndex(import_record_idx) = from {
-                                let record = &col_ref!(self.all_import_records)[idx as usize]
-                                    .as_slice()[*import_record_idx as usize];
+                                let record = &self.all_import_records[idx as usize].as_slice()
+                                    [*import_record_idx as usize];
                                 if record.source_index.is_invalid() {
                                     continue;
                                 }
                                 // Read-only deref — recursion may revisit the
                                 // same allocation as `ast`, so bind shared.
-                                let Some(other_ast) = col_ref!(self.all_css_asts)
+                                let Some(other_ast) = self.all_css_asts
                                     [record.source_index.get() as usize]
                                     .as_deref()
                                 else {
@@ -1637,18 +1534,11 @@ mod __css_validation {
                 // Warn about cross-file composition with the same CSS properties
                 let mut iter = property_usage.bitset.iter_set();
                 while let Some(property_tag) = iter.next() {
+                    // `PropertyBitset` is only ever populated via `bitset.set(tag as u16)`
+                    // (see `bun_css::fill_property_bit_set`).
                     let property_id_tag: PropertyIdTag =
-                        // SAFETY: `PropertyBitset` is only ever populated via
-                        // `bitset.set(tag as u16 as usize)` where `tag: PropertyIdTag`
-                        // (see `bun_css::fill_property_bit_set`), so every set index is a
-                        // valid `#[repr(u16)]` discriminant. `PropertyIdTag` lives in
-                        // `bun_css` (generated) and exposes no `from_repr`; once it does,
-                        // replace this transmute with that accessor.
-                        unsafe {
-                            core::mem::transmute::<u16, PropertyIdTag>(
-                                u16::try_from(property_tag).expect("int cast"),
-                            )
-                        };
+                        PropertyIdTag::from_repr(u16::try_from(property_tag).expect("int cast"))
+                            .expect("PropertyBitset holds PropertyIdTag discriminants");
                     debug_assert!(property_id_tag != PropertyIdTag::Custom);
                     debug_assert!(property_id_tag != PropertyIdTag::Unparsed);
                     self.add_property_or_warn(
@@ -1665,18 +1555,14 @@ mod __css_validation {
             }
         }
 
-        // SAFETY: parse_graph backref valid for link step. Read-only.
-        let input = this.parse_graph().input_files.split_raw();
         let mut visitor = Visitor {
             visited: ArrayHashMap::<bun_ast::Ref, ()>::default(),
             properties: StringArrayHashMap::<PropertyInFile>::default(),
             all_import_records: import_records_list,
             all_css_asts,
-            all_symbols: &this.graph.symbols,
-            all_sources: input.source,
-            // Split-borrow with `&this.graph.symbols` above —
-            // `log_disjoint` returns the disjoint `Transpiler.log` backref.
-            log: this.log_disjoint(),
+            all_symbols: symbols,
+            all_sources,
+            log,
         };
         for local in root_css_ast.local_scope.values() {
             visitor.clear_retaining_capacity();

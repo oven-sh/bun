@@ -1,4 +1,5 @@
 use crate::mal_prelude::*;
+use crate::Graph::Graph;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 
@@ -10,8 +11,9 @@ use crate::{
     RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
-pub(crate) fn compute_cross_chunk_dependencies(
-    c: &mut LinkerContext,
+pub(crate) fn compute_cross_chunk_dependencies<'c>(
+    c: &mut LinkerContext<'c>,
+    pg: &Graph<'c>,
     chunks: &mut [Chunk],
 ) -> Result<(), bun_alloc::AllocError> {
     if !c.graph.code_splitting {
@@ -79,7 +81,7 @@ pub(crate) fn compute_cross_chunk_dependencies(
         }
     }
 
-    compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
+    compute_cross_chunk_dependencies_with_chunk_metas(c, pg, chunks, &mut chunk_metas)
 }
 
 struct CrossChunkDependencies<'a, 'bump> {
@@ -169,10 +171,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
-                        // Slice copy (fat pointer):
-                        // `path.text` borrows the chunk's
-                        // `unique_key` backing buffer (`LinkerContext.unique_key_buf`),
-                        // which outlives the link pass.
+                        // `unique_key` lives in the bundle arena, which outlives the link pass.
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
                         import_record.source_index = Index::INVALID;
 
@@ -328,7 +327,11 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
 /// loading one runs nothing, and neither does anything its files statically
 /// import (which may live in a chunk the entry would otherwise only have
 /// reached, in order, through this one).
-fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_alloc::AllocError> {
+fn inert_chunks<'c>(
+    c: &LinkerContext<'c>,
+    pg: &Graph<'c>,
+    chunks: &[Chunk],
+) -> Result<AutoBitSet, bun_alloc::AllocError> {
     let mut chunk_of_file = vec![u32::MAX; c.graph.files.len()];
     let mut inert = AutoBitSet::init_empty(chunks.len())?;
     for (chunk_index, chunk) in chunks.iter().enumerate() {
@@ -338,7 +341,7 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
         let mut runs_nothing = !chunk.entry_point.is_entry_point();
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
             chunk_of_file[source_index as usize] = chunk_index as u32;
-            runs_nothing = runs_nothing && c.loading_file_has_no_side_effects(source_index);
+            runs_nothing = runs_nothing && c.loading_file_has_no_side_effects(pg, source_index);
         }
         if runs_nothing {
             inert.set(chunk_index);
@@ -406,8 +409,9 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_a
     }
 }
 
-fn compute_cross_chunk_dependencies_with_chunk_metas(
-    c: &mut LinkerContext,
+fn compute_cross_chunk_dependencies_with_chunk_metas<'c>(
+    c: &mut LinkerContext<'c>,
+    pg: &Graph<'c>,
     chunks: &mut [Chunk],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
@@ -433,18 +437,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             if let Some(other_chunk_index) = symbol.chunk_index() {
                 if other_chunk_index as usize != chunk_index {
                     if cfg!(debug_assertions) {
-                        // SAFETY: arena slices valid for the link pass.
                         let name = symbol.original_name.slice();
-                        let path = {
-                            &c.parse_graph().input_files.items_source()
-                                [import_ref.source_index() as usize]
-                                .path
-                                .text
-                        };
                         debug!(
-                            "Import name: {} (in {})",
+                            "Import name: {} (in source {})",
                             bstr::BStr::new(name),
-                            bstr::BStr::new(&**path),
+                            import_ref.source_index(),
                         );
                     }
 
@@ -501,7 +498,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 }
                 // Nothing is used from it; skip it if loading it runs nothing.
                 if inert.is_none() {
-                    inert = Some(inert_chunks(c, chunks)?);
+                    inert = Some(inert_chunks(c, pg, chunks)?);
                 }
                 if inert.as_ref().unwrap().is_set(other_chunk_index) {
                     continue;

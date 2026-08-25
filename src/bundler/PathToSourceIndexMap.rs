@@ -28,10 +28,6 @@ pub struct PathToSourceIndexMap {
 
 pub type Map = StringHashMap<IndexInt>;
 
-/// std `HashMap::entry` doesn't expose
-/// `found_existing` + value-ptr together, so we hand-roll a thin shim.
-pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
-
 impl PathToSourceIndexMap {
     pub(crate) fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
         self.get(path.path_text())
@@ -51,14 +47,6 @@ impl PathToSourceIndexMap {
         // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
         self.map.put(text, value)
-    }
-
-    pub(crate) fn get_or_put(
-        &mut self,
-        text: impl AsRef<[u8]>,
-    ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
-        // PERF: see note in `put` re: key duplication.
-        self.map.get_or_put(text.as_ref())
     }
 
     pub fn remove(&mut self, text: impl AsRef<[u8]>) -> bool {

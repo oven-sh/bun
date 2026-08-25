@@ -2102,13 +2102,35 @@ pub mod cache {
         pub(crate) stream: bool,
     }
 
+    impl Default for Fs {
+        fn default() -> Self {
+            Fs {
+                shared_buffer: MutableString::init(0).expect("unreachable"),
+                macro_shared_buffer: MutableString::init(0).expect("unreachable"),
+                use_alternate_source_cache: false,
+                stream: false,
+            }
+        }
+    }
+
     /// Optional external destructor (`function(ctx)`) for foreign-owned
-    /// source bytes; `NONE` when there is nothing external to free.
+    /// source bytes; `NONE` when there is nothing external to free. Filled
+    /// in by a native plugin through the `OnBeforeParseResult` it is handed
+    /// (`bundler_plugin.h`: `plugin_source_code_context` /
+    /// `free_plugin_source_code_context`), which thereby promises that
+    /// `function(ctx)` releases its buffer, once, from any thread; Rust code
+    /// can only produce [`NONE`](Self::NONE).
     #[repr(C)]
     pub struct ExternalFreeFunction {
-        pub ctx: *mut c_void,
-        pub function: Option<unsafe extern "C" fn(*mut c_void)>,
+        ctx: *mut c_void,
+        function: Option<unsafe extern "C" fn(*mut c_void)>,
     }
+
+    // SAFETY: see the type doc — the plugin's free function is callable from
+    // any thread; the struct is two words of plain data otherwise.
+    unsafe impl Send for ExternalFreeFunction {}
+    // SAFETY: as above; `&ExternalFreeFunction` exposes nothing but `is_*`.
+    unsafe impl Sync for ExternalFreeFunction {}
 
     impl ExternalFreeFunction {
         pub const NONE: ExternalFreeFunction = ExternalFreeFunction {
@@ -2116,10 +2138,23 @@ pub mod cache {
             function: None,
         };
 
-        pub fn call(&self) {
-            if let Some(func) = self.function {
-                // SAFETY: ctx was provided by the same native plugin that provided `function`.
-                unsafe { func(self.ctx) };
+        #[inline]
+        pub fn is_some(&self) -> bool {
+            self.function.is_some()
+        }
+
+        /// The plugin set a free function but no context for it to free.
+        #[inline]
+        pub fn is_missing_ctx(&self) -> bool {
+            self.function.is_some() && self.ctx.is_null()
+        }
+
+        /// Run the destructor (if any); `self` is `NONE` afterwards.
+        pub fn call(&mut self) {
+            let this = core::mem::take(self);
+            if let Some(func) = this.function {
+                // SAFETY: see the type doc — set by the plugin alongside `ctx`.
+                unsafe { func(this.ctx) };
             }
         }
     }
@@ -2167,6 +2202,13 @@ pub mod cache {
         /// `BundleV2.finalizers`); NOT freed on `deinit`.
         External { ptr: *const u8, len: usize },
     }
+
+    // SAFETY: every variant is (a view of) immutable bytes whose owner keeps
+    // them alive past the `Entry` (see the variant docs); nothing about them
+    // is tied to a thread.
+    unsafe impl Send for Contents {}
+    // SAFETY: as above — `&Contents` only reads the bytes.
+    unsafe impl Sync for Contents {}
 
     impl Contents {
         #[inline]

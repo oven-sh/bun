@@ -1,14 +1,11 @@
-//! Like `scanImportsAndExports.rs`, this step needs many
-//! overlapping `&mut` column slices out of `LinkerGraph.{ast,meta}` while also
-//! calling `&self` methods. The SoA columns are physically disjoint and never
-//! reallocate during this step, so we cache raw column pointers and deref at
-//! each use site.
+//! Step 5 of `scan_imports_and_exports`: create namespace exports for every
+//! file, one worker task per file. Each task owns its file's row of the
+//! columns it writes ([`Step5Row`]) and shares the rest read-only
+//! ([`Step5Shared`]).
 
 use crate::mal_prelude::*;
-use core::mem::MaybeUninit;
 
 use bun_alloc::Arena as Bump;
-use bun_alloc::ArenaVecExt as _;
 use bun_ast::Loc;
 use bun_collections::{HashMap, VecExt};
 use bun_core::strings;
@@ -22,104 +19,164 @@ use bun_ast::{
 
 use crate::options::Format;
 use crate::perf;
-use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports, js_meta};
+use crate::{Index, LinkerContext, LinkerGraph, RefImportData, ResolvedExports, js_meta};
 
-pub use crate::ThreadPool;
+/// One file's row of every column step 5 writes.
+pub(crate) struct Step5Row<'r, 'a> {
+    id: u32,
+    resolved_exports: &'r mut ResolvedExports,
+    sorted_and_filtered_export_aliases: &'r mut js_meta::SortedAndFilteredExportAliases,
+    meta_flags: &'r mut js_meta::Flags,
+    ast_flags: &'r mut AstFlags,
+    parts: &'r mut bun_ast::PartList<'a>,
+    named_imports: &'r mut crate::bundled_ast::NamedImports,
+}
 
-impl LinkerContext<'_> {
-    /// Step 5: Create namespace exports for every file. This is always necessary
-    /// for CommonJS files, and is also necessary for other files if they are
-    /// imported using an import star statement.
-    ///
-    // CONCURRENCY: `each` callback — runs on worker threads, one task per
-    // `source_index`. Writes: `graph.{ast,meta}[source_index]` SoA cells
-    // (per-row disjoint). Reads `graph.symbols`/`options`/`ts_enums` shared.
-    // Never forms `&mut LinkerContext`; per-row writes via `split_raw()` raw
-    // pointers (root provenance). See `# Safety` for full invariant.
-    /// # Safety
-    ///
-    /// Runs concurrently on worker-pool threads (one task per `source_index`).
-    /// The body never materializes `&mut LinkerContext` — it derefs `this` to a
-    /// shared `&LinkerContext` for read-only access (`symbols`, `ts_enums`,
-    /// `top_level_symbols_to_parts`, options) and writes only to its own
-    /// `source_index` row of the `graph.{ast,meta}` SoA columns via raw
-    /// per-row pointers obtained from `split_raw()` (root provenance, no
-    /// `&mut [T]` intermediate). Disjoint rows ⇒ no overlapping `&mut`.
-    pub(crate) unsafe fn do_step5(this: *mut LinkerContext<'_>, source_index_: Index, _: usize) {
-        let source_index = source_index_.get();
-        let _trace = perf::trace("Bundler.CreateNamespaceExports");
+// SAFETY: a row is handed to exactly one pool task, which is the only code
+// touching those columns' `id` entries until `do_step5` has joined; the
+// `!Send` inside (`Part::scopes`' raw scope pointers) is arena data no task
+// frees.
+unsafe impl Send for Step5Row<'_, '_> {}
 
-        // SAFETY: shared-ref view for all read-only access. Multiple worker threads may
-        // hold `&LinkerContext` simultaneously; the SoA buffers live behind raw
-        // pointers inside `MultiArrayList`, so this borrow does not assert
-        // immutability over the heap cells we write below.
-        let c: &LinkerContext<'_> = unsafe { &*this };
+/// What step 5's tasks read: whole columns other than the ones in
+/// [`Step5Row`], plus the symbol table and options.
+#[derive(Clone, Copy)]
+pub(crate) struct Step5Shared<'r, 'a> {
+    pool: &'r crate::ThreadPool<'a>,
+    options: &'r crate::linker_context_mod::LinkerOptions,
+    symbols: &'r bun_ast::symbol::Map,
+    ts_enums: &'r bun_ast::ast_result::TsEnumsMap,
+    unbound_module_ref: Ref,
+    imports_to_bind: &'r [RefImportData],
+    probably_typescript_type: &'r [js_meta::ProbablyTypescriptType],
+    tlsp_overlay: &'r [bun_ast::ast_result::TopLevelSymbolToParts],
+    tlsp_ast: &'r [bun_ast::ast_result::TopLevelSymbolToParts],
+    exports_ref: &'r [Ref],
+    named_exports: &'r [crate::bundled_ast::NamedExports],
+}
 
-        let id = source_index;
-        if id as usize >= c.graph.meta.len() {
-            return;
+// SAFETY: shared by step 5's tasks while the bundle thread is blocked joining
+// them; everything but `pool` (built for cross-thread use) is read-only for
+// the step — the columns a task writes are handed to it separately as its
+// `Step5Row`.
+unsafe impl Sync for Step5Shared<'_, '_> {}
+// SAFETY: as above.
+unsafe impl Send for Step5Shared<'_, '_> {}
+
+impl Step5Shared<'_, '_> {
+    #[inline]
+    fn top_level_symbols_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
+        crate::linker_graph::top_level_symbol_to_parts(self.tlsp_overlay, self.tlsp_ast, id, ref_)
+    }
+    #[inline]
+    fn top_level_symbols_to_parts_for_runtime(&self, ref_: Ref) -> &[u32] {
+        self.top_level_symbols_to_parts(Index::RUNTIME.get(), ref_)
+    }
+    #[inline]
+    fn runtime_function(&self, name: &[u8]) -> Ref {
+        crate::linker_graph::runtime_function(self.named_exports, name)
+    }
+}
+
+/// Step 5: Create namespace exports for every file. This is always necessary
+/// for CommonJS files, and is also necessary for other files if they are
+/// imported using an import star statement. Blocks until every file is done.
+pub(crate) fn do_step5<'a>(
+    this: &mut LinkerContext<'a>,
+    pool: &crate::ThreadPool<'a>,
+    reachable: &[Index],
+) {
+    let LinkerContext {
+        graph,
+        options,
+        unbound_module_ref,
+        ..
+    } = this;
+    let LinkerGraph {
+        ast,
+        meta,
+        symbols,
+        ts_enums,
+        ..
+    } = graph;
+    let ast = ast.split_mut();
+    let meta = meta.split_mut();
+    let shared = Step5Shared {
+        pool,
+        options,
+        symbols,
+        ts_enums,
+        unbound_module_ref: *unbound_module_ref,
+        imports_to_bind: &*meta.imports_to_bind,
+        probably_typescript_type: &*meta.probably_typescript_type,
+        tlsp_overlay: &*meta.top_level_symbol_to_parts_overlay,
+        tlsp_ast: &*ast.top_level_symbols_to_parts,
+        exports_ref: &*ast.exports_ref,
+        named_exports: &*ast.named_exports,
+    };
+    let meta_len = meta.flags.len();
+    let mut is_reachable = bun_collections::DynamicBitSet::init_empty(meta_len).expect("OOM");
+    for index in reachable {
+        if (index.get() as usize) < meta_len {
+            is_reachable.set(index.get() as usize);
         }
+    }
+    let mut rows: Vec<Step5Row<'_, 'a>> = meta
+        .resolved_exports
+        .iter_mut()
+        .zip(meta.sorted_and_filtered_export_aliases.iter_mut())
+        .zip(meta.flags.iter_mut())
+        .zip(ast.flags.iter_mut())
+        .zip(ast.parts.iter_mut())
+        .zip(ast.named_imports.iter_mut())
+        .enumerate()
+        .filter(|(id, _)| is_reachable.is_set(*id))
+        .map(
+            |(
+                id,
+                (((((resolved_exports, aliases), meta_flags), ast_flags), parts), named_imports),
+            )| {
+                Step5Row {
+                    id: id as u32,
+                    resolved_exports,
+                    sorted_and_filtered_export_aliases: aliases,
+                    meta_flags,
+                    ast_flags,
+                    parts,
+                    named_imports,
+                }
+            },
+        )
+        .collect();
+    pool.worker_pool()
+        .each_mut(shared, |c, row, _| step5_for_file(c, row), &mut rows);
+}
 
-        // SAFETY: `this` points to `BundleV2.linker` (caller is the worker-pool
-        // dispatch from `scan_imports_and_exports`); `container_of` shape.
-        // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
-        // form `&mut BundleV2` here (concurrent tasks would alias it).
-        let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };
-        let worker = ThreadPool::Worker::get(bundle_v2);
-        // `Worker::get` returns the thread-local worker
-        // (not RAII), so balance with `unget` explicitly via scopeguard.
-        let worker = scopeguard::guard(worker, |w| w.unget());
+/// Worker-thread body of [`do_step5`] for one file.
+fn step5_for_file(c: &Step5Shared<'_, '_>, row: &mut Step5Row<'_, '_>) {
+    let source_index = row.id;
+    let _trace = perf::trace("Bundler.CreateNamespaceExports");
+    let id = source_index;
 
-        // we must use this arena here
-        // SAFETY: `Worker::create` initializes `arena` to point at
-        // `worker.heap`; valid for the worker's lifetime.
-        let arena: &Bump = worker.arena();
+    let worker = c.pool.get_worker();
+    // we must use this arena here
+    let arena: &Bump = worker.arena();
 
-        // ── raw SoA column pointers (root provenance) ─────────────────────
-        // `split_raw()` derives `*mut [T]` directly from the buffer base with
-        // no `&mut` intermediate, so per-row writes through these pointers are
-        // sound under Stacked Borrows even with N concurrent tasks. We index
-        // by raw `.add(id)` (never `(*col)[id]`, which would form a transient
-        // `&[T]` over the whole column and race with other rows' writes).
-        let ast = c.graph.ast.split_raw();
-        let meta = c.graph.meta.split_raw();
-        macro_rules! row_mut {
-            ($col:expr, $ty:ty, $i:expr) => {{
-                // SAFETY: `$col: *mut [$ty]` from `split_raw()`; `$i < len`
-                // (guarded above for `meta`, and `ast.len == meta.len`). The
-                // `.cast::<$ty>()` fat→thin cast preserves the raw provenance
-                // from `split_raw()`.
-                unsafe { &mut *($col.cast::<$ty>().add($i as usize)) }
-            }};
-        }
+    let imports_to_bind = c.imports_to_bind;
+    let probably_typescript_type = c.probably_typescript_type;
+    let resolved_exports: &mut ResolvedExports = row.resolved_exports;
+    // counting in here saves us an extra pass through the array
+    let mut re_exports_count: usize = 0;
 
-        let resolved_exports: *mut ResolvedExports = meta
-            .resolved_exports
-            .cast::<ResolvedExports>()
-            .wrapping_add(id as usize);
-        // Read-only columns (never written during step 5) — whole-column
-        // shared slices are fine here.
-        // SAFETY: `split_raw()` columns are valid for `meta.len()` elements;
-        // no task mutates `imports_to_bind` / `probably_typescript_type`.
-        let (imports_to_bind, probably_typescript_type): (
-            &[RefImportData],
-            &[js_meta::ProbablyTypescriptType],
-        ) = unsafe { (&*meta.imports_to_bind, &*meta.probably_typescript_type) };
-
+    {
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
         // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
-        let mut aliases = bun_alloc::ArenaVec::<&[u8]>::with_capacity_in(
-            unsafe { (*resolved_exports).count() },
-            arena,
-        );
-
-        // counting in here saves us an extra pass through the array
-        let mut re_exports_count: usize = 0;
+        let mut aliases =
+            bun_alloc::ArenaVec::<&[u8]>::with_capacity_in(resolved_exports.count(), arena);
 
         {
-            // SAFETY: see above.
-            let mut alias_iter = unsafe { (*resolved_exports).iterator() };
+            let mut alias_iter = resolved_exports.iterator();
             'next_alias: while let Some(entry) = alias_iter.next() {
                 let export_ = entry.value_ptr;
                 let alias: &[u8] = entry.key_ptr;
@@ -164,85 +221,51 @@ impl LinkerContext<'_> {
         // if yes, we could just move all the hidden exports to the end of the array
         // and only store a count instead of an array
         strings::sort_asc(aliases.as_mut_slice());
-        let export_aliases = aliases.into_bump_slice();
-        *row_mut!(
-            meta.sorted_and_filtered_export_aliases,
-            js_meta::SortedAndFilteredExportAliases,
-            id
-        ) = bun_alloc::AstAlloc::vec_from_iter(
-            export_aliases
+        *row.sorted_and_filtered_export_aliases = bun_alloc::AstAlloc::vec_from_iter(
+            aliases
                 .iter()
-                .map(|s| bun_alloc::AstAlloc::vec_from_slice(*s).into_boxed_slice()),
+                .map(|s| bun_alloc::AstAlloc::vec_from_slice(s).into_boxed_slice()),
         );
+        drop(aliases);
+    }
+    let export_aliases = &**row.sorted_and_filtered_export_aliases;
 
-        // Export creation uses "sortedAndFilteredExportAliases" so this must
-        // come second after we fill in that array
-        c.create_exports_for_file(
-            arena,
-            id,
-            // SAFETY: `resolved_exports` points at one slot of the
-            // `meta.resolved_exports` SoA column; `imports_to_bind` is a
-            // distinct SoA column (disjoint allocation). The earlier iterator
-            // over `*resolved_exports` ended above, so this is the sole live
-            // `&mut` into that slot. `create_exports_for_file` writes only via
-            // this param + the three per-row cells below and never re-borrows
-            // those columns through `self`.
-            unsafe { &mut *resolved_exports },
-            imports_to_bind,
-            export_aliases,
-            re_exports_count,
-            // Per-row mutable SoA cells (own `id` only — disjoint across tasks).
-            row_mut!(meta.flags, js_meta::Flags, id),
-            row_mut!(ast.flags, AstFlags, id),
-            row_mut!(ast.parts, bun_ast::PartList, id),
-        );
+    // Export creation uses "sortedAndFilteredExportAliases" so this must
+    // come second after we fill in that array
+    create_exports_for_file(
+        c,
+        arena,
+        id,
+        resolved_exports,
+        imports_to_bind,
+        export_aliases,
+        re_exports_count,
+        row.meta_flags,
+        row.ast_flags,
+        row.parts,
+    );
 
+    {
         // Each part tracks the other parts it depends on within this file
         let mut local_dependencies: HashMap<u32, u32> = HashMap::default();
 
-        // Multiple `&mut` into graph SoA are needed here;
-        // raw per-row pointers via `split_raw()` so concurrent tasks never
-        // hold overlapping `&mut [T]`.
-        let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).as_mut_slice();
-        let named_imports: *mut crate::bundled_ast::NamedImports = ast
-            .named_imports
-            .cast::<crate::bundled_ast::NamedImports>()
-            .wrapping_add(id as usize);
-        // SAFETY: `named_imports` is a stable column pointer (see above). We
-        // hoist the emptiness check so the per-symbol-use inner loop skips
-        // the lookup entirely for files with no imports (≈ all leaf modules).
-        let named_imports_is_empty = unsafe { (*named_imports).is_empty() };
+        let named_imports: &mut crate::bundled_ast::NamedImports = row.named_imports;
+        // Hoisted so the per-symbol-use inner loop skips the lookup entirely
+        // for files with no imports (≈ all leaf modules).
+        let named_imports_is_empty = named_imports.is_empty();
 
         // PERF: hoist this file's two `top_level_symbols_to_parts`
         // sub-maps rather than going through
-        // `c.topLevelSymbolsToParts(id, ref)` per symbol-use — that is fine
-        // when the underlying ArrayHashMap has its index_header (O(1) get),
-        // but perf showed `find_hash` falling through to the linear
-        // scan branch here (≈87% of step5 self-time on three.js), so we (a)
-        // hoist the per-file column pointer math out of the J×K inner loop
-        // and (b) ensure the accelerator index is built on the large
-        // `top_level_symbols_to_parts[id]` map before probing it J times.
-        // SAFETY: both columns are SoA rows owned by this task's `id`; the
-        // overlay row may be written by `create_exports_for_file` above (this
-        // borrow begins after it returns) and the ast row is parser-built and
-        // never reallocated during step 5. No other task touches row `id`.
-        let (tlsp_overlay, tlsp_ast): (
-            &bun_ast::ast_result::TopLevelSymbolToParts,
-            &bun_ast::ast_result::TopLevelSymbolToParts,
-        ) = unsafe {
-            (
-                &*(meta.top_level_symbol_to_parts_overlay
-                    as *const bun_ast::ast_result::TopLevelSymbolToParts)
-                    .add(id as usize),
-                &*(ast.top_level_symbols_to_parts
-                    as *const bun_ast::ast_result::TopLevelSymbolToParts)
-                    .add(id as usize),
-            )
-        };
+        // `c.topLevelSymbolsToParts(id, ref)` per symbol-use — perf showed
+        // `find_hash` falling through to the linear scan branch here (≈87% of
+        // step5 self-time on three.js), so hoist the per-file lookups out of
+        // the J×K inner loop.
+        let tlsp_overlay: &bun_ast::ast_result::TopLevelSymbolToParts =
+            &c.tlsp_overlay[id as usize];
+        let tlsp_ast: &bun_ast::ast_result::TopLevelSymbolToParts = &c.tlsp_ast[id as usize];
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
-        // SAFETY: see above.
-        for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
+        for (part_index, part) in row.parts.as_mut_slice().iter_mut().enumerate() {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
@@ -257,27 +280,29 @@ impl LinkerContext<'_> {
                 Some(m) => m.keys().to_vec(),
             };
             for ref_ in &prop_use_refs {
-                // Re-fetch each iteration to avoid overlapping &mut.
-                let properties: *const _ = part
-                    .import_symbol_property_uses
+                // `import_symbol_property_uses` and `symbol_uses` are separate
+                // fields of the part.
+                let Part {
+                    import_symbol_property_uses,
+                    symbol_uses,
+                    ..
+                } = &mut *part;
+                let properties = import_symbol_property_uses
                     .as_ref()
                     .unwrap()
                     .get(ref_)
                     .unwrap();
-                let use_: &mut SymbolUse = part.symbol_uses.get_ptr_mut(ref_).unwrap();
+                let use_: &mut SymbolUse = symbol_uses.get_ptr_mut(ref_).unwrap();
 
                 // Rare path: this import is a TypeScript enum
                 if let Some(import_data) = our_imports_to_bind.get(ref_) {
                     let import_ref = import_data.data.import_ref;
-                    if let Some(symbol) = c.graph.symbols.get_const(import_ref) {
+                    if let Some(symbol) = c.symbols.get_const(import_ref) {
                         if symbol.kind == bun_ast::symbol::Kind::TsEnum {
-                            if let Some(enum_data) = c.graph.ts_enums.get(&import_ref) {
+                            if let Some(enum_data) = c.ts_enums.get(&import_ref) {
                                 let mut found_non_inlined_enum = false;
 
-                                // SAFETY: `properties` points into
-                                // `part.import_symbol_property_uses` which is not
-                                // mutated for the lifetime of this borrow.
-                                for (name, prop_use) in unsafe { (*properties).iter() } {
+                                for (name, prop_use) in properties.iter() {
                                     if enum_data.get(name).is_none() {
                                         found_non_inlined_enum = true;
                                         use_.count_estimate += prop_use.count_estimate;
@@ -286,7 +311,7 @@ impl LinkerContext<'_> {
 
                                 if !found_non_inlined_enum {
                                     if use_.count_estimate == 0 {
-                                        let _ = part.symbol_uses.swap_remove(ref_);
+                                        let _ = symbol_uses.swap_remove(ref_);
                                     }
                                     continue;
                                 }
@@ -296,8 +321,7 @@ impl LinkerContext<'_> {
                 }
 
                 // Common path: this import isn't a TypeScript enum
-                // SAFETY: see above.
-                for prop_use in unsafe { (*properties).values() } {
+                for prop_use in properties.values() {
                     use_.count_estimate += prop_use.count_estimate;
                 }
             }
@@ -349,35 +373,31 @@ impl LinkerContext<'_> {
 
                 // Also map from imports to parts that use them
                 if !named_imports_is_empty {
-                    // SAFETY: `named_imports` is a stable column pointer; this
-                    // task owns row `id` exclusively (see split_raw note).
-                    if let Some(existing) = unsafe { (*named_imports).get_ptr_mut(&ref_) } {
+                    if let Some(existing) = named_imports.get_ptr_mut(&ref_) {
                         existing.local_parts_with_uses.push(part_index_u32);
                     }
                 }
             }
         }
     }
+}
 
-    /// WARNING: This method is run in parallel over all files. Do not mutate data
-    /// for other files within this method or you will create a data race.
-    ///
-    /// Takes `&self` (read-only) plus the three SoA row cells it
-    /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
-    /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create_exports_for_file(
-        &self,
-        arena: &Bump,
-        id: u32,
-        resolved_exports: &mut ResolvedExports,
-        imports_to_bind: &[RefImportData],
-        export_aliases: &[&[u8]],
-        re_exports_count: usize,
-        meta_flags: &mut js_meta::Flags,
-        ast_flags: &mut AstFlags,
-        ast_parts: &mut bun_ast::PartList,
-    ) {
+/// WARNING: This is run in parallel over all files. Everything written is a
+/// parameter (this file's row); `c` is read-only.
+#[allow(clippy::too_many_arguments)]
+fn create_exports_for_file(
+    c: &Step5Shared<'_, '_>,
+    arena: &Bump,
+    id: u32,
+    resolved_exports: &mut ResolvedExports,
+    imports_to_bind: &[RefImportData],
+    export_aliases: &[Box<[u8], bun_alloc::AstAlloc>],
+    re_exports_count: usize,
+    meta_flags: &mut js_meta::Flags,
+    ast_flags: &mut AstFlags,
+    ast_parts: &mut bun_ast::PartList,
+) {
+    {
         // `Stmt.Disabler`/`Expr.Disabler` are debug-only guards
         // around the global thread-local block store. `Disabler::scope()`
         // calls `disable()` and re-`enable()`s on drop. In debug builds the
@@ -403,7 +423,7 @@ impl LinkerContext<'_> {
 
         let initial_flags = *meta_flags;
         let needs_exports_variable = initial_flags.needs_exports_variable;
-        let force_include_exports_for_entry_point = self.options.output_format == Format::Cjs
+        let force_include_exports_for_entry_point = c.options.output_format == Format::Cjs
             && initial_flags.force_include_exports_for_entry_point;
 
         let stmts_count =
@@ -416,21 +436,14 @@ impl LinkerContext<'_> {
             // + 1 if we need to do module.exports = __toCommonJS(exports)
             force_include_exports_for_entry_point as usize;
 
-        // `Batcher::<T>::init` (preallocated arena slice + cursor) requires
-        // `T: Default` which `Stmt`
-        // doesn't satisfy, so we hand-roll the same shape: one arena slab of
-        // `stmts_count` `MaybeUninit<Stmt>`, sliced front-to-back. `eat1`
-        // becomes a `write` + sub-slice carve. The slab is held as a safe
-        // `&mut [MaybeUninit<Stmt>]` borrow of the arena allocation; each
-        // carve borrows it briefly and hands the result to `StoreSlice`
-        // (raw-ptr wrapper, no lifetime), so successive carves don't alias.
-        let stmts_slab: &mut [MaybeUninit<Stmt>] =
-            arena.alloc_slice_fill_with(stmts_count, |_| MaybeUninit::uninit());
+        // One arena slab of `stmts_count` statements, handed out front to
+        // back: one per export getter body, then the tail window for the part.
+        let stmts_slab: &mut [Stmt] = arena.alloc_slice_fill_with(stmts_count, |_| Stmt::empty());
         let mut stmts_head: usize = 0;
         macro_rules! stmts_eat1 {
             ($value:expr) => {{
-                // `MaybeUninit::write` returns `&mut T` to the now-initialized slot.
-                let written: &mut Stmt = stmts_slab[stmts_head].write($value);
+                let written: &mut Stmt = &mut stmts_slab[stmts_head];
+                *written = $value;
                 stmts_head += 1;
                 bun_ast::StoreSlice::new_mut(core::slice::from_mut(written))
             }};
@@ -438,7 +451,8 @@ impl LinkerContext<'_> {
         let loc = Loc::EMPTY;
         // todo: investigate if preallocating this array is faster
         let mut ns_export_dependencies = bun_ast::DependencyList::init_capacity(re_exports_count);
-        for &alias in export_aliases {
+        for alias in export_aliases {
+            let alias: &[u8] = alias;
             let exp = resolved_exports.get_mut(alias).unwrap();
             let mut exp_data = exp.data;
 
@@ -458,7 +472,7 @@ impl LinkerContext<'_> {
             // written to a property access later on
             // note: this is stack allocated
             let value: Expr = 'brk: {
-                if let Some(symbol) = self.graph.symbols.get_const(exp_data.import_ref) {
+                if let Some(symbol) = c.symbols.get_const(exp_data.import_ref) {
                     if symbol.namespace_alias.is_some() {
                         break 'brk Expr::init(
                             E::ImportIdentifier {
@@ -487,10 +501,7 @@ impl LinkerContext<'_> {
                 key: Some(Expr::allocate(
                     arena,
                     // TODO: test emoji work as expected (relevant for WASM exports)
-                    // SAFETY: `alias` borrows the worker arena which outlives the
-                    // link pass; `E::String::data: &'static [u8]` is the arena
-                    // erasure used throughout the AST.
-                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                    E::String::init(alias),
                     loc,
                 )),
                 value: Some(Expr::allocate(
@@ -509,7 +520,7 @@ impl LinkerContext<'_> {
 
             // Make sure the part that declares the export is included
             let parts =
-                self.top_level_symbols_to_parts(exp_data.source_index.get(), exp_data.import_ref);
+                c.top_level_symbols_to_parts(exp_data.source_index.get(), exp_data.import_ref);
             ns_export_dependencies.ensure_unused_capacity(parts.len());
             for &part_id in parts {
                 // Use a non-local dependency since this is likely from a different
@@ -522,7 +533,7 @@ impl LinkerContext<'_> {
         }
 
         let mut declared_symbols = DeclaredSymbolList::default();
-        let exports_ref = self.graph.ast.items_exports_ref()[id as usize];
+        let exports_ref = c.exports_ref[id as usize];
         let all_export_stmts_len = needs_exports_variable as usize
             + (!properties.is_empty()) as usize
             + force_include_exports_for_entry_point as usize;
@@ -532,7 +543,7 @@ impl LinkerContext<'_> {
         let all_export_stmts_base = stmts_head;
         macro_rules! emit_export_stmt {
             ($value:expr) => {{
-                stmts_slab[stmts_head].write($value);
+                stmts_slab[stmts_head] = $value;
                 stmts_head += 1;
             }};
         }
@@ -565,7 +576,7 @@ impl LinkerContext<'_> {
         // "__export(exports, { foo: () => foo })"
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
-            export_ref = self.runtime_function(b"__export");
+            export_ref = c.runtime_function(b"__export");
             // `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
             // arena-backed `move_from_list`, so re-own.
@@ -598,7 +609,7 @@ impl LinkerContext<'_> {
                 loc,
             ));
             // Make sure this file depends on the "__export" symbol
-            let parts = self.top_level_symbols_to_parts_for_runtime(export_ref);
+            let parts = c.top_level_symbols_to_parts_for_runtime(export_ref);
             ns_export_dependencies.ensure_unused_capacity(parts.len());
             for &part_index in parts {
                 ns_export_dependencies.append_assume_capacity(Dependency {
@@ -617,14 +628,14 @@ impl LinkerContext<'_> {
         // bundle (including the entry point module) may do "import * as" to get
         // access to the exports object and should NOT see the "__esModule" flag.
         if force_include_exports_for_entry_point {
-            let to_common_js_ref = self.runtime_function(b"__toCommonJS");
+            let to_common_js_ref = c.runtime_function(b"__toCommonJS");
             emit_export_stmt!(Stmt::assign(
                 Expr::allocate(
                     arena,
                     E::Dot {
                         name: b"exports".into(),
                         name_loc: Loc::EMPTY,
-                        target: Expr::init_identifier(self.unbound_module_ref, Loc::EMPTY),
+                        target: Expr::init_identifier(c.unbound_module_ref, Loc::EMPTY),
                         ..Default::default()
                     },
                     Loc::EMPTY,
@@ -654,17 +665,10 @@ impl LinkerContext<'_> {
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
             ast_parts.as_mut_slice()[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
-                stmts: if self.options.output_format != Format::InternalBakeDev {
+                stmts: if c.options.output_format != Format::InternalBakeDev {
                     let init = &mut stmts_slab[all_export_stmts_base..stmts_head];
                     debug_assert_eq!(init.len(), all_export_stmts_len);
-                    // SAFETY: the `[all_export_stmts_base..stmts_head]` window of
-                    // `stmts_slab` is fully initialized above (`debug_assert_eq!`
-                    // just verified head == base+len); same-layout cast
-                    // `[MaybeUninit<Stmt>]` → `[Stmt]`. The worker arena
-                    // outlives the link pass.
-                    bun_ast::StoreSlice::new_mut(unsafe {
-                        &mut *(std::ptr::from_mut::<[MaybeUninit<Stmt>]>(init) as *mut [Stmt])
-                    })
+                    bun_ast::StoreSlice::new_mut(init)
                 } else {
                     bun_ast::StoreSlice::EMPTY
                 },

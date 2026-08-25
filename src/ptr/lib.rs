@@ -49,7 +49,11 @@ pub use ref_count::{
 // point: `#[derive(bun_ptr::CellRefCounted)]`.
 pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
+pub mod lent;
+pub mod owner_cell;
 pub mod parent_ref;
+pub use lent::{Lent, LentMut};
+pub use owner_cell::{OwnerCell, RefFamily};
 pub use parent_ref::ParentRef;
 pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;
@@ -285,6 +289,34 @@ impl<T: ?Sized, P> PartialEq for BackRef<T, P> {
     }
 }
 impl<T: ?Sized, P> Eq for BackRef<T, P> {}
+
+/// A [`BackRef`] provenance a dispatch handle may be built from: the
+/// handle's impl bodies receive `*mut T`, so the pointer must carry write
+/// provenance ([`Mut`] or [`Root`], not [`Shared`]).
+pub trait WritableProvenance {}
+impl WritableProvenance for Mut {}
+impl WritableProvenance for Root {}
+
+/// For a `bun_dispatch::link_interface!` handle type `$handle` (whose owner
+/// trait is `$owner`): a safe constructor from a [`BackRef`] to an owner. The
+/// handle is another back-reference — whoever stores it takes on the
+/// `BackRef`'s holder obligation.
+#[macro_export]
+macro_rules! link_handle_from_backref {
+    ($handle:ident, $owner:ident) => {
+        impl $handle {
+            #[inline]
+            pub fn from_backref<T: $owner, P: $crate::WritableProvenance>(
+                owner: $crate::BackRef<T, P>,
+            ) -> Self {
+                // SAFETY: `BackRef` invariant — the pointee is live while the
+                // handle's holder (bound by the same obligation) uses it; `P`
+                // carries write provenance for the impl bodies' `*mut T`.
+                unsafe { Self::of(owner.as_const_ptr().cast_mut()) }
+            }
+        }
+    };
+}
 
 /// Detach a slice borrow from its borrowck lifetime.
 ///

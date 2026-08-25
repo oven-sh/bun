@@ -288,7 +288,7 @@ impl Default for LinkerGraph<'_> {
 // thin forwarders for call sites that don't have a split in hand.
 // ──────────────────────────────────────────────────────────────────────────
 
-fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
+pub(crate) fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
     named_exports[Index::RUNTIME.get() as usize]
         .get(name)
         .expect("runtime function must be a named export of the runtime module")
@@ -324,7 +324,7 @@ pub(crate) fn generate_new_symbol(
     ref_
 }
 
-fn top_level_symbol_to_parts<'a>(
+pub(crate) fn top_level_symbol_to_parts<'a>(
     top_level_symbol_to_parts_overlay: &'a [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &'a [bundled_ast::TopLevelSymbolToParts],
     id: u32,
@@ -488,32 +488,6 @@ impl<'a> LinkerGraph<'a> {
         self.symbols
             .get_const(ref_)
             .expect("infallible: ref in symbol table")
-    }
-
-    /// Mutable view of a symbol that is known to exist. Takes `&self` (not
-    /// `&mut self`): the linker mutates per-symbol fields (`link`,
-    /// `namespace_alias`, `import_item_status`, ...) through shared
-    /// `&LinkerContext`/`&LinkerGraph` paths while iterating disjoint graph
-    /// columns, mirroring the prior open-coded `unsafe { &mut *get(r) }`.
-    ///
-    /// # Safety
-    /// Caller must ensure no other live `&`/`&mut` borrow aliases the same
-    /// symbol slot for the returned reference's lifetime (the `&self` signature
-    /// alone cannot enforce this — two calls with the same `Ref` while both
-    /// results are live is UB). Mirrors the prior open-coded
-    /// `unsafe { &mut *get(r) }` call-site obligation.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
-        // SAFETY: `ref_` was produced by this symbol table, so `get` is
-        // infallible and points at a live slot; caller guarantees the mutated
-        // slot is disjoint from any other borrow held at the call site.
-        unsafe {
-            &mut *self
-                .symbols
-                .get(ref_)
-                .expect("infallible: ref in symbol table")
-        }
     }
 
     pub(crate) fn generate_new_symbol(
@@ -966,7 +940,7 @@ impl<'a> LinkerGraph<'a> {
 pub struct File {
     pub entry_bits: AutoBitSet,
 
-    pub(crate) input_file: Index,
+    pub input_file: Index,
 
     /// The minimum number of links in the module graph to get from an entry point
     /// to this file

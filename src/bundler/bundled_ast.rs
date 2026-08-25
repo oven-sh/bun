@@ -184,9 +184,21 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
+    /// What `bun_js_printer::print*` reads of this AST besides its parts.
+    pub(crate) fn printer_view(&self) -> bun_js_printer::PrintAst<'_> {
+        bun_js_printer::PrintAst {
+            approximate_newline_count: self.approximate_newline_count as usize,
+            has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
+            exports_kind: self.exports_kind,
+            named_exports: &self.named_exports,
+            export_star_import_records: self.export_star_import_records.as_slice(),
+            top_level_await_keyword: self.top_level_await_keyword,
+        }
+    }
+
     // The collection types aren't Copy, so consume `self` to move them (to_ast
     // is a one-shot conversion back to the fat Ast).
-    pub(crate) fn to_ast(self) -> Ast<'arena> {
+    pub fn to_ast(self) -> Ast<'arena> {
         let arena: &'arena bun_alloc::Arena = *self.parts.allocator();
         Ast {
             approximate_newline_count: self.approximate_newline_count as usize,

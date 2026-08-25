@@ -2744,12 +2744,17 @@ mod stylesheet_impl {
 
     impl StyleSheet<BundlerAtRule> {
         pub fn parse_bundler(
-            arena: &'static Bump,
+            arena: &Bump,
             code: &[u8],
             options: ParserOptions<'static>,
             import_records: &mut Vec<ImportRecord>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
+            // SAFETY: the crate-wide 'bump erasure (see `parse_with` /
+            // `StyleAttribute`): everything the returned stylesheet borrows
+            // from `arena` is typed `'static` and the caller keeps `arena` alive
+            // for as long as the stylesheet.
+            let arena: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(arena) };
             // `import_records` is shared by both `BundlerAtRuleParser` and the
             // inner `Parser`, and `options` is both borrowed by the at-rule
             // parser and passed by value:

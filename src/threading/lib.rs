@@ -1,4 +1,5 @@
 //! bun_threading crate root — thin re-exports.
+#![feature(thread_local)]
 
 pub mod channel;
 #[path = "Condition.rs"]
@@ -13,11 +14,16 @@ pub mod reset_event;
 pub mod rwlock;
 #[path = "Semaphore.rs"]
 pub mod semaphore;
+pub mod task_group;
+pub mod keep_alive;
+pub mod thread_bound;
 #[path = "ThreadPool.rs"]
 pub mod thread_pool;
+pub mod thread_slots;
 pub mod work_pool;
 
 pub mod guarded;
+pub mod job_batch;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]
 pub mod wait_group;
@@ -30,12 +36,17 @@ pub use condition::{Condition, Condvar};
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
 pub use futex as Futex;
 pub use guarded::{Guarded, GuardedLock};
+pub use job_batch::{BatchJob, JobBatch};
 pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
 pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
-pub use thread_pool::ThreadPool;
-pub use unbounded_queue::{Link, Linked, UnboundedQueue};
+pub use task_group::{GroupTask, GroupedTask, TaskGroup};
+pub use keep_alive::KeepAlive;
+pub use thread_bound::ThreadBound;
+pub use thread_pool::{ThreadPool, ThreadRef};
+pub use thread_slots::{SlotGuard, ThreadSlots};
+pub use unbounded_queue::{Link, Linked, OwnedDrain, OwnedQueue, UnboundedQueue};
 pub use wait_group::WaitGroup;
 pub use work_pool::Task as WorkPoolTask;
 pub use work_pool::{IntrusiveWorkTask, OwnedTask, WorkPool};

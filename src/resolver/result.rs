@@ -231,7 +231,7 @@ impl Result {
     /// for the ARENA-backed pointer — same invariant as
     /// [`dir_info::DirInfo::package_json`].
     #[inline]
-    pub(crate) fn package_json_ref(&self) -> Option<&'static PackageJSON> {
+    pub fn package_json_ref(&self) -> Option<&'static PackageJSON> {
         Self::deref_package_json(self.package_json)
     }
 

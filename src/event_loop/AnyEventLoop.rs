@@ -575,6 +575,35 @@ impl JsPoster {
         // SAFETY: vtable contract.
         unsafe { (self.vtable.post)(self.data, task) }
     }
+
+    /// [`post`](Self::post); a refused task is released here (it never runs)
+    /// and `false` is returned.
+    #[inline]
+    pub fn post_or_release(&self, task: NonNull<ConcurrentTask>) -> bool {
+        match self.post(task) {
+            Posted::Queued => true,
+            Posted::Refused(task) => {
+                // SAFETY: refused ⇒ never queued; still ours to release.
+                unsafe { ConcurrentTask::release_refused(task) };
+                false
+            }
+        }
+    }
+
+    /// Queue `ctx` to [`run`](crate::ManagedTask::RunOnce::run) on the VM's thread and wake
+    /// it; if the VM has closed, [`cancelled`](crate::ManagedTask::RunOnce::cancelled) runs
+    /// here instead and `false` is returned.
+    pub fn post_boxed<T: crate::ManagedTask::RunOnce>(&self, ctx: Box<T>) -> bool {
+        let task = ConcurrentTask::create(crate::ManagedTask::ManagedTask::new_boxed(ctx));
+        match self.post(task) {
+            Posted::Queued => true,
+            Posted::Refused(task) => {
+                // SAFETY: refused ⇒ never queued; still ours to release.
+                unsafe { ConcurrentTask::release_refused(task) };
+                false
+            }
+        }
+    }
 }
 
 impl Clone for JsPoster {

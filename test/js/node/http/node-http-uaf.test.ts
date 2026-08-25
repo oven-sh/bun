@@ -67,17 +67,15 @@ test.concurrent(
       exitCode: 0,
     });
     // Under ASAN every request is aborted before the server answers; release
-    // answers about a fifth of them and about a tenth are aborted before they
-    // reach the server at all. The rest must have reached it and settled.
-    const { tally } = result as { tally: { handled: number; responded: number; aborted: number } };
-    expect({
-      settled: tally.responded + tally.aborted,
-      aborted: tally.aborted > 0,
-      handled: tally.handled > 0,
-    }).toEqual({
+    // answers about a fifth of them. `handled` says how many reached the
+    // server: about nine in ten on a fast machine, and none on a slow one
+    // (windows-aarch64 in CI), where every abort lands before the accept. It
+    // is reported, not asserted. The deterministic rounds above carry the
+    // coverage; the load only has to settle, and abort at least once.
+    const { tally } = result as { tally: { responded: number; aborted: number } };
+    expect({ settled: tally.responded + tally.aborted, aborted: tally.aborted > 0 }).toEqual({
       settled: requests,
       aborted: true,
-      handled: true,
     });
   },
   fixtureTimeout,

@@ -87,7 +87,7 @@ fn description(code: bun_core::SignalCode) -> &'static str {
         S::SIGURG => "Urgent socket condition",
         S::SIGXCPU => "CPU time limit exceeded",
         S::SIGXFSZ => "File size limit exceeded",
-        S::SIGVTALRM => "Virtual timefr expired",
+        S::SIGVTALRM => "Virtual timer expired",
         S::SIGPROF => "Profiling timer expired",
         S::SIGWINCH => "Window size change",
         S::SIGIO => "I/O on asynchronous file descriptor is possible",

@@ -712,6 +712,15 @@ impl NetworkTask {
         Ok(())
     }
 
+    /// Moves the fully written header block into `self.header_buf` and returns the
+    /// view of it that the HTTP thread reads.
+    fn store_header_buf(&mut self, header_builder: &mut HeaderBuilder) -> &'static [u8] {
+        debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
+        self.header_buf = header_builder.content.move_to_slice();
+        // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
+        unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
+    }
+
     pub(crate) fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
         // `HTTPClientResultCallback::new`
         // performs type erasure over a `fn(*mut T, *mut AsyncHTTP, _)`.
@@ -819,59 +828,37 @@ impl NetworkTask {
             None => None,
         };
 
-        // Only attach the registry `Authorization` header when the tarball URL
-        // origin matches the configured registry scope origin. The npm manifest
-        // is registry-controlled, so a malicious registry could otherwise point
-        // the tarball at an attacker-controlled host and receive the scope
-        // credentials. The empty-`tarball_url` branch builds the URL from
-        // `scope.url.href()`, so its origin matches and authorized downloads
-        // keep working.
-        // Compare (protocol, hostname, effective port) rather than the raw
-        // `URL.origin` slice — `origin` is a borrowed prefix of the input
-        // string and is not normalized for default ports, so a tarball URL of
-        // `https://host:443/...` would not byte-match a `.npmrc` registry of
-        // `https://host/...` even though they are the same origin. Some
-        // registries emit `dist.tarball` URLs with the default port spelled
-        // out; without normalization those installs lose the `Authorization`
-        // header and fail with 401.
-        let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
-            let tarball = URL::parse(&self.url_buf);
-            let registry = scope.url.url();
-            tarball.protocol == registry.protocol
-                && tarball.hostname == registry.hostname
-                && tarball.get_port_auto() == registry.get_port_auto()
+        // The empty-`tarball_url` branch above built the URL from `scope.url`, so it
+        // is under the registry and gets the scope's credentials.
+        let credentials = match authorization {
+            Authorization::NoAuthorization => None,
+            Authorization::AllowAuthorization => pm
+                .options
+                .tarball_credentials(scope, &URL::parse(&self.url_buf)),
         };
 
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
 
-        if send_auth {
-            count_auth(&mut header_builder, scope);
-        }
-
-        // Registry credentials win over URL userinfo, as in npm.
-        let url_authorization = match url_authorization {
-            Some(value) if header_builder.header_count == 0 => {
+        // Configured credentials win over the URL's userinfo, as in npm.
+        let header_buf: &'static [u8] = match (credentials, url_authorization) {
+            (Some(credentials), _) => {
+                count_auth(&mut header_builder, credentials);
+                header_builder.allocate()?;
+                append_auth(&mut header_builder, credentials);
+                self.store_header_buf(&mut header_builder)
+            }
+            (None, Some(value)) => {
                 header_builder.count("Authorization", &value);
-                Some(value)
+                header_builder.allocate()?;
+                header_builder.append("Authorization", &value);
+                self.store_header_buf(&mut header_builder)
             }
-            _ => None,
-        };
-
-        let header_buf: &'static [u8] = if header_builder.header_count > 0 {
-            header_builder.allocate()?;
-            match &url_authorization {
-                Some(value) => header_builder.append("Authorization", value),
-                None => append_auth(&mut header_builder, scope),
+            (None, None) => {
+                self.header_buf = Box::default();
+                b""
             }
-            debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
-            self.header_buf = header_builder.content.move_to_slice();
-            // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
-            unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
-        } else {
-            self.header_buf = Box::default();
-            b""
         };
 
         // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by

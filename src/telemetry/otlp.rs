@@ -322,7 +322,7 @@ pub fn redact_query(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let end = strings::index_of_char_usize(&url[q..], b'#').map_or(url.len(), |i| q + i);
     let hit = |pair: &[u8]| {
         let key = strings::split_once_char(pair, b'=').map_or(pair, |(k, _)| k);
-        REDACTED_QUERY_KEYS.iter().any(|k| *k == key)
+        REDACTED_QUERY_KEYS.contains(&key)
     };
     if !strings::split(&url[q..end], b"&").any(hit) {
         return std::borrow::Cow::Borrowed(url);
@@ -334,7 +334,7 @@ pub fn redact_query(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
             out.push(b'&');
         }
         match strings::split_once_char(pair, b'=') {
-            Some((k, _)) if REDACTED_QUERY_KEYS.iter().any(|r| *r == k) => {
+            Some((k, _)) if REDACTED_QUERY_KEYS.contains(&k) => {
                 out.extend_from_slice(k);
                 out.extend_from_slice(b"=REDACTED");
             }

@@ -127,8 +127,8 @@ describe("Bun.serve", () => {
       "server.port": server.port,
       "network.protocol.version": "1.1",
       "user_agent.original": "otel-test",
-      "client.address": expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
-      "network.peer.address": expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
+      "client.address": expect.stringMatching(/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/),
+      "network.peer.address": expect.stringMatching(/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/),
       "network.peer.port": expect.any(Number),
       "http.response.status_code": 201,
     });

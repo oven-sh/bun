@@ -186,8 +186,9 @@ impl Request {
     /// may repeat; `None` when absent.
     pub fn header_joined(&self, name: &[u8]) -> Option<Vec<u8>> {
         unsafe extern "C" fn push(value: *const u8, len: usize, user: *mut core::ffi::c_void) {
-            // SAFETY: `user` is the `&mut Option<Vec<u8>>` passed below; value/len is a request-owned slice.
+            // SAFETY: `user` is the `&mut Option<Vec<u8>>` passed below.
             let out = unsafe { &mut *user.cast::<Option<Vec<u8>>>() };
+            // SAFETY: value/len is a request-owned slice valid for the call.
             let v = unsafe { bun_core::ffi::slice(value, len) };
             match out {
                 Some(buf) => {

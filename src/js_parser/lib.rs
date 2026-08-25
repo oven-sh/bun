@@ -88,6 +88,19 @@ pub mod Macro {
             }
         }
     }
+    impl MacroContext {
+        /// A second handle onto the same macro-runner state, for a parse's
+        /// `Options`. The state stays owned by (and is torn down through) the
+        /// transpiler's own `MacroContext`, which every parse it runs is
+        /// inside of.
+        #[inline]
+        pub fn handle(&self) -> MacroContext {
+            MacroContext {
+                javascript_object: self.javascript_object,
+                data: self.data,
+            }
+        }
+    }
     unsafe extern "Rust" {
         /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
         /// is `*mut bun_bundler::Transpiler<'_>` — erased because this crate

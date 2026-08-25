@@ -1355,7 +1355,7 @@ pub struct Options<'a> {
     /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
-    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
+    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback<'a>,
 
     /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
@@ -1477,57 +1477,56 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
-// Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
-// keeps alive for the print pass; `callback` is POD.
+/// What the print entry points read of a file's AST besides its parts:
+/// lets callers whose ASTs are stored column-wise print without assembling
+/// an owned [`Ast`].
 #[derive(Clone, Copy)]
-pub struct RequireOrImportMetaCallback {
-    pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
+pub struct PrintAst<'a> {
+    pub approximate_newline_count: usize,
+    pub has_lazy_export: bool,
+    pub exports_kind: js_ast::ExportsKind,
+    pub named_exports: &'a js_ast::ast_result::NamedExports,
+    pub export_star_import_records: &'a [u32],
+    pub top_level_await_keyword: bun_ast::Range,
 }
 
-impl Default for RequireOrImportMetaCallback {
-    fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
-            RequireOrImportMeta::default()
-        }
-        Self {
-            ctx: None,
-            callback: noop,
+impl<'a> From<&'a Ast<'_>> for PrintAst<'a> {
+    fn from(ast: &'a Ast<'_>) -> Self {
+        PrintAst {
+            approximate_newline_count: ast.approximate_newline_count,
+            has_lazy_export: ast.has_lazy_export,
+            exports_kind: ast.exports_kind,
+            named_exports: &ast.named_exports,
+            export_star_import_records: ast.export_star_import_records.as_slice(),
+            top_level_await_keyword: ast.top_level_await_keyword,
         }
     }
 }
 
-/// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
-/// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
+/// How the printer asks its host what a bundled `require()` / `import.meta`
+/// of source `id` refers to.
+#[derive(Clone, Copy, Default)]
+pub struct RequireOrImportMetaCallback<'a> {
+    pub(crate) ctx: Option<&'a dyn RequireOrImportMetaSource>,
+}
+
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta;
 }
 
-impl RequireOrImportMetaCallback {
+impl<'a> RequireOrImportMetaCallback<'a> {
     pub(crate) fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
+        self.ctx
+            .unwrap()
+            .require_or_import_meta_for_source(id, was_unwrapped_require)
     }
 
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
-        fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
-            id: u32,
-            was_unwrapped_require: bool,
-        ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
-            // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
-            // deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
-        }
-        Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
-            ctx: Some(NonNull::from(ctx).cast::<()>()),
-            callback: thunk::<T>,
-        }
+    pub fn init(ctx: &'a dyn RequireOrImportMetaSource) -> Self {
+        Self { ctx: Some(ctx) }
     }
 }
 
@@ -7036,7 +7035,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_dev_server_module(
             &mut self,
             source: &bun_ast::Source,
-            ast: &js_ast::Ast,
+            ast: crate::PrintAst<'_>,
             part: &js_ast::Part,
         ) {
             self.indent();
@@ -7748,7 +7747,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
     opts: &mut Options<'a>,
     source: &'a bun_ast::Source,
-    tree: &Ast,
+    tree: PrintAst<'_>,
 ) -> SourceMap::chunk::Builder<'a> {
     if generate_source_map == GenerateSourceMap::Disable {
         return SourceMap::chunk::Builder::default();
@@ -7807,7 +7806,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
     // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
     // Renamer<'static,'static>`) lets inference unify it with the no-op arm.
-    let mut no_op_renamer;
+    let no_op_renamer;
     // hoisted out of the `minify_identifiers` arm so the
     // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
     let mut minify_renamer;
@@ -7895,7 +7894,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let minifier = tree.char_freq.as_ref().unwrap().compile();
         minify_renamer.assign_names_by_frequency(&minifier)?;
 
-        rename::Renamer::MinifyRenamer(&mut *minify_renamer)
+        rename::Renamer::MinifyRenamer(&*minify_renamer)
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
         no_op_renamer.to_renamer()
@@ -7916,7 +7915,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,
         source,
-        tree,
+        PrintAst::from(tree),
     );
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
@@ -8037,8 +8036,7 @@ pub fn print_json<W: WriterTrait>(
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
     let bump = bun_alloc::Arena::new();
-    let mut no_op =
-        rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
+    let no_op = rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
 
     let full_opts = Options {
         indent: opts.indent,
@@ -8067,7 +8065,7 @@ pub fn print_json<W: WriterTrait>(
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &Ast,
+    ast: PrintAst<'_>,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
@@ -8098,7 +8096,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &Ast,
+    ast: PrintAst<'_>,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
@@ -8139,7 +8137,7 @@ pub(crate) fn print_with_writer_and_platform<
 >(
     mut writer: W,
     bump: &'a bun_alloc::Arena,
-    ast: &Ast,
+    ast: PrintAst<'_>,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],

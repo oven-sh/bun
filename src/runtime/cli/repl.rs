@@ -2162,7 +2162,12 @@ impl<'a> Repl<'a> {
                 &mut vm.as_mut().transpiler,
             ));
         }
-        opts.macro_context = vm.as_mut().transpiler.macro_context.as_mut();
+        opts.macro_context = vm
+            .as_mut()
+            .transpiler
+            .macro_context
+            .as_ref()
+            .map(|m| m.handle());
 
         // Create log for errors
         let mut log = bun_ast::Log::init();

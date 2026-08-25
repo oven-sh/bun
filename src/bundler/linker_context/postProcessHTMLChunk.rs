@@ -1,18 +1,19 @@
 use bun_core::string_joiner::{StringJoiner, Watcher};
 
 use crate::Chunk;
-use crate::linker_context_mod::GenerateChunkCtx;
+use crate::linker_context_mod::LinkShared;
 use crate::thread_pool;
 
 pub(crate) fn post_process_html_chunk(
-    ctx: GenerateChunkCtx,
+    ctx: LinkShared<'_, '_>,
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
 ) -> Result<(), crate::Error> {
     // The body has no fallible sites; the Result signature matches the other
     // `post_process_*_chunk` callees dispatched from `generate_chunk`.
     // This is where we split output into pieces
-    let c = ctx.c();
+    let c = ctx.c;
+    let pg = ctx.graph;
     // E0509: StringJoiner has Drop, so FRU `..Default::default()` is illegal — assign field instead.
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -38,14 +39,15 @@ pub(crate) fn post_process_html_chunk(
     // stored in `chunk.intermediate_output`, which is only read while the chunk and
     // the linker graph are alive.
     let mut j = unsafe { j.detach_lifetime() };
+    let _ = alloc;
     chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
-        alloc,
+        pg,
         &mut j,
-        ctx.chunks.len() as u32, // @truncate
+        ctx.chunk_unique_keys.len() as u32, // @truncate
     ));
 
     // Reshaped for borrowck (compute hash before assigning into chunk)
-    let isolated_hash = c.generate_isolated_hash(chunk, alloc);
+    let isolated_hash = c.generate_isolated_hash(pg, chunk);
     chunk.isolated_hash = isolated_hash;
 
     Ok(())

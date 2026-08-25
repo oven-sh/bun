@@ -5,8 +5,8 @@ use bun_core::{self, Output, zstr};
 use bun_io as Async;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 
-use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
-use crate::{BundleV2, Transpiler};
+use crate::Transpiler;
+use crate::thread_pool::BundleHeap;
 
 /// Used to keep the bundle thread from spinning on Windows
 #[cfg(windows)]
@@ -72,46 +72,21 @@ pub trait CompletionStruct: Node + Send + 'static {
     fn complete_on_bundle_thread(&mut self);
     fn set_result(&mut self, result: BundleV2Result);
     fn set_log(&mut self, log: bun_ast::Log);
-    fn set_transpiler(&mut self, this: *mut BundleV2<'_>);
-    fn plugins(&self) -> Option<NonNull<JSBundlerPlugin>>;
-    /// Returns the file map if non-empty; a single accessor so the opaque
-    /// `FileMap` layout stays in T6.
-    fn file_map(&mut self) -> Option<NonNull<FileMap>>;
-    /// Returns a §Dispatch handle (erased owner + `&'static` vtable) the impl
-    /// provides, so the bundler can read `result == .err` / `is_cancelled`,
-    /// and post plugin hops to the owning VM, without naming the concrete
-    /// struct.
-    fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
-    /// `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
-    /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
-    /// configure pair is folded into one trait call returning the
-    /// arena-allocated, fully-configured transpiler.
-    // The returned `&'a mut Transpiler<'a>` is arena-allocated via `bump.alloc(...)`
-    // (bumpalo `Bump`), which hands out `&mut` from `&self` through interior
-    // mutability — the standard arena pattern `mut_from_ref` cannot see through.
-    #[allow(clippy::mut_from_ref)]
+    /// The per-build transpiler, configured from the task's config. `heap`
+    /// is the per-build heap that backs it, so the two share `'a` (option
+    /// fields like `optimize_imports: &'a StringSet` borrow from it).
     fn create_and_configure_transpiler<'a>(
         &mut self,
-        bump: &'a Arena,
-    ) -> Result<&'a mut Transpiler<'a>, crate::Error>;
+        heap: &'a Arena,
+    ) -> Result<Box<Transpiler<'a>>, crate::Error>;
 
-    /// Constructs the `BundleV2`, wires `plugins`/`completion`/`file_map`,
-    /// and runs the bundle.
-    ///
-    /// This body is `JSBundleCompletionTask`-specific, so the
-    /// construction + run is delegated to the trait impl in T6, which has
-    /// access to the concrete event-loop / work-pool wiring. The shared
-    /// scaffolding (arena, AST arena push/pop, log copy,
-    /// `completeOnBundleThread`) stays in `generate_in_new_thread` below.
+    /// Constructs the `BundleV2` (wiring plugins / completion handle / file
+    /// map from the task) and runs the bundle to completion.
     fn init_and_run<'a>(
         &mut self,
-        transpiler: &'a mut Transpiler<'a>,
-        bump: &'a Arena,
-        // Raw `*mut` (not `&'static`) because `BundleV2::init` ultimately
-        // stores it as `worker_pool: *mut ThreadPool` and `WorkPool::get()`
-        // hands out `&'static`; materializing `&mut` from that would be UB.
-        thread_pool: *mut bun_threading::ThreadPool,
+        transpiler: &mut Transpiler<'a>,
+        heap: &'a BundleHeap,
     ) -> Result<(), crate::Error>;
 }
 
@@ -269,42 +244,23 @@ impl<C: CompletionStruct> BundleThread<C> {
         completion: &mut C,
         generation: bun_core::Generation,
     ) -> Result<(), crate::Error> {
-        let heap = Arena::new();
-
-        let bump = &heap;
-        let ast_memory_store: &mut bun_ast::ASTMemoryAllocator =
-            bump.alloc(bun_ast::ASTMemoryAllocator::new(bump));
+        let heap = BundleHeap::new();
+        let mut ast_memory_store = bun_ast::ASTMemoryAllocator::new(&heap);
         ast_memory_store.reset();
         ast_memory_store.push();
 
-        // Allocate + configure folded — see `create_and_configure_transpiler` doc.
-        let transpiler = completion.create_and_configure_transpiler(bump)?;
-
+        let mut transpiler = completion.create_and_configure_transpiler(&heap)?;
         transpiler.resolver.generation = generation;
 
-        // Construction + run delegated — see
-        // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so
-        // `completion` can be borrowed again below.
-        let transpiler_ptr: *mut Transpiler<'_> = transpiler;
-        let run = completion.init_and_run(
-            // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
-            unsafe { &mut *transpiler_ptr },
-            bump,
-            // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
-            // the impl can hand it to `BundleV2::init` (which stores `*mut`).
-            std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
-        );
+        let run = completion.init_and_run(&mut transpiler, &heap);
 
-        // Straight-line teardown: log copy
-        // runs on both paths; `completeOnBundleThread` only on success (the error
-        // path's `set_result(Err)` + complete happens in `thread_main`). The
-        // `deinitWithoutFreeingArena` + wait-group drain live inside `init_and_run`
-        // (it owns `this`).
+        // The log copy runs on both paths; `completeOnBundleThread` only on
+        // success (the error path's `set_result(Err)` + complete happens in
+        // `thread_main`).
         let mut out_log = bun_ast::Log::init();
-        // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
-        // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
-        // `&'a mut Transpiler` consumed by `init_and_run` above is not reborrowed.
-        let _ = unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) }; // logger OOM-only
+        let _ = transpiler
+            .log_mut()
+            .append_to_with_recycled(&mut out_log, true); // logger OOM-only
         completion.set_log(out_log);
 
         if run.is_ok() {
@@ -312,32 +268,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         }
 
         ast_memory_store.pop();
-
-        // `transpiler` / `ast_memory_store` are arena-allocated, but their
-        // containers (`Resolver` caches, `BundleOptions` strings, the AST
-        // allocator's own `mi_heap` handle, …) live on the global heap as
-        // `Vec`/`Box`/`HashMap`, so dropping `heap` (`mi_heap_destroy`) reclaims
-        // the struct bytes but never runs `Transpiler::drop` /
-        // `ASTMemoryAllocator::drop` — leaking the resolver's directory/file
-        // caches and an entire `mi_heap` per `Bun.build()` call. LSan does not
-        // flag the latter (mimalloc bypasses the ASAN `malloc` interceptor), so
-        // the symptom is RSS-only: ~32 MB/build linear growth in the
-        // bun-build-api "does not leak sourcemap JSON" test.
-        //
-        // SAFETY: both pointers are the unique `&'a mut` slots returned by
-        // `bump.alloc(...)` above; nothing else holds a reference to either
-        // past `init_and_run` (`set_transpiler` was cleared by
-        // `deinit_without_freeing_arena`, `pop()` restored the AST-allocator
-        // thread-local). The arena bytes themselves are bulk-freed afterwards
-        // by `heap`'s `Drop` — `drop_in_place` only releases the *embedded
-        // global-heap* state, so there is no double free.
-        unsafe {
-            core::ptr::drop_in_place(transpiler_ptr);
-            core::ptr::drop_in_place(std::ptr::from_mut::<bun_ast::ASTMemoryAllocator>(
-                ast_memory_store,
-            ));
-        }
-
+        drop(transpiler);
+        drop(ast_memory_store);
         run
     }
 }

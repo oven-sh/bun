@@ -232,6 +232,14 @@ impl Result {
     /// Single deref site for the ARENA-backed pointer — same invariant as
     /// [`dir_info::DirInfo::package_json`].
     #[inline]
+    pub fn package_json_ref(&self) -> Option<&'static PackageJSON> {
+        Self::deref_package_json(self.package_json)
+    }
+
+    /// Field-value form of [`package_json_ref`] for sites where `self` is
+    /// already mutably borrowed (e.g. while iterating `path_pair`). Takes the
+    /// `Copy` field directly so the borrow checker only sees a field read.
+    #[inline]
     pub(crate) fn deref_package_json(
         ptr: Option<*const PackageJSON>,
     ) -> Option<&'static PackageJSON> {

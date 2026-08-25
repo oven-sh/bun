@@ -1,6 +1,6 @@
 #![feature(inherent_associated_types)]
-#![feature(adt_const_params, allocator_api, thread_local)]
-#![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
+#![feature(adt_const_params, allocator_api)]
+#![allow(incomplete_features)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
@@ -46,8 +46,8 @@ pub use options_impl::PathTemplate;
 pub use HTMLImportManifest::html_import_manifest;
 pub use bun_core::cheap_prefix_normalizer;
 pub use bundle_v2::{
-    CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
-    StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,
+    CompileResult, CompileResultForSourceMap, ContentHasher, ImportTracker, PartRange, StableRef,
+    WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,
 };
 pub use chunk::{
     CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,
@@ -84,6 +84,7 @@ pub mod HTMLImportManifest;
 pub mod HTMLScanner;
 pub mod cache;
 pub mod entry_points;
+pub mod inbox;
 #[path = "OutputFile.rs"]
 pub mod output_file;
 #[path = "ThreadPool.rs"]
@@ -194,9 +195,7 @@ pub mod linker_context {
 
     // ── Re-exports so `crate::linker_context::{debug, LinkerContext, …}`
     //    resolves at every submodule call-site.
-    pub use crate::linker_context_mod::{
-        ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
-    };
+    pub use crate::linker_context_mod::{ChunkMeta, LinkShared, LinkerContext};
 }
 
 // ---------------------------------------------------------------------------
@@ -337,42 +336,47 @@ pub use bundle_v2::dispatch;
 // ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
 // Re-exported through `bundle_v2::dispatch` for existing call sites.
 
-// Erased handle to `bake::DevServer`. The struct stores a `&'a mut [Chunk]`
-// it mutates through, hence `*mut`.
+// Erased handle to `bake::DevServer` (a `DevServerCell`). Every method runs
+// on the dev server's (JS) thread, which is also the bundle thread there.
 bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
-        fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
-        fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_ast::Log;
-        fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
-        fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
-        fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
+        fn with_barrel_needed_exports(f: &mut dyn for<'m> FnMut(&'m mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>));
+        fn add_resolution_failures(abs_path: &[u8], graph: bake_types::Graph, log: &mut bun_ast::Log);
+        fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: &bun_ast::Log, bv2: &mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
+        fn put_or_overwrite_asset(path: &bun_paths::fs::Path<'_>, contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
         fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
         fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;
-        fn current_bundle_start_data() -> *mut ();
         fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), crate::Error>;
         fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
+        fn drain_bundle_inbox();
+        fn watcher_add_file(fd: bun_sys::Fd, file_path: &[u8], hash: u32, dir_fd: bun_sys::Fd, clone_file_path: bool) -> bun_sys::Result<bun_watcher::FdOwnership>;
     }
 }
-impl DevServerHandle {
-    /// The handle for the dev server `owner` points at. The handle is another
-    /// back-reference: whoever stores it takes on `owner`'s holder obligation
-    /// (must be dropped before the pointee).
-    #[inline]
-    pub fn from_owner<T: DevServerHandleOwner>(owner: bun_ptr::BackRef<T, bun_ptr::Root>) -> Self {
-        // SAFETY: `BackRef` invariant — the pointee is live while the handle's
-        // holder (bound by the same obligation) uses it.
-        unsafe { Self::of(owner.this_ptr().as_ptr()) }
+bun_ptr::link_handle_from_backref!(DevServerHandle, DevServerHandleOwner);
+
+impl bundle_v2::BundleWatcher for DevServerHandle {
+    fn add_file(
+        &mut self,
+        fd: bun_sys::Fd,
+        file_path: &[u8],
+        hash: u32,
+        dir_fd: bun_sys::Fd,
+        clone_file_path: bool,
+    ) -> bun_sys::Result<bun_watcher::FdOwnership> {
+        self.watcher_add_file(fd, file_path, hash, dir_fd, clone_file_path)
     }
 }
-// SAFETY: the handle is `{ kind, owner: *mut () }`; the raw pointer is what
-// defeats the auto-impl. `owner` is the single per-process `bake::DevServer`
-// (established at `unsafe fn new()`), which outlives every bundler worker
-// thread that carries this handle; thread-safety of each dispatched method is
-// upheld by the `link_impl_DevServerHandle!` bodies, not by the handle itself.
-unsafe impl Send for DevServerHandle {}
-// SAFETY: see `Send` above — sharing the tagged pointer is sound for the same reason.
-unsafe impl Sync for DevServerHandle {}
+
+// Erased handle to `Bun.build`'s `JSBundleCompletionTask` (whose fields name
+// runtime types). Both methods are callable from any thread.
+bun_dispatch::link_interface! {
+    pub CompletionHandle[Js] {
+        fn is_cancelled() -> bool;
+        fn enqueue_task_concurrent(task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>);
+    }
+}
+bun_ptr::link_handle_from_backref!(CompletionHandle, CompletionHandleOwner);
 
 // VirtualMachine accessors for `normalize_specifier` / `get_loader_and_virtual_source`.
 // `bun_runtime::jsc_hooks` provides the `Runtime` arm.

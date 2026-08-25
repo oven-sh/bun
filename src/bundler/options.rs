@@ -1198,7 +1198,9 @@ bun_core::comptime_string_map! {
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
     pub banner: Cow<'static, [u8]>,
-    pub define: Box<defines::Define>,
+    /// Shared with the worker transpilers cloned from this one and kept by
+    /// a bundle's heap (parsed ASTs borrow from it).
+    pub define: std::sync::Arc<defines::Define>,
     pub drop: Box<[Box<[u8]>]>,
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.
@@ -1438,13 +1440,7 @@ impl<'a> BundleOptions<'a> {
         BundleOptions {
             footer: self.footer.clone(),
             banner: self.banner.clone(),
-            define: Box::new(defines::Define {
-                identifiers: self.define.identifiers.clone(),
-                dots: self.define.dots.clone(),
-                dots_filter: self.define.dots_filter.clone(),
-                drop_debugger: self.define.drop_debugger,
-                user_hash: self.define.user_hash,
-            }),
+            define: std::sync::Arc::clone(&self.define),
             drop: self.drop.clone(),
             bundler_feature_flags: self
                 .bundler_feature_flags
@@ -1658,7 +1654,8 @@ impl<'a> BundleOptions<'a> {
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
             self.dead_code_elimination && self.minify_syntax,
             arena,
-        )?;
+        )?
+        .into();
         self.defines_loaded = true;
         Ok(())
     }
@@ -1696,7 +1693,7 @@ impl<'a> BundleOptions<'a> {
             log,
             // `define` is filled by `load_defines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
-            define: Box::new(defines::Define::default()),
+            define: std::sync::Arc::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,

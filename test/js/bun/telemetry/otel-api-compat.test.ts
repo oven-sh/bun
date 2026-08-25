@@ -303,6 +303,54 @@ describe("@opentelemetry/api", () => {
     await collect();
   });
 
+  test("the api global's version matches the installed @opentelemetry/api, so its registerGlobal() calls succeed", () => {
+    const { diag, metrics, DiagLogLevel } = require("@opentelemetry/api");
+    const version = require("@opentelemetry/api/package.json").version;
+    expect((globalThis as any)[Symbol.for("opentelemetry.js.api.1")].version).toBe(version);
+    expect(diag.setLogger({ error() {}, warn() {}, info() {}, debug() {}, verbose() {} }, DiagLogLevel.ERROR)).toBe(
+      true,
+    );
+    expect(metrics.setGlobalMeterProvider({ getMeter: () => ({}) as any })).toBe(true);
+    metrics.disable();
+    diag.disable();
+  });
+
+  test("baggage set or deleted on the Context wins over what the request carried in, for fetch and node:http alike", async () => {
+    const seen: Record<string, (string | null)[]> = { set: [], deleted: [], untouched: [] };
+    using upstream = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen[new URL(req.url).pathname.slice(1)].push(req.headers.get("baggage"));
+        return new Response("u");
+      },
+    });
+    const get = (path: string) =>
+      new Promise<void>(r => http.get(`http://127.0.0.1:${upstream.port}/${path}`, res => res.resume().on("end", r)));
+    using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        await fetch(`${upstream.url}untouched`);
+        await get("untouched");
+        await context.with(
+          propagation.setBaggage(context.active(), propagation.createBaggage({ k: { value: "v" } })),
+          async () => {
+            await fetch(`${upstream.url}set`);
+            await get("set");
+          },
+        );
+        await context.with(propagation.deleteBaggage(context.active()), async () => {
+          expect(propagation.getActiveBaggage()).toBeUndefined();
+          await fetch(`${upstream.url}deleted`);
+          await get("deleted");
+        });
+        return new Response("ok");
+      },
+    });
+    await (await fetch(server.url, { headers: { baggage: "secret=1" } })).text();
+    expect(seen).toEqual({ untouched: ["secret=1", "secret=1"], set: ["k=v", "k=v"], deleted: [null, null] });
+    await collect();
+  });
+
   test("propagation.inject() inside a request handler forwards the baggage the request carried in", async () => {
     using server = Bun.serve({
       port: 0,

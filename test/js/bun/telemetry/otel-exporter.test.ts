@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { basename } from "node:path";
 import { gunzipSync } from "node:zlib";
 
 const root = require("@opentelemetry/otlp-transformer/build/src/generated/root");
@@ -90,7 +91,8 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       team: "runtime",
       "telemetry.sdk.name": "bun",
       "process.runtime.name": "bun",
-      "process.executable.name": "bun",
+      // the running binary's name (bun, bun-debug, or a --compile output's own name)
+      "process.executable.name": basename(bunExe()),
       "process.executable.path": expect.any(String),
       "process.command": expect.stringMatching(/index\.js$/),
       "host.name": require("node:os").hostname(),
@@ -683,10 +685,106 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(attrs.team).toBe("x");
   });
 
-  test("bunfig [telemetry] table enables and configures", async () => {
+  test("OTEL_SDK_DISABLED=true makes Bun.otel.start() a no-op", async () => {
+    using c = collector();
+    const { stdout, exitCode } = await run(
+      `Bun.otel.start({ endpoint: process.env.C }); Bun.otel.tracer("t").startSpan("s").end(); await Bun.otel.forceFlush(); console.log(Bun.otel.enabled);`,
+      { C: c.url, OTEL_SDK_DISABLED: "true" },
+    );
+    expect(stdout.trim()).toBe("false");
+    expect(c.received.length).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  test("OTEL_TRACES_EXPORTER=none: start() without exporters adds no default endpoint", async () => {
+    using c = collector(); // listening on the would-be default is not possible (4318), so assert via stats
+    const { stdout, exitCode } = await run(
+      `Bun.otel.start({ serviceName: "x" }); Bun.otel.tracer("t").startSpan("s").end(); await Bun.otel.forceFlush(); const s = Bun.otel.stats(); console.log(s.exportsFailed, s.exportsSucceeded);`,
+      { OTEL_TRACES_EXPORTER: "none" },
+    );
+    expect(stdout.trim()).toBe("0 0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an async function exporter is awaited: forceFlush waits for it and a rejection counts as a failed export, not an unhandled rejection", async () => {
+    const { stdout, exitCode } = await run(
+      `
+      let resolveExport;
+      const exported = [];
+      Bun.otel.start({ exporters: [{ async export(spans) { await new Promise(r => (resolveExport = r)); exported.push(...spans.map(s => s.name)); } }, { async export() { await 1; throw new Error("flaky"); } }] });
+      process.on("unhandledRejection", () => { console.log("UNHANDLED"); });
+      Bun.otel.tracer("t").startSpan("a").end();
+      const flushed = Bun.otel.forceFlush().then(() => "flushed");
+      const first = await Promise.race([flushed, Bun.sleep(30).then(() => "waiting")]);
+      resolveExport();
+      await flushed;
+      const s = Bun.otel.stats();
+      console.log(first, JSON.stringify(exported), s.exportsSucceeded, s.exportsFailed, s.spansExported);
+      `,
+      {},
+    );
+    expect(stdout.trim()).toBe('waiting ["a"] 1 1 1');
+    expect(exitCode).toBe(0);
+  });
+
+  test("a function exporter that throws is a warning and a failed export, not an uncaught exception", async () => {
+    using dir = tempDir("otel-throwing-exporter", {
+      "index.js": `Bun.otel.start({ exporters: [{ export() { throw new Error("boom"); } }] }); Bun.otel.tracer("t").startSpan("a").end(); await Bun.otel.forceFlush(); console.log("alive", Bun.otel.stats().exportsFailed);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("alive 1");
+    expect(stderr).toContain("exporter callback failed");
+    expect(exitCode).toBe(0);
+  });
+
+  test("spans are flushed on process.exit() and after an uncaught exception", async () => {
+    using c = collector();
+    const a = await run(
+      `Bun.otel.start({ endpoint: process.env.C }); Bun.otel.tracer("t").startSpan("exit0").end(); process.exit(0);`,
+      { C: c.url },
+    );
+    expect(a.exitCode).toBe(0);
+    const b = await run(
+      `Bun.otel.start({ endpoint: process.env.C }); Bun.otel.tracer("t").startSpan("threw").end(); throw new Error("fatal");`,
+      { C: c.url },
+    );
+    expect(b.exitCode).toBe(1);
+    expect(
+      c
+        .spans()
+        .map((s: any) => s.name)
+        .sort(),
+    ).toEqual(["exit0", "threw"]);
+  });
+
+  test("spans from a worker that alone called Bun.otel.start() are exported when the process exits", async () => {
+    using c = collector();
+    using dir = tempDir("otel-worker-only", {
+      "w.js": `Bun.otel.start({ endpoint: process.env.C }); Bun.otel.tracer("w").startSpan("from-worker").end(); postMessage("done");`,
+      "index.js": `const w = new Worker("./w.js"); await new Promise(r => (w.onmessage = r)); await w.terminate();`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, C: c.url },
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+    expect(c.spans().map((s: any) => s.name)).toEqual(["from-worker"]);
+  });
+
+  test("bunfig [otel] table enables and configures", async () => {
     using c = collector();
     using dir = tempDir("otel-bunfig", {
-      "bunfig.toml": `[telemetry]\nenabled = true\nendpoint = "${c.url}"\nserviceName = "from-bunfig"\n`,
+      "bunfig.toml": `[otel]\nendpoint = "${c.url}"\nserviceName = "from-bunfig"\n`,
       "index.js": `Bun.otel.tracer("t").startSpan("bf").end();`,
     });
     await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });

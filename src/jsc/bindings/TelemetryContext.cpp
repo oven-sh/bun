@@ -208,6 +208,10 @@ extern "C" BunString Bun__Telemetry__activeExtrasBaggage(Zig::GlobalObject* glob
         (void)scope.tryClearException();
         return { BunStringTag::Empty, {} };
     }
+    // null: the Context masks baggage (deleteBaggage / empty) — Dead tells the
+    // caller not to fall back to the request's inbound header.
+    if (header.isNull())
+        return { BunStringTag::Dead, {} };
     if (!header.isString() || !asString(header)->length())
         return { BunStringTag::Empty, {} };
     BunString out = Bun::toStringRef(globalObject, header);

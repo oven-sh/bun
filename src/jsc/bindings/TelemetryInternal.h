@@ -101,7 +101,7 @@ JSValue telemetryInternalFunction(Zig::GlobalObject*, const Identifier&);
 // End `span` at `endNs` (0 = now). Never runs JS.
 void telemetryEndSpan(Zig::GlobalObject*, JSTelemetrySpan*, uint64_t endNs);
 // One attribute onto a pooled span.
-void telemetryNativeSetAttribute(Zig::GlobalObject*, uint64_t handle, JSString* key, JSValue value);
+bool telemetryNativeSetAttribute(Zig::GlobalObject*, uint64_t handle, JSString* key, JSValue value);
 // Restore the context `span.enter()` displaced (no-op if not entered).
 void telemetryExitSpan(Zig::GlobalObject*, JSTelemetrySpan*);
 // span.setAttribute / span.setAttributes({...}) without calling into JS for the common cases.

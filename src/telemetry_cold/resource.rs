@@ -22,10 +22,19 @@ pub struct ResourceInfo<'a> {
 #[cold]
 #[inline(never)]
 pub fn encode(info: &ResourceInfo<'_>) -> Vec<u8> {
+    // A `bun build --compile` binary is its own executable.
+    let exe_name: &[u8] = match bun_paths::basename(info.executable_path) {
+        b"" => b"bun",
+        n => n,
+    };
+    let default_service_name;
     let service_name: &str = match info.service_name {
         Some(s) if !s.is_empty() => s,
         // semconv: `unknown_service:` + process.executable.name
-        _ => "unknown_service:bun",
+        _ => {
+            default_service_name = format!("unknown_service:{}", bstr::BStr::new(exe_name));
+            &default_service_name
+        }
     };
     let mut attrs: Vec<(&[u8], Value<'_>)> = Vec::with_capacity(16 + info.extra.len());
     attrs.push((b"service.name", Value::Str(service_name.as_bytes())));
@@ -42,7 +51,7 @@ pub fn encode(info: &ResourceInfo<'_>) -> Vec<u8> {
         Value::Str(info.runtime_version.as_bytes()),
     ));
     attrs.push((b"process.pid", Value::Int(info.pid as i64)));
-    attrs.push((b"process.executable.name", Value::Str(b"bun")));
+    attrs.push((b"process.executable.name", Value::Str(exe_name)));
     if !info.executable_path.is_empty() {
         attrs.push((b"process.executable.path", Value::Str(info.executable_path)));
     }

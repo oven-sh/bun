@@ -2,11 +2,17 @@
 
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_telemetry::pool::{self, NativeSpan};
-use bun_telemetry::{
-    Instrument, ScopeId, SpanContext, SpanKind, SpanStub, StatusCode, Value, clock,
-};
+use bun_telemetry::{Instrument, ScopeId, SpanContext, SpanKind, SpanStub, Value, clock};
 
 use super::{Entered, local, state};
+
+unsafe extern "C" {
+    safe fn Bun__Telemetry__observeSettlement(
+        global: &JSGlobalObject,
+        promise: JSValue,
+        span_cell: JSValue,
+    ) -> bool;
+}
 
 /// Start a span for one incoming WebSocket message and make it active for
 /// the handler. `link` is the upgrade request's context (may be invalid).
@@ -73,10 +79,21 @@ pub fn end_message(
     result: JSValue,
 ) -> bun_jsc::JsResult<()> {
     if let Some(p) = result.as_any_promise() {
-        if p.status() == bun_jsc::js_promise::Status::Rejected {
-            if let Some(mut l) = local(global) {
-                pool::with(&mut l.pool, span, |s| s.set_status(StatusCode::Error, b""));
+        match p.status() {
+            bun_jsc::js_promise::Status::Pending => {
+                // An async handler: the span covers the promise and records its
+                // rejection, like Bun.otel.span(name, async fn).
+                let cell = super::span::Bun__Telemetry__poolMaterialize(global, span.0);
+                if Bun__Telemetry__observeSettlement(global, result, cell) {
+                    return Ok(());
+                }
             }
+            bun_jsc::js_promise::Status::Rejected => {
+                let r = super::span::record_exception(global, span, p.result(global.vm()));
+                super::end_native(global, span, 0, |_| {});
+                return r;
+            }
+            bun_jsc::js_promise::Status::Fulfilled => {}
         }
     }
     super::end_native(global, span, 0, |_| {});

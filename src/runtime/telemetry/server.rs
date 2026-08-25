@@ -86,8 +86,13 @@ pub fn begin(
             let mut fresh = Vec::new();
             let cache = resp.peer_attrs_cache();
             let cached: &[u8] = cache.as_ref().map_or(b"", |c| c.get());
+            let h1 = if h.http10 != 0 {
+                R::HttpVersion::Http10
+            } else {
+                R::HttpVersion::Http11
+            };
             let peer_encoded: &[u8] = if !cached.is_empty() {
-                f.version = R::HttpVersion::Http11;
+                f.version = h1;
                 cached
             } else {
                 (f.peer, f.peer_port, f.version) = match resp {
@@ -100,21 +105,10 @@ pub fn begin(
                         None => (R::PeerIp::None, 0, R::HttpVersion::Http3),
                     },
                     _ => match resp.get_remote_address_raw() {
-                        Some((RawIp::V4(b), port)) => {
-                            (R::PeerIp::V4(b), port, R::HttpVersion::Http11)
-                        }
-                        // v4-mapped (::ffff:a.b.c.d) reads as the v4 address, as node reports it.
-                        Some((RawIp::V6(b), port)) => (
-                            match b {
-                                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, a, b_, c, d] => {
-                                    R::PeerIp::V4([a, b_, c, d])
-                                }
-                                _ => R::PeerIp::V6(b),
-                            },
-                            port,
-                            R::HttpVersion::Http11,
-                        ),
-                        None => (R::PeerIp::None, 0, R::HttpVersion::Http11),
+                        Some((RawIp::V4(b), port)) => (R::PeerIp::V4(b), port, h1),
+                        // (a v4-mapped `::ffff:a.b.c.d` stays as such, like requestIP() / net.Socket.remoteAddress)
+                        Some((RawIp::V6(b), port)) => (R::PeerIp::V6(b), port, h1),
+                        None => (R::PeerIp::None, 0, h1),
                     },
                 };
                 match (&cache, &f.peer) {
@@ -144,12 +138,13 @@ pub fn begin(
             if !st.capture_request_headers.is_empty() {
                 let l = &st.limits;
                 for name in &st.capture_request_headers {
-                    if let Some(v) = req.header(name) {
+                    // semconv: string[]; a repeated header's values are joined
+                    // with ", " (one element), as Request.headers.get() shows them.
+                    if let Some(v) = req.header_joined(name) {
                         let mut key = Vec::with_capacity(20 + name.len());
                         key.extend_from_slice(b"http.request.header.");
                         key.extend_from_slice(name);
-                        // semconv: header values are string[].
-                        s.push_attribute(&key, &Value::Array(&[Value::Str(v)]), l);
+                        s.push_attribute(&key, &Value::Array(&[Value::Str(&v)]), l);
                     }
                 }
             }

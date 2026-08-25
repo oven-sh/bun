@@ -135,12 +135,14 @@ pub enum HttpVersion {
     Http11,
     Http2,
     Http3,
+    Http10,
 }
 
 impl HttpVersion {
     fn text(self) -> &'static [u8] {
         match self {
             HttpVersion::Unknown => b"",
+            HttpVersion::Http10 => b"1.0",
             HttpVersion::Http11 => b"1.1",
             HttpVersion::Http2 => b"2",
             HttpVersion::Http3 => b"3",
@@ -714,11 +716,12 @@ fn append_tail(
         room -= 1;
     }
     if !query.is_empty() && room != 0 {
+        let query = otlp::redact_query(query);
         otlp::write_str_kv_small(
             out,
             f::ATTRIBUTES,
             "url.query",
-            otlp::truncate_utf8(query, max),
+            otlp::truncate_utf8(&query, max),
         );
     }
     Nested::<SPAN_LEN_RESERVE>::at(span_start + OFF_LEN).finish(out);

@@ -51,6 +51,7 @@ using namespace JSC;
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
+    macro(awaitExport) \
     macro(baggageHeaderFromExtras) \
     macro(basename) \
     macro(birthtimeMs) \
@@ -194,6 +195,9 @@ using namespace JSC;
     macro(telemetryAddLink) \
     macro(telemetryAddOneLink) \
     macro(telemetryFlattenAttributes) \
+    macro(telemetrySpanRecordExceptionImpl) \
+    macro(telemetrySpanSetAttributesImpl) \
+    macro(telemetrySpanSetStatusImpl) \
     macro(telemetrySetAttribute) \
     macro(telemetrySetName) \
     macro(telemetrySetStatus) \

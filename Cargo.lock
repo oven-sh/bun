@@ -1655,6 +1655,7 @@ dependencies = [
  "bstr",
  "bun_base64",
  "bun_core",
+ "bun_paths",
  "bun_telemetry",
  "bun_url",
 ]

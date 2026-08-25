@@ -3,7 +3,7 @@ declare module "bun" {
    * Native OpenTelemetry tracing.
    *
    * Enable with `BUN_OTEL=1` (then the standard `OTEL_*` environment variables
-   * apply), a `[telemetry]` table in `bunfig.toml`, or {@link otel.start}.
+   * apply), an `[otel]` table in `bunfig.toml`, or {@link otel.start}.
    * Once enabled, `Bun.serve`, `node:http`, `fetch`, `Bun.sql`, `bun:sqlite`,
    * `Bun.redis`, `Bun.connect`/`node:net`, `WebSocket`, `node:fs`,
    * `Bun.spawn` and `Bun.dns` emit spans, `traceparent` is propagated on
@@ -227,7 +227,7 @@ declare module "bun" {
       headers?: Record<string, string> | undefined;
       /** @default "none" */
       compression?: "gzip" | "none" | undefined;
-      /** Per-request timeout. @default 10000 */
+      /** Total time one export request may take before it is aborted and retried. @default 10000 */
       timeoutMs?: number | undefined;
     }
 
@@ -301,20 +301,22 @@ declare module "bun" {
     /**
      * A function exporter. Give exactly one of the three callbacks; it is
      * called on the batch interval (and on `forceFlush()` / at exit) with
-     * every span recorded since the previous call.
+     * every span recorded since the previous call. It may return a promise:
+     * the batch counts as exported when it resolves (a rejection or throw is
+     * a failed export and a warning, and `forceFlush()` / exit wait for it).
      */
     type FunctionExporterOptions =
       | {
           /** Decoded spans. */
-          export(spans: ExportedSpan[]): void;
+          export(spans: ExportedSpan[]): void | Promise<void>;
         }
       | {
           /** An encoded OTLP `ExportTraceServiceRequest` (protobuf). */
-          exportProtobuf(request: Uint8Array<ArrayBuffer>): void;
+          exportProtobuf(request: Uint8Array<ArrayBuffer>): void | Promise<void>;
         }
       | {
           /** An OTLP/JSON `ExportTraceServiceRequest`. */
-          exportJSON(request: string): void;
+          exportJSON(request: string): void | Promise<void>;
         };
 
     /**
@@ -478,9 +480,13 @@ declare module "bun" {
     /**
      * Wrap a function so that every call runs inside a span — like
      * {@link span}, but declared once, with `this` and the arguments passed
-     * through and the span named after the function (or `name`). The span
+     * through and the span named after the function (or `name`; one of the
+     * two is required, an anonymous function without `name` throws). The span
      * ends when the call returns or the promise it returns settles; a throw
-     * or rejection is recorded on it.
+     * or rejection is recorded on it. A non-`Promise` thenable result is
+     * adopted with `Promise.resolve()` under the span and that `Promise` is
+     * returned. The wrapped function is not a constructor; wrapping a class
+     * throws.
      *
      * ```ts
      * export const loadUser = Bun.otel.wrap(async function loadUser(id: string) {

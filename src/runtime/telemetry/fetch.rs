@@ -16,7 +16,17 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
         return SpanStub::NONE;
     }
     let st = state();
-    let parent_ctx = super::active_context(global);
+    // A `traceparent` the caller set names the span this request continues:
+    // the CLIENT span becomes its child and the header is re-pointed at the
+    // CLIENT span, so caller → CLIENT → downstream SERVER stitch.
+    let caller_parent = headers
+        .get(b"traceparent")
+        .and_then(propagation::parse_traceparent)
+        .map(|mut c| {
+            c.flags = bun_telemetry::Flags(c.flags.0 | bun_telemetry::Flags::REMOTE);
+            c
+        });
+    let parent_ctx = caller_parent.or_else(|| super::active_context(global));
     if parent_ctx.is_none() && !bun_telemetry::allows_root(Instrument::HttpClient) {
         return SpanStub::NONE;
     }
@@ -30,11 +40,11 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
         bun_telemetry::clock::now_unix_nanos(),
     );
     drop(l);
-    let inject_traceparent = st.propagate_trace_context && headers.get(b"traceparent").is_none();
+    let inject_traceparent = st.propagate_trace_context;
     if inject_traceparent {
         let mut tp = [0u8; propagation::TRACEPARENT_LEN];
         propagation::format_traceparent(&stub.ctx, &mut tp);
-        headers.append(b"traceparent", &tp);
+        headers.set(b"traceparent", &tp);
     }
     // tracestate rides with the traceparent; baggage is its own propagator
     // (it can be active with no span, or with trace context off).
@@ -97,6 +107,9 @@ pub fn end(
             let authority_end = bun_core::strings::index_of_any(&url[scheme_end..], b"/?#")
                 .map(|i| i + scheme_end)
                 .unwrap_or(url.len());
+            // …nor credential-bearing query values (presigned URLs).
+            let url_q = bun_telemetry::otlp::redact_query(url);
+            let url: &[u8] = &url_q;
             match bun_core::strings::last_index_of_char(&url[scheme_end..authority_end], b'@') {
                 None => {
                     w.attr("url.full", url);

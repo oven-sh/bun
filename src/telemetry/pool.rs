@@ -317,8 +317,13 @@ impl Pool {
     }
 
     fn release(&mut self, handle: NativeSpan) {
-        self.slots[handle.index()].reset();
-        self.free.push_back(handle.index() as u32);
+        let slot = &mut self.slots[handle.index()];
+        slot.reset();
+        // A slot whose generation is about to wrap is retired rather than
+        // reused, so a stale handle can never alias a later span.
+        if slot.generation < GENERATION_MASK {
+            self.free.push_back(handle.index() as u32);
+        }
     }
 }
 
@@ -463,7 +468,9 @@ pub fn stub_ptr(p: &Pool, handle: NativeSpan) -> *const SpanStub {
         return core::ptr::null();
     }
     match p.slots.get(handle.index()) {
-        Some(slot) if slot.generation == handle.generation() => &raw const slot.stub,
+        // An ended span is nobody's parent: its slot (and ids) may be reused at
+        // any moment, so the answer must not depend on whether it has been yet.
+        Some(slot) if slot.live && slot.generation == handle.generation() => &raw const slot.stub,
         _ => core::ptr::null(),
     }
 }

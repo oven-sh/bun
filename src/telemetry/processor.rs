@@ -67,6 +67,9 @@ pub trait Exporter: Send + Sync {
     fn owner(&self) -> Option<usize> {
         None
     }
+    /// Periodic housekeeping from [`Processor::tick`] (e.g. aborting an
+    /// export that has outlived its timeout).
+    fn tick(&self, _now_ns: u64) {}
 }
 
 /// A payload an exporter handed back for a later attempt. Parked payloads
@@ -115,6 +118,9 @@ pub struct Processor {
     pending: Guarded<Pending>,
     exporters: RwLock<Vec<Arc<dyn Exporter>>>,
     retries: Guarded<Vec<ParkedRetry>>,
+    /// Spans held by `retries`; they count against `max_queue_size` so an
+    /// outage cannot buffer more than the queue would.
+    parked_spans: core::sync::atomic::AtomicU32,
     /// Encoded `Resource` body.
     resource: RwLock<Arc<[u8]>>,
     /// Encoded `InstrumentationScope` bodies, indexed by `ScopeId`.
@@ -174,6 +180,7 @@ impl Processor {
             }),
             exporters: RwLock::new(Vec::new()),
             retries: Guarded::new(Vec::new()),
+            parked_spans: core::sync::atomic::AtomicU32::new(0),
             resource: RwLock::new(Arc::from(Vec::new())),
             scopes: RwLock::new(scopes),
             scope_names: RwLock::new(names),
@@ -209,6 +216,8 @@ impl Processor {
         *retries = kept;
         drop(retries);
         for r in dropped {
+            self.parked_spans
+                .fetch_sub(r.payload.span_count, Ordering::Relaxed);
             self.record_result(&r.payload, ExportResult::Failure);
         }
     }
@@ -234,6 +243,8 @@ impl Processor {
         *retries = kept;
         drop(retries);
         for r in dropped {
+            self.parked_spans
+                .fetch_sub(r.payload.span_count, Ordering::Relaxed);
             self.record_result(&r.payload, ExportResult::Failure);
         }
     }
@@ -257,6 +268,8 @@ impl Processor {
         backoff: Duration,
     ) {
         let due_ns = clock::now_unix_nanos().saturating_add(backoff.as_nanos() as u64);
+        self.parked_spans
+            .fetch_add(payload.span_count, Ordering::Relaxed);
         self.retries.lock().push(ParkedRetry {
             exporter,
             payload,
@@ -271,21 +284,36 @@ impl Processor {
         self.dispatch_retries(RetryFilter::All);
     }
 
+    /// `Due`: the single oldest due retry (one per tick, so a recovering
+    /// collector is not hit with every parked payload at once); `All`: every
+    /// parked retry now (forceFlush / shutdown).
     fn dispatch_retries(&'static self, filter: RetryFilter) {
         let due: Vec<ParkedRetry> = {
             let mut q = self.retries.lock();
             if q.is_empty() {
                 return;
             }
-            let now = clock::now_unix_nanos();
-            let (due, later) = q
-                .drain(..)
-                .partition(|r| filter == RetryFilter::All || r.due_ns <= now);
-            *q = later;
-            due
+            match filter {
+                RetryFilter::All => q.drain(..).collect(),
+                RetryFilter::Due => {
+                    let now = clock::now_unix_nanos();
+                    let oldest = q
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| r.due_ns <= now)
+                        .min_by_key(|(_, r)| r.due_ns)
+                        .map(|(i, _)| i);
+                    match oldest {
+                        Some(i) => vec![q.remove(i)],
+                        None => return,
+                    }
+                }
+            }
         };
         self.inflight.fetch_add(due.len(), Ordering::AcqRel);
         for r in due {
+            self.parked_spans
+                .fetch_sub(r.payload.span_count, Ordering::Relaxed);
             r.exporter.export(self, r.payload, r.attempt);
         }
     }
@@ -332,7 +360,10 @@ impl Processor {
     pub fn accept(&'static self, batch: &LocalBatch) -> bool {
         let cfg = *self.config.read();
         let mut p = self.pending.lock();
-        if p.count >= cfg.max_queue_size {
+        if p.count
+            .saturating_add(self.parked_spans.load(Ordering::Relaxed))
+            >= cfg.max_queue_size
+        {
             self.stats
                 .spans_dropped
                 .fetch_add(batch.count as u64, Ordering::Relaxed);
@@ -369,6 +400,10 @@ impl Processor {
     /// after flushing its VM's local batch. Returns true if an export was
     /// started.
     pub fn tick(&'static self) -> bool {
+        let now = clock::now_unix_nanos();
+        for e in self.exporters.read().iter() {
+            e.tick(now);
+        }
         self.dispatch_retries(RetryFilter::Due);
         let cfg = *self.config.read();
         let due = self.inflight() == 0 && {
@@ -564,6 +599,7 @@ impl Processor {
         let cfg = *self.config.read();
         let deadline = clock::now_unix_nanos() + (cfg.export_timeout_ms as u64) * 1_000_000;
         let parked = core::mem::take(&mut *self.retries.lock());
+        self.parked_spans.store(0, Ordering::Relaxed);
         for r in parked {
             let result = r.exporter.export_blocking(&r.payload, deadline);
             self.record_result(&r.payload, result);

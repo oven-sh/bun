@@ -382,63 +382,52 @@ impl<'a> Parser<'a> {
             cmd,
             CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::TestCommand
         ) {
-            if let Some(expr) = json.get(b"telemetry") {
-                if expr.data.e_object().is_some() {
-                    // [telemetry] — native OpenTelemetry (Bun.otel). Env vars override.
-                    let mut cfg = bun_telemetry_cold::config::Bunfig::default();
-                    if let Some(e) = expr.get(b"enabled") {
-                        self.expect(&e, ExprTag::EBoolean)?;
-                        cfg.enabled = e.as_bool();
-                    }
-                    if let Some(e) = expr.get(b"exporter") {
-                        self.expect(&e, ExprTag::EString)?;
-                        cfg.exporter = e
-                            .as_string(self.bump)
-                            .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
-                    }
-                    if let Some(e) = expr.get(b"endpoint") {
-                        self.expect(&e, ExprTag::EString)?;
-                        cfg.endpoint = e
-                            .as_string(self.bump)
-                            .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
-                    }
-                    if let Some(e) = expr.get(b"serviceName") {
-                        self.expect(&e, ExprTag::EString)?;
-                        cfg.service_name = e
-                            .as_string(self.bump)
-                            .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
-                    }
-                    if let Some(h) = expr.get(b"headers") {
-                        self.expect(&h, ExprTag::EObject)?;
-                        let obj = h.data.e_object().expect("infallible: type checked");
-                        for prop in obj.properties.slice() {
-                            let (Some(k), Some(v)) = (prop.key.as_ref(), prop.value.as_ref())
-                            else {
-                                continue;
-                            };
-                            self.expect_string(v)?;
-                            if let (Some(k), Some(v)) =
-                                (k.as_string(self.bump), v.as_string(self.bump))
-                            {
-                                cfg.headers.push((
-                                    bstr::ByteSlice::to_str_lossy(k).into_owned(),
-                                    bstr::ByteSlice::to_str_lossy(v).into_owned(),
-                                ));
-                            }
+            // [otel] — native OpenTelemetry (Bun.otel). OTEL_* environment variables override.
+            if let Some(expr) = json.get(b"otel") {
+                self.expect(&expr, ExprTag::EObject)?;
+                let mut cfg = bun_telemetry_cold::config::Bunfig::default();
+                // The table's presence turns tracing on unless it says `enabled = false`.
+                cfg.enabled = Some(true);
+                if let Some(e) = expr.get(b"enabled") {
+                    self.expect(&e, ExprTag::EBoolean)?;
+                    cfg.enabled = e.as_bool();
+                }
+                if let Some(e) = expr.get(b"exporter") {
+                    self.expect(&e, ExprTag::EString)?;
+                    cfg.exporter = e
+                        .as_string(self.bump)
+                        .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
+                }
+                if let Some(e) = expr.get(b"endpoint") {
+                    self.expect(&e, ExprTag::EString)?;
+                    cfg.endpoint = e
+                        .as_string(self.bump)
+                        .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
+                }
+                if let Some(e) = expr.get(b"serviceName") {
+                    self.expect(&e, ExprTag::EString)?;
+                    cfg.service_name = e
+                        .as_string(self.bump)
+                        .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
+                }
+                if let Some(h) = expr.get(b"headers") {
+                    self.expect(&h, ExprTag::EObject)?;
+                    let obj = h.data.e_object().expect("infallible: type checked");
+                    for prop in obj.properties.slice() {
+                        let (Some(k), Some(v)) = (prop.key.as_ref(), prop.value.as_ref()) else {
+                            continue;
+                        };
+                        self.expect_string(v)?;
+                        if let (Some(k), Some(v)) = (k.as_string(self.bump), v.as_string(self.bump))
+                        {
+                            cfg.headers.push((
+                                bstr::ByteSlice::to_str_lossy(k).into_owned(),
+                                bstr::ByteSlice::to_str_lossy(v).into_owned(),
+                            ));
                         }
                     }
-                    bun_telemetry_cold::config::set_bunfig(cfg);
-                } else if cmd != CommandTag::TestCommand {
-                    // `telemetry = false` (crash-report/analytics opt-out): run/auto only, as before.
-                    self.expect(&expr, ExprTag::EBoolean)?;
-                    bun_analytics::set_enabled(
-                        if expr.as_bool().expect("infallible: type checked") {
-                            bun_analytics::TriState::Yes
-                        } else {
-                            bun_analytics::TriState::No
-                        },
-                    );
                 }
+                bun_telemetry_cold::config::set_bunfig(cfg);
             }
         }
 
@@ -453,6 +442,15 @@ impl<'a> Parser<'a> {
 
             if let Some(expr) = json.get(b"preload") {
                 self.load_preload(&expr)?;
+            }
+
+            if let Some(expr) = json.get(b"telemetry") {
+                self.expect(&expr, ExprTag::EBoolean)?;
+                bun_analytics::set_enabled(if expr.as_bool().expect("infallible: type checked") {
+                    bun_analytics::TriState::Yes
+                } else {
+                    bun_analytics::TriState::No
+                });
             }
         }
 

@@ -16,11 +16,12 @@ const parseTraceparent = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryPa
 const withContext = $newRustFunction("telemetry.rs", "withContext", 3);
 const nativeForceFlush = $newRustFunction("telemetry.rs", "forceFlush", 0);
 const nativeStats = $newRustFunction("telemetry.rs", "stats", 0);
+const nativeExportSettled = $newRustFunction("telemetry.rs", "exportSettled", 3);
 const nativeDecode = $newRustFunction("telemetry.rs", "decode", 1);
 const nativeSetEnabled = $newRustFunction("telemetry.rs", "setEnabled", 2);
 const nativePropagationFlags = $newRustFunction("telemetry.rs", "propagationFlags", 0);
 const nativeInstrumentId = $newRustFunction("telemetry.rs", "instrumentId", 1);
-const startInstrumentSpan = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryStartInstrumentSpan", 3);
+const startInstrumentSpan = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryStartInstrumentSpan", 4);
 const propagationHeaders = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryPropagationHeaders", 2);
 const enterContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryEnterContext", 2);
 const exitContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryExitContext", 1);
@@ -89,7 +90,8 @@ class BunContext {
   getValue(key: symbol): unknown {
     if (key === SPAN_KEY) return this.#span;
     const extras = this.#extras;
-    if (extras !== undefined && extras.$has(key)) return extras.$get(key);
+    // (a null BAGGAGE_KEY entry means "deleted": the request's inbound baggage is masked)
+    if (extras !== undefined && extras.$has(key)) return extras.$get(key) ?? undefined;
     // Baggage a request carried in lives on its span, not in extras.
     if (key === BAGGAGE_KEY && this.#span !== undefined) return parseBaggage(propagationHeaders(this.#span)[2]);
     return undefined;
@@ -104,6 +106,13 @@ class BunContext {
 
   deleteValue(key: symbol): BunContext {
     if (key === SPAN_KEY) return new BunContext(undefined, this.#extras);
+    if (key === BAGGAGE_KEY && this.#span !== undefined) {
+      // propagation.deleteBaggage(ctx) must also mask what the request carried
+      // in, so record the deletion rather than just dropping the entry.
+      const m = new SafeMap(this.#extras);
+      m.$set(key, null);
+      return new BunContext(this.#span, m);
+    }
     if (this.#extras === undefined || !this.#extras.$has(key)) return this;
     const m = new SafeMap(this.#extras);
     m.$delete(key);
@@ -212,7 +221,8 @@ type Tracer = {
 
 const tracers = new Map<string, Tracer>();
 function getTracer(name?: string, version?: string): Tracer {
-  name = name ? name + "" : "";
+  // No name = the default scope Bun.otel.span/wrap use, exported as "bun".
+  name = name ? name + "" : "bun";
   // NUL cannot appear in a package name, so "a@1" + undefined ≠ "a" + "1".
   const key = version ? name + "\0" + version : name;
   let t = tracers.$get(key);
@@ -293,9 +303,14 @@ function parseBaggage(header: string): Baggage | undefined {
 }
 
 /** W3C `baggage` header for the Baggage in an active-slot extras Map, or "" (used natively). */
-function baggageHeaderFromExtras(extras: unknown): string {
-  const bag = $isMap(extras) ? (extras as Map<symbol, unknown>).$get(BAGGAGE_KEY) : undefined;
-  return bag != null && typeof (bag as any).getAllEntries === "function" ? serializeBaggage(bag) : "";
+/** W3C `baggage` header for the Baggage in an active-slot extras Map (used natively):
+ * the header, `""` when the Context says nothing about baggage (fall back to
+ * what the request carried in), or `null` when it says "none" (deleted/empty). */
+function baggageHeaderFromExtras(extras: unknown): string | null {
+  if (!$isMap(extras) || !(extras as Map<symbol, unknown>).$has(BAGGAGE_KEY)) return "";
+  const bag = (extras as Map<symbol, unknown>).$get(BAGGAGE_KEY);
+  if (bag == null || typeof (bag as any).getAllEntries !== "function") return null;
+  return serializeBaggage(bag) || null;
 }
 
 function serializeBaggage(bag: any): string {
@@ -346,9 +361,9 @@ const propagator = {
       incomingBaggage = baggage;
     }
     if (nativePropagationFlags() & 2) {
-      // Baggage set in JS (propagation.setBaggage) wins over what the request carried in.
-      const bag = $isMap(extras) ? extras.$get(BAGGAGE_KEY) : undefined;
-      const s = bag ? serializeBaggage(bag) : incomingBaggage;
+      // The Context's own Baggage (set or deleted in JS) wins over what the request carried in.
+      const fromContext = baggageHeaderFromExtras(extras);
+      const s = fromContext === "" ? incomingBaggage : fromContext;
       if (s) setter.set(carrier, "baggage", s);
     }
   },
@@ -381,25 +396,84 @@ const propagator = {
  * per global when telemetry is enabled. If user code already registered a
  * provider we leave it alone.
  */
+/** The version of the `@opentelemetry/api` package the application would load
+ * (its registerGlobal() compares the global's `version` for strict equality;
+ * getGlobal() only needs the same major and minor >= its own). */
+function installedApiVersion(): string {
+  try {
+    const from = (Bun.main || process.cwd() + "/") + "";
+    const path = Bun.resolveSync("@opentelemetry/api/package.json", from);
+    const { readFileSync } = require("node:fs");
+    const pkg = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof pkg?.version === "string") return pkg.version;
+  } catch {}
+  return "1.9.0";
+}
+
 function installGlobal() {
   const g = globalThis as any;
   let reg = g[API_KEY];
   if (!reg) {
-    // Highest 1.x minor we claim compatibility with; the api accepts a global
-    // whose minor is >= its own.
-    reg = g[API_KEY] = { version: "1.999.0" };
+    let version: string | undefined;
+    reg = g[API_KEY] = {
+      get version() {
+        return (version ??= installedApiVersion());
+      },
+      set version(v) {
+        version = v;
+      },
+    };
   }
   reg.trace ??= tracerProvider;
   reg.context ??= contextManager;
   reg.propagation ??= propagator;
 }
 
+/** An async function exporter returned `promise`: report its settlement natively. */
+function awaitExport(promise: Promise<unknown>, exporterId: number, payloadId: number) {
+  promise.then(
+    () => nativeExportSettled(exporterId, payloadId, true),
+    (e: any) => {
+      console.warn("[otel] exporter callback failed:", e?.message ?? e);
+      nativeExportSettled(exporterId, payloadId, false);
+    },
+  );
+}
+
 // ── node:http client (see _http_client.ts) ────────────────────────────────
 
 const httpClientInstrument = nativeInstrumentId("fetch") as number;
 /** A CLIENT span under the active span, or undefined when disabled. */
-function startClientSpan(name: string) {
-  return startInstrumentSpan(httpClientInstrument, name + "", SpanKind.CLIENT);
+const REDACTED_QUERY_KEYS = ["sig", "Signature", "AWSAccessKeyId", "X-Goog-Signature"];
+/** `path` with credential query values (presigned URLs) replaced by REDACTED. */
+function redactQuery(path: string): string {
+  const q = StringPrototypeIndexOf.$call(path, "?");
+  if (q === -1) return path;
+  let hit = false;
+  for (let i = 0; i < REDACTED_QUERY_KEYS.length && !hit; i++)
+    hit = StringPrototypeIndexOf.$call(path, REDACTED_QUERY_KEYS[i] + "=", q) !== -1;
+  if (!hit) return path;
+  const hash = StringPrototypeIndexOf.$call(path, "#", q);
+  const end = hash === -1 ? path.length : hash;
+  const pairs: string[] = StringPrototypeSplit.$call(StringPrototypeSlice.$call(path, q + 1, end), "&");
+  for (let i = 0; i < pairs.length; i++) {
+    const eq = StringPrototypeIndexOf.$call(pairs[i], "=");
+    const key = eq === -1 ? pairs[i] : StringPrototypeSlice.$call(pairs[i], 0, eq);
+    for (let k = 0; k < REDACTED_QUERY_KEYS.length; k++)
+      if (key === REDACTED_QUERY_KEYS[k]) {
+        pairs[i] = key + "=REDACTED";
+        break;
+      }
+  }
+  return (
+    StringPrototypeSlice.$call(path, 0, q + 1) +
+    ArrayPrototypeJoin.$call(pairs, "&") +
+    StringPrototypeSlice.$call(path, end)
+  );
+}
+
+function startClientSpan(name: string, callerTraceparent?: string) {
+  return startInstrumentSpan(httpClientInstrument, name + "", SpanKind.CLIENT, callerTraceparent);
 }
 
 // ── Bun.otel ──────────────────────────────────────────────────────────────
@@ -528,6 +602,8 @@ export default {
   bunOtel,
   installGlobal,
   startClientSpan,
+  redactQuery,
+  awaitExport,
   propagationHeaders,
   unpackContext,
   toNativeSpan,

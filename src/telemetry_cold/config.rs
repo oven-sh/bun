@@ -60,6 +60,9 @@ pub struct Config {
     pub otlp_exporters: Vec<OtlpExporterConfig>,
     /// `OTEL_TRACES_EXPORTER=console`.
     pub console_exporter: bool,
+    /// `OTEL_TRACES_EXPORTER` was set (possibly to `none`): the environment
+    /// chose the exporters, so `start()` adds no default endpoint.
+    pub exporters_from_env: bool,
     pub propagate_trace_context: bool,
     pub propagate_baggage: bool,
     pub limits: Limits,
@@ -88,6 +91,7 @@ impl Default for Config {
             batch: BatchConfig::default(),
             otlp_exporters: Vec::new(),
             console_exporter: false,
+            exporters_from_env: false,
             propagate_trace_context: true,
             propagate_baggage: true,
             limits: DEFAULT_LIMITS,
@@ -97,7 +101,7 @@ impl Default for Config {
     }
 }
 
-/// `bunfig.toml` `[telemetry]` table, recorded at startup and layered
+/// `bunfig.toml` `[otel]` table, recorded at startup and layered
 /// under the environment (env vars win, matching every other OTel SDK).
 #[derive(Default, Clone, Debug)]
 pub struct Bunfig {
@@ -123,6 +127,8 @@ pub fn bunfig() -> Option<&'static Bunfig> {
 pub struct EnvConfig {
     /// `BUN_OTEL` truthy (or `OTEL_BUN`), and not `OTEL_SDK_DISABLED`.
     pub enabled: bool,
+    /// `OTEL_SDK_DISABLED` truthy: nothing may turn tracing on, `start()` included.
+    pub sdk_disabled: bool,
     pub config: Config,
     pub warnings: Vec<String>,
 }
@@ -178,10 +184,10 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         .or_else(|| get("OTEL_BUN").map(|v| truthy(&v)))
         .or_else(|| bunfig.and_then(|b| b.enabled))
         .unwrap_or(false);
-    if get("OTEL_SDK_DISABLED")
+    let sdk_disabled = get("OTEL_SDK_DISABLED")
         .map(|v| truthy(&v))
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if sdk_disabled {
         enabled = false;
     }
     // service.name: OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES > bunfig.
@@ -291,7 +297,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         .or_else(|| {
             bunfig
                 .and_then(|b| b.exporter.clone())
-                .map(|s| ("bunfig [telemetry] exporter", s.into_bytes()))
+                .map(|s| ("bunfig [otel] exporter", s.into_bytes()))
         });
     if let Some((source, v)) = preset {
         for name in bun_core::strings::split(&v, b",") {
@@ -315,6 +321,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     }
     if let Some(v) = get("OTEL_TRACES_EXPORTER") {
         want_otlp = false;
+        c.exporters_from_env = true;
         for e in bun_core::strings::split(&v, b",") {
             match e.trim_ascii() {
                 b"otlp" => want_otlp = true,
@@ -459,6 +466,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
 
     EnvConfig {
         enabled,
+        sdk_disabled,
         config: c,
         warnings,
     }

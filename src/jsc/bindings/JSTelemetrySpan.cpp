@@ -329,12 +329,12 @@ void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, ui
 
 // ─── native-owned span mutators (private globals used by TelemetrySpan.ts) ───
 
-void telemetryNativeSetAttribute(Zig::GlobalObject* globalObject, uint64_t handle, JSString* key, JSValue value)
+bool telemetryNativeSetAttribute(Zig::GlobalObject* globalObject, uint64_t handle, JSString* key, JSValue value)
 {
     TelemetryAttrGatherer gatherer;
     gatherer.gatherOne(key, value);
     TelemetryAttrPool pool = gatherer.pool();
-    Bun__Telemetry__nativeSetAttributes(globalObject, handle, &pool);
+    return Bun__Telemetry__nativeSetAttributes(globalObject, handle, &pool);
 }
 
 // $telemetrySetAttribute(span, key: string, value)

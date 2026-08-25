@@ -27,9 +27,17 @@ async function collect(): Promise<any[]> {
 }
 
 const byName = (list: any[], scope: string) => list.filter(s => s.scope.name === scope);
+/** Configure like restore() but with fetch spans off, so this process's fetch() acts as an external, uninstrumented caller. */
+function asExternalClient() {
+  Bun.otel.start({
+    exporters: [{ export: (b: any[]) => spans.push(...b) }],
+    instrumentations: { http: true, fetch: false },
+  });
+}
 
 describe("Bun.serve", () => {
   test("a batch of varied requests exports each span with its own identity, timing, path, status and parent", async () => {
+    asExternalClient();
     using server = Bun.serve({
       port: 0,
       routes: {
@@ -244,7 +252,10 @@ describe("Bun.serve", () => {
     const got = await collect();
     const servers = byName(got, "bun.http.server");
     const clients = byName(got, "bun.http.client");
-    const frontSrv = servers.find(s => s.parentSpanId === parentId)!;
+    // The test's own fetch() to `front` is traced too: caller (traceparent) → CLIENT → front SERVER.
+    const outerClient = clients.find(c => c.parentSpanId === parentId)!;
+    expect(outerClient).toBeDefined();
+    const frontSrv = servers.find(s => s.parentSpanId === outerClient.spanId)!;
     expect(frontSrv).toBeDefined();
     expect(frontSrv.traceId).toBe(traceId);
     expect(frontSrv.traceState).toBe("vendor=abc,other=1");
@@ -273,7 +284,7 @@ describe("Bun.serve", () => {
     expect(inner!.get("traceparent")).toBe(`00-${traceId}-${innerClient.spanId}-01`);
   });
 
-  test("user-supplied traceparent on fetch is left alone", async () => {
+  test("a traceparent the caller sets on fetch() becomes the CLIENT span's parent and the header is re-pointed at the CLIENT span", async () => {
     let seen: string | null = null;
     using server = Bun.serve({
       port: 0,
@@ -284,11 +295,24 @@ describe("Bun.serve", () => {
     });
     const tp = "00-11111111111111111111111111111111-2222222222222222-01";
     await (await fetch(`http://localhost:${server.port}/`, { headers: { traceparent: tp } })).text();
+    const got = await collect();
+    const [client] = byName(got, "bun.http.client");
+    const [srv] = byName(got, "bun.http.server");
+    // caller (1111…/2222…) → CLIENT → SERVER, one trace
+    expect(client.traceId).toBe("1".repeat(32));
+    expect(client.parentSpanId).toBe("2".repeat(16));
+    expect(seen).toBe(`00-${"1".repeat(32)}-${client.spanId}-01`);
+    expect(srv.traceId).toBe("1".repeat(32));
+    expect(srv.parentSpanId).toBe(client.spanId);
+    // with fetch spans off the header is forwarded untouched
+    asExternalClient();
+    await (await fetch(`http://localhost:${server.port}/`, { headers: { traceparent: tp } })).text();
     expect(seen).toBe(tp);
     await collect();
   });
 
   test("malformed traceparent is ignored (new root)", async () => {
+    asExternalClient();
     using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
     await (await fetch(`http://localhost:${server.port}/`, { headers: { traceparent: "00-zzz-yyy-01" } })).text();
     const [srv] = byName(await collect(), "bun.http.server");
@@ -381,10 +405,10 @@ describe("node:http", () => {
         return Reflect.get(t, k, r);
       },
     });
+    // (throws while the headers are scanned, before a span exists: nothing to end, nothing leaked)
     expect(() => http.request({ host: "127.0.0.1", port: 1, headers: hostile as any })).toThrow("hostile headers");
     const got = byName(await collect(), "bun.http.client");
     expect(got.map(s => [s.status.code, typeof s.attributes["error.type"]])).toEqual([
-      [2, "string"],
       [2, "string"],
       [2, "string"],
       [2, "string"],
@@ -563,10 +587,54 @@ describe("node:http", () => {
       traceparent: expect.stringMatching(new RegExp(`^00-${traceId}-[0-9a-f]{16}-01$`)),
       xa: "2",
     });
-    expect(seen[2]).toEqual({ traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", xa: "3" });
+    // a caller-set traceparent: same trace, re-pointed at the request's own CLIENT span
+    expect(seen[2]).toEqual({
+      traceparent: expect.stringMatching(/^00-0af7651916cd43dd8448eb211c80319c-[0-9a-f]{16}-01$/),
+      xa: "3",
+    });
+    expect(seen[2].traceparent).not.toBe("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
   });
 
-  test("http.request client goes through fetch instrumentation", async () => {
+  test("node:http client span ends with the response body, and reports a body cut short as an error", async () => {
+    const { promise: release, resolve } = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (new URL(req.url).pathname === "/slow") {
+          return new Response(
+            new ReadableStream({
+              async start(c) {
+                c.enqueue(new TextEncoder().encode("part"));
+                await release;
+                c.enqueue(new TextEncoder().encode("rest"));
+                c.close();
+              },
+            }),
+          );
+        }
+        return new Response("whole");
+      },
+    });
+    // complete body: span ends at 'end', OK
+    await new Promise<void>(r => http.get(`http://127.0.0.1:${server.port}/ok`, res => res.resume().on("end", r)));
+    // headers arrive, then the client destroys mid-body: span ends with an error
+    await new Promise<void>(r =>
+      http.get(`http://127.0.0.1:${server.port}/slow`, res => {
+        res.once("data", () => {
+          res.destroy();
+          setTimeout(r, 10);
+        });
+      }),
+    );
+    resolve();
+    const got = byName(await collect(), "bun.http.client");
+    expect(got.map(s => [s.attributes["http.response.status_code"], s.status.code])).toEqual([
+      [200, 0],
+      [200, 2],
+    ]);
+  });
+
+  test("http.request client gets a CLIENT span and injects traceparent", async () => {
     using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
     await new Promise<void>((resolve, reject) => {
       const req = http.request(`http://localhost:${server.port}/hr`, res => {
@@ -671,6 +739,85 @@ describe("live request span", () => {
     expect([named, unnamed]).toEqual(["GET /users/:id", "POST"]);
     const got = byName(await collect(), "bun.http.server").map(s => s.name);
     expect(got.sort()).toEqual(["GET /users/:id", "POST"]);
+  });
+});
+
+describe("static routes", () => {
+  test("a static Response route gets a SERVER span with its route and status", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/static": new Response("hello", { status: 202 }), "/dyn": () => new Response("d") },
+      fetch: () => new Response("f"),
+    });
+    await (await fetch(new URL("/static", server.url))).text();
+    await (await fetch(new URL("/static", server.url), { method: "HEAD" })).text();
+    const got = byName(await collect(), "bun.http.server");
+    expect(got.map(s => [s.name, s.attributes["http.response.status_code"], s.attributes["http.route"]])).toEqual([
+      ["GET /static", 202, "/static"],
+      ["HEAD /static", 202, "/static"],
+    ]);
+  });
+});
+
+describe("request facts", () => {
+  test("an HTTP/1.0 request line is reported as network.protocol.version 1.0", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const sock = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(s) {
+          s.end();
+        },
+        open(s) {
+          s.write("GET /old HTTP/1.0\r\nHost: h\r\n\r\n");
+        },
+      },
+    });
+    await new Promise<void>(r => setTimeout(r, 50));
+    sock.end();
+    const [srv] = byName(await collect(), "bun.http.server");
+    expect(srv.attributes["network.protocol.version"]).toBe("1.0");
+  });
+
+  test("a repeated request header captured via OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST is joined", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const spans = [];
+        Bun.otel.start({ exporters: [{ export: b => spans.push(...b) }], instrumentations: { http: true } });
+        const server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+        const s = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data(s) { s.end(); }, open(s) { s.write("GET / HTTP/1.1\\r\\nHost: h\\r\\nX-Forwarded-For: a\\r\\nX-Forwarded-For: b\\r\\n\\r\\n"); } } });
+        await Bun.sleep(50);
+        await Bun.otel.forceFlush();
+        console.log(JSON.stringify(spans.find(s => s.scope.name === "bun.http.server").attributes["http.request.header.x-forwarded-for"]));
+        server.stop(true);
+        `,
+      ],
+      env: { ...bunEnv, OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST: "x-forwarded-for" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify(["a, b"]));
+    expect(exitCode).toBe(0);
+  });
+
+  test("credential-bearing query values are redacted in url.full / url.query (fetch, node:http, server)", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const q = "?X-Amz-Date=1&X-Goog-Signature=g00g&sig=s3cr3t&Signature=abc&AWSAccessKeyId=AKIA&ok=1";
+    await (await fetch(`${server.url}f${q}`)).text();
+    await new Promise<void>(r => http.get(`http://127.0.0.1:${server.port}/n${q}`, res => res.resume().on("end", r)));
+    const got = await collect();
+    const redacted =
+      "X-Amz-Date=1&X-Goog-Signature=REDACTED&sig=REDACTED&Signature=REDACTED&AWSAccessKeyId=REDACTED&ok=1";
+    expect(byName(got, "bun.http.client").map(s => new URL(s.attributes["url.full"]).search.slice(1))).toEqual([
+      redacted,
+      redacted,
+    ]);
+    expect(byName(got, "bun.http.server").map(s => s.attributes["url.query"])).toEqual([redacted, redacted]);
   });
 });
 

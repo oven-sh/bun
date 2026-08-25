@@ -132,6 +132,10 @@ impl Default for InitOptions {
     }
 }
 
+/// Installed by `bun_runtime::telemetry` once tracing is configured; run from
+/// [`VirtualMachine::on_exit`] on every exit path (see there).
+pub static TELEMETRY_EXIT_HOOK: std::sync::OnceLock<fn(&mut VirtualMachine)> = std::sync::OnceLock::new();
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -1735,6 +1739,13 @@ impl VirtualMachine {
         }
 
         ExitHandler::dispatch_on_exit(self);
+
+        // Native telemetry: flush this VM's spans (and on the main thread drain
+        // the exporters) on every way out — process.exit() and fatal errors
+        // skip the cleanup-hook list below on the main thread.
+        if let Some(hook) = TELEMETRY_EXIT_HOOK.get() {
+            hook(self);
+        }
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {

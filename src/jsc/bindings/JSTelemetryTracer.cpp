@@ -32,6 +32,28 @@ JSValue telemetryInternalFunction(Zig::GlobalObject* globalObject, const Identif
     return fn;
 }
 
+// internal/telemetry awaitExport(promise, exporterId, payloadId); false if it threw.
+extern "C" bool Bun__Telemetry__awaitExport(Zig::GlobalObject* globalObject, EncodedJSValue promise, double exporterId, double payloadId)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue fn = telemetryInternalFunction(globalObject, WebCore::builtinNames(vm).awaitExportPublicName());
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return false;
+    }
+    MarkedArgumentBuffer args;
+    args.append(JSValue::decode(promise));
+    args.append(jsNumber(exporterId));
+    args.append(jsNumber(payloadId));
+    call(globalObject, fn, jsUndefined(), args, "awaitExport"_s);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return false;
+    }
+    return true;
+}
+
 // ─── span creation ───
 
 // W3C tracestate/baggage travel with the span that received them so outgoing
@@ -352,8 +374,33 @@ static EncodedJSValue tracedLeave(JSGlobalObject* lexicalGlobalObject, JSTracedF
     auto* span = toTelemetrySpan(JSValue::decode(spanValue));
     if (!span)
         return resultValue;
-    telemetryExitSpan(globalObject, span);
     JSValue result = JSValue::decode(resultValue);
+    if (result.isObject() && !result.inherits<JSPromise>()) {
+        // A thenable (query builders, PrismaPromise, …): adopt it into a real
+        // Promise while the span is still active — its then() runs now, under
+        // the span — and trace that promise instead. The caller gets the Promise.
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue then = result.get(globalObject, vm.propertyNames->then);
+        if (scope.exception()) [[unlikely]] {
+            telemetryExitSpan(globalObject, span);
+            telemetryFailSpanNoJS(globalObject, span, scope.exception()->value());
+            telemetryEndSpan(globalObject, span, 0);
+            return {};
+        }
+        if (then.isCallable()) {
+            auto* promise = JSPromise::resolvedPromise(globalObject, result);
+            if (scope.exception()) [[unlikely]] {
+                telemetryExitSpan(globalObject, span);
+                telemetryFailSpanNoJS(globalObject, span, scope.exception()->value());
+                telemetryEndSpan(globalObject, span, 0);
+                return {};
+            }
+            result = promise;
+            resultValue = JSValue::encode(result);
+        }
+    }
+    telemetryExitSpan(globalObject, span);
     if (auto* promise = result.isCell() ? dynamicDowncast<JSPromise>(result.asCell()) : nullptr) {
         if (promise->status() == JSPromise::Status::Pending) {
             promise->addSettlementObserver(globalObject->vm(), span);
@@ -392,6 +439,24 @@ static void tracedSettled(JSGlobalObject* lexicalGlobalObject, JSValue spanValue
     telemetryEndSpan(globalObject, span, 0);
 }
 
+static void ensureTracedFunctionHooks(VM& vm);
+
+// End `spanCell` (a JSTelemetrySpan) when `promise` settles, failing it on
+// rejection — the same treatment Bun.otel.span(name, async fn) gives its
+// promise. False if `promise` is not a pending JSPromise (caller ends it now).
+extern "C" bool Bun__Telemetry__observeSettlement(Zig::GlobalObject* globalObject, EncodedJSValue promiseValue, EncodedJSValue spanCell)
+{
+    JSValue promiseCell = JSValue::decode(promiseValue);
+    auto* promise = promiseCell.isCell() ? dynamicDowncast<JSPromise>(promiseCell.asCell()) : nullptr;
+    auto* span = toTelemetrySpan(JSValue::decode(spanCell));
+    if (!promise || !span || promise->status() != JSPromise::Status::Pending)
+        return false;
+    auto& vm = globalObject->vm();
+    ensureTracedFunctionHooks(vm);
+    promise->addSettlementObserver(vm, span);
+    return true;
+}
+
 static void ensureTracedFunctionHooks(VM& vm)
 {
     auto& hooks = vm.tracedFunctionHooks();
@@ -425,6 +490,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelWrap, (JSGlobalObject * lexicalGlobalObj
     if (!fn.isCallable()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "Bun.otel.wrap: fn must be a function"_s);
     JSObject* target = fn.getObject();
+    if (auto* jsFunction = dynamicDowncast<JSFunction>(target); jsFunction && !jsFunction->isHostOrBuiltinFunction() && jsFunction->jsExecutable()->isClassConstructorFunction()) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "Bun.otel.wrap: a class cannot be wrapped (the wrapped function is not a constructor); wrap its methods instead"_s);
     JSValue targetName = target->get(globalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
     WTF::String fnName = targetName.isString() ? asString(targetName)->tryGetValue() : WTF::String();
@@ -455,9 +522,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelSet, (JSGlobalObject * lexicalGlobalObje
         return JSValue::encode(jsBoolean(false));
     if (uint64_t handle = active.poolHandle(); handle && keyOrAttributes.isString()) {
         // A request span and one attribute: straight into the slot, no Span object.
-        if (!value.isUndefinedOrNull())
-            telemetryNativeSetAttribute(globalObject, handle, asString(keyOrAttributes), value);
-        return JSValue::encode(jsBoolean(true));
+        // False once the request span has ended, or when it is not recording.
+        return JSValue::encode(jsBoolean(telemetryNativeSetAttribute(globalObject, handle, asString(keyOrAttributes), value)));
     }
     JSTelemetrySpan* span = toTelemetrySpan(active.header);
     if (!span)
@@ -469,7 +535,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelSet, (JSGlobalObject * lexicalGlobalObje
     else
         telemetrySpanSetAttributes(globalObject, span, keyOrAttributes);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(true));
+    return JSValue::encode(jsBoolean(span->isRecording()));
 }
 
 // createTracer(scopeId, name, version)
@@ -583,7 +649,9 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryStartInstrumentSpan, (JSGlobalObject * lexic
     if (!instrument.isInt32() || !name.isString())
         return JSValue::encode(jsUndefined());
     BunString n = telemetryBorrow(asString(name));
-    return Bun__Telemetry__startInstrumentSpan(globalObject, static_cast<uint32_t>(instrument.asInt32()), &n, telemetryApiKind(callFrame->argument(2)));
+    JSValue traceparent = callFrame->argument(3);
+    BunString tp = traceparent.isString() ? telemetryBorrow(asString(traceparent)) : BunString { BunStringTag::Empty, {} };
+    return Bun__Telemetry__startInstrumentSpan(globalObject, static_cast<uint32_t>(instrument.asInt32()), &n, telemetryApiKind(callFrame->argument(2)), &tp);
 }
 
 // propagationHeaders(span) → [traceparent?, tracestate?, baggage?], honouring OTEL_PROPAGATORS.
@@ -626,7 +694,9 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
     bool includeAmbient = callFrame->argument(1).isTrue();
     if ((flags & 2) && includeAmbient) {
         BunString bg = Bun__Telemetry__activeExtrasBaggage(globalObject);
-        if (bg.tag != BunStringTag::Empty)
+        if (bg.tag == BunStringTag::Dead)
+            baggage = JSValue();
+        else if (bg.tag != BunStringTag::Empty)
             baggage = jsString(vm, bg.transferToWTFString());
     }
     if ((flags & 2) && baggage && asString(baggage)->length()) {

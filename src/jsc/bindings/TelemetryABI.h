@@ -187,7 +187,7 @@ void Bun__Telemetry__encodeSpan(JSC::JSGlobalObject*, const Bun::TelemetryEndDes
 // Native-owned (pooled) spans; `handle` is a bun_telemetry::pool::NativeSpan.
 bool Bun__Telemetry__nativeIsLive(JSC::JSGlobalObject*, uint64_t handle);
 bool Bun__Telemetry__nativeEnd(JSC::JSGlobalObject*, uint64_t handle, uint64_t endNs);
-void Bun__Telemetry__nativeSetAttributes(JSC::JSGlobalObject*, uint64_t handle, const Bun::TelemetryAttrPool*);
+bool Bun__Telemetry__nativeSetAttributes(JSC::JSGlobalObject*, uint64_t handle, const Bun::TelemetryAttrPool*);
 void Bun__Telemetry__nativeSetName(JSC::JSGlobalObject*, uint64_t handle, const BunString*);
 void Bun__Telemetry__nativeSetStatus(JSC::JSGlobalObject*, uint64_t handle, uint8_t code, const BunString* message);
 void Bun__Telemetry__nativeAddEvent(JSC::JSGlobalObject*, uint64_t handle, const Bun::TelemetryEventRef*, const Bun::TelemetryAttrPool*);
@@ -199,5 +199,5 @@ bool Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, uint64_t handle, Bu
 const Bun::TelemetrySpanStub* Bun__Telemetry__poolStub(JSC::JSGlobalObject*, uint64_t handle);
 JSC::EncodedJSValue Bun__Telemetry__poolMaterialize(Zig::GlobalObject*, uint64_t handle);
 // Native-owned span for a JS-implemented built-in instrumentation; undefined when it should not record.
-JSC::EncodedJSValue Bun__Telemetry__startInstrumentSpan(Zig::GlobalObject*, uint32_t instrument, const BunString* name, uint8_t kind);
+JSC::EncodedJSValue Bun__Telemetry__startInstrumentSpan(Zig::GlobalObject*, uint32_t instrument, const BunString* name, uint8_t kind, const BunString* remoteParentTraceparent);
 }

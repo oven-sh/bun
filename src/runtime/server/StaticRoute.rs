@@ -248,7 +248,11 @@ impl StaticRoute {
     }
 
     // HEAD requests have no body.
-    pub(crate) fn on_head_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_head_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+        Self::traced(this, req, resp, |req| Self::head(this, req, resp));
+    }
+
+    fn head(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
         // Evaluate conditional request preconditions for HEAD with 200 status
         if this.status_code == 200 {
             if Self::render_precondition(this, &mut req, resp) {
@@ -289,18 +293,51 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
     }
 
+    /// Run `f` (which writes the response) inside a SERVER span, like a
+    /// handler-served request. A static response is written synchronously
+    /// (or handed to the socket's backpressure machinery), so the span ends
+    /// when `f` returns, with the route's status.
+    fn traced(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse, f: impl FnOnce(AnyRequest)) {
+        let server = this.server.get();
+        let span = match (&server, bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer)) {
+            (Some(server), true) => {
+                let global = server.global_this();
+                crate::telemetry::server::begin(
+                    global,
+                    Method::find(req.method()),
+                    &req,
+                    resp,
+                    matches!(resp, AnyResponse::SSL(_)),
+                )
+                .map(|(span, entered)| {
+                    crate::telemetry::server::set_route(global, span, req.url());
+                    (span, entered, global, this.status_code)
+                })
+            }
+            _ => None,
+        };
+        f(req);
+        if let Some((span, entered, global, status)) = span {
+            drop(entered);
+            crate::telemetry::server::end(global, span, status, false);
+        }
+    }
+
     pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        if method == Method::GET {
-            Self::on_get(this, req, resp);
-        } else if method == Method::HEAD {
-            Self::on_head_request(this, req, resp);
-        } else {
-            // For other methods, use the original behavior
-            let mut req = req;
-            req.set_yield(false);
-            Self::on(this, resp);
+        if method == Method::HEAD {
+            return Self::on_head_request(this, req, resp);
         }
+        Self::traced(this, req, resp, |req| {
+            if method == Method::GET {
+                Self::on_get(this, req, resp);
+            } else {
+                // For other methods, use the original behavior
+                let mut req = req;
+                req.set_yield(false);
+                Self::on(this, resp);
+            }
+        });
     }
 
     pub(crate) fn on_get(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {

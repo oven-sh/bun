@@ -194,7 +194,7 @@ impl ConnectSpan {
                     },
                 );
                 url.extend_from_slice(&self.path);
-                w.attr("url.full", &url[..]);
+                w.attr("url.full", &bun_telemetry::otlp::redact_query(&url[..])[..]);
                 if let Some(e) = error {
                     w.fail(e.as_bytes(), b"");
                 }

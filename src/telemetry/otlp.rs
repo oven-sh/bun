@@ -304,6 +304,47 @@ pub fn write_str_kv_small(out: &mut Vec<u8>, field: u32, key: &'static str, v: &
     out.extend_from_slice(v);
 }
 
+/// Query-string keys whose values are credentials (semconv url.full/url.query
+/// "SHOULD be redacted"; the same set @opentelemetry/instrumentation-http uses).
+const REDACTED_QUERY_KEYS: [&[u8]; 4] =
+    [b"sig", b"Signature", b"AWSAccessKeyId", b"X-Goog-Signature"];
+
+/// `url` (a full URL or just a query string) with the values of
+/// [`REDACTED_QUERY_KEYS`] replaced by `REDACTED`. Borrows when there is
+/// nothing to redact (no `?`, or no such key), which is nearly always.
+pub fn redact_query(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    use bun_core::strings;
+    let q = match strings::index_of_char_usize(url, b'?') {
+        Some(i) => i + 1,
+        None if strings::contains_char(url, b'=') && !strings::contains(url, b"://") => 0,
+        None => return std::borrow::Cow::Borrowed(url),
+    };
+    let end = strings::index_of_char_usize(&url[q..], b'#').map_or(url.len(), |i| q + i);
+    let hit = |pair: &[u8]| {
+        let key = strings::split_once_char(pair, b'=').map_or(pair, |(k, _)| k);
+        REDACTED_QUERY_KEYS.iter().any(|k| *k == key)
+    };
+    if !strings::split(&url[q..end], b"&").any(hit) {
+        return std::borrow::Cow::Borrowed(url);
+    }
+    let mut out = Vec::with_capacity(url.len());
+    out.extend_from_slice(&url[..q]);
+    for (i, pair) in strings::split(&url[q..end], b"&").enumerate() {
+        if i != 0 {
+            out.push(b'&');
+        }
+        match strings::split_once_char(pair, b'=') {
+            Some((k, _)) if REDACTED_QUERY_KEYS.iter().any(|r| *r == k) => {
+                out.extend_from_slice(k);
+                out.extend_from_slice(b"=REDACTED");
+            }
+            _ => out.extend_from_slice(pair),
+        }
+    }
+    out.extend_from_slice(&url[end..]);
+    std::borrow::Cow::Owned(out)
+}
+
 /// Longest prefix of `s` that is at most `max` bytes and does not split a
 /// UTF-8 sequence.
 #[inline]

@@ -189,45 +189,62 @@ let otel;
 // array to serialize (a copy with trace context appended when injected).
 function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
   otel ??= require("internal/telemetry");
-  const span = otel.startClientSpan(req.method);
-  if (!span) return arrayHeaders;
-  req[kOtelSpan] = span;
+  // A traceparent the caller set is the span this request continues: the
+  // CLIENT span is parented under it and the header re-pointed at the CLIENT
+  // span (as fetch() does), so caller → client → downstream server stitch.
+  let pairs = false;
+  let indexOf: ((name: string) => number) | undefined;
+  let callerTraceparent: string | undefined;
   if (arrayHeaders !== undefined) {
-    const pairs = arrayHeaders.length && ArrayIsArray(arrayHeaders[0]);
+    pairs = arrayHeaders.length && ArrayIsArray(arrayHeaders[0]);
     // (non-string names are left for _storeHeader to reject)
-    const has = name => {
+    indexOf = name => {
       if (pairs) {
         for (let i = 0; i < arrayHeaders.length; i++) {
           const k = arrayHeaders[i]?.[0];
-          if (typeof k === "string" && StringPrototypeToLowerCase.$call(k) === name) return true;
+          if (typeof k === "string" && StringPrototypeToLowerCase.$call(k) === name) return i;
         }
       } else {
         for (let i = 0; i + 1 < arrayHeaders.length; i += 2) {
           const k = arrayHeaders[i];
-          if (typeof k === "string" && StringPrototypeToLowerCase.$call(k) === name) return true;
+          if (typeof k === "string" && StringPrototypeToLowerCase.$call(k) === name) return i;
         }
       }
-      return false;
+      return -1;
     };
-    if (!has("traceparent")) {
-      const [traceparent, tracestate, baggage] = otel.propagationHeaders(span, true);
-      const add: [string, string][] = [];
-      if (traceparent) add.push(["traceparent", traceparent]);
-      if (tracestate && !has("tracestate")) add.push(["tracestate", tracestate]);
-      if (baggage && !has("baggage")) add.push(["baggage", baggage]);
-      if (add.length) {
-        arrayHeaders = ArrayPrototypeSlice.$call(arrayHeaders);
-        for (const [k, v] of add) {
+    const ti = indexOf("traceparent");
+    if (ti !== -1) {
+      const v = pairs ? arrayHeaders[ti]?.[1] : arrayHeaders[ti + 1];
+      if (typeof v === "string") callerTraceparent = v;
+    }
+  } else {
+    const v = req.getHeader("traceparent");
+    if (typeof v === "string") callerTraceparent = v;
+  }
+  const span = otel.startClientSpan(req.method, callerTraceparent);
+  if (!span) return arrayHeaders;
+  req[kOtelSpan] = span;
+  const [traceparent, tracestate, baggage] = otel.propagationHeaders(span, true);
+  if (arrayHeaders !== undefined) {
+    const set: [string, string][] = [];
+    if (traceparent) set.push(["traceparent", traceparent]);
+    if (tracestate) set.push(["tracestate", tracestate]);
+    if (baggage) set.push(["baggage", baggage]);
+    if (set.length) {
+      arrayHeaders = ArrayPrototypeSlice.$call(arrayHeaders);
+      for (const [k, v] of set) {
+        const at = indexOf!(k);
+        if (at === -1) {
           if (pairs) arrayHeaders.push([k, v]);
           else arrayHeaders.push(k, v);
-        }
+        } else if (pairs) arrayHeaders[at] = [k, v];
+        else arrayHeaders[at + 1] = v;
       }
     }
-  } else if (!req.getHeader("traceparent")) {
-    const [traceparent, tracestate, baggage] = otel.propagationHeaders(span, true);
+  } else {
     if (traceparent) req.setHeader("traceparent", traceparent);
-    if (tracestate && !req.getHeader("tracestate")) req.setHeader("tracestate", tracestate);
-    if (baggage && !req.getHeader("baggage")) req.setHeader("baggage", baggage);
+    if (tracestate) req.setHeader("tracestate", tracestate);
+    if (baggage) req.setHeader("baggage", baggage);
   }
   if (span.isRecording()) {
     const defaultPort = protocol === "https:" ? 443 : 80;
@@ -235,23 +252,52 @@ function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
       "http.request.method": req.method,
       "server.address": host,
       "server.port": +port || defaultPort,
-      "url.full": protocol + "//" + formatAuthority(host, port, defaultPort) + req.path,
+      "url.full": protocol + "//" + formatAuthority(host, port, defaultPort) + otel.redactQuery(req.path),
     });
   }
   return arrayHeaders;
 }
+const kOtelFinish = Symbol("kOtelFinish");
 function otelClientRequestEnd(req, res, err) {
   const span = req[kOtelSpan];
   if (span === undefined) return;
-  req[kOtelSpan] = undefined;
+  if (req[kOtelFinish] !== undefined) {
+    // headers already arrived; this is the socket closing / an error mid-body
+    req[kOtelFinish](err);
+    return;
+  }
   if (res) {
+    // Headers arrived: record the status now; the span ends with the body
+    // (response 'end'), or with an error if the response is cut short — like
+    // fetch() and @opentelemetry/instrumentation-http.
     const code = res.statusCode;
     span.setAttribute("http.response.status_code", code);
     if (code >= 400) {
       span.setAttribute("error.type", String(code));
       span.setStatus(2);
     }
-  } else if (err) {
+    let done = false;
+    const finish = (req[kOtelFinish] = (e?: any) => {
+      if (done) return;
+      done = true;
+      req[kOtelSpan] = undefined;
+      req[kOtelFinish] = undefined;
+      if (e) {
+        span.setAttribute("error.type", e?.code || e?.name || "Error");
+        span.setStatus(2, e?.message);
+      } else if (res.aborted || !res.complete) {
+        span.setAttribute("error.type", "aborted");
+        span.setStatus(2, "response aborted before it completed");
+      }
+      span.end();
+    });
+    res.once("end", () => finish());
+    res.once("error", finish);
+    res.once("close", () => finish());
+    return;
+  }
+  req[kOtelSpan] = undefined;
+  if (err) {
     span.setAttribute("error.type", err?.code || err?.name || "Error");
     span.setStatus(2, err?.message);
   }

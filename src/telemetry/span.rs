@@ -289,6 +289,12 @@ impl SpanStub {
                 (TraceId(t), SpanId::INVALID, false)
             }
         };
+        // The first span of a trace in this process (a root, or the child of a
+        // remote parent) is where the epoch offset gets re-measured (see
+        // clock.rs); this span keeps the time it was given.
+        if parent_id == SpanId::INVALID || parent_remote {
+            crate::clock::reanchor(now_ns);
+        }
         let sampled = sampler.should_sample(parent, &trace_id);
         SpanStub {
             ctx: SpanContext {

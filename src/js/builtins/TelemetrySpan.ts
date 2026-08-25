@@ -59,23 +59,28 @@ export function setAttribute(this: unknown, key: unknown, value: unknown) {
 
 export function setAttributes(this: unknown, attributes: unknown) {
   if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, Field.State) as number;
-  if (!(state & State.Recording) || attributes == null || typeof attributes !== "object") return this;
+  return $telemetrySpanSetAttributesImpl(this, attributes);
+}
+
+$visibility = "Private";
+export function telemetrySpanSetAttributesImpl(span: any, attributes: unknown) {
+  const state = $getInternalField(span, Field.State) as number;
+  if (!(state & State.Recording) || attributes == null || typeof attributes !== "object") return span;
   if (state & State.Native) {
     for (const key in attributes as object) {
       const value = attributes[key];
-      if (value != null) $telemetrySetAttribute(this, key, value);
+      if (value != null) $telemetrySetAttribute(span, key, value);
     }
-    return this;
+    return span;
   }
-  let attrs = $getInternalField(this, Field.Attributes) as unknown[] | null;
+  let attrs = $getInternalField(span, Field.Attributes) as unknown[] | null;
   const existing = attrs === null ? 0 : attrs.length;
   for (const key in attributes as object) {
     const value = attributes[key];
     if (value == null) continue;
     if (attrs === null) {
       attrs = [key, value];
-      $putInternalField(this, Field.Attributes, attrs);
+      $putInternalField(span, Field.Attributes, attrs);
       continue;
     }
     let i = 0;
@@ -90,7 +95,7 @@ export function setAttributes(this: unknown, attributes: unknown) {
       $arrayPush(attrs, value);
     }
   }
-  return this;
+  return span;
 }
 
 export function updateName(this: unknown, name: unknown) {
@@ -111,8 +116,13 @@ export function isRecording(this: unknown) {
 // setStatus({ code, message }) — or setStatus(code, message?)
 export function setStatus(this: unknown, status: any, messageArg?: unknown) {
   if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, Field.State) as number;
-  if (!(state & State.Recording) || status == null) return this;
+  return $telemetrySpanSetStatusImpl(this, status, messageArg);
+}
+
+$visibility = "Private";
+export function telemetrySpanSetStatusImpl(span: any, status: any, messageArg?: unknown) {
+  const state = $getInternalField(span, Field.State) as number;
+  if (!(state & State.Recording) || status == null) return span;
   // api SpanStatusCode: UNSET 0, OK 1, ERROR 2 — or "unset" | "ok" | "error"
   let code: number, msg: unknown;
   if (typeof status === "number") {
@@ -125,17 +135,17 @@ export function setStatus(this: unknown, status: any, messageArg?: unknown) {
     code = status.code | 0;
     msg = status.message;
   }
-  if (code !== 1 && code !== 2) return this;
+  if (code !== 1 && code !== 2) return span;
   const message = code === 2 && msg != null ? msg + "" : "";
   if (state & State.Native) {
-    $telemetrySetStatus(this, code, message);
-    return this;
+    $telemetrySetStatus(span, code, message);
+    return span;
   }
   // OK is final.
-  if (($getInternalField(this, Field.StatusCode) as number) === 1) return this;
-  $putInternalField(this, Field.StatusCode, code);
-  $putInternalField(this, Field.StatusMessage, message);
-  return this;
+  if (($getInternalField(span, Field.StatusCode) as number) === 1) return span;
+  $putInternalField(span, Field.StatusCode, code);
+  $putInternalField(span, Field.StatusMessage, message);
+  return span;
 }
 
 // addEvent(name, attributesOrStartTime?, startTime?)
@@ -158,7 +168,7 @@ export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown)
 // set(key, value) — or set({ ...attributes })
 export function set(this: any, keyOrAttributes: unknown, value?: unknown) {
   if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
-  if (typeof keyOrAttributes !== "string") return this.setAttributes(keyOrAttributes);
+  if (typeof keyOrAttributes !== "string") return $telemetrySpanSetAttributesImpl(this, keyOrAttributes);
   // = setAttribute, inlined
   const state = $getInternalField(this, Field.State) as number;
   if (!(state & State.Recording) || value == null) return this;
@@ -186,20 +196,25 @@ export function set(this: any, keyOrAttributes: unknown, value?: unknown) {
 // fail(error) — record the exception and mark the span failed with its message
 export function fail(this: any, error: any) {
   if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
-  this.recordException(error);
+  $telemetrySpanRecordExceptionImpl(this, error, undefined);
   const message = error == null ? undefined : typeof error === "string" ? error : error.message;
-  return this.setStatus(2, message);
+  return $telemetrySpanSetStatusImpl(this, 2, message);
 }
 
 export function ok(this: any) {
   if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
-  return this.setStatus(1);
+  return $telemetrySpanSetStatusImpl(this, 1);
 }
 
 export function recordException(this: any, exception: any, time?: unknown) {
   if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, Field.State) as number;
-  if (!(state & State.Recording) || exception == null) return this;
+  return $telemetrySpanRecordExceptionImpl(this, exception, time);
+}
+
+$visibility = "Private";
+export function telemetrySpanRecordExceptionImpl(span: any, exception: any, time?: unknown) {
+  const state = $getInternalField(span, Field.State) as number;
+  if (!(state & State.Recording) || exception == null) return span;
   const flat: unknown[] = [];
   if (typeof exception === "string") {
     $arrayPush(flat, "exception.message");
@@ -223,8 +238,8 @@ export function recordException(this: any, exception: any, time?: unknown) {
       $arrayPush(flat, stack + "");
     }
   }
-  $telemetryAddEvent(this, "exception", flat, time);
-  return this;
+  $telemetryAddEvent(span, "exception", flat, time);
+  return span;
 }
 
 // { k: v, … } → [k, v, …] without null/undefined values (null when not an object).

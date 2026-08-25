@@ -142,6 +142,71 @@ describe("Bun.otel", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("Bun.otel.wrap rejects a class (the wrapped function is not a constructor)", () => {
+    expect(() => Bun.otel.wrap(class Foo {})).toThrow(TypeError);
+    const w = Bun.otel.wrap(function plain() {
+      return 1;
+    });
+    expect(() => new (w as any)()).toThrow(TypeError);
+    expect(w()).toBe(1);
+  });
+
+  test("wrap/span with a thenable: adopted into a Promise under the span, which ends when it settles", async () => {
+    let ranUnder: string | undefined;
+    const thenable = {
+      then(resolve: (v: number) => void) {
+        // a lazy query builder starts its work here — inside the span
+        ranUnder = Bun.otel.activeSpan()?.name;
+        setTimeout(() => resolve(42), 5);
+      },
+    };
+    const listUsers = Bun.otel.wrap(function listUsers() {
+      return thenable as any;
+    });
+    const p = listUsers();
+    expect(p).toBeInstanceOf(Promise);
+    expect(await p).toBe(42);
+    const rejected = Bun.otel.span(
+      "rejects",
+      () => ({ then: (_: any, reject: any) => reject(new Error("nope")) }) as any,
+    );
+    await expect(rejected).rejects.toThrow("nope");
+    const got = await collect();
+    const lu = got.find(s => s.name === "listUsers");
+    expect(ranUnder).toBe("listUsers");
+    expect(lu.endTime - lu.startTime).toBeGreaterThan(4); // (ms) ≥ the 5 ms the thenable took
+    expect(got.find(s => s.name === "rejects").status.code).toBe(2);
+  });
+
+  test("tracer() with no name is the default 'bun' scope", async () => {
+    expect(Bun.otel.tracer().name).toBe("bun");
+    Bun.otel.tracer().startSpan("t").end();
+    const [s] = await collect();
+    expect(s.scope.name).toBe("bun");
+  });
+
+  test("Bun.otel.set returns false once the span it would write to has ended, and on an unsampled span", async () => {
+    let late: boolean | undefined;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], instrumentations: { http: true } });
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        setTimeout(() => {
+          late = Bun.otel.set("late", 1);
+          resolve();
+        }, 20);
+        return new Response("ok");
+      },
+    });
+    await (await fetch(server.url)).text();
+    await promise;
+    expect(late).toBe(false);
+    Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], sampler: "always_off" });
+    expect(Bun.otel.span("unsampled", s => Bun.otel.set("k", 1))).toBe(false);
+    await collect();
+  });
+
   test("span.fail / span.ok / string status and kind names", async () => {
     const s1 = tracer.startSpan("s1", { kind: "producer" });
     s1.fail("just a message").end();

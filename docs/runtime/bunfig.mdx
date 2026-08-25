@@ -115,13 +115,12 @@ We do not currently collect telemetry; this setting only controls anonymous cras
 telemetry = false
 ```
 
-### `[telemetry]`
+### `[otel]`
 
-As a table, `telemetry` configures [OpenTelemetry tracing](/runtime/opentelemetry) instead. `OTEL_*` environment variables override these values.
+Configures native [OpenTelemetry tracing](/runtime/opentelemetry) (the table's presence enables it; `enabled = false` turns it off). `OTEL_*` environment variables override these values.
 
 ```toml title="bunfig.toml" icon="settings"
-[telemetry]
-enabled = true
+[otel]
 endpoint = "http://localhost:4318"
 serviceName = "my-api"
 headers = { "x-api-key" = "..." }

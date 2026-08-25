@@ -89,7 +89,26 @@ pub(crate) fn release_cell(js_cell: bun_telemetry::JsCellRef) {
 }
 
 /// `f(trace_state, baggage)` for the active span (W3C headers to forward).
+/// Baggage the active api Context set (or deleted) wins over what the span
+/// inherited from the incoming request — the same rule as propagator.inject
+/// and node:http.
 pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8], &[u8]) -> R) -> R {
+    // Empty: the Context says nothing (use inherited); Dead: it says "none".
+    let from_context = Bun__Telemetry__activeExtrasBaggage(global);
+    let masked = from_context.tag() == bun_core::Tag::Dead;
+    let from_context = if masked {
+        bun_core::ZigStringSlice::EMPTY
+    } else {
+        from_context.to_utf8()
+    };
+    fn pick<'a>(masked: bool, from_context: &'a [u8], inherited: &'a [u8]) -> &'a [u8] {
+        if masked || !from_context.is_empty() {
+            from_context
+        } else {
+            inherited
+        }
+    }
+    let from_context = from_context.slice();
     let native = active_native(global);
     if native.is_some() {
         let owned = local(global)
@@ -99,11 +118,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
                 })
             })
             .unwrap_or_default();
-        if owned[1].is_empty() {
-            let extras = Bun__Telemetry__activeExtrasBaggage(global);
-            return f(&owned[0], extras.to_utf8().slice());
-        }
-        return f(&owned[0], &owned[1]);
+        return f(&owned[0], pick(masked, from_context, &owned[1]));
     }
     // JS-owned spans keep the inherited headers in their TraceState/Baggage fields.
     let cell = active_js(global);
@@ -112,12 +127,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
         Bun__TelemetrySpan__baggage(cell),
     );
     let (ts, bg) = (ts.to_utf8_without_ref(), bg.to_utf8_without_ref());
-    if bg.slice().is_empty() {
-        // Baggage carried by the api Context (propagation.extract / setBaggage).
-        let extras = Bun__Telemetry__activeExtrasBaggage(global);
-        return f(ts.slice(), extras.to_utf8().slice());
-    }
-    f(ts.slice(), bg.slice())
+    f(ts.slice(), pick(masked, from_context, bg.slice()))
 }
 
 /// Create the JS cell for a native-owned span (request spans etc.). The
@@ -899,14 +909,20 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
 
 /// Apply every `pool.items` entry as a span attribute (last write wins per key).
 #[unsafe(no_mangle)]
+/// False when the span has ended (its slot released) or is not recording.
 pub extern "C" fn Bun__Telemetry__nativeSetAttributes(
     global: &JSGlobalObject,
     handle: u64,
     attrs: &AttrPool,
-) {
+) -> bool {
     let lim = limits();
-    let Some(mut l) = local(global) else { return };
+    let Some(mut l) = local(global) else {
+        return false;
+    };
     let Local { pool, scratch, .. } = &mut *l;
+    if !pool::with_ref(pool, NativeSpan(handle), |s| s.stub.is_recording()).unwrap_or(false) {
+        return false;
+    }
     let [scratch @ .., _] = scratch;
     each_attr(
         attrs.items(),
@@ -917,6 +933,7 @@ pub extern "C" fn Bun__Telemetry__nativeSetAttributes(
             pool::with(pool, NativeSpan(handle), |s| s.set_attribute(k, v, lim));
         },
     );
+    true
 }
 
 #[unsafe(no_mangle)]
@@ -1041,6 +1058,7 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
     instrument: u32,
     name: &JsString,
     api_kind: u8,
+    remote_parent: &JsString,
 ) -> JSValue {
     let Some(i) = bun_telemetry::Instrument::ALL
         .get(instrument as usize)
@@ -1048,7 +1066,29 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
     else {
         return JSValue::UNDEFINED;
     };
-    let stub = super::start_leaf(global, i);
+    // node:http with a caller-set `traceparent`: that context is the parent
+    // (same rule as fetch); otherwise the active span.
+    let remote = if remote_parent.is_empty() {
+        None
+    } else {
+        bun_telemetry::propagation::parse_traceparent(remote_parent.to_utf8_without_ref().slice())
+            .map(|mut c| {
+                c.flags = Flags(c.flags.0 | Flags::REMOTE);
+                c
+            })
+    };
+    let stub = match remote {
+        Some(parent) if bun_telemetry::enabled(i) => match local(global) {
+            Some(mut l) => SpanStub::start(
+                &mut l.rng,
+                Some(&parent),
+                &super::state().sampler,
+                clock::now_unix_nanos(),
+            ),
+            None => SpanStub::NONE,
+        },
+        _ => super::start_leaf(global, i),
+    };
     if !stub.is_some() {
         return JSValue::UNDEFINED;
     }

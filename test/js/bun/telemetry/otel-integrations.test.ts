@@ -279,6 +279,36 @@ describe("WebSocket", () => {
     expect(message.links).toEqual([expect.objectContaining({ traceId: upgrade.traceId, spanId: upgrade.spanId })]);
   });
 
+  test("an async message handler's span covers its promise and records a late rejection", async () => {
+    using dir = tempDir("otel-ws-async", {
+      "index.js": `
+        const { promise, resolve } = Promise.withResolvers();
+        process.on("unhandledRejection", e => resolve("unhandled:" + e.message));
+        const spans = [];
+        Bun.otel.start({ exporters: [{ export(b) { spans.push(...b); } }], instrumentations: ["websocket", "http"] });
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, srv) { if (srv.upgrade(req)) return; return new Response("no"); },
+          websocket: { async message() { await Bun.sleep(20); throw new Error("late"); } },
+        });
+        const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
+        ws.onopen = () => ws.send("x");
+        const how = await Promise.race([promise, Bun.sleep(200).then(() => "no-unhandled")]);
+        ws.close();
+        await Bun.sleep(10);
+        await Bun.otel.forceFlush();
+        const m = spans.find(s => s.name === "websocket.message");
+        console.log(JSON.stringify([m.status.code, m.events[0]?.attributes["exception.message"], (m.endTime - m.startTime) >= 15]));
+        server.stop(true);
+        process.exit(0);
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify([2, "late", true]));
+    expect(exitCode).toBe(0);
+  });
+
   test("a message handler that throws is still reported, even if describing the error throws", async () => {
     // Runs out of process: the thrown error surfaces as an uncaught exception.
     using dir = tempDir("otel-ws-throw", {

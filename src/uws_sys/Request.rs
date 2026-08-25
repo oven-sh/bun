@@ -20,6 +20,14 @@ impl AnyRequest {
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).header(name),
         }
     }
+    pub fn header_joined(&self, name: &[u8]) -> Option<Vec<u8>> {
+        match self {
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).header_joined(name),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r)
+                .header(name)
+                .map(|v| v.to_vec()),
+        }
+    }
     pub fn telemetry_headers(&self) -> TelemetryHeaders<'_> {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).telemetry_headers(),
@@ -34,6 +42,7 @@ impl AnyRequest {
                     forwarded: RawSlice::of(r.header(b"forwarded")),
                     x_forwarded_for: RawSlice::of(r.header(b"x-forwarded-for")),
                     path_len: u32::MAX,
+                    http10: 0,
                     _req: core::marker::PhantomData,
                 }
             }
@@ -102,6 +111,8 @@ pub struct TelemetryHeaders<'a> {
     x_forwarded_for: RawSlice,
     /// Length of the path part of `url()` (up to `?`); `u32::MAX` if unknown.
     pub path_len: u32,
+    /// The request line said `HTTP/1.0` (H1 only).
+    pub http10: u8,
     _req: core::marker::PhantomData<&'a Request>,
 }
 
@@ -165,9 +176,38 @@ impl Request {
             forwarded: RawSlice::NONE,
             x_forwarded_for: RawSlice::NONE,
             path_len: u32::MAX,
+            http10: 0,
             _req: core::marker::PhantomData,
         };
         c::uws_req_telemetry_headers(self, &mut out);
+        out
+    }
+    /// Every value of `name` (lower-case) joined with `", "`, for headers that
+    /// may repeat; `None` when absent.
+    pub fn header_joined(&self, name: &[u8]) -> Option<Vec<u8>> {
+        unsafe extern "C" fn push(value: *const u8, len: usize, user: *mut core::ffi::c_void) {
+            // SAFETY: `user` is the `&mut Option<Vec<u8>>` passed below; value/len is a request-owned slice.
+            let out = unsafe { &mut *user.cast::<Option<Vec<u8>>>() };
+            let v = unsafe { bun_core::ffi::slice(value, len) };
+            match out {
+                Some(buf) => {
+                    buf.extend_from_slice(b", ");
+                    buf.extend_from_slice(v);
+                }
+                None => *out = Some(v.to_vec()),
+            }
+        }
+        let mut out: Option<Vec<u8>> = None;
+        // SAFETY: name is a valid slice; `push` only runs during the call with `out` alive.
+        unsafe {
+            c::uws_req_for_each_header_value(
+                self,
+                name.as_ptr(),
+                name.len(),
+                push,
+                (&raw mut out).cast(),
+            )
+        };
         out
     }
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
@@ -203,6 +243,13 @@ mod c {
         pub(super) safe fn uws_req_get_url(res: &Request, dest: &mut *const u8) -> usize;
         pub(super) safe fn uws_req_get_method(res: &Request, dest: &mut *const u8) -> usize;
         pub(super) safe fn uws_req_telemetry_headers(res: &Request, out: &mut TelemetryHeaders<'_>);
+        pub(super) fn uws_req_for_each_header_value(
+            res: *const Request,
+            lower_case_name: *const u8,
+            name_len: usize,
+            handler: unsafe extern "C" fn(*const u8, usize, *mut core::ffi::c_void),
+            user_data: *mut core::ffi::c_void,
+        );
         pub(super) fn uws_req_get_header(
             res: *const Request,
             lower_case_header: *const u8,

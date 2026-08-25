@@ -1521,12 +1521,15 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     struct uws_header_slice_t host, user_agent, traceparent, tracestate, baggage, forwarded, x_forwarded_for;
     /* Length of the path part of the URL (up to '?'). */
     uint32_t path_len;
+    /* The request line said HTTP/1.0. */
+    uint8_t http10;
   };
   void uws_req_telemetry_headers(uws_req_t *res, struct uws_telemetry_headers_t *out)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
     memset(out, 0, sizeof(*out));
     out->path_len = (uint32_t)uwsReq->getUrl().length();
+    out->http10 = uwsReq->isAncient() ? 1 : 0;
     for (auto header : *uwsReq)
     {
       std::string_view k = header.first;
@@ -1545,6 +1548,19 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
         slot->ptr = header.second.data();
         slot->len = header.second.length();
       }
+    }
+  }
+
+  /* Every value of a (lower-case) header name, in order; for repeated headers. */
+  typedef void (*uws_header_value_handler)(const char *value, size_t value_len, void *user_data);
+  void uws_req_for_each_header_value(uws_req_t *res, const char *lower_case_name, size_t name_len, uws_header_value_handler handler, void *user_data)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    std::string_view name(lower_case_name, name_len);
+    for (auto header : *uwsReq)
+    {
+      if (header.first.length() == name.length() && !strncasecmp(header.first.data(), name.data(), name.length()))
+        handler(header.second.data(), header.second.length(), user_data);
     }
   }
 

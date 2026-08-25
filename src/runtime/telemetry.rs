@@ -97,6 +97,8 @@ pub struct VmState {
     flush_keep_alive: RefCell<bun_io::KeepAlive>,
     flush_hook_installed: Cell<bool>,
     api_installed: Cell<bool>,
+    /// `flush_at_exit` ran (it can be reached from both on_exit and the cleanup hook).
+    flushed_at_exit: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(VmState; from_timer_ptr => event_loop_timer);
@@ -150,6 +152,7 @@ fn vm_state_create(global: &JSGlobalObject) -> &'static VmState {
         flush_keep_alive: RefCell::new(bun_io::KeepAlive::init()),
         flush_hook_installed: Cell::new(false),
         api_installed: Cell::new(false),
+        flushed_at_exit: Cell::new(false),
     }));
     let rare = global.bun_vm().as_mut().rare_data();
     rare.telemetry = Some(core::ptr::NonNull::from(&mut *s).cast());
@@ -242,26 +245,45 @@ impl VmState {
     }
 }
 
+/// `VirtualMachine::on_exit` (every exit path, incl. process.exit() and fatal
+/// errors): flush this VM's spans; on the main thread also drain every
+/// exporter synchronously — even when only a worker configured tracing.
+#[optimize(size)]
+fn flush_at_exit(vm: &mut bun_jsc::VirtualMachineRef) {
+    let is_main = vm.worker_ref().is_none();
+    if let Some(s) = vm_state(vm.global()) {
+        if !s.flushed_at_exit.replace(true) {
+            s.disarm_timer();
+            bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
+            exporter::JsExporter::settle_stranded_for_vm(s);
+            if is_main {
+                // JS exporters belonging to this VM get their final batch synchronously.
+                processor().shutdown_blocking();
+            } else {
+                // Workers: push to the shared processor; the main thread exports.
+                processor().tick();
+            }
+            exporter::JsExporter::detach_all_for_vm(s);
+            processor().remove_idle_hooks(s.idle_hook_key());
+            // A JS exporter callback above may have recorded spans and re-armed the timer.
+            s.disarm_timer();
+            return;
+        }
+    }
+    if is_main && configured() {
+        // Main thread never touched telemetry (a worker did): still the one
+        // place the process can block for the final export.
+        processor().shutdown_blocking();
+    }
+}
+
+/// RareData cleanup hook (VM teardown): flush if `on_exit` did not, then free.
 #[optimize(size)]
 extern "C" fn on_vm_exit(ctx: *mut c_void) {
     // SAFETY: `ctx` is the leaked VmState registered in `vm_state_or_init`.
     let s = unsafe { &*ctx.cast::<VmState>() };
-    s.disarm_timer();
-    bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
     let global = s.global();
-    exporter::JsExporter::settle_stranded_for_vm(s);
-    // JS exporters belonging to this VM get their final batch synchronously.
-    if global.bun_vm().worker_ref().is_none() {
-        processor().shutdown_blocking();
-    } else {
-        // Workers: push to the shared processor; the main thread exports.
-        processor().tick();
-    }
-    exporter::JsExporter::detach_all_for_vm(s);
-    processor().remove_idle_hooks(s.idle_hook_key());
-    // A JS exporter callback above may have recorded spans and re-armed the
-    // timer; it must not stay in the heap past the free below.
-    s.disarm_timer();
+    flush_at_exit(global.bun_vm().as_mut());
     // Nothing can reach this VmState past the cleanup hook (`local()` returns
     // None once the slot is cleared).
     global.bun_vm().as_mut().rare_data().telemetry = None;
@@ -418,6 +440,7 @@ fn configure_with(
         },
     });
     bun_telemetry::set_enabled_mask(cfg.instruments, cfg.roots);
+    let _ = bun_jsc::virtual_machine::TELEMETRY_EXIT_HOOK.set(flush_at_exit);
     let s = vm_state_or_init(global);
     s.arm_timer();
 }
@@ -500,6 +523,14 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let opts = frame.argument(0);
     let vm = global.bun_vm();
     let env = read_env_config(vm);
+    if env.sdk_disabled {
+        // OTEL_SDK_DISABLED wins over code, as with the SDK's NodeSDK.start().
+        static WARNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+        if !WARNED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+            bun_core::warn!("[otel] Bun.otel.start() ignored: OTEL_SDK_DISABLED is set");
+        }
+        return Ok(JSValue::UNDEFINED);
+    }
     if !configured() {
         // (the BUN_OTEL=1 startup path printed them already otherwise)
         for w in &env.warnings {
@@ -704,6 +735,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // earlier start) behaves like BUN_OTEL=1: the local collector default.
     if !replaces_exporters
         && !configured()
+        && !cfg.exporters_from_env
         && cfg.otlp_exporters.is_empty()
         && !cfg.console_exporter
         && js_exporters.is_empty()
@@ -939,7 +971,7 @@ pub fn is_enabled(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 pub fn create_scope(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let name = arg_string(global, frame.argument(0))?.unwrap_or_default();
     let version = arg_string(global, frame.argument(1))?.unwrap_or_default();
-    if name.is_empty() {
+    if (name.is_empty() || name == "bun") && version.is_empty() {
         return Ok(JSValue::js_number_from_int32(Instrument::User as i32));
     }
     let id = processor().register_scope(name.as_bytes(), version.as_bytes());
@@ -1032,6 +1064,29 @@ pub(crate) fn resolve_flush_waiters() {
     for mut w in waiters {
         let _ = w.resolve(global, JSValue::UNDEFINED);
     }
+}
+
+/// internal: `exportSettled(exporterId, payloadId, ok)` — an async function
+/// exporter's promise settled (see JsExporter::await_settlement).
+#[bun_jsc::host_fn]
+pub fn export_settled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let exporter_id = frame.argument(0).as_number() as usize;
+    let payload_id = frame.argument(1).as_number() as usize;
+    let ok = frame.argument(2).to_boolean();
+    if let Some(s) = vm_state(global) {
+        // Only exporters this VM still owns; the id is an address, so match it
+        // against the live list rather than dereferencing it.
+        let found = s
+            .js_exporters
+            .borrow()
+            .iter()
+            .find(|e| Arc::as_ptr(e) as usize == exporter_id)
+            .cloned();
+        if let Some(e) = found {
+            e.export_settled(payload_id, ok);
+        }
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 /// `stats()` → { spansExported, spansDropped, exportsOk, exportsFailed, pending, inflight }

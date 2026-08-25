@@ -579,20 +579,29 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   // (slow client), the transform arm's writeBytes returns a pending promise and
   // the writable side parks on m_nativeSinkReadyPromise. Without that, a fast
   // source with a stalled client fills the sink buffer unboundedly.
+  //
+  // The client is a raw socket that reads nothing until the stall is observed.
+  // What the kernel can then absorb is the server's send buffer plus the
+  // client's untouched receive buffer (a few MB on Linux). A fetch() client
+  // would not do: it reads ahead up to its high-water mark in fast bursts, and
+  // TCP receive autotuning grows the receive window with every read, up to
+  // tcp_rmem[2] (32 MB since Linux 6.16), enough to hold this whole body.
   test("CompressionStream -> native HTTP sink applies backpressure to a stalled client", async () => {
     let pulls = 0;
     // Incompressible data so the gzipped output is ~as large as the input.
     const chunk = crypto.getRandomValues(new Uint8Array(64 * 1024));
-    // Backpressure parks after ~tens of pulls (a few MB of socket+sink buffer /
+    // Backpressure parks after ~tens of pulls (a few MB of socket buffers /
     // 64KB); 200 is enough headroom to distinguish "parked" from "ran away"
     // without pushing ~32MB through gzip+HTTP under debug+ASAN.
     const TOTAL = 200;
+    const { promise: firstPull, resolve: onFirstPull } = Promise.withResolvers<void>();
     await using server = Bun.serve({
       port: 0,
       fetch() {
         const body = new ReadableStream({
           pull(c) {
             pulls++;
+            if (pulls === 1) onFirstPull();
             c.enqueue(chunk.slice());
             if (pulls >= TOTAL) c.close();
           },
@@ -600,19 +609,56 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
         return new Response(body.pipeThrough(new CompressionStream("gzip")));
       },
     });
-    const res = await fetch(server.url);
-    const reader = res.body!.getReader();
-    await reader.read();
+    const received: Buffer[] = [];
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    using socket = await Bun.connect({
+      hostname: server.hostname,
+      port: server.port,
+      socket: {
+        open(s) {
+          s.pause();
+          s.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        },
+        data(_s, data) {
+          received.push(data);
+        },
+        close() {
+          onClose();
+        },
+      },
+    });
+    await firstPull;
     // Let the server's pull loop run until it either parks on backpressure or
     // runs away to TOTAL.
     await waitUntilStable(() => pulls, TOTAL);
     const pullsWhileStalled = pulls;
-    while (!(await reader.read()).done) {}
+    socket.resume();
+    await closed;
     // Without backpressure the pull loop reaches TOTAL while the client is
-    // stalled; with it, pulls stay bounded by the socket + sink buffer
+    // stalled; with it, pulls stay bounded by the socket buffers
     // (~a few MB / 64KB ≈ tens of pulls).
     expect(pullsWhileStalled).toBeLessThan(TOTAL);
     expect(pulls).toBe(TOTAL);
+
+    // The stall and the resume must not lose or reorder any output: de-chunk
+    // the response and compare the gunzipped body with the source.
+    const raw = Buffer.concat(received);
+    const headEnd = raw.indexOf("\r\n\r\n");
+    const head = raw.subarray(0, headEnd).toString();
+    expect(head).toStartWith("HTTP/1.1 200");
+    expect(head.toLowerCase()).toContain("transfer-encoding: chunked");
+    const body: Buffer[] = [];
+    for (let i = headEnd + 4; ; ) {
+      const sizeEnd = raw.indexOf("\r\n", i);
+      const size = parseInt(raw.subarray(i, sizeEnd).toString(), 16);
+      if (sizeEnd < 0 || Number.isNaN(size)) throw new Error(`malformed chunk framing at offset ${i}`);
+      if (size === 0) break;
+      body.push(raw.subarray(sizeEnd + 2, sizeEnd + 2 + size));
+      i = sizeEnd + 2 + size + 2;
+    }
+    const out = zlib.gunzipSync(Buffer.concat(body));
+    expect(out.byteLength).toBe(TOTAL * chunk.byteLength);
+    expect(out.equals(Buffer.concat(Array.from({ length: TOTAL }, () => chunk)))).toBe(true);
   });
 
   test("request body -> DecompressionStream propagates backpressure to the client", async () => {

@@ -55,8 +55,13 @@ test.concurrent(
       stderr: "",
       exitCode: 0,
     });
+    // Under ASAN every request is aborted before the server answers; release
+    // answers about a third of them. Both must add up, and the load did abort.
     const { tally } = result as { tally: { responded: number; aborted: number } };
-    expect(tally.responded + tally.aborted).toBe(requests);
+    expect({ settled: tally.responded + tally.aborted, aborted: tally.aborted > 0 }).toEqual({
+      settled: requests,
+      aborted: true,
+    });
   },
   fixtureTimeout,
 );
@@ -144,19 +149,16 @@ test.concurrent.skipIf(!slow)(
 // An 8 MiB write does not fit the socket buffer, so the response is left with
 // a registered uWS writable handler while its onwritable slot holds a
 // non-callable (#32661 set undefined, #32735 the rest). The drain must skip
-// the slot: no crash, no uncaught TypeError, and the whole body still arrives.
-// One child runs the four values in turn and prints a line per value, so a
-// crash still names the value it happened on.
+// the slot: the whole body still arrives, and the child exits clean. A drain
+// that calls the slot throws an uncaught TypeError, which ends the child with
+// the error on stderr. One child runs the four values in turn and prints a
+// line per value, so a crash still names the value it happened on.
 test.concurrent("drain skips an onwritable slot set to undefined, null, 0 or false", async () => {
   const src = /* js */ `
     import http from "node:http";
     import { once } from "node:events";
 
-    let caught;
-    process.on("uncaughtException", err => { caught = String(err); });
-
     for (const slot of [undefined, null, 0, false]) {
-      caught = undefined;
       let hadBackpressure;
       const server = http.createServer(async (req, res) => {
         res.writeHead(200, { "Content-Type": "application/octet-stream" });
@@ -172,7 +174,7 @@ test.concurrent("drain skips an onwritable slot set to undefined, null, 0 or fal
 
       const response = await fetch("http://127.0.0.1:" + server.address().port + "/", { headers: { connection: "close" } });
       const body = await response.bytes();
-      console.log(JSON.stringify({ slot: String(slot), status: response.status, bodyLength: body.length, hadBackpressure, caught }));
+      console.log(JSON.stringify({ slot: String(slot), status: response.status, bodyLength: body.length, hadBackpressure }));
       server.close();
     }
   `;

@@ -1326,7 +1326,11 @@ pub mod bv2_impl {
                     let plugins = self.plugins;
                     // The slot's own pointer, not one re-derived from `&mut self`:
                     // the bundle thread keeps using the slot while the plugins hold this.
-                    let self_ptr = self.this.expect("set when queued").as_ptr().cast::<core::ffi::c_void>();
+                    let self_ptr = self
+                        .this
+                        .expect("set when queued")
+                        .as_ptr()
+                        .cast::<core::ffi::c_void>();
                     plugins.match_on_resolve(
                         &self.import_record.specifier,
                         &self.import_record.namespace,
@@ -1443,7 +1447,11 @@ pub mod bv2_impl {
                     let plugins = self.plugins;
                     // The slot's own pointer, not one re-derived from `&mut self`:
                     // the bundle thread keeps using the slot while the plugins hold this.
-                    let self_ptr = self.this.expect("set when queued").as_ptr().cast::<core::ffi::c_void>();
+                    let self_ptr = self
+                        .this
+                        .expect("set when queued")
+                        .as_ptr()
+                        .cast::<core::ffi::c_void>();
                     plugins.match_on_load(
                         &self.path,
                         &self.namespace,
@@ -4015,7 +4023,8 @@ pub mod bv2_impl {
             // Leaked for the process: the hot reloader keeps this pointer and
             // refers to the bundle from the watcher thread (until it
             // `execve()`s on the next change).
-            let mut this = core::ptr::NonNull::from(Box::leak(BundleV2::init(transpiler, config, heap)?));
+            let mut this =
+                core::ptr::NonNull::from(Box::leak(BundleV2::init(transpiler, config, heap)?));
             // SAFETY: leaked above and never freed; the reloader re-enters only
             // through `execve`, so this thread's use below does not race it, and
             // both sides use this one pointer.

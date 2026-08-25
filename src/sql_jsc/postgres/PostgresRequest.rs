@@ -170,7 +170,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 let str = value
                     .json_stringify_fast(global)
                     .map_err(js_error_to_postgres)?;
-                let slice = str.to_utf8_without_ref();
+                let slice = str.to_utf8();
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
@@ -220,7 +220,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 if str.tag() == bun_core::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
                 }
-                let slice = str.to_utf8_without_ref();
+                let slice = str.to_utf8();
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
@@ -296,7 +296,7 @@ pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     )?;
     write_bind(
         &signature.prepared_statement_name,
-        &BunString::empty(),
+        &BunString::EMPTY,
         global,
         array_value,
         JSValue::ZERO,
@@ -326,7 +326,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
 ) -> Result<(), AnyPostgresError> {
     write_bind(
         &statement.signature.prepared_statement_name,
-        &BunString::empty(),
+        &BunString::EMPTY,
         global,
         array_value,
         columns_value,
@@ -395,7 +395,7 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
 
     write_bind(
         name,
-        &BunString::empty(),
+        &BunString::EMPTY,
         global,
         array_value,
         columns_value,

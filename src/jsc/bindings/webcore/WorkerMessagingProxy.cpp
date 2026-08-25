@@ -293,6 +293,8 @@ static constexpr size_t drainBatchLimit = 1024;
 template<typename Dispatch>
 static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
 {
+    auto& vm = globalObject.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     size_t remaining = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
 
     while (true) {
@@ -322,9 +324,18 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
                 return false;
             auto message = batch.takeFirst();
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+            // message port post message steps (7.3): if deserializing throws, catch it and fire messageerror.
             auto event = MessageEvent::create(globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            dispatch(event.event);
-            if (globalObject.drainMicrotasks())
+            if (scope.exception()) [[unlikely]] {
+                if (vm.hasPendingTerminationException())
+                    return false;
+                scope.clearException();
+                dispatch(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+            } else
+                dispatch(event->event);
+            bool terminating = globalObject.drainMicrotasks();
+            RETURN_IF_EXCEPTION(scope, false);
+            if (terminating)
                 return false; // termination pending
         }
     }

@@ -428,6 +428,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
+            "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
+        ),
+        parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
         parse_param!(
@@ -2017,6 +2020,18 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    if let Some(depth) = args.option(b"--bytecode-depth") {
+        ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
+            Ok(v) => v,
+            Err(_) => {
+                Output::err_generic(
+                    "Invalid value for --bytecode-depth: \"{}\". Must be a non-negative integer\n",
+                    format_args!("{}", BStr::new(depth)),
+                );
+                Global::exit(1);
+            }
+        };
+    }
 
     let production = args.flag(b"--production");
 

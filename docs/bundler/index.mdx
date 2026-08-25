@@ -1536,6 +1536,8 @@ The `bytecode: boolean` option generates bytecode for any JavaScript/TypeScript 
 
 Without an explicit `format`, bytecode defaults to CommonJS.
 
+The `bytecodeDepth: number` option (a non-negative integer) limits how many levels of nested functions are compiled ahead of time (`0` = only each module's top-level code). Functions past the limit are compiled from source when first called. Defaults to all.
+
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"
@@ -1741,6 +1743,13 @@ interface BuildConfig {
    * @default false
    */
   bytecode?: boolean;
+  /**
+   * How many levels of nested functions to compile to bytecode ahead of time
+   * (a non-negative integer; `0` = only each module's top-level code).
+   * Only used when `bytecode: true`.
+   * @default undefined (all nested functions)
+   */
+  bytecodeDepth?: number;
   /**
    * Add a banner to the bundled code such as "use client";
    */

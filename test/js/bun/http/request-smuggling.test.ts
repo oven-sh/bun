@@ -1628,6 +1628,48 @@ test("rejects Transfer-Encoding header with empty value", async () => {
   expect(seen).not.toContain("GET /admin");
 });
 
+// RFC 9110 5.6.1: empty list members are ignored, so these two fields combine
+// to just "chunked". The parser frames the body as chunked, and the handler
+// must receive that body: a has-body decision that reads only the first
+// Transfer-Encoding field sees an empty value and drops the chunk data.
+test.each([
+  ["empty", ""],
+  ["whitespace-only", "   "],
+])("delivers the chunked body when a %s Transfer-Encoding field precedes chunked", async (name, te) => {
+  const seen: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      seen.push(`${req.method} ${new URL(req.url).pathname} body=${JSON.stringify(await req.text())}`);
+      return new Response("OK");
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const client = net.connect(server.port, "127.0.0.1", () => {
+    client.write(
+      "POST /a HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        `Transfer-Encoding:${te}\r\n` +
+        "Transfer-Encoding: chunked\r\n" +
+        "\r\n" +
+        "5\r\nhello\r\n0\r\n\r\n" +
+        "GET /after HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        "Connection: close\r\n" +
+        "\r\n",
+    );
+  });
+  let raw = "";
+  client.on("data", chunk => (raw += chunk.toString()));
+  client.on("error", reject);
+  client.on("close", () => resolve(raw));
+  const response = await promise;
+
+  expect(seen).toEqual(['POST /a body="hello"', 'GET /after body=""']);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+});
+
 describe("Host header field values in request.url", () => {
   // Windows refuses connections under accept-backlog/TIME_WAIT churn even while the
   // server is listening, so a refused connect (before anything was read) is retried.

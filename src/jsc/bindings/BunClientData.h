@@ -41,6 +41,8 @@ inline bool Bun__VmHandle__scriptAllowedInline(const unsigned char* state)
 }
 // JS thread only: adjust the keep-alive of the VM this thread runs.
 extern "C" void Bun__eventLoop__refKeepAlive(void* bunVM, int delta);
+// Any thread: whether the calling thread is the one `bunVM` runs on.
+extern "C" bool Bun__VM__isCurrentThread(const void* bunVM);
 
 namespace WebCore {
 

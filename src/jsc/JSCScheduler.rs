@@ -64,8 +64,8 @@ unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     let ct = ConcurrentTask::create_from(task);
     if let crate::vm_handle::Posted::Refused(ct) = handle.post(kind, ct) {
         // SAFETY: refused ⇒ we own the ConcurrentTask box; the C++ job's ticket
-        // was already cancelled by the VM teardown (DeferredWorkTimer is shut
-        // down before ~VM), so dropping the job pointer here loses nothing.
+        // stays pending in the DeferredWorkTimer, which cancels it with the VM,
+        // so dropping the job pointer here loses nothing.
         drop(unsafe { bun_core::heap::take(ct.as_ptr()) });
         // SAFETY: `task` is the C++ job handed over for exactly one run/destroy.
         unsafe { JSCDeferredWorkTask::destroy(task) };

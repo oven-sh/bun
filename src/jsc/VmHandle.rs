@@ -529,6 +529,13 @@ pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
     vm.current_loop_kind()
 }
 
+/// Any thread: whether the calling thread is the one `vm` runs on. Compares
+/// the thread's own VM slot to `vm`, which is not dereferenced.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__isCurrentThread(vm: *const VirtualMachine) -> bool {
+    VirtualMachine::get_or_null().is_some_and(|current| core::ptr::eq(current, vm))
+}
+
 // ── Test suite only: deterministic late completions ───────────────────────
 //
 // `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE` (first-level worker VMs; builds with

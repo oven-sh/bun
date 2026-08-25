@@ -2091,9 +2091,6 @@ pub(crate) mod strings_impl {
         if let Some(r) = starts_with_redacted_item(str, b"_auth") {
             return Some(r);
         }
-        if let Some(r) = starts_with_redacted_item(str, b"_authToken") {
-            return Some(r);
-        }
         if let Some(r) = starts_with_redacted_item(str, b"email") {
             return Some(r);
         }

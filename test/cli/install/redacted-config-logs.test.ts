@@ -228,6 +228,12 @@ describe.concurrent("redact", async () => {
       secret: "does-not-decode",
     },
     {
+      title: "quoted password key",
+      npmrc: '"//registry.npmjs.org/:password"=SUPERSECRETVALUE',
+      expected: "is not a known .npmrc option",
+      secret: "SUPERSECRETVALUE",
+    },
+    {
       // Unquoted twin of the above: the identifier path must redact after a
       // misspelt option too, since the warning prints the line.
       title: "misspelt _authToken key",

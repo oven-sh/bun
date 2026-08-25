@@ -1074,6 +1074,9 @@ mod draft {
                                         }));
                                     }
                                 }
+                                // A known option whose value is not a string (`=true`, no `=`):
+                                // nothing to apply, and not a typo to warn about.
+                                return Some(IniOption::None);
                             }
                         }
                         // `//host/...:word=` where `word` is none of the seven options: npm

@@ -17,18 +17,29 @@ export type Fixture = {
   [Symbol.asyncDispose](): Promise<void>;
 };
 
-// Not bunRun: that helper ignores stdin and awaits exit, and this server must
-// stay up for the whole describe block.
-export async function startFixture(opts: {
+export type FixtureOptions = {
   tls: boolean;
   http1?: boolean;
   http3?: boolean;
   idleTimeout?: number;
   execArgv?: string[];
-}): Promise<Fixture> {
+};
+
+// Not bunRun: that helper ignores stdin and awaits exit, and this server must
+// stay up for the whole describe block.
+export async function startFixture(opts: FixtureOptions): Promise<Fixture> {
   // The file behind the Bun.file routes. Per fixture, so that no module-level
   // hook has to outlive the test file that first imported this module.
   const dir = tempDir("serve-http2", { "big.bin": Buffer.alloc(3 * 1024 * 1024 + 17, "0123456789") });
+  try {
+    return await spawnFixture(opts, dir);
+  } catch (err) {
+    dir[Symbol.dispose]();
+    throw err;
+  }
+}
+
+async function spawnFixture(opts: FixtureOptions, dir: ReturnType<typeof tempDir>): Promise<Fixture> {
   const proc = Bun.spawn({
     cmd: [
       bunExe(),

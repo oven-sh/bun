@@ -312,13 +312,22 @@ impl FileReader {
         // on every path through the original `if let` body) so the `RefPtr<Store>`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
-            // Single-threaded JS event loop; we hold the only mutating handle.
-            match blob::Store::data_mut(&store) {
+            // Clone the `File` out so `open_file_blob` takes `&mut File` on
+            // its own copy instead of `data_mut()` on the shared `Store`
+            // (other `RefPtr<Store>` clones to the same allocation exist). The
+            // clone is cheap; the `is_atty = Some(true)` cache write
+            // `open_file_blob` makes is intentionally discarded with the
+            // clone — writing it back would need `data_mut()` on an aliased
+            // handle, re-opening #30800. Cost: a repeat `isatty` probe on a
+            // second `.stream()` of `Bun.file(0|1|2)` (the canonical stdio
+            // Stores are built with `is_atty` pre-populated).
+            match &store.data {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
-                    let open_result = Lazy::open_file_blob(file);
+                    let mut file_local = file.clone();
+                    let open_result = Lazy::open_file_blob(&mut file_local);
                     // drop the RefPtr<Store>; `lazy` was already cleared above
                     drop(store);
                     match open_result {

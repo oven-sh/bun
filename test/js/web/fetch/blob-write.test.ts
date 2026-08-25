@@ -136,3 +136,44 @@ test("Bun.file(path).write() silently ignores an invalid options.type", async ()
   // the .txt default is kept
   expect(file.type).toBe("text/plain;charset=utf-8");
 });
+
+// Stress the threadpool `ReadFile` path that reaches into the backing
+// `Store` off the JS thread (`resolve_size_and_last_modified` on each
+// worker). `do_read_file` clones the backing `RefPtr<Store>` into each
+// spawned `ReadFile` task, so N concurrent `file.bytes()` calls on the
+// *same* `Blob` schedule N workers that all observe the same `Store`
+// allocation. The write-target (`file.last_modified`) is `AtomicU64` on
+// Rust's memory model and the only worker-thread write, so the race is
+// idempotent (every task stores the same `fstat`-derived mtime). Shared
+// (not exclusive) borrow through `RefPtr: Deref` is what keeps the
+// `&mut` aliasing hazard away under `bun bd` (ASAN + Rust's UB rules).
+// Regression guard for oven-sh/bun#30800 (`Store::data_mut` is now an
+// `unsafe fn`; `last_modified` converted to atomic to match the
+// threading reality).
+test("Bun.file().bytes() is safe under high concurrency", async () => {
+  const dir = tempDirWithFiles(
+    "bun-blob-concurrent",
+    Object.fromEntries(
+      Array.from({ length: 16 }, (_, i) => [
+        `f${i}.txt`,
+        `content-${i}-${Buffer.alloc(1024, 65 + (i % 26)).toString()}`,
+      ]),
+    ),
+  );
+  // Many overlapping reads per file; each goes through a distinct `ReadFile`
+  // task on the threadpool, and all 8 per file share ONE `Store` (the
+  // `Blob` is constructed once and its `RefPtr<Store>` cloned per task).
+  // The test asserts every task returns the full, uncorrupted file bytes.
+  const results = await Promise.all(
+    Array.from({ length: 16 }, (_, i) => {
+      const file = Bun.file(path.join(dir, `f${i}.txt`));
+      return Promise.all(Array.from({ length: 8 }, () => file.bytes()));
+    }),
+  );
+  for (let i = 0; i < results.length; i++) {
+    const expected = `content-${i}-${Buffer.alloc(1024, 65 + (i % 26)).toString()}`;
+    for (const bytes of results[i]) {
+      expect(new TextDecoder().decode(bytes)).toBe(expected);
+    }
+  }
+});

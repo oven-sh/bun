@@ -363,7 +363,9 @@ export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
 // post-auth dispatcher; it answers OK and returns true when `payload` is that
 // query.
 export function mysqlAckSessionSetup(socket: { write(data: Buffer): unknown }, payload: Buffer): boolean {
-  if (payload[0] !== 0x03 /* COM_QUERY */ || !payload.includes("SET time_zone")) return false;
+  if (payload[0] !== 0x03 /* COM_QUERY */ || payload.subarray(1).toString("utf8") !== "SET time_zone = '+00:00'") {
+    return false;
+  }
   socket.write(mysqlOkPacket(1));
   return true;
 }

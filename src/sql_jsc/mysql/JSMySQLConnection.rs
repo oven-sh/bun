@@ -298,11 +298,17 @@ impl JSMySQLConnection {
                 self.connection_timeout_ms,
                 "",
             ),
-            S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk | S::SessionSetup => (
+            S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => (
                 AnyMySQLErrorT::ConnectionTimedOut,
                 Connection,
                 self.connection_timeout_ms,
                 " (during authentication)",
+            ),
+            S::SessionSetup => (
+                AnyMySQLErrorT::ConnectionTimedOut,
+                Connection,
+                self.connection_timeout_ms,
+                " (during session setup)",
             ),
             S::Disconnected | S::Failed => return,
         };

@@ -90,6 +90,15 @@ checkRoundTrip("text", await sql`SELECT id, dt FROM ${sql(t)} ORDER BY id`.simpl
   if (!(row.ts instanceof Date) || row.ts.getTime() !== written.getTime()) {
     failures.push(`TIMESTAMP read back: expected ${written.toISOString()}, got ${String(row.ts)}`);
   }
+
+  // A server-generated value has no cancelling encode error, so this pins the
+  // decode half on its own: NOW() is fixed per statement, so the decoded Date
+  // must equal the server's own epoch for the same instant.
+  const [gen] = await sql`
+    SELECT NOW(3) AS n, CAST(ROUND(UNIX_TIMESTAMP(NOW(3)) * 1000) AS SIGNED) AS n_ms`;
+  if (!(gen.n instanceof Date) || gen.n.getTime() !== Number(gen.n_ms)) {
+    failures.push(`NOW() decode: got ${String(gen.n)}, server epoch ${gen.n_ms}`);
+  }
 }
 
 // MySQL's permissive sql_mode stores "0000-00-00 00:00:00"; it must read back

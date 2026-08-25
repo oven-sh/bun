@@ -200,7 +200,7 @@ function createManticoreMock(opts: { deprecateEof: boolean; info?: string }) {
           state = "ready";
         } else if (state === "ready") {
           const cmd = payload[0];
-          if (cmd === 0x03 && payload.includes("SET time_zone")) {
+          if (cmd === 0x03 && payload.subarray(1).toString("utf8") === "SET time_zone = '+00:00'") {
             // Session-setup query the driver sends on every new connection
             // before it reports itself connected; acknowledge with OK.
             socket.write(buildOK(1));

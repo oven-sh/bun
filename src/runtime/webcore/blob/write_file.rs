@@ -9,7 +9,7 @@ use bun_io as io;
 #[cfg(not(windows))]
 use bun_io::IntrusiveIoRequest as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
@@ -22,10 +22,6 @@ use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
 
-// A tagged result-or-error union. Modeled
-// as a plain Rust enum: it only ever travels through the Rust fn-pointer
-// callbacks below (`WriteFileOnWriteFileCallback`), never across FFI, so the
-// layout is unconstrained.
 /// One `write()` attempt on the pool thread.
 #[cfg(not(windows))]
 pub(crate) enum WriteStep {
@@ -41,9 +37,6 @@ pub enum WriteFileResultType {
     Err(Box<SystemError>),
 }
 
-pub type WriteFileOnWriteFileCallback =
-    fn(ctx: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()>;
-
 /// The completion token a `WriteFile` keeps across its async I/O.
 pub type WriteFileTask = bun_jsc::Completion<WriteFile>;
 
@@ -55,7 +48,7 @@ unsafe impl Send for WriteFile {}
 impl bun_jsc::JobContext for WriteFile {
     const CANCELLABLE: bool = cfg!(not(windows));
     type OffThread = Self;
-    /// The completion is delivered through `on_complete_callback(ctx, ..)`.
+    /// The completion is delivered through `on_complete`.
     type Js = ();
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
@@ -103,8 +96,7 @@ pub struct WriteFile {
     pub(crate) io_parking: super::IoParking,
     pub(crate) state: AtomicU8, // ClosingState
 
-    pub(crate) on_complete_ctx: *mut c_void,
-    pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
+    pub(crate) on_complete: WriteFilePromise,
     pub(crate) total_written: usize,
 
     #[cfg(not(windows))]
@@ -276,14 +268,13 @@ impl WriteFile {
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn create_with_ctx(
+    pub(crate) fn create(
         file_blob: Blob,
         bytes_blob: Blob,
-        on_write_file_context: *mut c_void,
-        on_complete_callback: WriteFileOnWriteFileCallback,
+        on_complete: WriteFilePromise,
         mkdirp_if_not_exists: bool,
-    ) -> Result<WriteFile, Error> {
-        let write_file = WriteFile {
+    ) -> WriteFile {
+        WriteFile {
             file_blob,
             bytes_blob,
             opened_fd: Fd::INVALID,
@@ -299,34 +290,12 @@ impl WriteFile {
             #[cfg(not(windows))]
             io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
-            on_complete_ctx: on_write_file_context,
-            on_complete_callback,
+            on_complete,
             total_written: 0,
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
-        };
-        Ok(write_file)
-    }
-
-    #[cfg(not(windows))]
-    pub(crate) fn create<C>(
-        file_blob: Blob,
-        bytes_blob: Blob,
-        context: *mut C,
-        callback: WriteFileOnWriteFileCallback,
-        mkdirp_if_not_exists: bool,
-    ) -> Result<WriteFile, Error> {
-        // The caller supplies a
-        // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`),
-        // so this is just a `.cast()` on `context`.
-        WriteFile::create_with_ctx(
-            file_blob,
-            bytes_blob,
-            context.cast::<c_void>(),
-            callback,
-            mkdirp_if_not_exists,
-        )
+        }
     }
 
     // reshaped for borrowck — take (off, len) here and re-derive the slice
@@ -361,22 +330,15 @@ impl WriteFile {
     }
 
     pub(crate) fn then(mut this: WriteFile, _global: &JSGlobalObject) -> jsc::JsResult<()> {
-        let cb = this.on_complete_callback;
-        let cb_ctx = this.on_complete_ctx;
+        let on_complete = core::mem::take(&mut this.on_complete);
         let system_error = this.system_error.take();
         let total_written = this.total_written;
         drop(this);
 
-        if let Some(err) = system_error {
-            cb(cb_ctx, WriteFileResultType::Err(Box::new(err)))?;
-            return Ok(());
-        }
-
-        cb(
-            cb_ctx,
-            WriteFileResultType::Result(total_written as SizeType),
-        )?;
-        Ok(())
+        on_complete.run(match system_error {
+            Some(err) => WriteFileResultType::Err(Box::new(err)),
+            None => WriteFileResultType::Result(total_written as SizeType),
+        })
     }
 
     pub(crate) fn run(&mut self, task: WriteFileTask) {
@@ -577,8 +539,7 @@ mod windows_impl {
         pub(crate) io_request: uv::fs_t,
         pub(crate) file_blob: Blob,
         pub(crate) bytes_blob: Blob,
-        pub(crate) on_complete_callback: WriteFileOnWriteFileCallback,
-        pub(crate) on_complete_ctx: *mut c_void,
+        pub(crate) on_complete: WriteFilePromise,
         pub(crate) mkdirp_if_not_exists: bool,
         pub(crate) uv_bufs: [uv::uv_buf_t; 1],
 
@@ -609,12 +570,11 @@ mod windows_impl {
     }
 
     impl WriteFileWindows {
-        pub(crate) fn create_with_ctx(
+        pub(crate) fn create(
+            event_loop: *mut EventLoop,
             file_blob: Blob,
             bytes_blob: Blob,
-            event_loop: *mut EventLoop,
-            on_write_file_context: *mut c_void,
-            on_complete_callback: WriteFileOnWriteFileCallback,
+            on_complete: WriteFilePromise,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
@@ -630,8 +590,7 @@ mod windows_impl {
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
-                on_complete_ctx: on_write_file_context,
-                on_complete_callback,
+                on_complete,
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {
@@ -1032,25 +991,21 @@ mod windows_impl {
         /// `this` must point to a live `WriteFileWindows` allocated via [`Self::new`].
         /// On return, `*this` has been freed and must not be accessed again.
         pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> WriteFileWindowsError {
-            // SAFETY: caller contract — `this` is live; copy out everything we
+            // SAFETY: caller contract — `this` is live; move out everything we
             // need before `deinit` frees the allocation.
-            let (cb, cb_ctx) = unsafe { ((*this).on_complete_callback, (*this).on_complete_ctx) };
-
-            // SAFETY: caller contract — `this` is live.
-            if let Some(err) = unsafe { (*this).to_system_error() } {
-                // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
-                if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(Box::new(err))) {
-                    return e.into();
-                }
-            } else {
-                // SAFETY: caller contract — `this` is live.
-                let wrote = unsafe { (*this).total_written };
-                // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
-                if let Err(e) = cb(cb_ctx, WriteFileResultType::Result(wrote as SizeType)) {
-                    return e.into();
-                }
+            let (on_complete, result) = unsafe {
+                (
+                    core::mem::take(&mut (*this).on_complete),
+                    match (*this).to_system_error() {
+                        Some(err) => WriteFileResultType::Err(Box::new(err)),
+                        None => WriteFileResultType::Result((*this).total_written as SizeType),
+                    },
+                )
+            };
+            // SAFETY: caller contract — `this` is live; consumed here.
+            unsafe { Self::deinit(this) };
+            if let Err(e) = on_complete.run(result) {
+                return e.into();
             }
 
             WriteFileWindowsError::WriteFileWindowsDeinitialized
@@ -1190,50 +1145,26 @@ mod windows_impl {
                 drop(bun_core::heap::take(this));
             }
         }
-
-        pub(crate) fn create<C>(
-            event_loop: *mut EventLoop,
-            file_blob: Blob,
-            bytes_blob: Blob,
-            context: *mut C,
-            callback: WriteFileOnWriteFileCallback,
-            mkdirp_if_not_exists: bool,
-        ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
-            // see `WriteFile::create` — caller supplies an erased
-            // `*mut c_void` callback directly; `context` is just `.cast()`ed.
-            WriteFileWindows::create_with_ctx(
-                file_blob,
-                bytes_blob,
-                event_loop,
-                context.cast::<c_void>(),
-                callback,
-                mkdirp_if_not_exists,
-            )
-        }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Where a finished `WriteFile` delivers its byte count or error.
+#[derive(Default)]
 pub struct WriteFilePromise {
     pub(crate) promise: jsc::JSPromiseStrong,
-    pub global_this: *const JSGlobalObject,
+    pub global_this: Option<GlobalRef>,
 }
 
 impl WriteFilePromise {
-    pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> jsc::JsResult<()> {
-        let handler = handler.cast::<Self>();
-        // SAFETY: handler is the Box-allocated WriteFilePromise created in
-        // Blob.rs (`heap::into_raw(Box::new(WriteFilePromise { .. }))`); consumed here.
-        // `swap()` releases the Strong's handle slot and yields a GC-owned `*mut JSPromise`,
-        // which stays valid past `drop(heap::take(handler))`.
-        let (promise, global_this): (*mut JSPromise, &JSGlobalObject) = unsafe {
-            let h = &mut *handler;
-            let promise = std::ptr::from_mut::<JSPromise>(h.promise.swap());
-            let global_this = &*h.global_this;
-            drop(bun_core::heap::take(handler));
-            (promise, global_this)
-        };
+    pub(crate) fn run(mut self, count: WriteFileResultType) -> jsc::JsResult<()> {
+        // `swap()` releases the Strong's handle slot and yields a GC-owned
+        // `*mut JSPromise`, which stays valid past dropping `self`.
+        let promise = std::ptr::from_mut::<JSPromise>(self.promise.swap());
+        let global_this = self.global_this.take().expect("set at creation");
+        let global_this: &JSGlobalObject = &global_this;
+        drop(self);
         // SAFETY: GC-owned cell (kept alive below); scoped shared access.
         let value = unsafe { (*promise).to_js() };
         value.ensure_still_alive();

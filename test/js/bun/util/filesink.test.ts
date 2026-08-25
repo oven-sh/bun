@@ -1019,6 +1019,32 @@ describe.concurrent("start() on a live writer", () => {
     expect(result).toEqual({ combined: "to ato b", bEndsWithSecondChunk: true, closed: "all" });
   });
 
+  it("start({ path }) with a second write queued settles it and flushes it to the new path", async () => {
+    // On Windows the first chunk is in flight and the second waits in the
+    // writer's queue with its promise. The replaced file never reports the
+    // first write back, so the restart itself has to drive the queue.
+    const result = await run(`
+      const a = join(dir, "a.txt");
+      const b = join(dir, "b.txt");
+      const writer = Bun.file(a).writer();
+      writer.write("first");
+      const queued = writer.write("second");
+      writer.start({ path: b });
+      const { promise, resolve } = Promise.withResolvers();
+      const timer = setTimeout(() => resolve("timeout"), 3_000);
+      Promise.resolve(queued).then(() => resolve("settled"));
+      const settled = await promise;
+      clearTimeout(timer);
+      writer.write("third");
+      await writer.end();
+      const deadline = Date.now() + 10_000;
+      while (read(a) + read(b) !== "firstsecondthird" && Date.now() < deadline) await Bun.sleep(1);
+      const out = { settled, combined: read(a) + read(b), bEndsWithQueued: read(b).endsWith("secondthird") };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ settled: "settled", combined: "firstsecondthird", bEndsWithQueued: true, closed: "all" });
+  });
+
   it("start({ path }) after a failed write writes to the new path", async () => {
     // The failed write's bytes are gone with the file that rejected them; the
     // writer must not stay wedged behind them.

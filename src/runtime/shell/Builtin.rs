@@ -629,34 +629,7 @@ impl Builtin {
                                 ),
                             ));
                         }
-                        Ok(f) => {
-                            #[cfg(windows)]
-                            {
-                                use bun_sys::FdExt as _;
-                                match f.make_lib_uv_owned_for_syscall(
-                                    bun_sys::Tag::open,
-                                    bun_sys::ErrorCase::CloseOnFail,
-                                ) {
-                                    Err(e) => {
-                                        let sys = e.to_shell_system_error();
-                                        return Some(Self::cmd_write_failing_error(
-                                            interp,
-                                            cmd,
-                                            format_args!(
-                                                "bun: {}: {}",
-                                                bstr::BStr::new(sys.message.byte_slice()),
-                                                bstr::BStr::new(path.as_bytes()),
-                                            ),
-                                        ));
-                                    }
-                                    Ok(f2) => f2,
-                                }
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                f
-                            }
-                        }
+                        Ok(f) => f,
                     }
                 };
 

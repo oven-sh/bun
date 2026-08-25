@@ -886,8 +886,7 @@ impl ClientSession {
         self.maybe_release();
     }
 
-    /// Drain and flush until the socket pushes back (onWritable resumes) or nothing
-    /// is left to frame. A flush that writes everything raises no onWritable.
+    /// Drain and flush until backpressure or nothing is left: a full flush raises no onWritable.
     fn pump_send_bodies(&mut self) -> Result<(), Error> {
         loop {
             let more = encode::drain_send_bodies(self);

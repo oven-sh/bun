@@ -1829,10 +1829,12 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     });
   });
 
-  // From the multi-tenant case: the manifest names the tarball URL, so a registry's
-  // own credentials only follow a tarball at or under the registry URL, and a path a
-  // server would resolve elsewhere (`..`, `%2e%2e`, backslash) matches nothing.
-  test("registry credentials are not sent to a sibling path on the same host", async () => {
+  // npm's fallback: a tarball with no `.npmrc` line of its own gets the registry's
+  // credentials when it is on the registry's origin, whatever its path. GitLab's
+  // instance-level registry serves tarballs under a project path, so this is the
+  // documented setup (#30513). A path the server would resolve elsewhere (`..`,
+  // `%2e%2e`, backslash) still matches nothing.
+  test("registry credentials follow a tarball on a sibling path of the same origin", async () => {
     const registryPath = "/npm/team-a";
     const tarballPath = "/npm/team-b/no-deps/-/no-deps-1.0.0.tgz";
     using registry = mockRegistry("Bearer team-a-token", { registryPath, tarballPath });
@@ -1845,14 +1847,40 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       ].join("\n"),
     });
 
-    const { exitCode } = await install(String(dir));
+    const { stderr, exitCode } = await install(String(dir));
 
-    expect({ requests: registry.requests, exitCode }).toEqual({
+    expect({ requests: registry.requests, exitCode, stderr }).toEqual({
       requests: [
         { path: `${registryPath}/no-deps`, auth: "Bearer team-a-token" },
-        { path: tarballPath, auth: null },
+        { path: tarballPath, auth: "Bearer team-a-token" },
       ],
-      exitCode: 1,
+      exitCode: 0,
+      stderr: expect.not.stringContaining("401"),
+    });
+  });
+
+  test("GitLab's instance-level registry: the project-path tarball gets the instance token", async () => {
+    const registryPath = "/api/v4/packages/npm";
+    const tarballPath = "/api/v4/projects/123/packages/npm/no-deps/-/no-deps-1.0.0.tgz";
+    using registry = mockRegistry("Bearer instance-token", { registryPath, tarballPath });
+    using dir = tempDir("npmrc-url-auth-gitlab-instance", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}${registryPath}/`,
+        `//${registry.host}${registryPath}/:_authToken=instance-token`,
+        "",
+      ].join("\n"),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+
+    expect({ requests: registry.requests, exitCode, stderr }).toEqual({
+      requests: [
+        { path: `${registryPath}/no-deps`, auth: "Bearer instance-token" },
+        { path: tarballPath, auth: "Bearer instance-token" },
+      ],
+      exitCode: 0,
+      stderr: expect.not.stringContaining("401"),
     });
   });
 

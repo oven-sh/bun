@@ -10,11 +10,12 @@ use bstr::BStr;
 
 use crate::napi;
 use bun_collections::StringArrayHashMap;
+use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
-use bun_core::{ZStr, ZigString};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
-    JsError, JsResult, SystemError, ZigStringJsc,
+    self as jsc, CallFrame, EncodedSliceJsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
+    JsCell, JsClass, JsError, JsResult, SystemError,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
@@ -32,13 +33,6 @@ fn dir_exists(path: &'static [u8]) -> bool {
     // SAFETY: `path` is a NUL-free static literal; copy into a stack ZBox.
     let z = ZBox::from_bytes(path);
     bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &z).unwrap_or(false)
-}
-
-/// `bun.String.toJSArray` — local shim over `JSValue::create_array_from_iter`.
-fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> JsResult<JSValue> {
-    JSValue::create_array_from_iter(global, strs.iter(), |s| {
-        jsc::bun_string_jsc::to_js(s, global)
-    })
 }
 
 // Runtime availability is governed by `bun_core::Environment::ENABLE_TINYCC`
@@ -96,7 +90,7 @@ unsafe extern "C" {
     /// `host_fn::NewRuntimeFunction` — `Bun__CreateFFIFunctionValue`.
     fn Bun__CreateFFIFunctionValue(
         global: *const JSGlobalObject,
-        symbol_name: *const ZigString,
+        symbol_name: *const EncodedSlice,
         arg_count: u32,
         function_pointer: *const c_void,
         add_ptr_property: bool,
@@ -105,7 +99,7 @@ unsafe extern "C" {
 
     fn Bun__CreateJSCFFIFunction(
         global: *const JSGlobalObject,
-        symbol_name: *const ZigString,
+        symbol_name: *const EncodedSlice,
         arg_types: *const u8,
         arg_count: u32,
         return_type: u8,
@@ -125,7 +119,7 @@ unsafe extern "C" {
 
 fn create_jsc_ffi_function(
     global: &JSGlobalObject,
-    symbol_name: &ZigString,
+    symbol_name: &EncodedSlice,
     function: &Function,
     target: *mut c_void,
     owner: JSValue,
@@ -168,7 +162,7 @@ mod exposed_to_ffi {
 #[inline]
 fn new_runtime_function(
     global: &JSGlobalObject,
-    symbol_name: &ZigString,
+    symbol_name: &EncodedSlice,
     arg_count: u32,
     function_pointer: *const c_void,
     add_ptr_property: bool,
@@ -1053,7 +1047,7 @@ impl FFI {
                             value,
                         ));
                     }
-                    let slice = value.to_slice(global_this)?;
+                    let slice = value.to_utf8(global_this)?;
                     if slice.slice().is_empty() {
                         continue;
                     }
@@ -1195,7 +1189,7 @@ impl FFI {
             }
             match &function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global_this);
+                    let res = EncodedSlice::utf8(msg).to_error_instance(global_this);
                     return Err(global_this.throw_value(res));
                 }
                 Step::Pending => {
@@ -1204,17 +1198,17 @@ impl FFI {
                     );
                 }
                 Step::Compiled(compiled) => {
-                    let str = ZigString::init(function_name.as_bytes());
+                    let symbol_name = EncodedSlice::utf8(function_name.as_bytes());
                     let cb = new_runtime_function(
                         global_this,
-                        &str,
+                        &symbol_name,
                         u32::try_from(function.arg_types.len()).expect("int cast"),
                         compiled.ptr.cast_const(),
                         true,
                         function.symbol_from_dynamic_library,
                     );
                     // `cb` is rooted by the `symbolsValue` cached own-property set below.
-                    obj.put(global_this, str.slice(), cb);
+                    obj.put(global_this, symbol_name, cb);
                 }
             }
         }
@@ -1298,7 +1292,7 @@ impl FFI {
                 return Err(JsError::Thrown);
             }
             return Ok(
-                ZigString::init(b"Failed to create FFI callback").to_error_instance(global_this)
+                global_this.create_error_instance(format_args!("Failed to create FFI callback"))
             );
         }
         Ok(cb)
@@ -1341,7 +1335,7 @@ impl FFI {
         let _ = function;
         let text: &[u8] =
             b"// bun:ffi callbacks are compiled by JavaScriptCore (no C source is generated)\n";
-        jsc::bun_string_jsc::create_utf8_for_js(global, text)
+        bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     pub fn print(
@@ -1381,12 +1375,12 @@ impl FFI {
             let mut arraylist: Vec<u8> = Vec::new();
             if function.print_source_code(&mut arraylist).is_err() {
                 // an error while generating source code
-                return Ok(ZigString::init(b"Error while printing code").to_error_instance(global));
+                return Ok(global.create_error_instance(format_args!("Error while printing code")));
             }
             strs.push(bun_core::String::clone_utf8(&arraylist));
         }
 
-        strings_to_js_array(global, &strs)
+        bun_string_jsc::to_js_array(global, &strs)
     }
 }
 
@@ -1538,8 +1532,8 @@ impl FFI {
             let target = function
                 .symbol_from_dynamic_library
                 .expect("symbol was resolved above");
-            let str = ZigString::init(function_name.as_bytes());
-            let cb = create_jsc_ffi_function(global, &str, function, target, js_object);
+            let symbol_name = EncodedSlice::utf8(function_name.as_bytes());
+            let cb = create_jsc_ffi_function(global, &symbol_name, function, target, js_object);
             if cb.is_empty() {
                 // An exception the constructor left pending is the caller's.
                 let ret = if global.has_exception() {
@@ -1556,7 +1550,7 @@ impl FFI {
                 unsafe { &*lib_ptr }.do_close();
                 return ret;
             }
-            obj.put(global, str.slice(), cb);
+            obj.put(global, symbol_name, cb);
         }
 
         // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
@@ -1624,8 +1618,8 @@ impl FFI {
                 return Ok(err);
             }
             let target = function.symbol_from_dynamic_library.expect("checked above");
-            let name = ZigString::init(function_name.as_bytes());
-            let cb = create_jsc_ffi_function(global, &name, function, target, js_object);
+            let symbol_name = EncodedSlice::utf8(function_name.as_bytes());
+            let cb = create_jsc_ffi_function(global, &symbol_name, function, target, js_object);
             if cb.is_empty() {
                 // An exception the constructor left pending is the caller's.
                 let err = if global.has_exception() {
@@ -1640,7 +1634,7 @@ impl FFI {
                 unsafe { &*lib_ptr }.do_close();
                 return err;
             }
-            obj.put(global, name.slice(), cb);
+            obj.put(global, symbol_name, cb);
         }
 
         // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
@@ -1673,14 +1667,14 @@ impl FFI {
 
         let name = match name_value {
             Some(value) if value.is_string() => value.to_bun_string(global)?,
-            _ => bun_core::String::static_(b"CFunction"),
+            _ => bun_core::String::static_("CFunction"),
         };
         if let Some(err) = function.reject_napi_types_error(global) {
             return Ok(err);
         }
         let cb = create_jsc_ffi_function(
             global,
-            &name.to_zig_string(),
+            &name.to_encoded_slice(),
             &function,
             target,
             JSValue::UNDEFINED,
@@ -1707,10 +1701,9 @@ pub(super) fn generate_symbol_for_function(
 
     if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
-            return Ok(Some(
-                ZigString::static_(b"Expected an object with \"args\" as an array")
-                    .to_error_instance(global),
-            ));
+            return Ok(Some(global.create_error_instance(format_args!(
+                "Expected an object with \"args\" as an array"
+            ))));
         }
 
         let mut array = args.array_iterator(global)?;
@@ -1718,10 +1711,9 @@ pub(super) fn generate_symbol_for_function(
         abi_types.reserve_exact(array.len as usize);
         while let Some(val) = array.next()? {
             if val.is_empty_or_undefined_or_null() {
-                return Ok(Some(
-                    ZigString::static_(b"param must be a string (type name) or number")
-                        .to_error_instance(global),
-                ));
+                return Ok(Some(global.create_error_instance(format_args!(
+                    "param must be a string (type name) or number"
+                ))));
             }
 
             if val.is_any_int() {
@@ -1731,19 +1723,18 @@ pub(super) fn generate_symbol_for_function(
                     continue;
                 } else {
                     return Ok(Some(
-                        ZigString::static_(b"invalid ABI type").to_error_instance(global),
+                        global.create_error_instance(format_args!("invalid ABI type")),
                     ));
                 }
             }
 
             if !val.js_type().is_string_like() {
-                return Ok(Some(
-                    ZigString::static_(b"param must be a string (type name) or number")
-                        .to_error_instance(global),
-                ));
+                return Ok(Some(global.create_error_instance(format_args!(
+                    "param must be a string (type name) or number"
+                ))));
             }
 
-            let type_name = val.to_slice(global)?;
+            let type_name = val.to_utf8(global)?;
             let Some(abi) = ABIType::LABEL.get(type_name.slice()).copied() else {
                 return Ok(Some(global.to_type_error(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1771,12 +1762,12 @@ pub(super) fn generate_symbol_for_function(
                     break 'brk;
                 } else {
                     return Ok(Some(
-                        ZigString::static_(b"invalid ABI type").to_error_instance(global),
+                        global.create_error_instance(format_args!("invalid ABI type")),
                     ));
                 }
             }
 
-            let ret_slice = ret_value.to_slice(global)?;
+            let ret_slice = ret_value.to_utf8(global)?;
             return_type = match ABIType::LABEL.get(ret_slice.slice()).copied() {
                 Some(t) => t,
                 None => {
@@ -1791,26 +1782,20 @@ pub(super) fn generate_symbol_for_function(
 
     if return_type == ABIType::NapiEnv {
         return Ok(Some(
-            ZigString::static_(b"Cannot return napi_env to JavaScript: a napi_env is an in-parameter for cc()-compiled C, never a return value").to_error_instance(global),
+            global.create_error_instance(format_args!("Cannot return napi_env to JavaScript: a napi_env is an in-parameter for cc()-compiled C, never a return value")),
         ));
     }
 
     if return_type == ABIType::Buffer {
-        return Ok(Some(
-            ZigString::static_(
-                b"Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)",
-            )
-            .to_error_instance(global),
-        ));
+        return Ok(Some(global.create_error_instance(format_args!(
+            "Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)"
+        ))));
     }
 
     if return_type == ABIType::BufferLength {
-        return Ok(Some(
-            ZigString::static_(
-                b"buffer_length is an argument-only type; it cannot be a return type",
-            )
-            .to_error_instance(global),
-        ));
+        return Ok(Some(global.create_error_instance(format_args!(
+            "buffer_length is an argument-only type; it cannot be a return type"
+        ))));
     }
 
     *function = Function::default();

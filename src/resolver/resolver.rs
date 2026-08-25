@@ -1860,7 +1860,7 @@ impl<'a> Resolver<'a> {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8_without_ref();
+                    let custom_utf8 = custom_path.to_utf8();
                     match self.check_relative_path(
                         custom_utf8.slice(),
                         import_path,
@@ -2000,7 +2000,7 @@ impl<'a> Resolver<'a> {
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8_without_ref();
+                    let custom_utf8 = custom_path.to_utf8();
                     match self.check_package_path(
                         custom_utf8.slice(),
                         import_path,

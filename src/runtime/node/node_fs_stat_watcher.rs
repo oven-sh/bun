@@ -1013,7 +1013,7 @@ fn restat_impl(path: &ZStr) -> bun_sys::Maybe<PosixStat> {
 }
 
 pub struct Arguments {
-    pub path: PathLike,
+    pub path: PathLike<'static>,
     pub(crate) listener: JSValue,
 
     pub(crate) persistent: bool,

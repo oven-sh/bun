@@ -9,7 +9,7 @@ use bun_paths::resolve_path;
 extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     input: &BunString,
 ) -> BunString {
-    let str = input.to_utf8_without_ref();
+    let str = input.to_utf8();
 
     let cwd: &[u8] = bun_core::cwd::get();
 

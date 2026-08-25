@@ -1,10 +1,11 @@
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
-    JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString,
+    JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
+    bun_string_jsc,
 };
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
-use bun_core::{ZigStringSlice, strings};
+use bun_core::{Utf8Bytes, strings};
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
 use bun_sys;
 
@@ -16,7 +17,6 @@ use bun_sys;
 /// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
-    use crate::jsc::{StringJsc as _, bun_string_jsc};
     if T::IS_U16 {
         // T == u16 when IS_U16; bytemuck statically checks the layout.
         let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
@@ -560,13 +560,14 @@ pub(crate) fn basename(
 
     let path_slice = path_str.to_utf8();
 
-    let mut suffix_slice: Option<bun_core::ZigStringSlice> = None;
-    if let Some(_suffix_ptr) = suffix_ptr {
-        let suffix_str = _suffix_ptr.to_js_string_view(global_object)?;
-        if !suffix_str.is_empty() && suffix_str.length() <= path_str.length() {
-            suffix_slice = Some(suffix_str.to_utf8());
-        }
-    }
+    let suffix_str = match suffix_ptr {
+        Some(suffix_ptr) => Some(suffix_ptr.to_js_string_view(global_object)?),
+        None => None,
+    };
+    let suffix_slice = suffix_str
+        .as_ref()
+        .filter(|s| !s.is_empty() && s.length() <= path_str.length())
+        .map(|s| s.to_utf8());
     basename_js_t::<u8>(
         global_object,
         is_windows,
@@ -770,7 +771,7 @@ fn dirname(
 
     let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
-        return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
+        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
     }
 
     let path_slice = path_str.to_utf8();
@@ -1184,7 +1185,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut root: &[u8] = b"";
     let root_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "root")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1194,7 +1195,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut dir: &[u8] = b"";
     let dir_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "dir")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1204,7 +1205,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut base: &[u8] = b"";
     let base_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "base")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1214,7 +1215,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut _name: &[u8] = b"";
     let _name_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "name")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1224,7 +1225,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 
     let mut ext: &[u8] = b"";
     let ext_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "ext")? {
-        Some(js_value.to_slice(global_object)?)
+        Some(js_value.to_utf8(global_object)?)
     } else {
         None
     };
@@ -1509,14 +1510,12 @@ pub(crate) fn join(
 ) -> JsResult<JSValue> {
     let args_len = args.len();
     if args_len == 0 {
-        return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
+        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
     }
 
-    // The `ZigStringSlice` RAII guards live inline in `owned` so every
-    // per-arg UTF-8 slice is released at scope exit.
-    // ASCII-only inputs (the common case) borrow the WTF backing without
+    // ASCII-only inputs (the common case) borrow the JSString backing without
     // allocating; only non-ASCII triggers a transcode allocation.
-    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::with_capacity(args_len);
+    let mut views: SmallVec<[JSStringView<'_>; 8]> = SmallVec::with_capacity(args_len);
 
     for (i, &path_ptr) in args.iter().enumerate() {
         // Inline the `is_string` fast path; only build `format_args!("paths[{i}]")`
@@ -1534,13 +1533,10 @@ pub(crate) fn join(
         if path_str.is_empty() {
             continue;
         }
-        owned.push(path_str.to_utf8());
+        views.push(path_str);
     }
-    // Derive the `&[u8]` views in a second pass once `owned` is fully built —
-    // borrowck then sees `paths` as a plain reborrow of `owned` with no
-    // intervening mutation, so no raw-pointer detach is needed. Empty entries
-    // are skipped both here and inside `join_*_t`.
-    let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(ZigStringSlice::slice).collect();
+    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
+    let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(Utf8Bytes::slice).collect();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
@@ -1970,7 +1966,7 @@ fn normalize(
     validate_string(global_object, path_ptr, format_args!("path"))?;
     let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
-        return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
+        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
     }
 
     let path_slice = path_str.to_utf8();
@@ -3368,12 +3364,11 @@ fn resolve(
     // Lazily-allocated RareData buffer replaces the old stack_fallback_size_large
     // on the stack; `PathScratch` spills to the heap for very long paths.
 
-    // Borrow each argument's WTF backing as a `ZigStringSlice` (no per-arg
-    // `to_owned_slice()` heap copy — ASCII inputs borrow in place, only
-    // non-ASCII transcodes). Inline-8 keeps the typical call alloc-free.
-    // Walk back-to-front to early-out on the first absolute
+    // Borrow each argument's JSString backing as `Utf8Bytes` (ASCII inputs
+    // borrow in place, only non-ASCII transcodes). Inline-8 keeps the typical
+    // call alloc-free. Walk back-to-front to early-out on the first absolute
     // POSIX path; reverse the borrowed views before handing to `resolve_*_t`.
-    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::new();
+    let mut views: SmallVec<[JSStringView<'_>; 8]> = SmallVec::new();
     let mut resolved_root = false;
 
     let mut i = args_len;
@@ -3391,20 +3386,14 @@ fn resolve(
             continue;
         }
 
-        owned.push(path_str.to_utf8());
-
-        if !is_windows {
-            // `'/'` is ASCII, so byte-level check on the UTF-8 view matches `charAt(0)`.
-            if owned.last().unwrap().slice().first() == Some(&CHAR_FORWARD_SLASH) {
-                resolved_root = true;
-            }
+        if !is_windows && path_str.char_at(0) == u16::from(CHAR_FORWARD_SLASH) {
+            resolved_root = true;
         }
+        views.push(path_str);
     }
 
-    let mut paths: SmallVec<[&[u8]; 8]> = SmallVec::with_capacity(owned.len());
-    for s in owned.iter().rev() {
-        paths.push(s.slice());
-    }
+    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
+    let paths: SmallVec<[&[u8]; 8]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
 
     #[cfg(unix)]
     {

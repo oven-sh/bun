@@ -53,6 +53,10 @@ impl<T> GenOpt<T> {
     pub fn as_ref(&self) -> Option<&T> {
         self.0.as_ref()
     }
+    #[inline]
+    pub fn into_inner(self) -> Option<T> {
+        self.0
+    }
 }
 
 /// Required-value accessor: `field.get() -> T` (used inside tagged-union arms).

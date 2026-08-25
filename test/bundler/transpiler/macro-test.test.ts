@@ -475,7 +475,7 @@ describe("the macro host", () => {
     const load = {
       require: `try { require("./uses.ts") } catch {}`,
       import: `await import("./uses.ts").catch(() => {})`,
-      build: `await Bun.build({ entrypoints: [new URL("./uses.ts", import.meta.url).pathname] }).catch(() => {})`,
+      build: `await Bun.build({ entrypoints: [Bun.fileURLToPath(new URL("./uses.ts", import.meta.url))] }).catch(() => {})`,
     }[how];
     const { lines, stderr, exitCode } = await run(
       {

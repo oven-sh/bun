@@ -8863,6 +8863,8 @@ declare module "bun" {
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     * - `ERR_IMAGE_BAD_EXTRACT_AREA` — an extract rectangle extends beyond
+     *   the image dimensions at the point where it is applied.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
@@ -8873,6 +8875,7 @@ declare module "bun" {
     type ErrorCode =
       | "ERR_IMAGE_FORMAT_UNSUPPORTED"
       | "ERR_IMAGE_TOO_MANY_PIXELS"
+      | "ERR_IMAGE_BAD_EXTRACT_AREA"
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
@@ -8925,6 +8928,18 @@ declare module "bun" {
       withoutEnlargement?: boolean;
     }
 
+    /** A rectangular region passed to {@link Image.extract}. */
+    interface Region {
+      /** Zero-based horizontal offset. Integer between 0 and 100,000,000. */
+      left: number;
+      /** Zero-based vertical offset. Integer between 0 and 100,000,000. */
+      top: number;
+      /** Region width. Integer between 1 and 100,000,000. */
+      width: number;
+      /** Region height. Integer between 1 and 100,000,000. */
+      height: number;
+    }
+
     interface ModulateOptions {
       /** Multiplier; `1` leaves brightness unchanged. */
       brightness?: number;
@@ -8948,9 +8963,10 @@ declare module "bun" {
    * decode → transform → encode pipeline runs on a worker thread when a
    * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
    *
-   * Chainables overwrite (calling `.resize()` twice keeps the second). Order
-   * of execution is fixed regardless of call order:
-   * `autoOrient → rotate → flip/flop → resize → modulate`.
+   * Chainables overwrite (calling `.resize()` twice keeps the second).
+   * `extract()` has Sharp-compatible pre-resize and post-resize slots. Order
+   * of execution is fixed:
+   * `autoOrient → rotate → flip/flop → pre-extract → resize → post-extract → modulate`.
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
    * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
@@ -9005,6 +9021,18 @@ declare module "bun" {
 
     /** Set target dimensions. Omit `height` to keep the source aspect ratio. */
     resize(width: number, height?: number, options?: Image.ResizeOptions): this;
+    /**
+     * Extract a rectangular region.
+     *
+     * The first call before `resize()` uses pre-resize pipeline coordinates
+     * (after auto-orientation, rotation, and flipping). A call after `resize()`,
+     * or a second call, uses resized-image coordinates. This matches Sharp's
+     * pre-/post-resize slots and allows `extract().resize().extract()` in one
+     * pipeline. An encoding terminal rejects with
+     * `ERR_IMAGE_BAD_EXTRACT_AREA` when the rectangle extends beyond the image
+     * at the stage where it is applied.
+     */
+    extract(region: Image.Region): this;
     /** Rotate by a multiple of 90°. */
     rotate(degrees: number): this;
     /** Mirror about the x-axis (vertical). */

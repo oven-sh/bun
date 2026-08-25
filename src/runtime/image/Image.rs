@@ -2,10 +2,11 @@
 //! libjpeg-turbo / libspng / libwebp codecs and the highway resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
-//! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
-//! write one slot of `Pipeline` and return `this` — there is no op list, so
-//! calling a setter twice overwrites. The actual decode → transform → encode
-//! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
+//! mutators (`extract`, `resize`, `rotate`, `flip`, `flop`,
+//! `jpeg`/`png`/`webp`) write fixed slots in `Pipeline` and return `this` — one
+//! slot per setting, except Sharp's pre/post extract pair. There is no op list,
+//! so later setters overwrite their slot. The actual decode → transform →
+//! encode work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
 use core::cell::Cell;
@@ -190,20 +191,32 @@ impl Default for Resize {
     }
 }
 
-/// One slot per operation, not an op list — calling `.resize()` twice
-/// overwrites, it doesn't resize twice. This is Sharp's semantics and means
-/// the worker snapshot is a plain struct copy with a fixed execution order
+#[derive(Clone, Copy)]
+pub struct Extract {
+    pub(crate) left: u32,
+    pub(crate) top: u32,
+    pub(crate) w: u32,
+    pub(crate) h: u32,
+}
+
+/// Fixed slots, not an op list — calling `.resize()` twice overwrites, it
+/// doesn't resize twice. Extract has Sharp's two pre/post slots. This means the
+/// worker snapshot is a plain struct copy with a fixed execution order
 /// (`run()` below), no allocation, no "too many ops" edge.
 ///
-/// Execution order matches Sharp: (autoOrient) → rotate → flip/flop → resize
-/// → modulate. Rotate precedes resize so the target box is interpreted in
-/// upright space; modulate runs last so it operates on the fewest pixels.
+/// Execution order matches Sharp: (autoOrient) → rotate → flip/flop →
+/// pre-extract → resize → post-extract → modulate. Sharp exposes two extract
+/// slots so `.extract().resize().extract()` can crop in both coordinate spaces.
+/// Rotate precedes resize so the target box is interpreted in upright space;
+/// modulate runs last so it operates on the fewest pixels.
 #[derive(Clone, Copy, Default)]
 pub struct Pipeline {
     pub(crate) rotate: u16, // 0/90/180/270
     pub(crate) flip: bool,  // vertical
     pub(crate) flop: bool,  // horizontal
+    pub(crate) extract_pre: Option<Extract>,
     pub(crate) resize: Option<Resize>,
+    pub(crate) extract_post: Option<Extract>,
     pub(crate) modulate: Option<Modulate>,
     /// Output settings from `.jpeg()/.png()/.webp()`. `None` ⇒ re-encode in
     /// source format.
@@ -251,6 +264,42 @@ macro_rules! coerce_int {
 /// real-world image (a 268 MP JPEG is ~80 MB) while keeping a single
 /// path-driven request from materialising gigabytes before any guard runs.
 const MAX_INPUT_FILE_BYTES: u64 = 256 << 20;
+
+/// Sharp applies the same upper bound to each extract field. Keeping this
+/// below `u32::MAX` also makes the worker-side checked arithmetic predictable.
+const MAX_EXTRACT_VALUE: f64 = 100_000_000.0;
+
+fn extract_integer(
+    global: &JSGlobalObject,
+    options: JSValue,
+    property: &'static str,
+    minimum: f64,
+) -> JsResult<u32> {
+    let Some(value) = options.get(global, property)? else {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "extract: {property} must be an integer between {} and {}",
+            minimum as u32, MAX_EXTRACT_VALUE as u32
+        )));
+    };
+    if !value.is_number() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "extract: {property} must be an integer between {} and {}",
+            minimum as u32, MAX_EXTRACT_VALUE as u32
+        )));
+    }
+    let number = value.as_number();
+    if !number.is_finite()
+        || number < minimum
+        || number > MAX_EXTRACT_VALUE
+        || number.trunc() != number
+    {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "extract: {property} must be an integer between {} and {}",
+            minimum as u32, MAX_EXTRACT_VALUE as u32
+        )));
+    }
+    Ok(number as u32)
+}
 
 // ───────────────────────────── lifecycle ────────────────────────────────────
 
@@ -489,6 +538,39 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
+    pub(crate) fn do_extract(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments();
+        if args.len() < 1 || !args[0].is_object() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "extract(options) expects left, top, width and height"
+            )));
+        }
+        let options = args[0];
+        let extract = Extract {
+            left: extract_integer(global, options, "left", 0.0)?,
+            top: extract_integer(global, options, "top", 0.0)?,
+            w: extract_integer(global, options, "width", 1.0)?,
+            h: extract_integer(global, options, "height", 1.0)?,
+        };
+
+        self.update_pipeline(|p| {
+            // Sharp has one slot on either side of resize. Once a pre-extract
+            // exists, subsequent calls target (and overwrite) the post slot,
+            // even when resize is added later in the chain.
+            if p.resize.is_some() || p.extract_pre.is_some() {
+                p.extract_post = Some(extract);
+            } else {
+                p.extract_pre = Some(extract);
+            }
+        });
+        Ok(callframe.this())
+    }
+
+    #[bun_jsc::host_fn(method)]
     pub(crate) fn do_rotate(
         &self,
         global: &JSGlobalObject,
@@ -667,6 +749,14 @@ fn error_message(e: codecs::Error) -> &'static ZStr {
 
 fn reject_error(global: &JSGlobalObject, e: codecs::Error) -> JSValue {
     error_with_code(global, error_code(e), error_message(e))
+}
+
+fn reject_bad_extract_area(global: &JSGlobalObject) -> JSValue {
+    error_with_code(
+        global,
+        zstr!("ERR_IMAGE_BAD_EXTRACT_AREA"),
+        zstr!("Image: bad extract area"),
+    )
 }
 
 fn error_with_code(global: &JSGlobalObject, code: &'static ZStr, msg: &'static ZStr) -> JSValue {
@@ -1232,6 +1322,7 @@ impl Image {
                 "{}",
                 bstr::BStr::new(error_message(e).as_bytes())
             ))),
+            TaskResult::BadExtractArea => Err(global.throw_value(reject_bad_extract_area(global))),
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
             TaskResult::Meta { .. } => unreachable!(),
@@ -1531,7 +1622,19 @@ pub enum TaskResult {
         format: codecs::Format,
     },
     Err(codecs::Error),
+    BadExtractArea,
     IoErr(sys::Error),
+}
+
+enum PipelineError {
+    Codec(codecs::Error),
+    BadExtractArea,
+}
+
+impl From<codecs::Error> for PipelineError {
+    fn from(value: codecs::Error) -> Self {
+        Self::Codec(value)
+    }
 }
 
 impl PipelineTask {
@@ -1641,7 +1744,13 @@ impl PipelineTask {
         // can be over-shrunk and then upscaled, throwing away detail.
         // (flip/flop are pure mirrors that never change w/h, so the hint
         //  stays valid through them.)
-        let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
+        // A pre-extract is expressed in full-resolution coordinates, so a
+        // decode-time JPEG downscale would change its coordinate space. A
+        // post-extract is already expressed in resized coordinates and keeps
+        // this optimisation available.
+        let hint: codecs::DecodeHint = if self.pipeline.extract_pre.is_some() {
+            codecs::DecodeHint::default()
+        } else if let Some(r) = self.pipeline.resize {
             let mut tw = r.w;
             // r.h==0 means "preserve aspect" — constrain on width only.
             let mut th = if r.h != 0 { r.h } else { r.w };
@@ -1703,7 +1812,10 @@ impl PipelineTask {
         }
 
         if let Err(e) = self.apply_pipeline(&mut decoded) {
-            self.result = TaskResult::Err(e);
+            self.result = match e {
+                PipelineError::Codec(e) => TaskResult::Err(e),
+                PipelineError::BadExtractArea => TaskResult::BadExtractArea,
+            };
             return;
         }
 
@@ -1927,19 +2039,22 @@ impl PipelineTask {
                 promise.resolve(global, obj)?;
             }
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,
+            TaskResult::BadExtractArea => {
+                promise.reject(global, Ok(reject_bad_extract_area(global)))?
+            }
             TaskResult::IoErr(e) => promise.reject(global, Ok(e.to_js(global)))?,
         }
         Ok(())
     }
 
-    /// Fixed Sharp order: rotate → flip/flop → resize. Each stage replaces
-    /// `d` in place; the old buffer is freed before assigning the new one so
-    /// peak memory is at most 2× one frame. Every stage hand-swaps only the
-    /// pixel slots — rotate/resize return a fresh `Decoded` with
-    /// `icc_profile == None`, so overwriting `d.*` wholesale would drop the
-    /// source's colour profile. Geometry doesn't change colour meaning, so
-    /// the profile survives unchanged.
-    fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
+    /// Fixed Sharp order: rotate → flip/flop → pre-extract → resize →
+    /// post-extract. Extract compacts the existing allocation; stages that
+    /// need a fresh buffer free the old one before assignment, so peak memory
+    /// is at most 2× one frame. Every stage hand-swaps only the pixel slots —
+    /// rotate/resize return a fresh `Decoded` with `icc_profile == None`, so
+    /// overwriting `d.*` wholesale would drop the source's colour profile.
+    /// Geometry doesn't change colour meaning, so the profile survives.
+    fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), PipelineError> {
         let p = &self.pipeline;
         if p.rotate != 0 {
             let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
@@ -1957,6 +2072,9 @@ impl PipelineTask {
             let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
             d.rgba = next;
         }
+        if let Some(extract) = p.extract_pre {
+            extract_region(d, extract)?;
+        }
         if let Some(r) = p.resize {
             let t = resolve_resize(r, d.width, d.height);
             // Guard the output canvas AND the H-then-V intermediate (always
@@ -1968,7 +2086,7 @@ impl PipelineTask {
             if (t.0 as u64) * (t.1 as u64) > self.max_pixels
                 || (t.0 as u64) * (d.height as u64) > self.max_pixels
             {
-                return Err(codecs::Error::TooManyPixels);
+                return Err(codecs::Error::TooManyPixels.into());
             }
             if t.0 != d.width || t.1 != d.height {
                 let next = codecs::resize(&d.rgba, d.width, d.height, t.0, t.1, r.filter)?;
@@ -1977,11 +2095,93 @@ impl PipelineTask {
                 d.height = t.1;
             }
         }
+        if let Some(extract) = p.extract_post {
+            extract_region(d, extract)?;
+        }
         if let Some(m) = p.modulate {
             codecs::modulate(&mut d.rgba, m.brightness, m.saturation);
         }
         Ok(())
     }
+}
+
+/// Compact a rectangular RGBA region into the front of the existing buffer.
+/// Destination rows always begin at or before their source rows, so
+/// `copy_within` safely handles overlap and avoids a second image allocation.
+fn extract_region(d: &mut codecs::Decoded, extract: Extract) -> Result<(), PipelineError> {
+    let right = u64::from(extract.left) + u64::from(extract.w);
+    let bottom = u64::from(extract.top) + u64::from(extract.h);
+    if extract.w == 0
+        || extract.h == 0
+        || right > u64::from(d.width)
+        || bottom > u64::from(d.height)
+    {
+        return Err(PipelineError::BadExtractArea);
+    }
+
+    let decoded_pixels = u64::from(d.width)
+        .checked_mul(u64::from(d.height))
+        .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+    let decoded_bytes = decoded_pixels
+        .checked_mul(4)
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+    if decoded_bytes != d.rgba.len() {
+        return Err(PipelineError::Codec(codecs::Error::DecodeFailed));
+    }
+
+    if extract.left == 0 && extract.top == 0 && extract.w == d.width && extract.h == d.height {
+        return Ok(());
+    }
+
+    let src_stride = usize::try_from(d.width)
+        .ok()
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+    let row_bytes = usize::try_from(extract.w)
+        .ok()
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+    let left_bytes = usize::try_from(extract.left)
+        .ok()
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+    let top = usize::try_from(extract.top)
+        .map_err(|_| PipelineError::Codec(codecs::Error::DecodeFailed))?;
+    let height = usize::try_from(extract.h)
+        .map_err(|_| PipelineError::Codec(codecs::Error::DecodeFailed))?;
+
+    for output_y in 0..height {
+        let source_y = top
+            .checked_add(output_y)
+            .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+        let source_start = source_y
+            .checked_mul(src_stride)
+            .and_then(|n| n.checked_add(left_bytes))
+            .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+        let source_end = source_start
+            .checked_add(row_bytes)
+            .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+        let destination_start = output_y
+            .checked_mul(row_bytes)
+            .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+        let destination_end = destination_start
+            .checked_add(row_bytes)
+            .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+        if source_end > d.rgba.len() || destination_end > d.rgba.len() {
+            return Err(PipelineError::Codec(codecs::Error::DecodeFailed));
+        }
+        d.rgba
+            .copy_within(source_start..source_end, destination_start);
+    }
+
+    let output_len = row_bytes
+        .checked_mul(height)
+        .ok_or(PipelineError::Codec(codecs::Error::DecodeFailed))?;
+    d.rgba.truncate(output_len);
+    d.width = extract.w;
+    d.height = extract.h;
+    Ok(())
 }
 
 /// `.placeholder()` body — runs on the worker. Input is the decoded RGBA

@@ -49,6 +49,15 @@ import * as tsd from "./utilities";
   Bun.TOML.parse("asdf = asdf");
 }
 
+{
+  const image = new Bun.Image(new Uint8Array(0));
+  const region: Bun.Image.Region = { left: 0, top: 0, width: 32, height: 32 };
+  tsd.expectType<Bun.Image>(image.extract(region));
+
+  // @ts-expect-error all four region fields are required
+  image.extract({ left: 0, top: 0, width: 32 });
+}
+
 DOMException;
 
 tsd

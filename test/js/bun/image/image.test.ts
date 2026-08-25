@@ -85,6 +85,11 @@ const gradientPng = makePng(16, 16, (x, y) => {
   return [v, v, v, 255];
 });
 
+function coordinatePattern(x: number, y: number): [number, number, number, number] {
+  return [x * 29, y * 31, x * 7 + y * 11, 255];
+}
+const coordinatesPng = makePng(8, 8, coordinatePattern);
+
 function rgbaAt(buf: Uint8Array, w: number, x: number, y: number): [number, number, number, number] {
   const i = (y * w + x) * 4;
   return [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
@@ -364,6 +369,121 @@ describe("Bun.Image", () => {
       const b = decodePngRaw(await new Bun.Image(wide).resize(4).png().bytes());
       expect({ w: a.w, h: a.h }).toEqual({ w: 4, h: 2 });
       expect({ w: a.w, h: a.h }).toEqual({ w: b.w, h: b.h });
+    });
+  });
+
+  describe("extract", () => {
+    test("is chainable and extracts the exact pixels", async () => {
+      const image = new Bun.Image(coordinatesPng);
+      expect(image.extract({ left: 4, top: 3, width: 4, height: 5 })).toBe(image);
+
+      const { w, h, data } = decodePngRaw(await image.png().bytes());
+      expect({ w, h }).toEqual({ w: 4, h: 5 });
+      expect({ width: image.width, height: image.height }).toEqual({ width: 4, height: 5 });
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          expect(rgbaAt(data, w, x, y)).toEqual(coordinatePattern(x + 4, y + 3));
+        }
+      }
+    });
+
+    test("supports Sharp-compatible extracts before and after resize", async () => {
+      const pre = { left: 1, top: 1, width: 6, height: 6 };
+      const post = { left: 2, top: 2, width: 4, height: 4 };
+
+      const combined = decodePngRaw(
+        await new Bun.Image(coordinatesPng)
+          .extract(pre)
+          .resize(8, 8, { filter: "nearest" })
+          .extract(post)
+          .png()
+          .bytes(),
+      );
+
+      const preOutput = await new Bun.Image(coordinatesPng).extract(pre).png().bytes();
+      const staged = decodePngRaw(
+        await new Bun.Image(preOutput).resize(8, 8, { filter: "nearest" }).extract(post).png().bytes(),
+      );
+
+      expect({ w: combined.w, h: combined.h }).toEqual({ w: 4, h: 4 });
+      expect([...combined.data]).toEqual([...staged.data]);
+    });
+
+    test("overwrites the post-resize slot like Sharp", async () => {
+      const withoutResize = decodePngRaw(
+        await new Bun.Image(coordinatesPng)
+          .extract({ left: 1, top: 1, width: 6, height: 6 })
+          .extract({ left: 99, top: 99, width: 1, height: 1 })
+          .extract({ left: 2, top: 1, width: 3, height: 2 })
+          .png()
+          .bytes(),
+      );
+      expect({ w: withoutResize.w, h: withoutResize.h }).toEqual({ w: 3, h: 2 });
+      expect(rgbaAt(withoutResize.data, 3, 0, 0)).toEqual(coordinatePattern(3, 2));
+
+      const afterResize = decodePngRaw(
+        await new Bun.Image(coordinatesPng)
+          .resize(4, 4, { filter: "nearest" })
+          .extract({ left: 99, top: 99, width: 1, height: 1 })
+          .extract({ left: 1, top: 1, width: 2, height: 2 })
+          .png()
+          .bytes(),
+      );
+      expect({ w: afterResize.w, h: afterResize.h }).toEqual({ w: 2, h: 2 });
+    });
+
+    test("validates all fields synchronously", () => {
+      const valid = { left: 0, top: 0, width: 1, height: 1 };
+      const cases: Array<[unknown, RegExp]> = [
+        [{}, /left/],
+        [{ ...valid, left: undefined }, /left/],
+        [{ ...valid, top: "0" }, /top/],
+        [{ ...valid, left: -1 }, /left/],
+        [{ ...valid, top: 0.5 }, /top/],
+        [{ ...valid, width: 0 }, /width/],
+        [{ ...valid, height: 0 }, /height/],
+        [{ ...valid, width: Number.NaN }, /width/],
+        [{ ...valid, height: Number.POSITIVE_INFINITY }, /height/],
+        [{ ...valid, left: 100_000_001 }, /left/],
+      ];
+      for (const [options, message] of cases) {
+        expect(() => (new Bun.Image(coordinatesPng) as any).extract(options)).toThrow(message);
+      }
+
+      const sentinel = new Error("getter failed");
+      expect(() =>
+        new Bun.Image(coordinatesPng).extract({
+          get left() {
+            throw sentinel;
+          },
+          top: 0,
+          width: 1,
+          height: 1,
+        }),
+      ).toThrow(sentinel);
+    });
+
+    test("rejects out-of-bounds pre- and post-resize regions with a stable code", async () => {
+      for (const terminal of [
+        new Bun.Image(coordinatesPng).extract({ left: 7, top: 0, width: 2, height: 1 }).png().bytes(),
+        new Bun.Image(coordinatesPng).resize(4, 4).extract({ left: 3, top: 0, width: 2, height: 1 }).png().bytes(),
+      ]) {
+        const error = await terminal.then(
+          () => null,
+          (reason: any) => reason,
+        );
+        expect(error?.code).toBe("ERR_IMAGE_BAD_EXTRACT_AREA");
+        expect(error?.message).toContain("bad extract area");
+      }
+    });
+
+    test("pre-extract keeps full-resolution JPEG coordinates", async () => {
+      const source = makePng(64, 64, (x, y) => [x * 4, y * 4, (x + y) * 2, 255]);
+      const jpeg = await new Bun.Image(source).jpeg({ quality: 100 }).bytes();
+      const output = decodePngRaw(
+        await new Bun.Image(jpeg).extract({ left: 48, top: 48, width: 16, height: 16 }).resize(4, 4).png().bytes(),
+      );
+      expect({ w: output.w, h: output.h }).toEqual({ w: 4, h: 4 });
     });
   });
 

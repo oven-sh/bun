@@ -3,7 +3,7 @@ title: Image
 description: Decode, transform, and encode images with a fast native pipeline
 ---
 
-`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
+`Bun.Image` is a chainable image pipeline for decoding, extracting, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
 
 ```ts
 await Bun.file("photo.jpg").image().resize(400, 400, { fit: "inside" }).webp({ quality: 80 }).write("thumb.webp");
@@ -79,6 +79,35 @@ img.resize(800, 600, { filter: "mitchell" });
 | `"nearest"`               | Pixel art / hard edges                           |
 
 When the source is a JPEG and the target is at most half the source size, decode skips straight to the nearest M/8 IDCT scale. As a result, generating a thumbnail from a 24 MP photo never materializes the full-resolution buffer.
+
+## Extract
+
+Extract a rectangular region with the same option names and pre-/post-resize semantics as Sharp:
+
+```ts
+const avatar = await new Bun.Image(upload)
+  .extract({ left: crop.x, top: crop.y, width: crop.width, height: crop.height })
+  .resize(512, 512)
+  .webp({ quality: 85 })
+  .bytes();
+```
+
+`left`, `top`, `width`, and `height` are required integers. Offsets must be non-negative and dimensions must be positive. The rectangle must fit within the image at the point where it is applied; otherwise an encoding terminal or a direct `Response` body fails with `error.code === "ERR_IMAGE_BAD_EXTRACT_AREA"`. Metadata-only operations don't execute transforms.
+
+Like Sharp, Bun keeps one extract slot before resize and one after resize. This makes both coordinate spaces available in one pipeline:
+
+```ts
+const output = await new Bun.Image(input)
+  .extract({ left: 100, top: 50, width: 1000, height: 800 }) // pre-resize coordinates
+  .resize(500, 400)
+  .extract({ left: 50, top: 25, width: 400, height: 300 }) // resized coordinates
+  .png()
+  .bytes();
+```
+
+A second extract call targets the post-resize slot even if `resize()` is added later. Further calls overwrite that post-resize slot, matching Sharp. Cropping compacts the decoded RGBA allocation in place instead of allocating an intermediate image buffer.
+
+Bun keeps its existing fixed transform order: `autoOrient → rotate → flip/flop → pre-extract → resize → post-extract → modulate`. Pre-resize coordinates therefore refer to the image after orientation, rotation, and flipping.
 
 ## Rotate · flip
 

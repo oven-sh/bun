@@ -27,9 +27,11 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
 ## Adding a chainable op
 
 1. Add a field to `Pipeline` in `Image.rs` (one slot per op — setters
-   overwrite, there is no op list) and a stage in `PipelineTask.applyPipeline`
-   at the right point in the fixed `rotate → flip/flop → resize → modulate`
-   order.
+   overwrite, there is no op list) and a stage in `PipelineTask.apply_pipeline`
+   at the right point in the fixed pipeline:
+   `rotate → flip/flop → pre-extract → resize → post-extract → modulate`.
+   `extract` is the intentional exception to the one-slot rule: Sharp has one
+   slot on each side of resize.
 2. Add a `do<Name>` method that parses args, writes the slot, returns
    `callframe.this()`.
 3. Add it to `proto:` in `Image.classes.ts`.

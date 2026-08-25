@@ -90,9 +90,9 @@ describe("fake node cli", () => {
   // #40482: positionals after the eval source must all reach process.argv
   test("node -e keeps positionals in process.argv", () => {
     using temp = tempDir("fake-node", {});
-    expect(
-      fakeNodeRun(temp, ["-e", "console.log(JSON.stringify(process.argv.slice(1)))", "foo", "bar"]).stdout,
-    ).toBe(JSON.stringify(["foo", "bar"]));
+    expect(fakeNodeRun(temp, ["-e", "console.log(JSON.stringify(process.argv.slice(1)))", "foo", "bar"]).stdout).toBe(
+      JSON.stringify(["foo", "bar"]),
+    );
   });
 
   test("node -p keeps positionals in process.argv", () => {

@@ -392,11 +392,13 @@ is not there). So an atomizable impl must never be reachable from two VMs —
 not via a process-global registry handing out `String::clone()`s, not via one
 `SerializedScriptValue` deserialized by several receivers. Hand another thread
 its own bytes (`Box<[u8]>` / `clone_utf8` on arrival), or share a
-`Bun::isolatedCopyForSharing` / `toCrossThreadShareable` string (pre-hashed and
-marked never-atomize, so a receiver's atom table copies it instead; see
-`src/jsc/bindings/BunString.cpp`) or a static string. `String::to_thread_safe()` is a plain
-isolated copy for handing a value to _one_ other owner. `ObjectURLRegistry`
-and the structured-clone object fast paths are the worked examples.
+`String::share()`d / `Bun::isolatedCopyForSharing` / `toCrossThreadShareable`
+string (pre-hashed and marked never-atomize, so a receiver's atom table copies
+it instead; see `src/jsc/bindings/BunString.cpp`) or a static string — make it
+shared once, then hand it out with plain `clone()`. `String::to_thread_safe()`
+is a plain isolated copy for handing a value to _one_ other owner.
+`ObjectURLRegistry`, `StandaloneModuleGraph::File` and the structured-clone
+object fast paths are the worked examples.
 
 ## Common Patterns
 

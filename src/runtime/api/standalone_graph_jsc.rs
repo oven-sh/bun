@@ -10,17 +10,11 @@ use bun_jsc::JSGlobalObject;
 
 use crate::webcore::Blob;
 use crate::webcore::blob::SizeType;
-use crate::webcore::blob::store::{Bytes, Data, Store, StoreRef};
+use crate::webcore::blob::store::{Bytes, Data, IsAllAscii, Store, StoreRef};
 use bun_standalone_graph::File;
 
-/// Extension trait wiring JSC-dependent methods onto `standalone_graph::File`.
-pub(crate) trait FileJsc {
-    /// A fresh `Blob` over the shared immortal store, owned by `global`'s VM.
-    fn file_blob(&self, global: &JSGlobalObject) -> Blob;
-}
-
-/// The process-wide part of an embedded file's `Blob`: store + content type.
-/// `global_this` is null and `name` is `DEAD`; `file_blob` stamps those per VM.
+/// The process-wide part of an embedded file's `Blob`: store, content type
+/// and a shared `name`. `global_this` is null; `file_blob` stamps it per VM.
 fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGraph::Blob> {
     *file.cached_blob.get_or_init(|| {
         // `contents` is a `'static` slice into the embedded executable
@@ -44,7 +38,7 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
             data: Data::Bytes(bytes),
             mime_type: MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
+            is_all_ascii: IsAllAscii::default(),
         };
         let blob = Blob::default();
         if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
@@ -57,9 +51,6 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
             store.mime_type = mime;
         }
         if let Data::Bytes(bytes) = &mut store.data {
-            // `Bytes::Drop` and `jsdom_file_construct` both require
-            // `stored_name` to be heap-owned (or empty); a borrowed
-            // `'static` slice would be invalid-freed there.
             bytes.stored_name = file.name.to_vec().into_boxed_slice();
         }
         let store = StoreRef::from(Store::new(store));
@@ -67,6 +58,12 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
         store.ref_();
         blob.size.set(store.size());
         blob.store.set(Some(store));
+        let name = file.display_name();
+        if !name.is_empty() {
+            let mut name = bstring::String::clone_utf8(name);
+            name.share();
+            blob.name.set(name);
+        }
         // `cached_blob` is typed against the lower crate's opaque `Blob`
         // (it cannot name `webcore::Blob` without a dep cycle).
         NonNull::new(Blob::new(blob))
@@ -75,17 +72,11 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
     })
 }
 
-impl FileJsc for File {
-    fn file_blob(&self, global: &JSGlobalObject) -> Blob {
-        // SAFETY: `shared_blob` returns the pointer from `Blob::new`, never
-        // freed for the process lifetime; only read here.
-        let blob =
-            unsafe { shared_blob(self).cast::<Blob>().as_ref() }.dupe_with_content_type(true);
-        blob.global_this.set(global);
-        let name = self.display_name();
-        if !name.is_empty() {
-            blob.name.set(bstring::String::clone_utf8(name));
-        }
-        blob
-    }
+/// A fresh `Blob` over the shared immortal store, owned by `global`'s VM.
+pub(crate) fn file_blob(file: &File, global: &JSGlobalObject) -> Blob {
+    // SAFETY: `shared_blob` returns the pointer from `Blob::new`, never
+    // freed for the process lifetime; only read here.
+    let blob = unsafe { shared_blob(file).cast::<Blob>().as_ref() }.dupe_with_content_type(true);
+    blob.global_this.set(global);
+    blob
 }

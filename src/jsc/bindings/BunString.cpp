@@ -215,6 +215,20 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toThreadSafe(BunString* str)
     }
 }
 
+extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__share(BunString* str)
+{
+    if (str->tag != BunStringTag::WTFStringImpl)
+        return;
+    auto* impl = str->impl.wtf;
+    if (impl->isAtom() || impl->isSymbol() || impl->isSubString()) {
+        str->impl.wtf = isolatedCopyForSharing(*impl).releaseImpl().leakRef();
+        impl->deref();
+    } else if (!impl->isStatic()) {
+        impl->hash();
+        impl->setNeverAtomize();
+    }
+}
+
 BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
@@ -319,8 +333,8 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
     if (impl->isAtom() || impl->isSymbol())
         return isolatedCopyForSharing(*impl);
 
-    // 2) Don't share slices, or external buffers whose finalizer belongs to the creating thread
-    if (impl->isSubString() || impl->isExternal())
+    // 2) Don't share slices
+    if (impl->isSubString())
         return isolatedCopyForSharing(*impl);
 
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread
@@ -793,23 +807,17 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-// True iff the impl owns its buffer outright and is in no thread's atom
-// table, so another thread may hold a ref (after ensureHash + setNeverAtomize).
+// True iff the impl owns its buffer (or is external) and is not an atom,
+// symbol or substring, so another thread may hold a ref.
 extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadSafe(
     const WTF::StringImpl* wtf)
 {
-    return !wtf->isAtom() && !wtf->isSymbol() && !wtf->isSubString() && !wtf->isExternal();
+    return !wtf->isAtom() && !wtf->isSymbol() && !wtf->isSubString();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
 {
     str->hash();
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void WTFStringImpl__setNeverAtomize(WTF::StringImpl* str)
-{
-    if (!str->isStatic())
-        str->setNeverAtomize();
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(

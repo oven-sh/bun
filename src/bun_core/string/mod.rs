@@ -104,6 +104,7 @@ unsafe extern "C" {
     // fields in place; the type encodes the sole pointer-validity precondition,
     // so `safe fn` discharges the link-time proof here.
     safe fn BunString__toThreadSafe(this: &mut String);
+    safe fn BunString__share(this: &mut String);
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
@@ -515,10 +516,19 @@ impl String {
         }
         debug_assert!(self.is_thread_safe());
     }
+    /// Make a WTF-backed impl safe to hand to any number of threads/VMs:
+    /// isolated if it was an atom/symbol/substring, pre-hashed, and never
+    /// atomized in place; hand it out with `clone()`.
+    pub fn share(&mut self) {
+        if self.tag == Tag::WTFStringImpl {
+            BunString__share(self)
+        }
+        debug_assert!(self.is_thread_safe());
+    }
     /// True iff this `String` may be handed to another thread as-is: every
     /// tag except `WTFStringImpl` is inert (raw slice / static / dead), and a
-    /// WTF-backed string qualifies iff its impl owns its buffer and is in no
-    /// atom table (`isThreadSafe()`).
+    /// WTF-backed string qualifies iff its impl is not an atom, symbol or
+    /// substring (`isThreadSafe()`).
     ///
     /// Call sites that move a `String` across a thread boundary must ensure
     /// this holds (typically by calling [`to_thread_safe`] first); see the
@@ -918,17 +928,11 @@ impl String {
         let mut out = self.into_utf8_with_string();
         if out.string.tag == Tag::WTFStringImpl {
             if out.utf8.is_none() {
-                // 8-bit all-ASCII: a thread-safe `string` keeps backing the bytes.
-                if out.string.is_thread_safe() {
-                    let wtf = out.string.as_wtf();
-                    wtf.ensure_hash();
-                    // The JS thread still holds this impl; a later property-key use there must copy, not atomize in place.
-                    wtf.set_never_atomize();
-                    return out;
-                }
-                out.utf8 = Some(out.slice().to_vec());
+                // 8-bit all-ASCII: a shared `string` keeps backing the bytes.
+                out.string.share();
+                return out;
             }
-            // Transcoded or copied; drop the WTF backing to release memory.
+            // Transcoded; drop the WTF backing to release memory.
             out.string = String::EMPTY;
         }
         out
@@ -979,20 +983,16 @@ impl Default for String {
 }
 // SAFETY: `String` is a tag + raw ptr to a `WTF::StringImpl` (or a borrowed
 // `EncodedSlice` slice / static / dead sentinel). All non-WTF tags are trivially
-// `Send + Sync` (no interior mutability, no refcount). The WTF tag is the
-// hazard: `WTF::StringImpl`'s refcount is non-atomic unless the impl was
-// created thread-safe, so sending/sharing a non-thread-safe impl across
-// threads and then `ref_()`/`deref()`ing it is a data race.
+// `Send + Sync` (no interior mutability, no refcount). A `WTF::StringImpl`'s
+// refcount is atomic; the hazards are per-thread atom tables and the lazily
+// computed hash/flags (see "Cross-thread string hazards" in `src/CLAUDE.md`).
 //
 // We keep the blanket impls to match the C++ `BunString`
 // FFI contract (the type must round-trip by value through `extern "C"` and sit
 // in `Send + Sync` containers), and instead enforce the invariant at the
-// boundary: any code that moves a `String` to another thread MUST first call
-// [`String::to_thread_safe`] (or otherwise guarantee [`String::is_thread_safe`]
-// returns `true`). [`String::debug_assert_thread_safe`] is the debug-build
-// checkpoint for that hand-off; `to_thread_safe()` itself asserts its own
-// postcondition. A `ThreadSafeString` newtype split would make this static,
-// but is deferred until the FFI surface can be reshaped.
+// boundary: code that moves a `String` to one other thread calls
+// [`String::to_thread_safe`], code that shares one impl between threads/VMs
+// calls [`String::share`] (both assert [`String::is_thread_safe`]).
 unsafe impl Send for String {}
 // SAFETY: same contract as the `Send` impl above — sharing requires
 // `is_thread_safe()`; non-WTF tags are inert and trivially `Sync`.

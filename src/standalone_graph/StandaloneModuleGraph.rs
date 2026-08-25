@@ -84,7 +84,8 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
 // SAFETY: the graph is populated once at startup before any worker threads;
 // after that `File::sourcemap` is mutated only under `INIT_LOCK` and
-// `File::cached_blob` is a `OnceLock`. Everything else is read-only.
+// `File::cached_blob` / `File::wtf_string` are `OnceLock`s. Everything else
+// is read-only.
 // (`Send` is auto-derived: `UnsafeCell<T: Send>` is `Send`.)
 unsafe impl Sync for Instance {}
 
@@ -283,8 +284,9 @@ fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
 // startup, never freed) shared by the main VM, Workers and resolver threads.
 // The raw pointers in `File` point into the immortal section; `cached_blob`
-// is a `OnceLock` holding VM-independent state only (no `global_this`, no
-// WTF string); `sourcemap` is mutated only under `INIT_LOCK`.
+// and `wtf_string` are `OnceLock`s holding VM-independent state only (null
+// `global_this`, shared string impls); `sourcemap` is mutated only under
+// `INIT_LOCK`.
 unsafe impl Send for StandaloneModuleGraph {}
 // SAFETY: see `Send` impl.
 unsafe impl Sync for StandaloneModuleGraph {}
@@ -474,10 +476,11 @@ pub struct File {
     pub loader: Loader,
     pub contents: &'static ZStr,
     pub sourcemap: LazySourceMap,
-    /// VM-independent `webcore::Blob` template (store + content type); see
+    /// VM-independent `webcore::Blob` template (store, content type, shared name); see
     /// `standalone_graph_jsc::file_blob`.
     pub cached_blob: std::sync::OnceLock<NonNull<Blob>>,
     pub encoding: Encoding,
+    wtf_string: std::sync::OnceLock<BunString>,
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
@@ -524,30 +527,41 @@ impl File {
             .unwrap_or(self.name)
     }
 
-    /// A fresh impl per call so each VM owns its own; Latin-1/UTF-16 are
-    /// zero-copy externals over the immortal section.
+    /// One shared impl per process (see `BunString::share`); Latin-1/UTF-16
+    /// are zero-copy externals over the immortal section.
     pub fn to_wtf_string(&self) -> BunString {
         if self.contents.is_empty() {
             return BunString::EMPTY;
         }
-        match self.encoding {
-            Encoding::Binary => BunString::clone_utf8(self.contents.as_bytes()),
-            Encoding::Latin1 => BunString::create_static_external(self.contents.as_bytes(), true),
-            Encoding::Utf16 => {
-                let bytes = self.contents.as_bytes();
-                debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
-                #[expect(
-                    clippy::cast_ptr_alignment,
-                    reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
-                )]
-                // SAFETY: even byte count at a 2-byte-aligned offset of a
-                // section that is never freed.
-                let units = unsafe {
-                    core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+        self.wtf_string
+            .get_or_init(|| {
+                let mut s = match self.encoding {
+                    Encoding::Binary => BunString::clone_utf8(self.contents.as_bytes()),
+                    Encoding::Latin1 => {
+                        BunString::create_static_external(self.contents.as_bytes(), true)
+                    }
+                    Encoding::Utf16 => {
+                        let bytes = self.contents.as_bytes();
+                        debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
+                        #[expect(
+                            clippy::cast_ptr_alignment,
+                            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
+                        )]
+                        // SAFETY: even byte count at a 2-byte-aligned offset of a
+                        // section that is never freed.
+                        let units = unsafe {
+                            core::slice::from_raw_parts(
+                                bytes.as_ptr().cast::<u16>(),
+                                bytes.len() / 2,
+                            )
+                        };
+                        BunString::create_static_external_utf16(units)
+                    }
                 };
-                BunString::create_static_external_utf16(units)
-            }
-        }
+                s.share();
+                s
+            })
+            .clone()
     }
 }
 
@@ -865,6 +879,7 @@ impl StandaloneModuleGraph {
                     side: module.side,
                     cached_blob: std::sync::OnceLock::new(),
                     encoding: module.encoding,
+                    wtf_string: std::sync::OnceLock::new(),
                 },
             );
         }

@@ -30,7 +30,7 @@ use super::SizeType;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::webcore_types::store::{
-    Bytes, Data, DataTag, File, S3, SerializeTag, Store, StoreRef,
+    Bytes, Data, DataTag, File, IsAllAscii, S3, SerializeTag, Store, StoreRef,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ impl StoreExt for Store {
             data: Data::S3(S3::init(path, mime_type, credentials)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
+            is_all_ascii: IsAllAscii::default(),
         }))
     }
 
@@ -158,7 +158,7 @@ impl StoreExt for Store {
             data: Data::File(File::init(pathlike, mime_type)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
+            is_all_ascii: IsAllAscii::default(),
         }))
     }
 
@@ -170,7 +170,7 @@ impl StoreExt for Store {
             data: Data::Bytes(Bytes::init_mmap(slice)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
+            is_all_ascii: IsAllAscii::default(),
         }))
     }
 

@@ -26,8 +26,9 @@ impl Default for ObjectURLRegistry {
     }
 }
 
-/// Holds no VM-affine state: `blob.global_this` is null and `blob.name` is an
-/// isolated copy that is never handed out; each resolving VM gets its own copy.
+/// Holds no VM-affine state: `blob.global_this` is null and `blob.name` is a
+/// shared impl (pre-hashed, never atomized in place), so dupes may clone it
+/// into any VM.
 pub struct Entry {
     blob: Blob,
 }
@@ -41,7 +42,7 @@ impl Entry {
     pub(crate) fn init(blob: &Blob) -> Box<Entry> {
         let blob = blob.dupe_with_content_type(true);
         blob.global_this.set(core::ptr::null());
-        blob.name.with_mut(|name| name.to_thread_safe());
+        blob.name.with_mut(|name| name.share());
         Box::new(Entry { blob })
     }
 }
@@ -77,7 +78,6 @@ impl ObjectURLRegistry {
         let entry = map.get(&uuid.bytes)?;
         let blob = entry.blob.dupe_with_content_type(true);
         blob.global_this.set(global_object);
-        blob.name.with_mut(|name| name.to_thread_safe());
         Some(blob)
     }
 

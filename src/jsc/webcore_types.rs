@@ -143,11 +143,14 @@ pub struct Blob {
 }
 
 // SAFETY: a `Blob` reaches another thread only as an `ObjectURLRegistry`
-// entry or standalone-graph template (both with null `global_this` and a
-// `DEAD` `name`; every dupe handed out is stamped with the resolving thread's
-// global and a fresh name impl) or via the work-pool read/write tasks that
+// entry or standalone-graph template (null `global_this`, `name` made
+// `String::share()`d so dupes clone it into any VM; each dupe is stamped with
+// the resolving thread's global) or via the work-pool read/write tasks that
 // hand it back to the owning JS thread. `store` (`StoreRef`) and
-// `content_type` are atomically refcounted.
+// `content_type` are atomically refcounted; a shared `Store`'s `is_all_ascii`
+// is atomic, a `Bytes` store is not otherwise written after construction, and
+// a `File` store's stat fields (`seekable`, `max_size`, `mode`,
+// `last_modified`) are lazily cached by whichever dupe stats it.
 unsafe impl Send for Blob {}
 // SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
 // mutex, on the standalone-graph template (never written after its `OnceLock`
@@ -433,9 +436,20 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
-    /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
-    pub fn get_file_name(&self) -> Option<&[u8]> {
+    /// The name a `File` reports: `name` if set, else [`store_path`].
+    ///
+    /// [`store_path`]: Self::store_path
+    pub fn get_file_name(&self) -> Option<bun_core::Utf8Bytes<'_>> {
+        let name = self.name.get();
+        if name.tag() != bun_core::Tag::Dead {
+            return Some(name.to_utf8());
+        }
+        self.store_path().map(bun_core::Utf8Bytes::Borrowed)
+    }
+
+    /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
+    /// `None` for fd-backed or unnamed stores.
+    pub fn store_path(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = &bytes.stored_name[..];
@@ -541,7 +555,29 @@ pub mod store {
         pub data: Data,
         pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
-        pub is_all_ascii: Option<bool>,
+        pub is_all_ascii: IsAllAscii,
+    }
+
+    /// Tri-state "are the bytes all ASCII", learned lazily by whichever
+    /// thread's dupe reads or writes the full store first.
+    #[derive(Default)]
+    pub struct IsAllAscii(core::sync::atomic::AtomicU8);
+
+    impl IsAllAscii {
+        #[inline]
+        pub fn get(&self) -> Option<bool> {
+            match self.0.load(core::sync::atomic::Ordering::Relaxed) {
+                0 => None,
+                v => Some(v == 2),
+            }
+        }
+        #[inline]
+        pub fn set(&self, is_all_ascii: bool) {
+            self.0.store(
+                1 + u8::from(is_all_ascii),
+                core::sync::atomic::Ordering::Relaxed,
+            );
+        }
     }
 
     /// Backing data for a `Store`.
@@ -895,7 +931,7 @@ pub mod store {
                 data: Data::Bytes(Bytes::init(bytes)),
                 mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: None,
+                is_all_ascii: IsAllAscii::default(),
             }))
         }
 

@@ -934,12 +934,6 @@ impl WTFStringImplStruct {
     pub fn ensure_hash(&self) {
         Bun__WTFStringImpl__ensureHash(self);
     }
-    /// After this, using the impl as a property key copies it into the atom
-    /// table instead of atomizing it in place.
-    #[inline]
-    pub fn set_never_atomize(&self) {
-        WTFStringImpl__setNeverAtomize(self);
-    }
 }
 
 unsafe extern "C" {
@@ -954,7 +948,6 @@ unsafe extern "C" {
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
     safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
-    safe fn WTFStringImpl__setNeverAtomize(this: &WTFStringImplStruct);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

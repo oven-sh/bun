@@ -1485,8 +1485,8 @@ mod vm_loader_ctx {
             // Returned slices borrow blob heap storage that lives until
             // `blob_deinit`; erased to `'static` per the interface signature —
             // sound because the bundler caller drops them before `blob_deinit`.
-            blob_file_name(b) => blob(b)
-                .get_file_name()
+            blob_store_path(b) => blob(b)
+                .store_path()
                 .map(|s| core::slice::from_raw_parts(s.as_ptr(), s.len())),
             blob_needs_read_file(b) => blob(b).needs_to_read_file(),
             blob_shared_view(b) => {
@@ -4002,7 +4002,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 loader = blob.get_loader(unsafe { &*jsc_vm });
 
                 // "file:" loader makes no sense for blobs, so default to tsx.
-                if let Some(filename) = blob.get_file_name() {
+                if let Some(filename) = blob.store_path() {
                     // Only treat it as a file if it is a `Bun.file()`.
                     if blob.needs_to_read_file() {
                         // Note: borrowck — `Fs::Path<'a>` borrows
@@ -4825,7 +4825,7 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
 #[unsafe(no_mangle)]
 fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mode) -> *mut () {
     use bun_jsc::node_path::PathOrFileDescriptor;
-    use bun_jsc::webcore_types::store::{Data, File, Store};
+    use bun_jsc::webcore_types::store::{Data, File, IsAllAscii, Store};
     let store: Box<Store> = Store::new(Store {
         data: Data::File(File {
             pathlike: PathOrFileDescriptor::Fd(fd),
@@ -4835,7 +4835,7 @@ fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mod
         }),
         mime_type: bun_http_types::MimeType::NONE,
         ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
-        is_all_ascii: None,
+        is_all_ascii: IsAllAscii::default(),
     });
     bun_core::heap::into_raw(store).cast()
 }

@@ -158,8 +158,7 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(dh_params_file) = generated.dh_params_file.as_ref() {
-            result.dh_params_file_name =
-                Some(handle_path(global, "dhParamsFile", dh_params_file)?);
+            result.dh_params_file_name = Some(handle_path(global, "dhParamsFile", dh_params_file)?);
             any = true;
         }
         if let Some(server_name) = generated.server_name.as_ref() {

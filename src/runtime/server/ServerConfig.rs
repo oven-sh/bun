@@ -969,9 +969,7 @@ impl ServerConfig {
                         _ => {}
                     }
 
-                    // `serve_define` entries come last: `Define::insert` is
-                    // last-write-wins, so `[serve.static].define` beats the
-                    // top-level define on a conflicting key.
+                    // Serve entries last; downstream `Define::insert` is last-write-wins.
                     let define = match (o.define.as_ref(), o.serve_define.as_ref()) {
                         (None, None) => None,
                         (Some(define), None) => Some(define.clone()),

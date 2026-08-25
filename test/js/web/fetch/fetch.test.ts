@@ -69,16 +69,18 @@ it("new Request(invalid url) throws", () => {
 
 it("Response#blob().type is empty when Content-Type is not a valid MIME type", async () => {
   // File API: a type with any character outside U+0020..U+007E is the empty string.
-  await using server = net.createServer(socket => {
-    socket.on("data", () => {
-      socket.end(
-        Buffer.from(
-          "HTTP/1.1 200 OK\r\nContent-Type: text/pl\xe2in; charset=utf-8\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx",
-          "latin1",
-        ),
-      );
-    });
-  }).listen(0);
+  await using server = net
+    .createServer(socket => {
+      socket.on("data", () => {
+        socket.end(
+          Buffer.from(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/pl\xe2in; charset=utf-8\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx",
+            "latin1",
+          ),
+        );
+      });
+    })
+    .listen(0);
   await once(server, "listening");
   const res = await fetch(`http://127.0.0.1:${server.address().port}/`);
   expect(res.headers.get("content-type")).toBe("text/plâin; charset=utf-8");

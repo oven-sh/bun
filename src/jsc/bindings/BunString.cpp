@@ -415,13 +415,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromBytes(const char* by
     return BunString__fromUTF8(bytes, length);
 }
 
-extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t length, bool isLatin1)
+extern "C" BunString BunString__createStaticExternalLatin1(const Latin1Character* bytes, size_t length)
 {
-    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const Latin1Character*>(bytes), length }) :
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::ExternalStringImpl::createStatic({ bytes, length }).leakRef() } };
+}
 
-                                                 WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const char16_t*>(bytes), length });
-
-    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+extern "C" BunString BunString__createStaticExternalUTF16(const char16_t* units, size_t length)
+{
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::ExternalStringImpl::createStatic({ units, length }).leakRef() } };
 }
 
 extern "C" BunString BunString__createExternal(const char* bytes, size_t length, bool isLatin1, void* ctx, void (*callback)(void* arg0, void* arg1, size_t arg2))

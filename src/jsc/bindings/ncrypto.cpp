@@ -1279,6 +1279,49 @@ bool EqualNoCase(const WTF::StringView a, const WTF::StringView b)
     if (a.length() != b.length()) return false;
     return a.startsWithIgnoringASCIICase(b);
 }
+
+// OpenSSL's DH_check() returns at once, with no flags set, when (p, q, g) is one
+// of its built-in named groups (DH_get_nid() != NID_undef). BoringSSL's DH_check()
+// has no such shortcut: it runs 64 Miller-Rabin rounds on p and again on
+// (p - 1) / 2, which takes seconds for the larger groups (26 s for modp18).
+// These are the named groups BoringSSL ships: the RFC 3526 MODP primes with
+// generator 2.
+bool IsWellKnownGroup(const DH* dh)
+{
+    const BIGNUM* p = nullptr;
+    const BIGNUM* q = nullptr;
+    const BIGNUM* g = nullptr;
+    DH_get0_pqg(dh, &p, &q, &g);
+    if (p == nullptr || q != nullptr || g == nullptr) return false;
+    if (!BN_is_word(g, DH_GENERATOR_2)) return false;
+
+    BIGNUM* (*getPrime)(BIGNUM*) = nullptr;
+    switch (BN_num_bits(p)) {
+    case 1536:
+        getPrime = BN_get_rfc3526_prime_1536;
+        break;
+    case 2048:
+        getPrime = BN_get_rfc3526_prime_2048;
+        break;
+    case 3072:
+        getPrime = BN_get_rfc3526_prime_3072;
+        break;
+    case 4096:
+        getPrime = BN_get_rfc3526_prime_4096;
+        break;
+    case 6144:
+        getPrime = BN_get_rfc3526_prime_6144;
+        break;
+    case 8192:
+        getPrime = BN_get_rfc3526_prime_8192;
+        break;
+    default:
+        return false;
+    }
+
+    BignumPointer known(getPrime(nullptr));
+    return known && BN_cmp(p, known.get()) == 0;
+}
 } // namespace
 
 DHPointer::DHPointer(DH* dh)
@@ -1391,6 +1434,7 @@ DHPointer::CheckResult DHPointer::check()
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (!dh_) return DHPointer::CheckResult::NONE;
+    if (IsWellKnownGroup(dh_.get())) return DHPointer::CheckResult::NONE;
     int codes = 0;
     if (DH_check(dh_.get(), &codes) != 1)
         return DHPointer::CheckResult::CHECK_FAILED;

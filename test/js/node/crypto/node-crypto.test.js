@@ -689,6 +689,53 @@ describe("DiffieHellman", () => {
       value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     });
   });
+
+  // OpenSSL's DH_check() returns at once, with no flags set, for its built-in
+  // named groups. So Node constructs every modp group in microseconds with
+  // verifyError 0. BoringSSL's DH_check() has no such shortcut: it runs 64
+  // Miller-Rabin rounds on p and on (p - 1) / 2, about 26 s for the 8192-bit
+  // group, and its generator heuristic then reports DH_NOT_SUITABLE_GENERATOR.
+  describe("well-known groups", () => {
+    const { DH_CHECK_P_NOT_PRIME } = crypto.constants;
+
+    it.each(["modp5", "modp14", "modp15", "modp16", "modp17", "modp18"])(
+      "getDiffieHellman(%s) reports verifyError 0",
+      group => {
+        expect(crypto.getDiffieHellman(group).verifyError).toBe(0);
+      },
+    );
+
+    it("constructs the 8192-bit group without running the primality tests", () => {
+      const start = performance.now();
+      const named = crypto.getDiffieHellman("modp18");
+      const group = new crypto.DiffieHellmanGroup("modp18");
+      const fromPrime = crypto.createDiffieHellman(named.getPrime(), 2);
+      const fromBufferGenerator = crypto.createDiffieHellman(named.getPrime(), Buffer.from([2]));
+      const elapsed = performance.now() - start;
+
+      expect([named.verifyError, group.verifyError, fromPrime.verifyError, fromBufferGenerator.verifyError]).toEqual([
+        0, 0, 0, 0,
+      ]);
+      // Without the shortcut the four constructions above take about 107 s.
+      expect(elapsed).toBeLessThan(5_000);
+    });
+
+    it("matches the prime by value, not by length", () => {
+      const p = crypto.getDiffieHellman("modp5").getPrime();
+      // Flip bit 1 so p stays odd and keeps its width, but is no longer prime.
+      p[p.length - 1] ^= 0x02;
+      const dh = crypto.createDiffieHellman(p, 2);
+      expect(dh.verifyError & DH_CHECK_P_NOT_PRIME).toBe(DH_CHECK_P_NOT_PRIME);
+    });
+
+    it("only skips the check for generator 2", () => {
+      const p = crypto.getDiffieHellman("modp5").getPrime();
+      const pMinusOne = Buffer.from(p);
+      pMinusOne[pMinusOne.length - 1] -= 1;
+      // g = p - 1 is outside the valid range, which the full check reports.
+      expect(crypto.createDiffieHellman(p, pMinusOne).verifyError).not.toBe(0);
+    });
+  });
 });
 
 // An integer-valued Number is not always an int32 JSValue. An element of an array that
@@ -995,11 +1042,7 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   const dhg = crypto.createDiffieHellmanGroup("modp5");
   expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
   expect("verifyError" in dhg).toBeTrue();
-
-  // boringssl seems to set DH_NOT_SUITABLE_GENERATOR for both
-  // DH_GENERATOR_2 and DH_GENERATOR_5 if not using
-  // DH_generate_parameters_ex
-  expect(dhg.verifyError).toBe(8);
+  expect(dhg.verifyError).toBe(0);
 });
 it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #18700", () => {
   const key = crypto.randomBytes(32);

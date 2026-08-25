@@ -12,8 +12,8 @@ use core::marker::PhantomData;
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult, ZigException,
-    bun_string_jsc, ffi, host_fn,
+    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
+    StringJsc as _, ZigException, bun_string_jsc, ffi, host_fn,
 };
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
@@ -516,8 +516,8 @@ impl JSValue {
     /// `JSValue.createObject2` — `{ [key1]: value1, [key2]: value2 }`.
     pub fn create_object2(
         global: &JSGlobalObject,
-        key1: &bun_core::ZigString,
-        key2: &bun_core::ZigString,
+        key1: &bun_core::EncodedSlice,
+        key2: &bun_core::EncodedSlice,
         value1: JSValue,
         value2: JSValue,
     ) -> JsResult<JSValue> {
@@ -703,12 +703,12 @@ impl JSValue {
         host_fn::from_js_host_call(global, || JSC__JSValue__bigIntUnaryMinus(global, self))
     }
     /// `JSValue.fromEntries` — build a plain object from
-    /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
+    /// parallel `keys`/`values` `EncodedSlice` arrays. When `clone` is true the
     /// C++ side copies the string bytes (caller may free `keys`/`values`).
     pub fn from_entries(
         global: &JSGlobalObject,
-        keys: &mut [bun_core::ZigString],
-        values: &mut [bun_core::ZigString],
+        keys: &mut [bun_core::EncodedSlice],
+        values: &mut [bun_core::EncodedSlice],
         clone: bool,
     ) -> JSValue {
         debug_assert_eq!(keys.len(), values.len());
@@ -875,11 +875,11 @@ impl JSValue {
         })
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
-        bun_string_jsc::from_js(self, global)
+        bun_core::String::from_js(self, global)
     }
     /// `toString()` then UTF-8. The slice holds its own ref/allocation, so it
     /// is independent of the `JSString` cell.
-    pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
+    pub fn to_utf8(self, global: &JSGlobalObject) -> JsResult<bun_core::Utf8Bytes<'static>> {
         Ok(self.to_bun_string(global)?.into_utf8())
     }
     pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
@@ -904,7 +904,7 @@ impl JSValue {
     /// JS `typeof`, or `"array"` for arrays.
     pub fn type_name<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
         if self.js_type().is_array() {
-            return bun_core::StringView::static_(b"array");
+            return bun_core::StringView::static_("array");
         }
         self.js_type_string(global)
     }
@@ -1224,14 +1224,14 @@ impl JSValue {
         self,
         global: &JSGlobalObject,
         property: impl AsRef<[u8]>,
-    ) -> JsResult<Option<bun_core::ZigStringSlice>> {
+    ) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
         let property = property.as_ref();
         match self.get(global, property)? {
             Some(v) if !v.is_undefined_or_null() => {
                 if !v.is_string() {
                     return Err(global.throw_invalid_property_type(property, "string", v));
                 }
-                Ok(Some(v.to_slice(global)?))
+                Ok(Some(v.to_utf8(global)?))
             }
             _ => Ok(None),
         }
@@ -1432,8 +1432,7 @@ impl JSValue {
         Ok(len.clamp(0.0, I52_MAX as f64) as u64)
     }
     /// Set a property. Key dispatch goes through the [`PutKey`] trait so
-    /// callers may pass `&[u8]`, `ZigString`, `&ZigString`, `bun.String`, or
-    /// `&bun.String`.
+    /// callers may pass `&[u8]`, `EncodedSlice`, `String`, or `&String`.
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
@@ -1444,8 +1443,8 @@ impl JSValue {
         key: impl AsRef<[u8]>,
         value: JSValue,
     ) {
-        let zs = bun_core::ZigString::init(key.as_ref());
-        JSC__JSValue__putNonEnumerable(self, global, &zs, value)
+        let key = bun_core::EncodedSlice::latin1(key.as_ref());
+        JSC__JSValue__putNonEnumerable(self, global, &key, value)
     }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
     /// `undefined`) when `None`. Collapses the open-coded
@@ -1485,8 +1484,8 @@ impl JSValue {
     }
     /// `JSValue.deleteProperty` — delete an own property by name.
     pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> bool {
-        let zs = bun_core::ZigString::init(key.as_ref());
-        JSC__JSValue__deleteProperty(self, global, &zs)
+        let key = bun_core::EncodedSlice::latin1(key.as_ref());
+        JSC__JSValue__deleteProperty(self, global, &key)
     }
     /// `JSValue.putMayBeIndex` — same as [`put`] but accepts
     /// both non-numeric and numeric keys. Prefer [`put`] when the key is
@@ -1589,7 +1588,7 @@ impl JSValue {
         global: &JSGlobalObject,
         indent: u32,
     ) -> JsResult<bun_core::String> {
-        let mut out = bun_core::String::empty();
+        let mut out = bun_core::String::EMPTY;
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jsonStringify(self, global, indent, &mut out)
         })?;
@@ -1599,7 +1598,7 @@ impl JSValue {
     /// `JSValue.jsonStringifyFast` — `JSON.stringify(this)`
     /// with no indent / no replacer (fast path used by SQL value binders).
     pub fn json_stringify_fast(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
-        let mut out = bun_core::String::empty();
+        let mut out = bun_core::String::EMPTY;
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jsonStringifyFast(self, global, &mut out)
         })?;
@@ -1851,20 +1850,14 @@ impl<T: FromAny> FromAny for Option<T> {
 }
 
 /// Dispatch trait for [`JSValue::put`]'s key parameter: routes
-/// `ZigString`/`bun.String`/byte-slice keys to the matching FFI.
+/// `EncodedSlice`/`String`/byte-slice keys to the matching FFI.
 pub trait PutKey {
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
 }
-impl PutKey for &bun_core::ZigString {
+impl PutKey for bun_core::EncodedSlice<'_> {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        JSC__JSValue__put(target, global, self, value)
-    }
-}
-impl PutKey for bun_core::ZigString {
-    #[inline]
-    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        (&self).put(target, global, value)
+        JSC__JSValue__put(target, global, &self, value)
     }
 }
 impl PutKey for &bun_core::String {
@@ -1882,8 +1875,7 @@ impl PutKey for bun_core::String {
 impl PutKey for &[u8] {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        let zs = bun_core::ZigString::init(self);
-        (&zs).put(target, global, value)
+        bun_core::EncodedSlice::latin1(self).put(target, global, value)
     }
 }
 impl<const N: usize> PutKey for &[u8; N] {
@@ -1968,8 +1960,8 @@ unsafe extern "C" {
     safe fn JSC__JSValue__createEmptyObjectWithNullPrototype(global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__createObject2(
         global: &JSGlobalObject,
-        key1: &bun_core::ZigString,
-        key2: &bun_core::ZigString,
+        key1: &bun_core::EncodedSlice,
+        key2: &bun_core::EncodedSlice,
         value1: JSValue,
         value2: JSValue,
     ) -> JSValue;
@@ -2004,8 +1996,8 @@ unsafe extern "C" {
     safe fn JSC__JSValue__bigIntUnaryMinus(global: &JSGlobalObject, value: JSValue) -> JSValue;
     fn JSC__JSValue__fromEntries(
         global: *const JSGlobalObject,
-        keys: *mut bun_core::ZigString,
-        values: *mut bun_core::ZigString,
+        keys: *mut bun_core::EncodedSlice,
+        values: *mut bun_core::EncodedSlice,
         strings_count: usize,
         clone: bool,
     ) -> JSValue;
@@ -2066,19 +2058,19 @@ unsafe extern "C" {
     safe fn JSC__JSValue__put(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::ZigString,
+        key: &bun_core::EncodedSlice,
         value: JSValue,
     );
     safe fn JSC__JSValue__putNonEnumerable(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::ZigString,
+        key: &bun_core::EncodedSlice,
         value: JSValue,
     );
     safe fn JSC__JSValue__deleteProperty(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::ZigString,
+        key: &bun_core::EncodedSlice,
     ) -> bool;
     safe fn JSC__JSValue__putBunString(
         this: JSValue,
@@ -2228,7 +2220,7 @@ pub type ForEachCallback =
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
-    key: *mut bun_core::ZigString,
+    key: *mut bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
     is_private_symbol: bool,
@@ -2353,7 +2345,7 @@ impl JSValue {
     /// `JSValue.getClassName`.
     pub fn get_class_name(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         if !self.is_cell() {
-            return Ok(bun_core::String::static_(b"[not a class]"));
+            return Ok(bun_core::String::static_("[not a class]"));
         }
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__getClassName(self, global))
     }
@@ -2587,7 +2579,7 @@ impl JSValue {
     /// name). Empty for empty/`undefined`/`null`.
     pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         if self.is_empty_or_undefined_or_null() {
-            return Ok(bun_core::String::empty());
+            return Ok(bun_core::String::EMPTY);
         }
         unsafe extern "C" {
             safe fn JSC__JSValue__getNameProperty(

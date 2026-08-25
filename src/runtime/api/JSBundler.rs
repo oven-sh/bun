@@ -13,7 +13,8 @@ use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -24,7 +25,7 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 
 pub mod js_bundler {
     use super::*;
-    use bun_core::ZigStringSlice;
+    use bun_core::Utf8Bytes;
 
     use bun_sys::FdExt;
 
@@ -303,7 +304,7 @@ pub mod js_bundler {
                 let mut iter = exec_argv.array_iterator(global_this)?;
                 let mut is_first = true;
                 while let Some(arg) = iter.next()? {
-                    let slice = arg.to_slice(global_this)?;
+                    let slice = arg.to_utf8(global_this)?;
                     if is_first {
                         is_first = false;
                         this.exec_argv.append_slice(slice.slice())?;
@@ -317,7 +318,7 @@ pub mod js_bundler {
             if let Some(executable_path) =
                 object.get_own(global_this, &BunString::static_("executablePath"))?
             {
-                let slice = executable_path.to_slice(global_this)?;
+                let slice = executable_path.to_utf8(global_this)?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
                 if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                     .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -346,7 +347,7 @@ pub mod js_bundler {
                 if let Some(windows_icon_path) =
                     windows.get_own(global_this, &BunString::static_("icon"))?
                 {
-                    let slice = windows_icon_path.to_slice(global_this)?;
+                    let slice = windows_icon_path.to_utf8(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                         .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -363,48 +364,48 @@ pub mod js_bundler {
                 if let Some(windows_title) =
                     windows.get_own(global_this, &BunString::static_("title"))?
                 {
-                    let slice = windows_title.to_slice(global_this)?;
+                    let slice = windows_title.to_utf8(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_publisher) =
                     windows.get_own(global_this, &BunString::static_("publisher"))?
                 {
-                    let slice = windows_publisher.to_slice(global_this)?;
+                    let slice = windows_publisher.to_utf8(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_version) =
                     windows.get_own(global_this, &BunString::static_("version"))?
                 {
-                    let slice = windows_version.to_slice(global_this)?;
+                    let slice = windows_version.to_utf8(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_description) =
                     windows.get_own(global_this, &BunString::static_("description"))?
                 {
-                    let slice = windows_description.to_slice(global_this)?;
+                    let slice = windows_description.to_utf8(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_copyright) =
                     windows.get_own(global_this, &BunString::static_("copyright"))?
                 {
-                    let slice = windows_copyright.to_slice(global_this)?;
+                    let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
             }
 
             if let Some(outfile) = object.get_own(global_this, &BunString::static_("outfile"))? {
-                let slice = outfile.to_slice(global_this)?;
+                let slice = outfile.to_utf8(global_this)?;
                 this.outfile.append_slice_exact(slice.slice())?;
             }
 
             if let Some(assets) = object.get_own_array(global_this, "assets")? {
                 let mut iter = assets.array_iterator(global_this)?;
                 while let Some(arg) = iter.next()? {
-                    let slice = arg.to_slice(global_this)?;
+                    let slice = arg.to_utf8(global_this)?;
                     this.assets.push(Box::from(slice.slice()));
                 }
             }
@@ -677,7 +678,7 @@ pub mod js_bundler {
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
                         this.env_behavior = api::DotEnvBehavior::LoadAll;
                     } else if env.is_string() {
-                        let slice = env.to_slice(global_this)?;
+                        let slice = env.to_utf8(global_this)?;
                         match api::DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
                                 this.env_behavior = behavior;
@@ -811,7 +812,7 @@ pub mod js_bundler {
             if let Some(entry_points) = entry_points_opt {
                 let mut iter = entry_points.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice(global_this)?;
+                    let slice = entry_point.to_utf8(global_this)?;
                     this.entry_points.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -840,13 +841,13 @@ pub mod js_bundler {
 
             if let Some(conditions_value) = config.get_truthy(global_this, "conditions")? {
                 if conditions_value.is_string() {
-                    let slice = conditions_value.to_slice(global_this)?;
+                    let slice = conditions_value.to_utf8(global_this)?;
                     this.conditions.insert(slice.slice())?;
                     drop(slice);
                 } else if conditions_value.js_type().is_array() {
                     let mut iter = conditions_value.array_iterator(global_this)?;
                     while let Some(entry_point) = iter.next()? {
-                        let slice = entry_point.to_slice(global_this)?;
+                        let slice = entry_point.to_utf8(global_this)?;
                         this.conditions.insert(slice.slice())?;
                         drop(slice);
                     }
@@ -858,7 +859,7 @@ pub mod js_bundler {
             }
 
             {
-                let path: ZigStringSlice = 'brk: {
+                let path: Utf8Bytes = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
                         break 'brk slice;
                     }
@@ -875,7 +876,7 @@ pub mod js_bundler {
                             }
                         }
                         if all_in_filemap {
-                            break 'brk ZigStringSlice::from_utf8_never_free(b".");
+                            break 'brk Utf8Bytes::Borrowed(b".");
                         }
                     }
 
@@ -883,18 +884,14 @@ pub mod js_bundler {
                         let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             &entry_points[0],
                         );
-                        break 'brk ZigStringSlice::from_utf8_never_free(if d.is_empty() {
-                            b"."
-                        } else {
-                            d
-                        });
+                        break 'brk Utf8Bytes::Borrowed(if d.is_empty() { b"." } else { d });
                     }
 
                     // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
                     // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
                     // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
-                    break 'brk ZigStringSlice::from_utf8_never_free(
+                    break 'brk Utf8Bytes::Borrowed(
                         bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
                             .unwrap_or(b"."),
                     );
@@ -930,7 +927,7 @@ pub mod js_bundler {
             if let Some(externals) = config.get_own_array(global_this, "external")? {
                 let mut iter = externals.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice(global_this)?;
+                    let slice = entry_point.to_utf8(global_this)?;
                     this.external.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -951,7 +948,7 @@ pub mod js_bundler {
                     if allow_unresolved_val.get_length(global_this)? > 0 {
                         let mut iter = allow_unresolved_val.array_iterator(global_this)?;
                         while let Some(entry) = iter.next()? {
-                            let slice = entry.to_slice(global_this)?;
+                            let slice = entry.to_utf8(global_this)?;
                             this.allow_unresolved
                                 .as_mut()
                                 .unwrap()
@@ -965,7 +962,7 @@ pub mod js_bundler {
             if let Some(drops) = config.get_own_array(global_this, "drop")? {
                 let mut iter = drops.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice(global_this)?;
+                    let slice = entry.to_utf8(global_this)?;
                     this.drop.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -974,7 +971,7 @@ pub mod js_bundler {
             if let Some(features) = config.get_own_array(global_this, "features")? {
                 let mut iter = features.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice(global_this)?;
+                    let slice = entry.to_utf8(global_this)?;
                     this.features.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -983,7 +980,7 @@ pub mod js_bundler {
             if let Some(optimize_imports) = config.get_own_array(global_this, "optimizeImports")? {
                 let mut iter = optimize_imports.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice(global_this)?;
+                    let slice = entry.to_utf8(global_this)?;
                     this.optimize_imports.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -1148,7 +1145,7 @@ pub mod js_bundler {
                 } else if metafile_value.is_string() {
                     // metafile: "path/to/meta.json" - shorthand for { json: "..." }
                     this.metafile = true;
-                    let slice = metafile_value.to_slice(global_this)?;
+                    let slice = metafile_value.to_utf8(global_this)?;
                     this.metafile_json_path.append_slice_exact(slice.slice())?;
                     drop(slice);
                 } else if metafile_value.is_object() {
@@ -1961,15 +1958,12 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        jsc::bun_string_jsc::create_utf8_for_js(global_this, &this.path)
+        bun_string_jsc::create_utf8_for_js(global_this, &this.path)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        jsc::bun_string_jsc::create_utf8_for_js(
-            global_this,
-            <&'static str>::from(this.loader).as_bytes(),
-        )
+        BunString::static_(<&'static str>::from(this.loader)).to_js(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1979,7 +1973,7 @@ impl BuildArtifact {
         let mut cursor = &mut buf[..];
         write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
         let written = 512 - cursor.len();
-        jsc::bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
+        bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1999,10 +1993,7 @@ impl BuildArtifact {
         this: &Self,
         global_object: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        jsc::bun_string_jsc::create_utf8_for_js(
-            global_object,
-            <&'static str>::from(this.output_kind).as_bytes(),
-        )
+        BunString::static_(<&'static str>::from(this.output_kind)).to_js(global_object)
     }
 
     #[bun_jsc::host_fn(getter)]

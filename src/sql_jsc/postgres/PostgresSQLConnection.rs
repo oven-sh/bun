@@ -1111,23 +1111,23 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             + 1;
 
         let _ = b.allocate();
-        let u = args.username_str.to_utf8_without_ref();
+        let u = args.username_str.to_utf8();
         username = bun_ptr::RawSlice::new(b.append(u.slice()));
         drop(u);
 
-        let p = args.password_str.to_utf8_without_ref();
+        let p = args.password_str.to_utf8();
         password = bun_ptr::RawSlice::new(b.append(p.slice()));
         drop(p);
 
-        let d = args.database_str.to_utf8_without_ref();
+        let d = args.database_str.to_utf8();
         database = bun_ptr::RawSlice::new(b.append(d.slice()));
         drop(d);
 
-        let o = options_str.to_utf8_without_ref();
+        let o = options_str.to_utf8();
         options = bun_ptr::RawSlice::new(b.append(o.slice()));
         drop(o);
 
-        let _path = path_str.to_utf8_without_ref();
+        let _path = path_str.to_utf8();
         path = bun_ptr::RawSlice::new(b.append(_path.slice()));
         drop(_path);
 

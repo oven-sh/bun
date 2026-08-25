@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::StringView;
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::Utf8Bytes;
 
 bun_opaque::opaque_ffi! {
     /// Opaque JSC `JSString*` cell. Never constructed in Rust; only handled by reference.
@@ -65,7 +65,7 @@ pub struct JSStringView<'a> {
 impl JSStringView<'_> {
     /// UTF-8 bytes; borrows when 8-bit ASCII, allocates otherwise. Never refs.
     #[inline]
-    pub fn to_utf8(&self) -> ZigStringSlice {
+    pub fn to_utf8(&self) -> Utf8Bytes<'_> {
         self.view.to_utf8()
     }
 }

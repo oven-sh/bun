@@ -112,8 +112,7 @@ fn get_argv0(
     pretend_argv0: Option<&CStr>,
     first_cmd: JSValue,
 ) -> JsResult<Argv0Result> {
-    let arg0 = first_cmd.to_slice(global_this)?;
-    // `arg0` drops at scope exit (was `defer arg0.deinit()`).
+    let arg0 = first_cmd.to_utf8(global_this)?;
 
     // Check for null bytes in command (security: prevent null byte injection)
     if strings::index_of_char(arg0.slice(), 0).is_some() {
@@ -843,9 +842,9 @@ fn spawn_maybe_sync(
                         terminal_js_value = terminal_val;
                     } else if terminal_val.is_object() {
                         // Create a new terminal from options
-                        let mut term_options =
+                        let term_options =
                             TerminalOptions::parse_from_js(global_this, terminal_val)?;
-                        match Terminal::create_from_spawn(global_this, &mut term_options) {
+                        match Terminal::create_from_spawn(global_this, &term_options) {
                             Ok(created) => {
                                 **terminal_info = Some(TerminalCreateResult {
                                     // Transfer the +1 ref to `Subprocess.terminal` (released
@@ -861,7 +860,6 @@ fn spawn_maybe_sync(
                                 });
                             }
                             Err(err) => {
-                                drop(term_options);
                                 return Err(match err {
                                     TerminalInitError::OpenPtyFailed => {
                                         global_this.throw(format_args!("Failed to open PTY"))
@@ -2253,7 +2251,7 @@ impl CgroupTarget {
             return Ok(Self::DirFd(Fd::from_native(fd)));
         }
         if value.is_string() {
-            let path = value.to_slice(global)?;
+            let path = value.to_utf8(global)?;
             if strings::contains_char(path.slice(), 0) {
                 return Err(global
                     .err(

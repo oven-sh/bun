@@ -1512,9 +1512,8 @@ inline bool Http2Connection::handleData(Http2Response *stream, uint8_t flags, co
     const unsigned char *body = payload;
     uint32_t bodyLength = length;
     if (flags & http2::PADDED) {
-        if (length < 1) return connectionError(http2::ERR_FRAME_SIZE_ERROR);
+        /* Validated by the caller before the closed-stream shortcut. */
         pad = payload[0];
-        if (1 + pad > length) return connectionError(http2::ERR_PROTOCOL_ERROR);
         body = payload + 1;
         bodyLength = length - 1 - pad;
     }

@@ -133,30 +133,36 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
+    /// `fill` validates every name/value pair and throws on an invalid one.
     pub fn create(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
         buf: &EncodedSlice,
         count_: u32,
-    ) -> Option<NonNull<FetchHeaders>> {
+    ) -> JsResult<NonNull<FetchHeaders>> {
         // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
         // passed by address only.
-        let p =
-            unsafe { WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_) };
-        NonNull::new(p)
+        crate::call_null_is_throw(global, || unsafe {
+            WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_)
+        })
     }
 
+    /// Like [`create`](Self::create) but wrapped as a JS `Headers`. The C++
+    /// side returns the wrapper even after `fill` threw, so the exception state
+    /// is checked explicitly.
     pub fn from(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
         buf: &EncodedSlice,
         count_: u32,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
         // passed by address only.
-        unsafe { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
+        crate::call_check_slow(global, || unsafe {
+            WebCore__FetchHeaders__createValue(global, names, values, buf, count_)
+        })
     }
 
     pub fn is_empty(&mut self) -> bool {

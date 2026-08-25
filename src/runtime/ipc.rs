@@ -2021,7 +2021,7 @@ fn import_windows_socket_payload(
         log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
         return Ok(None);
     }
-    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY);
+    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY)?;
     Ok(Some(Fd::from_system(sock as *mut c_void)))
 }
 

@@ -589,7 +589,13 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   test("CompressionStream -> native HTTP sink applies backpressure to a stalled client", async () => {
     let pulls = 0;
     // Incompressible data so the gzipped output is ~as large as the input.
+    // Each pull stamps its sequence number into the first 4 bytes.
     const chunk = crypto.getRandomValues(new Uint8Array(64 * 1024));
+    const numbered = (n: number) => {
+      const data = Buffer.from(chunk);
+      data.writeUInt32BE(n, 0);
+      return data;
+    };
     // Backpressure parks after ~tens of pulls (a few MB of socket buffers /
     // 64KB); 200 is enough headroom to distinguish "parked" from "ran away"
     // without pushing ~32MB through gzip+HTTP under debug+ASAN.
@@ -602,7 +608,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
           pull(c) {
             pulls++;
             if (pulls === 1) onFirstPull();
-            c.enqueue(chunk.slice());
+            c.enqueue(numbered(pulls));
             if (pulls >= TOTAL) c.close();
           },
         });
@@ -658,7 +664,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     }
     const out = zlib.gunzipSync(Buffer.concat(body));
     expect(out.byteLength).toBe(TOTAL * chunk.byteLength);
-    expect(out.equals(Buffer.concat(Array.from({ length: TOTAL }, () => chunk)))).toBe(true);
+    expect(out.equals(Buffer.concat(Array.from({ length: TOTAL }, (_, i) => numbered(i + 1))))).toBe(true);
   });
 
   test("request body -> DecompressionStream propagates backpressure to the client", async () => {

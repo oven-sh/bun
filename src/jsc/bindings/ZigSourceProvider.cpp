@@ -205,7 +205,7 @@ extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* byt
     static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(std::span<const uint8_t>(bytes, len));
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
@@ -218,7 +218,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
     EvalContextType evalContextType = EvalContextType::None;
 
     ParserError parserError;
-    UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
+    UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType, depth);
     if (parserError.isValid())
         return false;
     if (!unlinkedCodeBlock)
@@ -240,7 +240,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
 
@@ -253,7 +253,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunStr
     EvalContextType evalContextType = EvalContextType::None;
 
     ParserError parserError;
-    UnlinkedProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
+    UnlinkedProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType, depth);
     if (parserError.isValid())
         return false;
     if (!unlinkedCodeBlock)

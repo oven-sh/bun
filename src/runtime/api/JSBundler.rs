@@ -140,6 +140,7 @@ pub mod js_bundler {
         pub(crate) packages: options::PackagesOption,
         pub(crate) format: options::Format,
         pub(crate) bytecode: bool,
+        pub(crate) bytecode_depth: u32,
         pub(crate) banner: OwnedString,
         pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
@@ -202,6 +203,7 @@ pub mod js_bundler {
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,
                 bytecode: false,
+                bytecode_depth: u32::MAX,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
@@ -594,6 +596,10 @@ pub mod js_bundler {
                     }
                     this.target = Target::Bun;
                 }
+            }
+
+            if let Some(depth) = config.get_optional_int::<u32>(global_this, "bytecodeDepth")? {
+                this.bytecode_depth = depth;
             }
 
             if let Some(react_fast_refresh) =

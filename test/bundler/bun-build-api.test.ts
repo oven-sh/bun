@@ -71,6 +71,110 @@ describe("Bun.build", () => {
     expect(await bunRun(build.outputs[0].path)).toSpawn("world");
   });
 
+  const nestedSource = `
+    export function outer() {
+      function middle() {
+        function inner() {
+          return "world";
+        }
+        return inner();
+      }
+      return middle();
+    }
+
+    console.log(outer());
+  `;
+
+  async function bytecodeSize(dir: string, depth: number | undefined) {
+    const outdir = join(dir, depth === undefined ? "all" : `depth-${depth}`);
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      outdir,
+      target: "bun",
+      bytecode: true,
+      bytecodeDepth: depth,
+    });
+    expect(build.outputs.map(o => o.kind)).toStrictEqual(["entry-point", "bytecode"]);
+    expect(await bunRun(build.outputs[0].path)).toSpawn("world");
+    return build.outputs[1].size;
+  }
+
+  test("bytecodeDepth bounds nested function bytecode", async () => {
+    const dir = tempDirWithFiles("bun-build-api-bytecode-depth", {
+      "package.json": `{}`,
+      "index.ts": nestedSource,
+    });
+
+    const depth0 = await bytecodeSize(dir, 0);
+    const depth1 = await bytecodeSize(dir, 1);
+    const depth2 = await bytecodeSize(dir, 2);
+    const all = await bytecodeSize(dir, undefined);
+
+    expect(depth0).toBeLessThan(depth1);
+    expect(depth1).toBeLessThan(depth2);
+    expect(depth2).toBeLessThan(all);
+    expect(await bytecodeSize(dir, 3)).toBe(all);
+  });
+
+  test("bytecodeDepth rejects invalid values", async () => {
+    const dir = tempDirWithFiles("bun-build-api-bytecode-depth-invalid", {
+      "package.json": `{}`,
+      "index.ts": nestedSource,
+    });
+    for (const bytecodeDepth of [-1, 1.5, "abc", Infinity]) {
+      expect(() =>
+        Bun.build({
+          entrypoints: [join(dir, "index.ts")],
+          outdir: join(dir, "out"),
+          target: "bun",
+          bytecode: true,
+          // @ts-expect-error
+          bytecodeDepth,
+        }),
+      ).toThrow(/bytecodeDepth/);
+    }
+  });
+
+  test("--bytecode-depth on the CLI", async () => {
+    const dir = tempDirWithFiles("bun-build-cli-bytecode-depth", {
+      "package.json": `{}`,
+      "index.ts": nestedSource,
+    });
+
+    async function cliBytecodeSize(args: string[]) {
+      const outdir = join(dir, "out-" + args.join("").replace(/[^a-z0-9]/g, ""));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", join(dir, "index.ts"), "--target=bun", "--bytecode", "--outdir", outdir, ...args],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(await bunRun(join(outdir, "index.js"))).toSpawn("world");
+      return Bun.file(join(outdir, "index.js.jsc")).size;
+    }
+
+    const depth0 = await cliBytecodeSize(["--bytecode-depth=0"]);
+    const depth1 = await cliBytecodeSize(["--bytecode-depth", "1"]);
+    const all = await cliBytecodeSize([]);
+    expect(depth0).toBeLessThan(depth1);
+    expect(depth1).toBeLessThan(all);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", join(dir, "index.ts"), "--target=bun", "--bytecode", "--bytecode-depth=nope"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Invalid value for --bytecode-depth: "nope"');
+    expect(exitCode).toBe(1);
+  });
+
   test("passing undefined doesnt segfault", () => {
     try {
       // @ts-ignore

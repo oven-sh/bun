@@ -377,6 +377,53 @@ test("path.resolve() and path.relative() use an overridden process.cwd()", () =>
   expect(path.resolve()).toBe(process.cwd());
 });
 
+// resolve() and relative() view their arguments before they call process.cwd() and read them
+// after; a replacement that GCs in between must not free the characters they point at.
+test("process.cwd() replacements that trigger GC do not corrupt argument views", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const path = require("node:path");
+// Each argument is built as a fresh concatenation, so viewing it resolves the rope inside the
+// call and the resolved characters are owned by nothing but that argument.
+const tails = [Buffer.alloc(16000, "seg_").toString(), Buffer.alloc(24000, "あ").toString()];
+let calls = 0;
+process.cwd = () => {
+  calls++;
+  Bun.gc(true);
+  const keep = [];
+  for (let i = 0; i < 200; i++) keep.push(Buffer.alloc(50000 + i, "Q").toString());
+  globalThis.keep = keep;
+  Bun.gc(true);
+  return "/x";
+};
+const results = [];
+for (const ns of ["posix", "win32"]) {
+  const p = path[ns];
+  for (const tail of tails) {
+    for (let r = 0; r < 3; r++) {
+      results.push(p.resolve("dir/" + tail) === p.join("/x", "dir", tail) ? "OK" : "MISMATCH");
+      results.push(p.relative("dir/" + tail + "/a", "dir/" + tail + "/b") === ".." + p.sep + "b" ? "OK" : "MISMATCH");
+    }
+  }
+}
+console.log(results.join("\\n"));
+console.log("calls=" + calls);`,
+    ],
+    // Malloc=1 lets ASan builds see the freed JSC string; bmalloc has no SystemHeap on Windows.
+    env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1", ASAN_OPTIONS: "detect_leaks=0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // 2 namespaces x 2 tails x 3 rounds, each round one resolve() (1 read) and one relative() (2 reads).
+  const expected = [...Array(24).fill("OK"), "calls=36"];
+  expect({ lines: stdout.trim().split("\n"), stderr }).toEqual({ lines: expected, stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 describe("path module shape", () => {
   test("matches Node.js", () => {
     const keys = [

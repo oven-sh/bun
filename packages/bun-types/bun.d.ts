@@ -8855,8 +8855,10 @@ declare module "bun" {
 
   namespace Image {
     /**
-     * Stable `error.code` values set on rejections from `Bun.Image` terminals.
-     * Branch on these instead of parsing the message.
+     * Stable `error.code` values on `Bun.Image` pipeline errors — set on
+     * rejections from the async terminals, and on the same errors thrown
+     * synchronously when a pipeline is used directly as a `Response` /
+     * `Request` body. Branch on these instead of parsing the message.
      *
      * - `ERR_IMAGE_FORMAT_UNSUPPORTED` — the requested format isn't available
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
@@ -8865,6 +8867,7 @@ declare module "bun" {
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_OUT_OF_MEMORY` — a pipeline allocation failed.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
@@ -8876,6 +8879,7 @@ declare module "bun" {
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_OUT_OF_MEMORY"
       | "ERR_INVALID_STATE";
 
     /**

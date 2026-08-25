@@ -670,10 +670,26 @@ fn reject_error(global: &JSGlobalObject, e: codecs::Error) -> JSValue {
 
 fn error_with_code(global: &JSGlobalObject, code: &ZStr, msg: &ZStr) -> JSValue {
     let err = global.create_error_instance(format_args!("{}", bstr::BStr::new(msg.as_bytes())));
+    // Instance creation can fail with a pending exception (VM termination,
+    // OOM); `put` on the empty value would deref null. Hand the empty value
+    // back — `throw_value`/reject propagate the pending exception.
+    if err.is_empty() {
+        return err;
+    }
     let code_js = jsc::bun_string_jsc::create_utf8_for_js(global, code.as_bytes())
         .unwrap_or(JSValue::UNDEFINED);
     err.put(global, b"code", code_js);
     err
+}
+
+/// One rendering for the detached-`ArrayBuffer` error so the async terminal
+/// and the sync body encode can't drift apart.
+fn detached_error(global: &JSGlobalObject) -> JSValue {
+    error_with_code(
+        global,
+        zstr!("ERR_INVALID_STATE"),
+        zstr!("Image: source ArrayBuffer was detached"),
+    )
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -1124,15 +1140,8 @@ impl Image {
             Ok(i) => i,
             Err(PinError::Detached) => {
                 drop(deliver);
-                return Ok(JSPromise::rejected_promise(
-                    global,
-                    error_with_code(
-                        global,
-                        zstr!("ERR_INVALID_STATE"),
-                        zstr!("Image: source ArrayBuffer was detached"),
-                    ),
-                )
-                .as_value(global));
+                return Ok(JSPromise::rejected_promise(global, detached_error(global))
+                    .as_value(global));
             }
         };
         let work = PipelineTask {
@@ -1206,7 +1215,7 @@ impl Image {
         let (input, _pin) = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
             Err(PinError::Detached) => {
-                return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
+                return Err(global.throw_value(detached_error(global)));
             }
         };
         // `_pin` unpins at scope exit, after `run()` is done with the bytes.
@@ -1229,10 +1238,8 @@ impl Image {
                 self.last_height.set(i32::try_from(h).expect("int cast"));
                 Ok((out, format.mime()))
             }
-            TaskResult::Err(e) => Err(global.throw(format_args!(
-                "{}",
-                bstr::BStr::new(error_message(e).as_bytes())
-            ))),
+            // Same coded error shape as the async terminals reject with.
+            TaskResult::Err(e) => Err(global.throw_value(reject_error(global, e))),
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
             TaskResult::Meta { .. } => unreachable!(),

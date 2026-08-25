@@ -48,24 +48,27 @@ test("destroying a TLS socket over a tunneled net.Socket sends a bare FIN", asyn
 
   // The client: a raw socket through the tunnel, TLS layered on top.
   const raw = net.connect(proxyPort, "127.0.0.1");
-  await once(raw, "connect");
-  const secure = tls.connect({ socket: raw, ca: tlsCert.cert, servername: "localhost" });
-  secure.on("error", () => {});
-  await once(secure, "secureConnect");
+  try {
+    await once(raw, "connect");
+    const secure = tls.connect({ socket: raw, ca: tlsCert.cert, servername: "localhost" });
+    secure.on("error", () => {});
+    await once(secure, "secureConnect");
 
-  secure.write("hello");
-  const [reply] = await once(secure, "data");
-  expect(reply.toString()).toBe("ok");
+    secure.write("hello");
+    const [reply] = await once(secure, "data");
+    expect(reply.toString()).toBe("ok");
 
-  // Destroy, as undici does when a response carries 'connection: close'.
-  // Node sends nothing here, only the FIN.
-  countTeardownBytes = true;
-  secure.destroy();
+    // Destroy, as undici does when a response carries 'connection: close'.
+    // Node sends nothing here, only the FIN.
+    countTeardownBytes = true;
+    secure.destroy();
 
-  await clientEnded.promise;
-  expect(teardownBytes).toBe(0);
-  await clientClosed.promise;
-
-  proxy.close();
-  target.close();
+    await clientEnded.promise;
+    expect(teardownBytes).toBe(0);
+    await clientClosed.promise;
+  } finally {
+    raw.destroy();
+    proxy.close();
+    target.close();
+  }
 });

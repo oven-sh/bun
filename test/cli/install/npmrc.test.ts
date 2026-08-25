@@ -1525,6 +1525,67 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     });
   });
 
+  // The default registry's token used to follow any `--registry`/env registry on the
+  // same host, path ignored, so a sibling path got the wrong token and its own line
+  // was never consulted. Only a registry at or under the old one inherits now.
+  test.each([
+    ["--registry", (origin: string) => [["--registry", `${origin}/npm/team-b/`], {}] as const],
+    ["NPM_CONFIG_REGISTRY", (origin: string) => [[], { NPM_CONFIG_REGISTRY: `${origin}/npm/team-b/` }] as const],
+  ])(
+    "a registry from %s on a sibling path uses that path's own line, not the default registry's token",
+    async (_source, overrideFor) => {
+      using registry = mockRegistry("Bearer team-b-token", {
+        registryPath: "/npm/team-b",
+        tarballPath: "/npm/team-b/no-deps/-/no-deps-1.0.0.tgz",
+      });
+      using dir = tempDir("npmrc-url-auth-sibling-registry", {
+        "package.json": packageJson,
+        ".npmrc": [
+          `registry=${registry.origin}/npm/team-a/`,
+          `//${registry.host}/npm/team-a/:_authToken=team-a-token`,
+          `//${registry.host}/npm/team-b/:_authToken=team-b-token`,
+          "",
+        ].join("\n"),
+        "home/.gitkeep": "",
+      });
+      const [args, extraEnv] = overrideFor(registry.origin);
+
+      const { stderr, exitCode } = await install(String(dir), [...args], { ...extraEnv });
+
+      expect({ requests: registry.requests, exitCode, stderr }).toEqual({
+        requests: [
+          { path: "/npm/team-b/no-deps", auth: "Bearer team-b-token" },
+          { path: "/npm/team-b/no-deps/-/no-deps-1.0.0.tgz", auth: "Bearer team-b-token" },
+        ],
+        exitCode: 0,
+        stderr: expect.not.stringContaining("401"),
+      });
+    },
+  );
+
+  test("--registry below the default registry keeps its token", async () => {
+    using registry = mockRegistry("Bearer team-a-token", {
+      registryPath: "/npm/team-a/sub",
+      tarballPath: "/npm/team-a/sub/no-deps/-/no-deps-1.0.0.tgz",
+    });
+    using dir = tempDir("npmrc-url-auth-child-registry", {
+      "package.json": packageJson,
+      ".npmrc": `registry=${registry.origin}/npm/team-a/\n//${registry.host}/npm/team-a/:_authToken=team-a-token\n`,
+      "home/.gitkeep": "",
+    });
+
+    const { stderr, exitCode } = await install(String(dir), ["--registry", `${registry.origin}/npm/team-a/sub/`]);
+
+    expect({ requests: registry.requests, exitCode, stderr }).toEqual({
+      requests: [
+        { path: "/npm/team-a/sub/no-deps", auth: "Bearer team-a-token" },
+        { path: "/npm/team-a/sub/no-deps/-/no-deps-1.0.0.tgz", auth: "Bearer team-a-token" },
+      ],
+      exitCode: 0,
+      stderr: expect.not.stringContaining("401"),
+    });
+  });
+
   test.each(["NPM_CONFIG_REGISTRY", "BUN_CONFIG_REGISTRY"])(
     "a registry from %s uses the token the project .npmrc has for that host",
     async variable => {

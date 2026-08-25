@@ -58,7 +58,7 @@ static EMPTY: Empty = Empty { len: 0, nul: 0 };
 
 /// The current record; points at `EMPTY` until [`startup`], then at an
 /// element of `VISITED`.
-static CWD: AtomicPtr<Entry> = AtomicPtr::new(&EMPTY as *const Empty as *mut Entry);
+static CWD: AtomicPtr<Entry> = AtomicPtr::new(ptr::addr_of!(EMPTY) as *mut Entry);
 
 /// Every directory recorded so far, one entry per distinct path, never freed:
 /// paths derived from an earlier one may still be in use after a `chdir`, and
@@ -133,17 +133,20 @@ pub fn set(path: &[u8]) -> &'static ZStr {
             let layout =
                 Layout::from_size_align(size_of::<Entry>() + path.len() + 1, align_of::<Entry>())
                     .unwrap();
-            // SAFETY: `layout` is non-zero-sized; the writes stay within it.
+            // SAFETY: `layout` is non-zero-sized and `Entry`-aligned; the
+            // writes stay within it.
             let entry: &'static Entry = unsafe {
-                let p = std::alloc::alloc(layout);
+                let p = std::alloc::alloc(layout)
+                    .cast::<core::ffi::c_void>()
+                    .cast::<Entry>();
                 if p.is_null() {
                     std::alloc::handle_alloc_error(layout);
                 }
-                p.cast::<usize>().write(path.len());
-                let bytes = p.add(size_of::<Entry>());
+                ptr::addr_of_mut!((*p).len).write(path.len());
+                let bytes = ptr::addr_of_mut!((*p).bytes).cast::<u8>();
                 ptr::copy_nonoverlapping(path.as_ptr(), bytes, path.len());
                 bytes.add(path.len()).write(0);
-                &*p.cast::<Entry>()
+                &*p
             };
             let inserted = visited.insert(entry);
             debug_assert!(inserted, "cwd entry lookup and insert disagree");

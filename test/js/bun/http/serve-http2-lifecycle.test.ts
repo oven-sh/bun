@@ -1,34 +1,17 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { createHash, randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import http2 from "node:http2";
-import net from "node:net";
-import { join } from "node:path";
 import tls from "node:tls";
 import {
   F,
-  Fixture,
   H2Result,
-  PREFACE,
-  RawFrame,
   RawH2,
   T,
   baseHeaders,
-  big,
-  bigFileDir,
-  bigFilePath,
   connectH2,
   decodeStatus,
-  fixtureSource,
   frame,
-  handler,
-  hpackLiteral,
-  lateRead,
-  makeRoutes,
   request,
-  routes,
-  server,
-  sha256,
   startFixture,
 } from "./serve-http2-helpers";
 

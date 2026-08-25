@@ -343,14 +343,36 @@ fn from_input_js(
     Ok(img)
 }
 
+/// Read an optional numeric option. Missing/`undefined` → `None`; any other
+/// non-number (string, null, object, …) throws Node-style
+/// `ERR_INVALID_ARG_TYPE` instead of silently falling back to the default
+/// (#40490). Out-of-range numbers still clamp via `coerce_int!` at the caller.
+fn get_number_option(
+    opt: JSValue,
+    global: &JSGlobalObject,
+    name: &'static str,
+) -> JsResult<Option<f64>> {
+    match opt.get(global, name)? {
+        Some(v) => {
+            if !v.is_number() {
+                return Err(global.throw_invalid_property_type_value(
+                    name.as_bytes(),
+                    b"number",
+                    v,
+                ));
+            }
+            Ok(Some(v.as_number()))
+        }
+        None => Ok(None),
+    }
+}
+
 fn apply_options(img: &mut Image, global: &JSGlobalObject, opt: JSValue) -> JsResult<()> {
     if !opt.is_object() {
         return Ok(());
     }
-    if let Some(v) = opt.get(global, "maxPixels")? {
-        if v.is_number() {
-            img.max_pixels = coerce_int!(u64, v.as_number(), 0.0, 1e15);
-        }
+    if let Some(v) = get_number_option(opt, global, "maxPixels")? {
+        img.max_pixels = coerce_int!(u64, v, 0.0, 1e15);
     }
     if let Some(v) = opt.get(global, "autoOrient")? {
         img.auto_orient = v.to_boolean();
@@ -536,25 +558,19 @@ impl Image {
             let opt = args[0];
             // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
             // f32 +Inf (0×Inf = NaN → static_cast<u8>(NaN) is UB).
-            if let Some(v) = opt.get(global, "brightness")? {
-                if v.is_number() {
-                    let x = v.as_number();
-                    m.brightness = if x.is_finite() {
-                        x.clamp(0.0, 1e4) as f32
-                    } else {
-                        1.0
-                    };
-                }
+            if let Some(x) = get_number_option(opt, global, "brightness")? {
+                m.brightness = if x.is_finite() {
+                    x.clamp(0.0, 1e4) as f32
+                } else {
+                    1.0
+                };
             }
-            if let Some(v) = opt.get(global, "saturation")? {
-                if v.is_number() {
-                    let x = v.as_number();
-                    m.saturation = if x.is_finite() {
-                        x.clamp(0.0, 1e4) as f32
-                    } else {
-                        1.0
-                    };
-                }
+            if let Some(x) = get_number_option(opt, global, "saturation")? {
+                m.saturation = if x.is_finite() {
+                    x.clamp(0.0, 1e4) as f32
+                } else {
+                    1.0
+                };
             }
         }
         self.update_pipeline(|p| p.modulate = Some(m));
@@ -579,26 +595,20 @@ impl Image {
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
             let opt = args[0];
-            if let Some(q) = opt.get(global, "quality")? {
-                if q.is_number() {
-                    enc.quality = coerce_int!(u8, q.as_number(), 1.0, 100.0);
-                }
+            if let Some(q) = get_number_option(opt, global, "quality")? {
+                enc.quality = coerce_int!(u8, q, 1.0, 100.0);
             }
             if let Some(l) = opt.get(global, "lossless")? {
                 enc.lossless = l.to_boolean();
             }
-            if let Some(c) = opt.get(global, "compressionLevel")? {
-                if c.is_number() {
-                    enc.compression_level = coerce_int!(i8, c.as_number(), 0.0, 9.0);
-                }
+            if let Some(c) = get_number_option(opt, global, "compressionLevel")? {
+                enc.compression_level = coerce_int!(i8, c, 0.0, 9.0);
             }
             if let Some(p) = opt.get(global, "palette")? {
                 enc.palette = p.to_boolean();
             }
-            if let Some(c) = opt.get(global, "colors")? {
-                if c.is_number() {
-                    enc.colors = coerce_int!(u16, c.as_number(), 2.0, 256.0);
-                }
+            if let Some(c) = get_number_option(opt, global, "colors")? {
+                enc.colors = coerce_int!(u16, c, 2.0, 256.0);
             }
             if let Some(d) = opt.get(global, "dither")? {
                 enc.dither = d.to_boolean();

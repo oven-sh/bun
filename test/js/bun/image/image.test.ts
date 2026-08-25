@@ -905,6 +905,36 @@ describe("Bun.Image", () => {
     await expect(new Bun.Image(cornersPng).resize(Infinity).png().bytes()).rejects.toThrow(/maxPixels/);
   });
 
+  // #40490: a wrong-type option value used to be silently ignored, so
+  // `.jpeg({ quality: "84" })` produced the default-quality output with no
+  // signal. Only undefined means "use the default" now.
+  test("wrong-type numeric options throw ERR_INVALID_ARG_TYPE", async () => {
+    const img = () => new Bun.Image(cornersPng);
+    let caught: any;
+    try {
+      img().jpeg({ quality: "84" as any });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining('"quality"'),
+    });
+    for (const bad of [null, {}, [], true, 95n]) {
+      expect(() => img().jpeg({ quality: bad as any })).toThrow(TypeError);
+    }
+    expect(() => img().webp({ quality: "84" as any })).toThrow(/"quality"/);
+    expect(() => img().png({ compressionLevel: "9" as any })).toThrow(/"compressionLevel"/);
+    expect(() => img().png({ colors: "16" as any })).toThrow(/"colors"/);
+    expect(() => img().modulate({ brightness: "2" as any })).toThrow(/"brightness"/);
+    expect(() => img().modulate({ saturation: "2" as any })).toThrow(/"saturation"/);
+    expect(() => new Bun.Image(cornersPng, { maxPixels: "100" as any })).toThrow(/"maxPixels"/);
+    // undefined still selects the default and must not throw.
+    const out = await img().jpeg({ quality: undefined }).bytes();
+    expect(out[0]).toBe(0xff);
+  });
+
   test("constructor cleans up on throwing options getter", () => {
     // Just asserts no crash/leak path; the actual leak would only show under
     // a sanitizer, but the throw must surface.

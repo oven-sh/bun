@@ -595,8 +595,8 @@ Options:
                                   buildDir, mode (full|cpp-only|link-only),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   exceptionLint (the jsc-exception-lint
-                                  compiler plugin; on when clang's dev
-                                  headers are installed),
+                                  compiler plugin; on in assertion builds
+                                  when clang's dev headers are installed),
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it

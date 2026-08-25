@@ -7,7 +7,7 @@
  * keys are shared across checkouts through CCACHE_BASEDIR).
  */
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { isMacOS, isWindows, tempDir } from "harness";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -64,6 +64,9 @@ function linuxConfig(partial: PartialConfig, buildDir: string, toolchain = mockT
   );
 }
 
+/** The plugin is a host artifact: its extension follows the host, not the target. */
+const pluginExt = isMacOS ? ".dylib" : ".so";
+
 /**
  * The layout findLlvmDevDir looks for: a clang++ whose real path is two
  * levels below the install root, the plugin registry header, and libclang-cpp.
@@ -105,10 +108,17 @@ describe("jsc-exception-lint in the build", () => {
       llvmDevDir: realpathSync(llvm),
       exceptionLint: true,
     });
-    expect(
-      linuxConfig({ exceptionLint: false }, join(String(dir), "build"), mockToolchain(fakeLlvmInstall(llvm)))
-        .exceptionLint,
-    ).toBe(false);
+    const toolchain = mockToolchain(fakeLlvmInstall(llvm));
+    expect(linuxConfig({ exceptionLint: false }, join(String(dir), "build"), toolchain).exceptionLint).toBe(false);
+    // The check models the ThrowScope validator of assertion builds; a plain
+    // release build has a trivial ThrowScope destructor and stays out.
+    expect(linuxConfig({ buildType: "Release" }, join(String(dir), "build"), toolchain).exceptionLint).toBe(false);
+    expect(linuxConfig({ buildType: "Release", asan: true }, join(String(dir), "build"), toolchain).exceptionLint).toBe(
+      true,
+    );
+    expect(() =>
+      linuxConfig({ buildType: "Release", exceptionLint: true }, join(String(dir), "build"), toolchain),
+    ).toThrow(BuildError);
   });
 
   test.skipIf(isWindows)("the plugin flags reach ninja only, with no absolute path in them", () => {
@@ -123,7 +133,7 @@ describe("jsc-exception-lint in the build", () => {
     const lint = emitExceptionLint(n, cfg);
     expect(lint).toBeDefined();
     const { flags, implicitInputs } = lint!;
-    expect(flags[0]).toBe("-fplugin=jsc-exception-lint/libjsc-exception-lint-21.1.8.so");
+    expect(flags[0]).toBe(`-fplugin=jsc-exception-lint/libjsc-exception-lint-21.1.8${pluginExt}`);
     expect(flags).toContain("werror");
     expect(flags.filter(f => f.startsWith("data-hash="))).toEqual([expect.stringMatching(/^data-hash=[0-9a-f]{16}$/)]);
     // Every path is relative to the build dir, where ninja runs the compiler;
@@ -132,7 +142,7 @@ describe("jsc-exception-lint in the build", () => {
       expect(flag.replace(/^-?[a-z-]+=/, "")).not.toStartWith("/");
     }
     expect(implicitInputs.map(p => p.replace(buildDir, "<build>").replace(cfg.cwd, "<repo>"))).toEqual([
-      "<build>/jsc-exception-lint/libjsc-exception-lint-21.1.8.so",
+      `<build>/jsc-exception-lint/libjsc-exception-lint-21.1.8${pluginExt}`,
       "<repo>/scripts/jsc-exception-lint/nothrow.txt",
       "<repo>/scripts/jsc-exception-lint/summaries/webkit.tsv",
       "<repo>/scripts/jsc-exception-lint/summaries/bun.tsv",
@@ -143,7 +153,7 @@ describe("jsc-exception-lint in the build", () => {
     cxx(n, cfg, src, { flags: ["-O0"], ninjaOnlyFlags: flags, implicitInputs });
     const ninja = n.toString().replace(/ \$\n +/g, " ");
     expect(ninja).toContain("rule clang_plugin");
-    expect(ninja).toContain("-O0 -fplugin=jsc-exception-lint/libjsc-exception-lint-21.1.8.so -Xclang");
+    expect(ninja).toContain(`-O0 -fplugin=jsc-exception-lint/libjsc-exception-lint-21.1.8${pluginExt} -Xclang`);
     // compile_commands.json is written by write(); the entries it would hold
     // are what clangd and the standalone tool read.
     const compileCommands = (n as unknown as { compileCommands: { arguments: string[] }[] }).compileCommands;

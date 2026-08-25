@@ -161,8 +161,9 @@ export interface Config {
   /**
    * Load the jsc-exception-lint compiler plugin into every compile of bun's
    * own C++ (scripts/jsc-exception-lint). A missing JSC exception check is a
-   * compile error. Default: on when `llvmDevDir` is found and the target is
-   * not Windows (clang-cl does not load plugins).
+   * compile error. Default: on in assertion builds (debug, asan) when
+   * `llvmDevDir` is found and the target is not Windows (clang-cl does not
+   * load plugins). See resolveConfig for why assertion builds only.
    */
   exceptionLint: boolean;
 
@@ -1170,11 +1171,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // The plugin is built for the host against the host LLVM's clang headers
   // and loaded into the same clang. clang-cl (windows targets) has no plugin
   // interface, and Windows LLVM exports no symbols for one to bind to.
+  //
+  // Assertion builds only: the check models the ThrowScope validator, which
+  // exists under ASSERT_ENABLED. Without it ThrowScope has a trivial
+  // destructor, so a function that returns with an unchecked exception has
+  // no destructor in its CFG for the analysis to report at, and the result
+  // would depend on the build type. The CI asan lane and every `bun bd`
+  // build have assertions on.
   const llvmDevDir =
     host.os === "windows" || windows
       ? undefined
       : findLlvmDevDir(toolchain.hostCxx ?? toolchain.cxx, toolchain.clangResourceDir);
-  const exceptionLint = partial.exceptionLint ?? llvmDevDir !== undefined;
+  const exceptionLint = partial.exceptionLint ?? (llvmDevDir !== undefined && assertions);
   if (exceptionLint && llvmDevDir === undefined) {
     throw new BuildError("--exceptionLint=on needs the clang development headers", {
       hint:
@@ -1183,6 +1191,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : host.os === "darwin"
             ? "brew's llvm ships them; the toolchain in use does not (include/clang/Frontend/FrontendPluginRegistry.h is missing next to clang++)."
             : "apt: install libclang-<N>-dev and libclang-cpp<N>-dev for your clang (llvm.sh <N> all installs both).",
+    });
+  }
+  if (exceptionLint && !assertions) {
+    throw new BuildError("--exceptionLint=on needs --assertions=on", {
+      hint: "Without ASSERT_ENABLED the ThrowScope destructor is trivial, so the check cannot see a function that returns with an unchecked exception.",
     });
   }
 

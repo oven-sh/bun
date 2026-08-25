@@ -654,6 +654,21 @@ private:
           return s;
         }
       }
+      // RETURN_IF_EXCEPTION expands to
+      //   EXCEPTION_ASSERT(!!scope.exception() == ...);
+      //   if (vm.traps().maybeNeedHandling()) {
+      //     if (vm.hasExceptionsAfterHandlingTraps()) return ...;
+      //   }
+      // In a debug build the assertion queries the exception on every path.
+      // In a release build it is compiled out and only the trap-bit test is
+      // left, so that test stands for the check: the macro means "return if
+      // there is an exception" in both builds.
+      if (MD->getIdentifier() && MD->getName() == "maybeNeedHandling" &&
+          qualifiedName(MD->getParent()) == "JSC::VMTraps") {
+        s.kind = Summary::Check;
+        s.why = "RETURN_IF_EXCEPTION trap test";
+        return s;
+      }
     }
 
     const FunctionDecl *def = nullptr;
@@ -879,6 +894,18 @@ private:
       return in;
     const Stmt *S = stmtElem->getStmt();
 
+    // EXCEPTION_ASSERT(!!scope.exception() == ...) is how JSC code asserts
+    // about the exception state, and RETURN_IF_EXCEPTION starts with one. In
+    // a debug build it evaluates its argument, so the validator counts it as
+    // a check; in a release build it expands to ((void)0). Treat the
+    // expansion as a check in both, so the result does not depend on the
+    // build type.
+    if (isInExceptionAssertMacro(S)) {
+      result.touchesException = true;
+      return mapStates(
+          in, [](unsigned st) { return st & ~(kPending | kThrown | kMaybe); });
+    }
+
     // Scope construction.
     if (const auto *CC = dyn_cast<CXXConstructExpr>(S)) {
       const CXXConstructorDecl *ctor = CC->getConstructor();
@@ -938,16 +965,27 @@ private:
   // True when the statement is spelled inside a RETURN_IF_EXCEPTION-style
   // macro expansion.
   bool isInReturnIfExceptionMacro(const Stmt *S) {
+    return isInMacro(S, [](StringRef name) {
+      return name.contains("RETURN_IF_EXCEPTION") ||
+             name.contains("RETURN_IF_VM_EXCEPTION") ||
+             name.contains("RETURN_STATUS_IF_EXCEPTION") ||
+             name == "TRY_CLEAR_EXCEPTION";
+    });
+  }
+
+  bool isInExceptionAssertMacro(const Stmt *S) {
+    return isInMacro(S, [](StringRef name) {
+      return name == "EXCEPTION_ASSERT" || name == "EXCEPTION_ASSERT_UNUSED" ||
+             name == "EXCEPTION_ASSERT_WITH_MESSAGE";
+    });
+  }
+
+  // Walks the macro expansions the statement's start came from, innermost
+  // first, and reports whether one of them has a name `match` accepts.
+  template <typename F> bool isInMacro(const Stmt *S, F match) {
     SourceLocation loc = S->getBeginLoc();
-    if (!loc.isMacroID())
-      return false;
     while (loc.isMacroID()) {
-      StringRef name =
-          Lexer::getImmediateMacroName(loc, m_sm, m_ctx.getLangOpts());
-      if (name.contains("RETURN_IF_EXCEPTION") ||
-          name.contains("RETURN_IF_VM_EXCEPTION") ||
-          name.contains("RETURN_STATUS_IF_EXCEPTION") ||
-          name == "TRY_CLEAR_EXCEPTION")
+      if (match(Lexer::getImmediateMacroName(loc, m_sm, m_ctx.getLangOpts())))
         return true;
       loc = m_sm.getImmediateMacroCallerLoc(loc);
     }

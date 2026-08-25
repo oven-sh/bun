@@ -22,8 +22,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import type { Ninja } from "./ninja.ts";
@@ -96,6 +96,10 @@ export function emitExceptionLint(n: Ninja, cfg: Config): ExceptionLintOpts | un
   const plugin = exceptionLintPluginPath(cfg);
   const source = lintSource(cfg);
   const data = lintDataFiles(cfg);
+
+  // Output dirs are created at configure time, like the object dirs
+  // (configure.ts mkdirAll only sees output.objects).
+  mkdirSync(dirname(plugin), { recursive: true });
 
   n.comment("─── jsc-exception-lint plugin ───");
   n.blank();

@@ -25,12 +25,22 @@ tens of milliseconds per translation unit (300 ms for `bindings.cpp`, the
 largest). Building the plugin itself is one extra edge of 10 to 20 seconds
 that runs in parallel with the PCH.
 
-It is on when the target is not Windows and clang's development headers are
+It is on in assertion builds (debug, asan: every `bun bd` and the CI asan
+lane) when the target is not Windows and clang's development headers are
 installed next to the compiler (`include/clang/Frontend/FrontendPluginRegistry.h`
 and `lib/libclang-cpp.*`; apt: `libclang-21-dev` and `libclang-cpp21-dev`,
 both part of `llvm.sh 21 all`; brew: part of `llvm`). Turn it off with
 `bun bd --exceptionLint=off`. `--exceptionLint=on` fails configure with the
-reason when the headers are missing.
+reason when the headers are missing or assertions are off.
+
+Assertion builds only, because the check models the validator, which exists
+under `ASSERT_ENABLED`. There `ThrowScope` has a destructor that asserts on
+an unchecked exception, and the analysis reports at that destructor. In a
+plain release build the destructor is trivial and is not in the CFG, so a
+function that returns with a check pending cannot be reported, and the
+result would depend on the build type. `RETURN_IF_EXCEPTION` and
+`EXCEPTION_ASSERT` are still understood in a release build: the tool treats
+their expansions as a check whether or not the assertion is compiled in.
 
 Three kinds of input, all under this directory and all implicit inputs of
 every C++ compile (a change recompiles everything, through ccache too):

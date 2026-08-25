@@ -868,7 +868,7 @@ pub enum SourceHandle {
     ShellWritable(BackRef<crate::shell::subproc::Writable, bun_ptr::Mut>),
     FetchResponseBody(BackRef<crate::webcore::fetch::fetch_tasklet::FetchTasklet, bun_ptr::Mut>),
     ServerRequestBody(crate::server::AnyRequestContext),
-    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper, bun_ptr::Mut>),
+    S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
     /// `bun:internal-for-testing` only: `ready()` re-enters the stream's
     /// `on_cancel`, making consumed-during-`signal_drained` re-entrancy
@@ -907,10 +907,8 @@ impl SourceHandle {
             SourceHandle::Subprocess(p) => p.on_close(err),
             // SAFETY: live backref; cleared before the pointee is freed.
             SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::FetchResponseBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::S3DownloadBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
+            SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
             SourceHandle::TestingCancelOnDrain(_) => {}
@@ -934,13 +932,12 @@ impl SourceHandle {
             SourceHandle::FetchResponseBody(p) => p.on_ready(),
             SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
             SourceHandle::HTMLRewriter(p) => p.on_ready(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_drained(),
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
             }
             // Remaining variants leave `on_ready` at the trait default (no-op).
-            SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_) => {}
+            SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
         }
     }
 
@@ -950,6 +947,7 @@ impl SourceHandle {
     pub fn consumer_collected(self) {
         match self {
             SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
+            SourceHandle::S3DownloadBody(p) => p.on_stream_collected(),
             SourceHandle::None
             | SourceHandle::JSController(_)
             | SourceHandle::ServerRequestBody(_)
@@ -957,7 +955,6 @@ impl SourceHandle {
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }
@@ -966,6 +963,7 @@ impl SourceHandle {
     pub fn start(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),
+            SourceHandle::S3DownloadBody(p) => p.on_consumer_attached(),
             // Remaining variants leave `on_start` at the trait default (no-op).
             SourceHandle::None
             | SourceHandle::JSController(_)
@@ -974,7 +972,6 @@ impl SourceHandle {
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
-            | SourceHandle::S3DownloadBody(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }
@@ -2113,6 +2110,10 @@ pub struct NetworkSink {
     pub(crate) upstream_error: jsc::strong::Optional,
     pub(crate) ended: bool,
     pub(crate) done: bool,
+    /// `s3file.writer()`: the box is referenced by the JS wrapper (`finalize`) and by the upload's
+    /// completion callback; whichever lets go last frees it. 0 = owned elsewhere
+    /// (`S3UploadStreamWrapper`).
+    pub(crate) writer_holders: core::cell::Cell<u8>,
 }
 
 impl Default for NetworkSink {
@@ -2128,6 +2129,7 @@ impl Default for NetworkSink {
             upstream_error: jsc::strong::Optional::empty(),
             ended: false,
             done: false,
+            writer_holders: core::cell::Cell::new(0),
         }
     }
 }
@@ -2183,6 +2185,24 @@ impl NetworkSink {
 
     pub fn finalize(&mut self) {
         self.detach_writable();
+    }
+
+    /// One of the `writer_holders` is done with the box.
+    ///
+    /// # Safety
+    /// `this` is the live heap box from `writable()`; not used by the caller afterwards.
+    pub(crate) unsafe fn release_writer_holder(this: *mut NetworkSink) {
+        // SAFETY: fn contract.
+        unsafe {
+            let holders = (*this).writer_holders.get();
+            if holders == 0 {
+                return;
+            }
+            (*this).writer_holders.set(holders - 1);
+            if holders == 1 {
+                drop(bun_core::heap::take(this));
+            }
+        }
     }
 
     fn detach_writable(&mut self) {
@@ -2477,10 +2497,11 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     crate::impl_js_sink_forwarders!();
 
     unsafe fn finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is live, and the inherent `finalize`
-        // only releases the ref on the separate `MultiPartUpload`, never this
-        // sink, so the `&mut` scoped to this call stays valid throughout.
-        unsafe { (*this).finalize() }
+        // SAFETY: trait contract — `this` is live and not used after this call.
+        unsafe {
+            (*this).finalize();
+            Self::release_writer_holder(this);
+        }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

@@ -683,8 +683,8 @@ impl ClientSession {
         self.by_http_id.get(&async_http_id).copied()
     }
 
-    /// JS just enabled `response_body_streaming` on the request, so flush any
-    /// body bytes that arrived between metadata delivery and `getReader()`.
+    /// A body consumer attached on the JS side: flush any body bytes that arrived between
+    /// metadata delivery and `getReader()`.
     fn drain_response_body(&mut self, async_http_id: u32) {
         let Some(stream) = self.stream_for_http_id(async_http_id) else {
             return;

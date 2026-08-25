@@ -1016,6 +1016,10 @@ static std::optional<bool> rsisWriteChunk(JSC::VM& vm, JSGlobalObject* globalObj
     bool shouldSuspend = wrote.isNumber() && wrote.asNumber() < 0;
     if (auto* wrotePromise = dynamicDowncast<JSPromise>(wrote)) {
         markPromiseAsHandled(vm, wrotePromise);
+        if (wrotePromise->status() == JSPromise::Status::Rejected) {
+            throwException(globalObject, scope, wrotePromise->result());
+            return std::nullopt;
+        }
         shouldSuspend = wrotePromise->status() == JSPromise::Status::Pending;
     }
     if (shouldSuspend) {

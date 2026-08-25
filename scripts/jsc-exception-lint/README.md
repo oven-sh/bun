@@ -52,10 +52,12 @@ every C++ compile (a change recompiles everything, through ccache too):
   are kept.
 - `baseline.tsv`: findings that are known and tolerated while they are
   being fixed. One per line: `<file>\t<function>\t<kind>\t<callee>`, the
-  file relative to the repo root. An entry that no longer fires is a
-  warning that names it, so the list only shrinks. Fix the finding instead
-  of adding to this file. If the finding is a false positive, add the
-  callee to `nothrow.txt`.
+  file relative to the repo root, names without template arguments, a
+  lambda as `<lambda at file>`: no line numbers, so an edit elsewhere in
+  the file does not change a key. The error note prints the key. An entry
+  that no longer fires is a warning that names it, so the list only
+  shrinks. Fix the finding instead of adding to this file. If the finding
+  is a false positive, add the callee to `nothrow.txt`.
 
 A finding in a header is reported by the compile of the `.cpp` with the
 same stem, or by every compile when no such file exists.

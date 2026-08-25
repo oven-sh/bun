@@ -1331,9 +1331,12 @@ static std::string relativeToRoot(const std::string &file) {
   return file;
 }
 
-// A name without its template arguments: one baseline entry covers every
-// instantiation of a template (each translation unit may instantiate
-// different ones). `<lambda at file:line>` is kept; it is the lambda's name.
+// A name as it appears in a baseline key: without its template arguments,
+// so one entry covers every instantiation of a template (each translation
+// unit may instantiate different ones), and with the line number taken off
+// `<lambda at file:line>`, so an edit above the lambda does not change the
+// key. The lambdas of one file that share a function, kind and callee then
+// share an entry.
 static std::string stripTemplateArgs(const std::string &name) {
   std::string out;
   int depth = 0;
@@ -1343,7 +1346,10 @@ static std::string stripTemplateArgs(const std::string &name) {
       size_t close = name.find('>', i);
       if (close == std::string::npos)
         return name;
-      out += name.substr(i, close - i + 1);
+      size_t colon = name.rfind(':', close);
+      size_t end = colon != std::string::npos && colon > i ? colon : close;
+      out += name.substr(i, end - i);
+      out += '>';
       i = close;
       continue;
     }

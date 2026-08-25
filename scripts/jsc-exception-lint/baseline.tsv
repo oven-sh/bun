@@ -3,7 +3,7 @@
 # The build warns about an entry that no longer fires: remove it then. Do not add
 # to this file to silence a new finding; fix it, or add the callee to nothrow.txt
 # if it cannot throw.
-src/jsc/bindings/Algo/Tuple.h	Bun::Algo::Tuple::detail::forEachIndexedImpl	pending-call	<lambda at Undici.cpp:53>
+src/jsc/bindings/Algo/Tuple.h	Bun::Algo::Tuple::detail::forEachIndexedImpl	pending-call	<lambda at Undici.cpp>
 src/jsc/bindings/ErrorCode.cpp	Bun::determineSpecificType	unchecked-exit	Bun::JSValueToStringSafe
 src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode	pending-call	Bun::JSValueToStringSafe
 src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode	pending-call	JSC::JSObject::getIndex
@@ -12,14 +12,13 @@ src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode	pending-call	JSC
 src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode	pending-call	JSC::throwTypeError
 src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode	unchecked-exit	JSC::JSValue::toInt32
 src/jsc/bindings/JSBufferEncodingType.cpp	WebCore::parseEnumerationAllowBufferInternal	pending-call	JSC::JSString::view
-src/jsc/bindings/JSBundlerPlugin.cpp	<lambda at JSBundlerPlugin.cpp:567>	pending-call	BunString::transferToJS
-src/jsc/bindings/JSBundlerPlugin.cpp	<lambda at JSBundlerPlugin.cpp:580>	pending-call	BunString::transferToJS
+src/jsc/bindings/JSBundlerPlugin.cpp	<lambda at JSBundlerPlugin.cpp>	pending-call	BunString::transferToJS
 src/jsc/bindings/JSMockFunction.cpp	Bun::JSMockFunction::getCalls	scope-while-pending	JSC::constructEmptyArray
 src/jsc/bindings/JSMockFunction.cpp	Bun::JSMockFunction::getContexts	scope-while-pending	JSC::constructEmptyArray
 src/jsc/bindings/JSMockFunction.cpp	Bun::JSMockFunction::getInstances	scope-while-pending	JSC::constructEmptyArray
 src/jsc/bindings/JSMockFunction.cpp	Bun::JSMockFunction::getInvocationCallOrder	scope-while-pending	JSC::constructEmptyArray
 src/jsc/bindings/JSMockFunction.cpp	Bun::JSMockFunction::getReturnValues	scope-while-pending	JSC::constructEmptyArray
-src/jsc/bindings/JSMockFunction.cpp	Bun::forEachMockInSet	pending-call	<lambda at JSMockFunction.cpp:631>
+src/jsc/bindings/JSMockFunction.cpp	Bun::forEachMockInSet	pending-call	<lambda at JSMockFunction.cpp>
 src/jsc/bindings/JSMockFunction.cpp	Bun::jsMockFunctionCall	unchecked-exit	JSC::JSObject::putDirectIndex
 src/jsc/bindings/JSMockFunction.cpp	Bun::jsMockFunctionGetter_mockGetLastCall	unchecked-exit	JSC::JSObject::getIndex
 src/jsc/bindings/JSMockFunction.cpp	Bun::jsMockFunctionWithImplementation	pending-call	JSC::call
@@ -60,8 +59,8 @@ src/jsc/bindings/napi.cpp	Zig::napi_get_all_property_names	pending-call	JSC::JSS
 src/jsc/bindings/napi.cpp	Zig::napi_get_all_property_names	pending-call	JSC::JSValue::toPropertyKey
 src/jsc/bindings/napi.cpp	Zig::napi_new_instance	unchecked-exit	nested ThrowScope
 src/jsc/bindings/sqlite/JSSQLStatement.cpp	WebCore::rebindStatement	pending-call	WebCore::rebindValue
-src/jsc/bindings/sqlite/NodeSqlite.cpp	Bun::jsNodeSqliteBackup	thrown-call	<lambda at NodeSqlite.cpp:3947>
-src/jsc/bindings/sqlite/NodeSqlite.cpp	Bun::nodeSqliteAuthorizerCallback	unchecked-exit	<lambda at NodeSqlite.cpp:1911>
+src/jsc/bindings/sqlite/NodeSqlite.cpp	Bun::jsNodeSqliteBackup	thrown-call	<lambda at NodeSqlite.cpp>
+src/jsc/bindings/sqlite/NodeSqlite.cpp	Bun::nodeSqliteAuthorizerCallback	unchecked-exit	<lambda at NodeSqlite.cpp>
 src/jsc/bindings/v8/V8CpuProfiler.cpp	v8::CpuProfiler::StopProfiling	pending-call	v8::CpuProfiler::Stop
 src/jsc/bindings/v8/V8Isolate.cpp	v8::Isolate::ThrowError	pending-call	JSC::throwException
 src/jsc/bindings/webcore/JSMIMEParams.cpp	WebCore::jsMIMEParamsProtoFuncToString	pending-call	JSC::JSMapIterator::next
@@ -84,4 +83,4 @@ src/runtime/bake/BakeGlobalObject.cpp	Bake::bakeModuleLoaderResolve	unchecked-ex
 src/runtime/bake/BakeSourceProvider.cpp	Bake::BakeGetDefaultExportFromModule	pending-call	JSC::JSObject::get
 src/runtime/bake/BakeSourceProvider.cpp	Bake::BakeGetModuleNamespace	pending-call	JSC::JSModuleLoader::getModuleNamespaceObject
 src/runtime/bake/BakeSourceProvider.cpp	Bake::BakeLoadModuleByKey	pending-call	JSC::loadAndEvaluateModule
-src/runtime/webview/JSWebViewConstructor.cpp	Bun::constructWebView	pending-call	<lambda at JSWebViewConstructor.cpp:152>
+src/runtime/webview/JSWebViewConstructor.cpp	Bun::constructWebView	pending-call	<lambda at JSWebViewConstructor.cpp>

@@ -21,6 +21,7 @@ import {
   resolveConfig,
 } from "./config.ts";
 import { BuildError } from "./error.ts";
+import { exceptionLintConfigureInputs } from "./exception-lint.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
@@ -125,7 +126,14 @@ function configureInputs(cwd: string): string[] {
     .map(f => resolve(buildDir, f));
   const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
-  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
+  return [
+    ...scripts,
+    ...deps,
+    resolve(cwd, "scripts", "glob-sources.ts"),
+    resolve(cwd, "package.json"),
+    // Their digest is a compiler flag (data-hash=, see exception-lint.ts).
+    ...exceptionLintConfigureInputs(cwd),
+  ].sort();
 }
 
 /**

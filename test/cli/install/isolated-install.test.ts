@@ -2052,6 +2052,102 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   );
 });
 
+// https://github.com/oven-sh/bun/issues/40466
+// Two registry URLs sharing one install cache. The extracted-tarball cache key
+// has no port, so the warmup's strict-peer-dep tarball is reused by the second
+// registry, while the manifest cache is keyed by registry URL hash and is not.
+// The cold install then fetches strict-peer-dep's manifest as its last pending
+// task, resolves the package with no new task (tarball already extracted), and
+// defers its peer `no-deps@^2.0.0`. Without the fix nothing wakes the wait
+// loop again and `bun install` hangs in "Resolving dependencies" forever.
+test("transitive peer resolves when its tarball is cached from another registry", async () => {
+  const packagesDir = join(import.meta.dir, "registry", "packages");
+
+  function serveFixtures() {
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const pathname = new URL(req.url).pathname;
+
+        // Tarball: /<name>/-/<name>-<version>.tgz
+        if (pathname.endsWith(".tgz")) {
+          const match = pathname.match(/\/([^/]+)\/-\/(.+\.tgz)$/);
+          if (match) {
+            const tarball = file(join(packagesDir, match[1], match[2]));
+            if (await tarball.exists()) {
+              return new Response(tarball, {
+                headers: { "Content-Type": "application/octet-stream" },
+              });
+            }
+          }
+          return new Response("Not found", { status: 404 });
+        }
+
+        // Manifest: /<name>
+        const packageName = decodeURIComponent(pathname.slice(1));
+        const metaFile = file(join(packagesDir, packageName, "package.json"));
+        if (!(await metaFile.exists())) {
+          return new Response("Not found", { status: 404 });
+        }
+
+        const meta = await metaFile.json();
+        for (const [ver, info] of Object.entries(meta.versions ?? {}) as [string, any][]) {
+          if (info?.dist?.tarball) {
+            info.dist.tarball = `http://localhost:${server.port}/${packageName}/-/${packageName}-${ver}.tgz`;
+          }
+        }
+
+        return new Response(JSON.stringify(meta), {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "public, max-age=300",
+          },
+        });
+      },
+    });
+    return server;
+  }
+
+  using serverA = serveFixtures();
+  using serverB = serveFixtures();
+
+  using root = tempDir("transitive-peer-two-registries-", {
+    "warmup/package.json": JSON.stringify({
+      name: "warmup",
+      dependencies: { "strict-peer-dep": "1.0.0" },
+    }),
+    "cold/package.json": JSON.stringify({
+      name: "cold",
+      dependencies: { "no-deps": "1.0.0", "uses-strict-peer": "1.0.0" },
+    }),
+  });
+  const cacheDir = join(String(root), "cache").replaceAll("\\", "\\\\");
+  const bunfig = (port: number) =>
+    `[install]\ncache = "${cacheDir}"\nregistry = "http://localhost:${port}/"\nlinker = "isolated"\n`;
+  await write(join(String(root), "warmup", "bunfig.toml"), bunfig(serverA.port));
+  await write(join(String(root), "cold", "bunfig.toml"), bunfig(serverB.port));
+
+  // Caches strict-peer-dep's manifest (registry A's URL hash) and extracts its
+  // tarball (shared across registries).
+  await runBunInstall(bunEnv, join(String(root), "warmup"), { allowWarnings: true });
+
+  // Hangs forever without the fix.
+  await runBunInstall(bunEnv, join(String(root), "cold"), { allowWarnings: true });
+
+  const bunDir = join(String(root), "cold", "node_modules", ".bun");
+  const entries = await readdirSorted(bunDir);
+  const strictPeerEntry = entries.find(e => e.startsWith("strict-peer-dep@1.0.0"));
+  const usesStrictEntry = entries.find(e => e.startsWith("uses-strict-peer@1.0.0"));
+  expect(strictPeerEntry).toBeDefined();
+  expect(usesStrictEntry).toBeDefined();
+
+  // The deferred transitive peer must end up resolved and linked.
+  expect(existsSync(join(bunDir, strictPeerEntry!, "node_modules", "no-deps"))).toBe(true);
+  expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
+    join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
+  );
+});
+
 // https://github.com/oven-sh/bun/issues/36987
 // A tarball URL with a query string must not put a literal `?` in the .bun
 // store directory name: module resolution parses `?` as a query-string

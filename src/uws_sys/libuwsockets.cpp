@@ -1470,6 +1470,79 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return uwsReq->getHasTransferEncoding();
   }
 
+  /* Copies the request head into `dest` for `RequestHeadSnapshot`
+   * (src/runtime/webcore/request_head.rs), which reads this layout:
+   *
+   *   uint32_t count;                                 header fields
+   *   uint32_t target[2];                             offset, length
+   *   uint32_t field[count][4];                       name offset, name length,
+   *                                                   value offset, value length
+   *   char block[];                                   the wire bytes from the
+   *                                                   request target through the
+   *                                                   last header value
+   *
+   * Offsets are relative to `block`. The parser stores every name and value as
+   * a view into one receive buffer, in wire order, so one memcpy of that range
+   * is the whole copy. Returns the size the copy needs and writes nothing when
+   * that is more than `capacity`. */
+  size_t uws_req_copy_head(uws_req_t *res, char *dest, size_t capacity)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    std::string_view target = uwsReq->getFullUrl();
+    const char *blockBegin = target.data();
+    const char *blockEnd = target.data() + target.length();
+    uint32_t count = 0;
+    auto extend = [&](std::string_view view) {
+      if (view.data() == nullptr)
+      {
+        return;
+      }
+      if (view.data() < blockBegin)
+      {
+        blockBegin = view.data();
+      }
+      if (view.data() + view.length() > blockEnd)
+      {
+        blockEnd = view.data() + view.length();
+      }
+    };
+    for (auto [key, value] : *uwsReq)
+    {
+      count++;
+      extend(key);
+      extend(value);
+    }
+    size_t blockLength = (size_t)(blockEnd - blockBegin);
+    size_t needed = sizeof(uint32_t) * (3 + 4 * (size_t)count) + blockLength;
+    if (needed > capacity)
+    {
+      return needed;
+    }
+
+    /* `dest` is byte-aligned, so every uint32_t goes through memcpy. */
+    auto putU32 = [&dest](uint32_t value) {
+      memcpy(dest, &value, sizeof(value));
+      dest += sizeof(value);
+    };
+    auto putView = [&](std::string_view view) {
+      /* An absent value reads as an empty one at offset 0. */
+      putU32(view.data() ? (uint32_t)(view.data() - blockBegin) : 0);
+      putU32((uint32_t)view.length());
+    };
+    putU32(count);
+    putView(target);
+    for (auto [key, value] : *uwsReq)
+    {
+      putView(key);
+      putView(value);
+    }
+    if (blockLength > 0)
+    {
+      memcpy(dest, blockBegin, blockLength);
+    }
+    return needed;
+  }
+
   us_socket_t *uws_res_upgrade(int ssl, uws_res_r res, void *data,
                              const char *sec_web_socket_key,
                              size_t sec_web_socket_key_length,

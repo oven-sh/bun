@@ -5,8 +5,10 @@ use core::ptr::NonNull;
 use std::borrow::Cow;
 
 use bun_jsc::JsCell;
+use bun_uws as uws;
 use enumset::EnumSet;
 
+use super::request_head::RequestHeadSnapshot;
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
@@ -84,6 +86,10 @@ pub struct Request {
     pub(crate) url: JsCell<BunString>,
 
     headers: JsCell<Option<HeadersRef>>,
+    /// Copy of the uWS request head, taken by the server when that request goes
+    /// out of scope before JS read `url` or `headers`. The lazy getters fall back
+    /// to it once `request_context` no longer has a live uWS request.
+    head: JsCell<Option<RequestHeadSnapshot>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
     // `Arc` of an opaque ZST is meaningless (its payload address is not the
     // C++ object). `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes
@@ -236,6 +242,30 @@ impl Request {
         self.headers.set(headers);
     }
 
+    /// Where the lazy `url`/`headers` getters read the request head from, for a
+    /// `Request` that `Bun.serve` created. `None` for a `Request` built by JS.
+    fn request_head(&self) -> Option<RequestHead<'_>> {
+        if let Some(req) = self.request_context.get_request() {
+            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
+            return Some(RequestHead::Uws(bun_opaque::opaque_deref(req)));
+        }
+        self.head.get().as_ref().map(RequestHead::Snapshot)
+    }
+
+    /// The server calls this when a handler responded synchronously and the uWS
+    /// request `request_context` points at is about to go out of scope. Copies
+    /// what the lazy `url`/`headers` getters still need from it, unless JS
+    /// already read both. (An async handler gets both built eagerly instead, in
+    /// `RequestContext::to_async`.)
+    pub(crate) fn snapshot_request_head(&self, req: &uws::Request) {
+        if self.head.get().is_some()
+            || (!self.url.get().is_empty() && self.headers.get().is_some())
+        {
+            return;
+        }
+        self.head.set(Some(RequestHeadSnapshot::capture(req)));
+    }
+
     /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
     /// If the headers are empty, it will look at request_context to get the headers.
     /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
@@ -249,11 +279,8 @@ impl Request {
             return Ok(self.headers_mut().as_mut().unwrap());
         }
 
-        if let Some(req) = self.request_context.get_request() {
-            // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(
-                req.cast::<core::ffi::c_void>(),
-            )));
+        if let Some(head) = self.request_head() {
+            self.headers.set(Some(head.to_fetch_headers()));
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
@@ -298,11 +325,8 @@ impl Request {
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
         if self.headers.get().is_none() {
-            if let Some(req) = self.request_context.get_request() {
-                // we have a request context, so we can get the headers from it
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    req.cast::<core::ffi::c_void>(),
-                )));
+            if let Some(head) = self.request_head() {
+                self.headers.set(Some(head.to_fetch_headers()));
             }
         }
 
@@ -323,10 +347,8 @@ impl Request {
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
         if self.headers.get().is_none() {
-            if let Some(uws_req) = self.request_context.get_request() {
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    uws_req.cast::<core::ffi::c_void>(),
-                )));
+            if let Some(head) = self.request_head() {
+                self.headers.set(Some(head.to_fetch_headers()));
             }
         }
 
@@ -342,10 +364,8 @@ impl Request {
     }
 
     pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
-        if let Some(req) = self.request_context.get_request() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
-            let req = bun_opaque::opaque_deref(req);
-            if let Some(value) = req.header(b"content-type") {
+        if let Some(head) = self.request_head() {
+            if let Some(value) = head.header(b"content-type") {
                 return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
             }
         }
@@ -367,11 +387,48 @@ impl Request {
     }
 }
 
+/// The request head a `Bun.serve` `Request` reads `url` and `headers` from.
+enum RequestHead<'a> {
+    /// The uWS request. Live only while the server dispatch is on the stack.
+    Uws(&'a uws::Request),
+    /// The copy the server took when that dispatch ended.
+    Snapshot(&'a RequestHeadSnapshot),
+}
+
+impl<'a> RequestHead<'a> {
+    /// The request target from the request line (path and query).
+    fn target(&self) -> &'a [u8] {
+        match *self {
+            Self::Uws(req) => req.url(),
+            Self::Snapshot(head) => head.target(),
+        }
+    }
+
+    fn header(&self, lowercase_name: &[u8]) -> Option<&'a [u8]> {
+        match *self {
+            Self::Uws(req) => req.header(lowercase_name),
+            Self::Snapshot(head) => head.header(lowercase_name),
+        }
+    }
+
+    fn to_fetch_headers(&self) -> HeadersRef {
+        match *self {
+            Self::Uws(req) => HeadersRef::create_from_uws(
+                core::ptr::from_ref::<uws::Request>(req)
+                    .cast_mut()
+                    .cast::<core::ffi::c_void>(),
+            ),
+            Self::Snapshot(head) => head.to_fetch_headers(),
+        }
+    }
+}
+
 impl Request {
     pub(crate) fn memory_cost(&self) -> usize {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
+            + self.head.get().as_ref().map_or(0, RequestHeadSnapshot::memory_cost)
             + self.body_value().memory_cost()
     }
 
@@ -423,6 +480,7 @@ impl Request {
         Request {
             url: JsCell::new(url),
             headers: JsCell::new(headers),
+            head: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
@@ -708,6 +766,7 @@ impl Request {
     pub(crate) fn finalize_without_deinit(&mut self) {
         // headers.deref() → HeadersRef::Drop when set to None
         self.headers.set(None);
+        self.head.set(None);
 
         self.url.set(BunString::EMPTY);
 
@@ -771,12 +830,10 @@ impl Request {
             return url.byte_slice().len();
         }
 
-        if let Some(req) = self.request_context.get_request() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
-            let req = bun_opaque::opaque_deref(req);
-            let req_url = Self::request_target_path(req.url());
+        if let Some(head) = self.request_head() {
+            let req_url = Self::request_target_path(head.target());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req
+                if let Some(host) = head
                     .header(b"host")
                     .filter(|host| Self::is_valid_host_header(host))
                 {
@@ -863,12 +920,10 @@ impl Request {
             return Ok(());
         }
 
-        if let Some(req) = self.request_context.get_request() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
-            let req = bun_opaque::opaque_deref(req);
-            let req_url = Self::request_target_path(req.url());
+        if let Some(head) = self.request_head() {
+            let req_url = Self::request_target_path(head.target());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req
+                if let Some(host) = head
                     .header(b"host")
                     .filter(|host| Self::is_valid_host_header(host))
                 {
@@ -987,6 +1042,7 @@ impl Request {
         let mut req = Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
+            head: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
@@ -1494,6 +1550,7 @@ impl Request {
                 Request {
                     url: JsCell::new(url),
                     headers: JsCell::new(headers),
+                    head: JsCell::new(None),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
                     js_ref: JsCell::new(JsRef::empty()),
@@ -1520,6 +1577,7 @@ impl Request {
         let mut req = Box::new(Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
+            head: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
             // sentinel; seed with a non-deref'd dangling handle. `ManuallyDrop`
@@ -1552,6 +1610,7 @@ impl Request {
         Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
+            head: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),

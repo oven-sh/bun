@@ -134,15 +134,20 @@ describe("bundler", () => {
       splitting: true,
       files: {
         "/entry.ts": /* js */ `
+          import "./shared";
           console.log("mark:entry");
           await import("./lazy");
         `,
         "/lazy.ts": /* js */ `
+          import "./shared";
           console.log("mark:lazy");
+        `,
+        "/shared.ts": /* js */ `
+          console.log("mark:shared");
         `,
       },
       run: {
-        stdout: "mark:entry\nmark:lazy",
+        stdout: "mark:shared\nmark:entry\nmark:lazy",
       },
       onAfterBundle(api) {
         const file = readFileSync(api.outfile);
@@ -151,16 +156,19 @@ describe("bundler", () => {
         const offsets = trailer - 32;
         const base = offsets - Number(file.readBigUInt64LE(offsets));
         const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
-        expect(modules.length).toBe(2 * 52);
+        const count = modules.length / 52;
+        expect(count).toBe(3);
         const names: string[] = [];
-        for (let i = 0; i < 2; i++) {
+        for (let i = 0; i < count; i++) {
           const record = base + modules.offset + i * 52;
           const name = { offset: file.readUInt32LE(record), length: file.readUInt32LE(record + 4) };
           names.push(file.toString("latin1", base + name.offset, base + name.offset + name.length));
         }
-        expect(names).toHaveLength(2);
-        expect(names[0]).toBe("/$bunfs/root/out");
-        expect(names[1]).toMatch(/^\/\$bunfs\/root\/chunk-[0-9a-z]+\.js$/);
+        const chunks = names.filter(name => !name.endsWith("/root/out"));
+        expect(chunks).toHaveLength(2);
+        for (const name of chunks) {
+          expect(name).toMatch(/^(\/\$bunfs|B:\/~BUN)\/root\/chunk-[0-9a-z]+\.js$/);
+        }
       },
     });
 

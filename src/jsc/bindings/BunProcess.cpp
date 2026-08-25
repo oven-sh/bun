@@ -662,6 +662,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             if (auto* const* nodeModule = std::get_if<node::node_module*>(&registration)) {
                 node::node_module_register(*nodeModule);
                 RETURN_IF_EXCEPTION(scope, {});
+                if (JSValue thrown = globalObject->m_pendingNapiModuleAndExports[0].get(); thrown && thrown != strongModule.get()) {
+                    JSC::throwException(globalObject, scope, thrown);
+                    return {};
+                }
             } else {
                 napi_module_register(std::get<napi_module*>(registration));
             }

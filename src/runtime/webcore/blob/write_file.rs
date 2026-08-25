@@ -136,7 +136,7 @@ impl FileOpener for WriteFile {
     fn set_system_error(&mut self, e: SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &PathOrFileDescriptor {
+    fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
         &self
             .file_blob
             .store

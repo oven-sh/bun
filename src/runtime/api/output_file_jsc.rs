@@ -23,7 +23,7 @@ use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 /// Heap-dupe `path` into an owning `PathLike` so the resulting `Blob.Store`
 /// outlives the borrowed source.
 #[inline]
-fn dupe_path_like(path: &[u8]) -> PathLike {
+fn dupe_path_like(path: &[u8]) -> PathLike<'static> {
     PathLike::Utf8(Utf8Bytes::Owned(path.to_vec()))
 }
 

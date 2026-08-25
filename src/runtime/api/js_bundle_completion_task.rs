@@ -508,19 +508,19 @@ impl JSBundleCompletionTask {
                         // SAFETY: `Buffer` arm checked above.
                         _ => unsafe { core::hint::unreachable_unchecked() },
                     };
-                    let write_args = fs_args::WriteFile {
-                        flag: FileSystemFlags::W,
-                        mode: node_fs::DEFAULT_PERMISSION,
-                        // SAFETY: `write_file_with_path_buffer` is synchronous;
-                        // `write_path` outlives the call.
-                        file: PathOrFileDescriptor::Path(unsafe { PathLike::borrowed(write_path) }),
-                        flush: false,
-                        // SAFETY: as above; `output_files[i]` outlives the call.
-                        data: unsafe { StringOrBuffer::borrowed(bytes) },
-                        dirfd: root_dir.fd,
-                        signal: None,
-                    };
-                    match NodeFS::write_file_with_path_buffer(&mut pathbuf, &write_args) {
+                    let write_result = NodeFS::write_file_with_path_buffer(
+                        &mut pathbuf,
+                        &fs_args::WriteFile {
+                            flag: FileSystemFlags::W,
+                            mode: node_fs::DEFAULT_PERMISSION,
+                            file: PathOrFileDescriptor::Path(PathLike::borrowed(write_path)),
+                            flush: false,
+                            data: StringOrBuffer::borrowed(bytes),
+                            dirfd: root_dir.fd,
+                            signal: None,
+                        },
+                    );
+                    match write_result {
                         Err(err) => {
                             bun_core::Output::err(
                                 err,

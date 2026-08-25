@@ -73,7 +73,7 @@ pub struct NodeHTTPResponse {
     /// `Utf8WithString` (holds the WTFStringImpl ref) or a `Buffer`
     /// view. The cached `pendingWriteBuffer` slot GC-roots the JS cell; for
     /// buffers the underlying ArrayBuffer is additionally `pin()`ed.
-    pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer>,
+    pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer<'static>>,
 
     pub(crate) upgrade_context: JsCell<UpgradeCTX>,
 

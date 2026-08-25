@@ -118,10 +118,12 @@ it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
 `Utf8WithString` (`String::into_utf8_with_string[_thread_safe]()`) keeps the
 UTF-8 bytes _and_ the source `String` so the value can go back to JS without
 re-encoding; `Utf8WithString::js_only(string)` wraps an output-only string.
-`PathLike` / `StringOrBuffer` arms: `String`/`ThreadsafeString`
-(`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'static>)` (transcoded
-JS string, or Rust-side bytes: `unsafe { PathLike::borrowed(bytes) }` for a
-synchronous lend, `Owned` when the value must own them), `Buffer`.
+`PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadsafeString`
+(`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'a>)` (transcoded JS
+string, or Rust-side bytes: `PathLike::borrowed(bytes)` lends `&'a [u8]` to a
+synchronous call, `Owned` when the value must own them), `Buffer`. Anything
+parsed from JS, stored, or sent to another thread (`to_thread_safe`,
+`ThreadSafe<T>`, the fs `args::*<'static>` async path) is `'static`.
 
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
 borrowed view handed to C++. Constructors name the encoding of the bytes:

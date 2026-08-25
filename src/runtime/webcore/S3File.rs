@@ -237,7 +237,7 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 fn construct_s3_file_internal_store(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
 ) -> JsResult<Blob> {
     // get credentials from env — `Transpiler::env_mut` is the safe accessor
@@ -256,7 +256,7 @@ fn construct_s3_file_internal_store(
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it
 pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
     default_credentials: &s3::S3Credentials,
     default_options: s3::MultiPartUploadOptions,
@@ -290,7 +290,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
 
 pub(crate) fn construct_s3_file_with_s3_credentials(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
     existing_credentials: &s3::S3Credentials,
 ) -> JsResult<Blob> {
@@ -347,7 +347,7 @@ fn finish_s3_blob(
 
 fn construct_s3_file_internal(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
 ) -> JsResult<*mut Blob> {
     Ok(Blob::new(construct_s3_file_internal_store(
@@ -696,7 +696,7 @@ pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
 pub(crate) fn construct_internal_js(
     global: &JSGlobalObject,
-    path: PathLike,
+    path: PathLike<'static>,
     options: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let blob = construct_s3_file_internal(global, path, options)?;

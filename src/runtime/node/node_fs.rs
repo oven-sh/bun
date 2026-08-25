@@ -488,16 +488,21 @@ mod _async_tasks {
         use super::*;
 
         pub(crate) type Access =
-            AsyncFSTask<ret::Access, args::Access, { NodeFSFunctionEnum::Access }>;
-        pub(crate) type AppendFile =
-            AsyncFSTask<ret::AppendFile, args::AppendFile, { NodeFSFunctionEnum::AppendFile }>;
-        pub(crate) type Chmod = AsyncFSTask<ret::Chmod, args::Chmod, { NodeFSFunctionEnum::Chmod }>;
-        pub(crate) type Chown = AsyncFSTask<ret::Chown, args::Chown, { NodeFSFunctionEnum::Chown }>;
+            AsyncFSTask<ret::Access, args::Access<'static>, { NodeFSFunctionEnum::Access }>;
+        pub(crate) type AppendFile = AsyncFSTask<
+            ret::AppendFile,
+            args::AppendFile<'static>,
+            { NodeFSFunctionEnum::AppendFile },
+        >;
+        pub(crate) type Chmod =
+            AsyncFSTask<ret::Chmod, args::Chmod<'static>, { NodeFSFunctionEnum::Chmod }>;
+        pub(crate) type Chown =
+            AsyncFSTask<ret::Chown, args::Chown<'static>, { NodeFSFunctionEnum::Chown }>;
         pub(crate) type Close = UVFSRequest<ret::Close, args::Close, { NodeFSFunctionEnum::Close }>;
         pub(crate) type CopyFile =
-            AsyncFSTask<ret::CopyFile, args::CopyFile, { NodeFSFunctionEnum::CopyFile }>;
+            AsyncFSTask<ret::CopyFile, args::CopyFile<'static>, { NodeFSFunctionEnum::CopyFile }>;
         pub(crate) type Exists =
-            AsyncFSTask<ret::Exists, args::Exists, { NodeFSFunctionEnum::Exists }>;
+            AsyncFSTask<ret::Exists, args::Exists<'static>, { NodeFSFunctionEnum::Exists }>;
         pub(crate) type Fchmod =
             AsyncFSTask<ret::Fchmod, args::FChmod, { NodeFSFunctionEnum::Fchmod }>;
         pub(crate) type Fchown =
@@ -511,49 +516,62 @@ mod _async_tasks {
         pub(crate) type Futimes =
             AsyncFSTask<ret::Futimes, args::Futimes, { NodeFSFunctionEnum::Futimes }>;
         pub(crate) type Lchmod =
-            AsyncFSTask<ret::Lchmod, args::LCHmod, { NodeFSFunctionEnum::Lchmod }>;
+            AsyncFSTask<ret::Lchmod, args::LCHmod<'static>, { NodeFSFunctionEnum::Lchmod }>;
         pub(crate) type Lchown =
-            AsyncFSTask<ret::Lchown, args::LChown, { NodeFSFunctionEnum::Lchown }>;
-        pub(crate) type Link = AsyncFSTask<ret::Link, args::Link, { NodeFSFunctionEnum::Link }>;
-        pub(crate) type Lstat = AsyncFSTask<ret::Stat, args::Stat, { NodeFSFunctionEnum::Lstat }>;
+            AsyncFSTask<ret::Lchown, args::LChown<'static>, { NodeFSFunctionEnum::Lchown }>;
+        pub(crate) type Link =
+            AsyncFSTask<ret::Link, args::Link<'static>, { NodeFSFunctionEnum::Link }>;
+        pub(crate) type Lstat =
+            AsyncFSTask<ret::Stat, args::Stat<'static>, { NodeFSFunctionEnum::Lstat }>;
         pub(crate) type Lutimes =
-            AsyncFSTask<ret::Lutimes, args::Lutimes, { NodeFSFunctionEnum::Lutimes }>;
-        pub(crate) type Mkdir = AsyncFSTask<ret::Mkdir, args::Mkdir, { NodeFSFunctionEnum::Mkdir }>;
+            AsyncFSTask<ret::Lutimes, args::Lutimes<'static>, { NodeFSFunctionEnum::Lutimes }>;
+        pub(crate) type Mkdir =
+            AsyncFSTask<ret::Mkdir, args::Mkdir<'static>, { NodeFSFunctionEnum::Mkdir }>;
         pub(crate) type Mkdtemp =
-            AsyncFSTask<ret::Mkdtemp, args::MkdirTemp, { NodeFSFunctionEnum::Mkdtemp }>;
-        pub(crate) type Open = UVFSRequest<ret::Open, args::Open, { NodeFSFunctionEnum::Open }>;
+            AsyncFSTask<ret::Mkdtemp, args::MkdirTemp<'static>, { NodeFSFunctionEnum::Mkdtemp }>;
+        pub(crate) type Open =
+            UVFSRequest<ret::Open, args::Open<'static>, { NodeFSFunctionEnum::Open }>;
         pub(crate) type Read = UVFSRequest<ret::Read, args::Read, { NodeFSFunctionEnum::Read }>;
         pub(crate) type Readdir =
-            AsyncFSTask<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>;
+            AsyncFSTask<ret::Readdir, args::Readdir<'static>, { NodeFSFunctionEnum::Readdir }>;
         pub(crate) type ReadFile =
-            AsyncFSTask<ret::ReadFile, args::ReadFile, { NodeFSFunctionEnum::ReadFile }>;
+            AsyncFSTask<ret::ReadFile, args::ReadFile<'static>, { NodeFSFunctionEnum::ReadFile }>;
         pub(crate) type Readlink =
-            AsyncFSTask<ret::Readlink, args::Readlink, { NodeFSFunctionEnum::Readlink }>;
+            AsyncFSTask<ret::Readlink, args::Readlink<'static>, { NodeFSFunctionEnum::Readlink }>;
         pub(crate) type Readv = UVFSRequest<ret::Readv, args::Readv, { NodeFSFunctionEnum::Readv }>;
         pub(crate) type Realpath =
-            AsyncFSTask<ret::Realpath, args::Realpath, { NodeFSFunctionEnum::Realpath }>;
-        pub(crate) type RealpathNonNative =
-            AsyncFSTask<ret::Realpath, args::Realpath, { NodeFSFunctionEnum::RealpathNonNative }>;
+            AsyncFSTask<ret::Realpath, args::Realpath<'static>, { NodeFSFunctionEnum::Realpath }>;
+        pub(crate) type RealpathNonNative = AsyncFSTask<
+            ret::Realpath,
+            args::Realpath<'static>,
+            { NodeFSFunctionEnum::RealpathNonNative },
+        >;
         pub(crate) type Rename =
-            AsyncFSTask<ret::Rename, args::Rename, { NodeFSFunctionEnum::Rename }>;
-        pub(crate) type Rm = AsyncFSTask<ret::Rm, args::Rm, { NodeFSFunctionEnum::Rm }>;
-        pub(crate) type Rmdir = AsyncFSTask<ret::Rmdir, args::RmDir, { NodeFSFunctionEnum::Rmdir }>;
-        pub(crate) type Stat = AsyncFSTask<ret::Stat, args::Stat, { NodeFSFunctionEnum::Stat }>;
+            AsyncFSTask<ret::Rename, args::Rename<'static>, { NodeFSFunctionEnum::Rename }>;
+        pub(crate) type Rm = AsyncFSTask<ret::Rm, args::Rm<'static>, { NodeFSFunctionEnum::Rm }>;
+        pub(crate) type Rmdir =
+            AsyncFSTask<ret::Rmdir, args::RmDir<'static>, { NodeFSFunctionEnum::Rmdir }>;
+        pub(crate) type Stat =
+            AsyncFSTask<ret::Stat, args::Stat<'static>, { NodeFSFunctionEnum::Stat }>;
         pub(crate) type Symlink =
-            AsyncFSTask<ret::Symlink, args::Symlink, { NodeFSFunctionEnum::Symlink }>;
+            AsyncFSTask<ret::Symlink, args::Symlink<'static>, { NodeFSFunctionEnum::Symlink }>;
         pub(crate) type Truncate =
-            AsyncFSTask<ret::Truncate, args::Truncate, { NodeFSFunctionEnum::Truncate }>;
+            AsyncFSTask<ret::Truncate, args::Truncate<'static>, { NodeFSFunctionEnum::Truncate }>;
         pub(crate) type Unlink =
-            AsyncFSTask<ret::Unlink, args::Unlink, { NodeFSFunctionEnum::Unlink }>;
+            AsyncFSTask<ret::Unlink, args::Unlink<'static>, { NodeFSFunctionEnum::Unlink }>;
         pub(crate) type Utimes =
-            AsyncFSTask<ret::Utimes, args::Utimes, { NodeFSFunctionEnum::Utimes }>;
-        pub(crate) type Write = UVFSRequest<ret::Write, args::Write, { NodeFSFunctionEnum::Write }>;
-        pub(crate) type WriteFile =
-            AsyncFSTask<ret::WriteFile, args::WriteFile, { NodeFSFunctionEnum::WriteFile }>;
+            AsyncFSTask<ret::Utimes, args::Utimes<'static>, { NodeFSFunctionEnum::Utimes }>;
+        pub(crate) type Write =
+            UVFSRequest<ret::Write, args::Write<'static>, { NodeFSFunctionEnum::Write }>;
+        pub(crate) type WriteFile = AsyncFSTask<
+            ret::WriteFile,
+            args::WriteFile<'static>,
+            { NodeFSFunctionEnum::WriteFile },
+        >;
         pub(crate) type Writev =
             UVFSRequest<ret::Writev, args::Writev, { NodeFSFunctionEnum::Writev }>;
         pub(crate) type Statfs =
-            UVFSRequest<ret::StatFS, args::StatFS, { NodeFSFunctionEnum::Statfs }>;
+            UVFSRequest<ret::StatFS, args::StatFS<'static>, { NodeFSFunctionEnum::Statfs }>;
 
         const _: () = assert!(ReadFile::HAVE_ABORT_SIGNAL);
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
@@ -587,8 +605,9 @@ mod _async_tasks {
                 let mut node_fs = NodeFS::default();
                 // SAFETY: the scheduling caller keeps `path` alive until `completion`
                 // runs (it points into caller-owned state, not this box).
+                let path = unsafe { &*self.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: unsafe { PathLike::borrowed(&*self.path) },
+                    path: PathLike::borrowed(path),
                     recursive: true,
                     ..Default::default()
                 });
@@ -1025,32 +1044,32 @@ mod _async_tasks {
     };
 }
     impl_fs_argument!(
-        args::Rename,
-        args::Truncate,
+        args::Rename<'static>,
+        args::Truncate<'static>,
         args::FdVectorIo,
         args::FTruncate,
-        args::Chown,
-        args::Lutimes,
-        args::Chmod,
-        args::StatFS,
-        args::Stat,
-        args::Link,
-        args::Symlink,
-        args::Readlink,
-        args::Realpath,
-        args::Unlink,
-        args::Rm,
-        args::RmDir,
-        args::Mkdir,
-        args::MkdirTemp,
-        args::Readdir,
-        args::Open,
-        args::Write,
+        args::Chown<'static>,
+        args::Lutimes<'static>,
+        args::Chmod<'static>,
+        args::StatFS<'static>,
+        args::Stat<'static>,
+        args::Link<'static>,
+        args::Symlink<'static>,
+        args::Readlink<'static>,
+        args::Realpath<'static>,
+        args::Unlink<'static>,
+        args::Rm<'static>,
+        args::RmDir<'static>,
+        args::Mkdir<'static>,
+        args::MkdirTemp<'static>,
+        args::Readdir<'static>,
+        args::Open<'static>,
+        args::Write<'static>,
         args::Read,
-        args::Exists,
-        args::Access,
-        args::CopyFile,
-        args::Cp,
+        args::Exists<'static>,
+        args::Access<'static>,
+        args::CopyFile<'static>,
+        args::Cp<'static>,
     );
     impl_fs_argument!(@fd
         args::Fchown, args::FChmod, args::Fstat, args::Close, args::Futimes,
@@ -1059,7 +1078,7 @@ mod _async_tasks {
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
     // `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
     // `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
-    impl FsArgument for args::ReadFile {
+    impl FsArgument for args::ReadFile<'static> {
         const HAVE_ABORT_SIGNAL: bool = true;
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
@@ -1074,7 +1093,7 @@ mod _async_tasks {
             self.signal.as_deref()
         }
     }
-    impl FsArgument for args::WriteFile {
+    impl FsArgument for args::WriteFile<'static> {
         const HAVE_ABORT_SIGNAL: bool = true;
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
@@ -1089,7 +1108,7 @@ mod _async_tasks {
             self.signal.as_deref()
         }
     }
-    impl FsArgument for args::AppendFile {
+    impl FsArgument for args::AppendFile<'static> {
         const HAVE_ABORT_SIGNAL: bool = true;
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
@@ -1147,7 +1166,7 @@ mod _async_tasks {
             Ok(crate::node::types::FdJsc::to_js(self, global))
         }
     }
-    impl FsReturn for StringOrBuffer {
+    impl FsReturn for StringOrBuffer<'_> {
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.into_js(global)
@@ -1338,7 +1357,7 @@ mod _async_tasks {
     pub struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
-        pub args: ThreadSafe<args::Cp>,
+        pub args: ThreadSafe<args::Cp<'static>>,
         /// Owning-thread uses (global object, keep-alive context).
         pub(crate) evtloop: EventLoopHandle,
         /// How the last subtask's thread delivers the completion (moved out
@@ -1519,7 +1538,7 @@ mod _async_tasks {
         pub(crate) fn create(
             global_object: &JSGlobalObject,
             _binding: &Binding,
-            cp_args: args::Cp,
+            cp_args: args::Cp<'static>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
@@ -1540,7 +1559,7 @@ mod _async_tasks {
         /// global is touched — the loop and poster are the ones the shell task
         /// already captured on its own thread.
         pub(crate) fn create_for_shell(
-            cp_args: args::Cp,
+            cp_args: args::Cp<'static>,
             evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
             shelltask: *mut ShellCpTask,
@@ -1557,7 +1576,7 @@ mod _async_tasks {
 
         fn schedule_new(
             promise: JSPromiseStrong,
-            cp_args: args::Cp,
+            cp_args: args::Cp<'static>,
             evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
             tracker: AsyncTaskTracker,
@@ -1681,10 +1700,12 @@ mod _async_tasks {
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
                 // `Ok(())` placeholder.
                 let result = core::mem::replace(self.result.get_mut(), Ok(()));
+                let src = core::mem::take(&mut self.args.src);
+                let dest = core::mem::take(&mut self.args.dest);
                 let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
                 // SAFETY: shelltask is non-null in the IS_SHELL specialization and
                 // outlives this task; `cp_on_finish` enqueues it concurrently.
-                unsafe { ShellCpTask::cp_on_finish(shelltask, result) };
+                unsafe { ShellCpTask::cp_on_finish(shelltask, src, dest, result) };
                 // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 return Ok(());
@@ -2115,7 +2136,7 @@ mod _async_tasks {
     pub struct AsyncReaddirRecursiveTask {
         /// Protected arguments; their JS-backed path is not read off-thread
         /// (`root_path` is the owned copy).
-        pub args: ThreadSafe<args::Readdir>,
+        pub args: ThreadSafe<args::Readdir<'static>>,
         pub(crate) tag: ret::ReaddirTag,
         pub(crate) encoding: Encoding,
         /// The completion token, finished by whichever subtask ends the scan.
@@ -2313,7 +2334,7 @@ mod _async_tasks {
 
         pub(crate) fn create(
             global_object: &JSGlobalObject,
-            args: args::Readdir,
+            args: args::Readdir<'static>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let tag = args.tag();
@@ -2596,22 +2617,22 @@ pub mod args {
     /// `Writev`, `Readv`, `Exists`, `ReadFile`, `WriteFile`) keep bespoke impls.
     macro_rules! fs_args_path_forwarders {
         ($ty:ident; $($field:ident),+ $(,)?) => {
-            impl Unprotect for $ty {
+            impl Unprotect for $ty<'static> {
                 #[inline] fn unprotect(&mut self) { $( self.$field.unprotect(); )+ }
             }
-            impl $ty {
+            impl $ty<'static> {
                 pub fn to_thread_safe(&mut self) { $( self.$field.to_thread_safe(); )+ }
             }
         };
     }
 
-    pub struct Rename {
-        pub(crate) old_path: PathLike,
-        pub(crate) new_path: PathLike,
+    pub struct Rename<'a> {
+        pub(crate) old_path: PathLike<'a>,
+        pub(crate) new_path: PathLike<'a>,
     }
     fs_args_path_forwarders!(Rename; old_path, new_path);
-    impl Rename {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rename> {
+    impl Rename<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"oldPath",
@@ -2632,15 +2653,15 @@ pub mod args {
     }
 
     #[derive(Default)]
-    pub struct Truncate {
+    pub struct Truncate<'a> {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
-        pub path: PathOrFileDescriptor,
+        pub path: PathOrFileDescriptor<'a>,
         pub(crate) len: u64, // u63
         pub(crate) flags: i32,
     }
     fs_args_path_forwarders!(Truncate; path);
-    impl Truncate {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Truncate> {
+    impl Truncate<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
             })?;
@@ -2736,14 +2757,14 @@ pub mod args {
         }
     }
 
-    pub struct Chown {
-        pub path: PathLike,
+    pub struct Chown<'a> {
+        pub path: PathLike<'a>,
         pub(crate) uid: UidT,
         pub(crate) gid: GidT,
     }
     fs_args_path_forwarders!(Chown; path);
-    impl Chown {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chown> {
+    impl Chown<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             // `Drop for PathLike` covers every
             // error return below (including `validate_integer`).
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -2830,16 +2851,16 @@ pub mod args {
         T::from(in_ as u8)
     }
 
-    pub(crate) type LChown = Chown;
+    pub(crate) type LChown<'a> = Chown<'a>;
 
-    pub struct Lutimes {
-        pub path: PathLike,
+    pub struct Lutimes<'a> {
+        pub path: PathLike<'a>,
         pub(crate) atime: TimeLike,
         pub(crate) mtime: TimeLike,
     }
     fs_args_path_forwarders!(Lutimes; path);
-    impl Lutimes {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Lutimes> {
+    impl Lutimes<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `time_like_from_js` throws below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -2867,13 +2888,13 @@ pub mod args {
         }
     }
 
-    pub struct Chmod {
-        pub path: PathLike,
+    pub struct Chmod<'a> {
+        pub path: PathLike<'a>,
         pub(crate) mode: Mode,
     }
     fs_args_path_forwarders!(Chmod; path);
-    impl Chmod {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
+    impl Chmod<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `mode_from_js` throw below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -2916,15 +2937,15 @@ pub mod args {
         }
     }
 
-    pub(crate) type LCHmod = Chmod;
+    pub(crate) type LCHmod<'a> = Chmod<'a>;
 
-    pub struct StatFS {
-        pub path: PathLike,
+    pub struct StatFS<'a> {
+        pub path: PathLike<'a>,
         pub(crate) big_int: bool,
     }
     fs_args_path_forwarders!(StatFS; path);
-    impl StatFS {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<StatFS> {
+    impl StatFS<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `get_boolean_strict` throw below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -2946,14 +2967,14 @@ pub mod args {
         }
     }
 
-    pub struct Stat {
-        pub path: PathLike,
+    pub struct Stat<'a> {
+        pub path: PathLike<'a>,
         pub(crate) big_int: bool,
         pub(crate) throw_if_no_entry: bool,
     }
     fs_args_path_forwarders!(Stat; path);
-    impl Stat {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Stat> {
+    impl Stat<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             // `Drop for PathLike` covers the error returns below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut throw_if_no_entry = true;
@@ -3008,15 +3029,15 @@ pub mod args {
         }
     }
 
-    pub(crate) type Lstat = Stat;
+    pub(crate) type Lstat<'a> = Stat<'a>;
 
-    pub struct Link {
-        pub(crate) old_path: PathLike,
-        pub(crate) new_path: PathLike,
+    pub struct Link<'a> {
+        pub(crate) old_path: PathLike<'a>,
+        pub(crate) new_path: PathLike<'a>,
     }
     fs_args_path_forwarders!(Link; old_path, new_path);
-    impl Link {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Link> {
+    impl Link<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let old_path = PathLike::from_js_required(ctx, arguments, "oldPath")?;
             // `Drop for PathLike` runs on early return.
             let new_path = PathLike::from_js_required(ctx, arguments, "newPath")?;
@@ -3032,18 +3053,18 @@ pub mod args {
         Junction,
     }
 
-    pub struct Symlink {
+    pub struct Symlink<'a> {
         /// Where the symbolic link is targetting.
-        pub(crate) target_path: PathLike,
+        pub(crate) target_path: PathLike<'a>,
         /// The path to create the symbolic link at.
-        pub(crate) new_path: PathLike,
+        pub(crate) new_path: PathLike<'a>,
         /// Windows has multiple link types. By default, only junctions can be created by non-admin.
         #[cfg(windows)]
         pub(crate) link_type: SymlinkLinkType,
     }
     fs_args_path_forwarders!(Symlink; target_path, new_path);
-    impl Symlink {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Symlink> {
+    impl Symlink<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             // `Drop for PathLike` covers the error returns below.
             let old_path = PathLike::from_js_required(ctx, arguments, "target")?;
             let new_path = PathLike::from_js_required(ctx, arguments, "path")?;
@@ -3097,26 +3118,26 @@ pub mod args {
         }
     }
 
-    pub struct Readlink {
-        pub path: PathLike,
+    pub struct Readlink<'a> {
+        pub path: PathLike<'a>,
         pub(crate) encoding: Encoding,
     }
     fs_args_path_forwarders!(Readlink; path);
-    impl Readlink {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readlink> {
+    impl Readlink<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
             Ok(Readlink { path, encoding })
         }
     }
 
-    pub struct Realpath {
-        pub path: PathLike,
+    pub struct Realpath<'a> {
+        pub path: PathLike<'a>,
         pub(crate) encoding: Encoding,
     }
     fs_args_path_forwarders!(Realpath; path);
-    impl Realpath {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Realpath> {
+    impl Realpath<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let encoding = parse_encoding_arg(ctx, arguments, Encoding::Utf8)?;
             Ok(Realpath { path, encoding })
@@ -3163,12 +3184,12 @@ pub mod args {
         Ok(encoding)
     }
 
-    pub struct Unlink {
-        pub path: PathLike,
+    pub struct Unlink<'a> {
+        pub path: PathLike<'a>,
     }
     fs_args_path_forwarders!(Unlink; path);
-    impl Unlink {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Unlink> {
+    impl Unlink<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             Ok(Unlink { path })
         }
@@ -3178,21 +3199,21 @@ pub mod args {
     /// `validateRmOptions` does: an own `recursive`/`force` key holding
     /// `undefined` overwrites the default and is rejected, where `fs.rmdir`
     /// silently keeps the default for it.
-    pub struct Rm(pub(crate) RmDir);
-    impl std::ops::Deref for Rm {
-        type Target = RmDir;
-        fn deref(&self) -> &RmDir {
+    pub struct Rm<'a>(pub(crate) RmDir<'a>);
+    impl<'a> std::ops::Deref for Rm<'a> {
+        type Target = RmDir<'a>;
+        fn deref(&self) -> &RmDir<'a> {
             &self.0
         }
     }
-    impl Unprotect for Rm {
+    impl Unprotect for Rm<'static> {
         #[inline]
         fn unprotect(&mut self) {
             self.0.unprotect();
         }
     }
-    impl Rm {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rm> {
+    impl Rm<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             Ok(Rm(RmDir::from_js_impl(ctx, arguments, true)?))
         }
         pub(crate) fn to_thread_safe(&mut self) {
@@ -3200,16 +3221,16 @@ pub mod args {
         }
     }
 
-    pub struct RmDir {
-        pub path: PathLike,
+    pub struct RmDir<'a> {
+        pub path: PathLike<'a>,
         pub(crate) force: bool,
         pub(crate) max_retries: u32,
         pub(crate) recursive: bool,
         pub(crate) retry_delay: c_uint,
     }
     fs_args_path_forwarders!(RmDir; path);
-    impl RmDir {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<RmDir> {
+    impl RmDir<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             Self::from_js_impl(ctx, arguments, false)
         }
         /// `strict_booleans` selects node's `validateRmOptions` behavior (used by
@@ -3219,7 +3240,7 @@ pub mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
             strict_booleans: bool,
-        ) -> JsResult<RmDir> {
+        ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut recursive = false;
             let mut force = false;
@@ -3291,8 +3312,8 @@ pub mod args {
     }
 
     /// https://github.com/nodejs/node/blob/master/lib/fs.js#L1285
-    pub struct Mkdir {
-        pub path: PathLike,
+    pub struct Mkdir<'a> {
+        pub path: PathLike<'a>,
         /// Indicates whether parent folders should be created.
         /// If a folder was created, the path to the first created folder will be returned.
         /// @default false
@@ -3302,10 +3323,10 @@ pub mod args {
         /// If set to true, the return value is never set to a string
         pub(crate) always_return_none: bool,
     }
-    impl Mkdir {
+    impl Mkdir<'_> {
         pub(crate) const DEFAULT_MODE: Mode = 0o777;
     }
-    impl Default for Mkdir {
+    impl Default for Mkdir<'_> {
         fn default() -> Self {
             Self {
                 path: PathLike::default(),
@@ -3316,8 +3337,8 @@ pub mod args {
         }
     }
     fs_args_path_forwarders!(Mkdir; path);
-    impl Mkdir {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Mkdir> {
+    impl Mkdir<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut recursive = false;
             let mut mode: Mode = 0o777;
@@ -3347,16 +3368,13 @@ pub mod args {
         }
     }
 
-    pub struct MkdirTemp {
-        pub(crate) prefix: PathLike,
+    pub struct MkdirTemp<'a> {
+        pub(crate) prefix: PathLike<'a>,
         pub(crate) encoding: Encoding,
     }
     fs_args_path_forwarders!(MkdirTemp; prefix);
-    impl MkdirTemp {
-        pub fn from_js(
-            ctx: &JSGlobalObject,
-            arguments: &mut ArgumentsSlice,
-        ) -> JsResult<MkdirTemp> {
+    impl MkdirTemp<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"prefix",
@@ -3369,14 +3387,14 @@ pub mod args {
         }
     }
 
-    pub struct Readdir {
-        pub path: PathLike,
+    pub struct Readdir<'a> {
+        pub path: PathLike<'a>,
         pub(crate) encoding: Encoding,
         pub(crate) with_file_types: bool,
         pub(crate) recursive: bool,
     }
     fs_args_path_forwarders!(Readdir; path);
-    impl Readdir {
+    impl Readdir<'_> {
         pub(crate) fn tag(&self) -> ret::ReaddirTag {
             match self.encoding {
                 Encoding::Buffer => ret::ReaddirTag::Buffers,
@@ -3389,7 +3407,9 @@ pub mod args {
                 }
             }
         }
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Readdir> {
+    }
+    impl Readdir<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Utf8;
             let mut with_file_types = false;
@@ -3435,14 +3455,14 @@ pub mod args {
         }
     }
 
-    pub struct Open {
-        pub path: PathLike,
+    pub struct Open<'a> {
+        pub path: PathLike<'a>,
         pub(crate) flags: FileSystemFlags,
         pub(crate) mode: Mode,
     }
     fs_args_path_forwarders!(Open; path);
-    impl Open {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Open> {
+    impl Open<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut flags = FileSystemFlags::R;
             let mut mode: Mode = DEFAULT_PERMISSION;
@@ -3470,7 +3490,7 @@ pub mod args {
     /// * Values can be either numbers representing Unix epoch time in seconds,`Date`s, or a numeric string like `'123456789.0'`.
     /// * If the value can not be converted to a number, or is `NaN`, `Infinity` or`-Infinity`, an `Error` will be thrown.
     /// @since v0.4.2
-    pub(crate) type Utimes = Lutimes;
+    pub(crate) type Utimes<'a> = Lutimes<'a>;
 
     pub struct Futimes {
         pub(crate) fd: FD,
@@ -3528,16 +3548,16 @@ pub mod args {
     /// The kernel ignores the position argument and always appends the data to
     /// the end of the file.
     /// @since v0.0.2
-    pub struct Write {
+    pub struct Write<'a> {
         pub(crate) fd: FD,
-        pub(crate) buffer: StringOrBuffer,
+        pub(crate) buffer: StringOrBuffer<'a>,
         // pub buffer_val: JSValue,
         pub offset: u64,
         pub(crate) length: u64,
         pub(crate) position: Option<ReadPosition>,
         pub(crate) encoding: Encoding,
     }
-    impl Default for Write {
+    impl Default for Write<'_> {
         fn default() -> Self {
             Self {
                 fd: FD::INVALID,
@@ -3549,17 +3569,17 @@ pub mod args {
             }
         }
     }
-    impl Unprotect for Write {
+    impl Unprotect for Write<'static> {
         #[inline]
         fn unprotect(&mut self) {
             self.buffer.unprotect();
         }
     }
-    impl Write {
+    impl Write<'static> {
         pub(crate) fn to_thread_safe(&mut self) {
             self.buffer.to_thread_safe();
         }
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Write> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let buffer_value = arguments.next();
             let bv = buffer_value
@@ -3918,8 +3938,8 @@ pub mod args {
     /// If a file descriptor is provided, the underlying file will _not_ be closed automatically.
     /// @param options Either the encoding for the result, or an object that contains the encoding and an optional flag.
     /// If a flag is not provided, it defaults to `'r'`.
-    pub struct ReadFile {
-        pub path: PathOrFileDescriptor,
+    pub struct ReadFile<'a> {
+        pub path: PathOrFileDescriptor<'a>,
         pub(crate) encoding: Encoding,
         pub offset: BlobSizeType,
         pub(crate) max_size: Option<BlobSizeType>,
@@ -3927,7 +3947,7 @@ pub mod args {
         pub(crate) flag: FileSystemFlags,
         pub(crate) signal: Option<AbortSignalRef>,
     }
-    impl Default for ReadFile {
+    impl Default for ReadFile<'_> {
         fn default() -> Self {
             Self {
                 path: PathOrFileDescriptor::default(),
@@ -3940,7 +3960,7 @@ pub mod args {
             }
         }
     }
-    impl Drop for ReadFile {
+    impl Drop for ReadFile<'_> {
         fn drop(&mut self) {
             // Release the AbortSignal ref taken in `from_js`.
             if let Some(signal) = self.signal.take() {
@@ -3948,18 +3968,18 @@ pub mod args {
             }
         }
     }
-    impl Unprotect for ReadFile {
+    impl Unprotect for ReadFile<'static> {
         #[inline]
         fn unprotect(&mut self) {
             self.path.unprotect();
             // Signal unref handled by `Drop` (idempotent via `.take()`).
         }
     }
-    impl ReadFile {
+    impl ReadFile<'static> {
         pub(crate) fn to_thread_safe(&mut self) {
             self.path.to_thread_safe();
         }
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
@@ -4007,6 +4027,8 @@ pub mod args {
                 ..Default::default()
             })
         }
+    }
+    impl ReadFile<'_> {
         pub(crate) fn aborted(&self) -> bool {
             if let Some(signal) = &self.signal {
                 return signal.aborted();
@@ -4015,17 +4037,17 @@ pub mod args {
         }
     }
 
-    pub struct WriteFile {
+    pub struct WriteFile<'a> {
         pub(crate) flag: FileSystemFlags,
         pub(crate) mode: Mode,
-        pub(crate) file: PathOrFileDescriptor,
+        pub(crate) file: PathOrFileDescriptor<'a>,
         pub flush: bool,
         /// Encoded at the time of construction.
-        pub(crate) data: StringOrBuffer,
+        pub(crate) data: StringOrBuffer<'a>,
         pub(crate) dirfd: FD,
         pub(crate) signal: Option<AbortSignalRef>,
     }
-    impl Drop for WriteFile {
+    impl Drop for WriteFile<'_> {
         fn drop(&mut self) {
             // Release the AbortSignal ref taken in `from_js`.
             if let Some(signal) = self.signal.take() {
@@ -4033,12 +4055,12 @@ pub mod args {
             }
         }
     }
-    impl WriteFile {
+    impl WriteFile<'static> {
         pub(crate) fn to_thread_safe(&mut self) {
             self.file.to_thread_safe();
         }
     }
-    impl Unprotect for WriteFile {
+    impl Unprotect for WriteFile<'static> {
         #[inline]
         fn unprotect(&mut self) {
             self.file.unprotect();
@@ -4046,18 +4068,15 @@ pub mod args {
             // Signal unref handled by `Drop` (idempotent via `.take()`).
         }
     }
-    impl WriteFile {
-        pub fn from_js(
-            ctx: &JSGlobalObject,
-            arguments: &mut ArgumentsSlice,
-        ) -> JsResult<WriteFile> {
+    impl WriteFile<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             Self::from_js_with_default_flag(ctx, arguments, FileSystemFlags::W)
         }
         pub(crate) fn from_js_with_default_flag(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
             default_flag: FileSystemFlags,
-        ) -> JsResult<WriteFile> {
+        ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
@@ -4135,6 +4154,8 @@ pub mod args {
                 flush,
             })
         }
+    }
+    impl WriteFile<'_> {
         pub(crate) fn aborted(&self) -> bool {
             if let Some(signal) = &self.signal {
                 return signal.aborted();
@@ -4146,25 +4167,25 @@ pub mod args {
     /// Same fields as `WriteFile`; distinct type so `FsArgument::from_js` can
     /// default `flag` to `a` (Node: `if (!options.flag) options.flag = 'a'`)
     /// while still honoring an explicit `flag` the caller passed.
-    pub struct AppendFile(pub(crate) WriteFile);
-    impl Unprotect for AppendFile {
+    pub struct AppendFile<'a>(pub(crate) WriteFile<'a>);
+    impl Unprotect for AppendFile<'static> {
         #[inline]
         fn unprotect(&mut self) {
             self.0.unprotect();
         }
     }
 
-    pub struct Exists {
-        pub path: Option<PathLike>,
+    pub struct Exists<'a> {
+        pub path: Option<PathLike<'a>>,
     }
-    impl Exists {
+    impl Exists<'static> {
         pub(crate) fn to_thread_safe(&mut self) {
             if let Some(p) = &mut self.path {
                 p.to_thread_safe();
             }
         }
     }
-    impl Unprotect for Exists {
+    impl Unprotect for Exists<'static> {
         #[inline]
         fn unprotect(&mut self) {
             if let Some(p) = &mut self.path {
@@ -4172,21 +4193,21 @@ pub mod args {
             }
         }
     }
-    impl Exists {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Exists> {
+    impl Exists<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             Ok(Exists {
                 path: PathLike::from_js(ctx, arguments)?,
             })
         }
     }
 
-    pub struct Access {
-        pub path: PathLike,
+    pub struct Access<'a> {
+        pub path: PathLike<'a>,
         pub(crate) mode: FileSystemFlags,
     }
     fs_args_path_forwarders!(Access; path);
-    impl Access {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Access> {
+    impl Access<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut mode = FileSystemFlags::R;
             if let Some(arg) = arguments.next() {
@@ -4211,14 +4232,14 @@ pub mod args {
         }
     }
 
-    pub struct CopyFile {
-        pub(crate) src: PathLike,
-        pub(crate) dest: PathLike,
+    pub struct CopyFile<'a> {
+        pub(crate) src: PathLike<'a>,
+        pub(crate) dest: PathLike<'a>,
         pub(crate) mode: constants::Copyfile,
     }
     fs_args_path_forwarders!(CopyFile; src, dest);
-    impl CopyFile {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<CopyFile> {
+    impl CopyFile<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let src = PathLike::from_js_required(ctx, arguments, "src")?;
             // `Drop for PathLike` runs on early return.
             let dest = PathLike::from_js_required(ctx, arguments, "dest")?;
@@ -4241,14 +4262,14 @@ pub mod args {
         pub(crate) force: bool,
     }
 
-    pub struct Cp {
-        pub(crate) src: PathLike,
-        pub(crate) dest: PathLike,
+    pub struct Cp<'a> {
+        pub(crate) src: PathLike<'a>,
+        pub(crate) dest: PathLike<'a>,
         pub(crate) flags: CpFlags,
     }
     fs_args_path_forwarders!(Cp; src, dest);
-    impl Cp {
-        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Cp> {
+    impl Cp<'static> {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let src = PathLike::from_js_required(ctx, arguments, "src")?;
             // `Drop for PathLike` runs on early return.
             let dest = PathLike::from_js_required(ctx, arguments, "dest")?;
@@ -4359,7 +4380,7 @@ pub mod ret {
     pub(crate) type Link = ();
     pub(crate) type Lstat = StatOrNotFound;
     pub(crate) type Mkdir = StringOrUndefined;
-    pub(crate) type Mkdtemp = StringOrBuffer;
+    pub(crate) type Mkdtemp = StringOrBuffer<'static>;
     pub(crate) type Open = FD;
     pub(crate) type WriteFile = ();
     pub(crate) type Readv = Read;
@@ -4430,7 +4451,7 @@ pub mod ret {
         }
     }
 
-    pub(crate) type ReadFile = StringOrBuffer;
+    pub(crate) type ReadFile = StringOrBuffer<'static>;
 
     pub(crate) enum ReadFileWithOptions {
         String(Box<[u8]>),
@@ -4439,8 +4460,8 @@ pub mod ret {
         NullTerminated(bun_core::ZBox), // [:0]const u8 owned
     }
 
-    pub(crate) type Readlink = StringOrBuffer;
-    pub(crate) type Realpath = StringOrBuffer;
+    pub(crate) type Readlink = StringOrBuffer<'static>;
+    pub(crate) type Realpath = StringOrBuffer<'static>;
     pub(crate) type Rename = ();
     pub(crate) type Rmdir = ();
     pub(crate) type Stat = StatOrNotFound;
@@ -4490,7 +4511,7 @@ impl Default for NodeFS {
 /// Encode a path returned by the OS (`mkdtemp`/`readlink`/`realpath`) using the
 /// caller's `encoding` option, matching Node.js: `"buffer"` yields a `Buffer`
 /// of the raw bytes, any other encoding is `Buffer.from(bytes).toString(enc)`.
-fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
+fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer<'static> {
     match encoding {
         Encoding::Buffer => {
             StringOrBuffer::Buffer(Buffer::from_string(bytes).expect("unreachable"))
@@ -8990,8 +9011,7 @@ impl NodeFS {
                         len -= 1;
                     }
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        // SAFETY: `mkdir_recursive` is synchronous; `bytes` outlives the call.
-                        path: unsafe { PathLike::borrowed(&bytes[..len]) },
+                        path: PathLike::borrowed(&bytes[..len]),
                         recursive: true,
                         ..Default::default()
                     });
@@ -9109,13 +9129,13 @@ macro_rules! node_fs_ops {
 }
 
 node_fs_ops! {
-    Access => access, args::Access, ret::Access;
-    AppendFile => append_file, args::AppendFile, ret::AppendFile;
-    Chmod => chmod, args::Chmod, ret::Chmod;
-    Chown => chown, args::Chown, ret::Chown;
+    Access => access, args::Access<'static>, ret::Access;
+    AppendFile => append_file, args::AppendFile<'static>, ret::AppendFile;
+    Chmod => chmod, args::Chmod<'static>, ret::Chmod;
+    Chown => chown, args::Chown<'static>, ret::Chown;
     Close => close, args::Close, ret::Close, uv = uv_close;
-    CopyFile => copy_file, args::CopyFile, ret::CopyFile;
-    Exists => exists, args::Exists, ret::Exists;
+    CopyFile => copy_file, args::CopyFile<'static>, ret::CopyFile;
+    Exists => exists, args::Exists<'static>, ret::Exists;
     Fchmod => fchmod, args::FChmod, ret::Fchmod;
     Fchown => fchown, args::Fchown, ret::Fchown;
     Fdatasync => fdatasync, args::FdataSync, ret::Fdatasync;
@@ -9123,32 +9143,32 @@ node_fs_ops! {
     Fsync => fsync, args::Fsync, ret::Fsync;
     Ftruncate => ftruncate, args::FTruncate, ret::Ftruncate;
     Futimes => futimes, args::Futimes, ret::Futimes;
-    Lchmod => lchmod, args::LCHmod, ret::Lchmod;
-    Lchown => lchown, args::LChown, ret::Lchown;
-    Link => link, args::Link, ret::Link;
-    Lstat => lstat, args::Lstat, ret::Lstat;
-    Lutimes => lutimes, args::Lutimes, ret::Lutimes;
-    Mkdir => mkdir, args::Mkdir, ret::Mkdir;
-    Mkdtemp => mkdtemp, args::MkdirTemp, ret::Mkdtemp;
-    Open => open, args::Open, ret::Open, uv = uv_open;
+    Lchmod => lchmod, args::LCHmod<'static>, ret::Lchmod;
+    Lchown => lchown, args::LChown<'static>, ret::Lchown;
+    Link => link, args::Link<'static>, ret::Link;
+    Lstat => lstat, args::Lstat<'static>, ret::Lstat;
+    Lutimes => lutimes, args::Lutimes<'static>, ret::Lutimes;
+    Mkdir => mkdir, args::Mkdir<'static>, ret::Mkdir;
+    Mkdtemp => mkdtemp, args::MkdirTemp<'static>, ret::Mkdtemp;
+    Open => open, args::Open<'static>, ret::Open, uv = uv_open;
     Read => read, args::Read, ret::Read, uv = uv_read;
-    Readdir => readdir, args::Readdir, ret::Readdir;
-    ReadFile => read_file, args::ReadFile, ret::ReadFile;
-    Readlink => readlink, args::Readlink, ret::Readlink;
+    Readdir => readdir, args::Readdir<'static>, ret::Readdir;
+    ReadFile => read_file, args::ReadFile<'static>, ret::ReadFile;
+    Readlink => readlink, args::Readlink<'static>, ret::Readlink;
     Readv => readv, args::Readv, ret::Readv, uv = uv_readv;
-    Realpath => realpath, args::Realpath, ret::Realpath;
-    RealpathNonNative => realpath_non_native, args::Realpath, ret::Realpath;
-    Rename => rename, args::Rename, ret::Rename;
-    Rm => rm, args::Rm, ret::Rm;
-    Rmdir => rmdir, args::RmDir, ret::Rmdir;
-    Stat => stat, args::Stat, ret::Stat;
-    Statfs => statfs, args::StatFS, ret::StatFS, uv_req = uv_statfs;
-    Symlink => symlink, args::Symlink, ret::Symlink;
-    Truncate => truncate, args::Truncate, ret::Truncate;
-    Unlink => unlink, args::Unlink, ret::Unlink;
-    Utimes => utimes, args::Utimes, ret::Utimes;
-    Write => write, args::Write, ret::Write, uv = uv_write;
-    WriteFile => write_file, args::WriteFile, ret::WriteFile;
+    Realpath => realpath, args::Realpath<'static>, ret::Realpath;
+    RealpathNonNative => realpath_non_native, args::Realpath<'static>, ret::Realpath;
+    Rename => rename, args::Rename<'static>, ret::Rename;
+    Rm => rm, args::Rm<'static>, ret::Rm;
+    Rmdir => rmdir, args::RmDir<'static>, ret::Rmdir;
+    Stat => stat, args::Stat<'static>, ret::Stat;
+    Statfs => statfs, args::StatFS<'static>, ret::StatFS, uv_req = uv_statfs;
+    Symlink => symlink, args::Symlink<'static>, ret::Symlink;
+    Truncate => truncate, args::Truncate<'static>, ret::Truncate;
+    Unlink => unlink, args::Unlink<'static>, ret::Unlink;
+    Utimes => utimes, args::Utimes<'static>, ret::Utimes;
+    Write => write, args::Write<'static>, ret::Write, uv = uv_write;
+    WriteFile => write_file, args::WriteFile<'static>, ret::WriteFile;
     Writev => writev, args::Writev, ret::Writev, uv = uv_writev;
 }
 
@@ -9446,8 +9466,7 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
         unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
     node_fs
         .mkdir_recursive(&args::Mkdir {
-            // SAFETY: `mkdir_recursive` is synchronous; `path_bytes` outlives the call.
-            path: unsafe { PathLike::borrowed(path_bytes) },
+            path: PathLike::borrowed(path_bytes),
             recursive: true,
             ..Default::default()
         })

@@ -2185,7 +2185,7 @@ pub(crate) fn parse_compress_args(
 pub(crate) fn coerce_compress_buffer(
     global: &JSGlobalObject,
     buffer_value: JSValue,
-) -> JsResult<node::StringOrBuffer> {
+) -> JsResult<node::StringOrBuffer<'static>> {
     if let Some(buffer) = node::StringOrBuffer::from_js(global, buffer_value)? {
         return Ok(buffer);
     }
@@ -2198,7 +2198,7 @@ pub(crate) fn coerce_compress_buffer(
 pub(crate) fn parse_compress_buffer_and_options(
     global: &JSGlobalObject,
     callframe: &CallFrame,
-) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
+) -> JsResult<(node::StringOrBuffer<'static>, Option<JSValue>)> {
     let (buffer_value, options_val) = parse_compress_args(global, callframe)?;
     Ok((coerce_compress_buffer(global, buffer_value)?, options_val))
 }
@@ -2654,7 +2654,7 @@ pub mod JSZstd {
     fn get_options_async(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<(node::StringOrBuffer, Option<JSValue>, i32)> {
+    ) -> JsResult<(node::StringOrBuffer<'static>, Option<JSValue>, i32)> {
         let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
 
         let level = get_level(global_this, options_val)?;
@@ -2783,7 +2783,7 @@ pub mod JSZstd {
     pub(crate) struct ZstdJob {
         /// Created with `Flavor::Async` (JS-backed buffer protected); the
         /// [`bun_jsc::ThreadSafe`] releases that with the job.
-        pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
+        pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer<'static>>,
         pub is_compress: bool,
         pub level: i32,
         /// Filled in by `run`.
@@ -2830,7 +2830,7 @@ pub mod JSZstd {
 
     fn create_job(
         global_this: &JSGlobalObject,
-        buffer: node::StringOrBuffer,
+        buffer: node::StringOrBuffer<'static>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {

@@ -636,7 +636,7 @@ impl Config {
 /// into the owning `JSTranspiler`'s config (its `Transpiler` is bit-copied),
 /// which the job's Js side keeps alive and the pool borrow keeps valid.
 pub(crate) struct TransformTask {
-    pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
+    pub input_code: bun_jsc::ThreadSafe<StringOrBuffer<'static>>,
     pub output_code: BunString,
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,
@@ -676,7 +676,7 @@ impl TransformTask {
     fn schedule(
         transpiler: &JSTranspiler,
         transpiler_js: JSValue,
-        input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
+        input_code: bun_jsc::ThreadSafe<StringOrBuffer<'static>>,
         global: &JSGlobalObject,
         loader: Loader,
     ) -> JSValue {

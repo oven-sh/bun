@@ -759,8 +759,8 @@ pub(crate) struct Scrypt {
     // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
     // `from_js_maybe_async(.., Flavor::Async, ..)`, adopted into a `ThreadSafe`
     // by the job).
-    password: StringOrBuffer,
-    salt: StringOrBuffer,
+    password: StringOrBuffer<'static>,
+    salt: StringOrBuffer<'static>,
     n: u32,
     r: u32,
     p: u32,

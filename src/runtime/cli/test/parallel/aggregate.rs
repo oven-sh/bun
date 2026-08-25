@@ -247,8 +247,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();
         let _ = fs.mkdir_recursive(&fs_args::Mkdir {
-            // SAFETY: `mkdir_recursive` is synchronous; `opts` outlives the call.
-            path: unsafe { PathLike::borrowed(&opts.reports_directory) },
+            path: PathLike::borrowed(&opts.reports_directory),
             always_return_none: true,
             ..Default::default()
         });

@@ -377,7 +377,7 @@ pub trait BlobExt {
     fn estimated_size(&self) -> usize;
     fn to_js(&self, global_object: &JSGlobalObject) -> JSValue;
     fn find_or_create_file_from_path(
-        path_or_fd: &mut PathOrFileDescriptor,
+        path_or_fd: &mut PathOrFileDescriptor<'static>,
         global_this: &JSGlobalObject,
         check_s3: bool,
     ) -> Blob
@@ -3504,7 +3504,7 @@ impl BlobExt for Blob {
     /// by `server_body.rs` / `fetch.rs` (collapsed from a const generic since
     /// it only guards a string prefix check).
     fn find_or_create_file_from_path(
-        path_or_fd: &mut PathOrFileDescriptor,
+        path_or_fd: &mut PathOrFileDescriptor<'static>,
         global_this: &JSGlobalObject,
         check_s3: bool,
     ) -> Blob {
@@ -4216,8 +4216,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                // SAFETY: `mkdir_recursive` is synchronous; `path_string` outlives the call.
-                path: unsafe { PathLike::borrowed(dirname) },
+                path: PathLike::borrowed(dirname),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -4351,9 +4350,7 @@ fn write_file_with_empty_source_to_destination(
                                 };
                                 let mkdir_result =
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        // SAFETY: `mkdir_recursive` is synchronous;
-                                        // `dirpath` outlives the call.
-                                        path: unsafe { PathLike::borrowed(dirpath) },
+                                        path: PathLike::borrowed(dirpath),
                                         recursive: true,
                                         always_return_none: true,
                                         ..Default::default()
@@ -6667,7 +6664,7 @@ pub trait FileOpener: Sized {
     fn set_errno(&mut self, e: crate::Error);
     fn set_system_error(&mut self, e: jsc::SystemError);
     /// Either `self.file_store.pathlike` or `self.file_blob.store.data.file.pathlike`.
-    fn pathlike(&self) -> &PathOrFileDescriptor;
+    fn pathlike(&self) -> &PathOrFileDescriptor<'static>;
     /// Implementors that have a `mkdirp_if_not_exists` field (`WriteFile`,
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls

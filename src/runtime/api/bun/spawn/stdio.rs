@@ -56,7 +56,7 @@ pub enum Stdio {
     Ignore,
     Fd(Fd),
     Dup2(Dup2),
-    Path(PathLike),
+    Path(PathLike<'static>),
     Blob(webcore::blob::Any),
     ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Memfd(Fd),

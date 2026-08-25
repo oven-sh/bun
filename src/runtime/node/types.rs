@@ -95,7 +95,7 @@ pub enum FileBlobs {
 
 pub enum BlobOrStringOrBuffer {
     Blob(Box<Blob>),
-    StringOrBuffer(StringOrBuffer),
+    StringOrBuffer(StringOrBuffer<'static>),
 }
 
 impl Drop for BlobOrStringOrBuffer {
@@ -269,32 +269,27 @@ impl BlobOrStringOrBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum StringOrBuffer {
+/// Parsed from JS it is `StringOrBuffer<'static>`; `Utf8` may instead borrow
+/// Rust-side bytes for a synchronous call ([`StringOrBuffer::borrowed`]).
+pub enum StringOrBuffer<'a> {
     String(Utf8WithString),
     ThreadsafeString(Utf8WithString),
-    Utf8(Utf8Bytes<'static>),
+    Utf8(Utf8Bytes<'a>),
     Buffer(Buffer),
 }
 
-impl Default for StringOrBuffer {
+impl Default for StringOrBuffer<'_> {
     fn default() -> Self {
         Self::EMPTY
     }
 }
 
-impl StringOrBuffer {
-    pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::Utf8(Utf8Bytes::EMPTY);
+impl<'a> StringOrBuffer<'a> {
+    pub(crate) const EMPTY: Self = StringOrBuffer::Utf8(Utf8Bytes::EMPTY);
 
-    /// Lend `bytes` to a synchronous syscall without copying.
-    ///
-    /// # Safety
-    /// `bytes` must stay alive and unmoved until the returned value is dropped.
     #[inline]
-    pub(crate) unsafe fn borrowed(bytes: &[u8]) -> StringOrBuffer {
-        // SAFETY: caller contract above.
-        StringOrBuffer::Utf8(Utf8Bytes::Borrowed(unsafe {
-            bun_ptr::detach_lifetime(bytes)
-        }))
+    pub(crate) fn borrowed(bytes: &'a [u8]) -> StringOrBuffer<'a> {
+        StringOrBuffer::Utf8(Utf8Bytes::Borrowed(bytes))
     }
 
     pub(crate) fn slice(&self) -> &[u8] {
@@ -319,7 +314,7 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
     }
 }
 
-impl bun_jsc::Unprotect for StringOrBuffer {
+impl bun_jsc::Unprotect for StringOrBuffer<'static> {
     /// JS-side half of cleanup — undo the
     /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
     /// `from_js_maybe_async(.., Flavor::Async, ..)`. Owned slices are released
@@ -336,7 +331,32 @@ impl bun_jsc::Unprotect for StringOrBuffer {
     }
 }
 
-impl StringOrBuffer {
+impl StringOrBuffer<'_> {
+    pub fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
+        match self {
+            Self::ThreadsafeString(str) | Self::String(str) => str.into_js(ctx),
+            Self::Utf8(utf8) => bun_string_jsc::create_utf8_for_js(ctx, &utf8),
+            Self::Buffer(mut buffer) => {
+                if buffer.buffer.value != JSValue::ZERO {
+                    return Ok(buffer.buffer.value);
+                }
+                buffer.to_node_buffer(ctx)
+            }
+        }
+    }
+
+    /// Returns the buffer payload if this is `Self::Buffer`.
+    #[inline]
+    pub(crate) fn buffer(&self) -> Option<&Buffer> {
+        if let Self::Buffer(b) = self {
+            Some(b)
+        } else {
+            None
+        }
+    }
+}
+
+impl StringOrBuffer<'static> {
     pub(crate) fn to_thread_safe(&mut self) {
         match self {
             Self::String(s) => {
@@ -370,29 +390,6 @@ impl StringOrBuffer {
         Ok(result)
     }
 
-    pub fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            Self::ThreadsafeString(str) | Self::String(str) => str.into_js(ctx),
-            Self::Utf8(utf8) => bun_string_jsc::create_utf8_for_js(ctx, &utf8),
-            Self::Buffer(mut buffer) => {
-                if buffer.buffer.value != JSValue::ZERO {
-                    return Ok(buffer.buffer.value);
-                }
-                buffer.to_node_buffer(ctx)
-            }
-        }
-    }
-
-    /// Returns the buffer payload if this is `Self::Buffer`.
-    #[inline]
-    pub(crate) fn buffer(&self) -> Option<&Buffer> {
-        if let Self::Buffer(b) = self {
-            Some(b)
-        } else {
-            None
-        }
-    }
-
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
     /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
@@ -404,7 +401,7 @@ impl StringOrBuffer {
     /// `Option<>`-returning wrappers below cannot always NRVO away.
     #[inline]
     pub(crate) fn from_js_maybe_async_into(
-        out: &mut StringOrBuffer,
+        out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
         flavor: Flavor,
@@ -468,7 +465,7 @@ impl StringOrBuffer {
         value: JSValue,
         flavor: Flavor,
         string_objects: StringObjects,
-    ) -> JsResult<Option<StringOrBuffer>> {
+    ) -> JsResult<Option<Self>> {
         let mut out = Self::EMPTY;
         if Self::from_js_maybe_async_into(&mut out, global, value, flavor, string_objects)? {
             Ok(Some(out))
@@ -478,7 +475,7 @@ impl StringOrBuffer {
     }
 
     #[inline]
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
+    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
@@ -487,7 +484,7 @@ impl StringOrBuffer {
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
-    ) -> JsResult<Option<StringOrBuffer>> {
+    ) -> JsResult<Option<Self>> {
         Self::from_js_with_encoding_maybe_async(
             global,
             value,
@@ -500,7 +497,7 @@ impl StringOrBuffer {
     /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
     #[inline]
     pub(crate) fn from_js_with_encoding_into(
-        out: &mut StringOrBuffer,
+        out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
@@ -520,7 +517,7 @@ impl StringOrBuffer {
     /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.
     #[inline]
     pub(crate) fn from_js_with_encoding_maybe_async_into(
-        out: &mut StringOrBuffer,
+        out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
@@ -569,7 +566,7 @@ impl StringOrBuffer {
         encoding: Encoding,
         flavor: Flavor,
         string_objects: StringObjects,
-    ) -> JsResult<Option<StringOrBuffer>> {
+    ) -> JsResult<Option<Self>> {
         let mut out = Self::EMPTY;
         if Self::from_js_with_encoding_maybe_async_into(
             &mut out,
@@ -590,7 +587,7 @@ impl StringOrBuffer {
         value: JSValue,
         encoding_value: JSValue,
         string_objects: StringObjects,
-    ) -> JsResult<Option<StringOrBuffer>> {
+    ) -> JsResult<Option<Self>> {
         let encoding: Encoding = 'brk: {
             if !encoding_value.is_cell() {
                 break 'brk Encoding::Utf8;
@@ -846,7 +843,10 @@ pub trait PathLikeExt {
     ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
-    fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>>
+    fn from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<Option<PathLike<'static>>>
     where
         Self: Sized;
 
@@ -859,7 +859,7 @@ pub trait PathLikeExt {
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
         name: &str,
-    ) -> JsResult<PathLike>
+    ) -> JsResult<PathLike<'static>>
     where
         Self: Sized,
     {
@@ -871,7 +871,7 @@ pub trait PathLikeExt {
     fn from_js_with_allocator(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathLike>>
+    ) -> JsResult<Option<PathLike<'static>>>
     where
         Self: Sized;
     /// Throws ENAMETOOLONG too; [`Self::from_js`] defers it for async bindings instead.
@@ -879,7 +879,7 @@ pub trait PathLikeExt {
         global: &JSGlobalObject,
         str: bun_core::String,
         will_be_async: bool,
-    ) -> JsResult<PathLike>
+    ) -> JsResult<PathLike<'static>>
     where
         Self: Sized;
 }
@@ -889,12 +889,12 @@ pub(crate) trait PathOrFdExt {
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathOrFileDescriptor>>
+    ) -> JsResult<Option<PathOrFileDescriptor<'static>>>
     where
         Self: Sized;
 }
 
-impl PathLikeExt for PathLike {
+impl PathLikeExt for PathLike<'_> {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
     // separate method.
@@ -1105,14 +1105,17 @@ impl PathLikeExt for PathLike {
         }
     }
 
-    fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>> {
+    fn from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<Option<PathLike<'static>>> {
         Self::from_js_with_allocator(ctx, arguments)
     }
 
     fn from_js_with_allocator(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathLike>> {
+    ) -> JsResult<Option<PathLike<'static>>> {
         let Some(arg) = arguments.next() else {
             return Ok(None);
         };
@@ -1132,7 +1135,7 @@ impl PathLikeExt for PathLike {
                 }
 
                 arguments.protect_eat();
-                Self::Buffer(buffer)
+                PathLike::Buffer(buffer)
             }
 
             JSType::ArrayBuffer => {
@@ -1149,7 +1152,7 @@ impl PathLikeExt for PathLike {
                 }
 
                 arguments.protect_eat();
-                Self::Buffer(buffer)
+                PathLike::Buffer(buffer)
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
@@ -1210,7 +1213,7 @@ impl PathLikeExt for PathLike {
         global: &JSGlobalObject,
         str: bun_core::String,
         will_be_async: bool,
-    ) -> JsResult<PathLike> {
+    ) -> JsResult<PathLike<'static>> {
         let path = path_like_from_string(global, str, will_be_async)?;
         match Valid::path_too_long(path.slice()) {
             Some(err) => Err(global.throw_value(err.to_error_instance(global))),
@@ -1224,7 +1227,7 @@ fn path_like_from_string(
     global: &JSGlobalObject,
     str: bun_core::String,
     will_be_async: bool,
-) -> JsResult<PathLike> {
+) -> JsResult<PathLike<'static>> {
     let utf8 = if will_be_async {
         str.into_utf8_with_string_thread_safe()
     } else {
@@ -1280,10 +1283,10 @@ impl Valid {
 
     /// Sync bindings throw; async ones get it as `arguments.deferred_error` and a placeholder path.
     pub(crate) fn path_length(
-        path: PathLike,
+        path: PathLike<'static>,
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-    ) -> JsResult<PathLike> {
+    ) -> JsResult<PathLike<'static>> {
         let Some(err) = Self::path_too_long(path.slice()) else {
             return Ok(path);
         };
@@ -1518,22 +1521,22 @@ pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 // bumped where the underlying type supports it; otherwise we bitwise-copy
 // and leave proper ref-counting to a later pass.
 
-impl PathOrFdExt for PathOrFileDescriptor {
+impl PathOrFdExt for PathOrFileDescriptor<'_> {
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathOrFileDescriptor>> {
+    ) -> JsResult<Option<PathOrFileDescriptor<'static>>> {
         let Some(first) = arguments.next() else {
             return Ok(None);
         };
 
         if let Some(fd) = Fd::from_js_validated(first, ctx)? {
             arguments.eat();
-            return Ok(Some(Self::Fd(fd)));
+            return Ok(Some(PathOrFileDescriptor::Fd(fd)));
         }
 
         match PathLike::from_js_with_allocator(ctx, arguments)? {
-            Some(path) => Ok(Some(Self::Path(path))),
+            Some(path) => Ok(Some(PathOrFileDescriptor::Path(path))),
             None => Ok(None),
         }
     }
@@ -1788,7 +1791,7 @@ impl Dirent {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum PathOrBlob {
-    Path(PathOrFileDescriptor),
+    Path(PathOrFileDescriptor<'static>),
     Blob(Box<Blob>),
 }
 

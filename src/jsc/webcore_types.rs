@@ -769,7 +769,7 @@ pub mod store {
     /// A blob store referencing a file on disk.
     #[derive(Clone)]
     pub struct File {
-        pub pathlike: PathOrFileDescriptor,
+        pub pathlike: PathOrFileDescriptor<'static>,
         pub mime_type: MimeType,
         pub is_atty: Option<bool>,
         pub mode: bun_sys::Mode,
@@ -795,7 +795,7 @@ pub mod store {
 
     impl File {
         #[inline]
-        pub fn init(pathlike: PathOrFileDescriptor, mime_type: Option<MimeType>) -> File {
+        pub fn init(pathlike: PathOrFileDescriptor<'static>, mime_type: Option<MimeType>) -> File {
             File {
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
@@ -812,7 +812,7 @@ pub mod store {
     /// I/O methods (`unlink`/`stat`/`listObjects`/`getCredentialsWithOptions`)
     /// live in `bun_runtime` because they reach the HTTP client / event loop.
     pub struct S3 {
-        pub pathlike: PathLike,
+        pub pathlike: PathLike<'static>,
         pub(crate) mime_type: MimeType,
         pub(crate) credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
@@ -853,7 +853,7 @@ pub mod store {
         }
 
         pub fn init(
-            pathlike: PathLike,
+            pathlike: PathLike<'static>,
             mime_type: Option<MimeType>,
             credentials: bun_s3_signing::S3Credentials,
         ) -> S3 {

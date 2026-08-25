@@ -1810,8 +1810,7 @@ impl CommandLineReporter {
                     // Ensure the directory exists
                     let mut fs = crate::node::fs::NodeFS::default();
                     let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-                        // SAFETY: `mkdir_recursive` is synchronous; `opts` outlives the call.
-                        path: unsafe { crate::node::PathLike::borrowed(&opts.reports_directory) },
+                        path: crate::node::PathLike::borrowed(&opts.reports_directory),
                         always_return_none: true,
                         recursive: true,
                         ..Default::default()

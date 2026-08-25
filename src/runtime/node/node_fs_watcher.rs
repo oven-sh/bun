@@ -618,7 +618,7 @@ impl FSWatcher {
 }
 
 pub struct Arguments<'a> {
-    pub path: PathLike,
+    pub path: PathLike<'static>,
     pub(crate) listener: JSValue,
     pub global_this: &'a JSGlobalObject,
     pub(crate) signal: Option<&'a AbortSignal>,

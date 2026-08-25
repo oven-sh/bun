@@ -10,8 +10,8 @@ use crate::node::{Flavor, StringObjects, StringOrBuffer};
 use crate::crypto::evp::{self, Algorithm};
 
 pub(crate) struct PBKDF2 {
-    pub password: StringOrBuffer,
-    pub salt: StringOrBuffer,
+    pub password: StringOrBuffer<'static>,
+    pub salt: StringOrBuffer<'static>,
     pub iteration_count: u32,
     pub length: usize,
     algorithm: Algorithm,

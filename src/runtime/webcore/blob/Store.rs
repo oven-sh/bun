@@ -42,14 +42,14 @@ pub use bun_jsc::webcore_types::store::{
 pub trait StoreExt {
     fn to_any_blob(&mut self) -> Option<super::Any>;
     fn init_s3(
-        pathlike: PathLike,
+        pathlike: PathLike<'static>,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
     ) -> Result<Box<Store>, crate::Error>
     where
         Self: Sized;
     fn init_file(
-        pathlike: PathOrFileDescriptor,
+        pathlike: PathOrFileDescriptor<'static>,
         mime_type: Option<MimeType>,
     ) -> Result<Box<Store>, crate::Error>
     where
@@ -123,7 +123,7 @@ impl StoreExt for Store {
     }
 
     fn init_s3(
-        pathlike: PathLike,
+        pathlike: PathLike<'static>,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
     ) -> Result<Box<Store>, crate::Error> {
@@ -144,7 +144,7 @@ impl StoreExt for Store {
     }
 
     fn init_file(
-        pathlike: PathOrFileDescriptor,
+        pathlike: PathOrFileDescriptor<'static>,
         mime_type: Option<MimeType>,
     ) -> Result<Box<Store>, crate::Error> {
         // Compute the extension-derived fallback before moving `pathlike` into

@@ -183,7 +183,7 @@ impl Binding {
 
     /// `callAsync(.cp)`.
     pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let cp_args = match parse_async_args::<args::Cp>(global, frame) {
+        let cp_args = match parse_async_args::<args::Cp<'static>>(global, frame) {
             Ok(args) => args,
             Err(result) => return result,
         };
@@ -218,7 +218,7 @@ impl Binding {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let rd_args = match parse_async_args::<args::Readdir>(global, frame) {
+        let rd_args = match parse_async_args::<args::Readdir<'static>>(global, frame) {
             Ok(args) => args,
             Err(result) => return result,
         };
@@ -300,53 +300,53 @@ macro_rules! node_fs_bindings {
 
 #[rustfmt::skip]
 node_fs_bindings! {
-    access_sync       / access            => Access,            args::Access,    ret::Access;
-    append_file_sync  / append_file       => AppendFile,        args::AppendFile,ret::AppendFile;
-    close_sync        / close             => Close,             args::Close,     ret::Close;
-    copy_file_sync    / copy_file         => CopyFile,          args::CopyFile,  ret::CopyFile;
-    exists_sync       / exists            => Exists,            args::Exists,    ret::Exists;
-    chown_sync        / chown             => Chown,             args::Chown,     ret::Chown;
-    chmod_sync        / chmod             => Chmod,             args::Chmod,     ret::Chmod;
-    fchmod_sync       / fchmod            => Fchmod,            args::FChmod,    ret::Fchmod;
-    fchown_sync       / fchown            => Fchown,            args::Fchown,    ret::Fchown;
-    fstat_sync        / fstat             => Fstat,             args::Fstat,     ret::Fstat;
-    fsync_sync        / fsync             => Fsync,             args::Fsync,     ret::Fsync;
-    ftruncate_sync    / ftruncate         => Ftruncate,         args::FTruncate, ret::Ftruncate;
-    futimes_sync      / futimes           => Futimes,           args::Futimes,   ret::Futimes;
-    lchmod_sync       / lchmod            => Lchmod,            args::LCHmod,    ret::Lchmod;
-    lchown_sync       / lchown            => Lchown,            args::LChown,    ret::Lchown;
-    link_sync         / link              => Link,              args::Link,      ret::Link;
-    lstat_sync        / lstat             => Lstat,             args::Lstat,     ret::Lstat;
-    mkdir_sync        / mkdir             => Mkdir,             args::Mkdir,     ret::Mkdir;
-    mkdtemp_sync      / mkdtemp           => Mkdtemp,           args::MkdirTemp, ret::Mkdtemp;
-    open_sync         / open              => Open,              args::Open,      ret::Open;
-    read_sync         / read              => Read,              args::Read,      ret::Read;
-    write_sync        / write             => Write,             args::Write,     ret::Write;
-    read_file_sync    / read_file         => ReadFile,          args::ReadFile,  ret::ReadFile;
-    write_file_sync   / write_file        => WriteFile,         args::WriteFile, ret::WriteFile;
-    readlink_sync     / readlink          => Readlink,          args::Readlink,  ret::Readlink;
-    rm_sync           / rm                => Rm,                args::Rm,        ret::Rm;
-    rmdir_sync        / rmdir             => Rmdir,             args::RmDir,     ret::Rmdir;
-    realpath_sync     / realpath          => RealpathNonNative, args::Realpath,  ret::Realpath;
-    realpath_native_sync / realpath_native => Realpath,         args::Realpath,  ret::Realpath;
-    rename_sync       / rename            => Rename,            args::Rename,    ret::Rename;
-    stat_sync         / stat              => Stat,              args::Stat,      ret::Stat;
-    statfs_sync       / statfs            => Statfs,            args::StatFS,    ret::StatFS;
-    symlink_sync      / symlink           => Symlink,           args::Symlink,   ret::Symlink;
-    truncate_sync     / truncate          => Truncate,          args::Truncate,  ret::Truncate;
-    unlink_sync       / unlink            => Unlink,            args::Unlink,    ret::Unlink;
-    utimes_sync       / utimes            => Utimes,            args::Utimes,    ret::Utimes;
-    lutimes_sync      / lutimes           => Lutimes,           args::Lutimes,   ret::Lutimes;
-    writev_sync       / writev            => Writev,            args::Writev,    ret::Writev;
-    readv_sync        / readv             => Readv,             args::Readv,     ret::Readv;
-    fdatasync_sync    / fdatasync         => Fdatasync,         args::FdataSync, ret::Fdatasync;
+    access_sync          / access          => Access,            args::Access<'static>,     ret::Access;
+    append_file_sync     / append_file     => AppendFile,        args::AppendFile<'static>, ret::AppendFile;
+    close_sync           / close           => Close,             args::Close,               ret::Close;
+    copy_file_sync       / copy_file       => CopyFile,          args::CopyFile<'static>,   ret::CopyFile;
+    exists_sync          / exists          => Exists,            args::Exists<'static>,     ret::Exists;
+    chown_sync           / chown           => Chown,             args::Chown<'static>,      ret::Chown;
+    chmod_sync           / chmod           => Chmod,             args::Chmod<'static>,      ret::Chmod;
+    fchmod_sync          / fchmod          => Fchmod,            args::FChmod,              ret::Fchmod;
+    fchown_sync          / fchown          => Fchown,            args::Fchown,              ret::Fchown;
+    fstat_sync           / fstat           => Fstat,             args::Fstat,               ret::Fstat;
+    fsync_sync           / fsync           => Fsync,             args::Fsync,               ret::Fsync;
+    ftruncate_sync       / ftruncate       => Ftruncate,         args::FTruncate,           ret::Ftruncate;
+    futimes_sync         / futimes         => Futimes,           args::Futimes,             ret::Futimes;
+    lchmod_sync          / lchmod          => Lchmod,            args::LCHmod<'static>,     ret::Lchmod;
+    lchown_sync          / lchown          => Lchown,            args::LChown<'static>,     ret::Lchown;
+    link_sync            / link            => Link,              args::Link<'static>,       ret::Link;
+    lstat_sync           / lstat           => Lstat,             args::Lstat<'static>,      ret::Lstat;
+    mkdir_sync           / mkdir           => Mkdir,             args::Mkdir<'static>,      ret::Mkdir;
+    mkdtemp_sync         / mkdtemp         => Mkdtemp,           args::MkdirTemp<'static>,  ret::Mkdtemp;
+    open_sync            / open            => Open,              args::Open<'static>,       ret::Open;
+    read_sync            / read            => Read,              args::Read,                ret::Read;
+    write_sync           / write           => Write,             args::Write<'static>,      ret::Write;
+    read_file_sync       / read_file       => ReadFile,          args::ReadFile<'static>,   ret::ReadFile;
+    write_file_sync      / write_file      => WriteFile,         args::WriteFile<'static>,  ret::WriteFile;
+    readlink_sync        / readlink        => Readlink,          args::Readlink<'static>,   ret::Readlink;
+    rm_sync              / rm              => Rm,                args::Rm<'static>,         ret::Rm;
+    rmdir_sync           / rmdir           => Rmdir,             args::RmDir<'static>,      ret::Rmdir;
+    realpath_sync        / realpath        => RealpathNonNative, args::Realpath<'static>,   ret::Realpath;
+    realpath_native_sync / realpath_native => Realpath,          args::Realpath<'static>,   ret::Realpath;
+    rename_sync          / rename          => Rename,            args::Rename<'static>,     ret::Rename;
+    stat_sync            / stat            => Stat,              args::Stat<'static>,       ret::Stat;
+    statfs_sync          / statfs          => Statfs,            args::StatFS<'static>,     ret::StatFS;
+    symlink_sync         / symlink         => Symlink,           args::Symlink<'static>,    ret::Symlink;
+    truncate_sync        / truncate        => Truncate,          args::Truncate<'static>,   ret::Truncate;
+    unlink_sync          / unlink          => Unlink,            args::Unlink<'static>,     ret::Unlink;
+    utimes_sync          / utimes          => Utimes,            args::Utimes<'static>,     ret::Utimes;
+    lutimes_sync         / lutimes         => Lutimes,           args::Lutimes<'static>,    ret::Lutimes;
+    writev_sync          / writev          => Writev,            args::Writev,              ret::Writev;
+    readv_sync           / readv           => Readv,             args::Readv,               ret::Readv;
+    fdatasync_sync       / fdatasync       => Fdatasync,         args::FdataSync,           ret::Fdatasync;
 }
 
 // `readdirSync` goes through the generic sync path; only the async side is
 // special-cased above.
 impl Binding {
     pub(crate) const readdir_sync: NodeFSFunction =
-        call_sync::<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>();
+        call_sync::<ret::Readdir, args::Readdir<'static>, { NodeFSFunctionEnum::Readdir }>();
     // pub const statfs = callAsync(.statfs);
     // pub const statfsSync = callSync(.statfs);
 }

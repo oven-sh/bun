@@ -96,22 +96,23 @@ impl<T: Unprotect + Default> Default for ThreadSafe<T> {
 
 // `ThreadSafe<T>` crosses to the work-pool thread; auto-`Send` iff `T: Send`.
 
-/// `node.PathLike`.
-pub enum PathLike {
+/// `node.PathLike`. Parsed from JS it is `PathLike<'static>`; `Utf8` may
+/// instead borrow Rust-side bytes for a synchronous call ([`PathLike::borrowed`]).
+pub enum PathLike<'a> {
     Buffer(MarkedArrayBuffer),
     String(Utf8WithString),
     ThreadsafeString(Utf8WithString),
-    Utf8(Utf8Bytes<'static>),
+    Utf8(Utf8Bytes<'a>),
 }
 
-impl Default for PathLike {
+impl Default for PathLike<'_> {
     #[inline]
     fn default() -> Self {
         PathLike::Utf8(Utf8Bytes::EMPTY)
     }
 }
 
-impl Clone for PathLike {
+impl Clone for PathLike<'_> {
     /// Bumps any owning ref so
     /// the clone is independently droppable *and* `clone().slice()` returns
     /// the same bytes as the original.
@@ -131,7 +132,7 @@ impl Clone for PathLike {
     }
 }
 
-impl Drop for PathLike {
+impl Drop for PathLike<'_> {
     fn drop(&mut self) {
         match self {
             Self::Buffer(b) => {
@@ -145,18 +146,10 @@ impl Drop for PathLike {
     }
 }
 
-impl PathLike {
-    /// Lend `bytes` to a synchronous syscall without copying.
-    ///
-    /// # Safety
-    /// `bytes` must stay alive and unmoved until the returned `PathLike` is
-    /// dropped.
+impl<'a> PathLike<'a> {
     #[inline]
-    pub unsafe fn borrowed(bytes: &[u8]) -> PathLike {
-        // SAFETY: caller contract above.
-        PathLike::Utf8(Utf8Bytes::Borrowed(unsafe {
-            bun_ptr::detach_lifetime(bytes)
-        }))
+    pub fn borrowed(bytes: &'a [u8]) -> PathLike<'a> {
+        PathLike::Utf8(Utf8Bytes::Borrowed(bytes))
     }
 
     #[inline]
@@ -175,7 +168,9 @@ impl PathLike {
             Self::Utf8(s) => s.slice().len(),
         }
     }
+}
 
+impl PathLike<'static> {
     /// Promote any borrowed-JS
     /// payload to a thread-safe representation. For `Buffer` the variant is
     /// kept and the backing JS value is `protect()`ed (paired with
@@ -200,7 +195,7 @@ impl PathLike {
     }
 }
 
-impl Unprotect for PathLike {
+impl Unprotect for PathLike<'static> {
     /// JS-side half of cleanup — undo
     /// the `protect()` taken by [`Self::to_thread_safe`] /
     /// `ArgumentsSlice::protect_eat`. Owned payloads are released by `Drop`.
@@ -213,19 +208,19 @@ impl Unprotect for PathLike {
 }
 
 /// `node.PathOrFileDescriptor`.
-pub enum PathOrFileDescriptor {
+pub enum PathOrFileDescriptor<'a> {
     Fd(Fd),
-    Path(PathLike),
+    Path(PathLike<'a>),
 }
 
-impl Default for PathOrFileDescriptor {
+impl Default for PathOrFileDescriptor<'_> {
     #[inline]
     fn default() -> Self {
         Self::Fd(Fd::INVALID)
     }
 }
 
-impl Clone for PathOrFileDescriptor {
+impl Clone for PathOrFileDescriptor<'_> {
     fn clone(&self) -> Self {
         match self {
             Self::Fd(fd) => Self::Fd(*fd),
@@ -253,14 +248,16 @@ impl PathOrFileDescriptorSerializeTag {
     }
 }
 
-impl PathOrFileDescriptor {
+impl PathOrFileDescriptor<'static> {
     #[inline]
     pub fn to_thread_safe(&mut self) {
         if let Self::Path(p) = self {
             p.to_thread_safe();
         }
     }
+}
 
+impl PathOrFileDescriptor<'_> {
     #[inline]
     pub fn estimated_size(&self) -> usize {
         match self {
@@ -270,7 +267,7 @@ impl PathOrFileDescriptor {
     }
 }
 
-impl Unprotect for PathOrFileDescriptor {
+impl Unprotect for PathOrFileDescriptor<'static> {
     /// JS-side half of cleanup — see [`PathLike::unprotect`].
     #[inline]
     fn unprotect(&mut self) {
@@ -280,7 +277,7 @@ impl Unprotect for PathOrFileDescriptor {
     }
 }
 
-impl core::fmt::Display for PathOrFileDescriptor {
+impl core::fmt::Display for PathOrFileDescriptor<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Path(p) => write!(f, "{}", bstr::BStr::new(p.slice())),
@@ -291,7 +288,7 @@ impl core::fmt::Display for PathOrFileDescriptor {
     }
 }
 
-impl PathOrFileDescriptor {
+impl<'a> PathOrFileDescriptor<'a> {
     #[inline]
     pub fn is_path(&self) -> bool {
         matches!(self, Self::Path(_))
@@ -305,7 +302,7 @@ impl PathOrFileDescriptor {
     /// Unwrap the `Path` arm. Panics on `Fd` (used only after the caller has
     /// matched on the tag).
     #[inline]
-    pub fn path(&self) -> &PathLike {
+    pub fn path(&self) -> &PathLike<'a> {
         match self {
             Self::Path(path) => path,
             Self::Fd(_) => unreachable!("PathOrFileDescriptor::path() on Fd variant"),

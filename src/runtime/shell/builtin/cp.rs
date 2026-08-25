@@ -1,5 +1,7 @@
+use bun_core::Utf8Bytes;
 use bun_paths::resolve_path;
 
+use crate::node::PathLike;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
@@ -228,11 +230,11 @@ impl Cp {
                     let ignorable = tref
                         .tgt_absolute
                         .as_ref()
-                        .map_or(false, |p| eb.absolute_targets.contains(p))
+                        .map_or(false, |p| eb.absolute_targets.contains(p.slice()))
                         || tref
                             .src_absolute
                             .as_ref()
-                            .map_or(false, |p| eb.absolute_srcs.contains(p));
+                            .map_or(false, |p| eb.absolute_srcs.contains(p.slice()));
                     Some((t, ignorable))
                 } else {
                     None
@@ -281,10 +283,10 @@ impl Cp {
                     // compatibility.
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
                         if (sys.get_errno() == bun_sys::E::EBUSY
-                                && task.tgt_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)))
-                            || task.src_absolute.as_deref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p)));
+                                && task.tgt_absolute.as_ref()
+                                    .map_or(false, |p| sys.path.eql_utf8(p.slice())))
+                            || task.src_absolute.as_ref()
+                                    .map_or(false, |p| sys.path.eql_utf8(p.slice())));
                     if is_ebusy {
                         exec.ebusy.tasks.push(bun_core::heap::into_raw(task));
                         return Self::next(interp, cmd).run(interp);
@@ -293,10 +295,10 @@ impl Cp {
                     // Record successful absolute paths so a deferred EBUSY
                     // sibling can be suppressed.
                     if let Some(tgt) = task.tgt_absolute.take() {
-                        bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
+                        bun_core::handle_oom(exec.ebusy.absolute_targets.insert(tgt.slice()));
                     }
                     if let Some(src) = task.src_absolute.take() {
-                        bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
+                        bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(src.slice()));
                     }
                 }
             }
@@ -397,8 +399,10 @@ pub struct ShellCpTask {
     pub(crate) operands: usize,
     pub(crate) src: Vec<u8>,
     pub(crate) tgt: Vec<u8>,
-    pub(crate) src_absolute: Option<Vec<u8>>,
-    pub(crate) tgt_absolute: Option<Vec<u8>>,
+    /// The absolute paths handed to the `ShellAsyncCpTask`, moved back by
+    /// [`cp_on_finish`](Self::cp_on_finish) for the EBUSY bookkeeping.
+    pub(crate) src_absolute: Option<PathLike<'static>>,
+    pub(crate) tgt_absolute: Option<PathLike<'static>>,
     pub(crate) cwd_path: Vec<u8>,
     /// `cp_on_copy` is invoked from work-pool threads (concurrently per
     /// copied file) while the directory walk is still fanning out, so the
@@ -482,12 +486,19 @@ impl ShellCpTask {
     /// `this` is the live `heap::alloc`'d task originally passed to
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
-    pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
+    pub(crate) unsafe fn cp_on_finish(
+        this: *mut ShellCpTask,
+        src: PathLike<'static>,
+        dest: PathLike<'static>,
+        result: bun_sys::Maybe<()>,
+    ) {
         // SAFETY: caller contract — JS thread, from the `ShellAsyncCpTask`'s
         // completion; `this` is live and ours. The pool side finished (and
         // dropped its poster) when it handed the copy to that task, so continue
         // in place rather than bouncing through the concurrent queue again.
         unsafe {
+            (*this).src_absolute = Some(src);
+            (*this).tgt_absolute = Some(dest);
             if let Err(e) = result {
                 (*this).err = Some(ShellErr::new_sys(&e));
             }
@@ -706,20 +717,9 @@ impl ShellCpTask {
             _copying_many = true;
         }
 
-        self.src_absolute = Some(src.as_bytes().to_vec());
-        self.tgt_absolute = Some(tgt.as_bytes().to_vec());
-
         let args = crate::node::fs::args::Cp {
-            // SAFETY: this `ShellCpTask` owns `src_absolute`/`tgt_absolute` and is
-            // freed only in `on_shell_cp_task_done`, after the `ShellAsyncCpTask`
-            // that reads `args` has completed.
-            src: unsafe {
-                bun_jsc::node::PathLike::borrowed(self.src_absolute.as_deref().unwrap())
-            },
-            // SAFETY: as above.
-            dest: unsafe {
-                bun_jsc::node::PathLike::borrowed(self.tgt_absolute.as_deref().unwrap())
-            },
+            src: PathLike::Utf8(Utf8Bytes::Owned(src.as_bytes().to_vec())),
+            dest: PathLike::Utf8(Utf8Bytes::Owned(tgt.as_bytes().to_vec())),
             flags: crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
                 force: true,

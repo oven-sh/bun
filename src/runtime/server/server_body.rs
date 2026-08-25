@@ -641,7 +641,7 @@ impl AnyRoute {
     pub(crate) fn from_options(
         global: &JSGlobalObject,
         headers: Option<&FetchHeaders>,
-        path: &mut Node::PathOrFileDescriptor,
+        path: &mut Node::PathOrFileDescriptor<'static>,
     ) -> JsResult<AnyRoute> {
         // The file/static route doesn't ref it.
         let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global, false);

@@ -513,9 +513,13 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       // More bytes than the pipe holds only go through once the read loop has drained the rest, so
       // from here on the read is in flight, blocked on the next chunk.
       const chunk = Buffer.alloc(192 * 1024, 0x78);
+      const deadline = Date.now() + 4000;
       for (let off = 0; off < chunk.length; ) {
         const n = write(chunk, off);
-        if (n === 0) await Bun.sleep(1);
+        if (n === 0) {
+          if (Date.now() > deadline) throw new Error(`the read loop took only ${off} of ${chunk.length} bytes`);
+          await Bun.sleep(1);
+        }
         off += n;
       }
       ac.abort(reason);

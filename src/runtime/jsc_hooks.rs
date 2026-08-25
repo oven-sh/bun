@@ -1331,6 +1331,8 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
     };
     bun_core::heap::into_raw(Box::new(NodeFS {
         vm: vm_field,
+        // SAFETY: per fn contract.
+        vm_handle: Some(unsafe { &*vm }.handle()),
         ..NodeFS::default()
     }))
     .cast::<c_void>()

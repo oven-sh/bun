@@ -983,9 +983,13 @@ describe.skipIf(isWindows)("terminate() stops a readFile of a FIFO that never en
           // More bytes than the pipe holds only go through once the worker's read loop has drained
           // the rest, so from here on the worker is inside that loop, blocked in read().
           const chunk = Buffer.alloc(${fed}, 0x78);
+          const deadline = Date.now() + ${timeout / 2};
           for (let off = 0; off < chunk.length; ) {
             const n = write(chunk, off);
-            if (n === 0) await Bun.sleep(1);
+            if (n === 0) {
+              if (Date.now() > deadline) { console.log("the worker took only", off, "bytes"); process.exit(3); }
+              await Bun.sleep(1);
+            }
             off += n;
           }
           console.log("fed");
@@ -1037,7 +1041,6 @@ describe.skipIf(isWindows)("terminate() stops a readFile of a FIFO that never en
         const fs = require("node:fs");
         const { Worker } = require("node:worker_threads");
         const io = () => {
-          if (process.platform !== "linux") return { bytes: 0, reads: 1 };
           const text = fs.readFileSync("/proc/self/io", "utf8");
           return { bytes: Number(/rchar: (\\d+)/.exec(text)[1]), reads: Number(/syscr: (\\d+)/.exec(text)[1]) };
         };
@@ -1051,12 +1054,19 @@ describe.skipIf(isWindows)("terminate() stops a readFile of a FIFO that never en
         w.on("message", async m => {
           console.log(m);
           if (m !== "reading") process.exit(1);
-          // A window of reading: long enough that a doubling read size would have passed 2 MiB.
-          const a = io();
-          await Bun.sleep(200);
-          const b = io();
+          // A window of reading: 32 MiB, past which a doubling read size averages above 2 MiB.
+          let perRead = 0;
+          if (process.platform === "linux") {
+            const a = io();
+            let b = a;
+            for (const deadline = Date.now() + ${timeout / 4}; b.bytes - a.bytes < 32 * 1024 * 1024 && Date.now() < deadline; ) {
+              await Bun.sleep(10);
+              b = io();
+            }
+            perRead = Math.round((b.bytes - a.bytes) / Math.max(1, b.reads - a.reads));
+          }
           const code = await Promise.race([w.terminate(), Bun.sleep(${timeout / 2}).then(() => "hung")]);
-          console.log("terminated", code, "bytes per read:", Math.round((b.bytes - a.bytes) / Math.max(1, b.reads - a.reads)));
+          console.log("terminated", code, "bytes per read:", perRead);
           process.exit(code === "hung" ? 2 : 0);
         });
       `,

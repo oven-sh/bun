@@ -403,57 +403,6 @@ mod macho {
         // SAFETY: section data is `length` bytes immediately following the u64 header.
         Some((unsafe { slice_ptr.add(data_offset) }, length as usize))
     }
-
-    unsafe extern "C" {
-        /// `<mach-o/getsect.h>`: the named segment's load command in the main executable.
-        fn getsegbyname(
-            segname: *const core::ffi::c_char,
-        ) -> *const bun_sys::macho::segment_command_64;
-        /// `<mach-o/dyld.h>`: the path dyld loaded image `image_index` from.
-        fn _dyld_get_image_name(image_index: u32) -> *const core::ffi::c_char;
-    }
-
-    /// `F_RDADVISE` on the executable for the file bytes backing `[lo, hi)`: an
-    /// asynchronous read into the page cache that returns at once.
-    /// (`MADV_WILLNEED` blocks on Darwin until the pages are in, so it is no use
-    /// for overlapping I/O with startup.)
-    pub(super) fn read_ahead(lo: usize, hi: usize) {
-        // SAFETY: NUL-terminated segment name; returns null or a pointer into the
-        // main image's load commands, which live as long as the process.
-        let segment = unsafe { getsegbyname(c"__BUN".as_ptr()) };
-        if segment.is_null() {
-            return;
-        }
-        // SAFETY: non-null per the check above.
-        let segment = unsafe { &*segment };
-        let slide = bun_sys::c::_dyld_get_image_vmaddr_slide(0) as usize;
-        let segment_start = (segment.vmaddr as usize).wrapping_add(slide);
-        let segment_end = segment_start.saturating_add(segment.filesize as usize);
-        if lo < segment_start || hi > segment_end {
-            return;
-        }
-        // SAFETY: image 0 is the main executable; dyld keeps its NUL-terminated
-        // path alive for the life of the process.
-        let exe_path = unsafe { bun_core::ZStr::from_c_ptr(_dyld_get_image_name(0)) };
-        let Ok(file) = bun_sys::File::open(exe_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)
-        else {
-            return;
-        };
-        let advisory = libc::radvisory {
-            ra_offset: (lo - segment_start + segment.fileoff as usize) as libc::off_t,
-            ra_count: (hi - lo).min(i32::MAX as usize) as core::ffi::c_int,
-        };
-        // SAFETY: `advisory` is a valid `struct radvisory` for the duration of
-        // the call; the fd stays open until `file` drops below.
-        let rc = unsafe { libc::fcntl(file.fd().native(), libc::F_RDADVISE, &advisory) };
-        bun_core::scoped_log!(
-            super::StandaloneModuleGraph,
-            "prefetch: F_RDADVISE offset={} count={} rc={}",
-            advisory.ra_offset,
-            advisory.ra_count,
-            rc
-        );
-    }
 }
 
 #[cfg(windows)]
@@ -524,36 +473,6 @@ mod elf {
         }
         // SAFETY: payload_len bytes follow the 8-byte header at `target`.
         Some((unsafe { target.add(8) }, payload_len as usize))
-    }
-
-    /// `MADV_WILLNEED` over `[lo, hi)`: queues page-cache readahead for the
-    /// file bytes backing the mapping and returns once the I/O is submitted.
-    /// Issued in 128 KiB pieces because one call reads at most
-    /// `max(bdi->io_pages, ra_pages)` (device dependent, 128 KiB on some).
-    pub(super) fn read_ahead(lo: usize, hi: usize) {
-        const PIECE: usize = 128 * 1024;
-        let mut at = lo & !(bun_alloc::page_size() - 1);
-        while at < hi {
-            let len = PIECE.min(hi - at);
-            // SAFETY: `[at, at + len)` lies inside the mapped executable
-            // image; `MADV_WILLNEED` neither reads nor writes through it.
-            let rc =
-                unsafe { libc::madvise(at as *mut core::ffi::c_void, len, libc::MADV_WILLNEED) };
-            if rc != 0 {
-                bun_core::scoped_log!(
-                    super::StandaloneModuleGraph,
-                    "prefetch: madvise failed errno={}",
-                    bun_sys::last_errno()
-                );
-                return;
-            }
-            at += len;
-        }
-        bun_core::scoped_log!(
-            super::StandaloneModuleGraph,
-            "prefetch: MADV_WILLNEED {} bytes",
-            hi - lo
-        );
     }
 }
 
@@ -2621,12 +2540,12 @@ impl StandaloneModuleGraph {
         Ok(Some(graph))
     }
 
-    /// Starts reading the payload pages the entry point's static import closure
-    /// needs — its modules' bytecode (or source text when there is none), the
-    /// internal-module bytecode and the string table, one run by construction
-    /// (`to_bytes`) — so on a cold start the disk reads overlap JSC
-    /// initialization instead of arriving one page fault at a time while the
-    /// bytecode decodes. Pages already cached cost nothing; errors are ignored.
+    /// Reads the payload pages the entry point's static import closure needs
+    /// into the page cache before JSC touches them: its modules' bytecode (or
+    /// source text when there is none), the internal-module bytecode and the
+    /// string table, one run by construction (`to_bytes`). On a cold start that
+    /// is a few large reads instead of one page fault per page while the
+    /// bytecode decodes. Errors are ignored.
     /// `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1` skips it.
     fn prefetch_startup_pages(&self) {
         if self.startup_module_count == 0
@@ -2643,10 +2562,16 @@ impl StandaloneModuleGraph {
                     .flat_map(|f| [f.bytecode, f.module_info])
                     .chain(self.builtin_bytecode.iter().map(|&(_, bytes)| bytes))
                     .map(|bytes| (bytes.cast::<u8>().cast_const(), bytes.len()))
-                    .chain([(
-                        self.bytecode_string_table.as_ptr(),
-                        self.bytecode_string_table.len(),
-                    )]),
+                    .chain([
+                        (
+                            self.bytecode_string_table.as_ptr(),
+                            self.bytecode_string_table.len(),
+                        ),
+                        (
+                            self.module_info_string_table.as_ptr(),
+                            self.module_info_string_table.len(),
+                        ),
+                    ]),
             )
         } else {
             address_span(
@@ -2658,12 +2583,10 @@ impl StandaloneModuleGraph {
         let Some((lo, hi)) = span else {
             return;
         };
-        #[cfg(target_os = "macos")]
-        macho::read_ahead(lo, hi);
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-        elf::read_ahead(lo, hi);
         #[cfg(windows)]
         let _ = (lo, hi);
+        #[cfg(not(windows))]
+        read_ahead(lo, hi);
     }
 
     /// Hint to the kernel that the embedded source text is unlikely to be
@@ -2753,6 +2676,88 @@ fn address_span(regions: impl Iterator<Item = (*const u8, usize)>) -> Option<(us
             (lo.min(ptr as usize), hi.max(ptr as usize + len))
         });
     (lo < hi).then_some((lo, hi))
+}
+
+/// `MADV_WILLNEED` over the pages of `[lo, hi)`: the kernel reads the file
+/// bytes behind the mapping into the page cache.
+///
+/// Linux queues the readahead and returns. One call reads at most
+/// `max(bdi->io_pages, ra_pages)` (device dependent, 128 KiB by default), so
+/// it is issued in 128 KiB pieces.
+///
+/// Darwin (`vm_map_willneed`) pre-faults every page with reads of up to 1 MiB
+/// and returns once they are resident. It write-faults a writable mapping
+/// "to preclude subsequent soft-faults", which copies every page out of the
+/// page cache into private memory, so the range is read-only for the duration
+/// of the call. JSC's later writes to the bytecode copy one page at a time, as
+/// without the prefetch.
+#[cfg(not(windows))]
+fn read_ahead(lo: usize, hi: usize) {
+    let start = lo & !(bun_alloc::page_size() - 1);
+    #[cfg(target_os = "macos")]
+    {
+        let range = start as *mut core::ffi::c_void;
+        let len = hi - start;
+        // SAFETY: `[start, hi)` lies inside the `__BUN` segment, whose maximum
+        // protection is read-write; nothing else runs in this process yet, so
+        // no write lands while the range is read-only.
+        let rc = unsafe { libc::mprotect(range, len, libc::PROT_READ) };
+        if rc != 0 {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "prefetch: mprotect failed errno={}",
+                bun_sys::last_errno()
+            );
+            return;
+        }
+        // SAFETY: same range; `MADV_WILLNEED` neither reads nor writes through it.
+        let advised = unsafe { libc::madvise(range, len, libc::MADV_WILLNEED) };
+        let advise_errno = bun_sys::last_errno();
+        // SAFETY: restores the segment's own protection on the same range.
+        let restored = unsafe { libc::mprotect(range, len, libc::PROT_READ | libc::PROT_WRITE) };
+        if restored != 0 {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "prefetch: mprotect restore failed errno={}",
+                bun_sys::last_errno()
+            );
+            return;
+        }
+        if advised != 0 {
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "prefetch: madvise failed errno={}",
+                advise_errno
+            );
+            return;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        const PIECE: usize = 128 * 1024;
+        let mut at = start;
+        while at < hi {
+            let len = PIECE.min(hi - at);
+            // SAFETY: `[at, at + len)` lies inside the mapped executable image;
+            // `MADV_WILLNEED` neither reads nor writes through it.
+            let rc =
+                unsafe { libc::madvise(at as *mut core::ffi::c_void, len, libc::MADV_WILLNEED) };
+            if rc != 0 {
+                bun_core::scoped_log!(
+                    StandaloneModuleGraph,
+                    "prefetch: madvise failed errno={}",
+                    bun_sys::last_errno()
+                );
+                return;
+            }
+            at += len;
+        }
+    }
+    bun_core::scoped_log!(
+        StandaloneModuleGraph,
+        "prefetch: MADV_WILLNEED {} bytes",
+        hi - lo
+    );
 }
 
 /// Writes the ahead-of-time bytecode of the internal modules, the shared

@@ -2467,6 +2467,9 @@ pub mod parse_worker {
     /// Hand the task and its outcome back to the bundle thread
     /// (`on_parse_task_complete`).
     fn finish<'a>(mut this: Box<ParseTask<'a>>, ctx: &ParseShared<'a>, value: ResultValue<'a>) {
+        // Held only while the task is out (a queued result must not keep
+        // `ParseShared` — and through its inbox, itself — alive).
+        this.ctx = None;
         drop(core::mem::take(&mut this.jsx));
         let result = Result {
             value,

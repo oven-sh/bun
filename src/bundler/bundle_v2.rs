@@ -169,10 +169,8 @@ impl<'a> BundleConfig<'a> {
 }
 
 pub struct BundleV2<'a> {
-    /// The primary (server-side under bake) transpiler: the bundle's own clone
-    /// (`Transpiler::for_worker`) of the one it was started from, sharing its
-    /// `Log`.
-    /// Lent by whoever drives the bundle (`init`'s contract).
+    /// The primary (server-side under bake) transpiler, lent by whoever
+    /// drives the bundle (`init`'s contract); the bundle logs to its `Log`.
     pub(crate) transpiler: bun_ptr::LentMut<Transpiler<'a>>,
     /// What each transpiler's files are parsed against (kept by the heap:
     /// ASTs borrow from them). `client_define` is set with `client_transpiler`.
@@ -273,6 +271,9 @@ impl Drop for BundleV2<'_> {
     fn drop(&mut self) {
         self.shared.inbox.close();
         self.shared.pool.wait_for_all();
+        // Results that were never applied (an error path): drop them, and
+        // with them the finished tasks they carry.
+        self.shared.inbox.drain().for_each(drop);
     }
 }
 
@@ -283,7 +284,7 @@ bun_core::declare_scope!(scan_counter, visible);
 /// pass; `process_resolve_queue` schedules them.
 pub(crate) type ResolveQueue<'a> = StringHashMap<Option<Box<ParseTask<'a>>>>;
 
-/// Bake's transpilers, which the bundle clones (`Transpiler::for_worker`).
+/// Bake's transpilers, lent to the bundle like `init`'s `transpiler`.
 pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
     /// Lent for the bundle's life, like `init`'s `transpiler`.
@@ -1730,8 +1731,8 @@ pub mod bv2_impl {
                     match &mut event.incoming {
                         Incoming::ParseTask(result) => {
                             Self::on_parse_task_complete(result, self);
-                            if let Some(mut task) = result.parse_task.take() {
-                                task.ctx = None;
+                            if let Some(task) = result.parse_task.take() {
+                                debug_assert!(task.ctx.is_none(), "cleared by `finish`");
                                 self.parsed_tasks.push(task);
                             }
                         }
@@ -2905,8 +2906,10 @@ pub mod bv2_impl {
             Ok(Some(source_index.get()))
         }
 
-        /// The bundle clones `transpiler` (and the bake transpilers) and
-        /// shares its `Log`; `heap` outlives the bundle (see
+        /// `transpiler` (and the bake transpilers in `config`) are lent to the
+        /// bundle until it is dropped: the caller keeps them alive and does not
+        /// use them concurrently with it; parse threads read their options to
+        /// clone their own. `heap` outlives the bundle (see
         /// [`BundleV2::init_with_owned_heap`] for a bundle that owns its heap).
         pub fn init(
             transpiler: &mut Transpiler<'a>,

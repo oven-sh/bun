@@ -1362,11 +1362,17 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         watcher: Box<Watcher>,
         _reload_immediately: bool,
     ) -> *mut Watcher {
-        let mut watcher = watcher;
-        self.transpiler_mut().resolver.watcher = Some(watcher.get_resolve_watcher());
-        let watcher_ptr: *mut Watcher = &raw mut *watcher;
-        // Owned by the bundle, which `bun build --watch` leaks for the process.
+        // Owned by the bundle, which `bun build --watch` leaks for the process;
+        // everything below is derived from its final home.
         self.bun_watcher = Some(watcher);
+        let watcher: &mut Watcher = self
+            .bun_watcher
+            .as_deref_mut()
+            .and_then(bun_bundler::bundle_v2::BundleWatcher::as_watcher_mut)
+            .expect("just installed");
+        let resolve_watcher = watcher.get_resolve_watcher();
+        let watcher_ptr: *mut Watcher = watcher;
+        self.transpiler_mut().resolver.watcher = Some(resolve_watcher);
         watcher_ptr
     }
 

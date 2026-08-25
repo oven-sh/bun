@@ -171,7 +171,6 @@ fn step5_for_file(c: &Step5Shared<'_, '_>, row: &mut Step5Row<'_, '_>) {
     {
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
-        // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
         let mut aliases =
             bun_alloc::ArenaVec::<&[u8]>::with_capacity_in(resolved_exports.count(), arena);
 

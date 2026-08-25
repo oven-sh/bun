@@ -660,7 +660,7 @@ mod thunk {
         // SAFETY: as above; `reason[..reason_len]` is valid for the call.
         unsafe {
             let reason = bytes(reason.cast(), usize::try_from(reason_len).unwrap_or(0));
-            session::<E>(ctx).on_conncloseframe(app_error == 1, code, reason);
+            session::<E>(ctx).on_conncloseframe(app_error != 0, code, reason);
         }
     }
     pub(super) unsafe extern "C" fn on_new_token<E: NqEndpoint>(
@@ -752,7 +752,11 @@ mod thunk {
         let Some(payload) = unsafe { session::<E>(ctx) }.on_dg_write(sz) else {
             return -1;
         };
-        let n = payload.len().min(sz);
+        if payload.len() > sz {
+            debug_assert!(false, "on_dg_write returned more than `capacity` bytes");
+            return -1;
+        }
+        let n = payload.len();
         // SAFETY: `buf[..sz]` is writable for the call and `n <= sz`.
         unsafe { core::ptr::copy_nonoverlapping(payload.as_ptr(), buf.cast::<u8>(), n) };
         n as isize
@@ -1676,18 +1680,18 @@ impl<T: NqDriverOwner + AnyRefCounted<DestructorCtx = ()>> Drop for NqDriver<T> 
     }
 }
 
-pub fn debug_assert_layout() {
-    debug_assert_eq!(
+pub fn assert_layout() {
+    assert_eq!(
         us_nq_vtable_size(),
         core::mem::size_of::<RawVtable>(),
         "us_nq_vtable layout mismatch between node_quic_shim.c and lsquic_sys"
     );
-    debug_assert_eq!(
+    assert_eq!(
         us_nq_driver_size(),
         core::mem::size_of::<DriverNode>(),
         "us_nq_driver_s layout mismatch between node_quic_shim.c and lsquic_sys"
     );
-    debug_assert_eq!(
+    assert_eq!(
         us_nq_tp_size(),
         core::mem::size_of::<NqTransportParams>(),
         "us_nq_tp layout mismatch: peer_transport_params passes a stack \

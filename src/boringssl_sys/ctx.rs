@@ -314,8 +314,8 @@ unsafe extern "C" fn keylog_thunk<H: KeylogCallback>(ssl: *const SSL, line: *con
 
 /// `SSL_CTX` ex-data slot holding the wire-format ALPN preference list that
 /// [`SSL_CTX::set_alpn_select_from`] installed. Freed with the context.
-fn alpn_prefs_index() -> c_int {
-    static INDEX: std::sync::OnceLock<c_int> = std::sync::OnceLock::new();
+fn alpn_prefs_index() -> Option<c_int> {
+    static INDEX: std::sync::OnceLock<Option<c_int>> = std::sync::OnceLock::new();
     unsafe extern "C" fn free_prefs(
         _parent: *mut c_void,
         ptr: *mut c_void,
@@ -341,8 +341,7 @@ fn alpn_prefs_index() -> c_int {
                 Some(free_prefs),
             )
         };
-        assert!(i >= 0, "SSL_CTX_get_ex_new_index failed");
-        i
+        (i >= 0).then_some(i)
     })
 }
 
@@ -364,7 +363,10 @@ unsafe extern "C" fn alpn_select_from_prefs(
         if ctx.is_null() {
             return SSL_TLSEXT_ERR_NOACK;
         }
-        let p = SSL_CTX_get_ex_data(ctx, alpn_prefs_index()).cast::<Box<[u8]>>();
+        let Some(index) = alpn_prefs_index() else {
+            return SSL_TLSEXT_ERR_NOACK;
+        };
+        let p = SSL_CTX_get_ex_data(ctx, index).cast::<Box<[u8]>>();
         if p.is_null() {
             return SSL_TLSEXT_ERR_NOACK;
         }
@@ -507,7 +509,9 @@ impl SSL_CTX {
         if c_uint::try_from(prefs.len()).is_err() {
             return false;
         }
-        let index = alpn_prefs_index();
+        let Some(index) = alpn_prefs_index() else {
+            return false;
+        };
         let boxed: Box<Box<[u8]>> = Box::new(prefs.into());
         // SAFETY: `self` is live. The slot's previous value (if any) was
         // stored by this function and is freed here before being replaced;

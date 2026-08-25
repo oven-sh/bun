@@ -896,7 +896,7 @@ impl QuicEndpoint {
                 lsquic::enable_logging(c"debug");
             }
         });
-        lsquic::debug_assert_layout();
+        lsquic::assert_layout();
 
         let this = RefPtr::new(QuicEndpoint {
             ref_count: Cell::new(1),

@@ -445,7 +445,8 @@ pub struct EncodeOptions {
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     pub(crate) progressive: bool,
     /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
-    /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
+    /// WebP ICCP, HEIC/AVIF `colr` via the system codec). `None` ⇒ no
+    /// profile chunk/marker is written. The
     /// pipeline forwards this from the decode step so a non-sRGB source
     /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
     /// re-encode. Borrowed; the caller retains ownership.

@@ -73,6 +73,9 @@ struct Syms {
     CFRef (*CFDictionaryCreate)(CFRef, const void**, const void**, long, const void*, const void*);
     // CoreGraphics
     CFRef (*CGColorSpaceCreateDeviceRGB)();
+    CFRef (*CGColorSpaceCreateWithICCData)(CFRef);
+    CFRef (*CGColorSpaceCreateWithName)(CFRef);
+    size_t (*CGColorSpaceGetNumberOfComponents)(CFRef);
     void (*CGColorSpaceRelease)(CFRef);
     CFRef (*CGImageCreate)(size_t, size_t, size_t, size_t, size_t, CFRef, uint32_t, CFRef, const double*, bool, int32_t);
     size_t (*CGImageGetWidth)(CFRef);
@@ -95,6 +98,7 @@ struct Syms {
     // Data symbols (dlsym returns the *address* of the global; we store that
     // address and dereference at use-site).
     CFRef* kCFAllocatorNull;
+    CFRef* kCGColorSpaceSRGB;
     CFRef* kCGImageDestinationLossyCompressionQuality;
     const void* kCFTypeDictionaryKeyCallBacks;
     const void* kCFTypeDictionaryValueCallBacks;
@@ -119,6 +123,9 @@ constexpr struct {
     SYM(CFNumberCreate),
     SYM(CFDictionaryCreate),
     SYM(CGColorSpaceCreateDeviceRGB),
+    SYM(CGColorSpaceCreateWithICCData),
+    SYM(CGColorSpaceCreateWithName),
+    SYM(CGColorSpaceGetNumberOfComponents),
     SYM(CGColorSpaceRelease),
     SYM(CGImageCreate),
     SYM(CGImageGetWidth),
@@ -137,6 +144,7 @@ constexpr struct {
     SYM(vImageHorizontalReflect_ARGB8888),
     SYM(vImageVerticalReflect_ARGB8888),
     SYM(kCFAllocatorNull),
+    SYM(kCGColorSpaceSRGB),
     SYM(kCGImageDestinationLossyCompressionQuality),
     SYM(kCFTypeDictionaryKeyCallBacks),
     SYM(kCFTypeDictionaryValueCallBacks),
@@ -319,13 +327,16 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
 }
 
 // Encode RGBA8 → format. format: 0=jpeg, 1=png, 2=webp, 3=heic, 4=avif.
-// Quality 1-100. Two-phase like decode: pass `out=nullptr` to get the encoded
+// Quality 1-100. `icc`/`icc_len` (nullable) is the source ICC profile; the
+// pixels are tagged with it so the output carries the colour space (#40493).
+// Two-phase like decode: pass `out=nullptr` to get the encoded
 // size into `*out_len`; the encoded bytes are held in a static-thread-local
 // CFData until the next call so the second call can copy them out without
 // re-encoding. (One encode, one memcpy — same allocation count as the static
 // codecs after the recent Encoded refactor.)
 int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t height,
-    int32_t format, int32_t quality, uint8_t* out, size_t* out_len)
+    int32_t format, int32_t quality, const uint8_t* icc, size_t icc_len,
+    uint8_t* out, size_t* out_len)
 {
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
@@ -356,7 +367,7 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
 
     struct R {
         const Syms* s;
-        CFRef cs, prov, img, ustr, sink, dest, num, props;
+        CFRef cs, prov, img, ustr, sink, dest, num, props, iccData;
         ~R()
         {
             if (props) s->CFRelease(props);
@@ -367,11 +378,33 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
             if (img) s->CGImageRelease(img);
             if (prov) s->CGDataProviderRelease(prov);
             if (cs) s->CGColorSpaceRelease(cs);
+            if (iccData) s->CFRelease(iccData);
         }
     } r {};
     r.s = s;
 
-    r.cs = s->CGColorSpaceCreateDeviceRGB();
+    // Tag the pixels with their actual colour space. The pipeline's RGBA is
+    // still in the source space (decode does not colour-convert), so attach
+    // the source ICC profile when there is one — ImageIO then embeds it in
+    // the output (`colr` of type `prof` for HEIC/AVIF). Without a profile,
+    // tag sRGB by name: device RGB has no defined primaries, so ImageIO
+    // wrote the AVIF CICP fields as "unspecified" (2/2) and downstream
+    // decoders had no colour information at all (#40493).
+    if (icc && icc_len) {
+        r.iccData = s->CFDataCreateWithBytesNoCopy(nullptr, icc, static_cast<long>(icc_len), *s->kCFAllocatorNull);
+        if (r.iccData) {
+            CFRef cs = s->CGColorSpaceCreateWithICCData(r.iccData);
+            // CGImageCreate below needs a 3-component space for RGBA pixels;
+            // a non-RGB profile falls back to the sRGB tag.
+            if (cs && s->CGColorSpaceGetNumberOfComponents(cs) != 3) {
+                s->CGColorSpaceRelease(cs);
+                cs = nullptr;
+            }
+            r.cs = cs;
+        }
+    }
+    if (!r.cs) r.cs = s->CGColorSpaceCreateWithName(*s->kCGColorSpaceSRGB);
+    if (!r.cs) r.cs = s->CGColorSpaceCreateDeviceRGB();
     if (!r.cs) return CG_UNAVAILABLE;
 
     // Wrap the pipeline's straight-alpha RGBA directly — CGImageCreate (unlike
@@ -556,7 +589,7 @@ int64_t bun_coregraphics_clipboard_change_count()
 // Non-Apple: stubs so the link succeeds; callers only reference these on
 // macOS so they're dead code, but LTO needs the definitions.
 extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*) { return 1; }
-extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, void*, void*) { return 1; }
+extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, const void*, unsigned long, void*, void*) { return 1; }
 extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned) { return 1; }
 extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*, unsigned) { return 1; }
 extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }

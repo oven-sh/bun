@@ -778,6 +778,121 @@ describe("Bun.Image", () => {
       expect(String.fromCharCode(...lossless.subarray(12, 16))).toBe("VP8L");
       expect(extractWebpIccp(lossless)).toBeNull();
     });
+
+    // ── HEIC/AVIF colour tagging — #40493. The system encoders (ImageIO on
+    // macOS, WIC on Windows) used to receive neither the ICC profile nor a
+    // colour-space tag, so AVIF output had no `colr` ICC box and its CICP
+    // fields were "unspecified" (primaries 2, transfer 2): wide-gamut input
+    // came out untagged and rendered as sRGB downstream.
+    //
+    // Unlike the byte-copying JPEG/PNG/WebP container paths above, ImageIO
+    // *parses* the profile to build a CGColorSpace, so `fakeProfile` won't
+    // do. This is a real minimal Display-P3-compatible ICC profile (480
+    // bytes, CC0, from saucecontrol/Compact-ICC-Profiles,
+    // DisplayP3Compat-v4.icc).
+    const p3Profile = new Uint8Array(
+      Buffer.from(
+        "AAAB4GxjbXMEIAAAbW50clJHQiBYWVogB+IAAwAUAAkADgAdYWNzcE1TRlQAAAAAc2F3c2N0cmwA" +
+          "AAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1oYW5kguKocouKP/clPrmS7iTWrgAAAAAAAAAAAAAAAAAA" +
+          "AAAAAAAAAAAAAAAAAAAAAAAKZGVzYwAAAPwAAAAkY3BydAAAASAAAAAid3RwdAAAAUQAAAAUY2hh" +
+          "ZAAAAVgAAAAsclhZWgAAAYQAAAAUZ1hZWgAAAZgAAAAUYlhZWgAAAawAAAAUclRSQwAAAcAAAAAg" +
+          "Z1RSQwAAAcAAAAAgYlRSQwAAAcAAAAAgbWx1YwAAAAAAAAABAAAADGVuVVMAAAAIAAAAHABzAFAA" +
+          "MwBDbWx1YwAAAAAAAAABAAAADGVuVVMAAAAGAAAAHABDAEMAMAAAWFlaIAAAAAAAAPbWAAEAAAAA" +
+          "0y1zZjMyAAAAAAABDEIAAAXe///zJQAAB5MAAP2Q///7of///k4AAAOaAADAFFhZWiAAAAAAAACD" +
+          "3wAAPb8AAAAAWFlaIAAAAAAAAEq/AACxNwAACrVYWVogAAAAAAAAKDgAABEKAADIeHBhcmEAAAAA" +
+          "AAMAAAACZmkAAPKnAAANWQAAE9AAAApb",
+        "base64",
+      ),
+    );
+
+    // Walk an ISOBMFF (HEIF/AVIF) box tree and return every `colr` box:
+    // { type: "nclx" | "prof" | "rICC", payload }. Item properties live
+    // under meta (a FullBox: 4 extra header bytes) → iprp → ipco.
+    function extractIsobmffColr(buf: Uint8Array): { type: string; payload: Uint8Array }[] {
+      const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+      const found: { type: string; payload: Uint8Array }[] = [];
+      function walk(start: number, end: number) {
+        let off = start;
+        while (off + 8 <= end) {
+          let size = dv.getUint32(off);
+          const type = String.fromCharCode(buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]);
+          let hdr = 8;
+          if (size === 1) {
+            // 64-bit largesize; test images are tiny, the low word suffices.
+            size = Number(dv.getBigUint64(off + 8));
+            hdr = 16;
+          } else if (size === 0) {
+            size = end - off; // box extends to the end of the enclosing box
+          }
+          if (size < hdr || off + size > end) return;
+          if (type === "colr") {
+            const body = buf.subarray(off + hdr, off + size);
+            found.push({
+              type: String.fromCharCode(body[0], body[1], body[2], body[3]),
+              payload: body.subarray(4),
+            });
+          } else if (type === "meta") {
+            walk(off + hdr + 4, off + size);
+          } else if (type === "iprp" || type === "ipco") {
+            walk(off + hdr, off + size);
+          }
+          off += size;
+        }
+      }
+      walk(0, buf.length);
+      return found;
+    }
+
+    // Encode availability is machine-specific (see the HEIC/AVIF describe
+    // below), so both tests pin the ERR_IMAGE_FORMAT_UNSUPPORTED branch and
+    // only assert colour tagging where the codec exists. HEIC covers every
+    // macOS CI machine (HEVC ships unconditionally); AVIF additionally runs
+    // where an AV1 encoder exists (M3+).
+    test.each(["heic", "avif"] as const)("PNG iCCP transfers to .%s() — colr box carries the ICC profile", async fmt => {
+      const src = pngWithIccp(cornersPng, p3Profile);
+      let out: Uint8Array;
+      try {
+        out = await new Bun.Image(src)[fmt]({ quality: 60 }).bytes();
+      } catch (e: any) {
+        expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
+        return;
+      }
+      const prof = extractIsobmffColr(out).find(c => c.type === "prof" || c.type === "rICC");
+      // The encoder may re-serialise the profile, so assert a well-formed
+      // RGB ICC profile rather than byte equality: data colour space
+      // "RGB " at offset 16, signature "acsp" at offset 36.
+      expect(prof).toBeDefined();
+      const p = prof!.payload;
+      expect(String.fromCharCode(p[16], p[17], p[18], p[19])).toBe("RGB ");
+      expect(String.fromCharCode(p[36], p[37], p[38], p[39])).toBe("acsp");
+    });
+
+    // macOS only: WIC exposes no CICP control, so the "tag sane defaults
+    // without a profile" half of the fix is ImageIO-specific.
+    test.skipIf(!isMacOS).each(["heic", "avif"] as const)("no source profile → .%s() tags a defined colour space, not unspecified CICP", async fmt => {
+      let out: Uint8Array;
+      try {
+        out = await new Bun.Image(cornersPng)[fmt]({ quality: 60 }).bytes();
+      } catch (e: any) {
+        expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
+        return;
+      }
+      const colrs = extractIsobmffColr(out);
+      expect(colrs.length).toBeGreaterThan(0);
+      const nclx = colrs.find(c => c.type === "nclx");
+      if (nclx) {
+        const dv = new DataView(nclx.payload.buffer, nclx.payload.byteOffset, nclx.payload.byteLength);
+        // 2 = "unspecified" in both CICP fields — the bug. sRGB-tagged
+        // pixels must come out with defined primaries/transfer (1/13).
+        expect({ primaries: dv.getUint16(0), transfer: dv.getUint16(2) }).toEqual({
+          primaries: 1,
+          transfer: 13,
+        });
+      } else {
+        // No nclx — then an ICC `colr` must define the colour space.
+        expect(colrs.some(c => c.type === "prof" || c.type === "rICC")).toBe(true);
+      }
+    });
   });
 
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment

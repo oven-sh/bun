@@ -3134,18 +3134,20 @@ pub mod bv2_impl {
             config: BundleConfig<'static>,
             heap: &'h BundleHeap,
         ) -> Result<Box<BundleV2<'h>>, Error> {
-            // SAFETY: `Transpiler<'x>` / `BundleConfig<'_, 'x>` are covariant in
-            // `'x` but lent mutably, so the borrow checker cannot shorten
-            // `'static` to `'h` itself; that is sound as long as nothing that
-            // lives only for `'h` is stored into them, and the bundle stores
-            // only owned values into a lent transpiler's options.
-            let (transpiler, config) = unsafe {
-                (
-                    &mut *core::ptr::from_mut(transpiler).cast::<Transpiler<'h>>(),
-                    core::mem::transmute::<BundleConfig<'static>, BundleConfig<'h>>(config),
-                )
-            };
-            BundleV2::init(transpiler, config, heap)
+            // SAFETY: as `lend_shorter`, for the transpilers lent in `config`.
+            let config =
+                unsafe { core::mem::transmute::<BundleConfig<'static>, BundleConfig<'h>>(config) };
+            BundleV2::init(Self::lend_shorter(transpiler), config, heap)
+        }
+
+        /// A `'static` transpiler lent to a bundle whose heap lives for `'h`.
+        fn lend_shorter<'r, 'h>(transpiler: &'r mut Transpiler<'static>) -> &'r mut Transpiler<'h> {
+            // SAFETY: `Transpiler<'x>` is covariant in `'x` but lent mutably,
+            // so the borrow checker cannot shorten `'static` to `'h` itself;
+            // that is sound as long as nothing that lives only for `'h` is
+            // stored into it, and the bundle stores only owned values into a
+            // lent transpiler's options.
+            unsafe { &mut *core::ptr::from_mut(transpiler).cast::<Transpiler<'h>>() }
         }
 
         /// The bundle heap (`graph.heap`).
@@ -3949,11 +3951,35 @@ pub mod bv2_impl {
         /// The full `bun build` pipeline on the calling thread. With
         /// `enable_reloading`, the bundle is kept for the process (the hot
         /// reloader watches through it) — hence `'static`.
+        /// `bun build`: bundle `transpiler`'s entry points into `heap`.
         pub fn generate_from_cli(
-            transpiler: &mut Transpiler<'a>,
+            transpiler: &mut Transpiler<'static>,
             heap: &'a BundleHeap,
             event_loop: bun_event_loop::AnyEventLoop,
-            enable_reloading: bool,
+            reachable_files_count: &mut usize,
+            minify_duration: &mut u64,
+            source_code_size: &mut u64,
+            fetcher: Option<&DependenciesScanner<'_>>,
+        ) -> Result<BuildResult, Error> {
+            let config = BundleConfig::new(event_loop);
+            let mut this = BundleV2::init(Self::lend_shorter(transpiler), config, heap)?;
+            let result = this.run_from_cli(
+                reachable_files_count,
+                minify_duration,
+                source_code_size,
+                fetcher,
+            );
+            this.deinit_without_freeing_arena();
+            result
+        }
+
+        /// `bun build --watch`: the watcher thread keeps referring to the
+        /// bundle after this returns (until it `execve()`s the process on the
+        /// next change), so the bundle is never freed and `heap` is `'static`.
+        pub fn generate_from_cli_watching(
+            transpiler: &mut Transpiler<'static>,
+            heap: &'static BundleHeap,
+            event_loop: bun_event_loop::AnyEventLoop,
             reachable_files_count: &mut usize,
             minify_duration: &mut u64,
             source_code_size: &mut u64,
@@ -3963,31 +3989,17 @@ pub mod bv2_impl {
             'a: 'static,
         {
             let mut config = BundleConfig::new(event_loop);
-            config.watch = enable_reloading;
-            let mut this = BundleV2::init(transpiler, config, heap)?;
-            if enable_reloading {
-                // Under `--watch` the watcher thread keeps referring to the
-                // bundle after this returns, so it is never freed. Bounded:
-                // the next file change `execve()`s the process anyway.
-                let this: &'static mut BundleV2<'static> = Box::leak(this);
-                dispatch::enable_hot_module_reloading_for_bundler(&mut *this);
-                // The reloader re-enters only from the watcher thread's
-                // `execve`, never through this reference.
-                return this.run_from_cli(
-                    reachable_files_count,
-                    minify_duration,
-                    source_code_size,
-                    fetcher,
-                );
-            }
-            let result = this.run_from_cli(
+            config.watch = true;
+            let this: &mut BundleV2<'a> = Box::leak(BundleV2::init(transpiler, config, heap)?);
+            dispatch::enable_hot_module_reloading_for_bundler(&mut *this);
+            // The reloader re-enters only from the watcher thread's `execve`,
+            // never through this reference.
+            this.run_from_cli(
                 reachable_files_count,
                 minify_duration,
                 source_code_size,
                 fetcher,
-            );
-            this.deinit_without_freeing_arena();
-            result
+            )
         }
 
         fn run_from_cli(
@@ -4185,12 +4197,16 @@ pub mod bv2_impl {
         /// worker pool is owned (created with `thread_pool: None`), so tearing
         /// it down does not touch the runtime VM's parse threads.
         pub fn scan_module_graph_from_cli(
-            transpiler: &mut Transpiler<'a>,
+            transpiler: &mut Transpiler<'static>,
             heap: &'a BundleHeap,
             event_loop: bun_event_loop::AnyEventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            let mut this = BundleV2::init(transpiler, BundleConfig::new(event_loop), heap)?;
+            let mut this = BundleV2::init(
+                Self::lend_shorter(transpiler),
+                BundleConfig::new(event_loop),
+                heap,
+            )?;
 
             if this.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);

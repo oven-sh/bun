@@ -614,6 +614,8 @@ impl BuildCommand {
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
+        // The bundle's heap; declared here so it outlives `output_files`.
+        let heap;
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
@@ -656,22 +658,32 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
-            // Process-lifetime like the CLI arena `this_transpiler` lives in
-            // (and, under `--watch`, referenced by the watcher thread for as long).
-            let heap: &'static bun_bundler::bundle_v2::BundleHeap =
-                Box::leak(Box::new(bun_bundler::bundle_v2::BundleHeap::new()));
             let _ = arena;
-
-            let build_result = match BundleV2::generate_from_cli(
-                this_transpiler,
-                heap,
-                bun_event_loop::AnyEventLoop::init(),
-                ctx.debug.hot_reload == HotReload::Watch,
-                &mut reachable_file_count,
-                &mut minify_duration,
-                &mut input_code_length,
-                fetcher,
-            ) {
+            let build_result = if ctx.debug.hot_reload == HotReload::Watch {
+                // The watcher thread refers to the bundle (and its heap) until
+                // it `execve()`s the process on the next change.
+                BundleV2::generate_from_cli_watching(
+                    this_transpiler,
+                    Box::leak(Box::new(bun_bundler::bundle_v2::BundleHeap::new())),
+                    bun_event_loop::AnyEventLoop::init(),
+                    &mut reachable_file_count,
+                    &mut minify_duration,
+                    &mut input_code_length,
+                    fetcher,
+                )
+            } else {
+                heap = bun_bundler::bundle_v2::BundleHeap::new();
+                BundleV2::generate_from_cli(
+                    this_transpiler,
+                    &heap,
+                    bun_event_loop::AnyEventLoop::init(),
+                    &mut reachable_file_count,
+                    &mut minify_duration,
+                    &mut input_code_length,
+                    fetcher,
+                )
+            };
+            let build_result = match build_result {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {

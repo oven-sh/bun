@@ -161,15 +161,11 @@ pub(crate) fn filter<'a>(
     scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
-    // `scan_transpiler` is `'static` (CLI arena), so the heap the graph is
-    // parsed into is as well; `bun test` exits after the run.
-    let heap: &'static bun_bundler::bundle_v2::BundleHeap =
-        Box::leak(Box::new(bun_bundler::bundle_v2::BundleHeap::new()));
     let _ = arena;
-
+    let heap = bun_bundler::bundle_v2::BundleHeap::new();
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
-        heap,
+        &heap,
         bun_event_loop::AnyEventLoop::init(),
         &entry_points,
     ) {

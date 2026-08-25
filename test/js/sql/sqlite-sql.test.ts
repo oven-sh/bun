@@ -957,6 +957,12 @@ describe("Query Execution", () => {
     const outerReplaceFn = await sql`WITH c AS (SELECT 'aaa' AS n) SELECT REPLACE (n, 'a', 'b') AS r FROM c`;
     expect(outerReplaceFn).toEqual([{ r: "bbb" }]);
     expect(outerReplaceFn.affectedRows).toBe(0);
+
+    // upsert reports the statement's verb, matching PostgreSQL's command tag
+    await sql`INSERT INTO gadgets VALUES (7, 1)`;
+    const upsert = await sql`INSERT INTO gadgets VALUES (7, 2) ON CONFLICT (id) DO UPDATE SET price = 2`;
+    expect(upsert.command).toBe("INSERT");
+    expect(upsert.affectedRows).toBe(1);
   });
 
   test("SELECT with various clauses", async () => {

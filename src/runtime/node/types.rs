@@ -187,10 +187,11 @@ impl BlobOrStringOrBuffer {
                 }
                 if allow_request_response {
                     if let Some(request) = value.as_class_ref::<Request>() {
-                        let body_value = request.get_body_value();
-                        body_value.to_blob_if_possible();
-
-                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
+                        let any_blob = request.body_value().with_mut(|body_value| {
+                            body_value.to_blob_if_possible();
+                            body_value.try_use_as_any_blob()
+                        });
+                        if let Some(mut any_blob) = any_blob {
                             let blob = any_blob.to_blob(global);
                             any_blob.detach();
                             return Ok(Some(Self::Blob(Box::new(blob))));
@@ -202,10 +203,11 @@ impl BlobOrStringOrBuffer {
                     }
 
                     if let Some(response) = value.as_class_ref::<Response>() {
-                        let body_value = response.get_body_value();
-                        body_value.to_blob_if_possible();
-
-                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
+                        let any_blob = response.body_value().with_mut(|body_value| {
+                            body_value.to_blob_if_possible();
+                            body_value.try_use_as_any_blob()
+                        });
+                        if let Some(mut any_blob) = any_blob {
                             let blob = any_blob.to_blob(global);
                             any_blob.detach();
                             return Ok(Some(Self::Blob(Box::new(blob))));

@@ -91,6 +91,130 @@ pub trait BufferedReaderParent {
     }
 }
 
+/// A [`BufferedReaderParent`] that holds its reader in a by-value field, so a
+/// live parent is a live reader. Implemented by `impl_buffered_reader_parent!`
+/// (`reader = <field>;`); lets the parent drive the raw-pointer entry points
+/// ([`BufferedReader::read`], [`BufferedReader::on_error`]) from a
+/// [`ThisPtr`](bun_ptr::ThisPtr) without materialising a reference that the
+/// re-entrant dispatch could invalidate.
+///
+/// # Safety
+/// `reader` must be a place projection to a field inside `*this` (same
+/// allocation), performing no reads.
+pub unsafe trait BufferedReaderOwner: Sized {
+    fn reader(this: *mut Self) -> *mut BufferedReader;
+}
+
+/// The field types `impl_buffered_reader_parent!`'s `reader = <field>;` accepts.
+pub trait ReaderSlot {
+    fn raw(slot: *mut Self) -> *mut BufferedReader;
+}
+impl ReaderSlot for BufferedReader {
+    #[inline(always)]
+    fn raw(slot: *mut Self) -> *mut BufferedReader {
+        slot
+    }
+}
+impl ReaderSlot for bun_ptr::JsCell<BufferedReader> {
+    #[inline(always)]
+    fn raw(slot: *mut Self) -> *mut BufferedReader {
+        // `JsCell<T>` is `repr(transparent)` over `UnsafeCell<T>`.
+        slot.cast()
+    }
+}
+
+/// Place projection for `impl_buffered_reader_parent!`'s `reader = <field>;`:
+/// `this + offset`, typed by the (never called) field accessor.
+#[doc(hidden)]
+#[inline(always)]
+pub fn reader_slot_ptr<T, S: ReaderSlot>(
+    this: *mut T,
+    offset: usize,
+    _field: fn(&T) -> &S,
+) -> *mut BufferedReader {
+    S::raw(this.wrapping_byte_add(offset).cast::<S>())
+}
+
+impl BufferedReader {
+    /// The reader embedded in `parent`. The callbacks these entries dispatch
+    /// go to the registered parent (`set_parent`), which must be `parent` once
+    /// set.
+    #[inline]
+    fn embedded_in<P: BufferedReaderOwner>(parent: bun_ptr::ThisPtr<P>) -> *mut Self {
+        let reader = P::reader(parent.as_ptr());
+        #[cfg(debug_assertions)]
+        {
+            // SAFETY: `parent` is live (`ThisPtr` invariant), so its embedded reader is.
+            let registered = unsafe { (*reader).vtable.parent };
+            assert!(
+                registered.is_null() || registered == parent.as_ptr().cast::<c_void>(),
+                "BufferedReader dispatched through a parent it was not registered with"
+            );
+        }
+        reader
+    }
+
+    /// [`read`](Self::read) on the reader embedded in `parent`.
+    #[inline]
+    pub fn read_from<P: BufferedReaderOwner>(parent: bun_ptr::ThisPtr<P>) {
+        // SAFETY: `parent` is live (`ThisPtr` invariant), so its embedded
+        // reader is; no reference to either is held across the dispatch.
+        unsafe { Self::read(Self::embedded_in(parent)) }
+    }
+
+    /// [`on_error`](Self::on_error) on the reader embedded in `parent`.
+    #[inline]
+    pub fn on_error_from<P: BufferedReaderOwner>(parent: bun_ptr::ThisPtr<P>, err: sys::Error) {
+        // SAFETY: as `read_from`.
+        unsafe { Self::on_error(Self::embedded_in(parent), err) }
+    }
+
+    /// [`read_into`](Self::read_into) on the reader embedded in `parent`.
+    #[inline]
+    pub fn read_into_from<P: BufferedReaderOwner>(
+        parent: bun_ptr::ThisPtr<P>,
+        dst: &mut [u8],
+    ) -> (usize, ReadState) {
+        // SAFETY: as `read_from`.
+        unsafe { Self::read_into(Self::embedded_in(parent), dst) }
+    }
+
+    /// [`close`](Self::close) on the reader embedded in `parent`. The done
+    /// callback it dispatches re-enters `parent`, so no borrow of the reader
+    /// may be live in the caller.
+    #[inline]
+    pub fn close_from<P: BufferedReaderOwner>(parent: bun_ptr::ThisPtr<P>) {
+        // SAFETY: as `read_from`.
+        unsafe { (*Self::embedded_in(parent)).close() }
+    }
+
+    /// [`start`](Self::start) / [`start_file_offset`](Self::start_file_offset)
+    /// on the reader embedded in `parent`; a registration error re-enters
+    /// `parent` through `on_reader_error`.
+    #[inline]
+    pub fn start_from<P: BufferedReaderOwner>(
+        parent: bun_ptr::ThisPtr<P>,
+        fd: Fd,
+        is_pollable: bool,
+        offset: Option<usize>,
+    ) -> sys::Result<()> {
+        // SAFETY: as `read_from`.
+        let reader = unsafe { &mut *Self::embedded_in(parent) };
+        match offset {
+            Some(offset) => reader.start_file_offset(fd, is_pollable, offset),
+            None => reader.start(fd, is_pollable),
+        }
+    }
+
+    /// [`unpause`](Self::unpause) on the reader embedded in `parent` (on
+    /// Windows an exhausted limit reports EOF to `parent` from inside).
+    #[inline]
+    pub fn unpause_from<P: BufferedReaderOwner>(parent: bun_ptr::ThisPtr<P>) {
+        // SAFETY: as `read_from`.
+        unsafe { (*Self::embedded_in(parent)).unpause() }
+    }
+}
+
 impl BufferedReaderVTable {
     fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
         BufferedReaderVTable {

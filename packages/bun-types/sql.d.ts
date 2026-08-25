@@ -472,7 +472,8 @@ declare module "bun" {
        * (SQLite and MySQL), or `MERGE` (PostgreSQL) changed. `0` for
        * statements that do not write. This is the portable way to read the
        * affected-row count on every adapter. On SQLite, `null` when the
-       * count is unknown: a write wrapped in a CTE without `RETURNING`.
+       * count is unknown, for example a write wrapped in a CTE or an
+       * `INSERT ... SELECT` without `RETURNING`.
        */
       affectedRows: number | bigint | null;
       /**

@@ -913,11 +913,11 @@ describe("Query Execution", () => {
     expect(blockComment.affectedRows).toBe(2);
 
     // a CTE-wrapped write without RETURNING returns no rows, so the count is unknown
-    const cteWrite = await sql`WITH bump AS (SELECT 1) UPDATE gadgets2 SET id = id + 10`;
+    const cteWrite = await sql`WITH bump AS (SELECT 1) UPDATE gadgets2 SET id = id + 10 WHERE id > 0`;
     expect(cteWrite.command).toBe("UPDATE");
     expect(cteWrite.affectedRows).toBeNull();
 
-    const cteReturning = await sql`WITH bump AS (SELECT 1) UPDATE gadgets2 SET id = id - 10 RETURNING id`;
+    const cteReturning = await sql`WITH bump AS (SELECT 1) UPDATE gadgets2 SET id = id - 10 WHERE id > 10 RETURNING id`;
     expect(cteReturning).toHaveLength(2);
     expect(cteReturning.affectedRows).toBe(2);
 

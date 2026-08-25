@@ -6495,9 +6495,9 @@ bun_jsc::jsc_host_abi! {
     pub unsafe fn Bake__bundleNewRouteJSFunctionImpl(
         global: &JSGlobalObject,
         request_ptr: *mut c_void,
-        url: StringView<'_>,
+        url: &StringView<'_>,
     ) -> JSValue {
-        jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, url))
+        jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, *url))
     }
 }
 

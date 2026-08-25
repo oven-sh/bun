@@ -1340,20 +1340,24 @@ impl S3DownloadStreamWrapper {
         bun_core::heap::into_raw(Box::new(init))
     }
 
+    /// `this` is the heap pointer from `new` (write and dealloc provenance): the terminal
+    /// callback frees the wrapper through it, so no reference derived from it may outlive
+    /// this call.
     fn callback(
         chunk: &MutableString,
         has_more: bool,
         request_err: Option<Error::S3Error>,
-        self_: &Self,
+        this: *mut Self,
     ) {
-        // scope-exit cleanup via guard (keeps borrowck happy)
-        let _guard = scopeguard::guard(std::ptr::from_ref::<Self>(self_).cast_mut(), move |s| {
+        let _guard = scopeguard::guard(this, move |s| {
             if !has_more {
-                // SAFETY: s is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
-                // reconstituting and dropping the Box runs Drop::drop and frees the allocation
+                // SAFETY: `s` is the live allocation from `new`; the HTTP thread does not call
+                // back after the terminal chunk, so this is the only owner left.
                 drop(unsafe { bun_core::heap::take(s) });
             }
         });
+        // SAFETY: live until the guard runs, which is after the last use of this borrow.
+        let self_ = unsafe { &*this };
 
         if let Some(err) = request_err {
             let Some(bytes) = self_.stream.take() else {
@@ -1472,9 +1476,9 @@ impl S3DownloadStreamWrapper {
         err: Option<Error::S3Error>,
         opaque_self: *mut c_void,
     ) {
-        // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
-        let self_: &Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
-        Self::callback(chunk, has_more, err, self_);
+        // `opaque_self` is the wrapper allocated in `readable_stream`; handed on as the raw
+        // pointer so that the terminal callback can free it.
+        Self::callback(chunk, has_more, err, opaque_self.cast::<Self>());
     }
 }
 

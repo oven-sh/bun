@@ -51,8 +51,10 @@ pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
 pub mod lent;
 pub mod owner_cell;
+pub mod stable_vec;
 pub mod parent_ref;
 pub use lent::{Lent, LentMut};
+pub use stable_vec::StableVec;
 pub use owner_cell::{OwnerCell, RefFamily};
 pub use parent_ref::ParentRef;
 pub use raw_ref_count::RawRefCount;

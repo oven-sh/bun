@@ -216,17 +216,19 @@ pub struct BundleV2<'a> {
     pub(crate) parsed_tasks: Vec<Box<ParseTask<'a>>>,
     /// onLoad plugin requests, by id; the plugin host holds `&mut Load` while
     /// it answers one.
-    #[allow(clippy::vec_box)] // the plugin host holds pointers to the elements
-    pub(crate) loads: Vec<Box<api::JSBundler::Load<'a>>>,
+    /// (The plugin host holds their addresses, so they are never touched
+    /// through an owning `Box` while alive.)
+    pub(crate) loads: bun_ptr::StableVec<api::JSBundler::Load<'a>>,
     /// onResolve plugin requests, by id.
-    #[allow(clippy::vec_box)] // as `loads`
-    pub(crate) resolves: Vec<Box<api::JSBundler::Resolve<'a>>>,
+    pub(crate) resolves: bun_ptr::StableVec<api::JSBundler::Resolve<'a>>,
 
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
 
-    pub(crate) drain_defer_task: crate::DeferredBatchTask::DeferredBatchTask<'a>,
+    /// One task, out of line: the JS thread holds its address while a hop
+    /// is out, so it is never touched through `self`'s own storage.
+    pub(crate) drain_defer_task: bun_ptr::StableVec<crate::DeferredBatchTask::DeferredBatchTask<'a>>,
 
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` CLI) runs at the top of an event loop. When this is true,
@@ -1690,7 +1692,7 @@ pub mod bv2_impl {
                 graph.cancelled,
                 *completion,
                 event_loop,
-                &mut *loads[id as usize],
+                loads.get_mut(id as usize),
             );
         }
 
@@ -1706,7 +1708,7 @@ pub mod bv2_impl {
                 graph.cancelled,
                 *completion,
                 event_loop,
-                &mut *resolves[id as usize],
+                resolves.get_mut(id as usize),
             );
         }
 
@@ -3003,11 +3005,15 @@ pub mod bv2_impl {
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
                 free_list: Vec::new(),
                 parsed_tasks: Vec::new(),
-                loads: Vec::new(),
-                resolves: Vec::new(),
+                loads: bun_ptr::StableVec::new(),
+                resolves: bun_ptr::StableVec::new(),
                 dynamic_import_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
-                drain_defer_task: DeferredBatchTask::default(),
+                drain_defer_task: {
+                    let mut v = bun_ptr::StableVec::new();
+                    v.push(Box::new(DeferredBatchTask::default()));
+                    v
+                },
                 asynchronous: false,
                 finished: false,
                 has_any_top_level_await_modules: false,
@@ -4475,7 +4481,7 @@ pub mod bv2_impl {
             let this = self;
             // The request stays in `loads` (the plugin host may still hold
             // its address); its owned fields are released here.
-            let load = &mut *this.loads[id as usize];
+            let load = this.loads.get_mut(id as usize);
             let value = load.value.consume();
             let mut parse_task = load.parse_task.take();
             let load = OnLoad {
@@ -4699,7 +4705,7 @@ pub mod bv2_impl {
             let this = self;
             // The request stays in `resolves` (the plugin host may still hold
             // its address); its owned fields are released here.
-            let resolve = &mut *this.resolves[id as usize];
+            let resolve = this.resolves.get_mut(id as usize);
             let value = resolve.value.consume();
             let resolve = OnResolve {
                 import_record: core::mem::take(&mut resolve.import_record),
@@ -6956,7 +6962,7 @@ pub mod bv2_impl {
         /// in `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
         pub fn on_notify_defer(&mut self, id: u32) {
             self.thread_lock.assert_locked();
-            self.loads[id as usize].deferred_in = Some(self.graph.defer_epoch);
+            self.loads.get_mut(id as usize).deferred_in = Some(self.graph.defer_epoch);
             self.graph.deferred_pending += 1;
             self.decrement_scan_counter();
         }

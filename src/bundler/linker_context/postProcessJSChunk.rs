@@ -741,9 +741,8 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
-    // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>`; the
-    // storage retains ownership of every Drop field, so neither this
-    // `BundledAst` nor the `ast_view: Ast` derived from it below may run Drop.
+    // `MultiArrayList::get` gathers the row into a `ManuallyDrop<BundledAst>`
+    // (the columns keep ownership); `printer_view` below borrows from it.
     let ast = c.graph.ast.get(source_index as usize);
 
     match c.options.output_format {

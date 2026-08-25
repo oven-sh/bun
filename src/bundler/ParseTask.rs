@@ -1910,7 +1910,7 @@ pub mod parse_worker {
         log: &mut Log,
         entry: &mut CacheEntry,
     ) -> core::result::Result<Success<'a>, AnyError> {
-        let bump: &'a Bump = this.heap;
+        let bump: &'a Bump = this.arena();
         let ctx = task.ctx();
         let worker_ctx: &ParseShared<'a> = &ctx;
 
@@ -2334,7 +2334,8 @@ pub mod parse_worker {
             let (source_index, target) = (this.source_index, this.known_target);
             let read = {
                 let mut reader = ctx.pool.get_io_reader();
-                let crate::thread_pool::IoReader { heap, fs_cache } = &mut *reader;
+                let crate::thread_pool::IoReader { heap, fs_cache, .. } = &mut *reader;
+                let heap = heap.get();
                 get_source_code(
                     &mut this,
                     heap,
@@ -2374,7 +2375,7 @@ pub mod parse_worker {
         let value: ResultValue = 'value: {
             if matches!(this.stage, ParseTaskStage::NeedsSourceCode) {
                 let read = {
-                    let heap = worker.heap;
+                    let heap = worker.arena();
                     let t = &mut *worker.data.transpiler;
                     get_source_code(
                         &mut this,

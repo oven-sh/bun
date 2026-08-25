@@ -45,7 +45,6 @@ pub struct ThreadPool<'a> {
     workers: bun_threading::ThreadSlots<Worker<'a>>,
     /// One [`IoReader`] per IO-pool thread (when the read stage runs there).
     readers: bun_threading::ThreadSlots<IoReader<'a>>,
-    heap: &'a BundleHeap,
     /// What a [`Worker`] clones its transpilers from: the transpiler the
     /// bundle was started with (lent by whoever drives the bundle). Workers
     /// read its options and resolver configuration only — the parts the
@@ -104,17 +103,19 @@ mod io_thread_pool {
 // (`WorkerTeardown`) and drops the transpilers, whose storage is
 // global-allocator memory.
 unsafe impl Send for Worker<'_> {}
-
-/// The arenas a bundle allocates into: the bundle thread's own, and one per
-/// thread that parses for it (created lazily, on that thread). Owned by
-/// whoever drives the bundle and outlives the [`BundleV2`] that borrows it, so
-/// everything parsed into a worker arena (`Graph::ast`) carries its lifetime.
-/// Derefs to the bundle thread's arena.
+/// What a bundle allocates into and borrows from for its whole life: the
+/// bundle thread's arena (it derefs to that), plus per-bundle values the
+/// graph's ASTs borrow ([`keep_parse_config`](Self::keep_parse_config),
+/// [`keep_file_map`](Self::keep_file_map)). Owned by whoever drives the
+/// bundle and outlives the [`BundleV2`] that borrows it. Parse / IO threads
+/// allocate into their own [`ThreadArena`]s, lent at this heap's lifetime.
 pub struct BundleHeap {
     main: ThreadLocalArena,
-    workers: Box<[OnceLock<ThreadLocalArena>]>,
-    /// File contents read on the IO pool land here (one per IO thread).
-    readers: Box<[OnceLock<ThreadLocalArena>]>,
+    /// How many threads may parse / read for a bundle using this heap (the
+    /// per-thread arenas themselves live in the pool's [`Worker`]s and
+    /// [`IoReader`]s, which create and destroy them on their own thread).
+    workers: usize,
+    readers: usize,
     /// Per-bundle values the graph's ASTs borrow from (see
     /// [`keep_parse_config`](Self::keep_parse_config)).
     parse_configs: bun_threading::KeepAlive<ParseConfig>,
@@ -140,8 +141,8 @@ impl BundleHeap {
         let threads = usize::from(bun_core::get_thread_count()) + 1;
         Self {
             main: ThreadLocalArena::new(),
-            workers: (0..threads).map(|_| OnceLock::new()).collect(),
-            readers: (0..io).map(|_| OnceLock::new()).collect(),
+            workers: threads,
+            readers: io,
             parse_configs: bun_threading::KeepAlive::new(),
             file_maps: bun_threading::KeepAlive::new(),
         }
@@ -165,15 +166,6 @@ impl BundleHeap {
         self.file_maps.keep(Box::new(files))
     }
 
-    /// The calling thread's worker arena for slot `index`, created on first use.
-    fn worker(&self, index: usize) -> &ThreadLocalArena {
-        self.workers[index].get_or_init(ThreadLocalArena::new)
-    }
-
-    /// The calling IO thread's arena for slot `index`, created on first use.
-    fn reader(&self, index: usize) -> &ThreadLocalArena {
-        self.readers[index].get_or_init(ThreadLocalArena::new)
-    }
 }
 
 impl core::ops::Deref for BundleHeap {
@@ -219,9 +211,8 @@ impl<'a> ThreadPool<'a> {
         ThreadPool {
             worker_pool,
             io_pool,
-            heap,
-            workers: bun_threading::ThreadSlots::new(heap.workers.len()),
-            readers: bun_threading::ThreadSlots::new(heap.readers.len()),
+            workers: bun_threading::ThreadSlots::new(heap.workers),
+            readers: bun_threading::ThreadSlots::new(heap.readers),
             seed,
             define,
             client_seed: client_seed_lock,
@@ -250,7 +241,10 @@ impl<'a> ThreadPool<'a> {
             any = true;
             Worker::deinit_soon(worker);
         }
-        drop(self.readers.take_all());
+        for reader in self.readers.take_all() {
+            any = true;
+            IoReader::deinit_soon(reader);
+        }
         if any {
             self.worker_pool().wake_for_idle_events();
             if let Some(io) = self.io_pool {
@@ -367,10 +361,10 @@ impl<'a> ThreadPool<'a> {
     /// The calling IO-pool thread's [`IoReader`], created on first use.
     #[inline]
     pub(crate) fn get_io_reader(&self) -> bun_threading::SlotGuard<'_, IoReader<'a>> {
-        let heap = self.heap;
-        self.readers.get_or_init(|index| IoReader {
-            heap: heap.reader(index),
+        self.readers.get_or_init(|_| IoReader {
+            heap: ThreadArena::new(),
             fs_cache: Default::default(),
+            thread: ThreadPoolLib::Thread::current_ref(),
         })
     }
 
@@ -378,10 +372,9 @@ impl<'a> ThreadPool<'a> {
     /// store pushed for the guard's lifetime.
     #[inline]
     pub(crate) fn get_worker(&self) -> WorkerGuard<'_, 'a> {
-        let heap = self.heap;
         let mut worker = self
             .workers
-            .get_or_init(|index| Worker::new(&self.seed, heap.worker(index)));
+            .get_or_init(|_| Worker::new(&self.seed));
         worker.ast_memory_store.push();
         WorkerGuard {
             worker,
@@ -413,8 +406,76 @@ impl WorkerPool {
 /// arena for the file's bytes (they live as long as the bundle) and the
 /// file-reading scratch state — no transpiler.
 pub struct IoReader<'a> {
-    pub(crate) heap: &'a ThreadLocalArena,
+    pub(crate) heap: ThreadArena<'a>,
     pub(crate) fs_cache: bun_resolver::cache::Fs,
+    /// The IO-pool thread this belongs to (its arena is destroyed there).
+    thread: Option<ThreadPoolLib::ThreadRef>,
+}
+
+impl IoReader<'_> {
+    #[allow(clippy::boxed_local)] // as `ThreadSlots` hands it back
+    fn deinit_soon(reader: Box<Self>) {
+        let IoReader { heap, thread, .. } = *reader;
+        let teardown = Box::new(ArenaTeardown {
+            task: ThreadPoolLib::Task::default(),
+            arena: heap.into_inner(),
+        });
+        match thread {
+            Some(thread) => thread.push_idle_owned(teardown),
+            None => teardown.run_owned(),
+        }
+    }
+}
+
+/// Destroys an [`IoReader`]'s arena on the thread that created it.
+struct ArenaTeardown {
+    task: ThreadPoolLib::Task,
+    arena: Box<ThreadLocalArena>,
+}
+
+bun_threading::owned_task!(ArenaTeardown, task);
+
+impl ArenaTeardown {
+    #[allow(clippy::boxed_local)] // `OwnedTask`s are handed over boxed
+    fn run_owned(self: Box<Self>) {
+        drop(self.arena);
+    }
+}
+
+/// A parse / IO thread's arena for one bundle: created on that thread on
+/// first use, destroyed on that thread when the pool is torn down
+/// ([`Worker::deinit_soon`] / [`IoReader::deinit_soon`]). What a bundle
+/// parses into it (`Graph::ast`, file contents) is typed at the bundle
+/// heap's lifetime `'a`; the pool is torn down (`ThreadPool::deinit`) only
+/// after the bundle is done with all of that.
+pub(crate) struct ThreadArena<'a> {
+    arena: core::ptr::NonNull<ThreadLocalArena>,
+    _lends: core::marker::PhantomData<&'a ThreadLocalArena>,
+}
+
+// SAFETY: owns its arena like a `Box<ThreadLocalArena>` (which is `Send`).
+unsafe impl Send for ThreadArena<'_> {}
+
+impl<'a> ThreadArena<'a> {
+    fn new() -> Self {
+        ThreadArena {
+            arena: core::ptr::NonNull::from(Box::leak(Box::new(ThreadLocalArena::new()))),
+            _lends: core::marker::PhantomData,
+        }
+    }
+
+    /// See the type's doc for why this may be lent for `'a`.
+    #[inline]
+    pub(crate) fn get(&self) -> &'a ThreadLocalArena {
+        // SAFETY: a leaked box, reclaimed only by `into_inner` at pool
+        // teardown, after everything allocated from it is done with.
+        unsafe { self.arena.as_ref() }
+    }
+
+    fn into_inner(self) -> Box<ThreadLocalArena> {
+        // SAFETY: from `Box::leak` in `new`; `self` is consumed.
+        unsafe { Box::from_raw(self.arena.as_ptr()) }
+    }
 }
 
 /// The calling thread's [`Worker`]; pops its AST store on drop.
@@ -463,8 +524,8 @@ impl Drop for WorkerGuard<'_, '_> {
 
 /// Per-OS-thread bundler state; lives boxed in [`ThreadPool::workers`].
 pub struct Worker<'a> {
-    /// This thread's arena in the [`BundleHeap`], for everything it parses.
-    pub(crate) heap: &'a ThreadLocalArena,
+    /// This thread's arena, for everything it parses.
+    heap: ThreadArena<'a>,
 
     pub(crate) data: WorkerData<'a>,
 
@@ -516,6 +577,7 @@ struct WorkerTeardown {
     task: ThreadPoolLib::Task,
     ast_memory_store: bun_ast::ASTMemoryAllocator,
     temporary_arena: bun_alloc::Arena,
+    arena: Box<ThreadLocalArena>,
     macro_contexts: [Option<js_ast::Macro::MacroContext>; 2],
 }
 
@@ -535,11 +597,14 @@ impl WorkerTeardown {
         js_ast::Macro::collect_vm_garbage();
         drop(this.temporary_arena);
         drop(this.ast_memory_store);
+        drop(this.arena);
     }
 }
 
 impl<'a> Worker<'a> {
-    fn new(seed: &Transpiler<'a>, heap: &'a ThreadLocalArena) -> Worker<'a> {
+    fn new(seed: &Transpiler<'a>) -> Worker<'a> {
+        let heap_owned = ThreadArena::new();
+        let heap: &'a ThreadLocalArena = heap_owned.get();
         Output::Source::configure_thread();
 
         // The ASTMemoryAllocator owns its bump arena internally and ignores the
@@ -556,7 +621,7 @@ impl<'a> Worker<'a> {
 
         bun_core::scoped_log!(ThreadPool, "Worker.create()");
         Worker {
-            heap,
+            heap: heap_owned,
             data: WorkerData {
                 log,
                 transpiler,
@@ -569,10 +634,10 @@ impl<'a> Worker<'a> {
         }
     }
 
-    /// This thread's arena in the [`BundleHeap`].
+    /// This thread's arena (see [`ThreadArena`]).
     #[inline]
     pub(crate) fn arena(&self) -> &'a ThreadLocalArena {
-        self.heap
+        self.heap.get()
     }
 
     /// Hand the thread-affine parts back to the worker's own thread for
@@ -580,7 +645,7 @@ impl<'a> Worker<'a> {
     #[allow(clippy::boxed_local)] // as `ThreadSlots` hands it back
     fn deinit_soon(worker: Box<Worker<'a>>) {
         let Worker {
-            heap: _,
+            heap,
             mut data,
             ast_memory_store,
             thread,
@@ -591,6 +656,7 @@ impl<'a> Worker<'a> {
             task: ThreadPoolLib::Task::default(),
             ast_memory_store: ManuallyDrop::into_inner(ast_memory_store),
             temporary_arena,
+            arena: heap.into_inner(),
             macro_contexts: [
                 data.transpiler.macro_context.take(),
                 data.other_transpiler
@@ -613,7 +679,7 @@ impl<'a> Worker<'a> {
         client: Option<&'w Transpiler<'a>>,
         target: Target,
     ) -> TargetTranspilers<'w, 'a> {
-        let heap = self.heap;
+        let heap = self.heap.get();
         let data = &mut self.data;
         if data.transpiler.options.target == Target::Browser {
             return TargetTranspilers {

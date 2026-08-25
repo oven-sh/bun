@@ -5,8 +5,12 @@
 // resolutions"). `dedupe-cycle-a` and `dedupe-cycle-b` form a dependency
 // cycle, `dedupe-cycle-peer` declares a peer that nothing in the graph
 // provides, and `dedupe-divergent-peers` pulls in two declarers of that
-// unprovided peer name with divergent ranges (`strict-peer-dep` peers on
-// `no-deps@^2.0.0`).
+// unprovided peer name with divergent ranges. The second declarer is the
+// dedicated `dedupe-divergent-strict` (peers on `no-deps@^2.0.0`) rather
+// than the shared `strict-peer-dep` fixture: the CI runner gives the whole
+// test file one BUN_INSTALL_CACHE_DIR, and warming `strict-peer-dep`'s
+// manifest changes which loads are synchronous in the later "transitive
+// peer deps are resolved when resolution is fully synchronous" test.
 
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
@@ -26,8 +30,9 @@ const packages: Record<string, Manifest[]> = {
   ],
   "dedupe-cycle-peer": [{ version: "1.0.0", peerDependencies: { "no-deps": "1.0.0" } }],
   "dedupe-divergent-peers": [
-    { version: "1.0.0", dependencies: { "dedupe-cycle-peer": "1.0.0", "strict-peer-dep": "1.0.0" } },
+    { version: "1.0.0", dependencies: { "dedupe-cycle-peer": "1.0.0", "dedupe-divergent-strict": "1.0.0" } },
   ],
+  "dedupe-divergent-strict": [{ version: "1.0.0", peerDependencies: { "no-deps": "^2.0.0" } }],
 };
 
 for (const [name, manifests] of Object.entries(packages)) {
@@ -64,4 +69,4 @@ for (const [name, manifests] of Object.entries(packages)) {
   );
 }
 
-console.log("Created dedupe-cycle-a, dedupe-cycle-b, dedupe-cycle-peer and dedupe-divergent-peers test packages");
+console.log("Created the dedupe-cycle-* and dedupe-divergent-* test packages");

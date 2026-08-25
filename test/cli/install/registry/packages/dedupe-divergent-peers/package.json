@@ -10,12 +10,12 @@
       "version": "1.0.0",
       "dependencies": {
         "dedupe-cycle-peer": "1.0.0",
-        "strict-peer-dep": "1.0.0"
+        "dedupe-divergent-strict": "1.0.0"
       },
       "_id": "dedupe-divergent-peers@1.0.0",
       "dist": {
-        "integrity": "sha512-s9pE5I70ilbZ+aTONOWMaF+cjjE1HNoOTQyFisuKG7kDfrUxnWReJlaYVs4SUn7ZC2cVKLbJXzPX2finqXlcnw==",
-        "shasum": "42784ceb4e71592aa570f508d13a4d534579dbd3",
+        "integrity": "sha512-Yumt8FHlpYqig5uBOhz1w0V2NBRkTbadwifUCJrRKW2O2/6xyci4RBbs6qEz4wz52M7Gxh+/MkdJos+1Byr7Xw==",
+        "shasum": "110d11761bdf73aec0212e4c66f1efa3e0c38aef",
         "tarball": "http://localhost:4873/dedupe-divergent-peers/-/dedupe-divergent-peers-1.0.0.tgz"
       }
     }

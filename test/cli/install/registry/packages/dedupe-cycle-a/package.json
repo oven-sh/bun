@@ -13,8 +13,8 @@
       },
       "_id": "dedupe-cycle-a@1.0.0",
       "dist": {
-        "integrity": "sha512-atLT3xzqnegRPhbntU1V+d4pKpcmrvhygcUBr1WpaSYU0HNP4tCIp5P+TO74q4x7BQVW58QhxV8nEer6JZFWyw==",
-        "shasum": "d66c28dffecde96b00c8b48e8304d84841c6324f",
+        "integrity": "sha512-kiThV+wau/veSaLV+DJAA+sANGXhoR5XjgGsHFT36DF7XOjDbxHlJuwePGf/Nd5Zi2a3PETBmRlNMbI35whNCw==",
+        "shasum": "6179983661294f59016c653f3e55ba9d65bd74d1",
         "tarball": "http://localhost:4873/dedupe-cycle-a/-/dedupe-cycle-a-1.0.0.tgz"
       }
     }

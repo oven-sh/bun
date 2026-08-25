@@ -355,7 +355,7 @@ test("a package reached through a dependency cycle dedupes into one store entry"
 test("early dedupe keeps declarer-specific resolutions of an unprovided peer", async () => {
   // `dedupe-divergent-peers` pulls in two declarers of the peer name
   // `no-deps` with divergent ranges: `dedupe-cycle-peer` wants 1.0.0 and
-  // `strict-peer-dep` wants ^2.0.0. Neither workspace chain provides
+  // `dedupe-divergent-strict` wants ^2.0.0. Neither workspace chain provides
   // `no-deps`, so the shared subtree dedupes on the unresolved name and each
   // declarer must still auto-install its own best version. `ws-three` seeds
   // both no-deps versions into the lockfile under aliases (a different
@@ -412,7 +412,7 @@ test("early dedupe keeps declarer-specific resolutions of an unprovided peer", a
   const storeEntries = await readdirSorted(bunDir);
   expect(storeEntries.filter(e => e.startsWith("dedupe-divergent-peers@1.0.0"))).toHaveLength(1);
   const peerEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-peer@1.0.0"));
-  const strictEntries = storeEntries.filter(e => e.startsWith("strict-peer-dep@1.0.0"));
+  const strictEntries = storeEntries.filter(e => e.startsWith("dedupe-divergent-strict@1.0.0"));
   expect(peerEntries).toHaveLength(1);
   expect(strictEntries).toHaveLength(1);
 

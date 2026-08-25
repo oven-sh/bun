@@ -64,7 +64,7 @@ impl Default for PostgresSQLQuery {
     fn default() -> Self {
         Self {
             statement: Cell::new(None),
-            query: BunString::empty(),
+            query: BunString::EMPTY,
             this_value: JsCell::new(JsRef::empty()),
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
@@ -492,7 +492,6 @@ impl PostgresSQLQuery {
         let this_value = callframe.this();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let query_str = this.query.to_utf8();
-        // query_str: Utf8Slice<'_> — Drop frees.
         let writer = connection.writer();
         // We need a strong reference to the query so that it doesn't get GC'd
         this.ref_();

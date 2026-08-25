@@ -1,5 +1,6 @@
 import { RedisClient, SQL } from "bun";
 import { heapStats } from "bun:jsc";
+import { setSystemTime } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -597,6 +598,41 @@ describe("performance.now() mocking", () => {
     vi.advanceTimersByTime(500);
     expect(performance.now()).toBe(perfStart + 1500);
     expect(Date.now()).toBe(dateStart + 1500);
+  });
+
+  test("performance.timeOrigin follows the fake clock", () => {
+    const realTimeOrigin = performance.timeOrigin;
+    const fakeNow = new Date("2000-01-01T00:00:00.000Z").getTime();
+    vi.useFakeTimers({ now: fakeNow });
+
+    // performance.now() restarts at 0, so the fake epoch is the origin.
+    expect(performance.now()).toBe(0);
+    expect(performance.timeOrigin).toBe(fakeNow);
+    expect(performance.timeOrigin + performance.now()).toBe(Date.now());
+
+    vi.advanceTimersByTime(5000);
+    expect(performance.timeOrigin).toBe(fakeNow);
+    expect(performance.timeOrigin + performance.now()).toBe(Date.now());
+
+    // setSystemTime moves Date.now() but not performance.now(), so the origin moves with it.
+    const jumped = new Date("2010-06-15T12:00:00.000Z").getTime();
+    setSystemTime(jumped);
+    expect(Date.now()).toBe(jumped);
+    expect(performance.now()).toBe(5000);
+    expect(performance.timeOrigin).toBe(jumped - 5000);
+    expect(performance.timeOrigin + performance.now()).toBe(Date.now());
+    expect(performance.toJSON().timeOrigin).toBe(performance.timeOrigin);
+
+    vi.useRealTimers();
+    expect(performance.timeOrigin).toBe(realTimeOrigin);
+  });
+
+  test("performance.timeOrigin is not affected by setSystemTime without fake timers", () => {
+    const realTimeOrigin = performance.timeOrigin;
+    setSystemTime(new Date("2000-01-01T00:00:00.000Z"));
+    expect(new Date().getUTCFullYear()).toBe(2000);
+    expect(performance.timeOrigin).toBe(realTimeOrigin);
+    setSystemTime();
   });
 });
 

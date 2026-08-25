@@ -14,6 +14,7 @@ use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
+use bun_jsc::bun_string_jsc;
 use bun_ptr::{RefCount, RefPtr, ThisPtr};
 use bun_uws::{AnyRequest, AnyResponse};
 
@@ -116,7 +117,7 @@ impl HTMLBundle {
     }
 
     pub(crate) fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
+        bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
 
     /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.

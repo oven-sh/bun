@@ -7,7 +7,9 @@ use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
 use bun_core::String as BunString;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+#[cfg(windows)]
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::socket::Listener;
@@ -42,7 +44,7 @@ pub(crate) fn attach_windows_socket_payload(
         log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
         return Ok(None);
     };
-    let str_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex)?;
+    let str_js = bun_string_jsc::create_utf8_for_js(global, &hex)?;
     message.put(global, IPC::WIN_SOCKET_INFO_KEY, str_js);
     Ok(Some(hex))
 }
@@ -286,7 +288,7 @@ pub(crate) fn do_send(
         ex.put(
             global_object,
             b"syscall",
-            bun_jsc::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
+            BunString::static_("write").to_js(global_object)?,
         );
         return do_send_err(global_object, callback, ex, from);
     }
@@ -314,7 +316,7 @@ pub(crate) fn emit_handle_ipc_message(
             if let Some(cmd) = message.get(global_this, "cmd")? {
                 if cmd.is_string() {
                     let cmd_str = cmd.to_bun_string(global_this)?;
-                    if cmd_str.eql_comptime(b"NODE_CLUSTER") {
+                    if cmd_str.eq_ascii(b"NODE_CLUSTER") {
                         crate::node::node_cluster_binding::handle_internal_message_child(
                             global_this,
                             message,

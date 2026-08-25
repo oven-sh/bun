@@ -4098,7 +4098,7 @@ pub fn is_if_clause_keyword_bunstr(bunstr: &BunString) -> bool {
     use IfClauseTok::{Elif, Else, Fi, If, Then};
     [If, Else, Elif, Then, Fi]
         .iter()
-        .any(|&kw| bunstr.eql_comptime(<&'static str>::from(kw)))
+        .any(|&kw| bunstr.eq_ascii(<&'static str>::from(kw).as_bytes()))
 }
 
 // ───────────────────────────── SmolList ─────────────────────────────

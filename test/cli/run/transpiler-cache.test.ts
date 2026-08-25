@@ -403,6 +403,7 @@ describe("transpiler cache", () => {
         killSignal: "SIGKILL",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(proc.signalCode).toBeNull();
       expect(stdout).toBe("intact\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);

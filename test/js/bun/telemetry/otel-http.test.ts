@@ -18,11 +18,14 @@ beforeEach(restore);
 // The pipeline is process-global; leave nothing behind for later files.
 afterAll(() => Bun.otel.shutdown());
 
-async function collect(): Promise<any[]> {
+async function collect(atLeast = 0): Promise<any[]> {
   // Server spans end when the request context is finalized, which can trail
-  // the client seeing the response by a tick.
-  await Bun.sleep(0);
-  await Bun.otel.forceFlush();
+  // the client seeing the response; poll (bounded) rather than assume one tick.
+  const deadline = Date.now() + 5000;
+  do {
+    await Bun.sleep(0);
+    await Bun.otel.forceFlush();
+  } while (spans.length < atLeast && Date.now() < deadline);
   return spans.splice(0, spans.length).sort((a, b) => a.startTime - b.startTime);
 }
 

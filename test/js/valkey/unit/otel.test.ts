@@ -24,14 +24,15 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
 
   test("one CLIENT span per command with db semconv; values and credentials are not recorded", async () => {
     const redis = ctx.redis;
-    await redis.set("otel:key", "secret-value");
-    await redis.get("otel:key");
+    const key = ctx.generateKey("otel");
+    await redis.set(key, "secret-value");
+    await redis.get(key);
     await redis.send("AUTH", ["hunter2"]).catch(() => {});
     const got = (await collect()).filter(s => ["SET", "GET", "AUTH"].includes(s.attributes["db.operation.name"]));
     // semconv: `{operation} {db.namespace}` (the SELECT index, 0 by default).
     expect(got.map(s => [s.name, s.attributes["db.query.text"], s.status.code])).toEqual([
-      ["SET 0", "SET otel:key ...", 0],
-      ["GET 0", "GET otel:key", 0],
+      ["SET 0", `SET ${key} ...`, 0],
+      ["GET 0", `GET ${key}`, 0],
       ["AUTH 0", undefined, 2],
     ]);
     expect(JSON.stringify(got)).not.toContain("secret-value");
@@ -53,7 +54,7 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
     const redis = ctx.redis;
     const tracer = Bun.otel.tracer("test");
     await tracer.startActiveSpan("parent", async parent => {
-      await redis.incr("otel:counter");
+      await redis.incr(ctx.generateKey("otel-counter"));
       parent.end();
     });
     const [incr] = (await collect()).filter(s => s.attributes["db.operation.name"] === "INCR");

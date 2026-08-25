@@ -570,8 +570,8 @@ declare function $getByIdDirectPrivate<T = any, K extends string = string>(
 declare var $Promise: PromiseConstructor;
 
 declare function $isPromise<T>(value: unknown): value is Promise<T>;
-/** Brand check for JSTelemetrySpan (JSC::EmbedderInternalFieldObjectType; lowers to IsCellWithType). */
-declare function $isEmbedderInternalFieldObject(value: unknown): boolean;
+/** Brand check for JSTelemetrySpan (exact JSType compare, JSTelemetrySpan.cpp). */
+declare function $isTelemetrySpan(value: unknown): boolean;
 // JSTelemetrySpan.cpp: mutators for native-owned spans (state lives in a bun_telemetry::pool slot).
 declare function $telemetrySetAttribute(span: unknown, key: string, value: unknown): void;
 declare function $telemetrySetName(span: unknown, name: string): void;

@@ -218,6 +218,7 @@ declare module "bun" {
     }
 
     interface OtlpExporterOptions {
+      type?: "otlp" | undefined;
       /**
        * OTLP/HTTP endpoint. A bare origin (`http://collector:4318`) gets
        * `/v1/traces` appended; a URL with a path is used as-is.
@@ -231,26 +232,7 @@ declare module "bun" {
       timeoutMs?: number | undefined;
     }
 
-    /**
-     * A hosted backend that takes OTLP/HTTP with a static credential. The
-     * endpoint and auth header are derived from `type`; every field falls
-     * back to the vendor's usual environment variable.
-     *
-     * | `type`      | credential (`apiKey`)                         | `site` / `id`                                        |
-     * | ----------- | --------------------------------------------- | ---------------------------------------------------- |
-     * | `datadog`   | `DD_API_KEY` (omit to use a local Agent on :4318) | `site`: `DD_SITE` (`datadoghq.com`, `datadoghq.eu`, …) |
-     * | `honeycomb` | `HONEYCOMB_API_KEY`                           | `site`: `"us"` \| `"eu"`; `id`: classic dataset       |
-     * | `grafana`   | Cloud Access Policy token                      | `site`: OTLP gateway zone (`prod-us-east-0`); `id`: instance id |
-     * | `newrelic`  | `NEW_RELIC_LICENSE_KEY`                       | `site`: `"us"` \| `"eu"` \| `"fedramp"`               |
-     * | `axiom`     | `AXIOM_TOKEN`                                 | `id`: `AXIOM_DATASET`; `site`: edge domain             |
-     * | `dynatrace` | `DT_API_TOKEN`                                | `id`: environment id, or `endpoint`: `…/api/v2/otlp`   |
-     * | `sentry`    | DSN public key (`SENTRY_PUBLIC_KEY`)          | `endpoint` (or `SENTRY_OTLP_TRACES_ENDPOINT`): the project's OTLP traces URL |
-     * | `otlp`      | —                                             | `endpoint` (default `http://localhost:4318`)           |
-     */
-    interface PresetExporterOptions {
-      type: "datadog" | "honeycomb" | "grafana" | "newrelic" | "axiom" | "dynatrace" | "sentry" | "otlp";
-      apiKey?: string | undefined;
-      /** Vendor region / site / zone. */
+    /** Vendor region / site / zone. */
       site?: string | undefined;
       /** Second identifier where the vendor needs one (dataset, instance id, environment id). */
       id?: string | undefined;
@@ -344,7 +326,7 @@ declare module "bun" {
        * the environment or an earlier `start()` call; when omitted,
        * `OTEL_EXPORTER_OTLP_*` / `OTEL_TRACES_EXPORTER` decide.
        */
-      exporters?: Array<string | OtlpExporterOptions | PresetExporterOptions | FunctionExporterOptions> | undefined;
+      exporters?: Array<string | OtlpExporterOptions | FunctionExporterOptions> | undefined;
       /**
        * Sampler. A number is a parent-based trace-id ratio (`0.1` keeps 10%
        * of new traces and follows the caller's decision for propagated ones).
@@ -389,9 +371,12 @@ declare module "bun" {
           }
         | undefined;
       /**
-       * Record `db.query.text` on SQL, SQLite and Redis spans. SQL text is the
-       * parameterized statement; Redis records the command and first argument
-       * only, and nothing for `AUTH`/`HELLO`/`ACL`/`CONFIG`/`MIGRATE`.
+       * Record `db.query.text` on SQL, SQLite and Redis spans: the text handed
+       * to the driver (parameterized for tagged templates; verbatim for
+       * `sql.unsafe()`, `sql.file()`, `db.exec()`); Redis records the command
+       * and first argument only, and nothing for `AUTH`/`HELLO`/`ACL`/`CONFIG`/
+       * `MIGRATE`. Server error messages still reach the span's status and
+       * exception event when this is off. Env: `BUN_OTEL_CAPTURE_DB_STATEMENT`.
        * @default true
        */
       captureDbStatement?: boolean | undefined;
@@ -580,6 +565,12 @@ declare module "bun" {
     readonly contextManager: {
       active(): otel.Context;
       with<R, A extends unknown[]>(context: otel.Context, fn: (...args: A) => R, thisArg?: unknown, ...args: A): R;
+      /**
+       * A function runs in `context` on every call; an `EventEmitter` has its
+       * `emit()` wrapped, so every listener (including ones added before
+       * `bind`) runs in `context` — the SDK's manager patches listener
+       * registration instead and only affects listeners added afterwards.
+       */
       bind<T>(context: otel.Context, target: T): T;
       enable(): typeof Bun.otel.contextManager;
       disable(): typeof Bun.otel.contextManager;

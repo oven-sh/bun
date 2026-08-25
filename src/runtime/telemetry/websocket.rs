@@ -11,7 +11,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         promise: JSValue,
         span_cell: JSValue,
-    ) -> bool;
+    ) -> JSValue;
 }
 
 /// Start a span for one incoming WebSocket message and make it active for
@@ -85,7 +85,15 @@ pub fn end_message(
                 // An async handler: the span covers the promise and records its
                 // rejection, like Bun.otel.span(name, async fn).
                 let cell = super::span::Bun__Telemetry__poolMaterialize(global, span.0);
-                if Bun__Telemetry__observeSettlement(global, result, cell) {
+                let derived = Bun__Telemetry__observeSettlement(global, result, cell);
+                if global.has_exception() {
+                    return Err(bun_jsc::JsError::Thrown);
+                }
+                if !derived.is_empty() {
+                    // The handler's own promise is what the caller keeps; the
+                    // derived one only ends the span (its rejection is the
+                    // handler's, reported through the caller's promise).
+                    derived.as_any_promise().map(|p| p.set_handled(global.vm()));
                     return Ok(true);
                 }
             }

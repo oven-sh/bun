@@ -4,7 +4,7 @@ use bun_telemetry::otlp::{self, Value};
 
 pub struct ResourceInfo<'a> {
     pub service_name: Option<&'a str>,
-    pub extra: &'a [(String, String)],
+    pub extra: &'a [(String, crate::config::ResourceValue)],
     pub runtime_version: &'a str,
     pub pid: u32,
     /// The entrypoint (`process.command`).
@@ -72,10 +72,16 @@ pub fn encode(info: &ResourceInfo<'_>) -> Vec<u8> {
         if k.starts_with(b"telemetry.sdk.") {
             continue;
         }
+        let v = match v {
+            crate::config::ResourceValue::Str(s) => Value::Str(s.as_bytes()),
+            crate::config::ResourceValue::Int(i) => Value::Int(*i),
+            crate::config::ResourceValue::Double(d) => Value::Double(*d),
+            crate::config::ResourceValue::Bool(b) => Value::Bool(*b),
+        };
         if let Some(pos) = attrs.iter().position(|(bk, _)| *bk == k) {
-            attrs[pos].1 = Value::Str(v.as_bytes());
+            attrs[pos].1 = v;
         } else {
-            attrs.push((k, Value::Str(v.as_bytes())));
+            attrs.push((k, v));
         }
     }
     otlp::encode_resource(&attrs)

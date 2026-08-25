@@ -2701,7 +2701,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
 // `fast_random()`'s thread-local PRNG once per thread. Every other caller
 // must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
 // call).
-fn os_entropy(bytes: &mut [u8]) {
+pub fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;

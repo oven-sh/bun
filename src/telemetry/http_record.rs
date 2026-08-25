@@ -455,7 +455,7 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
     }
     let st = start + off_start(has_parent);
     out[st..st + 8].copy_from_slice(&p.stub.start_ns.to_le_bytes());
-    out[st + 9..st + 17].copy_from_slice(&p.end_ns.to_le_bytes());
+    out[st + 9..st + 17].copy_from_slice(&p.end_ns.max(p.stub.start_ns).to_le_bytes());
     // flags: 2-byte tag then fixed32
     out[st + 19..st + 23].copy_from_slice(&p.stub.ctx.flags.otlp().to_le_bytes());
     append_tail(
@@ -519,7 +519,7 @@ fn encode_miss(
     );
     debug_assert_eq!(
         &bytes[off_start(has_parent) + 9..off_start(has_parent) + 17],
-        &p.end_ns.to_le_bytes()
+        &p.end_ns.max(p.stub.start_ns).to_le_bytes()
     );
     append_tail(
         out,

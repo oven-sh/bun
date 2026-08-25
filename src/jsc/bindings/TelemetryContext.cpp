@@ -32,22 +32,6 @@ JSValue TelemetryContextSlot::build(JSGlobalObject* globalObject, JSValue header
     return constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), values);
 }
 
-// An async function's synchronous prefix runs in its caller's frame, so a span
-// activated there with `using span = tracer.startActiveSpan(...)` would
-// otherwise stay active in the caller after the function first suspends
-// (AsyncLocalStorage.enterWith has exactly that behaviour, by design). The
-// span header gets structured semantics instead: when the function first
-// returns to its caller, the caller sees the span it had at the call. ALS
-// stores keep Node's enterWith semantics.
-JSValue telemetryLeaveAsyncFrame(JSGlobalObject* globalObject, JSValue atEntry, JSValue current)
-{
-    auto entry = TelemetryContextSlot::read(atEntry);
-    auto now = TelemetryContextSlot::read(current);
-    if (entry.sameSpanContext(now))
-        return current;
-    return TelemetryContextSlot::build(globalObject, entry.header, entry.extras, now);
-}
-
 // enterContext(header | undefined, extras | undefined) → previous slot value.
 // An empty api Context (e.g. ROOT_CONTEXT) clears the header but keeps ALS stores.
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryEnterContext, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -119,7 +103,7 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__enter(Zig::GlobalObject* globalOb
 
 /// Leave a scope entered with `enter*`: the span header/extras go back to
 /// `prev`'s, but AsyncLocalStorage stores keep whatever the scope left there
-/// (Node's `enterWith` semantics, as `ALS.run` and telemetryLeaveAsyncFrame do).
+/// (Node's `enterWith` semantics, as `ALS.run` does).
 extern "C" void Bun__Telemetry__exit(Zig::GlobalObject* globalObject, JSC::EncodedJSValue prevValue)
 {
     auto* data = globalObject->m_asyncContextData.get();

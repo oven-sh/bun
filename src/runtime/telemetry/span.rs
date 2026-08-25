@@ -669,7 +669,10 @@ pub extern "C" fn Bun__Telemetry__stubStart(
         &super::state().sampler,
         now,
     );
-    if !super::configured() || bun_telemetry::is_shut_down() {
+    if !super::configured()
+        || bun_telemetry::is_shut_down()
+        || !bun_telemetry::enabled(bun_telemetry::Instrument::User)
+    {
         // No pipeline (no BUN_OTEL / bunfig / start()): the span still carries
         // ids for propagation but records nothing and is never buffered.
         out.ctx.flags = Flags(out.ctx.flags.0 | Flags::NON_RECORDING);
@@ -1069,57 +1072,6 @@ pub extern "C" fn Bun__Telemetry__nativePropagation(
     .unwrap_or(false)
 }
 
-/// Start a native-owned span for a JS-implemented built-in instrumentation
-/// (node:http client). Returns the JS cell, or undefined when it should not
-/// record.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
-    global: &JSGlobalObject,
-    instrument: u32,
-    name: &JsString,
-    api_kind: u8,
-    remote_parent: &JsString,
-) -> JSValue {
-    let Some(i) = bun_telemetry::Instrument::ALL
-        .get(instrument as usize)
-        .copied()
-    else {
-        return JSValue::UNDEFINED;
-    };
-    // Same rule as fetch(): the active span is the parent; with none (and
-    // root spans allowed) a `traceparent` the caller set (node:http) is.
-    let mut stub = super::start_leaf(global, i);
-    if !stub.is_some() {
-        return JSValue::UNDEFINED;
-    }
-    if stub.parent == bun_telemetry::SpanId::INVALID && !remote_parent.is_empty() {
-        if let Some(parent) =
-            bun_telemetry::propagation::parse_traceparent(remote_parent.to_utf8().slice())
-        {
-            if let Some(mut l) = local(global) {
-                stub = SpanStub::start(
-                    &mut l.rng,
-                    Some(&parent),
-                    &super::state().sampler,
-                    clock::now_unix_nanos(),
-                );
-            }
-        }
-    }
-    let name = name.to_utf8();
-    let name = name.slice();
-    let kind = SpanKind::from_api(api_kind);
-    let native = with_active_propagation(global, |ts, bg| {
-        let Some(mut l) = local(global) else {
-            return NativeSpan::NONE;
-        };
-        pool::begin_with(&mut l.pool, stub, ScopeId::from(i), name, kind, |s| {
-            s.trace_state.extend_from_slice(ts);
-            s.baggage.extend_from_slice(bg);
-        })
-    });
-    create_native_cell(global, &stub, ScopeId::from(i), kind, native)
-}
 
 /// bit 0: W3C trace context, bit 1: baggage.
 #[unsafe(no_mangle)]

@@ -20,8 +20,6 @@ const nativeExportSettled = $newRustFunction("telemetry.rs", "exportSettled", 3)
 const nativeDecode = $newRustFunction("telemetry.rs", "decode", 1);
 const nativeSetEnabled = $newRustFunction("telemetry.rs", "setEnabled", 2);
 const nativePropagationFlags = $newRustFunction("telemetry.rs", "propagationFlags", 0);
-const nativeInstrumentId = $newRustFunction("telemetry.rs", "instrumentId", 1);
-const startInstrumentSpan = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryStartInstrumentSpan", 4);
 const propagationHeaders = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryPropagationHeaders", 2);
 const enterContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryEnterContext", 2);
 const exitContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryExitContext", 1);
@@ -38,7 +36,8 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypeJoin = Array.prototype.join;
 const SafeMap = Map;
-const SafeSet = Set;
+const JSONParse = JSON.parse;
+const BunResolveSync = Bun.resolveSync.bind(Bun);
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
@@ -64,7 +63,7 @@ function wrap(sc: any) {
 /** Coerce anything span-like (ours, a foreign api Span, or a bare SpanContext) to a TelemetrySpan. */
 function toNativeSpan(span: any) {
   if (span == null) return undefined;
-  if ($isEmbedderInternalFieldObject(span)) return span;
+  if ($isTelemetrySpan(span)) return span;
   if (typeof span.spanContext === "function") {
     const sc = span.spanContext();
     return sc == null ? undefined : wrap(sc);
@@ -417,8 +416,8 @@ function installedApiVersion(): string {
   for (const from of [Bun.main, process.cwd() + "/"]) {
     if (!from) continue;
     try {
-      const path = Bun.resolveSync("@opentelemetry/api/package.json", from + "");
-      const pkg = JSON.parse(readFileSync(path, "utf8"));
+      const path = BunResolveSync("@opentelemetry/api/package.json", from + "");
+      const pkg = JSONParse(readFileSync(path, "utf8"));
       if (typeof pkg?.version === "string") return pkg.version;
     } catch {}
   }
@@ -438,6 +437,21 @@ function installGlobal() {
         version = v;
       },
     };
+  } else if (!reg.trace) {
+    // The api package is already loaded (it made the registry). Tracers it
+    // handed out before now are ProxyTracers whose provider only gets a
+    // delegate through trace.setGlobalTracerProvider(), so register through
+    // the api rather than by writing the registry.
+    try {
+      const path = BunResolveSync("@opentelemetry/api", (Bun.main || process.cwd() + "/") + "");
+      // loaded as CJS (require) or as ESM (import): only look, never load
+      const api = $requireMap.$get(path)?.exports ?? $esmNamespaceForCjs(path);
+      if (api?.trace?.setGlobalTracerProvider) {
+        api.trace.setGlobalTracerProvider(tracerProvider);
+        api.context?.setGlobalContextManager?.(contextManager);
+        api.propagation?.setGlobalPropagator?.(propagator);
+      }
+    } catch {}
   }
   reg.trace ??= tracerProvider;
   reg.context ??= contextManager;
@@ -457,68 +471,6 @@ function awaitExport(promise: Promise<unknown>, exporterId: number, payloadId: n
       } catch {}
     },
   );
-}
-
-// ── node:http client (see _http_client.ts) ────────────────────────────────
-
-const httpClientInstrument = nativeInstrumentId("fetch") as number;
-// Mirrors bun_telemetry::otlp::REDACTED_QUERY_KEYS.
-const REDACTED_QUERY_KEYS = [
-  "AWSAccessKeyId",
-  "Signature",
-  "sig",
-  "X-Goog-Signature",
-  "X-Amz-Signature",
-  "X-Amz-Credential",
-  "X-Amz-Security-Token",
-];
-/** `path` with credential query values (presigned URLs) replaced by REDACTED. */
-function redactQuery(path: string): string {
-  const q = StringPrototypeIndexOf.$call(path, "?");
-  if (q === -1) return path;
-  let hit = false;
-  for (let i = 0; i < REDACTED_QUERY_KEYS.length && !hit; i++)
-    hit = StringPrototypeIndexOf.$call(path, REDACTED_QUERY_KEYS[i] + "=", q) !== -1;
-  if (!hit) return path;
-  const hash = StringPrototypeIndexOf.$call(path, "#", q);
-  const end = hash === -1 ? path.length : hash;
-  const pairs: string[] = StringPrototypeSplit.$call(StringPrototypeSlice.$call(path, q + 1, end), "&");
-  for (let i = 0; i < pairs.length; i++) {
-    const eq = StringPrototypeIndexOf.$call(pairs[i], "=");
-    const key = eq === -1 ? pairs[i] : StringPrototypeSlice.$call(pairs[i], 0, eq);
-    for (let k = 0; k < REDACTED_QUERY_KEYS.length; k++)
-      if (key === REDACTED_QUERY_KEYS[k]) {
-        pairs[i] = key + "=REDACTED";
-        break;
-      }
-  }
-  return (
-    StringPrototypeSlice.$call(path, 0, q + 1) +
-    ArrayPrototypeJoin.$call(pairs, "&") +
-    StringPrototypeSlice.$call(path, end)
-  );
-}
-
-const KNOWN_METHODS = new SafeSet([
-  "GET",
-  "HEAD",
-  "POST",
-  "PUT",
-  "DELETE",
-  "CONNECT",
-  "OPTIONS",
-  "TRACE",
-  "PATCH",
-  "QUERY",
-]);
-function isKnownMethod(method: string) {
-  return KNOWN_METHODS.has(method);
-}
-/** A CLIENT span under the active span (or, with none, under a traceparent
- * the caller set), or undefined when disabled. Named like fetch()'s. */
-function startClientSpan(method: string, callerTraceparent?: string) {
-  const name = KNOWN_METHODS.has(method) ? method : "HTTP";
-  return startInstrumentSpan(httpClientInstrument, name, SpanKind.CLIENT, callerTraceparent);
 }
 
 // ── Bun.otel ──────────────────────────────────────────────────────────────
@@ -595,10 +547,9 @@ function makeTraceState(raw: string) {
 
 // ── Bun.otel.span / wrap / set ────────────────────────────────────────────
 //
-// All native: `span` and the functions `wrap` returns are JSTracedFunctions
-// (a JIT thunk runs JSTelemetryTracer.cpp's enter/leave hooks around a direct
-// call), and `set` writes to the active span without a Span object.
-const span = $cpp("JSTelemetryTracer.cpp", "createTelemetrySpanFunction");
+// All native (JSTelemetryTracer.cpp): `span`/`wrap` create + activate + call +
+// end, and `set` writes to the active span without a Span object.
+const span = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryOtelSpan", 3);
 const wrapFunction = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryOtelWrap", 2);
 const set = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryOtelSet", 2);
 
@@ -647,9 +598,6 @@ const bunOtel = {
 export default {
   bunOtel,
   installGlobal,
-  startClientSpan,
-  redactQuery,
-  isKnownMethod,
   awaitExport,
   propagationHeaders,
   unpackContext,

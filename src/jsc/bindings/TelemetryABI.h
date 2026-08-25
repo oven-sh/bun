@@ -200,6 +200,4 @@ BunString Bun__Telemetry__nativeName(JSC::JSGlobalObject*, uint64_t handle);
 bool Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, uint64_t handle, BunString* traceState, BunString* baggage);
 const Bun::TelemetrySpanStub* Bun__Telemetry__poolStub(JSC::JSGlobalObject*, uint64_t handle);
 JSC::EncodedJSValue Bun__Telemetry__poolMaterialize(Zig::GlobalObject*, uint64_t handle);
-// Native-owned span for a JS-implemented built-in instrumentation; undefined when it should not record.
-JSC::EncodedJSValue Bun__Telemetry__startInstrumentSpan(Zig::GlobalObject*, uint32_t instrument, const BunString* name, uint8_t kind, const BunString* remoteParentTraceparent);
 }

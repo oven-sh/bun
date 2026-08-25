@@ -17,7 +17,14 @@ pub type IdRng = Option<bun_core::rand::DefaultPrng>;
 
 #[inline(always)]
 fn next_ids(rng: &mut IdRng, out: &mut [u64]) {
-    let r = rng.get_or_insert_with(|| bun_core::rand::DefaultPrng::init(bun_core::fast_random()));
+    // Seeded per thread from the OS (not `fast_random`, whose per-thread
+    // streams start from one process-wide seed): two workers must never
+    // produce the same trace/span id sequence.
+    let r = rng.get_or_insert_with(|| {
+        let mut seed = [0u8; 8];
+        bun_core::os_entropy(&mut seed);
+        bun_core::rand::DefaultPrng::init(u64::from_ne_bytes(seed))
+    });
     for o in out.iter_mut() {
         loop {
             let v = r.next_u64();
@@ -253,6 +260,32 @@ pub struct SpanStub {
 }
 
 impl SpanStub {
+    /// Byte form for carrying a stub through JS (node:http keeps it on the
+    /// request between begin and end). Layout: trace_id, span_id, parent,
+    /// flags, start_ns (LE).
+    pub const BYTES: usize = 16 + 8 + 8 + 1 + 8;
+    pub fn to_bytes(&self) -> [u8; Self::BYTES] {
+        let mut b = [0u8; Self::BYTES];
+        b[..16].copy_from_slice(&self.ctx.trace_id.0);
+        b[16..24].copy_from_slice(&self.ctx.span_id.0);
+        b[24..32].copy_from_slice(&self.parent.0);
+        b[32] = self.ctx.flags.0;
+        b[33..41].copy_from_slice(&self.start_ns.to_le_bytes());
+        b
+    }
+    pub fn from_bytes(b: &[u8]) -> Option<SpanStub> {
+        if b.len() != Self::BYTES {
+            return None;
+        }
+        let mut s = SpanStub::NONE;
+        s.ctx.trace_id.0.copy_from_slice(&b[..16]);
+        s.ctx.span_id.0.copy_from_slice(&b[16..24]);
+        s.parent.0.copy_from_slice(&b[24..32]);
+        s.ctx.flags = Flags(b[32]);
+        s.start_ns = u64::from_le_bytes(b[33..41].try_into().ok()?);
+        Some(s)
+    }
+
     pub const NONE: SpanStub = SpanStub {
         ctx: SpanContext {
             trace_id: TraceId::INVALID,

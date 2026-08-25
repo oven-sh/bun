@@ -346,6 +346,27 @@ bool telemetryNativeSetAttribute(Zig::GlobalObject* globalObject, uint64_t handl
     return Bun__Telemetry__nativeSetAttributes(globalObject, handle, &pool);
 }
 
+// $isTelemetrySpan(value): the builtins' brand check before @getInternalField.
+JSC_DEFINE_HOST_FUNCTION(jsIsTelemetrySpan, (JSGlobalObject*, CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(toTelemetrySpan(callFrame->argument(0))));
+}
+
+// $telemetrySpanEnd(span) / $telemetrySpanFailNoJS(span, error): for the
+// telemetryTraceSettled builtin (promise reactions of a traced call).
+JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanEndPrivate, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    if (auto* span = toTelemetrySpan(callFrame->argument(0)))
+        telemetryEndSpan(defaultGlobalObject(lexicalGlobalObject), span, 0);
+    return JSValue::encode(jsUndefined());
+}
+JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanFailNoJSPrivate, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    if (auto* span = toTelemetrySpan(callFrame->argument(0)))
+        telemetryFailSpanNoJS(defaultGlobalObject(lexicalGlobalObject), span, callFrame->argument(1));
+    return JSValue::encode(jsUndefined());
+}
+
 // $telemetrySetAttribute(span, key: string, value)
 JSC_DEFINE_HOST_FUNCTION(jsTelemetrySetAttribute, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {

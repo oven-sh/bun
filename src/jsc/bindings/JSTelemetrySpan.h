@@ -1,5 +1,6 @@
 #pragma once
 #include "root.h"
+#include "JSDOMWrapper.h"
 #include "TelemetryABI.h"
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
@@ -20,11 +21,10 @@ using namespace JSC;
 class JSTelemetrySpan final : public JSC::JSInternalFieldObjectImpl<11> {
 public:
     using Base = JSC::JSInternalFieldObjectImpl<11>;
-    // JSC reserves exactly one JSType byte for an embedder InternalFieldObject;
-    // JSTelemetrySpan is the only class that uses it, which is what makes the
-    // builtins' @isEmbedderInternalFieldObject brand check exact. A second user
-    // of this type would need its own discriminator.
-    static constexpr JSC::JSType Type = static_cast<JSC::JSType>(JSC::EmbedderInternalFieldObjectType);
+    // A type byte of its own in the embedder range (JSDOMWrapper.h), so the
+    // builtins' `$isTelemetrySpan` brand check before `@getInternalField` is
+    // one exact type compare.
+    static constexpr JSC::JSType Type = static_cast<JSC::JSType>(WebCore::JSTelemetrySpanType);
 
     enum class Field : unsigned {
         // int32 of State bits
@@ -102,6 +102,9 @@ inline JSTelemetrySpan* toTelemetrySpan(JSValue v)
 JSC::JSObject* createTelemetrySpanPrototype(VM&, Zig::GlobalObject*);
 
 // Private globals for src/js/builtins/TelemetrySpan.ts (native-owned span mutators).
+JSC_DECLARE_HOST_FUNCTION(jsIsTelemetrySpan);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetrySpanEndPrivate);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetrySpanFailNoJSPrivate);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetAttribute);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetName);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetStatus);

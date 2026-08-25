@@ -591,11 +591,10 @@ describe("context propagation", () => {
     expect(await p).toBe(span);
   });
 
-  test("a `using` span in an async function's synchronous prefix is not left active in the caller, even with for-await in that prefix", async () => {
+  test("a `using` span in an async function's synchronous prefix has AsyncLocalStorage.enterWith semantics: active inside the function across awaits, and left active in the caller's frame", async () => {
     async function* agen() {
       yield 1;
     }
-    const seen: (string | undefined)[] = [];
     async function plain() {
       using span = tracer.startActiveSpan("plain");
       await 1;
@@ -607,35 +606,32 @@ describe("context propagation", () => {
       }
       return Bun.otel.activeSpan() === span;
     }
-    async function forAwaitSync() {
-      using span = tracer.startActiveSpan("fs");
-      for await (const _ of [1, 2]) {
-      }
-      return Bun.otel.activeSpan() === span;
-    }
+    // The synchronous prefix runs in the caller's frame (like ALS.enterWith):
+    // the caller sees the span until its own context is next restored. The
+    // callback forms (span(name, fn), wrap, startActiveSpan(name, fn)) scope
+    // it lexically instead.
     const p1 = plain();
-    seen.push(Bun.otel.activeSpan()?.name);
-    const p2 = forAwaitAsyncGen();
-    seen.push(Bun.otel.activeSpan()?.name);
-    const p3 = forAwaitSync();
-    seen.push(Bun.otel.activeSpan()?.name);
-    expect(seen).toEqual([undefined, undefined, undefined]);
-    expect(await Promise.all([p1, p2, p3])).toEqual([true, true, true]);
-    expect(Bun.otel.activeSpan()).toBeUndefined();
+    expect(Bun.otel.activeSpan()?.name).toBe("plain");
+    expect(await p1).toBe(true);
+    const p2 = Bun.otel.span("scoped", async () => forAwaitAsyncGen());
+    expect(Bun.otel.activeSpan()?.name).not.toBe("fa");
+    expect(await p2).toBe(true);
+    await collect();
   });
 
   test("concurrent async functions keep separate contexts", async () => {
-    async function work(name: string, delay: number) {
-      using span = tracer.startActiveSpan(name);
+    const work = Bun.otel.wrap(async function work(delay: number) {
+      const span = Bun.otel.activeSpan()!;
       await Bun.sleep(delay);
       expect(Bun.otel.activeSpan()).toBe(span);
       await Bun.sleep(1);
       expect(Bun.otel.activeSpan()).toBe(span);
       return span.spanId;
-    }
-    const ids = await Promise.all([work("a", 3), work("b", 1), work("c", 2)]);
+    });
+    const ids = await Promise.all([work(3), work(1), work(2)]);
     expect(new Set(ids).size).toBe(3);
     expect(Bun.otel.activeSpan()).toBeUndefined();
+    await collect();
   });
 
   test("context captured at await, not resume: enter after first await is scoped to that continuation", async () => {

@@ -1,8 +1,9 @@
-//! HTTP client spans for `fetch()` (and node:http, which is built on it).
+//! HTTP client spans for `fetch()` and the node:http client (which keeps the
+//! stub on the ClientRequest between `httpClientBegin` and `httpClientEnd`).
 
 use bun_http::Method;
 use bun_http_types::ETag::Headers;
-use bun_jsc::JSGlobalObject;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 use bun_telemetry::{Instrument, SpanKind, SpanStub, propagation};
 use bun_url::URL;
 
@@ -11,7 +12,41 @@ use super::{local, state};
 /// Start a CLIENT span for an outgoing request and inject `traceparent`
 /// (+ `tracestate` / `baggage`) into `headers` unless the caller already set
 /// one. Returns `SpanStub::NONE` when disabled.
-pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
+/// The request's propagation headers, as fetch (`Headers`) or node:http
+/// (`NodeHeaders`) holds them.
+pub trait PropagationHeaders {
+    fn traceparent(&self) -> Option<&[u8]>;
+    fn has_baggage(&self) -> bool;
+    fn set_traceparent(&mut self, v: &[u8]);
+    /// `None`: remove a caller-set tracestate (it belongs to another trace).
+    fn set_tracestate(&mut self, v: Option<&[u8]>);
+    fn set_baggage(&mut self, v: &[u8]);
+}
+
+impl PropagationHeaders for Headers {
+    fn traceparent(&self) -> Option<&[u8]> {
+        self.get(b"traceparent")
+    }
+    fn has_baggage(&self) -> bool {
+        self.get(b"baggage").is_some()
+    }
+    fn set_traceparent(&mut self, v: &[u8]) {
+        self.set(b"traceparent", v)
+    }
+    fn set_tracestate(&mut self, v: Option<&[u8]>) {
+        match v {
+            Some(v) => self.set(b"tracestate", v),
+            None => self.remove(b"tracestate"),
+        }
+    }
+    fn set_baggage(&mut self, v: &[u8]) {
+        self.append(b"baggage", v)
+    }
+}
+
+/// Start a CLIENT span for an outgoing request and inject `traceparent`
+/// (+ `tracestate`, `baggage`). Returns `SpanStub::NONE` when disabled.
+pub fn begin(global: &JSGlobalObject, headers: &mut impl PropagationHeaders) -> SpanStub {
     if !bun_telemetry::enabled(Instrument::HttpClient) {
         return SpanStub::NONE;
     }
@@ -32,11 +67,7 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
         return SpanStub::NONE;
     }
     let from_caller = active.is_none();
-    let parent_ctx = active.or_else(|| {
-        headers
-            .get(b"traceparent")
-            .and_then(propagation::parse_traceparent)
-    });
+    let parent_ctx = active.or_else(|| headers.traceparent().and_then(propagation::parse_traceparent));
     let Some(mut l) = local(global) else {
         return SpanStub::NONE;
     };
@@ -51,30 +82,142 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
     if inject_traceparent {
         let mut tp = [0u8; propagation::TRACEPARENT_LEN];
         propagation::format_traceparent(&stub.ctx, &mut tp);
-        headers.set(b"traceparent", &tp);
+        headers.set_traceparent(&tp);
     }
     // tracestate rides with the traceparent (the active span's; a caller's
-    // header is left as is); baggage is its own propagator (it can be active
-    // with no span, or with trace context off). Values are re-validated: they
-    // may come from a JS carrier and go into the request head verbatim.
+    // header is left as is when the caller's traceparent is the parent);
+    // baggage is its own propagator (it can be active with no span, or with
+    // trace context off). Values are re-validated: they may come from a JS
+    // carrier and go into the request head verbatim.
     let want_tracestate = inject_traceparent && !from_caller;
     if want_tracestate || st.propagate_baggage {
         super::with_active_propagation(global, |trace_state, baggage| {
             if want_tracestate {
                 if !trace_state.is_empty() && propagation::tracestate_is_reasonable(trace_state) {
-                    headers.set(b"tracestate", trace_state);
+                    headers.set_tracestate(Some(trace_state));
+                } else {
+                    // The traceparent now names our trace; a tracestate the
+                    // caller set belongs to another one.
+                    headers.set_tracestate(None);
                 }
             }
             if st.propagate_baggage
                 && !baggage.is_empty()
-                && headers.get(b"baggage").is_none()
+                && !headers.has_baggage()
                 && propagation::baggage_is_reasonable(baggage)
             {
-                headers.append(b"baggage", baggage);
+                headers.set_baggage(baggage);
             }
         });
     }
     stub
+}
+
+/// node:http's view for [`begin`]: what the caller set, and what to write
+/// back (`internal/telemetry` applies it to the request).
+#[derive(Default)]
+pub struct NodeHeaders {
+    pub caller_traceparent: Vec<u8>,
+    pub caller_has_baggage: bool,
+    pub traceparent: Option<[u8; propagation::TRACEPARENT_LEN]>,
+    /// Some(None) = remove.
+    pub tracestate: Option<Option<Vec<u8>>>,
+    pub baggage: Option<Vec<u8>>,
+}
+
+impl PropagationHeaders for NodeHeaders {
+    fn traceparent(&self) -> Option<&[u8]> {
+        if self.caller_traceparent.is_empty() { None } else { Some(&self.caller_traceparent) }
+    }
+    fn has_baggage(&self) -> bool {
+        self.caller_has_baggage
+    }
+    fn set_traceparent(&mut self, v: &[u8]) {
+        let mut tp = [0u8; propagation::TRACEPARENT_LEN];
+        tp.copy_from_slice(v);
+        self.traceparent = Some(tp);
+    }
+    fn set_tracestate(&mut self, v: Option<&[u8]>) {
+        self.tracestate = Some(v.map(<[u8]>::to_vec));
+    }
+    fn set_baggage(&mut self, v: &[u8]) {
+        self.baggage = Some(v.to_vec());
+    }
+}
+
+/// internal: `httpClientBegin(method, callerTraceparent, callerHasBaggage)` →
+/// undefined (no span) or `[stub: Uint8Array, traceparent, tracestate | null
+/// (remove) | undefined (leave), baggage | undefined]`.
+pub fn http_client_begin(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if !bun_telemetry::enabled(Instrument::HttpClient) {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let mut h = NodeHeaders::default();
+    let tp = frame.argument(1);
+    if tp.is_string() {
+        h.caller_traceparent = tp.to_utf8(global)?.slice().to_vec();
+    }
+    h.caller_has_baggage = frame.argument(2).to_boolean();
+    let stub = begin(global, &mut h);
+    if !stub.is_some() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let arr = JSValue::create_empty_array(global, 4)?;
+    arr.put_index(global, 0, bun_jsc::JSUint8Array::from_bytes_copy(global, &stub.to_bytes())?)?;
+    arr.put_index(
+        global,
+        1,
+        match &h.traceparent {
+            Some(tp) => bun_string_jsc::create_utf8_for_js(global, tp)?,
+            None => JSValue::UNDEFINED,
+        },
+    )?;
+    arr.put_index(
+        global,
+        2,
+        match &h.tracestate {
+            Some(Some(ts)) => bun_string_jsc::create_utf8_for_js(global, ts)?,
+            Some(None) => JSValue::NULL,
+            None => JSValue::UNDEFINED,
+        },
+    )?;
+    arr.put_index(
+        global,
+        3,
+        match &h.baggage {
+            Some(b) => bun_string_jsc::create_utf8_for_js(global, b)?,
+            None => JSValue::UNDEFINED,
+        },
+    )?;
+    Ok(arr)
+}
+
+/// internal: `httpClientEnd(stub, method, url, status, httpMinor, errCode?, errMessage?)`.
+pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let Some(buf) = frame.argument(0).as_array_buffer(global) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let Some(stub) = SpanStub::from_bytes(buf.byte_slice()) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let method = frame.argument(1).to_utf8(global)?;
+    let method = Method::which(method.slice()).unwrap_or(Method::GET);
+    let url = frame.argument(2).to_utf8(global)?;
+    let status = frame.argument(3).as_number() as u16;
+    let minor = frame.argument(4);
+    let minor_version = if minor.is_number() { Some(minor.as_number() as u8) } else { None };
+    let code = frame.argument(5);
+    let message = frame.argument(6);
+    let (code_s, msg_s);
+    let error = if code.is_string() || message.is_string() {
+        code_s = if code.is_string() { code.to_utf8(global)? } else { bun_core::Utf8Bytes::EMPTY };
+        msg_s = if message.is_string() { message.to_utf8(global)? } else { bun_core::Utf8Bytes::EMPTY };
+        Some((code_s.slice(), msg_s.slice()))
+    } else {
+        None
+    };
+    end(global, &stub, method, url.slice(), status, minor_version, error);
+    Ok(JSValue::UNDEFINED)
 }
 
 /// Finish the client span. `url` is the request URL as originally given

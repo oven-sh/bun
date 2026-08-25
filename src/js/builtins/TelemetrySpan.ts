@@ -31,7 +31,7 @@ const enum MaxBuffered {
 }
 
 export function setAttribute(this: unknown, key: unknown, value: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   const state = $getInternalField(this, Field.State) as number;
   if (!(state & State.Recording) || value == null) return this;
   key = key + "";
@@ -58,7 +58,7 @@ export function setAttribute(this: unknown, key: unknown, value: unknown) {
 }
 
 export function setAttributes(this: unknown, attributes: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   return $telemetrySpanSetAttributesImpl(this, attributes);
 }
 
@@ -99,7 +99,7 @@ export function telemetrySpanSetAttributesImpl(span: any, attributes: unknown) {
 }
 
 export function updateName(this: unknown, name: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   const state = $getInternalField(this, Field.State) as number;
   if (!(state & State.Recording)) return this;
   name = name + "";
@@ -109,13 +109,13 @@ export function updateName(this: unknown, name: unknown) {
 }
 
 export function isRecording(this: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   return (($getInternalField(this, Field.State) as number) & State.Recording) !== 0;
 }
 
 // setStatus({ code, message }) — or setStatus(code, message?)
 export function setStatus(this: unknown, status: any, messageArg?: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   return $telemetrySpanSetStatusImpl(this, status, messageArg);
 }
 
@@ -150,7 +150,7 @@ export function telemetrySpanSetStatusImpl(span: any, status: any, messageArg?: 
 
 // addEvent(name, attributesOrStartTime?, startTime?)
 export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   const state = $getInternalField(this, Field.State) as number;
   if (!(state & State.Recording)) return this;
   let attributes: unknown, time: unknown;
@@ -167,7 +167,7 @@ export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown)
 
 // set(key, value) — or set({ ...attributes })
 export function set(this: any, keyOrAttributes: unknown, value?: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   if (typeof keyOrAttributes !== "string") return $telemetrySpanSetAttributesImpl(this, keyOrAttributes);
   // = setAttribute, inlined
   const state = $getInternalField(this, Field.State) as number;
@@ -195,20 +195,39 @@ export function set(this: any, keyOrAttributes: unknown, value?: unknown) {
 
 // fail(error) — record the exception and mark the span failed with its message
 export function fail(this: any, error: any) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   $telemetrySpanRecordExceptionImpl(this, error, undefined);
   const message = error == null ? undefined : typeof error === "string" ? error : error.message;
   return $telemetrySpanSetStatusImpl(this, 2, message);
 }
 
 export function ok(this: any) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   return $telemetrySpanSetStatusImpl(this, 1);
 }
 
 export function recordException(this: any, exception: any, time?: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   return $telemetrySpanRecordExceptionImpl(this, exception, time);
+}
+
+// Bun.otel.span(name, fn) / Bun.otel.wrap / an async websocket handler
+// returned a promise: the span ends when it settles (failed on rejection), and
+// the caller gets the derived promise, so a rejection the caller does not
+// handle is still reported as unhandled (node's tracePromise shape).
+$visibility = "Private";
+export function telemetryTraceSettled(span: any, promise: Promise<unknown>) {
+  return promise.$then(
+    value => {
+      $telemetrySpanEnd(span);
+      return value;
+    },
+    error => {
+      $telemetrySpanFailNoJS(span, error);
+      $telemetrySpanEnd(span);
+      throw error;
+    },
+  );
 }
 
 $visibility = "Private";
@@ -293,14 +312,14 @@ export function telemetryAddOneLink(span: unknown, state: number, link: any) {
 }
 
 export function addLink(this: unknown, link: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   const state = $getInternalField(this, Field.State) as number;
   if (state & State.Recording) $telemetryAddOneLink(this, state, link);
   return this;
 }
 
 export function addLinks(this: unknown, links: unknown) {
-  if (!$isEmbedderInternalFieldObject(this)) throw new TypeError("not a Span");
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   const state = $getInternalField(this, Field.State) as number;
   if (state & State.Recording && $isJSArray(links)) {
     for (let i = 0; i < links.length; i++) $telemetryAddOneLink(this, state, links[i]);

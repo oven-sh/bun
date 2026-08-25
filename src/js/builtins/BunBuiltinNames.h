@@ -67,7 +67,6 @@ using namespace JSC;
     macro(createCommonJSModule) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
-    macro(createSpan) \
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
     macro(data) \
@@ -198,6 +197,12 @@ using namespace JSC;
     macro(telemetrySpanRecordExceptionImpl) \
     macro(telemetrySpanSetAttributesImpl) \
     macro(telemetrySpanSetStatusImpl) \
+    macro(isTelemetrySpan) \
+    macro(telemetrySpanEnd) \
+    macro(telemetrySpanFailNoJS) \
+    macro(telemetryTraceSettled) \
+    macro(telemetryWrapTarget) \
+    macro(telemetryWrapName) \
     macro(telemetrySetAttribute) \
     macro(telemetrySetName) \
     macro(telemetrySetStatus) \

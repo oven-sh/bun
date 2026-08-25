@@ -91,7 +91,9 @@ pub struct VmState {
     /// JS function exporters registered from this VM.
     js_exporters: RefCell<Vec<Arc<exporter::JsExporter>>>,
     /// Promises from `forceFlush()` waiting for in-flight exports to drain.
-    flush_waiters: RefCell<Vec<bun_jsc::JSPromiseStrong>>,
+    /// `forceFlush()` promises and the payload sequence number each waits
+    /// for (everything taken before it must have settled).
+    flush_waiters: RefCell<Vec<(u64, bun_jsc::JSPromiseStrong)>>,
     /// Keeps this event loop alive while `flush_waiters` is non-empty (the
     /// export completes on the HTTP thread; nothing else holds a worker open).
     flush_keep_alive: RefCell<bun_io::KeepAlive>,
@@ -119,7 +121,9 @@ pub(crate) fn vm_state(global: &JSGlobalObject) -> Option<&'static VmState> {
 
 /// For event-loop tasks that run without a global in hand.
 pub(crate) fn current_vm_state() -> Option<&'static VmState> {
-    vm_state_of(VirtualMachine::get())
+    // None off the JS thread (the --watch flush runs on the watcher thread).
+    // SAFETY: the thread-local VM pointer is valid for the thread's lifetime.
+    VirtualMachine::get_or_null().and_then(|vm| vm_state_of(unsafe { &*vm }))
 }
 
 fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
@@ -604,18 +608,19 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
         if let Some(v) = opts.get(global, "resourceAttributes")? {
             span::for_each_attribute(global, v, |k, val| {
+                use bun_telemetry_cold::config::ResourceValue as R;
                 let vs = match val {
-                    bun_telemetry::Value::Str(s) => bstr::ByteSlice::to_str_lossy(*s).into_owned(),
-                    bun_telemetry::Value::Int(i) => i.to_string(),
-                    bun_telemetry::Value::Double(d) => d.to_string(),
-                    bun_telemetry::Value::Bool(b) => b.to_string(),
+                    bun_telemetry::Value::Str(s) => R::Str(bstr::ByteSlice::to_str_lossy(*s).into_owned()),
+                    bun_telemetry::Value::Int(i) => R::Int(*i),
+                    bun_telemetry::Value::Double(d) => R::Double(*d),
+                    bun_telemetry::Value::Bool(b) => R::Bool(*b),
                     _ => return,
                 };
                 let k = bstr::ByteSlice::to_str_lossy(k).into_owned();
                 if k == "service.name" {
                     // an explicit serviceName wins (SDK: OTEL_SERVICE_NAME > resource attrs)
                     if !has_service_name {
-                        cfg.service_name = Some(vs);
+                        cfg.service_name = Some(vs.to_string());
                     }
                 } else {
                     cfg.resource_attributes.retain(|(ek, _)| *ek != k);
@@ -623,11 +628,8 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 }
             })?;
         }
-        // `endpoint` / `url` + `headers` is shorthand for one OTLP exporter.
-        let endpoint = match opt_str(global, opts, "endpoint")? {
-            Some(v) => Some(v),
-            None => opt_str(global, opts, "url")?,
-        };
+        // `endpoint` + `headers` is shorthand for one OTLP exporter.
+        let endpoint = opt_str(global, opts, "endpoint")?;
         let explicit_exporters = opts.get(global, "exporters")?;
         if endpoint.is_some() || explicit_exporters.is_some() {
             cfg.otlp_exporters.clear();
@@ -636,7 +638,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
         if let Some(url) = endpoint {
             let mut x = OtlpExporterConfig::new(normalize_traces_url(&url));
-            read_exporter_extras(global, opts, &mut x)?;
+            read_exporter_headers(global, opts, &mut x)?;
             cfg.otlp_exporters.push(x);
         }
         if let Some(list) = explicit_exporters {
@@ -680,36 +682,17 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     js_exporters.push(exporter::JsExporter::new(global, f, item, format));
                     continue;
                 }
-                // Vendor preset: { type: "datadog" | "honeycomb" | …, apiKey?, site?, id?, endpoint? }
-                if let Some(name) = opt_str(global, item, "type")? {
-                    let field = |k: &str| opt_str(global, item, k);
-                    let input = bun_telemetry_cold::presets::PresetInput {
-                        name: &name,
-                        api_key: field("apiKey")?,
-                        site: field("site")?.or(field("region")?),
-                        id: field("id")?.or(field("dataset")?).or(field("instanceId")?),
-                        endpoint: field("endpoint")?.or(field("url")?),
-                    };
-                    let loader = vm.env_loader();
-                    let mut x = match bun_telemetry_cold::presets::resolve(&input, &|k| {
-                        loader
-                            .get(k.as_bytes())
-                            .map(|v| bstr::ByteSlice::to_str_lossy(v).into_owned())
-                    }) {
-                        Ok(x) => x,
-                        Err(e) => return Err(global.throw_invalid_arguments(format_args!("{e}"))),
-                    };
-                    read_exporter_extras(global, item, &mut x)?;
-                    cfg.otlp_exporters.push(x);
-                    continue;
+                if let Some(ty) = opt_str(global, item, "type")? {
+                    if ty != "otlp" {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "unknown exporter type {ty:?} (expected \"otlp\", or an export() function)"
+                        )));
+                    }
                 }
-                let url = match opt_str(global, item, "url")? {
-                    Some(v) => Some(v),
-                    None => opt_str(global, item, "endpoint")?,
-                };
+                let url = opt_str(global, item, "url")?;
                 let Some(url) = url else {
                     return Err(global.throw_invalid_arguments(format_args!(
-                        "exporter needs a url, a type, or an export() function"
+                        "exporter needs a url or an export() function"
                     )));
                 };
                 let mut x = OtlpExporterConfig::new(normalize_traces_url(&url));
@@ -718,7 +701,16 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             }
         }
         if let Some(v) = opts.get(global, "sampler")? {
-            cfg.sampler = sampler_from_js(global, v, opts.get(global, "samplerArg")?)?;
+            // samplerArg falls back to OTEL_TRACES_SAMPLER_ARG like every other option.
+            let arg = match opts.get(global, "samplerArg")? {
+                Some(a) => Some(a),
+                None => vm
+                    .env_loader()
+                    .get(b"OTEL_TRACES_SAMPLER_ARG")
+                    .map(|v| bun_jsc::bun_string_jsc::create_utf8_for_js(global, v))
+                    .transpose()?,
+            };
+            cfg.sampler = sampler_from_js(global, v, arg)?;
         }
         if let Some(v) = opts.get(global, "instrumentations")? {
             read_instrumentations(global, v, &mut cfg)?;
@@ -761,7 +753,12 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     match arg_string(global, item)?.as_deref() {
                         Some("tracecontext") => cfg.propagate_trace_context = true,
                         Some("baggage") => cfg.propagate_baggage = true,
-                        _ => {}
+                        other => {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "unknown propagator {:?} (expected \"tracecontext\" or \"baggage\")",
+                                other.unwrap_or("")
+                            )));
+                        }
                     }
                 }
             }
@@ -849,11 +846,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 fn normalize_traces_url(url: &str) -> String {
-    // A bare collector base URL gets the traces path; anything with a path is used as-is.
-    match bun_url::URL::parse(url.as_bytes()).pathname {
-        b"" | b"/" => config::traces_endpoint(url),
-        _ => url.to_string(),
-    }
+    config::normalize_traces_url(url)
 }
 
 #[optimize(size)]
@@ -862,7 +855,30 @@ fn read_exporter_extras(
     obj: JSValue,
     x: &mut OtlpExporterConfig,
 ) -> JsResult<()> {
-    // Same shapes `fetch` accepts: a Headers, a record, or [name, value] pairs.
+    read_exporter_headers(global, obj, x)?;
+    match opt_str(global, obj, "compression")?.as_deref() {
+        None => {}
+        Some("none") => x.compression = Compression::None,
+        Some("gzip") => x.compression = Compression::Gzip,
+        Some(other) => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "unknown compression \"{other}\" (expected \"gzip\" or \"none\")"
+            )));
+        }
+    }
+    if let Some(t) = obj.get_optional_int::<u32>(global, "timeoutMs")? {
+        x.timeout_ms = t;
+    }
+    Ok(())
+}
+
+/// `headers` in the shapes `fetch` accepts: a Headers, a record, or [name, value] pairs.
+#[optimize(size)]
+fn read_exporter_headers(
+    global: &JSGlobalObject,
+    obj: JSValue,
+    x: &mut OtlpExporterConfig,
+) -> JsResult<()> {
     if let Some(h) = obj.get(global, "headers")? {
         if let Some(fh) = bun_jsc::FetchHeaders::create_from_js(global, h)? {
             // SAFETY: `create_from_js` returned a +1 owned FetchHeaders.
@@ -881,19 +897,6 @@ fn read_exporter_extras(
                 ));
             }
         }
-    }
-    match opt_str(global, obj, "compression")?.as_deref() {
-        None => {}
-        Some("none") => x.compression = Compression::None,
-        Some("gzip") => x.compression = Compression::Gzip,
-        Some(other) => {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "unknown compression \"{other}\" (expected \"gzip\" or \"none\")"
-            )));
-        }
-    }
-    if let Some(t) = obj.get_optional_int::<u32>(global, "timeoutMs")? {
-        x.timeout_ms = t;
     }
     Ok(())
 }
@@ -1000,15 +1003,14 @@ fn read_instrumentations(
             }
         } else if let Some(s) = arg_string(global, val)? {
             match s.as_str() {
-                "always" | "root" => {
+                "always" => {
                     cfg.instruments |= i.bit();
                     cfg.roots |= i.bit();
                 }
-                "nested" | "child" | "parent" => {
+                "nested" => {
                     cfg.instruments |= i.bit();
                     cfg.roots &= !i.bit();
                 }
-                "off" | "false" | "none" => cfg.instruments &= !i.bit(),
                 other => return Err(global.throw_invalid_arguments(format_args!("instrumentations.{}: expected boolean, \"always\" or \"nested\", got \"{other}\"", i.name()))),
             }
         }
@@ -1069,12 +1071,17 @@ pub fn with_context(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let s = vm_state_or_init(global);
     bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
-    processor().export();
-    processor().retry_now();
-    if processor().inflight() == 0
-        && processor().pending_retries() == 0
-        && processor().pending_count() == 0
-    {
+    // Everything recorded so far goes out now (looping past the batch-size
+    // cap); the promise resolves when those payloads — and anything older,
+    // in flight or parked — have settled, not when the pipeline is idle.
+    while processor().pending_count() != 0 && processor().exporter_count() != 0 {
+        if !processor().export() {
+            break;
+        }
+    }
+    let target = processor().next_seq();
+    processor().retry_older_than(target);
+    if processor().oldest_outstanding().is_none_or(|o| o >= target) {
         return Ok(bun_jsc::JSPromise::resolved_promise_value(
             global,
             JSValue::UNDEFINED,
@@ -1082,7 +1089,7 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     }
     let strong = bun_jsc::JSPromiseStrong::init(global);
     let value = strong.value();
-    s.flush_waiters.borrow_mut().push(strong);
+    s.flush_waiters.borrow_mut().push((target, strong));
     s.flush_keep_alive.borrow_mut().ref_(bun_io::js_vm_ctx());
     if !s.flush_hook_installed.replace(true) {
         let handle = global.bun_vm().handle();
@@ -1093,37 +1100,35 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
             }),
         );
     }
-    // The idle edge may have already passed between the check and the hook.
-    if processor().inflight() == 0 {
-        resolve_flush_waiters();
-    }
+    // A settlement may have already happened between the check and the hook.
+    resolve_flush_waiters();
     Ok(value)
 }
 
 pub(crate) fn resolve_flush_waiters() {
     let Some(s) = current_vm_state() else { return };
-    // The idle hook stays installed after the first forceFlush(); with nobody
-    // waiting, parked retries keep their backoff.
     if s.flush_waiters.borrow().is_empty() {
         return;
     }
-    if processor().pending_retries() != 0 {
-        // A flush is waiting on a payload that got parked: retry it now
-        // rather than after its backoff.
-        processor().retry_now();
-        return;
-    }
-    if processor().pending_count() != 0 {
-        // A request was cut at max_export_batch_size: keep going.
-        processor().export();
-    }
-    if processor().inflight() != 0 {
-        return;
-    }
-    let waiters = core::mem::take(&mut *s.flush_waiters.borrow_mut());
-    s.flush_keep_alive.borrow_mut().unref(bun_io::js_vm_ctx());
+    let oldest = processor().oldest_outstanding();
+    let ready: Vec<bun_jsc::JSPromiseStrong> = {
+        let mut waiters = s.flush_waiters.borrow_mut();
+        let mut ready = Vec::new();
+        let mut i = 0;
+        while i < waiters.len() {
+            if oldest.is_none_or(|o| o >= waiters[i].0) {
+                ready.push(waiters.swap_remove(i).1);
+            } else {
+                i += 1;
+            }
+        }
+        if waiters.is_empty() && !ready.is_empty() {
+            s.flush_keep_alive.borrow_mut().unref(bun_io::js_vm_ctx());
+        }
+        ready
+    };
     let global = s.global();
-    for mut w in waiters {
+    for mut w in ready {
         let _ = w.resolve(global, JSValue::UNDEFINED);
     }
 }
@@ -1238,18 +1243,18 @@ pub fn http_client_enabled(global: &JSGlobalObject, _frame: &CallFrame) -> JsRes
     ))
 }
 
-/// `instrumentId(name)` → index of a built-in instrumentation (its
-/// `bun_telemetry::Instrument` discriminant), for `startInstrumentSpan`.
+/// internal (node:http client): see telemetry/fetch.rs.
 #[bun_jsc::host_fn]
-pub fn instrument_id(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let name = arg_string(global, frame.argument(0))?.unwrap_or_default();
-    match Instrument::from_name(name.as_bytes()) {
-        Some(i) => Ok(JSValue::js_number_from_int32(i as i32)),
-        None => {
-            Err(global.throw_invalid_arguments(format_args!("unknown instrumentation \"{name}\"")))
-        }
-    }
+pub fn http_client_begin(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    fetch::http_client_begin(global, frame)
 }
+
+/// internal (node:http client): see telemetry/fetch.rs.
+#[bun_jsc::host_fn]
+pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    fetch::http_client_end(global, frame)
+}
+
 
 /// `propagationFlags()` → bit 0: W3C trace context, bit 1: baggage.
 #[bun_jsc::host_fn]

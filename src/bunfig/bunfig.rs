@@ -394,12 +394,6 @@ impl<'a> Parser<'a> {
                     self.expect(&e, ExprTag::EBoolean)?;
                     cfg.enabled = e.as_bool();
                 }
-                if let Some(e) = expr.get(b"exporter") {
-                    self.expect(&e, ExprTag::EString)?;
-                    cfg.exporter = e
-                        .as_string(self.bump)
-                        .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
-                }
                 if let Some(e) = expr.get(b"endpoint") {
                     self.expect(&e, ExprTag::EString)?;
                     cfg.endpoint = e

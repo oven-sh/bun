@@ -86,7 +86,5 @@ JSC_DECLARE_HOST_FUNCTION(jsTelemetryEnterContext);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryExitContext);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryActiveExtras);
 
-// Installed as VM::asyncContextLeaveAsyncFrameHook.
-JSC::JSValue telemetryLeaveAsyncFrame(JSC::JSGlobalObject*, JSC::JSValue atEntry, JSC::JSValue current);
 
 } // namespace Bun

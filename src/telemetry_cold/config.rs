@@ -46,11 +46,42 @@ pub fn traces_endpoint(base: &str) -> String {
     format!("{b}/v1/traces")
 }
 
+/// `Bun.otel.start({ endpoint })` / bunfig `endpoint`: a bare collector base
+/// URL (no path) gets `/v1/traces`; a URL with a path is used as-is.
+pub fn normalize_traces_url(url: &str) -> String {
+    let after_scheme = url.find("://").map_or(0, |i| i + 3);
+    match url[after_scheme..].find('/') {
+        None => traces_endpoint(url),
+        Some(i) if url[after_scheme + i..].trim_end_matches('/').is_empty() => traces_endpoint(url),
+        Some(_) => url.to_string(),
+    }
+}
+
+/// A `resourceAttributes` / OTEL_RESOURCE_ATTRIBUTES value (env values are strings).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ResourceValue {
+    Str(String),
+    Int(i64),
+    Double(f64),
+    Bool(bool),
+}
+
+impl std::fmt::Display for ResourceValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResourceValue::Str(s) => f.write_str(s),
+            ResourceValue::Int(i) => write!(f, "{i}"),
+            ResourceValue::Double(d) => write!(f, "{d}"),
+            ResourceValue::Bool(b) => write!(f, "{b}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub service_name: Option<String>,
     /// Extra resource attributes (`OTEL_RESOURCE_ATTRIBUTES` and user config).
-    pub resource_attributes: Vec<(String, String)>,
+    pub resource_attributes: Vec<(String, ResourceValue)>,
     pub sampler: Sampler,
     /// Bitmask of `Instrument`s that record.
     pub instruments: u32,
@@ -109,8 +140,6 @@ pub struct Bunfig {
     pub endpoint: Option<String>,
     pub headers: Vec<(String, String)>,
     pub service_name: Option<String>,
-    /// `exporter = "datadog"` (see presets.rs); `BUN_OTEL_EXPORTER` wins.
-    pub exporter: Option<String>,
 }
 
 static BUNFIG: std::sync::OnceLock<Bunfig> = std::sync::OnceLock::new();
@@ -125,7 +154,7 @@ pub fn bunfig() -> Option<&'static Bunfig> {
 
 /// Outcome of reading the environment.
 pub struct EnvConfig {
-    /// `BUN_OTEL` truthy (or `OTEL_BUN`), and not `OTEL_SDK_DISABLED`.
+    /// `BUN_OTEL` truthy, and not `OTEL_SDK_DISABLED`.
     pub enabled: bool,
     /// `OTEL_SDK_DISABLED` truthy: nothing may turn tracing on, `start()` included.
     pub sdk_disabled: bool,
@@ -181,7 +210,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     let bunfig = bunfig();
     let mut enabled = get("BUN_OTEL")
         .map(|v| truthy(&v))
-        .or_else(|| get("OTEL_BUN").map(|v| truthy(&v)))
+
         .or_else(|| bunfig.and_then(|b| b.enabled))
         .unwrap_or(false);
     let sdk_disabled = get("OTEL_SDK_DISABLED")
@@ -198,14 +227,17 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         }
     }
     if let Some(v) = get("OTEL_RESOURCE_ATTRIBUTES") {
-        c.resource_attributes = parse_kv_list(&v);
+        c.resource_attributes = parse_kv_list(&v)
+            .into_iter()
+            .map(|(k, v)| (k, ResourceValue::Str(v)))
+            .collect();
         if c.service_name.is_none() {
             if let Some((_, v)) = c
                 .resource_attributes
                 .iter()
                 .find(|(k, _)| k == "service.name")
             {
-                c.service_name = Some(v.clone());
+                c.service_name = Some(v.to_string());
             }
         }
         c.resource_attributes.retain(|(k, _)| k != "service.name");
@@ -290,9 +322,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         }
     }
 
-    // Exporter selection. The OTLP endpoint/headers/compression/timeout
-    // from OTEL_EXPORTER_OTLP_* (and bunfig endpoint/headers) apply to the
-    // plain `otlp` exporter and to vendor presets alike.
+    // Exporter selection: OTEL_EXPORTER_OTLP_* (and bunfig endpoint/headers).
     match get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
         .or_else(|| get("OTEL_EXPORTER_OTLP_PROTOCOL"))
         .as_deref()
@@ -315,7 +345,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     } else {
         bunfig
             .and_then(|b| b.endpoint.as_deref())
-            .map(traces_endpoint)
+            .map(normalize_traces_url)
     };
     let mut env_headers = bunfig.map(|b| b.headers.clone()).unwrap_or_default();
     for (k, val) in get("OTEL_EXPORTER_OTLP_HEADERS")
@@ -351,58 +381,14 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         .or_else(|| num("OTEL_EXPORTER_OTLP_TIMEOUT", &mut warnings));
 
     let mut want_otlp = true;
-    let mut have_preset = false;
-    let preset = get("BUN_OTEL_EXPORTER")
-        .map(|v| ("BUN_OTEL_EXPORTER", v))
-        .or_else(|| {
-            bunfig
-                .and_then(|b| b.exporter.clone())
-                .map(|s| ("bunfig [otel] exporter", s.into_bytes()))
-        });
-    if let Some((source, v)) = preset {
-        for name in bun_core::strings::split(&v, b",") {
-            let name = name.trim_ascii();
-            if name.is_empty() {
-                continue;
-            }
-            want_otlp = false;
-            have_preset = true;
-            let input = crate::presets::PresetInput {
-                name: &s(name),
-                api_key: None,
-                site: None,
-                id: None,
-                endpoint: explicit_url.clone(),
-            };
-            match crate::presets::resolve(&input, &|k| get(k).map(|v| s(&v))) {
-                Ok(mut x) => {
-                    // Explicit headers add to / override the preset's.
-                    for (k, val) in &env_headers {
-                        x.headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(k));
-                        x.headers.push((k.clone(), val.clone()));
-                    }
-                    if let Some(c) = compression {
-                        x.compression = c;
-                    }
-                    if let Some(t) = timeout_ms {
-                        x.timeout_ms = t;
-                    }
-                    c.otlp_exporters.push(x)
-                }
-                Err(e) => warnings.push(format!("{source}: {e}")),
-            }
-        }
-    }
     if let Some(v) = get("OTEL_TRACES_EXPORTER") {
         want_otlp = false;
         c.exporters_from_env = true;
         for e in bun_core::strings::split(&v, b",") {
             match e.trim_ascii() {
-                // With a preset, that *is* the OTLP exporter.
-                b"otlp" => want_otlp = !have_preset,
+                b"otlp" => want_otlp = true,
                 b"console" => c.console_exporter = true,
                 b"none" | b"" => {
-                    // OTEL_* overrides bunfig/BUN_*: none means none.
                     c.otlp_exporters.clear();
                     c.console_exporter = false;
                     want_otlp = false;
@@ -484,13 +470,29 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         c.capture_db_statement = truthy(&v);
     }
     if let Some(v) = get("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST") {
-        c.capture_request_headers = bun_core::strings::split(&v, b",")
-            .map(|h| s(h).to_ascii_lowercase())
-            .filter(|h| !h.is_empty())
-            .collect();
+        for h in bun_core::strings::split(&v, b",") {
+            let h = s(h.trim_ascii()).to_ascii_lowercase();
+            if h.is_empty() {
+                continue;
+            }
+            // RFC 9110 token characters; anything else can never match a header.
+            if h.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)) {
+                c.capture_request_headers.push(h);
+            } else {
+                warnings.push(format!(
+                    "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST: {h:?} is not a valid header name; ignored"
+                ));
+            }
+        }
     }
-    if get("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE").is_some() {
-        warnings.push("OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE is not supported yet; response headers are not recorded".into());
+    for unsupported in [
+        "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE",
+        "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_REQUEST",
+        "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE",
+    ] {
+        if get(unsupported).is_some() {
+            warnings.push(format!("{unsupported} is not supported yet; those headers are not recorded"));
+        }
     }
 
     EnvConfig {
@@ -567,34 +569,11 @@ mod tests {
     }
 
     #[test]
-    fn preset_combined_with_otel_env() {
-        // none wins over a preset
+    fn traces_exporter_none_and_otlp_env() {
+        let e = env(&[("BUN_OTEL", "1"), ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector"), ("OTEL_TRACES_EXPORTER", "none")]);
+        assert!(from_env(&e).config.otlp_exporters.is_empty());
         let e = env(&[
             ("BUN_OTEL", "1"),
-            ("BUN_OTEL_EXPORTER", "datadog"),
-            ("DD_API_KEY", "k"),
-            ("OTEL_TRACES_EXPORTER", "none"),
-        ]);
-        let r = from_env(&e);
-        assert!(r.config.otlp_exporters.is_empty());
-        // otlp + preset: the preset is the OTLP exporter, no localhost twin
-        let e = env(&[
-            ("BUN_OTEL", "1"),
-            ("BUN_OTEL_EXPORTER", "datadog"),
-            ("DD_API_KEY", "k"),
-            ("OTEL_TRACES_EXPORTER", "otlp"),
-        ]);
-        let r = from_env(&e);
-        assert_eq!(r.config.otlp_exporters.len(), 1);
-        assert!(
-            r.config.otlp_exporters[0].url.contains("datadoghq"),
-            "{}",
-            r.config.otlp_exporters[0].url
-        );
-        // preset `otlp` takes endpoint/headers/compression/timeout from OTEL_EXPORTER_OTLP_*
-        let e = env(&[
-            ("BUN_OTEL", "1"),
-            ("BUN_OTEL_EXPORTER", "otlp"),
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector"),
             ("OTEL_EXPORTER_OTLP_HEADERS", "authorization=x"),
             ("OTEL_EXPORTER_OTLP_COMPRESSION", "none"),
@@ -604,11 +583,7 @@ mod tests {
         assert_eq!(r.config.otlp_exporters.len(), 1);
         let x = &r.config.otlp_exporters[0];
         assert_eq!(x.url, "https://collector/v1/traces");
-        assert!(
-            x.headers
-                .iter()
-                .any(|(k, v)| k == "authorization" && v == "x")
-        );
+        assert!(x.headers.iter().any(|(k, v)| k == "authorization" && v == "x"));
         assert_eq!(x.compression, Compression::None);
         assert_eq!(x.timeout_ms, 1234);
     }
@@ -644,7 +619,7 @@ mod tests {
         assert_eq!(r.config.service_name.as_deref(), Some("api"));
         assert_eq!(
             r.config.resource_attributes,
-            vec![("deployment.environment".into(), "prod".into())]
+            vec![("deployment.environment".into(), ResourceValue::Str("prod".into()))]
         );
         assert_eq!(r.config.instruments & Instrument::Fs.bit(), 0);
         assert_eq!(r.config.instruments & Instrument::Dns.bit(), 0);

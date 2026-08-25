@@ -1985,7 +1985,6 @@ void GlobalObject::finishCreation(VM& vm)
     setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
 
     Base::finishCreation(vm);
-    vm.asyncContextLeaveAsyncFrameHook = Bun::telemetryLeaveAsyncFrame;
     ASSERT(inherits(info()));
 
     m_commonStrings.initialize();
@@ -2835,6 +2834,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
         { BuiltinName::k_makeAbortError, 1, jsFunctionMakeAbortError },
+        { BuiltinName::k_isTelemetrySpan, 1, Bun::jsIsTelemetrySpan },
+        { BuiltinName::k_telemetrySpanEnd, 1, Bun::jsTelemetrySpanEndPrivate },
+        { BuiltinName::k_telemetrySpanFailNoJS, 2, Bun::jsTelemetrySpanFailNoJSPrivate },
         { BuiltinName::k_telemetrySetAttribute, 3, Bun::jsTelemetrySetAttribute },
         { BuiltinName::k_telemetrySetName, 2, Bun::jsTelemetrySetName },
         { BuiltinName::k_telemetrySetStatus, 3, Bun::jsTelemetrySetStatus },
@@ -2868,6 +2870,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.telemetryAddOneLinkPrivateName(), telemetrySpanTelemetryAddOneLinkCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetryFlattenAttributesPrivateName(), telemetrySpanTelemetryFlattenAttributesCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanRecordExceptionImplPrivateName(), telemetrySpanTelemetrySpanRecordExceptionImplCodeGenerator(vm), 0);
+    putDirectBuiltinFunction(vm, this, builtinNames.telemetryTraceSettledPrivateName(), telemetrySpanTelemetryTraceSettledCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanSetAttributesImplPrivateName(), telemetrySpanTelemetrySpanSetAttributesImplCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanSetStatusImplPrivateName(), telemetrySpanTelemetrySpanSetStatusImplCodeGenerator(vm), 0);
 

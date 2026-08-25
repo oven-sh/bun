@@ -7,7 +7,6 @@
 pub mod config;
 pub mod decode;
 pub mod otlp_json;
-pub mod presets;
 pub mod resource;
 
 pub use config::Config;

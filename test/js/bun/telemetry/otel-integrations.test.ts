@@ -164,9 +164,9 @@ describe("node:fs / Bun.file / Bun.write", () => {
 
 describe("Bun.spawn", () => {
   test("span covers spawn → exit with executable, arg count and exit code (argv itself is not recorded)", async () => {
-    await Bun.spawn([process.execPath, "-e", "1"], { stdio: ["ignore", "ignore", "ignore"] }).exited;
-    Bun.spawnSync([process.execPath, "-e", "process.exit(3)"]);
-    const exe = path.basename(process.execPath);
+    await Bun.spawn([bunExe(), "-e", "1"], { stdio: ["ignore", "ignore", "ignore"], env: bunEnv }).exited;
+    Bun.spawnSync([bunExe(), "-e", "process.exit(3)"], { env: bunEnv });
+    const exe = path.basename(bunExe());
     const got = (await collect("bun.child_process")).filter(s => s.name === `spawn ${exe}`);
     expect(got.map(s => [s.name, s.attributes["process.exit.code"], s.status.code])).toEqual([
       [`spawn ${exe}`, 0, 0],
@@ -417,11 +417,13 @@ describe("WebSocket", () => {
 describe("dns", () => {
   test("Bun.dns.lookup span", async () => {
     await Bun.dns.lookup("localhost");
-    await Bun.dns.lookup("this-host-does-not-exist.invalid").catch(() => {});
+    // a name the resolver rejects locally (label > 63 bytes), no network round trip
+    const badName = Buffer.alloc(70, "a").toString() + ".invalid";
+    await Bun.dns.lookup(badName).catch(() => {});
     const got = await collect("bun.dns");
     expect(got.map(s => [s.name, s.attributes["dns.question.name"], s.status.code])).toEqual([
       ["dns.lookup", "localhost", 0],
-      ["dns.lookup", "this-host-does-not-exist.invalid", 2],
+      ["dns.lookup", badName, 2],
     ]);
     expect(got[1].attributes["error.type"]).toMatch(/^DNS_E/);
   });

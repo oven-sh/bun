@@ -124,11 +124,9 @@ Configures native [OpenTelemetry tracing](/runtime/opentelemetry) (the table's p
 endpoint = "http://localhost:4318"
 serviceName = "my-api"
 headers = { "x-api-key" = "..." }
-# or a vendor preset instead of endpoint/headers (credentials from the vendor's env vars):
-# exporter = "datadog"
 ```
 
-Keys: `enabled`, `endpoint`, `headers`, `serviceName`, `exporter` (one of the [presets](/runtime/opentelemetry#sending-to-a-hosted-backend)).
+Keys: `enabled`, `endpoint` (a bare origin gets `/v1/traces` appended; a URL with a path is used as-is), `headers`, `serviceName`.
 
 ### `env`
 

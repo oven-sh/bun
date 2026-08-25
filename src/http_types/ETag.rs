@@ -297,6 +297,25 @@ impl Headers {
         };
     }
 
+    /// Remove every `name` header.
+    pub fn remove(&mut self, name: &[u8]) {
+        loop {
+            let idx = {
+                let entries = self.entries.slice();
+                entries
+                    .items_name()
+                    .iter()
+                    .position(|n| strings::eql_case_insensitive_ascii(self.as_str(*n), name, true))
+            };
+            match idx {
+                Some(i) => {
+                    self.entries.ordered_remove(i);
+                }
+                None => return,
+            }
+        }
+    }
+
     pub fn get_content_disposition(&self) -> Option<&[u8]> {
         self.get(b"content-disposition")
     }

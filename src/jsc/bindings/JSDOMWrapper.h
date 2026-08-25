@@ -45,6 +45,9 @@ class ScriptExecutionContext;
 // offset | 7 | 6 | 5 | 4 | 3   2   1   0  |
 // value  | 1 | 1 | 1 | 1 |    NodeType    |
 
+// Bun's OpenTelemetry span cell (JSTelemetrySpan.h): an InternalFieldObject
+// whose builtins brand-check on exactly this type byte before @getInternalField.
+inline constexpr uint8_t JSTelemetrySpanType = 0b11101101;
 inline constexpr uint8_t JSDOMWrapperType = 0b11101110;
 inline constexpr uint8_t JSEventType = 0b11101111;
 inline constexpr uint8_t JSNodeType = 0b11110000;
@@ -53,6 +56,7 @@ inline constexpr uint8_t JSElementType = 0b11110000 | NodeConstants::ELEMENT_NOD
 inline constexpr uint8_t JSAsJSONType = JSElementType;
 
 static_assert(JSDOMWrapperType > JSC::LastJSCObjectType, "JSC::JSType offers the highest bit.");
+static_assert(JSTelemetrySpanType > JSC::LastJSCObjectType, "JSC::JSType offers the highest bit.");
 static_assert(NodeConstants::LastNodeType <= JSNodeTypeMask, "NodeType should be represented in 4bit.");
 
 class JSDOMObject : public JSC::JSDestructibleObject {

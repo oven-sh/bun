@@ -23,9 +23,7 @@ impl AnyRequest {
     pub fn header_joined(&self, name: &[u8]) -> Option<Vec<u8>> {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).header_joined(name),
-            Self::H3(r) => bun_opaque::opaque_deref_mut(*r)
-                .header(name)
-                .map(|v| v.to_vec()),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).header_joined(name),
         }
     }
     pub fn telemetry_headers(&self) -> TelemetryHeaders<'_> {

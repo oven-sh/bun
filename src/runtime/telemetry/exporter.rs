@@ -77,6 +77,26 @@ unsafe impl Send for OtlpHttpExporter {}
 // SAFETY: see `Send` above.
 unsafe impl Sync for OtlpHttpExporter {}
 
+/// An endpoint for messages: userinfo redacted, query dropped (either may
+/// carry the credential).
+fn display_url(url: &[u8]) -> Vec<u8> {
+    let scheme_end = bun_core::strings::index_of(url, b"://").map_or(0, |i| i + 3);
+    let authority_end = bun_core::strings::index_of_any(&url[scheme_end..], b"/?#")
+        .map_or(url.len(), |i| i + scheme_end);
+    let path_end = bun_core::strings::index_of_any(&url[scheme_end..], b"?#")
+        .map_or(url.len(), |i| i + scheme_end);
+    let mut out = Vec::with_capacity(url.len());
+    out.extend_from_slice(&url[..scheme_end]);
+    match bun_core::strings::last_index_of_char(&url[scheme_end..authority_end], b'@') {
+        Some(at) => {
+            out.extend_from_slice(b"REDACTED:REDACTED");
+            out.extend_from_slice(&url[scheme_end + at..path_end]);
+        }
+        None => out.extend_from_slice(&url[scheme_end..path_end]),
+    }
+    out
+}
+
 impl OtlpHttpExporter {
     #[optimize(size)]
     pub fn from_configs(
@@ -90,7 +110,7 @@ impl OtlpHttpExporter {
         if url.hostname.is_empty() || !(url.is_http() || url.is_https()) {
             return Err(format!(
                 "invalid OTLP endpoint URL {:?} (expected http:// or https://)",
-                cfg.url
+                bstr::BStr::new(&display_url(cfg.url.as_bytes()))
             )
             .into_bytes());
         }
@@ -164,7 +184,9 @@ impl OtlpHttpExporter {
             self.headers.content.written_slice(),
             body,
             callback,
-            FetchRedirect::Follow,
+            // A 3xx is a failed export (as in the SDK): following it would resend
+            // the credentials in `headers` to whatever origin it names.
+            FetchRedirect::Error,
             self.options(timeout_seconds, signals),
         )
     }
@@ -240,7 +262,7 @@ impl OtlpHttpExporter {
             bun_core::warn!(
                 "[otel] exporting {} span(s) to {}{} failed: {} (further export errors from this exporter are silenced; see Bun.otel.stats())",
                 payload.span_count,
-                bstr::BStr::new(&self.url),
+                bstr::BStr::new(&display_url(&self.url)),
                 when,
                 err
             );
@@ -679,6 +701,16 @@ struct JsExportTask {
     payload: Arc<ExportPayload>,
 }
 
+/// A task released unrun (its VM tore down between `post` and the tick)
+/// settles its payload as abandoned instead of leaving it in flight.
+impl Drop for JsExportTask {
+    fn drop(&mut self) {
+        if self.exporter.take_queued(&self.payload) {
+            self.processor.export_abandoned(&self.payload);
+        }
+    }
+}
+
 impl JsExporter {
     pub fn new(
         global: &JSGlobalObject,
@@ -805,8 +837,9 @@ impl JsExporter {
     }
 
     fn run_task(task: *mut JsExportTask) -> JsResult<()> {
-        // SAFETY: allocated in `export`; consumed here.
-        let task = unsafe { Box::from_raw(task) };
+        // SAFETY: allocated in `export`; owned by the ManagedTask (new_owned),
+        // which frees it after this returns.
+        let task = unsafe { &*task };
         // Already settled (abandoned at VM exit) if no longer queued.
         if task.exporter.take_queued(&task.payload) {
             match task.exporter.deliver(&task.payload) {
@@ -920,17 +953,11 @@ impl Exporter for JsExporter {
             processor,
             payload,
         }));
-        let ct = ConcurrentTask::create(ManagedTask::new(task, JsExporter::run_task));
+        let ct = ConcurrentTask::create(ManagedTask::new_owned(task, JsExporter::run_task));
         if let bun_jsc::Posted::Refused(ct) = vm.post(bun_jsc::LoopKind::Regular, ct) {
-            // SAFETY: VM gone; `ct` was refused unqueued and `task` was never shared.
-            let task = unsafe {
-                ConcurrentTask::release_refused(ct);
-                Box::from_raw(task)
-            };
-            // The owner VM is gone; like a task stranded at exit, not a failure.
-            if task.exporter.take_queued(&task.payload) {
-                processor.export_abandoned(&task.payload);
-            }
+            // SAFETY: VM gone; `ct` was refused unqueued. Releasing it drops
+            // the task, which abandons the payload (see Drop for JsExportTask).
+            unsafe { ConcurrentTask::release_refused(ct) };
         }
     }
 

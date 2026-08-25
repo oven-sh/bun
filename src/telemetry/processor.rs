@@ -21,16 +21,23 @@ pub struct ExportPayload {
     /// Exporters that currently have this payload parked for retry (its
     /// spans count against the queue once while this is non-zero).
     parked: core::sync::atomic::AtomicU32,
+    /// Creation order; `forceFlush()` waits for every payload up to the ones
+    /// it produced (see `Processor::outstanding`).
+    pub seq: u64,
 }
 
 impl ExportPayload {
     pub fn new(body: Vec<u8>, span_count: u32) -> Self {
+        Self::with_seq(body, span_count, 0)
+    }
+    pub fn with_seq(body: Vec<u8>, span_count: u32, seq: u64) -> Self {
         Self {
             body,
             span_count,
             pending: core::sync::atomic::AtomicU32::new(0),
             any_ok: core::sync::atomic::AtomicBool::new(false),
             parked: core::sync::atomic::AtomicU32::new(0),
+            seq,
         }
     }
     fn expect(&self, exporters: usize) {
@@ -49,6 +56,7 @@ pub enum ExportResult {
 enum RetryFilter {
     Due,
     All,
+    OlderThan(u64),
 }
 
 /// A destination for span batches. Implemented by the runtime for OTLP/HTTP,
@@ -140,6 +148,10 @@ pub struct Processor {
     /// `take_payload` left part of the batch pending (size cap): the next
     /// completion chains it regardless of size.
     split_remainder: core::sync::atomic::AtomicBool,
+    /// Sequence numbers of payloads taken and not yet settled by every
+    /// exporter (in flight or parked for retry), and the next one to assign.
+    outstanding: Guarded<Vec<u64>>,
+    next_seq: core::sync::atomic::AtomicU64,
     idle: Condvar,
     idle_lock: Guarded<()>,
     pub stats: Stats,
@@ -196,6 +208,8 @@ impl Processor {
             dispatching: AtomicUsize::new(0),
             chain_requested: core::sync::atomic::AtomicBool::new(false),
             split_remainder: core::sync::atomic::AtomicBool::new(false),
+            outstanding: Guarded::new(Vec::new()),
+            next_seq: core::sync::atomic::AtomicU64::new(1),
             idle: Condvar::new(),
             idle_lock: Guarded::new(()),
             stats: Stats::default(),
@@ -293,6 +307,11 @@ impl Processor {
         self.dispatch_retries(RetryFilter::All);
     }
 
+    /// `forceFlush()`: parked retries the flush is waiting on go now.
+    pub fn retry_older_than(&'static self, seq: u64) {
+        self.dispatch_retries(RetryFilter::OlderThan(seq));
+    }
+
     /// `Due`: retries whose backoff has elapsed; `All`: every parked retry
     /// now (forceFlush / shutdown). Backoff already staggers them.
     fn dispatch_retries(&'static self, filter: RetryFilter) {
@@ -303,6 +322,14 @@ impl Processor {
             }
             match filter {
                 RetryFilter::All => q.drain(..).collect(),
+                RetryFilter::OlderThan(seq) => {
+                    let (older, rest): (Vec<_>, Vec<_>) = q.drain(..).partition(|r| r.payload.seq < seq);
+                    *q = rest;
+                    if older.is_empty() {
+                        return;
+                    }
+                    older
+                }
                 RetryFilter::Due => {
                     let now = clock::mono_now();
                     let (due, later): (Vec<_>, Vec<_>) = q.drain(..).partition(|r| r.due_ns <= now);
@@ -500,7 +527,20 @@ impl Processor {
                 p.spare = scopes;
             }
         }
-        Some(Arc::new(ExportPayload::new(body, count)))
+        let seq = self.next_seq.fetch_add(1, Ordering::AcqRel);
+        self.outstanding.lock().push(seq);
+        Some(Arc::new(ExportPayload::with_seq(body, count, seq)))
+    }
+
+    /// The sequence number the next payload will get: a flush that has just
+    /// exported everything pending waits until `oldest_outstanding()` reaches it.
+    pub fn next_seq(&self) -> u64 {
+        self.next_seq.load(Ordering::Acquire)
+    }
+
+    /// Oldest payload not yet settled by every exporter, if any.
+    pub fn oldest_outstanding(&self) -> Option<u64> {
+        self.outstanding.lock().iter().copied().min()
     }
 
     /// Export everything pending now (non-blocking).
@@ -574,6 +614,16 @@ impl Processor {
                 &self.stats.spans_dropped
             };
             counter.fetch_add(payload.span_count as u64, Ordering::Relaxed);
+            {
+                let mut o = self.outstanding.lock();
+                if let Some(i) = o.iter().position(|s| *s == payload.seq) {
+                    o.swap_remove(i);
+                }
+            }
+            // forceFlush() waiters re-check on every settled payload.
+            for (_, h) in self.idle_hooks.read().iter() {
+                h();
+            }
         }
     }
 
@@ -597,9 +647,6 @@ impl Processor {
             {
                 let _g = self.idle_lock.lock();
                 self.idle.notify_all();
-            }
-            for (_, h) in self.idle_hooks.read().iter() {
-                h();
             }
             // A full batch accumulated while this export was running, or the
             // previous request was cut at max_export_batch_size: chain.

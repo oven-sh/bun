@@ -6,7 +6,6 @@
 //! `extern "Rust"` decls.
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_bundler::transpiler::PluginRunner;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
@@ -247,7 +246,8 @@ unsafe extern "C" fn Bun__runVirtualModule(
     specifier_ptr: *const bun_core::String,
 ) -> JSValue {
     jsc::mark_binding();
-    if global.bun_vm().plugin_runner.is_none() {
+    let vm = global.bun_vm();
+    if vm.plugin_runner.is_none() {
         return JSValue::ZERO;
     }
 
@@ -255,23 +255,16 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
 
-    // A registered namespace wins. Any other absolute path is a file.
+    // A registered namespace wins. Any other absolute path is a file on disk.
+    // What remains (`node:fs`, `ws`, `data:`, the `[eval]` entry) has no file
+    // for the `file` namespace to load.
     let (namespace, after_namespace): (&[u8], &[u8]) =
         if let Some(namespace) = registered_on_load_namespace(global, specifier) {
             (namespace, &specifier[namespace.len() + 1..])
-        } else if bun_paths::is_absolute(specifier) {
+        } else if bun_paths::is_absolute(specifier) && !vm.is_eval_or_stdin_entry(specifier) {
             (b"", specifier)
         } else {
-            if !PluginRunner::could_be_plugin(specifier) {
-                return JSValue::ZERO;
-            }
-            let namespace = PluginRunner::extract_namespace(specifier);
-            let after_namespace = if namespace.is_empty() {
-                specifier
-            } else {
-                &specifier[(namespace.len() + 1).min(specifier.len())..]
-            };
-            (namespace, after_namespace)
+            return JSValue::ZERO;
         };
 
     match global.run_on_load_plugins(

@@ -988,6 +988,52 @@ it.concurrent("onLoad runs in a registered namespace whose key looks like an abs
   expect(exitCode).toBe(0);
 });
 
+// `bun -e` and `bun -` give their in-memory source the key "<cwd>/[eval]" or
+// "<cwd>/[stdin]". There is no file to load, so a file-namespace onLoad filter
+// must not see them. The directory name contains a dot on purpose: stock bun
+// read ".eval-entry_xyz/[eval]" as a file extension and ran the filter.
+it.concurrent("onLoad does not run for the [eval] and [stdin] entries", async () => {
+  using dir = tempDir("plugin-onload.eval-entry", {
+    "preload.js": `
+      Bun.plugin({
+        name: "catch-all",
+        setup(build) {
+          build.onLoad({ filter: /.*/ }, args => ({
+            contents: "console.log(" + JSON.stringify("replaced " + args.path) + ");",
+            loader: "js",
+          }));
+        },
+      });
+    `,
+  });
+
+  await using evalProc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "-e", "console.log('eval ran')"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  await using stdinProc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "-"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdin: Buffer.from("console.log('stdin ran')"),
+    stderr: "pipe",
+  });
+  const [evalOut, evalErr, evalExit, stdinOut, stdinErr, stdinExit] = await Promise.all([
+    evalProc.stdout.text(),
+    evalProc.stderr.text(),
+    evalProc.exited,
+    stdinProc.stdout.text(),
+    stdinProc.stderr.text(),
+    stdinProc.exited,
+  ]);
+
+  expect(evalOut.trim() || evalErr).toBe("eval ran");
+  expect(stdinOut.trim() || stdinErr).toBe("stdin ran");
+  expect([evalExit, stdinExit]).toEqual([0, 0]);
+});
+
 // `bun test` consults plugins before the builtin modules so that mock.module()
 // can replace a builtin. A file-namespace onLoad filter must still see a file
 // without an extension there, and must not see bare builtin names such as "ws".

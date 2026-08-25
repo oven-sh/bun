@@ -5867,6 +5867,99 @@ describe("css tests", () => {
       { safari: 14 << 16 },
     );
 
+    // `&` is checked as :is() but a lone parent selector is inlined without
+    // it, so `&` never shares a rule with a selector that really prints :is()
+    // or :where(). An inner `&` under a type-selector parent does print :is().
+    prefix_test(
+      ".parent { .c, :where(.a) { color: red } }",
+      `
+      .parent .c {
+        color: red;
+      }
+
+      .parent :where(.a) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      ".parent { .c, .d { color: red } }",
+      `
+      .parent .c, .parent .d {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    prefix_test(
+      "div { &:focus-visible, :focus-visible & { color: red } }",
+      `
+      div:focus-visible {
+        color: red;
+      }
+
+      :focus-visible :is(div) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+
+    // :scope shares its compat bucket with :host and ::slotted() but shipped
+    // years earlier, so it does not share a rule with them.
+    prefix_test(
+      ":scope, :host { color: red }",
+      `
+      :scope {
+        color: red;
+      }
+
+      :host {
+        color: red;
+      }
+      `,
+      { firefox: 60 << 16 },
+    );
+
+    prefix_test(
+      ":scope, :scope > .a { color: red }",
+      `
+      :scope, :scope > .a {
+        color: red;
+      }
+      `,
+      { firefox: 60 << 16 },
+    );
+
+    // The `s` flag has no support data. An implied HTML case-insensitive
+    // attribute prints without a flag and needs nothing more.
+    prefix_test(
+      "[a=b s], [c=d i] { color: red }",
+      `
+      [a="b" s] {
+        color: red;
+      }
+
+      [c="d" i] {
+        color: red;
+      }
+      `,
+      { chrome: 45 << 16 },
+    );
+
+    prefix_test(
+      "[type=text], .x { color: red }",
+      `
+      [type="text"], .x {
+        color: red;
+      }
+      `,
+      { chrome: 45 << 16 },
+    );
+
     prefix_test(
       ":where(.a), :where(.b) { margin-inline-start: 24px }",
       `

@@ -274,13 +274,19 @@ pub(crate) fn get_prefix(selectors: &[Selector]) -> VendorPrefix {
     prefix
 }
 
-/// A set of [`Feature`]s, one bit per discriminant.
+/// Grouping bits past the compat features, for components whose compat bucket is
+/// wider than what the printer writes for them.
+const BIT_NESTING_LEADING: usize = Feature::COUNT;
+const BIT_NESTING_INNER: usize = Feature::COUNT + 1;
+const BIT_SCOPE: usize = Feature::COUNT + 2;
+const BIT_COUNT: usize = Feature::COUNT + 3;
+
+/// A set of [`Feature`]s (one bit per discriminant) plus the `BIT_*` grouping bits.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct FeatureSet([u64; Feature::COUNT.div_ceil(64)]);
+pub(crate) struct FeatureSet([u64; BIT_COUNT.div_ceil(64)]);
 
 impl FeatureSet {
-    fn insert(&mut self, feature: Feature) {
-        let bit = feature as usize;
+    fn insert(&mut self, bit: usize) {
         self.0[bit / 64] |= 1 << (bit % 64);
     }
 }
@@ -288,9 +294,23 @@ impl FeatureSet {
 /// Why a selector is incompatible with the targets. See [`incompatibility`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Incompatibility {
-    /// Unsupported features. Equal sets fail in the same browsers and can share one rule.
+    /// Unsupported features. Equal sets print the same way for every target, so they share a rule.
     Features(FeatureSet),
     /// A component with no support data (unknown or prefixed pseudo, `:nth-col()`): never shared.
+    Unknown,
+}
+
+/// What one selector component needs from the targets.
+enum Requirement {
+    Feature(Feature),
+    /// `&` with nesting compiled away. Checked as `:is()`, but keyed apart from it: the
+    /// printer inlines a lone parent selector, with `:is()` only for an inner `&`.
+    Nesting {
+        leading: bool,
+    },
+    /// `:scope`. Checked as Shadow DOM v1 like `:host`, but keyed apart: it shipped years earlier.
+    Scope,
+    /// No support data.
     Unknown,
 }
 
@@ -301,13 +321,20 @@ pub(crate) fn incompatibility(
 ) -> Option<Incompatibility> {
     let mut features = FeatureSet::default();
     let mut unknown = false;
-    visit_incompatible(core::slice::from_ref(selector), targets, &mut |feature| {
-        match feature {
-            Some(feature) => features.insert(feature),
-            None => unknown = true,
-        }
-        !unknown
-    });
+    visit_incompatible(
+        core::slice::from_ref(selector),
+        targets,
+        &mut |requirement| {
+            match requirement {
+                Requirement::Feature(feature) => features.insert(feature as usize),
+                Requirement::Nesting { leading: true } => features.insert(BIT_NESTING_LEADING),
+                Requirement::Nesting { leading: false } => features.insert(BIT_NESTING_INNER),
+                Requirement::Scope => features.insert(BIT_SCOPE),
+                Requirement::Unknown => unknown = true,
+            }
+            !unknown
+        },
+    );
     if unknown {
         Some(Incompatibility::Unknown)
     } else if features == FeatureSet::default() {
@@ -321,14 +348,15 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
     visit_incompatible(selectors, targets, &mut |_| false)
 }
 
-/// Feeds each unmet requirement to `sink` (`None`: no support data) until `sink` returns `false`.
+/// Feeds each unmet [`Requirement`] of `selectors` to `sink` until `sink` returns `false`.
 fn visit_incompatible(
     selectors: &[parser::Selector],
     targets: &Targets,
-    sink: &mut impl FnMut(Option<Feature>) -> bool,
+    sink: &mut impl FnMut(Requirement) -> bool,
 ) -> bool {
     use Feature as F;
     for selector in selectors {
+        let mut leading_nesting = has_leading_nesting(selector);
         'components: for component in selector.components.iter() {
             let feature = match component {
                 Component::Id(_) | Component::Class(_) | Component::LocalName(_) => continue,
@@ -346,19 +374,15 @@ fn visit_incompatible(
                     case_sensitivity,
                     operator,
                     ..
-                } => 'brk: {
-                    if *case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive {
-                        break 'brk F::CaseInsensitive;
+                } => match attribute_requirement(*case_sensitivity, *operator) {
+                    Requirement::Feature(feature) => feature,
+                    requirement => {
+                        if !sink(requirement) {
+                            return false;
+                        }
+                        continue;
                     }
-                    match operator {
-                        parser::attrs::AttrSelectorOperator::Equal
-                        | parser::attrs::AttrSelectorOperator::Includes
-                        | parser::attrs::AttrSelectorOperator::DashMatch => F::Selectors2,
-                        parser::attrs::AttrSelectorOperator::Prefix
-                        | parser::attrs::AttrSelectorOperator::Substring
-                        | parser::attrs::AttrSelectorOperator::Suffix => F::Selectors3,
-                    }
-                }
+                },
 
                 Component::AttributeOther(attr) => match &attr.operation {
                     parser::attrs::ParsedAttrSelectorOperation::Exists => F::Selectors2,
@@ -366,20 +390,15 @@ fn visit_incompatible(
                         case_sensitivity,
                         operator,
                         ..
-                    } => 'brk: {
-                        if *case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive
-                        {
-                            break 'brk F::CaseInsensitive;
+                    } => match attribute_requirement(*case_sensitivity, *operator) {
+                        Requirement::Feature(feature) => feature,
+                        requirement => {
+                            if !sink(requirement) {
+                                return false;
+                            }
+                            continue;
                         }
-                        match operator {
-                            parser::attrs::AttrSelectorOperator::Equal
-                            | parser::attrs::AttrSelectorOperator::Includes
-                            | parser::attrs::AttrSelectorOperator::DashMatch => F::Selectors2,
-                            parser::attrs::AttrSelectorOperator::Prefix
-                            | parser::attrs::AttrSelectorOperator::Substring
-                            | parser::attrs::AttrSelectorOperator::Suffix => F::Selectors3,
-                        }
-                    }
+                    },
                 },
 
                 Component::Empty | Component::Root => F::Selectors3,
@@ -398,7 +417,7 @@ fn visit_incompatible(
                         break 'brk F::Selectors2;
                     }
                     if data.ty == parser::NthType::Col || data.ty == parser::NthType::LastCol {
-                        if !sink(None) {
+                        if !sink(Requirement::Unknown) {
                             return false;
                         }
                         continue 'components;
@@ -425,9 +444,21 @@ fn visit_incompatible(
                     }
                     F::IsSelector
                 }
-                Component::Where(_) | Component::Nesting => F::IsSelector,
+                Component::Where(_) => F::IsSelector,
+                Component::Nesting => {
+                    let leading = core::mem::take(&mut leading_nesting);
+                    if !require_as(
+                        F::IsSelector,
+                        Requirement::Nesting { leading },
+                        targets,
+                        sink,
+                    ) {
+                        return false;
+                    }
+                    continue;
+                }
                 Component::Any { .. } => {
-                    if !sink(None) {
+                    if !sink(Requirement::Unknown) {
                         return false;
                     }
                     continue;
@@ -441,7 +472,13 @@ fn visit_incompatible(
                     continue;
                 }
 
-                Component::Scope | Component::Host(_) | Component::Slotted(_) => F::Shadowdomv1,
+                Component::Scope => {
+                    if !require_as(F::Shadowdomv1, Requirement::Scope, targets, sink) {
+                        return false;
+                    }
+                    continue;
+                }
+                Component::Host(_) | Component::Slotted(_) => F::Shadowdomv1,
 
                 Component::Part(_) => F::PartPseudo,
 
@@ -524,7 +561,7 @@ fn visit_incompatible(
 
                         _ => {}
                     }
-                    if !sink(None) {
+                    if !sink(Requirement::Unknown) {
                         return false;
                     }
                     continue 'components;
@@ -556,7 +593,7 @@ fn visit_incompatible(
                         PseudoElement::Custom { .. } => {}
                         _ => {}
                     }
-                    if !sink(None) {
+                    if !sink(Requirement::Unknown) {
                         return false;
                     }
                     continue 'components;
@@ -582,9 +619,52 @@ fn visit_incompatible(
 fn require(
     feature: Feature,
     targets: &Targets,
-    sink: &mut impl FnMut(Option<Feature>) -> bool,
+    sink: &mut impl FnMut(Requirement) -> bool,
 ) -> bool {
-    targets.is_compatible(feature) || sink(Some(feature))
+    require_as(feature, Requirement::Feature(feature), targets, sink)
+}
+
+/// Like [`require`], but reports `requirement` in place of the checked `feature`.
+fn require_as(
+    feature: Feature,
+    requirement: Requirement,
+    targets: &Targets,
+    sink: &mut impl FnMut(Requirement) -> bool,
+) -> bool {
+    targets.is_compatible(feature) || sink(requirement)
+}
+
+/// Whether the printer writes the selector's first `&` in the leading form (the parent
+/// selector itself when there is one parent). `&div` swaps to `div&` and takes the inner form.
+fn has_leading_nesting(selector: &parser::Selector) -> bool {
+    let mut compounds = CompoundSelectorIter {
+        sel: selector,
+        i: 0,
+    };
+    let Some(compound) = compounds.next() else {
+        return false;
+    };
+    matches!(compound.first(), Some(Component::Nesting)) && !is_type_selector(compound.get(1))
+}
+
+/// What an attribute selector with a value needs: the `i` flag needs `CaseInsensitive`, the `s`
+/// flag has no support data, and no flag (or the one HTML implies) leaves it to the operator.
+fn attribute_requirement(
+    case_sensitivity: parser::attrs::ParsedCaseSensitivity,
+    operator: parser::attrs::AttrSelectorOperator,
+) -> Requirement {
+    use parser::attrs::AttrSelectorOperator as Op;
+    use parser::attrs::ParsedCaseSensitivity as C;
+    match case_sensitivity {
+        C::AsciiCaseInsensitive => Requirement::Feature(Feature::CaseInsensitive),
+        C::ExplicitCaseSensitive => Requirement::Unknown,
+        C::CaseSensitive | C::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument => {
+            Requirement::Feature(match operator {
+                Op::Equal | Op::Includes | Op::DashMatch => Feature::Selectors2,
+                Op::Prefix | Op::Substring | Op::Suffix => Feature::Selectors3,
+            })
+        }
+    }
 }
 
 /// Determines whether a selector list contains only unused selectors.

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
+import { join } from "node:path";
 
 test("use strict causes CommonJS", () => {
   const { stdout, exitCode } = Bun.spawnSync({
@@ -251,4 +252,76 @@ describe("unterminated string literals in large files", () => {
     expect(stderr).toContain("Unterminated string literal");
     expect(exitCode).toBe(1);
   });
+});
+
+// A literal `import ... from "bun"` is not loaded through the module loader: the transpiler lowers the statement to
+// `var` declarations reading globalThis.Bun. Import bindings are usable by code written above the import statement,
+// so those declarations have to end up ahead of the rest of the module, wherever the statement was written.
+describe('import ... from "bun"', () => {
+  test.concurrent("bindings are initialized before code written above the import statement (-e)", async () => {
+    const { stdout, stderr, exitCode } = await bunRun([
+      "-e",
+      `
+        const { sep } = require("node:path");
+        const before = {
+          named: typeof escapeHTML,
+          call: escapeHTML("<a>"),
+          default: typeof BunDefault,
+          namespace: typeof ns,
+          other: typeof basename,
+        };
+        import { escapeHTML } from "bun";
+        import { basename } from "node:path";
+        import BunDefault from "bun";
+        import * as ns from "bun";
+        console.log(
+          JSON.stringify({
+            before,
+            defaultIsBun: BunDefault === Bun,
+            namespaceEscapeHTML: ns.escapeHTML === Bun.escapeHTML,
+            sep: typeof sep,
+          }),
+        );
+      `,
+    ]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      before: { named: "function", call: "&lt;a&gt;", default: "object", namespace: "object", other: "function" },
+      defaultIsBun: true,
+      namespaceEscapeHTML: true,
+      sep: "string",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(["mjs", "ts"])(
+    "bindings are initialized before code written above the import statement (entry.%s)",
+    async ext => {
+      const bunImports =
+        ext === "ts"
+          ? [`import type { BunFile } from "bun";`, `import { type Server, stringWidth } from "bun";`]
+          : [`import { stringWidth } from "bun";`];
+      // One statement per line: line 2 is checked against the stack trace below, which goes through the file's
+      // source map once the transpiled output no longer lines up with the source.
+      const source = [
+        `const before = { named: typeof stringWidth, call: stringWidth("abc"), default: typeof BunDefault, namespace: typeof ns, other: typeof basename };`,
+        `const line = Number(/entry\\.\\w+:(\\d+):\\d+/.exec(new Error().stack)[1]);`,
+        ...bunImports,
+        `import { basename } from "node:path";`,
+        `import BunDefault from "bun";`,
+        `import * as ns from "bun";`,
+        `console.log(JSON.stringify({ before, line, defaultIsBun: BunDefault === Bun, namespaceStringWidth: ns.stringWidth === Bun.stringWidth }));`,
+      ].join("\n");
+      using dir = tempDir("import-bun-before-statement", { [`entry.${ext}`]: source });
+      const { stdout, stderr, exitCode } = await bunRun(join(String(dir), `entry.${ext}`));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        before: { named: "function", call: 3, default: "object", namespace: "object", other: "function" },
+        line: 2,
+        defaultIsBun: true,
+        namespaceStringWidth: true,
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });

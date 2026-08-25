@@ -5,27 +5,6 @@ import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, tempDir } from
 import { isAbsolute, join, sep } from "path";
 import { pathToFileURL } from "url";
 
-// TEMPORARY timing instrumentation for a paired CI comparison. Removed before merge.
-const T0 = performance.now();
-const FILE = import.meta.path.split(/[\\/]/).pop();
-const tlog = (msg: string) =>
-  console.error(`[timing ${FILE}] +${((performance.now() - T0) / 1000).toFixed(2)}s ${msg}`);
-const durations: Record<string, number[]> = { install: [], licenses: [] };
-const summarize = (name: string) => {
-  const d = [...durations[name]].sort((a, b) => a - b);
-  if (!d.length) return `${name}: none`;
-  const sum = d.reduce((a, b) => a + b, 0);
-  return `${name}: n=${d.length} sum=${sum.toFixed(0)}ms median=${d[d.length >> 1].toFixed(0)}ms p90=${d[Math.floor(d.length * 0.9)].toFixed(0)}ms max=${d[d.length - 1].toFixed(0)}ms`;
-};
-let lagTotal = 0;
-let lagLast = performance.now();
-const lagTimer = setInterval(() => {
-  const now = performance.now();
-  lagTotal += Math.max(0, now - lagLast - 5);
-  lagLast = now;
-}, 5);
-tlog(`module evaluated, uptime=${(process.uptime() * 1000).toFixed(0)}ms cpus=${navigator.hardwareConcurrency}`);
-
 type Linker = "hoisted" | "isolated";
 type Files = Record<string, string>;
 type LicenseEntry = {
@@ -43,18 +22,10 @@ const registry = new VerdaccioRegistry();
 
 beforeAll(async () => {
   await registry.start();
-  tlog("registry started");
 });
 
 afterAll(() => {
   registry.stop();
-  clearInterval(lagTimer);
-  const cpu = process.cpuUsage();
-  tlog(`done. ${summarize("install")}`);
-  tlog(`done. ${summarize("licenses")}`);
-  tlog(
-    `done. runner cpu user=${(cpu.user / 1000).toFixed(0)}ms system=${(cpu.system / 1000).toFixed(0)}ms, event loop lag total=${lagTotal.toFixed(0)}ms, uptime=${(process.uptime() * 1000).toFixed(0)}ms`,
-  );
 });
 
 // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows and share hardlinked manifests on Linux.
@@ -146,8 +117,6 @@ const outHoistedFiles: Files = {
 };
 
 async function install(dir: string, linker: Linker, ...args: string[]) {
-  const t = performance.now();
-  using _ = { [Symbol.dispose]: () => void durations.install.push(performance.now() - t) };
   await using proc = spawn({
     cmd: [bunExe(), "install", "--linker", linker, ...args],
     env: installEnv(dir),
@@ -195,8 +164,6 @@ function copyManifests(from: string, to: string) {
 }
 
 async function licenses(dir: string, ...args: string[]): Promise<[string, string, number]> {
-  const t = performance.now();
-  using _ = { [Symbol.dispose]: () => void durations.licenses.push(performance.now() - t) };
   await using proc = spawn({
     cmd: [bunExe(), "pm", "licenses", ...args],
     env: bunEnv,
@@ -338,7 +305,6 @@ describe("bun pm licenses", () => {
       setup("hoisted", devOnlyFiles),
       setupProductionInstall(outHoistedFiles),
     ]);
-    tlog("fixtures ready");
   });
 
   test.concurrent("text output groups packages by license, Unknown last, dev-only packages marked", async () => {

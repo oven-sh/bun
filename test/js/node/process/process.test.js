@@ -1671,7 +1671,8 @@ describe.concurrent(() => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toContain("Boom");
     expect(stderr).toContain("at throwUncaughtError (");
     expect(stderr).not.toContain("at rethrowHandler (");

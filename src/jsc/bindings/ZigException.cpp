@@ -421,6 +421,23 @@ public:
     }
 };
 
+// A frame populateStackTrace(OnlyPosition) emits; native frames are skipped.
+static bool isVisibleFrame(const JSC::StackFrame& frame)
+{
+    return frame.hasLineAndColumnInfo() || frame.isWasmFrame();
+}
+
+static bool hasVisibleFrames(const WTF::Vector<JSC::StackFrame>* frames)
+{
+    if (!frames)
+        return false;
+    for (const auto& frame : *frames) {
+        if (isVisibleFrame(frame))
+            return true;
+    }
+    return false;
+}
+
 static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -432,7 +449,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 
         while (frame_i < frame_count && stack_frame_i < total_frame_count) {
             // Skip native frames
-            while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
+            while (stack_frame_i < total_frame_count && !isVisibleFrame(frames.at(stack_frame_i))) {
                 stack_frame_i++;
             }
             if (stack_frame_i >= total_frame_count)
@@ -487,8 +504,9 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // Node prints `err.stack`: the Error's own state wins over the wrapper's throw-site stack.
+    // ZigException__collectSourceLines repeats this selection, so the predicate must match.
     bool getFromSourceURL = false;
-    if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    if (hasVisibleFrames(err->stackTrace())) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags, FinalizerSafety::MustNotTriggerGC);
         RETURN_IF_EXCEPTION(scope, );
 
@@ -640,11 +658,10 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         }
     }
 
-    if (except.stack.frames_len == 0 && stackTrace != nullptr && stackTrace->size() > 0) {
+    if (except.stack.frames_len == 0 && hasVisibleFrames(stackTrace)) {
         // Last resort: the wrapper's throw-site stack.
         populateStackTrace(vm, *stackTrace, except.stack, global, flags);
         RETURN_IF_EXCEPTION(scope, );
-        getFromSourceURL = false;
     }
 
     if (except.stack.frames_len == 0 && getFromSourceURL) {
@@ -885,11 +902,12 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         auto* jscException = uncheckedDowncast<JSC::Exception>(value);
         JSValue unwrapped = jscException->value();
 
-        // Must match fromErrorInstance's selection: OnlySourceLines indexes the same vector via jsc_stack_frame_index.
-        if (auto* error = dynamicDowncast<JSC::ErrorInstance>(unwrapped);
-            error && error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
+        // Same selection as fromErrorInstance: OnlySourceLines indexes the chosen vector via jsc_stack_frame_index.
+        // Frames parsed from a `.stack` string carry index -1 and are skipped whichever vector is passed.
+        auto* error = dynamicDowncast<JSC::ErrorInstance>(unwrapped);
+        if (error && hasVisibleFrames(error->stackTrace())) {
             populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);
-        } else if (jscException->stack().size() > 0) {
+        } else if (hasVisibleFrames(&jscException->stack())) {
             populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
         }
 

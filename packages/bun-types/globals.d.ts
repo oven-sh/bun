@@ -1007,6 +1007,7 @@ declare class ResolveMessage {
   readonly position: Position | null;
   readonly code: string;
   readonly message: string;
+  stack: string;
   readonly referrer: string;
   readonly specifier: string;
   readonly importKind:
@@ -1029,6 +1030,7 @@ declare class BuildMessage {
   readonly name: "BuildMessage";
   readonly position: Position | null;
   readonly message: string;
+  stack: string;
   readonly level: "error" | "warning" | "info" | "debug" | "verbose";
 }
 

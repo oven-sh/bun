@@ -476,6 +476,16 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (cfg.socketFaultInjection) {
     rustflags.push("--cfg=socket_fault_injection");
   }
+  // Fork-local toggle (`DSH_SKIP_RESCLE=1`, ncdevshiv/nc-bun only — never set
+  // in CI or upstream builds): drops rescle.cpp + rescle-binding.cpp from the
+  // C++ sources because ATL/MFC is not part of default VS Build Tools installs
+  // (the C++ gate lives in scripts/build/bun.ts). The Rust extern of
+  // `rescle__setWindowsMetadata` then has no definition behind it, so the same
+  // flag compiles a Rust stub returning -14 into src/sys/windows/mod.rs.
+  rustflags.push("--check-cfg=cfg(dsh_skip_rescle)");
+  if (cfg.windows && process.env.DSH_SKIP_RESCLE) {
+    rustflags.push("--cfg=dsh_skip_rescle");
+  }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
   // `&'static core::panic::Location` (file/line/col) plus the file-path string

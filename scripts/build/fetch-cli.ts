@@ -262,7 +262,16 @@ async function fetchDep(
   await mkdir(dest, { recursive: true });
 
   // Github archives have a top-level directory <repo>-<commit>/. Strip it.
-  await extractTarGz(tarballPath, dest);
+  // The zstd tarball ships `tests/cli-tests/bin/{unzstd,zstdcat}` as
+  // symlinks. Windows bsdtar can't create those without Developer Mode /
+  // admin, so we skip the whole `tests/cli-tests/bin/` subtree — those
+  // entries are CLI test fixtures, not source files.
+  await extractTarGz(
+    tarballPath,
+    dest,
+    1,
+    name === "zstd" ? ["tests/cli-tests/bin/*"] : [],
+  );
 
   // ─── Apply patches / overlays ───
   for (let i = 0; i < patches.length; i++) {

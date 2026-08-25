@@ -1296,6 +1296,7 @@ pub const JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE: DWORD = JOB_OBJECT_LIMIT_KILL_ON_J
 pub mod rescle {
     use super::*;
 
+    #[cfg(not(dsh_skip_rescle))]
     unsafe extern "C" {
         fn rescle__setWindowsMetadata(
             exe_path: *const u16,    // exe_path
@@ -1306,6 +1307,27 @@ pub mod rescle {
             description: *const u16, // description (nullable)
             copyright: *const u16,   // copyright (nullable)
         ) -> c_int;
+    }
+
+    // Fork-local stub behind `dsh_skip_rescle` (`DSH_SKIP_RESCLE=1`, never set
+    // in CI/upstream): that flag drops rescle.cpp + rescle-binding.cpp from the
+    // C++ sources because ATL/MFC is absent from default VS Build Tools
+    // installs, leaving this extern without a definition and Debug links
+    // failing on `rescle__setWindowsMetadata`. The stub keeps the link green
+    // and reports the catch-all `-14`
+    // (`RescleError::WindowsMetadataEditError`) if metadata editing is ever
+    // reached in such a build.
+    #[cfg(dsh_skip_rescle)]
+    unsafe extern "C" fn rescle__setWindowsMetadata(
+        _exe_path: *const u16,
+        _icon_path: *const u16,
+        _title: *const u16,
+        _publisher: *const u16,
+        _version: *const u16,
+        _description: *const u16,
+        _copyright: *const u16,
+    ) -> c_int {
+        -14
     }
 
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]

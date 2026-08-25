@@ -15,20 +15,24 @@
 //! target has no desktop session to launch into; a follow-up JNI bridge to
 //! `Intent.ACTION_VIEW` can revisit this.
 
-use bun_core::Utf8Bytes;
+// Per-OS `#[cfg]` arms make `target` and `opts` unused on the
+// `cfg(not(any(...)))` fallback. Suppressing the lint at the module level
+// is the smallest change; `#[allow]` on the function would re-introduce
+// the same problem every time we add a new platform arm.
+#![allow(unused_variables)]
 
-use crate::api::bun::js_bun_spawn_bindings;
+use bun_core::Utf8Bytes;
 
 /// Options accepted by `Bun.open`. Field semantics match the npm `open`
 /// package where they overlap, and the macOS / Windows flags map directly to
 /// the platform opener's native flags.
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Clone)]
 pub struct OpenOptions {
     /// Application to open with. On macOS this maps to `/usr/bin/open -a`.
     /// On Windows this overrides `lpFile` while `lpVerb = "open"`. On Linux
     /// the named binary is executed directly (the platform's `xdg-open` is
     /// only used when `app` is `None`).
-    pub app: Option<Utf8Bytes>,
+    pub app: Option<Utf8Bytes<'static>>,
 
     /// `open -W` on macOS. On Windows, the returned `exited` promise resolves
     /// only after the spawned process (or its singleton reuse) signals input
@@ -105,13 +109,13 @@ impl std::error::Error for OpenError {}
 
 /// The configured platform opener (after applying `options.app`).
 #[cfg_attr(unix, allow(dead_code))]
-fn resolve_opener(opts: &OpenOptions) -> Result<&'static [u8], OpenError> {
+fn resolve_opener<'a>(opts: &'a OpenOptions) -> Result<&'a [u8], OpenError> {
     if let Some(app) = opts.app.as_ref() {
         // The caller specified an explicit app — return it as a slice the
         // caller owns. (Stored in the same arena as the input argv so the
         // pointer stays valid for the duration of the spawn.)
         // SAFETY: see `build_argv` for the lifetime contract.
-        return Ok(app.as_bytes());
+        return Ok(app.slice());
     }
     #[cfg(target_os = "macos")]
     {
@@ -177,7 +181,7 @@ pub fn build_argv(target: &str, opts: &OpenOptions) -> Result<Vec<Vec<u8>>, Open
         }
         if let Some(app) = opts.app.as_ref() {
             argv.push(b"-a".to_vec());
-            argv.push(app.as_bytes().to_vec());
+            argv.push(app.slice().to_vec());
         }
         if opts.edit {
             argv.push(b"-e".to_vec());
@@ -208,7 +212,7 @@ pub fn build_argv(target: &str, opts: &OpenOptions) -> Result<Vec<Vec<u8>>, Open
             // is bypassed because the binary knows its own protocol/file
             // handlers.
             let mut argv: Vec<Vec<u8>> = Vec::with_capacity(2);
-            argv.push(app.as_bytes().to_vec());
+            argv.push(app.slice().to_vec());
             argv.push(target.as_bytes().to_vec());
             return Ok(argv);
         }
@@ -245,7 +249,3 @@ pub fn argv_for(target: &str, opts: &OpenOptions) -> Result<Vec<Vec<u8>>, OpenEr
     let _ = resolve_opener(opts)?;
     build_argv(target, opts)
 }
-
-// Re-export so `BunObject.rs` doesn't have to walk the api::bun submodule
-// tree just to reach the spawn binding.
-pub use js_bun_spawn_bindings as spawn_bindings;

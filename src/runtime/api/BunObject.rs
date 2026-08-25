@@ -81,6 +81,7 @@ use bun_jsc::{
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
+use crate::api::open::{self as open_api, OpenOptions};
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
@@ -1024,17 +1025,17 @@ fn open(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     // Required positional arg: the URL / path / folder to open.
     let target_value = arguments
         .next_eat()
-        .ok_or_else(|| global_this.throw_invalid_arguments("Expected a `target`"))?;
+        .ok_or_else(|| global_this.throw_invalid_arguments(format_args!("Expected a `target`")))?;
     if !target_value.is_string() {
-        return Err(global_this.throw_invalid_arguments("Expected a `target` string"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Expected a `target` string")));
     }
     let target = target_value.to_utf8(global_this)?;
     let target_str = std::str::from_utf8(target.slice())
-        .map_err(|_| global_this.throw_invalid_arguments("`target` is not valid UTF-8"))?;
+        .map_err(|_| global_this.throw_invalid_arguments(format_args!("`target` is not valid UTF-8")))?;
 
     // Optional second arg: the options object. All fields are optional; the
     // default `OpenOptions` matches the npm `open` package's defaults.
-    let mut options = crate::api::open::OpenOptions::default();
+    let mut options = OpenOptions::default();
     options.hide_errors = true; // suppress Windows "no association" dialogs
     if let Some(opts_value) = arguments.next_eat() {
         if !opts_value.is_undefined_or_null() {
@@ -1064,13 +1065,10 @@ fn open(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     // Build the per-OS argv. Errors here are caller-input failures (NUL
     // bytes, empty target, unsupported OS) and become thrown JS errors
     // without ever reaching `Bun.spawn`.
-    let argv = match crate::api::open::argv_for(target_str, &options) {
+    let _argv = match open_api::argv_for(target_str, &options) {
         Ok(argv) => argv,
         Err(err) => {
-            return Err(global_this.throw_error(
-                crate::Error::from(err),
-                "",
-            ));
+            return Err(global_this.throw(format_args!("{}", err)));
         }
     };
 
@@ -1084,17 +1082,9 @@ fn open(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     //
     // TODO: route through `js_bun_spawn_bindings::spawn` once we confirm the
     //   JSObject construction matches what the binding expects. Scaffold
-    //   returns `UnsupportedOs` so the registration compiles end-to-end
-    //   before the spawn glue lands.
-    let _ = argv;
-    Err(global_this.throw_error(
-        crate::Error::from(crate::api::open::OpenError::UnsupportedOs("Bun.open host_fn (scaffold)")),
-        "",
-    ))
-}
-
-        Ok(JSValue::UNDEFINED)
-    })
+    //   throws so the registration compiles end-to-end before the spawn
+    //   glue lands.
+    Err(global_this.throw(format_args!("Bun.open host_fn (scaffold)")))
 }
 
 #[bun_jsc::host_fn]

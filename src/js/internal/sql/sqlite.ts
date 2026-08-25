@@ -180,7 +180,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
   let writeVerb: string | null = null;
   // parentheses seen so far in the reverse scan; a statement-level write verb sits at depth 0
   let parenDepth = 0;
-  let quoted: false | "'" | '"' = false;
+  let quoted: false | "'" | '"' | "`" | "]" = false;
   // we need to reverse search so we find the closest command to the parameter
   for (let i = text_len - 1; i >= 0; i--) {
     const char = text[i];
@@ -283,16 +283,27 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         }
       }
       default: {
-        // skip quoted commands
-        if (char === '"' || char === "'") {
+        // skip quoted spans: strings and quoted identifiers
+        if (char === '"' || char === "'" || char === "`") {
           if (quoted === char) {
             quoted = false;
-          } else {
+          } else if (!quoted) {
             quoted = char;
           }
           continue;
         }
+        if (quoted === "]") {
+          if (char === "[") {
+            quoted = false;
+          }
+          continue;
+        }
         if (!quoted) {
+          if (char === "]") {
+            // the reverse scan sees "]" first: it opens a bracket-quoted identifier, "[" closes it
+            quoted = "]";
+            continue;
+          }
           if (char === ")") {
             // a write verb can sit flush against the CTE's closing paren: "(SELECT 1)DELETE"
             if (

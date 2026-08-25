@@ -980,6 +980,13 @@ describe("Query Execution", () => {
     const readFirst = await sql.unsafe("SELECT 1 AS x; INSERT INTO gadgets2 VALUES (9)");
     expect(readFirst.command).toBe("SELECT");
     expect(readFirst.affectedRows).toBe(0);
+
+    // a semicolon inside a bracket-quoted identifier is not a statement boundary
+    await sql.unsafe("CREATE TABLE weird ([a;b] INTEGER)");
+    await sql.unsafe("INSERT INTO weird VALUES (1)");
+    const quotedIdent = await sql.unsafe("UPDATE weird SET [a;b] = 2 WHERE [a;b] = 1 RETURNING [a;b] AS v");
+    expect(quotedIdent).toEqual([{ v: 2 }]);
+    expect(quotedIdent.affectedRows).toBe(1);
   });
 
   test("SELECT with various clauses", async () => {

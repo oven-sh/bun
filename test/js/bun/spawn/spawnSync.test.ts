@@ -180,7 +180,13 @@ describe("uid/gid", () => {
   });
 
   it("accepts a null uid/gid", () => {
-    const result = Bun.spawnSync({ cmd: [bunExe(), "--version"], env: bunEnv, uid: null as any, gid: null as any });
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.log('ok')"],
+      env: bunEnv,
+      uid: null as any,
+      gid: null as any,
+    });
+    expect(result.stdout.toString()).toBe("ok\n");
     expect(result.exitCode).toBe(0);
   });
 

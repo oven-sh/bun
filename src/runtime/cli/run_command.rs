@@ -2926,9 +2926,7 @@ impl RunCommand {
         }
 
         if !ctx.runtime_options.eval.script.is_empty() {
-            // Shares the synthetic `[eval]` entry point and the
-            // positionals-into-passthrough merge, so `node -e code foo bar`
-            // keeps `foo` in `process.argv` like Node does. #40482
+            // exec_eval's positionals merge keeps `foo` in `node -e code foo`. #40482
             return Self::exec_eval(ctx);
         }
 

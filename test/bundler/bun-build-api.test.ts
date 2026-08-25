@@ -2058,4 +2058,22 @@ describe("Bun.build production option", () => {
     expect(stdout).toContain("longFunctionName");
     expect(exitCode).toBe(0);
   });
+
+  // Like the CLI, production wins over a tsconfig that re-enables the JSX
+  // dev transform. `env: "inline"` makes configure_defines merge the
+  // tsconfig jsx settings into the build options.
+  test.concurrent("production: true forces the JSX production runtime over tsconfig", async () => {
+    using dir = tempDir("build-production-jsx", {
+      "app.jsx": `export function App() { return <div>hi</div>; }`,
+      "tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsxdev" } }`,
+    });
+    const { stdout, exitCode } = await buildAndReadOutput(
+      String(dir),
+      `{ production: true, env: "inline", external: ["react*"] }`,
+      "./app.jsx",
+    );
+    expect(stdout).toContain("react/jsx-runtime");
+    expect(stdout).not.toContain("react/jsx-dev-runtime");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -717,10 +717,6 @@ describe("error event", () => {
   });
 
   test("uncaught output shows the worker stack when there is no 'error' listener", async () => {
-    // The error is structuredClone'd across the thread boundary and then
-    // rethrown by the EventEmitter 'error' path. The crash report must point
-    // at the worker's frame (from the cloned `.stack` string), not at the
-    // internal `throw er` site in node:events.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -746,12 +742,7 @@ describe("error event", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("uncaught output uses the error's own stack, not the rethrow site", async () => {
-    // A structuredClone'd error has no captured JSC frames, only a `.stack`
-    // string. When it escapes a microtask, the printer must prefer that
-    // string over the JSC::Exception wrapper stack captured at the `throw`.
-    // This is the same mechanism as the worker case above, exercised
-    // directly without the cross-thread hop.
+  test("uncaught output uses a structuredClone'd error's own stack, not the rethrow site", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

@@ -504,7 +504,6 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // Node prints `err.stack`: the Error's own state wins over the wrapper's throw-site stack.
-    // ZigException__collectSourceLines repeats this selection, so the predicate must match.
     bool getFromSourceURL = false;
     if (hasVisibleFrames(err->stackTrace())) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags, FinalizerSafety::MustNotTriggerGC);
@@ -903,7 +902,6 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         JSValue unwrapped = jscException->value();
 
         // Same selection as fromErrorInstance: OnlySourceLines indexes the chosen vector via jsc_stack_frame_index.
-        // Frames parsed from a `.stack` string carry index -1 and are skipped whichever vector is passed.
         auto* error = dynamicDowncast<JSC::ErrorInstance>(unwrapped);
         if (error && hasVisibleFrames(error->stackTrace())) {
             populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);

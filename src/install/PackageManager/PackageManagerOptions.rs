@@ -283,20 +283,23 @@ impl Options {
         }
     }
 
-    /// The credentials a tarball download may carry.
-    ///
-    /// The manifest that names the tarball URL comes from the registry, so a hostile
-    /// registry (or another tenant on a shared host) could point `dist.tarball` where
-    /// it likes; `scope`'s own credentials therefore only go to URLs at or under
-    /// `scope`'s registry URL. Any other URL gets exactly what `.npmrc` configures
-    /// for it by key, which covers registries that serve tarballs from another host
-    /// or path and lockfiles recorded against a registry that has since moved.
-    pub(crate) fn tarball_credentials<'a>(
+    /// The credentials a tarball download carries. On the registry's own origin
+    /// (same scheme, host and effective port) the registry's credentials follow it,
+    /// whatever its path: that is what serves GitLab's instance-level registry, whose
+    /// tarballs live under a project path, and it keeps bunfig, env and CLI
+    /// credentials ahead of `.npmrc` the way they are for the manifest. Off that
+    /// origin, or when the registry has no credentials, the tarball gets what
+    /// `.npmrc` configures for its own URL by key. A path the server would resolve
+    /// elsewhere (`..`, `%2e`, a backslash) gets nothing.
+    pub fn tarball_credentials<'a>(
         &'a self,
         scope: &'a Npm::registry::Scope,
         tarball: &bun_url::URL,
     ) -> Option<&'a Npm::registry::Scope> {
-        if scope.has_credentials() && url_under(tarball, &scope.url.url()) {
+        if !Npm::registry::path_is_canonical(tarball.pathname) {
+            return None;
+        }
+        if scope.has_credentials() && same_origin(tarball, &scope.url.url()) {
             return Some(scope);
         }
         Npm::registry::UrlAuth::find(&self.url_auth, tarball)
@@ -321,19 +324,13 @@ impl Options {
     }
 }
 
-/// `url` is at or under `base`: same scheme, host and effective port (some registries
-/// spell out `:443` in `dist.tarball`), and `base`'s path is a segment-wise prefix of
-/// `url`'s canonical path, so `/npm/team-ab/x` is not under `/npm/team-a/`.
-fn url_under(url: &bun_url::URL, base: &bun_url::URL) -> bool {
-    if base.hostname.is_empty()
-        || !url.protocol.eq_ignore_ascii_case(base.protocol)
-        || !url.hostname.eq_ignore_ascii_case(base.hostname)
-        || url.get_port_auto() != base.get_port_auto()
-        || !Npm::registry::path_is_canonical(url.pathname)
-    {
-        return false;
-    }
-    path_under(url.pathname, base.pathname)
+/// Same scheme, host and effective port (some registries spell out `:443` in
+/// `dist.tarball`).
+fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
+    !base.hostname.is_empty()
+        && url.protocol.eq_ignore_ascii_case(base.protocol)
+        && url.hostname.eq_ignore_ascii_case(base.hostname)
+        && url.get_port_auto() == base.get_port_auto()
 }
 
 /// `url` names the registry `base` already holds credentials for, or one below it:
@@ -347,6 +344,8 @@ fn registry_under(url: &bun_url::URL, base: &bun_url::URL) -> bool {
         && path_under(url.pathname, base.pathname)
 }
 
+/// `base`'s path is a segment-wise prefix of `path`, so `/npm/team-ab/x` is not under
+/// `/npm/team-a/`.
 fn path_under(path: &[u8], base: &[u8]) -> bool {
     let mut segments = bun_core::strings::tokenize(path, b"/");
     bun_core::strings::tokenize(base, b"/").all(|expected| segments.next() == Some(expected))

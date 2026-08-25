@@ -276,10 +276,10 @@ impl MySQLQuery {
         columns_value: JSValue,
         binding_value: JSValue,
     ) -> crate::Result<()> {
-        let mut query_str: Option<bun_core::Utf8Bytes<'static>> = None;
+        let mut query_str: Option<bun_core::Utf8Bytes<'_>> = None;
 
         if self.statement.is_null() {
-            let query = self.query.clone().into_utf8();
+            let query = self.query.to_utf8();
             let mut signature = match Signature::generate(
                 global_object,
                 query.slice(),

@@ -1535,7 +1535,7 @@ impl Listener {
             .unwrap(),
             _ => return Ok(JSValue::UNDEFINED),
         };
-        let address_js = bun_string_jsc::create_utf8_for_js(global, formatted)?;
+        let address_js = EncodedSlice::latin1(formatted).to_js(global);
         let port_js = match socket_ref.get_local_port() {
             Some(p) => JSValue::js_number(p as f64),
             None => JSValue::UNDEFINED,

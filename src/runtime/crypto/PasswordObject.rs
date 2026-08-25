@@ -490,7 +490,8 @@ impl PasswordOp for HashOp {
         PasswordObject::hash(password, self.algorithm)
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
-        EncodedSlice::utf8(&value).to_js(g)
+        // PHC / bcrypt output is ASCII.
+        EncodedSlice::latin1(&value).to_js(g)
         // `value` drops here.
     }
 }

@@ -587,21 +587,21 @@ struct Column {
     width: u32,
 }
 
-enum RowKey {
+enum RowKey<'a> {
     /// Property-name UTF-8 bytes + visible width (plain-object tabular data).
     Str {
-        text: bun_core::Utf8Bytes<'static>,
+        text: bun_core::Utf8Bytes<'a>,
         width: u32,
     },
     /// Row index (array / iterable tabular data). Rendered on demand.
     Num(u32),
 }
 
-impl RowKey {
-    fn str(name: &BunString) -> Self {
+impl<'a> RowKey<'a> {
+    fn str(name: &bun_core::StringView<'a>) -> Self {
         Self::Str {
             width: u32::try_from(name.visible_width_exclude_ansi_colors(false)).expect("int cast"),
-            text: name.clone().into_utf8(),
+            text: name.to_utf8(),
         }
     }
 
@@ -634,8 +634,8 @@ impl CellRef {
 /// One table row, collected during the width pass so the render pass never
 /// re-reads a property (which would re-invoke its getter) and never
 /// re-formats a value (which would re-run a custom inspect hook).
-struct CollectedRow {
-    key: RowKey,
+struct CollectedRow<'a> {
+    key: RowKey<'a>,
     /// Indexed by `column_index - 1`. `None` is an absent cell. May be
     /// shorter than `columns.len() - 1` when later rows added columns this
     /// row lacks.
@@ -703,13 +703,13 @@ impl<'a> TablePrinter<'a> {
     /// Read and format the row's cell values exactly once, size the columns
     /// (creating them on demand), and return the collected row for the
     /// render pass.
-    fn collect_row<const ENABLE_ANSI_COLORS: bool>(
+    fn collect_row<'r, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         cell_text: &mut Vec<u8>,
         columns: &mut Vec<Column>,
-        row_key: RowKey,
+        row_key: RowKey<'r>,
         row_value: JSValue,
-    ) -> JsResult<CollectedRow> {
+    ) -> JsResult<CollectedRow<'r>> {
         columns[0].width = columns[0].width.max(row_key.width());
 
         let mut row = CollectedRow {
@@ -814,7 +814,7 @@ impl<'a> TablePrinter<'a> {
         &self,
         writer: &mut dyn bun_io::Write,
         columns: &[Column],
-        row: &CollectedRow,
+        row: &CollectedRow<'_>,
         cell_text: &[u8],
     ) {
         let _ = writer.write_all("│".as_bytes());
@@ -897,14 +897,15 @@ impl<'a> TablePrinter<'a> {
         // `cell_text` and sizing columns. The render pass replays those byte
         // ranges, so no property is re-read and no value is re-formatted.
         let mut cell_text: Vec<u8> = Vec::new();
+        let rows_iter;
         let mut rows: Vec<CollectedRow> = Vec::new();
         {
             if self.is_iterable {
-                struct Ctx<'c, 'a> {
+                struct Ctx<'c, 'a, 'r> {
                     this: &'c mut TablePrinter<'a>,
                     cell_text: &'c mut Vec<u8>,
                     columns: &'c mut Vec<Column>,
-                    rows: &'c mut Vec<CollectedRow>,
+                    rows: &'c mut Vec<CollectedRow<'r>>,
                     idx: u32,
                     err: Option<jsc::JsError>,
                 }
@@ -925,7 +926,7 @@ impl<'a> TablePrinter<'a> {
                     value: JSValue,
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
+                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_, '_>>(ctx) };
                     // Once a cell failed, a JS exception may be pending (or
                     // the VM terminating); don't re-enter user code for the
                     // remaining elements.
@@ -953,7 +954,7 @@ impl<'a> TablePrinter<'a> {
                 }
             } else {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
-                let rows_iter = jsc::JSPropertyIterator::init(
+                rows_iter = jsc::JSPropertyIterator::init(
                     global_object,
                     tabular_obj,
                     jsc::PropertyIteratorOptions {

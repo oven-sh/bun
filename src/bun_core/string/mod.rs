@@ -1199,8 +1199,17 @@ impl<'a> EncodedSlice<'a> {
         slice
     }
 
-    /// Wrap a globally-allocated (mimalloc) UTF-16 buffer whose ownership is
-    /// being handed to C++: sets the 16-bit and global ptr-tags.
+    /// Wrap a globally-allocated Latin-1 buffer whose ownership is being
+    /// handed to C++: sets the global ptr-tag.
+    #[inline]
+    pub fn latin1_global(s: &'a [u8]) -> Self {
+        let mut slice = Self::latin1(s);
+        slice.mark(TAG_GLOBAL_BIT);
+        slice
+    }
+
+    /// Wrap a globally-allocated UTF-16 buffer whose ownership is being
+    /// handed to C++: sets the 16-bit and global ptr-tags.
     #[inline]
     pub fn utf16_global(s: &'a [u16]) -> Self {
         let mut slice = Self::utf16(s);
@@ -1523,6 +1532,12 @@ impl Utf8WithString {
     #[inline]
     pub fn js_only(string: String) -> Self {
         Self { utf8: None, string }
+    }
+
+    /// `js_only(self.string.clone())`: one ref, no copy of the UTF-8 bytes.
+    #[inline]
+    pub fn clone_string_only(&self) -> Self {
+        Self::js_only(self.string.clone())
     }
 
     /// True iff the UTF-8 bytes are read straight out of a WTF-backed

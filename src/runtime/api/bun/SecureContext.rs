@@ -17,6 +17,8 @@ use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl;
+use bun_core::EncodedSlice;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
@@ -184,8 +186,8 @@ impl SecureContext {
             }
         });
         let result = JSValue::create_empty_object(global, 0);
-        // SAFETY: the helper returned NUL-terminated PEM strings of the given
-        // lengths; `create_utf8_for_js` copies into the JS heap.
+        // SAFETY: the helper returned NUL-terminated PEM (ASCII) strings of the
+        // given lengths; `to_js` copies into the JS heap.
         let (key_slice, cert_slice, ca_slice) = unsafe {
             (
                 core::slice::from_raw_parts(out_key.cast::<u8>(), key_len),
@@ -197,19 +199,15 @@ impl SecureContext {
         result.put(
             global,
             b"key",
-            bun_string_jsc::create_utf8_for_js(global, key_slice)?,
+            EncodedSlice::latin1(key_slice).to_js(global),
         );
         result.put(
             global,
             b"cert",
-            bun_string_jsc::create_utf8_for_js(global, cert_slice)?,
+            EncodedSlice::latin1(cert_slice).to_js(global),
         );
         if let Some(ca_slice) = ca_slice {
-            result.put(
-                global,
-                b"ca",
-                bun_string_jsc::create_utf8_for_js(global, ca_slice)?,
-            );
+            result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global));
         }
         Ok(result)
     }
@@ -441,7 +439,6 @@ impl SecureContext {
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
 
-use bun_jsc::bun_string_jsc;
 use bun_uws_sys::socket_context::c;
 
 mod cpp {

@@ -6767,12 +6767,12 @@ impl NodeFS {
             } else {
                 E::ENOENT
             };
-            return Err(sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice()));
+            return Err(sys::Error::from_code(code, sys::Tag::scandir).with_path(path));
         };
 
         let mut entries: Vec<T> = Vec::with_capacity(list.len());
         let root_path = if T::IS_DIRENT {
-            BunString::clone_utf8(args.path.slice())
+            BunString::clone_utf8(path)
         } else {
             BunString::EMPTY
         };
@@ -6798,7 +6798,7 @@ impl NodeFS {
                 let joined_path;
                 let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
                     joined.clear();
-                    joined.extend_from_slice(args.path.slice());
+                    joined.extend_from_slice(path);
                     if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
                         joined.push(paths::SEP);
                     }
@@ -7395,7 +7395,7 @@ impl NodeFS {
         if args.encoding == Encoding::Utf8 {
             if let PathLike::String(s) = &args.path {
                 if strings::eql_long(s.slice(), link_path, true) {
-                    return Ok(StringOrBuffer::String(s.clone()));
+                    return Ok(StringOrBuffer::String(s.clone_string_only()));
                 }
             }
         }
@@ -7485,7 +7485,7 @@ impl NodeFS {
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
-                        return Ok(StringOrBuffer::String(s.clone()));
+                        return Ok(StringOrBuffer::String(s.clone_string_only()));
                     }
                 }
             }
@@ -7538,7 +7538,7 @@ impl NodeFS {
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
-                        return Ok(StringOrBuffer::String(s.clone()));
+                        return Ok(StringOrBuffer::String(s.clone_string_only()));
                     }
                 }
             }

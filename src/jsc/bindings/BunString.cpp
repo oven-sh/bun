@@ -132,6 +132,36 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transfer
     return JSValue::encode(bunString->transferToJS(globalObject));
 }
 
+// `message` for an Error built from a BunString: a WTF-backed string shares
+// its impl, a static one is atomized, a borrowed EncodedSlice is copied.
+static WTF::String errorMessage(const BunString* str)
+{
+    if (str->tag == BunStringTag::EncodedSlice)
+        return Zig::toStringCopy(str->impl.encoded);
+    return str->toWTFString(BunString::ZeroCopy);
+}
+
+extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, JSC::JSGlobalObject* globalObject, uint8_t kind)
+{
+    WTF::String message = errorMessage(str);
+    JSC::JSObject* result;
+    switch (kind) {
+    case 1:
+        result = JSC::createTypeError(globalObject, message);
+        break;
+    case 2:
+        result = JSC::createSyntaxError(globalObject, message);
+        break;
+    case 3:
+        result = JSC::createRangeError(globalObject, message);
+        break;
+    default:
+        result = JSC::createError(globalObject, message);
+        break;
+    }
+    return JSValue::encode(result);
+}
+
 namespace Bun {
 
 JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)

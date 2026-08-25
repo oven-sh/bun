@@ -732,32 +732,43 @@ impl JSGlobalObject {
     /// `args` formatted as UTF-8. If a `Display` impl fails mid-way (e.g. a
     /// JS `Symbol.toPrimitive` threw), the pending exception is cleared and
     /// the partial message is used rather than an error about an error.
-    fn error_message(&self, args: Arguments<'_>) -> bun_core::Utf8Bytes<'static> {
-        if let Some(fmt) = args.as_str() {
-            return bun_core::Utf8Bytes::Borrowed(fmt.as_bytes());
-        }
+    fn error_message(&self, args: Arguments<'_>) -> Vec<u8> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;
         if write!(WriteVec(&mut buf), "{}", args).is_err() {
             let _ = self.clear_exception_except_termination();
         }
-        bun_core::Utf8Bytes::Owned(buf)
+        buf
     }
 
+    /// An argument-free literal takes the `String::static_` path (atomized,
+    /// no copy); anything formatted is copied once into the JS heap.
     pub fn create_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        EncodedSlice::utf8(&self.error_message(args)).to_error_instance(self)
+        match args.as_str() {
+            Some(_) => BunString::create_format(args).to_error_instance(self),
+            None => EncodedSlice::utf8(&self.error_message(args)).to_error_instance(self),
+        }
     }
 
     pub fn create_type_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        EncodedSlice::utf8(&self.error_message(args)).to_type_error_instance(self)
+        match args.as_str() {
+            Some(_) => BunString::create_format(args).to_type_error_instance(self),
+            None => EncodedSlice::utf8(&self.error_message(args)).to_type_error_instance(self),
+        }
     }
 
     pub fn create_syntax_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        EncodedSlice::utf8(&self.error_message(args)).to_syntax_error_instance(self)
+        match args.as_str() {
+            Some(_) => BunString::create_format(args).to_syntax_error_instance(self),
+            None => EncodedSlice::utf8(&self.error_message(args)).to_syntax_error_instance(self),
+        }
     }
 
     pub fn create_range_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        EncodedSlice::utf8(&self.error_message(args)).to_range_error_instance(self)
+        match args.as_str() {
+            Some(_) => BunString::create_format(args).to_range_error_instance(self),
+            None => EncodedSlice::utf8(&self.error_message(args)).to_range_error_instance(self),
+        }
     }
 
     pub(crate) fn create_dom_exception_instance(
@@ -765,7 +776,14 @@ impl JSGlobalObject {
         code: DOMExceptionCode,
         args: Arguments<'_>,
     ) -> JSValue {
-        EncodedSlice::utf8(&self.error_message(args)).to_dom_exception_instance(self, code)
+        match args.as_str() {
+            Some(lit) => {
+                EncodedSlice::from_bytes(lit.as_bytes()).to_dom_exception_instance(self, code)
+            }
+            None => {
+                EncodedSlice::utf8(&self.error_message(args)).to_dom_exception_instance(self, code)
+            }
+        }
     }
 
     pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {

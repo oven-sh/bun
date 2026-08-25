@@ -3,7 +3,7 @@
 //! for bytes → JS string. Keeps `bun_core::string` free of
 //! `JSValue`/`JSGlobalObject`/`CallFrame` types.
 
-use bun_core::{String, Tag, Utf8WithString, strings};
+use bun_core::{EncodedSlice, String, Tag, Utf8WithString, strings};
 
 use crate::{CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
 
@@ -19,6 +19,11 @@ use crate::{CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, J
 // which owns the canonical extern decl + per-mode exception scope.
 unsafe extern "C" {
     safe fn BunString__toJSDOMURL(global_object: &JSGlobalObject, in_: &String) -> JSValue;
+    safe fn BunString__toErrorInstance(
+        str: &String,
+        global_object: &JSGlobalObject,
+        kind: u8,
+    ) -> JSValue;
     fn BunString__createArray(
         global_object: &JSGlobalObject,
         ptr: *const String,
@@ -35,9 +40,12 @@ pub trait StringJsc {
     /// Borrowed (`EncodedSlice`) contents are copied.
     fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// `new Error(self)` — the message is copied (16-bit stays 16-bit).
+    /// `new Error(self)`: a WTF-backed message is shared, a static one
+    /// atomized, a borrowed `EncodedSlice` copied.
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for String {
     #[track_caller]
@@ -81,10 +89,16 @@ impl StringJsc for String {
         unsafe { crate::cpp::BunString__toJSON(global_object, self) }
     }
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        self.to_encoded_slice().to_error_instance(global)
+        BunString__toErrorInstance(self, global, 0)
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        self.to_encoded_slice().to_type_error_instance(global)
+        BunString__toErrorInstance(self, global, 1)
+    }
+    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        BunString__toErrorInstance(self, global, 2)
+    }
+    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        BunString__toErrorInstance(self, global, 3)
     }
 }
 
@@ -142,15 +156,27 @@ pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> 
 /// UTF-8 `Vec<u8>` → JS string; the allocation (or its UTF-16 transcode) is
 /// adopted by JSC. Throws `STRING_TOO_LONG` when over [`String::max_length`].
 pub fn owned_utf8_into_js(global_object: &JSGlobalObject, utf8: Vec<u8>) -> JsResult<JSValue> {
-    String::from_owned_utf8(utf8)
-        .map_err(|_| global_object.throw_out_of_memory())?
-        .into_js(global_object)
+    if utf8.is_empty() {
+        return Ok(JSValue::js_empty_string(global_object));
+    }
+    match strings::to_utf16_alloc(&utf8, false, false) {
+        Ok(None) => {
+            let utf8 = core::mem::ManuallyDrop::new(utf8);
+            EncodedSlice::latin1_global(&utf8).to_external_value(global_object)
+        }
+        Ok(Some(utf16)) => owned_utf16_into_js(global_object, utf16),
+        Err(_) => Err(global_object.throw_out_of_memory()),
+    }
 }
 
 /// UTF-16 `Vec<u16>` → JS string; the allocation is adopted by JSC.
 /// Throws `STRING_TOO_LONG` when over [`String::max_length`].
 pub fn owned_utf16_into_js(global_object: &JSGlobalObject, utf16: Vec<u16>) -> JsResult<JSValue> {
-    String::create_external_globally_allocated_utf16(utf16).into_js(global_object)
+    if utf16.is_empty() {
+        return Ok(JSValue::js_empty_string(global_object));
+    }
+    let utf16 = core::mem::ManuallyDrop::new(utf16);
+    EncodedSlice::utf16_global(&utf16).to_external_value(global_object)
 }
 
 #[track_caller]

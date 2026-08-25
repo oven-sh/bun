@@ -484,7 +484,7 @@ impl SocketConfig {
     pub(crate) fn from_generated(
         vm: &'static VirtualMachine,
         global: &JSGlobalObject,
-        generated: &GeneratedSocketConfig,
+        generated: GeneratedSocketConfig,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
@@ -537,12 +537,12 @@ impl SocketConfig {
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
-        } else if let Some(unix) = generated.unix_.as_ref() {
+        } else if let Some(unix) = generated.unix_.into_inner() {
             if unix.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
             }
-            result.hostname_or_unix = unix.clone().into_utf8();
+            result.hostname_or_unix = unix.into_utf8();
             let slice = result.hostname_or_unix.slice();
             if slice.starts_with(b"file://")
                 || slice.starts_with(b"unix://")
@@ -551,12 +551,12 @@ impl SocketConfig {
                 let without_prefix = slice[7..].to_vec();
                 result.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
             }
-        } else if let Some(hostname) = generated.hostname.as_ref() {
+        } else if let Some(hostname) = generated.hostname.into_inner() {
             if hostname.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
             }
-            result.hostname_or_unix = hostname.clone().into_utf8();
+            result.hostname_or_unix = hostname.into_utf8();
             let slice = result.hostname_or_unix.slice();
             if bun_core::strings::contains_char(slice, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -589,7 +589,7 @@ impl SocketConfig {
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
-        Self::from_generated(vm, global_object, &generated, mode)
+        Self::from_generated(vm, global_object, generated, mode)
     }
 }
 

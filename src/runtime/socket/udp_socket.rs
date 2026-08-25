@@ -1407,24 +1407,15 @@ impl UDPSocket {
         // The views and their UTF-8 bytes live in these Vecs until
         // `socket.send()`. Phase 1 stored the primitive JSString; `as_string()`
         // is a plain cast (no `toPrimitive`, no user JS).
-        let mut string_views: Vec<Option<JSStringView<'_>>> = Vec::new();
-        if payload_vals.iter().any(|val| val.is_string()) {
-            string_views.reserve_exact(len);
-            for val in payload_vals.iter() {
-                string_views.push(if val.is_string() {
-                    Some(val.as_string().view(global_this)?)
-                } else {
-                    None
-                });
-            }
+        let mut string_views: Vec<Option<JSStringView<'_>>> = Vec::with_capacity(len);
+        for val in payload_vals.iter() {
+            string_views.push(if val.is_string() {
+                Some(val.as_string().view(global_this)?)
+            } else {
+                None
+            });
         }
-        let string_slices: Vec<Utf8Bytes<'_>> = string_views
-            .iter()
-            .map(|view| {
-                view.as_ref()
-                    .map_or(Utf8Bytes::EMPTY, JSStringView::to_utf8)
-            })
-            .collect();
+        let mut string_slices: Vec<Utf8Bytes<'_>> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {
             // Hoisted so the returned `slice()` borrow lives past the `'brk` block
             // (the underlying buffer is GC-rooted via `payload_vals`; the
@@ -1441,7 +1432,8 @@ impl UDPSocket {
                     }
                     break 'brk array_buffer.slice();
                 }
-                break 'brk string_slices[slice_idx].slice();
+                string_slices.push(string_views[slice_idx].as_ref().unwrap().to_utf8());
+                break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();
             lens[slice_idx] = slice.len();

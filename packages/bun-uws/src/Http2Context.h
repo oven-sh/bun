@@ -553,7 +553,7 @@ struct Http2Connection {
         /* Only response HEADERS/DATA leaving count as activity; a PING ACK
          * going out must not keep a stalled connection alive. */
         if (wrote && wroteStreamBytes && !closed) touch();
-        wroteStreamBytes = false;
+        if (out.length() == 0) wroteStreamBytes = false;
     }
 
     bool wantsDrain() {

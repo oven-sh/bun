@@ -973,7 +973,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 b"Connection closed before the connection was established",
                 AnyMySQLErrorT::ConnectionFailed,
             ),
-            _ => (b"Connection closed", AnyMySQLErrorT::ConnectionClosed),
+            S::Connected | S::Disconnected | S::Failed => {
+                (b"Connection closed", AnyMySQLErrorT::ConnectionClosed)
+            }
         };
         this.fail(message, err);
     }

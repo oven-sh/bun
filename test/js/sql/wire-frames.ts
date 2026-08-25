@@ -356,6 +356,17 @@ export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
   return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
 }
 
+// MySQL ERR_Packet — page_protocol_basic_err_packet.html:
+//   Int<1>(0xff) Int<2>(error_code) '#' String<5>(sql_state) String<EOF>(message)
+export function mysqlErrPacket(seq: number, code: number, sqlState: string, message: string): Buffer {
+  const codeBuf = Buffer.alloc(2);
+  codeBuf.writeUInt16LE(code);
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([Buffer.from([0xff]), codeBuf, Buffer.from("#"), Buffer.from(sqlState), Buffer.from(message)]),
+  );
+}
+
 // The driver sends `SET time_zone = '+00:00'` as a COM_QUERY on every new
 // connection right after authentication (session setup, MySQLConnection.rs)
 // and waits for its OK before it reports itself connected. A mock server must

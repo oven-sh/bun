@@ -697,7 +697,7 @@ impl String {
         }
     }
     /// Isomorphic encode (one byte per code unit): borrows 8-bit storage,
-    /// truncates each UTF-16 unit to its low byte. Not for UTF-8-tagged strings.
+    /// truncates each UTF-16 unit (or decoded UTF-8 code point) to its low byte.
     pub fn to_latin1(&self) -> Cow<'_, [u8]> {
         match self.tag {
             Tag::WTFStringImpl if self.as_wtf().is_8bit() => {
@@ -1450,12 +1450,18 @@ impl<'a> EncodedSlice<'a> {
         Utf8Bytes::Borrowed(bytes)
     }
     /// Isomorphic encode (one byte per code unit): borrows 8-bit storage,
-    /// truncates each UTF-16 unit to its low byte. Not for UTF-8-tagged slices.
+    /// truncates each UTF-16 unit (or decoded UTF-8 code point) to its low byte.
     pub fn to_latin1(self) -> Cow<'a, [u8]> {
         if self.is_16bit() {
             return Cow::Owned(narrow_utf16_to_latin1(self.utf16_slice()));
         }
-        debug_assert!(!self.is_utf8() || strings::is_all_ascii(self.slice()));
+        if self.is_utf8() && !strings::is_all_ascii(self.slice()) {
+            return Cow::Owned(
+                bstr::ByteSlice::chars(self.slice())
+                    .map(|c| c as u32 as u8)
+                    .collect(),
+            );
+        }
         Cow::Borrowed(self.slice())
     }
 

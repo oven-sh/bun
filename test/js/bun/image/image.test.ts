@@ -930,9 +930,11 @@ describe("Bun.Image", () => {
     expect(() => img().modulate({ brightness: "2" as any })).toThrow(/"brightness"/);
     expect(() => img().modulate({ saturation: "2" as any })).toThrow(/"saturation"/);
     expect(() => new Bun.Image(cornersPng, { maxPixels: "100" as any })).toThrow(/"maxPixels"/);
-    // undefined still selects the default and must not throw.
+    // undefined still selects the default and must not throw: the output is
+    // byte-identical to omitting the option entirely.
     const out = await img().jpeg({ quality: undefined }).bytes();
-    expect(out[0]).toBe(0xff);
+    const defaultOut = await img().jpeg().bytes();
+    expect(out).toEqual(defaultOut);
   });
 
   test("constructor cleans up on throwing options getter", () => {

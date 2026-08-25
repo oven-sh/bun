@@ -243,7 +243,6 @@ impl Request {
     /// `None` for a `Request` built by JS.
     fn request_head(&self) -> Option<RequestHead<'_>> {
         if let Some(req) = self.request_context.get_request() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             return Some(RequestHead::Uws(bun_opaque::opaque_deref(req)));
         }
         self.head.get().as_ref().map(RequestHead::Snapshot)

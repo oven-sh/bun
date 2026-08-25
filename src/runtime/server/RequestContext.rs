@@ -1538,7 +1538,6 @@ where
             // `req` is live only while the dispatch is still on the stack.
             if !HTTP3 {
                 if let Some(req) = self.req.get() {
-                    // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
                     request.snapshot_request_head(bun_opaque::opaque_deref(
                         req.cast::<uws::Request>(),
                     ));

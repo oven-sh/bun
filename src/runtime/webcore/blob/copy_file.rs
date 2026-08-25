@@ -249,24 +249,20 @@ impl CopyFile {
         Ok(())
     }
 
-    /// Creates or truncates the destination: only call this once the source
-    /// has been checked, so a rejected copy leaves the destination untouched.
     #[cfg(not(windows))]
     fn open_destination(&mut self) -> Result<(), crate::Error> {
+        // Not slice_z(): its &ZStr borrows self, which mkdir_if_not_exists() needs mutably.
         let mut path_buf = PathBuffer::uninit();
+        let capacity = path_buf.len() - 1;
+        let dest_len = bun_core::strings::copy(
+            &mut path_buf[..capacity],
+            self.destination_file_store.pathlike.path().slice(),
+        )
+        .len();
+        path_buf[dest_len] = 0;
+        let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf[..], dest_len);
+        let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
         loop {
-            // detach `dest` lifetime from `self` (borrowck) — slice_z
-            // copies into path_buf, so build the ZStr directly from the buffer.
-            let dest_len = {
-                let s = self.destination_file_store.pathlike.path().slice();
-                let n = s.len().min(path_buf.len() - 1);
-                path_buf[..n].copy_from_slice(&s[..n]);
-                path_buf[n] = 0;
-                n
-            };
-            // SAFETY: path_buf[dest_len] == 0 written above.
-            let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf[..], dest_len);
-            let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
             match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                 bun_sys::Result::Ok(result) => {
                     match result.make_lib_uv_owned_for_syscall(
@@ -302,11 +298,10 @@ impl CopyFile {
         Ok(())
     }
 
-    /// `None` when this source/destination pair isn't supported, e.g. a FIFO
-    /// source with a regular-file destination.
+    /// `None`: no syscall copies this pair (a FIFO into a regular file, for one).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pick_copy_syscall(&self, source_mode: Mode) -> Option<TryWith> {
-        // 0: the destination store was never stat'ed (Bun.write(path, ...)).
+        // 0 when the destination store was never stat'ed (Bun.write(path, ...)).
         let destination_mode = self.destination_file_store.mode;
 
         // Bun.write(Bun.file("a"), Bun.file("b"))
@@ -660,8 +655,7 @@ impl CopyFile {
                 self.source_fd = *fd;
             }
 
-            // First, we attempt to clonefile() on macOS
-            // This is the fastest way to copy a file.
+            // clonefile() is the fastest copy on macOS, so it goes first.
             #[cfg(target_os = "macos")]
             {
                 if self.offset == 0
@@ -677,8 +671,6 @@ impl CopyFile {
                     'do_clonefile: {
                         let mut path_buf = PathBuffer::uninit();
 
-                        // stat the output file, make sure it:
-                        // 1. Exists
                         match bun_sys::stat(
                             self.source_file_store
                                 .pathlike
@@ -698,7 +690,6 @@ impl CopyFile {
                                 }
                             }
                             bun_sys::Result::Err(err) => {
-                                // If we can't stat it, we also can't copy it.
                                 self.system_error = Some(err.to_system_error());
                                 return;
                             }
@@ -711,7 +702,6 @@ impl CopyFile {
                                     && self.max_length
                                         < SizeType::try_from(stat_size).expect("int cast")
                                 {
-                                    // If this fails...well, there's not much we can do about it.
                                     // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
                                     let _ = unsafe {
                                         bun_sys::c::truncate(
@@ -748,10 +738,7 @@ impl CopyFile {
                                 return;
                             }
                             Err(_) => {
-                                // this may still fail, in which case we just continue trying with fcopyfile
-                                // it can fail when the input file already exists
-                                // or if the output is not a directory
-                                // or if it's a network volume
+                                // An existing destination, another volume or a network mount: fcopyfile below still works.
                                 self.system_error = None;
                             }
                         }
@@ -764,8 +751,7 @@ impl CopyFile {
             }
             debug_assert!(self.source_fd.is_valid());
 
-            // Everything that can reject the source happens here, before
-            // open_destination() creates or truncates the destination.
+            // Every source check runs before open_destination() creates or truncates the destination.
             let stat: Stat = match stat_ {
                 Some(s) => s,
                 None => match bun_sys::fstat(self.source_fd) {
@@ -1415,8 +1401,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn prepare_read_write_loop(&mut self) {
-        // Opening the destination creates or truncates it, so a source that
-        // can't be opened has to fail before that.
+        // The source first: opening the destination creates or truncates it.
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
             &mut Store::data_mut(&self.source_file_store)
                 .as_file_mut()
@@ -1441,8 +1426,7 @@ impl<'a> CopyFileWindows<'a> {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
                 if self.mkdirp_if_not_exists && err.get_errno() == bun_sys::E::ENOENT {
-                    // on_mkdirp_complete() re-enters copyfile(), which opens
-                    // the source again.
+                    // on_mkdirp_complete() re-enters copyfile(), which reopens the source.
                     self.read_write_loop.close();
                     self.mkdirp();
                     return;

@@ -2110,15 +2110,15 @@ pub fn init(
             let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
             // Set ONLY `MiniEventLoop.global`,
             // NOT `globalInitialized`. The distinction is load-bearing: a later
-            // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /
-            // `pm version` lifecycle scripts → RunCommand::run_package_script_*)
-            // checks `globalInitialized` and, when false, allocates a FRESH mini
-            // with env/top_level_dir/uv-loop fully wired, then that becomes the
-            // global. If we flip `GLOBAL_INITIALIZED` here, that call returns
-            // *this* embedded mini instead — which was constructed without env,
-            // without top_level_dir, and (on Windows) without going through
-            // `init_global`'s uv-loop setup. The shell's IOWriter then opens
-            // stdout/stderr against an under-initialised loop → EBADF (exit 9).
+            // `init_global(env)` (e.g. from `bun pm pack` / `pm version`
+            // lifecycle scripts → RunCommand::run_package_script_*) checks
+            // `globalInitialized` and, when false, allocates a FRESH mini with
+            // env/uv-loop fully wired, then that becomes the global. If we flip
+            // `GLOBAL_INITIALIZED` here, that call returns *this* embedded mini
+            // instead — which was constructed without env and (on Windows)
+            // without going through `init_global`'s uv-loop setup. The shell's
+            // IOWriter then opens stdout/stderr against an under-initialised
+            // loop → EBADF (exit 9).
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
         }
     }

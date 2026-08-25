@@ -57,7 +57,19 @@ function opt(name: string, def?: string): string | undefined {
   const i = args.indexOf(name);
   if (i === -1) return def;
   const v = args[i + 1];
+  if (v === undefined || v.startsWith("--")) {
+    console.error(`${name} needs a value`);
+    process.exit(1);
+  }
   args.splice(i, 2);
+  return v;
+}
+function intOpt(name: string, def: number): number {
+  const v = Number(opt(name, String(def)));
+  if (!Number.isInteger(v) || v < 1) {
+    console.error(`${name} must be a positive integer`);
+    process.exit(1);
+  }
   return v;
 }
 
@@ -77,11 +89,11 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const buildDir = resolve(repo, opt("--build-dir", "build/debug")!);
-const jobs = Number(opt("--jobs", String(cpus().length)));
+const jobs = intOpt("--jobs", cpus().length);
 const jsonOut = opt("--json");
 const recomputeWebKit = flag("--webkit");
 const webkitOnly = flag("--webkit-only");
-const webkitRounds = Number(opt("--webkit-rounds", "3"));
+const webkitRounds = intOpt("--webkit-rounds", 3);
 const noSummaries = flag("--no-summaries");
 const reuseSummaries = flag("--reuse-summaries");
 const kinds = opt("--kind")?.split(",");
@@ -261,7 +273,7 @@ function webkitCompileDb(bindingsEntry: Entry): string {
     keep.push(a);
   }
   const firstInclude = keep.findIndex(a => a.startsWith("-I"));
-  keep.splice(firstInclude, 0, `-I${join(wkDir, "fwd")}`, `-I${fwd}`);
+  keep.splice(firstInclude === -1 ? keep.length : firstInclude, 0, `-I${join(wkDir, "fwd")}`, `-I${fwd}`);
   keep.push(
     "-DBUILDING_JavaScriptCore",
     "-DSTATICALLY_LINKED_WITH_WTF",

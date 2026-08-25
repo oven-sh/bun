@@ -62,6 +62,11 @@ JSC::JSValue::toThisSlowCase
 # Promise plumbing. reject/resolve run no user code synchronously (thenable
 # lookups are caught internally and turned into rejections).
 JSC::JSPromise::rejectedPromise
+JSC::JSPromise::resolve
+JSC::JSPromise::reject
+JSC::JSPromise::rejectAsHandled
+JSC::JSPromise::resolvePromise
+JSC::JSPromise::rejectPromise
 JSC::JSPromise::rejectWithCaughtException checkrelease
 JSC::JSPromise::rejectedPromiseWithCaughtException checkrelease
 JSC::JSInternalPromise::rejectWithCaughtException checkrelease
@@ -105,8 +110,3 @@ indirect:toThis
 
 # Wraps an ArrayBuffer in its JS object. Bun's override does not throw.
 JSC::TypedArrayController::toJS
-JSC::JSPromise::resolve
-JSC::JSPromise::reject
-JSC::JSPromise::rejectAsHandled
-JSC::JSPromise::resolvePromise
-JSC::JSPromise::rejectPromise

@@ -298,7 +298,10 @@ static void loadSummaries(const std::string &path) {
     Summary s;
     if (!Summary::parseKind(cols[2], s.kind))
       continue;
-    s.exitStates = (StateSet)std::stoul(cols[3]);
+    unsigned exitStates = 0;
+    if (llvm::StringRef(cols[3]).getAsInteger(10, exitStates))
+      continue; // malformed line
+    s.exitStates = exitStates;
     s.verifiesAtEntry = cols[4] == "1";
     s.why = cols.size() > 5 ? cols[5] : "";
     auto it = gImported.find(cols[0]);

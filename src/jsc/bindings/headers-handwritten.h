@@ -82,11 +82,12 @@ typedef struct BunString {
 
     // May be retained: shares a WTFStringImpl, atomizes a StaticEncodedSlice,
     // adopts a GLOBAL-tagged EncodedSlice, and copies any other EncodedSlice.
-    // Null for Dead/Empty.
+    // Null for Dead/Empty, and for an EncodedSlice over the string length limit.
     WTF::String toWTFString() const;
 
     // Borrows the characters in place; must not outlive `*this`. Allocates
     // only for a non-ASCII UTF-8 EncodedSlice (`underlyingString` owns it).
+    // A null view for an EncodedSlice over the string length limit.
     WTF::StringViewWithUnderlyingString view() const;
 
     // toWTFString() that moves the WTFStringImpl ref out instead of sharing

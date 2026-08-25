@@ -102,12 +102,15 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
 JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (this->tag == BunStringTag::Dead) [[unlikely]] {
+    if (this->tag == BunStringTag::Empty)
+        return jsEmptyString(vm);
+    auto str = this->transferToWTFString();
+    if (str.isNull()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         Bun::ERR::STRING_TOO_LONG(scope, globalObject);
         return {};
     }
-    return jsString(vm, this->transferToWTFString());
+    return jsString(vm, WTF::move(str));
 }
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
@@ -145,12 +148,15 @@ namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (bunString.tag == BunStringTag::Dead) [[unlikely]] {
+    if (bunString.tag == BunStringTag::Empty)
+        return JSC::jsEmptyString(vm);
+    auto str = bunString.toWTFString();
+    if (str.isNull()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         Bun::ERR::STRING_TOO_LONG(scope, globalObject);
         return nullptr;
     }
-    return JSC::jsString(vm, bunString.toWTFString());
+    return JSC::jsString(vm, WTF::move(str));
 }
 
 JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)

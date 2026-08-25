@@ -358,7 +358,12 @@ struct Http2Connection {
     /* Per-stream byte budget for the current drainWritable() pass; 0 = none. */
     size_t drainSlice = 0;
     /* Outbound bytes not yet accepted by the socket. */
-    BackPressure out;
+    /* Pending output. Inside a socket event `out` points at the context's
+     * loop-shared buffer (one allocation reused by every connection, like
+     * HTTP/1's cork buffer); whatever the kernel doesn't take by the end of
+     * the event is moved into ownOut. Outside an event it is ownOut. */
+    BackPressure ownOut;
+    BackPressure *out = &ownOut;
 
     uint32_t peerMaxFrameSize = 16384;
     int32_t peerInitialWindowSize = http2::DEFAULT_WINDOW_SIZE;
@@ -432,16 +437,16 @@ struct Http2Connection {
     void writeFrame(uint8_t type, uint8_t flags, uint32_t streamId, const char *payload, uint32_t length) {
         char header[http2::FRAME_HEADER_SIZE];
         http2::writeFrameHeader(header, length, type, flags, streamId);
-        out.reserve(out.length() + http2::FRAME_HEADER_SIZE + length);
-        out.append(header, http2::FRAME_HEADER_SIZE);
-        out.append(payload, length);
+        out->reserve(out->length() + http2::FRAME_HEADER_SIZE + length);
+        out->append(header, http2::FRAME_HEADER_SIZE);
+        out->append(payload, length);
     }
 
     /* A control frame the peer's input obliged us to send; see MAX_QUEUED_CONTROL. */
     void writeControlFrame(uint8_t type, uint8_t flags, uint32_t streamId, const char *payload, uint32_t length) {
         queuedControl += http2::FRAME_HEADER_SIZE + length;
         writeFrame(type, flags, streamId, payload, length);
-        controlEnd = out.length();
+        controlEnd = out->length();
     }
 
     inline void writeSettings();
@@ -451,7 +456,7 @@ struct Http2Connection {
         http2::writeU32BE(payload, increment & 0x7fffffff);
         queuedControl += http2::FRAME_HEADER_SIZE + 4;
         writeFrame(http2::WINDOW_UPDATE, 0, streamId, payload, 4);
-        controlEnd = out.length();
+        controlEnd = out->length();
     }
 
     void writeRstStream(uint32_t streamId, http2::ErrorCode code) {
@@ -460,7 +465,7 @@ struct Http2Connection {
         char payload[4];
         http2::writeU32BE(payload, code);
         writeFrame(http2::RST_STREAM, 0, streamId, payload, 4);
-        controlEnd = out.length();
+        controlEnd = out->length();
     }
 
     void writeGoaway(http2::ErrorCode code) {
@@ -480,10 +485,10 @@ struct Http2Connection {
      * high-water mark (so a large body is framed incrementally as the socket
      * drains rather than copied wholesale). */
     size_t sendAllowance(Http2Response *stream) {
-        if (out.length() >= http2::SOCKET_BACKPRESSURE_HIGH_WATER) return 0;
+        if (out->length() >= http2::SOCKET_BACKPRESSURE_HIGH_WATER) return 0;
         int64_t w = std::min<int64_t>(stream->sendWindow, connSendWindow);
         if (w <= 0) return 0;
-        size_t n = std::min<size_t>((size_t) w, http2::SOCKET_BACKPRESSURE_HIGH_WATER - out.length());
+        size_t n = std::min<size_t>((size_t) w, http2::SOCKET_BACKPRESSURE_HIGH_WATER - out->length());
         /* Inside a drain pass each stream is limited to its slice. */
         if (drainSlice) n = std::min(n, drainSlice);
         return n;
@@ -494,7 +499,7 @@ struct Http2Connection {
     size_t writeData(Http2Response *stream, const char *body, size_t length, bool endStream) {
         size_t allowed = std::min(length, sendAllowance(stream));
         if (length && !allowed) return 0;
-        out.reserve(out.length() + allowed + http2::FRAME_HEADER_SIZE * (allowed / peerMaxFrameSize + 1));
+        out->reserve(out->length() + allowed + http2::FRAME_HEADER_SIZE * (allowed / peerMaxFrameSize + 1));
         size_t sent = 0;
         do {
             uint32_t chunk = (uint32_t) std::min<size_t>(allowed - sent, peerMaxFrameSize);
@@ -522,14 +527,14 @@ struct Http2Connection {
 
     void flush() {
         bool wrote = false;
-        while (out.length() && !closed) {
-            int chunk = (int) std::min<size_t>(out.length(), 1u << 30);
-            int written = us_socket_write(s, out.data(), chunk);
+        while (out->length() && !closed) {
+            int chunk = (int) std::min<size_t>(out->length(), 1u << 30);
+            int written = us_socket_write(s, out->data(), chunk);
             if (written <= 0) break;
-            /* A small buffer is kept across events (it refills every read);
-             * one that grew for a large response is returned once drained. */
-            if (out.totalLength() > 16 * 1024) out.erase((size_t) written);
-            else out.consume((size_t) written);
+            /* The shared buffer keeps its allocation; a connection's own one
+             * is given back once drained. */
+            if (out == &ownOut) out->erase((size_t) written);
+            else out->consume((size_t) written);
             if ((size_t) written >= controlEnd) { controlEnd = 0; queuedControl = 0; }
             else controlEnd -= (size_t) written;
             wrote = true;
@@ -537,12 +542,18 @@ struct Http2Connection {
         /* Only response HEADERS/DATA leaving count as activity; a PING ACK
          * going out must not keep a stalled connection alive. */
         if (wrote && wroteStreamBytes && !closed) touch();
-        if (out.length() == 0) wroteStreamBytes = false;
+        if (out->length() == 0) wroteStreamBytes = false;
     }
+
+    /* Use the context's shared buffer for this event if nothing of ours is
+     * pending and no other connection holds it. */
+    inline void borrowSharedOut();
+    /* Give it back: flush, then move any remainder into ownOut. */
+    inline void returnSharedOut();
 
     bool wantsDrain() {
         return !closed && !writable.empty() && connSendWindow > 0 &&
-               out.length() < http2::SOCKET_BACKPRESSURE_HIGH_WATER;
+               out->length() < http2::SOCKET_BACKPRESSURE_HIGH_WATER;
     }
 
     /* flush, and while the socket keeps accepting everything, keep framing
@@ -550,9 +561,9 @@ struct Http2Connection {
      * raises on_writable). Calls out to onWritable handlers. */
     void pump() {
         flush();
-        while (out.length() == 0 && wantsDrain()) {
+        while (out->length() == 0 && wantsDrain()) {
             drainWritable();
-            if (closed || out.length() == 0) break;
+            if (closed || out->length() == 0) break;
             flush();
         }
     }
@@ -565,7 +576,7 @@ struct Http2Connection {
     inline void scheduleFlush();
 
     bool drainedAfterGoaway() {
-        return !closed && streams.empty() && (goawaySent || goawayReceived) && out.length() == 0;
+        return !closed && streams.empty() && (goawaySent || goawayReceived) && out->length() == 0;
     }
 
     bool takeResetToken() {
@@ -622,6 +633,11 @@ struct Http2Context {
     /* Seconds without traffic in either direction before a connection is
      * dropped (streams in flight are aborted); 0 disables. */
     unsigned idleTimeoutS = 10;
+
+    /* Output buffer lent to whichever connection is inside a socket event;
+     * see Http2Connection::out. */
+    BackPressure sharedOut;
+    Http2Connection *sharedOutHolder = nullptr;
 
     /* Scratch shared by every connection on this context: decoded request
      * header bytes + list, and the HPACK encode buffer. dispatchDepth guards
@@ -832,7 +848,9 @@ struct Http2Context {
              * write() per response. */
             if (conn->busy > 0) continue;
             conn->busy++;
+            conn->borrowSharedOut();
             conn->pump();
+            conn->returnSharedOut();
             conn->busy--;
             if (!sweepConnection(conn)) continue;
             if (conn->drainedAfterGoaway()) us_socket_close(conn->s, 0, nullptr);
@@ -873,7 +891,9 @@ private:
 
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         if (us_socket_is_shut_down(s)) return s;
-        connection(s)->onData(data, (size_t) length);
+        Http2Connection *conn = connection(s);
+        conn->borrowSharedOut();
+        conn->onData(data, (size_t) length);
         return s;
     }
 
@@ -881,6 +901,7 @@ private:
         Http2Connection *conn = connection(s);
         conn->busy++;
         conn->flush();
+        conn->borrowSharedOut();
         if (!conn->closed) conn->drainWritable();
         conn->busy--;
         return epilogue(conn, s);
@@ -890,6 +911,7 @@ private:
         Http2Connection *conn = connection(s);
         Http2Context *ctx = conn->ctx;
         conn->closed = true;
+        if (ctx->sharedOutHolder == conn) { ctx->sharedOut.clear(); ctx->sharedOutHolder = nullptr; conn->out = &conn->ownOut; }
         conn->busy++;
         for (Http2Response *stream : conn->streams) {
             stream->dead = true;
@@ -945,12 +967,14 @@ private:
      * retired, close a drained going-away connection. */
     static us_socket_t *epilogue(Http2Connection *conn, us_socket_t *s) {
         if (conn->closed) {
+            conn->returnSharedOut();
             if (conn->busy == 0) delete conn;
             return s;
         }
         conn->busy++;
         conn->pump();
         conn->busy--;
+        conn->returnSharedOut();
         if (!sweepConnection(conn)) return s;
         if (conn->drainedAfterGoaway()) return us_socket_close(s, 0, nullptr);
         return s;
@@ -1007,6 +1031,23 @@ inline void Http2Connection::recomputeIdleTimeout() {
     }
     idleTimeoutS = never ? 0 : t;
     touch();
+}
+
+inline void Http2Connection::borrowSharedOut() {
+    if (out != &ownOut || ownOut.length() != 0 || ctx->sharedOutHolder || closed) return;
+    ctx->sharedOutHolder = this;
+    out = &ctx->sharedOut;
+}
+
+inline void Http2Connection::returnSharedOut() {
+    if (out == &ownOut) return;
+    if (!closed) flush();
+    if (out->length()) ownOut.append(out->data(), out->length());
+    out->consume(out->length());
+    /* Don't keep a huge shared buffer around after one outsized burst. */
+    if (out->totalLength() > 4 * http2::SOCKET_BACKPRESSURE_HIGH_WATER) out->clear();
+    ctx->sharedOutHolder = nullptr;
+    out = &ownOut;
 }
 
 inline void Http2Connection::scheduleFlush() {
@@ -1119,10 +1160,10 @@ inline void Http2Connection::drainWritable() {
     for (Http2Response *stream : snapshot) stream->wantsWrite = false;
     size_t i = 0;
     size_t prevSlice = drainSlice;
-    drainSlice = std::max<size_t>(peerMaxFrameSize, (http2::SOCKET_BACKPRESSURE_HIGH_WATER - std::min<size_t>(out.length(), http2::SOCKET_BACKPRESSURE_HIGH_WATER)) / std::max<size_t>(snapshot.size(), 1));
+    drainSlice = std::max<size_t>(peerMaxFrameSize, (http2::SOCKET_BACKPRESSURE_HIGH_WATER - std::min<size_t>(out->length(), http2::SOCKET_BACKPRESSURE_HIGH_WATER)) / std::max<size_t>(snapshot.size(), 1));
     for (; i < snapshot.size(); i++) {
         if (closed) { drainSlice = prevSlice; drainDepth--; return; }
-        if (out.length() >= http2::SOCKET_BACKPRESSURE_HIGH_WATER || connSendWindow <= 0) break;
+        if (out->length() >= http2::SOCKET_BACKPRESSURE_HIGH_WATER || connSendWindow <= 0) break;
         Http2Response *stream = snapshot[i];
         if (stream->dead || stream->wantsWrite) continue;
         if (stream->sendWindow <= 0) { markWantsWrite(stream); continue; }

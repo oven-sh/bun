@@ -53,9 +53,8 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
-/// The `uid` / `gid` option. Node semantics: an int32 passed through to the OS
-/// (negative values are cast to uid_t/gid_t, matching libuv). `null` leaves the
-/// child's id unchanged.
+/// `uid` / `gid` are int32s passed through to the OS (negative values are cast
+/// to uid_t/gid_t, matching libuv).
 fn user_or_group_id_from_js(
     global: &JSGlobalObject,
     value: JSValue,
@@ -64,8 +63,7 @@ fn user_or_group_id_from_js(
     if value == JSValue::NULL {
         return Ok(None);
     }
-    // `validate_integer_range` maps NaN to the default, which here is id 0
-    // (root); a NaN that came from a failed lookup must not become that.
+    // `validate_integer_range` maps NaN to the default, and the default id 0 is root.
     if value.is_number() && value.as_number().is_nan() {
         return Err(global.throw_range_error(
             value.as_number(),

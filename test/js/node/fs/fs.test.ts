@@ -2015,6 +2015,66 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
+// Node defaults an explicit `undefined` len to 0 on every truncate entry point
+// (`if (len === undefined) len = 0` in truncateSync, `len = 0` default params
+// elsewhere), while `null` still fails validateInteger.
+describe.concurrent("truncate with an undefined len", () => {
+  const file = (name: string, dir: string) => {
+    const p = join(dir, name);
+    writeFileSync(p, "hello world");
+    return p;
+  };
+
+  it("truncateSync(path, undefined) truncates to 0", () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("sync.txt", String(dir));
+    fs.truncateSync(p, undefined);
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("promises.truncate(path, undefined) truncates to 0", async () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("promise.txt", String(dir));
+    await _promises.truncate(p, undefined);
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("truncate(path, undefined, cb) truncates to 0", async () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("callback.txt", String(dir));
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    fs.truncate(p, undefined, err => (err ? reject(err) : resolve()));
+    await promise;
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("ftruncateSync(fd, undefined) truncates to 0", () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("fsync.txt", String(dir));
+    const fd = openSync(p, "r+");
+    try {
+      ftruncateSync(fd, undefined);
+      expect(fstatSync(fd).size).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("null is still rejected with ERR_INVALID_ARG_TYPE", async () => {
+    using dir = tempDir("fs-truncate-null", {});
+    const p = file("null.txt", String(dir));
+    expect(() => fs.truncateSync(p, null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    await expect(() => _promises.truncate(p, null as any)).toThrowWithCodeAsync(TypeError, "ERR_INVALID_ARG_TYPE");
+    const fd = openSync(p, "r+");
+    try {
+      expect(() => ftruncateSync(fd, null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("hello world");
+  });
+});
+
 describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
   // IOV_MAX is 1024 on Linux and macOS. Node's libuv loops writev in
   // IOV_MAX-sized batches and caps readv at IOV_MAX; Bun previously passed

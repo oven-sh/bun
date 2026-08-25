@@ -1616,15 +1616,15 @@ describe.concurrent("bunfig [define] applies to HTML bundles", () => {
     return (JSON.parse(stdout) as { js: string }).js;
   }
 
-  for (const development of ["true", "false"]) {
-    test(`development: ${development}: [define] replaces the identifier in the chunk`, async () => {
+  describe.each(["true", "false"])("development: %s", development => {
+    test("[define] replaces the identifier in the chunk", async () => {
       const js = await run(development, `[define]\nBUILD_FLAG = '"from-define"'`);
       expect(js).toContain("MARKER");
       expect(js).toContain('"from-define"');
       expect(js).not.toContain("BUILD_FLAG");
     });
 
-    test(`development: ${development}: [serve.static] define wins over [define]`, async () => {
+    test("[serve.static] define wins over [define]", async () => {
       const js = await run(
         development,
         `[define]\nBUILD_FLAG = '"from-define"'\n\n[serve.static.define]\nBUILD_FLAG = '"from-serve"'`,
@@ -1634,5 +1634,5 @@ describe.concurrent("bunfig [define] applies to HTML bundles", () => {
       expect(js).not.toContain('"from-define"');
       expect(js).not.toContain("BUILD_FLAG");
     });
-  }
+  });
 });

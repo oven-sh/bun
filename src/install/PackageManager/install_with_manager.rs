@@ -57,7 +57,9 @@ pub fn install_with_manager(
 
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.
-    if !manager.env().has_http_proxy() {
+    if !manager.env().has_http_proxy()
+        && manager.options.offline != crate::package_manager_real::options::OfflineMode::Offline
+    {
         // And don't try to resolve DNS if it's an IP address.
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
@@ -233,6 +235,17 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
+                // Which workspaces asked for a self-contained node_modules is a property
+                // of their manifests, not of the dependency graph: mirror the freshly
+                // parsed manifests whether or not anything else changed, so the copy
+                // loaded from bun.lock never goes stale.
+                manager
+                    .lockfile
+                    .self_contained_workspaces
+                    .clear_retaining_capacity();
+                for key in lockfile.self_contained_workspaces.keys() {
+                    manager.lockfile.self_contained_workspaces.put(*key, ())?;
+                }
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
                 }
@@ -417,7 +430,6 @@ pub fn install_with_manager(
                             lf.workspace_versions.insert(*key, version);
                         }
                     }
-
                     // Update patched dependencies
                     {
                         for (key, value) in lockfile.patched_dependencies.iter() {
@@ -1834,12 +1846,11 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             let tag_total = original.tag.pre.len() + original.tag.build.len();
             if tag_total > 0 {
                 let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
-                let mut ptr = &mut tag_buf[..];
-                original.tag = original_resolution
-                    .npm()
-                    .version
-                    .tag
-                    .clone_into(&lockfile.buffers.string_bytes, &mut ptr);
+                original.tag = original_resolution.npm().version.tag.clone_into(
+                    &lockfile.buffers.string_bytes,
+                    &mut tag_buf,
+                    &mut 0,
+                );
 
                 entry_ptr.original_version_string_buf = tag_buf;
             }

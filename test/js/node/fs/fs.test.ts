@@ -3195,6 +3195,63 @@ describe("rm", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
+
+  // A recursive rm holds a view of the cwd for the whole walk. On Windows the
+  // cwd is a real handle that process.chdir() closes and replaces, and the
+  // closed value is reissued to the next object created. That view used to be
+  // an owning Dir: when the walk ended after a chdir it no longer matched the
+  // current cwd handle and was closed, which closed the object that had the
+  // old value by then (here: events created right after the chdir, in the
+  // crash reports the handle of a worker thread).
+  it.if(isWindows)(
+    "recursive rm on the thread pool does not close the old cwd handle after process.chdir()",
+    async () => {
+      using dir = tempDir("rm-across-chdir", {
+        "fixture.js": /* js */ `
+        import { dlopen } from "bun:ffi";
+        import fs from "node:fs";
+        import path from "node:path";
+        const k32 = dlopen("kernel32.dll", {
+          CreateEventW: { args: ["ptr", "i32", "i32", "ptr"], returns: "ptr" },
+          WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
+          CloseHandle: { args: ["ptr"], returns: "i32" },
+        }).symbols;
+        const WAIT_OBJECT_0 = 0;
+
+        const tree = path.resolve("tree");
+        fs.mkdirSync(tree);
+        for (let i = 0; i < 1500; i++) fs.writeFileSync(path.join(tree, String(i).padStart(5, "0")), "");
+        const elsewhere = path.resolve("elsewhere");
+        fs.mkdirSync(elsewhere);
+
+        // The walk runs on a thread pool thread and takes its view of the cwd
+        // when it starts. Wait until it has started deleting.
+        const removal = fs.promises.rm(tree, { recursive: true });
+        const sentinels = ["00000", "00500", "01000", "01499"].map(name => path.join(tree, name));
+        while (sentinels.every(file => fs.existsSync(file))) await Bun.sleep(1);
+        // Retire the cwd handle the walk is holding a view of, then give its
+        // value to objects whose state we can check: signaled events.
+        process.chdir(elsewhere);
+        const events = [];
+        for (let i = 0; i < 1024; i++) events.push(Number(k32.CreateEventW(null, 1, 1, null)));
+        await removal;
+        const closed = events.filter(event => k32.WaitForSingleObject(event, 0) !== WAIT_OBJECT_0).length;
+        for (const event of events) k32.CloseHandle(event);
+        if (closed) throw new Error("rm closed " + closed + " handle(s) it did not own");
+        console.log("PASS");
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    },
+  );
 });
 
 describe("rmdir", () => {
@@ -5703,6 +5760,174 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
   expect(proc.exitCode).toBe(0);
 });
 
+// A subdirectory can be removed between the moment the recursive walk lists it
+// in its parent and the moment the walk reads it. The walk skipped the
+// subdirectory when its open failed with ENOENT, but when the removal landed
+// after the open, the kernel reported ENOENT from getdents64(2) and the whole
+// call failed (readdirSync blamed the root). libc's readdir(3), and so node,
+// report that ENOENT as the end of the directory; bun reads with the raw
+// syscall and sees it. A concurrent deleter is not deterministic, so
+// LD_PRELOAD a shim that plays one from inside getdents64: the marked
+// directories are really removed and the kernel itself produces the ENOENT.
+// bun issues getdents64 through libc's syscall(), which is the interposable
+// symbol on this path. glibc-only, same as the statfs shim above.
+it.skipIf(!isGlibc || !cc)("recursive readdir skips a subdirectory that is removed after it was opened", async () => {
+  using dir = tempDir("readdir-vanishing-subdir", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+static long (*next_syscall)(long, ...);
+
+long syscall(long nr, ...) {
+  va_list ap;
+  va_start(ap, nr);
+  long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
+  long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
+  va_end(ap);
+  if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
+  if (nr == SYS_getdents64) {
+    int fd = (int)a1;
+    char link[64], target[PATH_MAX];
+    snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+    ssize_t n = readlink(link, target, sizeof target - 1);
+    if (n > 0) {
+      target[n] = 0;
+      const char *base = strrchr(target, '/');
+      base = base ? base + 1 : target;
+      if (strcmp(base, "vanish-before-read") == 0) {
+        // Removed before the first read: that read fails with ENOENT.
+        rmdir(target);
+      } else if (strcmp(base, "vanish-mid-read") == 0) {
+        // Removed once the first read handed out its entries: the read that
+        // would report the end of the directory fails with ENOENT instead.
+        // (After the rmdir the link reads "... (deleted)", so this branch
+        // is not taken again.)
+        long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
+        if (rc > 0) {
+          unlinkat(fd, "inner.txt", 0);
+          rmdir(target);
+        }
+        return rc;
+      }
+    }
+  }
+  return next_syscall(nr, a1, a2, a3, a4, a5, a6);
+}
+`,
+    "child.js": `
+const fs = require("node:fs");
+const path = require("node:path");
+
+function makeTree(root) {
+  fs.mkdirSync(path.join(root, "keep", "deeper"), { recursive: true });
+  fs.writeFileSync(path.join(root, "keep", "deeper", "file.txt"), "x");
+  fs.mkdirSync(path.join(root, "vanish-before-read"));
+  fs.mkdirSync(path.join(root, "vanish-mid-read"));
+  fs.writeFileSync(path.join(root, "vanish-mid-read", "inner.txt"), "x");
+  return root;
+}
+function makeDoomedRoot(parent) {
+  const root = path.join(parent, "vanish-before-read");
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+const names = entries => entries.map(String).sort();
+const direntNames = (root, entries) =>
+  entries.map(d => path.relative(root, path.join(d.parentPath, d.name))).sort();
+const outcome = async fn => {
+  try {
+    return await fn();
+  } catch (e) {
+    return { code: e.code, path: e.path };
+  }
+};
+
+(async () => {
+  const out = {};
+  let root = makeTree("sync");
+  out.sync = await outcome(() => names(fs.readdirSync(root, { recursive: true })));
+  out.syncLeft = fs.readdirSync(root);
+
+  root = makeTree("sync-types");
+  out.syncTypes = await outcome(() => direntNames(root, fs.readdirSync(root, { recursive: true, withFileTypes: true })));
+  out.syncTypesLeft = fs.readdirSync(root);
+
+  root = makeTree("async");
+  out.async = await outcome(async () => names(await fs.promises.readdir(root, { recursive: true })));
+  out.asyncLeft = fs.readdirSync(root);
+
+  root = makeTree("async-types");
+  out.asyncTypes = await outcome(async () =>
+    direntNames(root, await fs.promises.readdir(root, { recursive: true, withFileTypes: true })),
+  );
+  out.asyncTypesLeft = fs.readdirSync(root);
+
+  // Only subdirectories are skipped. A read error on the root itself is still
+  // returned, recursive or not.
+  root = makeDoomedRoot("root-sync");
+  out.rootSync = await outcome(() => fs.readdirSync(root, { recursive: true }));
+  root = makeDoomedRoot("root-async");
+  out.rootAsync = await outcome(() => fs.promises.readdir(root, { recursive: true }));
+  root = makeDoomedRoot("root-plain");
+  out.rootPlain = await outcome(() => fs.readdirSync(root));
+  console.log(JSON.stringify(out));
+})();
+`,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build readdir race shim:\n${compile.stderr.toString()}`);
+  }
+
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  const walked = [
+    "keep",
+    "keep/deeper",
+    "keep/deeper/file.txt",
+    "vanish-before-read",
+    "vanish-mid-read",
+    "vanish-mid-read/inner.txt",
+  ];
+  // The `*Left` lists prove that the shim removed both marked directories
+  // while the walk ran. If it did not interpose, they are still there.
+  expect(JSON.parse(stdout)).toEqual({
+    sync: walked,
+    syncLeft: ["keep"],
+    syncTypes: walked,
+    syncTypesLeft: ["keep"],
+    async: walked,
+    asyncLeft: ["keep"],
+    asyncTypes: walked,
+    asyncTypesLeft: ["keep"],
+    rootSync: { code: "ENOENT", path: path.join("root-sync", "vanish-before-read") },
+    rootAsync: { code: "ENOENT", path: path.join("root-async", "vanish-before-read") },
+    rootPlain: { code: "ENOENT", path: path.join("root-plain", "vanish-before-read") },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("fs.Stat constructor", () => {
   expect(new Stats()).toMatchObject({
     "atimeMs": undefined,
@@ -6478,5 +6703,22 @@ describe("fs.Utf8Stream", () => {
       });
     });
     await done;
+  });
+});
+
+describe("module init", () => {
+  it("fs.promises is a lazy getter that resolves to node:fs/promises", () => {
+    const desc = Object.getOwnPropertyDescriptor(fs, "promises")!;
+    expect(typeof desc.get).toBe("function");
+    expect(desc.enumerable).toBe(true);
+    expect(fs.promises).toBe(_promises);
+  });
+
+  it("every exported function keeps its own name", () => {
+    // FileReadStream/FileWriteStream are aliases of ReadStream/WriteStream, as in Node.
+    const mismatched = Object.keys(fs).filter(
+      k => !k.startsWith("File") && typeof fs[k] === "function" && fs[k].name !== k,
+    );
+    expect(mismatched).toStrictEqual([]);
   });
 });

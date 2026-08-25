@@ -6,7 +6,7 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
-use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
+use bun_ptr::{IntrusiveRc, RefCount};
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
@@ -798,7 +798,6 @@ impl S3Credentials {
         // `authorization` (Box<[u8]>) drops on `?`.
 
         if sign_query {
-            // defer free(host); defer free(amz_date); — drop at scope exit.
             // SignResult implements Drop, so struct-update `..default()`
             // is forbidden; mutate a default in place instead.
             let mut r = SignResult::default();
@@ -1247,31 +1246,16 @@ pub struct S3CredentialsWithOptions {
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
-    // Self-referential views: these fields are non-owning;
-    // they borrow into the sibling `_*_slice: ZigStringSlice` fields
-    // below. `RawSlice` encodes that non-owning contract (and gives callers
-    // `.as_deref()` instead of an open-coded `unsafe { &*p }`).
-    pub content_disposition: Option<RawSlice<u8>>,
-    pub content_type: Option<RawSlice<u8>>,
-    pub content_encoding: Option<RawSlice<u8>>,
+    pub content_disposition: Option<bun_core::Utf8Bytes<'static>>,
+    pub content_type: Option<bun_core::Utf8Bytes<'static>>,
+    pub content_encoding: Option<bun_core::Utf8Bytes<'static>>,
     /// indicates if requester pays for the request (for requester pays buckets)
     pub request_payer: bool,
     /// indicates if the credentials have changed
     pub changed_credentials: bool,
     /// indicates if the virtual hosted style is used
     pub virtual_hosted_style: bool,
-    pub _access_key_id_slice: Option<bun_core::ZigStringSlice>,
-    pub _secret_access_key_slice: Option<bun_core::ZigStringSlice>,
-    pub _region_slice: Option<bun_core::ZigStringSlice>,
-    pub _endpoint_slice: Option<bun_core::ZigStringSlice>,
-    pub _bucket_slice: Option<bun_core::ZigStringSlice>,
-    pub _session_token_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_disposition_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_type_slice: Option<bun_core::ZigStringSlice>,
-    pub _content_encoding_slice: Option<bun_core::ZigStringSlice>,
 }
-
-// ZigStringSlice impls Drop, so no explicit Drop needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // SignedHeaders

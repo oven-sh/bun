@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
+use bun_core::{MutableString, String as BunString, Utf8Bytes};
 use bun_event_loop::{
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
     Task, Taskable,
@@ -17,10 +17,9 @@ use bun_http::{
     Signals, ThreadSafeStreamBuffer,
 };
 use bun_io::KeepAlive;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::{
-    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc, StrongOptional,
-};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
 use bun_sys::FdExt;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
@@ -651,9 +650,8 @@ impl FetchTasklet {
             let err = jsc::SystemError {
                 code: BunString::static_(<&'static str>::from(
                     jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
-                ))
-                .into(),
-                message: BunString::static_("Stream already used, please create a new one").into(),
+                )),
+                message: BunString::static_("Stream already used, please create a new one"),
                 ..Default::default()
             };
             let err_instance = err.to_error_instance(&global_this);
@@ -1150,7 +1148,6 @@ impl FetchTasklet {
 
         let tracker = self.tracker;
         tracker.will_dispatch(&global_this);
-        // defer block:
         let dispatch_cleanup = |_this: &mut FetchTasklet| {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
             tracker.did_dispatch(&global_this);
@@ -1234,9 +1231,10 @@ impl FetchTasklet {
                             return false;
                         }
                     };
-                    let hostname =
-                        OwnedString::new(BunString::clone_utf8(&certificate_info.hostname));
-                    let js_hostname: JSValue = match hostname.to_js(&global_object) {
+                    let js_hostname: JSValue = match bun_string_jsc::create_utf8_for_js(
+                        &global_object,
+                        &certificate_info.hostname,
+                    ) {
                         Ok(v) => v,
                         Err(e) => {
                             let hostname_err_result = global_object.take_exception(e);
@@ -1369,7 +1367,7 @@ impl FetchTasklet {
                     b"getaddrinfo",
                     hostname,
                 );
-                err.path = path.into();
+                err.path = path;
                 return BodyValueError::SystemTypeError(err);
             }
         }
@@ -1604,9 +1602,9 @@ impl FetchTasklet {
         };
 
         let fetch_error = jsc::SystemError {
-            code: code.into(),
-            message: message.into(),
-            path: path.into(),
+            code,
+            message,
+            path,
             ..Default::default()
         };
 
@@ -1907,7 +1905,7 @@ impl FetchTasklet {
         // RELEASE_ASSERT in AtomStringImpl::remove(). Plain WTFStringImpl
         // refcounts are atomic, so clone_utf8 is safe.
         // Fast path: when the wire reason phrase matches the canonical text for
-        // this status code, store a StaticZigString (deref is a no-op, so still
+        // this status code, store a StaticEncodedSlice (deref is a no-op, so still
         // safe to drop off-thread) and skip the WTF allocation entirely.
         let status_text = match crate::server::http_status_text::get(status_code)
             .map(|t| &t[4..])
@@ -1929,7 +1927,7 @@ impl FetchTasklet {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
                 status_code,
-                status_text: status_text.into(),
+                status_text,
                 ..Default::default()
             },
             Body::new(body),
@@ -2790,7 +2788,7 @@ pub struct FetchOptions {
     // Custom Hostname
     pub(crate) hostname: Option<Box<[u8]>>,
     pub(crate) check_server_identity: StrongOptional,
-    pub(crate) unix_socket_path: ZigStringSlice,
+    pub(crate) unix_socket_path: Utf8Bytes<'static>,
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) upgraded_connection: bool,
     pub(crate) forced_protocol: Option<http::Protocol>,

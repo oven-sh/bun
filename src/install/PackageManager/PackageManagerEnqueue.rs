@@ -158,6 +158,18 @@ pub fn enqueue_tarball_for_download(
     if this.network_task_has_failed(task_id) {
         return Err(EnqueueTarballForDownloadError::AlreadyFailed);
     }
+    if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
+        let name = this
+            .lockfile
+            .str(&this.lockfile.packages.get(package_id as usize).name)
+            .to_vec();
+        if offline_tarball_miss(this, task_id, &name, is_required) {
+            return Err(EnqueueTarballForDownloadError::Offline);
+        }
+    }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
@@ -239,6 +251,16 @@ pub fn enqueue_tarball_for_reading(
     this.task_batch.push(ThreadPool::Batch::from(task));
 }
 
+/// Outcome of `enqueue_git_for_checkout`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GitEnqueueResult {
+    /// a task was queued (or joined an existing one); completion arrives via the task queue
+    Queued,
+    /// `--offline` and the repository is not cached: nothing was queued (already reported
+    /// if required); the caller must count the package as failed/skipped itself
+    OfflineMiss,
+}
+
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -246,7 +268,7 @@ pub fn enqueue_git_for_checkout(
     resolution: &Resolution,
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
-) {
+) -> GitEnqueueResult {
     // SAFETY: caller passes `resolution.tag == Git`; the `git` arm is the
     // active union field. Copy out so the value no longer borrows
     // `*resolution` while `*this` is mutably reborrowed below.
@@ -261,6 +283,16 @@ pub fn enqueue_git_for_checkout(
     let clone_id = Task::Id::for_git_clone(url);
     let resolved = this.lockfile.str_detached(&repository.resolved);
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
+    // --offline: decide before any queue registration, so an optional miss leaves
+    // nothing behind and a later required edge still reaches the report
+    if this.git_repositories.get(&clone_id).is_none() {
+        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
+        if offline_git_miss(this, clone_id, alias, is_required) {
+            return GitEnqueueResult::OfflineMiss;
+        }
+    }
     let checkout_queue = this
         .task_queue
         .get_or_put(checkout_id)
@@ -272,7 +304,7 @@ pub fn enqueue_git_for_checkout(
     checkout_queue.value_ptr.push(task_context);
 
     if checkout_queue.found_existing {
-        return;
+        return GitEnqueueResult::Queued;
     }
 
     if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
@@ -298,13 +330,90 @@ pub fn enqueue_git_for_checkout(
             .push(TaskCallbackContext::Dependency(dependency_id));
 
         if clone_queue.found_existing {
-            return;
+            return GitEnqueueResult::Queued;
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
         let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
         this.task_batch.push(ThreadPool::Batch::from(task));
     }
+    GitEnqueueResult::Queued
+}
+
+/// Under `--offline`, an install-phase request for a package that is not in the cache
+/// (these helpers are only reached after the cache lookup missed): report it once if
+/// required, skip if optional, and never register a task nobody will complete.
+fn offline_tarball_miss(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    name: &[u8],
+    is_required: bool,
+) -> bool {
+    if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+        return false;
+    }
+    if is_required && !this.network_task_has_failed(task_id) {
+        // reserve + mark failed so later dependents take the already-failed path
+        let _ = this.has_created_network_task(task_id, true);
+        this.mark_network_task_failed(task_id);
+        let _ = this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "--offline: \"{}\" is not in the cache",
+                bstr::BStr::new(name)
+            ),
+        );
+    }
+    true
+}
+
+/// Under `--offline`, a git dependency whose clone is not already in the cache cannot
+/// be installed: report it (once, and only if some edge requires it) instead of
+/// spawning `git`. Returns true when the clone must not be enqueued.
+fn offline_git_miss(
+    this: &mut PackageManager,
+    clone_id: Task::Id,
+    name: &[u8],
+    is_required: bool,
+) -> bool {
+    if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+        return false;
+    }
+    let mut folder = Vec::with_capacity(24);
+    {
+        use std::io::Write;
+        let _ = write!(
+            folder,
+            "{}.git",
+            bun_core::fmt::hex_int_lower::<16>(clone_id.get())
+        );
+    }
+    let cache_dir = package_manager_real::get_cache_directory(this);
+    let cached = bun_sys::directory_exists_at(cache_dir, &bun_core::ZBox::from_bytes(&folder))
+        .unwrap_or(false);
+    if cached {
+        return false;
+    }
+    if is_required {
+        if !this.network_task_has_failed(clone_id) {
+            // reserve + mark failed: reported once, later dependents see the failure
+            let _ = this.has_created_network_task(clone_id, true);
+            this.mark_network_task_failed(clone_id);
+            let _ = this.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "--offline: git repository for \"{}\" is not in the cache",
+                    bstr::BStr::new(name)
+                ),
+            );
+        }
+    } else {
+        // let a later required edge on the same repository report it
+        let _ = this.network_dedupe_map.remove(&clone_id);
+    }
+    true
 }
 
 /// # Safety
@@ -356,6 +465,14 @@ pub fn enqueue_package_for_download(
     let task_id = Task::Id::for_npm_package(name, version);
     if this.network_task_has_failed(task_id) {
         return Err(EnqueuePackageForDownloadError::AlreadyFailed);
+    }
+    {
+        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
+        if offline_tarball_miss(this, task_id, name, is_required) {
+            return Err(EnqueuePackageForDownloadError::Offline);
+        }
     }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
@@ -1128,12 +1245,43 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if this.options.enable.manifest_cache_control() && !expired
+                                        // (`--prefer-offline` / `--offline` load cached manifests as fresh
+                                        // regardless of age — see `DiskCacheCtx::accept_expired` — so they
+                                        // take this branch too; an entry still marked expired here needs
+                                        // the extended manifest and must be fetched.)
+                                        if !expired
+                                            && (this.options.enable.manifest_cache_control()
+                                                || this.options.offline
+                                                    != crate::package_manager_real::options::OfflineMode::Online)
                                         {
                                             let _ = this.network_dedupe_map.remove(&task_id);
                                             continue 'retry_from_manifests_ptr;
                                         }
                                     }
+                                }
+
+                                if this.options.offline
+                                    == crate::package_manager_real::options::OfflineMode::Offline
+                                {
+                                    // Optional/peer edges are skipped like any other unavailable
+                                    // optional dependency (and release the reservation so a later
+                                    // *required* edge on the same package still reports it); a
+                                    // required edge reports once and marks the task failed so
+                                    // later dependents take the already-failed path.
+                                    if dependency.behavior.is_required() {
+                                        this.mark_network_task_failed(task_id);
+                                        let _ = this.log_mut().add_error_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "--offline: no cached manifest for \"{}\" (run once online, or use --prefer-offline)",
+                                                bstr::BStr::new(&name_str),
+                                            ),
+                                        );
+                                    } else {
+                                        let _ = this.network_dedupe_map.remove(&task_id);
+                                    }
+                                    return Ok(());
                                 }
 
                                 if verbose_install() {
@@ -1318,6 +1466,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 if this.has_created_network_task(clone_id, dependency.behavior.is_required()) {
                     return Ok(());
                 }
+                if offline_git_miss(this, clone_id, alias, dependency.behavior.is_required()) {
+                    return Ok(());
+                }
 
                 let task = enqueue_git_clone(this, clone_id, alias, &dep, dependency, &res, None);
                 this.task_batch.push(ThreadPool::Batch::from(task));
@@ -1383,7 +1534,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
+            let generated = match run_tasks::generate_network_task_for_tarball(
                 this,
                 task_id,
                 &url,
@@ -1397,7 +1548,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 },
                 None,
                 crate::network_task::Authorization::NoAuthorization,
-            )? {
+            ) {
+                // --offline miss: already reported (if required) / skipped (if optional)
+                Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                other => other?,
+            };
+            if let Some(network_task) = generated {
                 // reshaped for borrowck — see `enqueue_tarball_for_download`.
                 let nt: *mut NetworkTask = network_task;
                 enqueue_network_task(this, nt);
@@ -1614,7 +1770,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // immediately so the `&mut *this` borrow ends before
                     // `enqueue_network_task(this, …)` reborrows it (NLL).
                     let network_task: Option<*mut NetworkTask> =
-                        run_tasks::generate_network_task_for_tarball(
+                        match run_tasks::generate_network_task_for_tarball(
                             this,
                             task_id,
                             url,
@@ -1628,8 +1784,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             },
                             None,
                             crate::network_task::Authorization::NoAuthorization,
-                        )?
-                        .map(std::ptr::from_mut::<NetworkTask>);
+                        ) {
+                            // --offline miss: already reported / skipped
+                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                            other => other?.map(std::ptr::from_mut::<NetworkTask>),
+                        };
                     if let Some(network_task) = network_task {
                         enqueue_network_task(this, network_task);
                     }
@@ -3011,7 +3170,7 @@ impl PackageManager {
         resolution: &Resolution,
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
-    ) {
+    ) -> GitEnqueueResult {
         enqueue_git_for_checkout(
             self,
             dependency_id,

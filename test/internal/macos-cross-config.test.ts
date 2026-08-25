@@ -18,7 +18,7 @@ import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
 import { MACOS_SDK_VERSION, macosSdkCachePath, resolveMacosSdkPath } from "../../scripts/build/macos-sdk.ts";
 import { rustTarget } from "../../scripts/build/rust.ts";
-import { postlinkCommands, machoEntitlementsPlist, machoPostlinkCommand } from "../../scripts/build/shims.ts";
+import { machoEntitlementsPlist, machoPostlinkCommand, postlinkCommands } from "../../scripts/build/shims.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {

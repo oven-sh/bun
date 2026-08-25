@@ -23,6 +23,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { declareAll } from "./build/bridge.ts";
 import {
   canTraceOrderFile,
   downloadArtifacts,
@@ -45,9 +46,8 @@ import {
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
-import { BuildError } from "./build/error.ts";
-import { declareAll } from "./build/bridge.ts";
 import { Engine, type EngineOptions } from "./build/engine.ts";
+import { BuildError } from "./build/error.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 

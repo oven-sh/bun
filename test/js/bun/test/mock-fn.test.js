@@ -1043,20 +1043,29 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
-    test("spyOn on object doens't crash if object GC'd", () => {
+    test("a spy keeps its target alive until it is restored", async () => {
       const spies = new Array(1000);
+      const targets = new Array(1000);
       (() => {
         for (let i = 0; i < 1000; i++) {
           var obj = { original: 42 };
           obj.original = 42;
           const fn = spyOn(obj, "original");
           spies[i] = fn;
+          targets[i] = new WeakRef(obj);
         }
         Bun.gc(true);
       })();
+      // A WeakRef target stays alive until the end of the job that created or
+      // dereferenced it, so collection is only observable from a later job.
+      await Bun.sleep(0);
       Bun.gc(true);
+      expect(targets.filter(ref => ref.deref() !== undefined)).toHaveLength(1000);
 
       jest.restoreAllMocks();
+      await Bun.sleep(0);
+      Bun.gc(true);
+      expect(targets.filter(ref => ref.deref() !== undefined).length).toBeLessThan(1000);
     });
 
     test("spyOn works on globalThis", () => {

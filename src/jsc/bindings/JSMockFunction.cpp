@@ -265,7 +265,6 @@ public:
     mutable JSC::WriteBarrier<JSC::JSArray> instances;
     mutable JSC::WriteBarrier<JSC::JSArray> returnValues;
 
-    // This cell has no destructor, so spy state must be GC references, not C++ handles.
     JSC::WriteBarrier<JSObject> spyTarget;
     // A JSString, or a Symbol for a symbol key.
     JSC::WriteBarrier<JSC::Unknown> spyPropertyKey;
@@ -462,6 +461,10 @@ public:
         initMock();
     }
 };
+
+// The cell uses cellHeapCellType, which never runs destructors. Spy state must
+// be GC references, not C++ handles such as JSC::Weak or JSC::Identifier.
+STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSMockFunction);
 
 template<typename Visitor>
 void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)

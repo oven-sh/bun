@@ -139,7 +139,7 @@ pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<S
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
-/// The route table's ref on each route; `StaticRouteEntry`'s `Drop` releases it.
+/// The route table's ref on each route.
 pub enum AnyRoute {
     /// Serve a static file — `"/robots.txt": new Response(...)`
     Static(bun_ptr::RefPtr<StaticRoute>),
@@ -163,16 +163,6 @@ impl AnyRoute {
             AnyRoute::FrameworkRouter(_) => {
                 core::mem::size_of::<crate::bake::FileSystemRouterType>()
             }
-        }
-    }
-
-    pub(crate) fn deref_(&self) {
-        match self {
-            AnyRoute::Static(r) => r.deref(),
-            AnyRoute::File(r) => r.deref(),
-            AnyRoute::Directory(r) => r.deref(),
-            AnyRoute::Html(r) => r.deref(),
-            AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
     }
 
@@ -4110,10 +4100,7 @@ pub(crate) mod http_server_agent {
                     _ => RouteType::Default,
                 },
                 file_path: match &entry.route {
-                    // SAFETY: RefPtr.data is a live NonNull while held in the
-                    // route table; `.bundle` (IntrusiveRc) derefs to the live
-                    // HTMLBundle whose `path` outlives this borrow.
-                    AnyRoute::Html(r) => BunString::from_bytes(&r.data().bundle.path),
+                    AnyRoute::Html(r) => BunString::from_bytes(&r.bundle.path),
                     _ => BunString::EMPTY,
                 },
                 ..Default::default()

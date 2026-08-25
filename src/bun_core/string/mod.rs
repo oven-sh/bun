@@ -928,11 +928,13 @@ impl String {
         let mut out = self.into_utf8_with_string();
         if out.string.tag == Tag::WTFStringImpl {
             if out.utf8.is_none() {
-                // 8-bit all-ASCII: a shared `string` keeps backing the bytes.
-                out.string.share();
-                return out;
+                // 8-bit all-ASCII: a thread-safe `string` keeps backing the bytes.
+                if out.string.is_thread_safe() {
+                    return out;
+                }
+                out.utf8 = Some(out.slice().to_vec());
             }
-            // Transcoded; drop the WTF backing to release memory.
+            // Transcoded or copied; drop the WTF backing to release memory.
             out.string = String::EMPTY;
         }
         out

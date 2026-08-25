@@ -7,10 +7,11 @@ use core::ptr::NonNull;
 use bun_core::{self as bstring, strings};
 use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
+use bun_ptr::RefPtr;
 
 use crate::webcore::Blob;
 use crate::webcore::blob::SizeType;
-use crate::webcore::blob::store::{Bytes, Data, IsAllAscii, Store, StoreRef};
+use crate::webcore::blob::store::{Bytes, Data, IsAllAscii, Store};
 use bun_standalone_graph::File;
 
 /// The process-wide part of an embedded file's `Blob`: store, content type
@@ -53,9 +54,9 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
         if let Data::Bytes(bytes) = &mut store.data {
             bytes.stored_name = file.name.to_vec().into_boxed_slice();
         }
-        let store = StoreRef::from(Store::new(store));
+        let store = RefPtr::new(store);
         // make it never free
-        store.ref_();
+        let _ = store.clone().into_raw();
         blob.size.set(store.size());
         blob.store.set(Some(store));
         let name = file.display_name();

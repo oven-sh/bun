@@ -209,13 +209,6 @@ impl StaticRouteEntry {
     }
 }
 
-impl Drop for StaticRouteEntry {
-    fn drop(&mut self) {
-        // path: Box<[u8]> drops automatically
-        self.route.deref_();
-    }
-}
-
 impl ServerConfig {
     fn normalize_static_routes_list(&mut self) -> Result<(), crate::Error> {
         fn hash(route: &StaticRouteEntry) -> u64 {

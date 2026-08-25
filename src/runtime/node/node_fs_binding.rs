@@ -224,7 +224,7 @@ impl Binding {
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
-        let is_bunfs = bun_standalone_graph::Graph::get().is_some()
+        let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));

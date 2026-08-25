@@ -274,7 +274,6 @@ impl FileRoute {
         let Some(path) = store.get_path() else {
             req.set_yield(true);
             route.on_response_complete(resp);
-            route.deref();
             return;
         };
 
@@ -301,7 +300,6 @@ impl FileRoute {
         let Ok(fd) = fd_result else {
             req.set_yield(true);
             route.on_response_complete(resp);
-            route.deref();
             return;
         };
 
@@ -317,7 +315,6 @@ impl FileRoute {
                 #[cfg(not(windows))]
                 Closer::close(fd, ());
                 route.on_response_complete(resp);
-                route.deref();
             }
             Serve::Stream {
                 file_type,

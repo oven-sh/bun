@@ -1920,7 +1920,7 @@ impl FetchTasklet {
         fetch_tasklet.tracker.did_schedule(global_this);
 
         // `body` is *moved* through `FetchOptions` into `request_body` (no
-        // shallow alias, no post-queue detach), so the StoreRef already carries
+        // shallow alias, no post-queue detach), so the RefPtr<Store> already carries
         // the caller's +1 — bumping it again here leaked one ref per
         // Blob-backed body (issue: fetch-leak fixture #5 RSS growth).
         // `clear_data() → request_body.detach()` releases it.

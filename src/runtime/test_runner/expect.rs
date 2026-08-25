@@ -3,12 +3,12 @@ use core::cell::Cell;
 use core::fmt;
 
 use bun_core::Output;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
-use bun_core::ZigString;
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
@@ -288,7 +288,7 @@ impl Expect {
 
     pub(crate) fn throw_pretty_matcher_error(
         global_this: &JSGlobalObject,
-        custom_label: bun_core::String,
+        custom_label: &bun_core::String,
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         flags: Flags,
@@ -427,7 +427,7 @@ impl Expect {
         #[allow(clippy::disallowed_methods)] // template is a runtime parameter
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
         Self::process_promise(
-            self.custom_label.clone(),
+            &self.custom_label,
             self.flags.get(),
             global_this,
             value,
@@ -444,7 +444,7 @@ impl Expect {
     #[allow(clippy::too_many_arguments)]
     fn throw_promise_matcher_error(
         global_this: &JSGlobalObject,
-        custom_label: bun_core::String,
+        custom_label: &bun_core::String,
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         flags: Flags,
@@ -475,7 +475,7 @@ impl Expect {
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
     pub(crate) fn process_promise(
-        custom_label: bun_core::String,
+        custom_label: &bun_core::String,
         flags: Flags,
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -609,7 +609,7 @@ impl Expect {
         // (note that matcher_name/matcher_args are not used because silent=true)
         // SAFETY: value is a valid in/out-ptr provided by C++ caller
         let v = unsafe { *value };
-        match Self::process_promise(bun_core::String::empty(), flags, global_this, v, "", "", true) {
+        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, "", "", true) {
             Ok(new) => {
                 // SAFETY: value is a valid in/out-ptr provided by C++ caller
                 unsafe { *value = new };
@@ -683,7 +683,6 @@ impl Expect {
     // false positive on that contract.
     #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
-        self.custom_label.deref();
         // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
         // so the Box drop below would leak the +1 — release explicitly.
         if let Some(parent) = self.parent.take() {
@@ -696,7 +695,7 @@ impl Expect {
         let arguments = callframe.arguments();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
 
-        let mut custom_label = bun_core::String::empty();
+        let mut custom_label = bun_core::String::EMPTY;
         if arguments.len() > 1 {
             if arguments[1].is_string() || arguments[1].implements_to_string(global_this)? {
                 custom_label = arguments[1].to_bun_string(global_this)?;
@@ -771,20 +770,17 @@ impl Expect {
 
         let arguments = call_frame.arguments();
 
-        let mut _msg: ZigString = ZigString::EMPTY;
-
-        if !arguments.is_empty() {
+        let message: bun_core::String = if !arguments.is_empty() {
             let value = arguments[0];
-            value.ensure_still_alive();
 
             if !value.is_string() {
                 return Err(global_this.throw_invalid_argument_type("pass", "message", "string"));
             }
 
-            value.to_zig_string(&mut _msg, global_this)?;
+            value.to_bun_string(global_this)?
         } else {
-            _msg = ZigString::from_bytes(b"passes by .pass() assertion");
-        }
+            bun_core::String::static_("passes by .pass() assertion")
+        };
 
         this.increment_expect_call_counter();
 
@@ -794,11 +790,9 @@ impl Expect {
         if not { pass = !pass; }
         if pass { return Ok(JSValue::UNDEFINED); }
 
-        let msg = _msg.to_slice();
-
         if not {
             let signature = Self::get_signature("pass", "", true);
-            return throw!(this, global_this, signature, "\n\n{}\n", bstr::BStr::new(msg.slice()));
+            return throw!(this, global_this, signature, "\n\n{}\n", message);
         }
 
         // should never reach here
@@ -817,20 +811,17 @@ impl Expect {
 
         let arguments = call_frame.arguments();
 
-        let mut _msg: ZigString = ZigString::EMPTY;
-
-        if !arguments.is_empty() {
+        let message: bun_core::String = if !arguments.is_empty() {
             let value = arguments[0];
-            value.ensure_still_alive();
 
             if !value.is_string() {
                 return Err(global_this.throw_invalid_argument_type("fail", "message", "string"));
             }
 
-            value.to_zig_string(&mut _msg, global_this)?;
+            value.to_bun_string(global_this)?
         } else {
-            _msg = ZigString::from_bytes(b"fails by .fail() assertion");
-        }
+            bun_core::String::static_("fails by .fail() assertion")
+        };
 
         this.increment_expect_call_counter();
 
@@ -840,10 +831,8 @@ impl Expect {
         if not { pass = !pass; }
         if pass { return Ok(JSValue::UNDEFINED); }
 
-        let msg = _msg.to_slice();
-
         let signature = Self::get_signature("fail", "", true);
-        throw!(this, global_this, signature, "\n\n{}\n", bstr::BStr::new(msg.slice()))
+        throw!(this, global_this, signature, "\n\n{}\n", message)
     }
 }
 
@@ -1117,10 +1106,6 @@ impl Expect {
 
             // 1. find the src loc of the snapshot
             let srcloc = call_frame.get_caller_src_loc(global_this);
-            // bun_core::String is Copy
-            // with no Drop, so wrap in the RAII guard to release the +1 on
-            // every exit path (including the early returns below).
-            let _srcloc_str_guard = bun_core::OwnedString::new(srcloc.str);
             let file_id = buntest.file_id;
             // MultiArrayList::get requires MultiArrayElement (derive pending);
             // use the column accessor which already compiles in jest.rs.
@@ -1369,7 +1354,7 @@ impl Expect {
         // SAFETY: already checked that args[0] is an object
         let matchers_to_register = args[0].get_object().expect("unreachable");
         {
-            let mut iter = JSPropertyIterator::init(
+            let iter = JSPropertyIterator::init(
                 global_this,
                 matchers_to_register,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -1381,14 +1366,13 @@ impl Expect {
                 },
             )?;
 
-            while let Some(matcher_name) = iter.next()? {
-                let matcher_fn: JSValue = iter.value;
+            while let Some((matcher_name, matcher_fn)) = iter.next()? {
 
                 if !matcher_fn.js_type().is_function() {
                     let type_name = if matcher_fn.is_null() {
-                        bun_core::String::static_("null")
+                        bun_core::StringView::static_("null")
                     } else {
-                        bun_core::String::init(matcher_fn.js_type_string(global_this).get_zig_string(global_this)?)
+                        matcher_fn.js_type_string(global_this)
                     };
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "expect.extend: `{}` is not a valid matcher. Must be a function, is \"{}\"",
@@ -1420,7 +1404,7 @@ impl Expect {
                 let wrapper_fn = unsafe {
                     Bun__JSWrappingFunction__create(
                         global_this,
-                        &raw const matcher_name,
+                        &matcher_name,
                         host_fn_ptr,
                         matcher_fn,
                     )
@@ -1441,7 +1425,7 @@ impl Expect {
     #[cold]
     fn throw_invalid_matcher_error(
         global_this: &JSGlobalObject,
-        matcher_name: bun_core::String,
+        matcher_name: &bun_core::String,
         result: JSValue,
     ) -> JsError {
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
@@ -1469,7 +1453,7 @@ impl Expect {
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
-        matcher_name: bun_core::String,
+        matcher_name: &bun_core::String,
         matcher_fn: JSValue,
         args: &[JSValue],
         flags: Flags,
@@ -1541,18 +1525,16 @@ impl Expect {
         if pass || silent { return Ok(pass); }
 
         // handle failure
-        // bun_core::String is Copy with no Drop, so wrap in OwnedString to
-        // release the +1 returned by to_bun_string/from_js on scope exit.
-        let message_text: bun_core::OwnedString = if message.is_undefined() {
-            bun_core::OwnedString::new(bun_core::String::static_("No message was specified for this matcher."))
+        let message_text: bun_core::String = if message.is_undefined() {
+            bun_core::String::static_("No message was specified for this matcher.")
         } else if message.is_string() {
-            bun_core::OwnedString::new(message.to_bun_string(global_this)?)
+            message.to_bun_string(global_this)?
         } else {
             debug_assert!(message.is_callable()); // checked above
 
             // Pass the global object itself as `this`.
             let message_result = message.call_with_global_this(global_this, &[])?;
-            bun_core::OwnedString::new(bun_core::String::from_js(message_result, global_this)?)
+            bun_core::String::from_js(message_result, global_this)?
         };
 
         let matcher_params = CustomMatcherParamsFormatter {
@@ -1561,11 +1543,11 @@ impl Expect {
         };
         Err(Self::throw_pretty_matcher_error(
             global_this,
-            bun_core::String::empty(),
+            &bun_core::String::EMPTY,
             matcher_name,
             matcher_params,
             Flags::default(),
-            format_args!("{}", message_text.get()),
+            format_args!("{}", message_text),
         ))
     }
 
@@ -1617,11 +1599,11 @@ impl Expect {
             )));
         };
         value = Self::process_promise(
-            expect.custom_label.clone(),
+            &expect.custom_label,
             expect.flags.get(),
             global_this,
             value,
-            matcher_name,
+            &matcher_name,
             &matcher_params,
             false,
         )?;
@@ -1639,7 +1621,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
+        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
 
         Ok(this_value)
     }
@@ -1772,14 +1754,14 @@ impl Expect {
         let [arg] = callframe.arguments_as_array::<1>();
 
         if arg.is_empty_or_undefined_or_null() {
-            let error_value = bun_core::String::init("reached unreachable code").to_error_instance(global_this);
-            error_value.put(global_this, b"name", bun_core::String::init("UnreachableError").to_js(global_this)?);
+            let error_value = global_this.create_error_instance(format_args!("reached unreachable code"));
+            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
         }
 
         if arg.is_string() {
             let error_value = arg.to_bun_string(global_this)?.to_error_instance(global_this);
-            error_value.put(global_this, b"name", bun_core::String::init("UnreachableError").to_js(global_this)?);
+            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
         }
 
@@ -2087,8 +2069,8 @@ impl Expect {
 
         let mut pass = value.is_string();
         if pass {
-            let value_string = value.to_slice_or_null(global)?;
-            let expected_string = expected.to_slice_or_null(global)?;
+            let value_string = value.to_utf8(global)?;
+            let expected_string = expected.to_utf8(global)?;
             pass = expected_string.slice().is_empty()
                 || pred(value_string.slice(), expected_string.slice());
         }
@@ -2630,7 +2612,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, this.flags, true)
+        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, this.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2705,10 +2687,10 @@ impl ExpectCustomAsymmetricMatcher {
                     Ok(r) => r,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                 };
-                let s = bun_core::OwnedString::new(match result.to_bun_string(global_this) {
+                let s = match result.to_bun_string(global_this) {
                     Ok(s) => s,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-                });
+                };
                 write!(writer, "{}", s)?;
             }
         }
@@ -2740,7 +2722,7 @@ impl ExpectMatcherContext {
         match this.flags.promise() {
             Promise::Rejects => bun_core::String::static_("rejects").to_js(global_this),
             Promise::Resolves => bun_core::String::static_("resolves").to_js(global_this),
-            _ => bun_core::String::empty().to_js(global_this),
+            _ => Ok(JSValue::js_empty_string(global_this)),
         }
     }
 
@@ -2795,7 +2777,7 @@ impl ExpectMatcherUtils {
             }
         }
 
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
+        bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2829,9 +2811,7 @@ impl ExpectMatcherUtils {
                 (),
             ));
         }
-        // `to_bun_string` returns +1;
-        // bun_core::String is `Copy` with no `Drop`, so wrap in `OwnedString`.
-        let matcher_name = bun_core::OwnedString::new(arguments[0].to_bun_string(global_this)?);
+        let matcher_name = arguments[0].to_bun_string(global_this)?;
 
         let received = if arguments.len() > 1 { arguments[1] } else { bun_core::String::static_("received").to_js(global_this)? };
         let expected = if arguments.len() > 2 { arguments[2] } else { bun_core::String::static_("expected").to_js(global_this)? };
@@ -2906,7 +2886,7 @@ impl ExpectMatcherUtils {
             bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
         };
         let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+        bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
     }
 }
 
@@ -3224,7 +3204,7 @@ fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> O
 unsafe extern "C" {
     fn Bun__JSWrappingFunction__create(
         global_this: *const JSGlobalObject,
-        symbol_name: *const bun_core::String,
+        symbol_name: &bun_core::String,
         // C++: `Bun::NativeFunctionPtr` — a bare `EncodedJSValue (*)(JSGlobalObject*, CallFrame*)`.
         // Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,

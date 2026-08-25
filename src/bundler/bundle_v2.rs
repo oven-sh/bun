@@ -819,7 +819,7 @@ pub mod bv2_impl {
                     is_on_load: bool,
                 ) -> bool {
                     let mut namespace_string = if path.is_file() {
-                        BunString::empty()
+                        BunString::EMPTY
                     } else {
                         BunString::clone_utf8(path.namespace)
                     };
@@ -842,7 +842,7 @@ pub mod bv2_impl {
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
                     let mut namespace_string = if namespace.is_empty() {
-                        BunString::static_(b"file")
+                        BunString::static_("file")
                     } else {
                         BunString::clone_utf8(namespace)
                     };
@@ -867,7 +867,7 @@ pub mod bv2_impl {
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
                     let mut namespace_string = if namespace.is_empty() || namespace == b"file" {
-                        BunString::static_(b"file")
+                        BunString::static_("file")
                     } else {
                         BunString::clone_utf8(namespace)
                     };
@@ -1398,6 +1398,9 @@ pub mod bv2_impl {
             }
         }
 
+        /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
+        pub(crate) enum EncoderStringTable {}
+
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
             /// "generate JSC bytecode off the main JS thread" helper — marks the
@@ -1408,8 +1411,22 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
-                source_provider_url: &mut bun_core::String,
+                source_provider_url: &bun_core::String,
+                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
+
+            /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`: (registry id, bytecode) for the internal modules named
+            /// by `specifiers` plus their static requires.
+            safe fn __bun_jsc_generate_internal_module_bytecode(
+                specifiers: &[&[u8]],
+                depth: u32,
+                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+            ) -> Vec<(u32, Box<[u8]>)>;
+
+            safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
+            safe fn __bun_jsc_encoder_string_table_take(
+                table: core::ptr::NonNull<EncoderStringTable>,
+            ) -> Box<[u8]>;
         }
 
         unsafe extern "Rust" {
@@ -1446,9 +1463,50 @@ pub mod bv2_impl {
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_provider_url: &mut bun_core::String,
+            source_provider_url: &bun_core::String,
+            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {
-            __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
+            __bun_jsc_generate_cached_bytecode(
+                format,
+                source,
+                source_provider_url,
+                external_strings,
+            )
+        }
+
+        /// Owns a `JSC::EncoderStringTable` for one link; `take()` serializes and frees it, `Drop` frees it on early return.
+        pub(crate) struct EncoderStringTableHandle(Option<core::ptr::NonNull<EncoderStringTable>>);
+
+        impl EncoderStringTableHandle {
+            #[inline]
+            pub(crate) fn new() -> Self {
+                Self(Some(__bun_jsc_encoder_string_table_new()))
+            }
+            #[inline]
+            pub(crate) fn get(&self) -> Option<core::ptr::NonNull<EncoderStringTable>> {
+                self.0
+            }
+            #[inline]
+            pub(crate) fn take(mut self) -> Box<[u8]> {
+                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"))
+            }
+        }
+
+        impl Drop for EncoderStringTableHandle {
+            fn drop(&mut self) {
+                if let Some(table) = self.0.take() {
+                    drop(__bun_jsc_encoder_string_table_take(table));
+                }
+            }
+        }
+
+        #[inline]
+        pub(crate) fn generate_internal_module_bytecode(
+            specifiers: &[&[u8]],
+            depth: u32,
+            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+        ) -> Vec<(u32, Box<[u8]>)> {
+            __bun_jsc_generate_internal_module_bytecode(specifiers, depth, external_strings)
         }
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
@@ -2914,6 +2972,8 @@ pub mod bv2_impl {
             this.linker.options.target = this.transpiler.options.target;
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
+            this.linker.options.generate_internal_module_bytecode =
+                this.transpiler.options.bytecode && this.transpiler.options.compile_target_is_host;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.

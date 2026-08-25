@@ -7,7 +7,6 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::scoped_log;
-use bun_core::{ZigString, ZigStringSlice};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
@@ -71,10 +70,10 @@ pub struct NodeHTTPResponse {
 
     pending_pinned_write: Cell<PendingPinnedWrite>,
     /// Owns the bytes referenced by `pending_pinned_write`: either a
-    /// `SliceWithUnderlyingString` (holds the WTFStringImpl ref) or a `Buffer`
+    /// `Utf8WithString` (holds the WTFStringImpl ref) or a `Buffer`
     /// view. The cached `pendingWriteBuffer` slot GC-roots the JS cell; for
     /// buffers the underlying ArrayBuffer is additionally `pin()`ed.
-    pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer>,
+    pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer<'static>>,
 
     pub(crate) upgrade_context: JsCell<UpgradeCTX>,
 
@@ -528,11 +527,12 @@ impl NodeHTTPResponse {
         );
     }
 
+    /// Empty `sec_websocket_*` slices fall back to the request's headers.
     pub(crate) fn upgrade(
         &self,
         data_value: JSValue,
-        sec_websocket_protocol: ZigString,
-        sec_websocket_extensions: ZigString,
+        sec_websocket_protocol: &[u8],
+        sec_websocket_extensions: &[u8],
     ) -> bool {
         let upgrade_ctx = self.upgrade_context.get().context;
         if upgrade_ctx.is_null() {
@@ -559,39 +559,28 @@ impl NodeHTTPResponse {
 
         let ws = ServerWebSocket::init(ws_handler, data_value, None);
 
-        let mut sec_websocket_protocol_str: Option<ZigStringSlice> = None;
-        let mut sec_websocket_extensions_str: Option<ZigStringSlice> = None;
-
-        // R-2: `JsCell::get()` projects `&UpgradeCTX`; the borrow lives until
-        // the explicit `drop`s below (no `with_mut` on this cell overlaps).
+        // R-2: `JsCell::get()` projects `&UpgradeCTX`; the borrow ends before
+        // the `with_mut` below.
         let upgrade_context: &UpgradeCTX = self.upgrade_context.get();
 
-        let sec_websocket_protocol_value: &[u8] = 'brk: {
-            if sec_websocket_protocol.len == 0 {
-                if !upgrade_context.request.is_null() {
-                    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                    let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-                    break 'brk request.header(b"sec-websocket-protocol").unwrap_or(b"");
-                } else {
-                    break 'brk &upgrade_context.sec_websocket_protocol;
-                }
-            }
-            sec_websocket_protocol_str = Some(sec_websocket_protocol.to_slice());
-            break 'brk sec_websocket_protocol_str.as_ref().unwrap().slice();
+        let sec_websocket_protocol_value: &[u8] = if !sec_websocket_protocol.is_empty() {
+            sec_websocket_protocol
+        } else if !upgrade_context.request.is_null() {
+            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
+            let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
+            request.header(b"sec-websocket-protocol").unwrap_or(b"")
+        } else {
+            &upgrade_context.sec_websocket_protocol
         };
 
-        let sec_websocket_extensions_value: &[u8] = 'brk: {
-            if sec_websocket_extensions.len == 0 {
-                if !upgrade_context.request.is_null() {
-                    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                    let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-                    break 'brk request.header(b"sec-websocket-extensions").unwrap_or(b"");
-                } else {
-                    break 'brk &upgrade_context.sec_websocket_extensions;
-                }
-            }
-            sec_websocket_extensions_str = Some(sec_websocket_extensions.to_slice());
-            break 'brk sec_websocket_extensions_str.as_ref().unwrap().slice();
+        let sec_websocket_extensions_value: &[u8] = if !sec_websocket_extensions.is_empty() {
+            sec_websocket_extensions
+        } else if !upgrade_context.request.is_null() {
+            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
+            let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
+            request.header(b"sec-websocket-extensions").unwrap_or(b"")
+        } else {
+            &upgrade_context.sec_websocket_extensions
         };
 
         let websocket_key: &[u8] = if !upgrade_context.request.is_null() {
@@ -619,10 +608,6 @@ impl NodeHTTPResponse {
                 Some(ctx),
             );
         }
-
-        // Drop the temporary slices before mutating upgrade_context.
-        drop(sec_websocket_protocol_str);
-        drop(sec_websocket_extensions_str);
 
         // The sec-websocket-* headers were already copied into
         // raw_response.upgrade(); the underlying HttpParser::fallback buffer is
@@ -954,17 +939,11 @@ impl NodeHTTPResponse {
             200
         };
 
-        // Hot path: src/js/node/_http_server.ts always sets `response.statusMessage`,
-        // so we always land here with a short JS string. `to_slice()` would do
-        // 2×ref + 2×deref FFI (OwnedString + ZigStringSlice::WTF); instead hold
-        // the +1 from `to_bun_string` in an `OwnedString` and borrow the bytes
-        // without the inner ref bump.
-        let status_message_str;
+        let status_message_view;
         let status_message_slice;
         let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
-            status_message_str =
-                bun_core::OwnedString::new(status_message_value.to_bun_string(global_object)?);
-            status_message_slice = status_message_str.to_utf8_without_ref();
+            status_message_view = status_message_value.to_js_string_view(global_object)?;
+            status_message_slice = status_message_view.to_utf8();
             status_message_slice.slice()
         } else {
             &[]
@@ -2417,12 +2396,14 @@ impl NodeHTTPResponse {
         &self,
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let section = self.raw_request_headers.replace(Vec::new());
         if section.is_empty() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
-        Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+        bun_jsc::call_zero_is_throw(global_object, || {
+            Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+        })
     }
 
     /// `handle.takeRequestTrailers()` — this request's captured trailer section
@@ -2431,20 +2412,22 @@ impl NodeHTTPResponse {
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
         // the wire; parse them with the same leniency so they surface on req.trailers.
         let use_insecure_http_parser = callframe.argument(0).to_boolean();
-        Bun__NodeHTTP__parseRequestTrailers(
-            global_object,
-            section.as_ptr(),
-            section.len(),
-            use_insecure_http_parser,
-        )
+        bun_jsc::call_zero_is_throw(global_object, || {
+            Bun__NodeHTTP__parseRequestTrailers(
+                global_object,
+                section.as_ptr(),
+                section.len(),
+                use_insecure_http_parser,
+            )
+        })
     }
 
     pub(crate) fn get_bytes_written(

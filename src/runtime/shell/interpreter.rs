@@ -26,7 +26,6 @@
 //! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
 
 use bun_collections::VecExt;
-use bun_core::WTFStringImplExt as _;
 use bun_jsc::JsCell;
 use core::cell::Cell;
 use core::fmt;
@@ -310,7 +309,7 @@ pub struct Interpreter {
 
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
     /// when running under a Worker). See [`Interpreter::get_vm_args_utf8`].
-    pub(crate) vm_args_utf8: JsCell<Vec<bun_core::ZigStringSlice>>,
+    pub(crate) vm_args_utf8: JsCell<Vec<bun_core::Utf8Bytes<'static>>>,
 
     /// `bun run` CLI context for `$N` expansion on the mini event loop.
     /// Null when constructed from JS (no `ContextData` is reachable).
@@ -414,7 +413,7 @@ impl Interpreter {
         arena: &'a bun_alloc::Arena,
         src: &'a [u8],
         jsobjs: &'a mut [crate::jsc::JSValue],
-        jsstrings_to_escape: &'a mut [bun_core::String],
+        jsstrings_to_escape: &'a [bun_core::String],
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
@@ -621,8 +620,6 @@ impl Interpreter {
         // Free buffered IO, env
         // maps, cwd fd; do NOT free the struct itself (it's embedded).
         self.root_shell.with_mut(|rs| rs.deinit_embedded(true));
-        // `vm_args_utf8` slices Drop themselves (`ZigStringSlice` has a Drop
-        // impl that derefs the WTF backing); the Vec frees on box drop.
     }
 
     /// Standalone-shell entrypoint for `bun <file>.sh`: parse `src` (already
@@ -693,7 +690,7 @@ impl Interpreter {
                 arena,
                 src,
                 &mut [],
-                &mut [],
+                &[],
                 &mut out_parser,
                 &mut out_lex_result,
             ) {
@@ -1106,7 +1103,7 @@ impl Interpreter {
         for arg in vm_args {
             size += arg.slice().len();
         }
-        size += vm_args.capacity() * core::mem::size_of::<bun_core::ZigStringSlice>();
+        size += vm_args.capacity() * core::mem::size_of::<bun_core::Utf8Bytes>();
         size
     }
 
@@ -1498,9 +1495,6 @@ impl Interpreter {
         }
 
         this.keep_alive.with_mut(|k| k.disable());
-        // `args: Box<ShellArgs>` and `vm_args_utf8: Vec<ZigStringSlice>` drop
-        // with the box; `ZigStringSlice` has a `Drop` impl that derefs its
-        // WTF backing.
     }
 
     pub(crate) fn is_running(
@@ -1587,7 +1581,7 @@ impl Interpreter {
         original_int: u8,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
-        vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
+        vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
     ) {
         let mut int = original_int;
         match event_loop {
@@ -1629,9 +1623,7 @@ impl Interpreter {
                     if vm_args_utf8.len() != argv.len() {
                         vm_args_utf8.reserve(argv.len());
                         for arg in argv {
-                            // SAFETY: each `WTFStringImpl` in `argv` is a live
-                            // `*WTF::StringImpl` borrowed from `worker.argv`.
-                            vm_args_utf8.push(unsafe { (**arg).to_utf8() });
+                            vm_args_utf8.push(bun_core::String::retain_wtf_impl(*arg).into_utf8());
                         }
                     }
                     out.extend_from_slice(vm_args_utf8[int as usize].slice());
@@ -2971,8 +2963,7 @@ pub(crate) fn create_shell_interpreter(
 
     let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
 
-    let cwd = cwd.map(bun_core::OwnedString::new);
-    let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
+    let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
     // bun_vm() returns the live thread-local VM for a Bun-owned global; that
     // pointer is the live `jsc::EventLoop` `EventLoopHandle::init` expects.

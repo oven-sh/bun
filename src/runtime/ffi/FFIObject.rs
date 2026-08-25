@@ -1,9 +1,10 @@
 use core::ffi::c_void;
 
-use bun_core::ZigString;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::host_fn::DomCall;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSValue, JsResult,
+    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSString, JSValue,
+    JsResult,
 };
 
 /// Reinterpret a user-supplied raw address (from `bun:ffi` JS land) as a
@@ -36,7 +37,7 @@ fn create_buffer_with_ctx(
     slice: &mut [u8],
     ctx: *mut c_void,
     callback: jsc::JSTypedArrayBytesDeallocator,
-) -> JSValue {
+) -> JsResult<JSValue> {
     unsafe extern "C" {
         fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
             global: *const JSGlobalObject,
@@ -48,7 +49,7 @@ fn create_buffer_with_ctx(
     }
     // SAFETY: `global` is live; `slice` stays valid for the Buffer's lifetime.
     // `callback` controls disposal (a no-op when the storage stays caller-owned).
-    unsafe {
+    jsc::call_zero_is_throw(global, || unsafe {
         JSBuffer__bufferFromPointerAndLengthAndDeinit(
             global,
             slice.as_mut_ptr(),
@@ -56,7 +57,7 @@ fn create_buffer_with_ctx(
             ctx,
             callback,
         )
-    }
+    })
 }
 
 // ── Put helpers from ZigGeneratedCode.cpp; each installs a host fn over its `*__slowpath` export ──
@@ -88,7 +89,7 @@ fn new_cstring(
         ValueOrError::Slice(ptr, len) => {
             // SAFETY: ptr/len point to FFI-owned memory whose lifetime the caller guarantees.
             let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
-            jsc::bun_string_jsc::create_utf8_for_js(global_this, bytes)
+            bun_string_jsc::create_utf8_for_js(global_this, bytes)
         }
     }
 }
@@ -729,12 +730,12 @@ fn to_buffer(
             let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
             // No finalizer means borrow: the noop deallocator keeps GC from freeing
             // caller-owned storage (oven-sh/bun#35405).
-            Ok(create_buffer_with_ctx(
+            create_buffer_with_ctx(
                 global_this,
                 slice,
                 ctx.unwrap_or(core::ptr::null_mut()),
                 callback.or(Some(noop_bytes_deallocator)),
-            ))
+            )
         }
     }
 }
@@ -746,7 +747,7 @@ pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 // ── `fields` host-fn thunks ──────────────────────────────────────────────────
 // The eight wrappers are unrolled manually here; each decodes its `CallFrame`
 // arguments into the target's parameter types (only the `*JSGlobalObject` /
-// `JSValue` / `Option<JSValue>` / `ZigString` arms are exercised by this table).
+// `JSValue` / `Option<JSValue>` / string arms are exercised by this table).
 
 /// Minimal `ArgumentsSlice::nextEat` — pops the next non-consumed argument.
 /// `wrapStaticMethod`'s arena/protect machinery is unused for the FFI fields
@@ -766,18 +767,18 @@ fn eat_required(
     next_eat(iter).ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))
 }
 
-/// Decode arm for `ZigString` arguments.
+/// Decode arm for string arguments.
 #[inline]
-fn eat_zig_string(
-    global: &JSGlobalObject,
+fn eat_string<'a>(
+    global: &'a JSGlobalObject,
     iter: &mut core::slice::Iter<'_, JSValue>,
-) -> JsResult<ZigString> {
+) -> JsResult<&'a JSString> {
     let string_value = next_eat(iter)
         .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
     if string_value.is_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected string")));
     }
-    string_value.get_zig_string(global)
+    string_value.to_js_string(global)
 }
 
 /// Wrap a `JsHostFnZig` body into the raw `JSHostFn` ABI. Mints a fresh
@@ -818,12 +819,11 @@ mod fields {
         FfiImpl::print(global, object, is_callback)
     }
 
-    // dlopen → FFI::open(global, ZigString, JSValue) -> JSValue
     pub(super) fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let mut iter = callframe.arguments().iter();
-        let name = eat_zig_string(global, &mut iter)?;
+        let name = eat_string(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
-        FfiImpl::open(global, name, object)
+        FfiImpl::open(global, &*name.view(global)?, object)
     }
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>

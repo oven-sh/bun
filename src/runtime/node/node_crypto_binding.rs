@@ -7,6 +7,7 @@ use core::ffi::{c_char, c_void};
 use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsPtr, JsResult,
     JsThread, Protected, Strong,
@@ -464,7 +465,7 @@ pub mod random {
                 }
             }
 
-            let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+            let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
             let uuid = if disable_entropy_cache {
                 UUID::init()
@@ -477,7 +478,7 @@ pub mod random {
                     .try_into()
                     .expect("infallible: size matches"),
             );
-            str.transfer_to_js(global)
+            str.into_js(global)
         }
 
         #[bun_jsc::host_fn]
@@ -518,13 +519,13 @@ pub mod random {
             }
             let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
 
-            let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+            let (str, bytes) = BunString::create_uninitialized_latin1(36);
             uuid.print(
                 (&mut bytes[..36])
                     .try_into()
                     .expect("infallible: size matches"),
             );
-            str.transfer_to_js(global)
+            str.into_js(global)
         }
 
         fn assert_offset(
@@ -758,8 +759,8 @@ pub(crate) struct Scrypt {
     // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
     // `from_js_maybe_async(.., Flavor::Async, ..)`, adopted into a `ThreadSafe`
     // by the job).
-    password: StringOrBuffer,
-    salt: StringOrBuffer,
+    password: StringOrBuffer<'static>,
+    salt: StringOrBuffer<'static>,
     n: u32,
     r: u32,
     p: u32,
@@ -1295,7 +1296,7 @@ mod _impl {
         let array = JSValue::create_empty_array(global, hashes.count())?;
 
         for (i, hash) in hashes.keys().iter().enumerate() {
-            let str = jsc::bun_string_jsc::create_utf8_for_js(global, hash)?;
+            let str = bun_string_jsc::create_utf8_for_js(global, hash)?;
             array.put_index(global, u32::try_from(i).expect("int cast"), str)?;
         }
 

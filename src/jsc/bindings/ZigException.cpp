@@ -423,6 +423,7 @@ public:
 
 static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
         uint8_t frame_i = 0;
         size_t stack_frame_i = 0;
@@ -440,6 +441,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
             ZigStackFrame& frame = trace.frames_ptr[frame_i];
             frame.jsc_stack_frame_index = static_cast<int32_t>(stack_frame_i);
             populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
+            RETURN_IF_EXCEPTION(scope, );
             stack_frame_i++;
             frame_i++;
         }
@@ -450,19 +452,24 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
             if (frame.jsc_stack_frame_index < 0 || static_cast<size_t>(frame.jsc_stack_frame_index) >= frames.size())
                 continue;
             populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
+            RETURN_IF_EXCEPTION(scope, );
         }
     }
 }
 
 static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* obj, const JSC::PropertyName& propertyName)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (obj->getNonIndexPropertySlot(global, propertyName, slot)) {
+    bool hasProperty = obj->getNonIndexPropertySlot(global, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasProperty) {
         if (slot.isAccessor()) {
             return {};
         }
 
         JSValue value = slot.getValue(global, propertyName);
+        RETURN_IF_EXCEPTION(scope, {});
         if (!value || value.isUndefinedOrNull()) {
             return {};
         }
@@ -482,9 +489,11 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
         populateStackTrace(vm, *stackTrace, except.stack, global, flags);
+        RETURN_IF_EXCEPTION(scope, );
 
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags, FinalizerSafety::MustNotTriggerGC);
+        RETURN_IF_EXCEPTION(scope, );
 
     } else {
         getFromSourceURL = true;
@@ -500,10 +509,12 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         except.message = Bun::toStringRef(err->sanitizedMessageString(global));
 
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
+        RETURN_IF_EXCEPTION(scope, );
         except.message = Bun::toStringRef(global, message);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
     } else {
+        RETURN_IF_EXCEPTION(scope, );
 
         except.message = Bun::toStringRef(err->sanitizedMessageString(global));
     }
@@ -560,7 +571,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
             return;
         if (fd) {
             if (fd.isNumber()) {
-                except.fd = fd.toInt32(global);
+                except.fd = JSC::toInt32(fd.asNumber());
             }
         }
 
@@ -569,7 +580,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
             return;
         if (errno_) {
             if (errno_.isNumber()) {
-                except.errno_ = errno_.toInt32(global);
+                except.errno_ = JSC::toInt32(errno_.asNumber());
             }
         }
     }
@@ -653,7 +664,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                     return;
                 if (column) {
                     if (column.isNumber()) {
-                        except.stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
+                        except.stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(JSC::toInt32(column.asNumber())).zeroBasedInt();
                     }
                 }
 
@@ -662,20 +673,19 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                     return;
                 if (line) {
                     if (line.isNumber()) {
-                        except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+                        except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(JSC::toInt32(line.asNumber())).zeroBasedInt();
 
                         JSC::JSValue lineText = getNonObservable(vm, global, obj, builtinNames(vm).lineTextPublicName());
                         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
                             return;
                         if (lineText) {
                             if (lineText.isString()) {
-                                if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
-                                    auto str = jsStr->value(global);
-                                    except.stack.source_lines_ptr[0] = Bun::toStringRef(str);
-                                    except.stack.source_lines_numbers[0] = except.stack.frames_ptr[0].position.line();
-                                    except.stack.source_lines_len = 1;
-                                    except.remapped = true;
-                                }
+                                auto str = asString(lineText)->value(global);
+                                RETURN_IF_EXCEPTION(scope, );
+                                except.stack.source_lines_ptr[0] = Bun::toStringRef(str);
+                                except.stack.source_lines_numbers[0] = except.stack.frames_ptr[0].position.line();
+                                except.stack.source_lines_len = 1;
+                                except.remapped = true;
                             }
                         }
                     }
@@ -683,11 +693,6 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
             }
 
             {
-                for (int i = 1; i < except.stack.frames_len; i++) {
-                    auto frame = except.stack.frames_ptr[i];
-                    frame.function_name.deref();
-                    frame.source_url.deref();
-                }
                 except.stack.frames_len = 1;
                 PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
                 except.stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
@@ -717,6 +722,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
         if (name_value) {
             if (name_value.isString()) {
                 auto name_str = name_value.toWTFString(global);
+                RETURN_IF_EXCEPTION(scope, );
                 except.name = Bun::toStringRef(name_str);
                 if (name_str == "Error"_s) {
                     except.type = JSErrorCodeError;
@@ -745,6 +751,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
         if (message) {
             if (message.isString()) {
                 except.message = Bun::toStringRef(message.toWTFString(global));
+                RETURN_IF_EXCEPTION(scope, );
             }
         }
 
@@ -770,7 +777,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
             }
             if (line) {
                 if (line.isNumber()) {
-                    except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+                    except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(JSC::toInt32(line.asNumber())).zeroBasedInt();
 
                     // TODO: don't sourcemap it twice
                     auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName());
@@ -779,7 +786,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
                     }
                     if (originalLine) {
                         if (originalLine.isNumber()) {
-                            except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
+                            except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(JSC::toInt32(originalLine.asNumber())).zeroBasedInt();
                         }
                     }
                     except.stack.frames_len = 1;

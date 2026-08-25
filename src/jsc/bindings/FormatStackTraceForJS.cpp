@@ -150,6 +150,7 @@ WTF::String formatStackTrace(
     Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::StringBuilder sb;
 
     if (!name.isEmpty()) {
@@ -306,6 +307,7 @@ WTF::String formatStackTrace(
         }
 
         WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
+        RETURN_IF_EXCEPTION(scope, {});
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
         OrdinalNumber displayLine = {};
@@ -422,7 +424,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         globalObject = defaultGlobalObject();
     }
 
-    return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
+    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance));
 }
 
 static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
@@ -436,6 +438,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
     // Create the call sites (one per frame)
     Zig::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // We need to sourcemap it if it's a GlobalObject.
 
@@ -774,6 +777,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
     WTF::Vector<JSC::StackFrame> stackTrace;
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
         if (instance->hasMaterializedErrorInfo()) {
@@ -825,6 +829,8 @@ void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObj
      * strict mode function and all frames below (its caller etc.) are not allow to access
      * their receiver and function objects. For those frames, getFunction() and getThis()
      * will return undefined."." */
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool encounteredStrictFrame = false;
 
     // TODO: is it safe to use CallSite structure from a different JSGlobalObject? This case would happen within a node:vm
@@ -833,6 +839,7 @@ void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObj
 
     for (size_t i = 0; i < framesCount; i++) {
         CallSite* callSite = CallSite::create(lexicalGlobalObject, callSiteStructure, stackTrace.at(i), encounteredStrictFrame);
+        RETURN_IF_EXCEPTION(scope, );
 
         if (!encounteredStrictFrame) {
             encounteredStrictFrame = callSite->isStrict();

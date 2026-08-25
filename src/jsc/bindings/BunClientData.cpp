@@ -13,6 +13,7 @@
 #include <JavaScriptCore/SimpleMarkingConstraint.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/CachedTypes.h>
 #include <wtf/MainThread.h>
 
 #include "JSDOMConstructorBase.h"
@@ -262,6 +263,11 @@ DOMIsoSubspaces::~DOMIsoSubspaces()
 DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
 {
     deleteSubspaceTable<JSC::GCClient::IsoSubspace>(this);
+}
+
+void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)
+{
+    m_decoderStringTable = makeUnique<JSC::DecoderStringTable>(bytes);
 }
 
 } // namespace WebCore

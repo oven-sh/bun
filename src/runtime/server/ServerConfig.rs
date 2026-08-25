@@ -747,7 +747,7 @@ impl ServerConfig {
 
             // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
             let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
-            let mut iter = JSPropertyIterator::init(
+            let iter = JSPropertyIterator::init(
                 global,
                 static_obj,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -775,15 +775,13 @@ impl ServerConfig {
             // Vec<StaticRouteEntry> drops elements (which deref route)
             // automatically on error.
 
-            while let Some(key) = iter.next()? {
+            while let Some((key, value)) = iter.next()? {
                 // NOTE: `to_owned_slice_returning_all_ascii` not yet on
                 // `bun_core::String`; split into `to_owned_slice()` + `is_all_ascii`.
                 let path_vec = key.to_owned_slice();
                 let is_ascii = strings::is_all_ascii(&path_vec);
                 let path: Box<[u8]> = path_vec.into_boxed_slice();
                 // The path Box drops on error.
-
-                let value: JSValue = iter.value;
 
                 if value.is_undefined() {
                     continue;
@@ -1095,11 +1093,10 @@ impl ServerConfig {
         }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
-            let sliced = base_uri.to_slice(global)?;
+            let utf8 = base_uri.to_utf8(global)?;
 
-            if !sliced.slice().is_empty() {
-                // sliced drops at scope end
-                args.base_uri = Box::<[u8]>::from(sliced.slice());
+            if !utf8.slice().is_empty() {
+                args.base_uri = Box::<[u8]>::from(utf8.slice());
             }
         }
 
@@ -1109,7 +1106,6 @@ impl ServerConfig {
             arg.get_stringish(global, "host")?
         };
         if let Some(host) = host {
-            let host = bun_core::OwnedString::new(host);
             let host_str = host.to_utf8();
 
             if !host_str.slice().is_empty() {
@@ -1140,7 +1136,7 @@ impl ServerConfig {
             if id.is_undefined_or_null() {
                 args.allow_hot = false;
             } else {
-                let id_str = id.to_slice(global)?;
+                let id_str = id.to_utf8(global)?;
                 if !id_str.slice().is_empty() {
                     args.id = Box::<[u8]>::from(id_str.slice());
                 } else {

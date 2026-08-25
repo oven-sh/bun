@@ -18,7 +18,7 @@ use crate::webcore::s3::client::{
     S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
     S3ListObjectsResult,
 };
-use bun_core::{ZigString, strings};
+use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
@@ -42,14 +42,14 @@ pub use bun_jsc::webcore_types::store::{
 pub trait StoreExt {
     fn to_any_blob(&mut self) -> Option<super::Any>;
     fn init_s3(
-        pathlike: PathLike,
+        pathlike: PathLike<'static>,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
     ) -> Result<Box<Store>, crate::Error>
     where
         Self: Sized;
     fn init_file(
-        pathlike: PathOrFileDescriptor,
+        pathlike: PathOrFileDescriptor<'static>,
         mime_type: Option<MimeType>,
     ) -> Result<Box<Store>, crate::Error>
     where
@@ -123,7 +123,7 @@ impl StoreExt for Store {
     }
 
     fn init_s3(
-        pathlike: PathLike,
+        pathlike: PathLike<'static>,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
     ) -> Result<Box<Store>, crate::Error> {
@@ -144,7 +144,7 @@ impl StoreExt for Store {
     }
 
     fn init_file(
-        pathlike: PathOrFileDescriptor,
+        pathlike: PathOrFileDescriptor<'static>,
         mime_type: Option<MimeType>,
     ) -> Result<Box<Store>, crate::Error> {
         // Compute the extension-derived fallback before moving `pathlike` into
@@ -225,12 +225,6 @@ impl FileExt for File {
     fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
-                let encoded_slice = match path_like {
-                    PathLike::EncodedSlice(slice) => {
-                        bun_core::ZigStringSlice::Owned(slice.slice().to_vec())
-                    }
-                    _ => ZigString::from_utf8(path_like.slice()).to_slice_clone(),
-                };
                 // The `*Binding` arg is unused in `AsyncFSTask::create`.
                 let binding = node_fs::Binding::default();
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
@@ -239,7 +233,7 @@ impl FileExt for File {
                     global_this,
                     &binding,
                     node_fs::args::Unlink {
-                        path: PathLike::EncodedSlice(encoded_slice),
+                        path: PathLike::owned(path_like.slice().to_vec()),
                     },
                     global_this.bun_vm().as_mut(),
                 ))
@@ -435,8 +429,7 @@ impl S3Ext for S3 {
 
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
-        // `S3ListObjectsOptions` is not `Clone` (it owns `Utf8Slice`s);
-        // box the wrapper first so the options live on the heap, then hand a
+        // Box the wrapper first so the options live on the heap, then hand a
         // borrow to `list_objects` (which only reads them synchronously to
         // build the search-params string). The wrapper retains ownership for
         // `Drop` after the async callback.

@@ -17,14 +17,15 @@ use super::cron_parser::{CronExpression, CronTz};
 use core::ffi::CStr;
 use std::cell::Cell;
 
+use bun_core::EncodedSlice;
 #[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
-    self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
-    JSValue, JsCell, JsRef, JsResult,
+    self as jsc, CallFrame, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction,
+    JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult,
 };
 #[cfg(not(target_os = "macos"))]
 use bun_paths::PathBuffer;
@@ -139,7 +140,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted<DestructorCtx = ()> {
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = this.err_msg().replace(None) {
-            let err = global.create_error_instance(format_args!("{}", bstr::BStr::new(&msg)));
+            let err = EncodedSlice::utf8(&msg).to_error_instance(&global);
             let _ = this
                 .promise()
                 .with_mut(|p| p.reject_with_async_stack(&global, Ok(err)));
@@ -728,7 +729,7 @@ fn resolve_cron_tz(global: &JSGlobalObject, opts: JSValue) -> JsResult<CronTz> {
             global.throw_invalid_arguments(format_args!("Bun.cron: options.tz must be a string"))
         );
     }
-    let tz_str = bun_core::OwnedString::new(tz_val.to_bun_string(global)?);
+    let tz_str = tz_val.to_bun_string(global)?;
     let tz_slice = tz_str.to_utf8();
     let tz_bytes = tz_slice.slice();
     // IANA names are ASCII; rejecting here keeps the Latin-1 StringView cast in
@@ -777,9 +778,9 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
         )));
     }
 
-    let path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
-    let schedule_str = bun_core::OwnedString::new(args[1].to_bun_string(global)?);
-    let title_str = bun_core::OwnedString::new(args[2].to_bun_string(global)?);
+    let path_str = args[0].to_bun_string(global)?;
+    let schedule_str = args[1].to_bun_string(global)?;
+    let title_str = args[2].to_bun_string(global)?;
 
     let path_slice = path_str.to_utf8();
     let schedule_slice = schedule_str.to_utf8();
@@ -1286,7 +1287,7 @@ pub(crate) fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
             .throw_invalid_arguments(format_args!("Bun.cron.remove() expects a string title")));
     }
 
-    let title_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+    let title_str = args[0].to_bun_string(global)?;
     let title_slice = title_str.to_utf8();
 
     if !validate_title(title_slice.slice()) {
@@ -1710,7 +1711,7 @@ impl CronJob {
             )));
         }
 
-        let schedule_str = bun_core::OwnedString::new(schedule_arg.to_bun_string(global)?);
+        let schedule_str = schedule_arg.to_bun_string(global)?;
         let schedule_slice = schedule_str.to_utf8();
 
         let parsed = match CronExpression::parse(schedule_slice.slice()) {
@@ -1864,7 +1865,7 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         )));
     }
 
-    let expr_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+    let expr_str = args[0].to_bun_string(global)?;
     let expr_slice = expr_str.to_utf8();
 
     let parsed = match CronExpression::parse(expr_slice.slice()) {

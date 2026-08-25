@@ -148,16 +148,14 @@ fn link_napi_module(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         Ok(b) => b,
         Err(e) => return Err(e.with_path(&exe_path).throw(global)),
     };
-    let addon_bytes =
-        match bun_sys::File::openat(Fd::cwd(), &addon_path, bun_sys::O::RDONLY, 0)
-            .and_then(|f| f.read_to_end())
-        {
-            Ok(b) => b,
-            Err(e) => return Err(e.with_path(&addon_path).throw(global)),
-        };
-
-    let out_bytes = match napi_link::link_into_macho(&exe_bytes, &addon_bytes, &virtual_path)
+    let addon_bytes = match bun_sys::File::openat(Fd::cwd(), &addon_path, bun_sys::O::RDONLY, 0)
+        .and_then(|f| f.read_to_end())
     {
+        Ok(b) => b,
+        Err(e) => return Err(e.with_path(&addon_path).throw(global)),
+    };
+
+    let out_bytes = match napi_link::link_into_macho(&exe_bytes, &addon_bytes, &virtual_path) {
         Ok(b) => b,
         Err(LinkError::UnsupportedExecutableFormat) => {
             return Err(global.throw(format_args!(

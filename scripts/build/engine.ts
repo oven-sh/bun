@@ -164,10 +164,14 @@ export class Task {
 
 /** A semaphore whose waiters are served by priority (heaviest task first), then FIFO. */
 class Pool {
+  readonly depth: number;
   private active = 0;
   private readonly queue: { priority: number; seq: number; go: () => void }[] = [];
   private seq = 0;
-  constructor(readonly depth: number) {}
+
+  constructor(depth: number) {
+    this.depth = depth;
+  }
 
   acquire(priority: number): Promise<void> {
     if (this.active < this.depth) {

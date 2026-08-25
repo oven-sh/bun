@@ -12,7 +12,7 @@ import { mkdir } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
-import { quote } from "./shell.ts";
+import { quote, quoteWin32Argv } from "./shell.ts";
 
 /**
  * A ninja `rule` — a reusable command template.
@@ -511,7 +511,9 @@ export class Ninja {
   /**
    * The shell text ninja runs for a native task. posix: `cd X && K=V prog
    * args && …`. Windows host: ninja hands the line to CreateProcess, so a cwd,
-   * env, or chain needs `cmd /c "…"`; a bare argv goes through verbatim.
+   * env, or chain needs `cmd /c "…"`; a bare argv goes through verbatim with
+   * CommandLineToArgvW quoting (cmd leaves `\"` alone, so the same quoting
+   * works inside the wrapper).
    */
   private shellCommand(commands: NativeCommand[]): string {
     const win = this.hostWindows;
@@ -519,7 +521,7 @@ export class Ninja {
       let s = "";
       if (c.cwd !== undefined) s += win ? `cd /d ${quote(c.cwd, true)} && ` : `cd ${quote(c.cwd, false)} && `;
       for (const [k, v] of Object.entries(c.env ?? {})) s += win ? `set ${k}=${v}&& ` : `${k}=${quote(v, false)} `;
-      return s + c.argv.map(a => quote(a, win)).join(" ");
+      return s + c.argv.map(a => (win ? quoteWin32Argv(a) : quote(a, false))).join(" ");
     });
     const joined = parts.join(" && ");
     const needsShell = commands.length > 1 || commands.some(c => c.cwd !== undefined || c.env !== undefined);

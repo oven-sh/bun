@@ -14,6 +14,7 @@ import { resolve } from "node:path";
 import { expandNinja } from "./depfile.ts";
 import { type Command, type Engine, type Task } from "./engine.ts";
 import type { GraphEdge, NativeTask, Ninja, Rule } from "./ninja.ts";
+import { quoteWin32Argv } from "./shell.ts";
 
 /** Declare every recorded edge and task. Returns the phony aliases by name (for `--target`). */
 export function declareAll(engine: Engine, n: Ninja, hostWindows: boolean): void {
@@ -140,7 +141,7 @@ class EdgeExpander {
 
   private paths(paths: readonly string[], sep: string, escape: boolean): string {
     if (!escape) return paths.join(sep);
-    return paths.map(p => (this.windows ? win32Escape(p) : shellEscape(p))).join(sep);
+    return paths.map(p => (this.windows ? quoteWin32Argv(p) : shellEscape(p))).join(sep);
   }
 }
 
@@ -148,22 +149,4 @@ class EdgeExpander {
 export function shellEscape(s: string): string {
   if (/^[A-Za-z0-9_+=:,./@%-]+$/.test(s)) return s;
   return `'${s.replace(/'/g, `'\\''`)}'`;
-}
-
-/** Win32: quote when needed, escaping quotes and the backslashes before them (CommandLineToArgvW rules). */
-export function win32Escape(s: string): string {
-  if (/^[A-Za-z0-9_+=:,./\\@%-]+$/.test(s)) return s;
-  let out = '"';
-  let backslashes = 0;
-  for (const ch of s) {
-    if (ch === "\\") {
-      backslashes++;
-      out += ch;
-      continue;
-    }
-    if (ch === '"') out += "\\".repeat(backslashes) + '\\"';
-    else out += ch;
-    backslashes = 0;
-  }
-  return out + "\\".repeat(backslashes) + '"';
 }

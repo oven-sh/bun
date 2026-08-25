@@ -13,7 +13,10 @@ use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
 
 use super::package_manager_options::Do;
-use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
+use super::{
+    CatalogUpdateInfo, DetachedVersion, PackageManager, PackageUpdateInfo, Subcommand,
+    UpdateRequest,
+};
 
 type ExprDisabler = bun_ast::expr::Disabler;
 
@@ -732,6 +735,7 @@ pub(crate) fn edit_catalogs_before_update(
                 dep_name: Box::from(key_str),
                 original_version_literal: Box::from(version_literal),
                 new_version_literal: None,
+                original: None,
             });
 
             if update_to_latest {
@@ -749,16 +753,15 @@ pub(crate) fn edit_catalogs_before_update(
     Ok(!manager.updating_catalogs.is_empty())
 }
 
-/// Runs on the loaded lockfile, before the differ: every `catalog:` row of an entry recorded by `edit_catalogs_before_update` registers its name in `updating_packages` with the row's locked version as the original, the way the cwd's own dependency lists register theirs, so the install summary prints the entry's move as an update row; a name those lists already registered keeps their original.
+/// Runs on the loaded lockfile, before the differ: every `catalog:` row of an entry recorded by `edit_catalogs_before_update` gives the entry the version it was locked to (the first row of the entry wins) and registers its name in `updating_packages` the way the cwd's own dependency lists register theirs, so the install summary prints the entry's move as an update row; a name those lists already registered keeps their original.
 pub(crate) fn record_catalog_originals(
     manager: &mut PackageManager,
 ) -> Result<(), bun_alloc::AllocError> {
-    let infos: &[CatalogUpdateInfo] = &manager.updating_catalogs;
-    if infos.is_empty() {
+    if manager.updating_catalogs.is_empty() {
         return Ok(());
     }
-    let by_name = CatalogInfoIndex::init(infos)?;
     let lockfile: &Lockfile = &manager.lockfile;
+    let infos: &mut [CatalogUpdateInfo] = &mut manager.updating_catalogs;
     let updating_packages = &mut manager.updating_packages;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let package_resolutions = lockfile.packages.items_resolution();
@@ -780,13 +783,15 @@ pub(crate) fn record_catalog_originals(
         }
         let dep_name = dep.name.slice(string_buf);
         let catalog_name = dep.version.catalog().slice(string_buf);
-        let Some(info) = by_name
-            .candidates(dep_name)
-            .and_then(|candidates| CatalogInfoIndex::pick(candidates, infos, catalog_name))
-            .map(|i| &infos[i])
+        let Some(info) =
+            CatalogUpdateInfo::position(infos, catalog_name, dep_name).map(|i| &mut infos[i])
         else {
             continue;
         };
+        let version = resolution.npm().version;
+        if info.original.is_none() {
+            info.original = Some(DetachedVersion::new(version, string_buf));
+        }
         let entry = updating_packages.get_or_put(dep_name)?;
         if entry.found_existing {
             continue;
@@ -798,9 +803,7 @@ pub(crate) fn record_catalog_originals(
             catalog_entry: true,
             ..Default::default()
         };
-        entry
-            .value_ptr
-            .set_original_version(resolution.npm().version, string_buf);
+        entry.value_ptr.set_original_version(version, string_buf);
     }
     Ok(())
 }
@@ -873,6 +876,8 @@ pub(crate) fn edit_catalogs_after_update(
         Ok(())
     })?;
 
+    // The install summary still reads the entries' originals.
+    manager.updating_catalogs = infos;
     Ok(changed)
 }
 

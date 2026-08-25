@@ -167,8 +167,10 @@ describe("FileSink", () => {
   }
 });
 
+import { spawn, type SpawnOptions } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import type { Readable } from "node:stream";
 import util from "node:util";
 
 it("end doesn't close when backed by a file descriptor", async () => {
@@ -930,25 +932,40 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
 // closing impossible") and dropped the old source without closing its fd.
 // Each case runs in a subprocess so a crash shows up as its exit code.
 describe.concurrent("start() on a live writer", () => {
-  // A replaced file is closed on the libuv threadpool, so the fd check polls
-  // until the lowest free fd is back at its baseline (or the deadline passes).
+  // The files live in `dir`. `closed()` reports whether every handle on them is
+  // gone once the writer is done. Windows refuses to rename a directory while
+  // a file inside it is open (EPERM), so it polls that rename. Linux never
+  // blocks the rename, so it looks for /proc/self/fd entries that point into
+  // `dir` instead (macOS cannot resolve /dev/fd entries to paths). A replaced
+  // file is closed on the libuv threadpool, hence the deadline.
   const prelude = `
     const fs = require("node:fs");
     const { join } = require("node:path");
-    const dir = process.argv[1];
-    function lowestFreeFd() {
-      const fd = fs.openSync("/dev/null", "r");
-      fs.closeSync(fd);
-      return fd;
+    const dir = join(process.argv[1], "files");
+    fs.mkdirSync(dir);
+    function openFilesInDir() {
+      if (process.platform !== "linux") return 0;
+      return fs.readdirSync("/proc/self/fd").filter(fd => {
+        try {
+          return fs.readlinkSync("/proc/self/fd/" + fd).includes(dir);
+        } catch {
+          return false;
+        }
+      }).length;
     }
-    async function fdsAboveBaseline(baseline) {
+    async function closed() {
       const deadline = Date.now() + 10_000;
-      let current = lowestFreeFd();
-      while (current > baseline && Date.now() < deadline) {
-        await Bun.sleep(1);
-        current = lowestFreeFd();
+      for (;;) {
+        try {
+          fs.renameSync(dir, dir + ".closed");
+          break;
+        } catch (e) {
+          if (e.code !== "EPERM" || Date.now() > deadline) return "rename: " + e.code;
+          await Bun.sleep(1);
+        }
       }
-      return current - baseline;
+      while (openFilesInDir() > 0 && Date.now() < deadline) await Bun.sleep(1);
+      return openFilesInDir() === 0 ? "all" : "open: " + openFilesInDir();
     }
     function read(path) {
       return fs.readFileSync(path, "utf8");
@@ -971,20 +988,16 @@ describe.concurrent("start() on a live writer", () => {
 
   it("start({ path }) writes to the new path and closes the old file", async () => {
     const result = await run(`
-      const baseline = lowestFreeFd();
       const initial = join(dir, "initial.txt");
       const target = join(dir, "target.txt");
       const writer = Bun.file(initial).writer();
       writer.start({ path: target });
       writer.write("short");
       await writer.end();
-      console.log(JSON.stringify({
-        target: read(target),
-        initial: read(initial),
-        leaked: await fdsAboveBaseline(baseline),
-      }));
+      const out = { target: read(target), initial: read(initial) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
-    expect(result).toEqual({ target: "short", initial: "", leaked: 0 });
+    expect(result).toEqual({ target: "short", initial: "", closed: "all" });
   });
 
   it("start({ path }) with a write in flight loses no bytes", async () => {
@@ -992,7 +1005,6 @@ describe.concurrent("start() on a live writer", () => {
     // buffered and writes it to the new file, Windows already handed it to the
     // threadpool for the old one. Either way every byte lands once, in order.
     const result = await run(`
-      const baseline = lowestFreeFd();
       const a = join(dir, "a.txt");
       const b = join(dir, "b.txt");
       const writer = Bun.file(a).writer();
@@ -1002,18 +1014,40 @@ describe.concurrent("start() on a live writer", () => {
       await writer.end();
       const deadline = Date.now() + 10_000;
       while (read(a) + read(b) !== "to ato b" && Date.now() < deadline) await Bun.sleep(1);
-      console.log(JSON.stringify({
-        combined: read(a) + read(b),
-        bEndsWithSecondChunk: read(b).endsWith("to b"),
-        leaked: await fdsAboveBaseline(baseline),
-      }));
+      const out = { combined: read(a) + read(b), bEndsWithSecondChunk: read(b).endsWith("to b") };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
-    expect(result).toEqual({ combined: "to ato b", bEndsWithSecondChunk: true, leaked: 0 });
+    expect(result).toEqual({ combined: "to ato b", bEndsWithSecondChunk: true, closed: "all" });
+  });
+
+  it("start({ path }) after a failed write writes to the new path", async () => {
+    // The failed write's bytes are gone with the file that rejected them; the
+    // writer must not stay wedged behind them.
+    const result = await run(`
+      const a = join(dir, "a.txt");
+      const b = join(dir, "b.txt");
+      const writer = Bun.file(a).writer();
+      const readOnly = fs.openSync(a, "r");
+      writer.start({ fd: readOnly });
+      fs.closeSync(readOnly);
+      writer.write("x");
+      let endError;
+      try {
+        await writer.end();
+      } catch (e) {
+        endError = e.code;
+      }
+      writer.start({ path: b });
+      writer.write("y");
+      await writer.end();
+      const out = { endError, b: read(b) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ endError: expect.stringMatching(/EBADF/), b: "y", closed: "all" });
   });
 
   it("start({ fd }) writes through a duplicate and leaves the caller's fd open", async () => {
     const result = await run(`
-      const baseline = lowestFreeFd();
       const target = join(dir, "target.txt");
       const writer = Bun.file(join(dir, "initial.txt")).writer();
       const fd = fs.openSync(target, "w");
@@ -1023,12 +1057,10 @@ describe.concurrent("start() on a live writer", () => {
       // The caller's fd is still open and shares the file position.
       fs.writeSync(fd, "!");
       fs.closeSync(fd);
-      console.log(JSON.stringify({
-        target: read(target),
-        leaked: await fdsAboveBaseline(baseline),
-      }));
+      const out = { target: read(target) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
-    expect(result).toEqual({ target: "via fd!", leaked: 0 });
+    expect(result).toEqual({ target: "via fd!", closed: "all" });
   });
 
   it("start({ path }) on a Bun.file(fd).writer() leaves the borrowed fd open", async () => {
@@ -1036,17 +1068,47 @@ describe.concurrent("start() on a live writer", () => {
       const a = join(dir, "a.txt");
       const b = join(dir, "b.txt");
       const fd = fs.openSync(a, "w");
-      const baseline = lowestFreeFd();
       const writer = Bun.file(fd).writer();
       writer.start({ path: b });
       writer.write("to b");
       await writer.end();
       // end() closed the file the writer opened for itself, not the caller's fd.
-      const leaked = await fdsAboveBaseline(baseline);
       fs.writeSync(fd, "!");
       fs.closeSync(fd);
-      console.log(JSON.stringify({ a: read(a), b: read(b), leaked }));
+      const out = { a: read(a), b: read(b) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
-    expect(result).toEqual({ a: "!", b: "to b", leaked: 0 });
+    expect(result).toEqual({ a: "!", b: "to b", closed: "all" });
+  });
+
+  // A uv_write in flight belongs to its pipe: uv_close would cancel it and the
+  // cancel callback would then tear down the replacement. The Windows writer
+  // refuses the restart and keeps the pipe; POSIX has no in-flight write.
+  it.skipIf(!isWindows)("start({ path }) while a pipe write is in flight throws EBUSY and keeps the pipe", async () => {
+    const dir = tmpdirSync();
+    const script = `
+      const writer = Bun.file(3).writer();
+      writer.write("x");
+      let code = null;
+      try {
+        writer.start({ path: ${JSON.stringify(join(dir, "target.txt"))} });
+      } catch (e) {
+        code = e.code;
+      }
+      writer.write("y");
+      await writer.end();
+      console.log(JSON.stringify({ code }));
+    `;
+    const options: SpawnOptions = { stdio: ["ignore", "pipe", "pipe", "pipe"], env: bunEnv as NodeJS.ProcessEnv };
+    const child = spawn(bunExe(), ["-e", script], options);
+    let stdout = "";
+    let stderr = "";
+    let pipe = "";
+    child.stdout!.on("data", d => (stdout += d));
+    child.stderr!.on("data", d => (stderr += d));
+    (child.stdio[3] as Readable).on("data", d => (pipe += d));
+    const exitCode = await new Promise(resolve => child.on("close", resolve));
+    expect(stderr).toBe("");
+    expect({ stdout: stdout.trim(), pipe, exitCode }).toEqual({ stdout: '{"code":"EBUSY"}', pipe: "xy", exitCode: 0 });
   });
 });

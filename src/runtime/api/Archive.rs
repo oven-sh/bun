@@ -34,8 +34,7 @@ pub(crate) struct GzipOptions {
 }
 
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
-// needs a custom `finalize` and no constructor, which the proc-macro does not
-// expose.
+// has no constructor, which the proc-macro does not expose.
 #[repr(C)]
 pub struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting

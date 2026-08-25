@@ -104,7 +104,7 @@ pub(crate) fn quantize(
         }
 
         let ch = b.widest_channel();
-        // Partial sort by the chosen channel, then cut at the midpoint.
+        // Partial sort by the chosen channel, then cut near the midpoint.
         let slice = &mut order[b.lo as usize..b.hi as usize];
         // u32 ×4 overflows past ~1.07B pixels (allowed when the user raises
         // `maxPixels`); the other order-index sites already widen first.

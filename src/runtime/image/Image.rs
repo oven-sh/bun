@@ -343,10 +343,8 @@ fn from_input_js(
     Ok(img)
 }
 
-/// Read an optional numeric option. Missing/`undefined` → `None`; any other
-/// non-number (string, null, object, …) throws Node-style
-/// `ERR_INVALID_ARG_TYPE` instead of silently falling back to the default
-/// (#40490). Out-of-range numbers still clamp via `coerce_int!` at the caller.
+/// Missing/`undefined` → `None` (use the default); any other non-number
+/// throws `ERR_INVALID_ARG_TYPE` instead of being silently ignored (#40490).
 fn get_number_option(
     opt: JSValue,
     global: &JSGlobalObject,

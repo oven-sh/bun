@@ -280,31 +280,7 @@ impl ClientSession {
             return self.fail(stream, err);
         };
         let mut client = req.client();
-        let client = &mut *client;
-        if client.flags.h3_retried || stream.is_streaming_body.get() {
-            return self.fail_busy(stream, client, err);
-        }
-        let Some(ctx) = ClientContext::get(self.thread) else {
-            return self.fail_busy(stream, client, err);
-        };
-        client.flags.h3_retried = true;
-        // The old session is dead from our perspective; make sure connect()
-        // can't pick it again.
-        self.closed.set(true);
-        let port = self.port;
-        let host: Vec<u8> = self.hostname.clone();
-        bun_core::scoped_log!(
-            h3_client,
-            "retry {}:{} after {}",
-            bstr::BStr::new(&host),
-            port,
-            bstr::BStr::new(err.name()),
-        );
-        stream.abort();
-        self.detach_busy(stream, client);
-        if !ctx.connect(client, &host, port) {
-            client.fail_from_h2(err);
-        }
+        self.retry_or_fail_busy(stream, &mut client, err);
     }
 
     pub(crate) fn abort_by_http_id(&self, async_http_id: u32) -> bool {
@@ -437,6 +413,8 @@ impl ClientSession {
             return self.fail_busy(stream, client, err);
         };
         client.flags.h3_retried = true;
+        // The old session is dead from our perspective; make sure connect()
+        // can't pick it again.
         self.closed.set(true);
         let port = self.port;
         let host: Vec<u8> = self.hostname.clone();

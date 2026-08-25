@@ -2736,7 +2736,10 @@ impl DevServer {
         config.bake = Some(bundler::bundle_v2::BakeOptions {
             framework: self.framework.as_bundler_view(),
             client_transpiler: bun_ptr::LentMut::new(&mut *self.client_transpiler),
-            ssr_transpiler: self.ssr_transpiler.as_deref_mut().map(bun_ptr::LentMut::new),
+            ssr_transpiler: self
+                .ssr_transpiler
+                .as_deref_mut()
+                .map(bun_ptr::LentMut::new),
         });
         config.thread_pool = Some(bun_threading::work_pool::WorkPool::get());
         config.plugins = self.bundler_options.plugin.map(bun_ptr::BackRef::from);

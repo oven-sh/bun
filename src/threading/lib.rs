@@ -6,6 +6,7 @@ pub mod channel;
 pub mod condition;
 #[path = "Futex.rs"]
 pub mod futex;
+pub mod keep_alive;
 #[path = "Mutex.rs"]
 pub mod mutex;
 #[path = "ResetEvent.rs"]
@@ -15,7 +16,6 @@ pub mod rwlock;
 #[path = "Semaphore.rs"]
 pub mod semaphore;
 pub mod task_group;
-pub mod keep_alive;
 pub mod thread_bound;
 #[path = "ThreadPool.rs"]
 pub mod thread_pool;
@@ -37,12 +37,12 @@ pub use condition::{Condition, Condvar};
 pub use futex as Futex;
 pub use guarded::{Guarded, GuardedLock};
 pub use job_batch::{BatchJob, JobBatch};
+pub use keep_alive::KeepAlive;
 pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
 pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
 pub use task_group::{GroupTask, GroupedTask, TaskGroup};
-pub use keep_alive::KeepAlive;
 pub use thread_bound::ThreadBound;
 pub use thread_pool::{ThreadPool, ThreadRef};
 pub use thread_slots::{SlotGuard, ThreadSlots};

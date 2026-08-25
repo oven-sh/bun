@@ -167,8 +167,9 @@ fn prepare_css_asts_for_chunk_impl(
                                     // copy. The duplicate is never dropped (`ManuallyDrop`
                                     // above), so the aliased heap stays singly-owned by
                                     // `entry.conditions[j]`.
-                                    *import_rule.conditions_mut() =
-                                        unsafe { core::ptr::read(&raw const entry.conditions.slice()[j]) };
+                                    *import_rule.conditions_mut() = unsafe {
+                                        core::ptr::read(&raw const entry.conditions.slice()[j])
+                                    };
                                     arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                                 },
                                 composes: Default::default(),

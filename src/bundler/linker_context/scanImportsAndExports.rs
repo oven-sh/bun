@@ -594,7 +594,8 @@ pub(crate) fn scan_imports_and_exports<'a>(
                 let tlsp_overlay = meta.items_top_level_symbol_to_parts_overlay();
                 let named_imports = &ast.named_imports[id];
                 let file_parts = ast.parts[id].as_mut_slice();
-                for (&r#ref, import) in imports_to_bind.keys().iter().zip(imports_to_bind.values()) {
+                for (&r#ref, import) in imports_to_bind.keys().iter().zip(imports_to_bind.values())
+                {
                     let import: &ImportData = import;
                     let import_source_index = import.data.source_index.get();
                     let import_ref = import.data.import_ref;

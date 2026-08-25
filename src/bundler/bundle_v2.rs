@@ -45,7 +45,6 @@ pub use crate::thread_pool::BundleHeap;
 /// `jsc::api::JSBundler::Plugin` — re-exported from the canonical def below.
 pub use api::JSBundler::Plugin as JSBundlerPlugin;
 
-
 /// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
 pub use api::JSBundler::FileMap;
 
@@ -1305,7 +1304,8 @@ pub mod bv2_impl {
                 /// `value` is set: hand the request back to the bundle thread
                 /// (`BundleV2::on_resolve`). Any thread.
                 pub fn answer(&mut self) {
-                    self.inbox.push(super::super::super::Incoming::Resolve(self.id));
+                    self.inbox
+                        .push(super::super::super::Incoming::Resolve(self.id));
                 }
                 /// The plugins can no longer answer this request (their VM is shutting down, or the pass
                 /// was cancelled before it was handed over): answer it as cancelled, from whichever thread
@@ -1410,12 +1410,14 @@ pub mod bv2_impl {
                 /// `value` is set: hand the request back to the bundle thread
                 /// (`BundleV2::on_load`). Any thread.
                 pub fn answer(&mut self) {
-                    self.inbox.push(super::super::super::Incoming::Load(self.id));
+                    self.inbox
+                        .push(super::super::super::Incoming::Load(self.id));
                 }
                 /// `.defer()` was called: tell the bundle thread
                 /// (`BundleV2::on_notify_defer`). JS thread.
                 pub fn notify_deferred(&mut self) {
-                    self.inbox.push(super::super::super::Incoming::LoadDeferred(self.id));
+                    self.inbox
+                        .push(super::super::super::Incoming::LoadDeferred(self.id));
                 }
                 /// As `Resolve::answer_cancelled`.
                 pub fn answer_cancelled(&mut self) {
@@ -2945,7 +2947,11 @@ pub mod bv2_impl {
                 None => Notify::blocking(),
             };
             let (client_transpiler, ssr_transpiler, framework) = match bake_options {
-                Some(bo) => (Some(bo.client_transpiler), bo.ssr_transpiler, Some(bo.framework)),
+                Some(bo) => (
+                    Some(bo.client_transpiler),
+                    bo.ssr_transpiler,
+                    Some(bo.framework),
+                ),
                 None => (None, None, None),
             };
             let define = heap.keep_parse_config(&transpiler.options);
@@ -3056,13 +3062,22 @@ pub mod bv2_impl {
             this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
             this.linker.options.ignore_dce_annotations =
                 this.transpiler.options.ignore_dce_annotations;
-            this.linker.options.banner.clone_from(&this.transpiler.options.banner);
-            this.linker.options.footer.clone_from(&this.transpiler.options.footer);
+            this.linker
+                .options
+                .banner
+                .clone_from(&this.transpiler.options.banner);
+            this.linker
+                .options
+                .footer
+                .clone_from(&this.transpiler.options.footer);
             this.linker.options.css_chunking = this.transpiler.options.css_chunking;
             this.linker.options.min_chunk_size = this.transpiler.options.min_chunk_size;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
-            this.linker.options.public_path.clone_from(&this.transpiler.options.public_path);
+            this.linker
+                .options
+                .public_path
+                .clone_from(&this.transpiler.options.public_path);
             this.linker.options.target = this.transpiler.options.target;
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
@@ -3082,8 +3097,14 @@ pub mod bv2_impl {
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
-            this.linker.options.metafile_json_path.clone_from(&this.transpiler.options.metafile_json_path);
-            this.linker.options.metafile_markdown_path.clone_from(&this.transpiler.options.metafile_markdown_path);
+            this.linker
+                .options
+                .metafile_json_path
+                .clone_from(&this.transpiler.options.metafile_json_path);
+            this.linker
+                .options
+                .metafile_markdown_path
+                .clone_from(&this.transpiler.options.metafile_markdown_path);
 
             this.linker.dev_server = this.dev_server;
 
@@ -4278,11 +4299,7 @@ pub mod bv2_impl {
             if self.graph.estimated_file_loader_count > 0 {
                 // The client transpiler's asset naming (created up front so the
                 // column borrows below need not give way to `&mut self`).
-                let needs_client = self
-                    .graph
-                    .ast
-                    .items_target()
-                    .contains(&Target::Browser)
+                let needs_client = self.graph.ast.items_target().contains(&Target::Browser)
                     && !self.transpiler.options.server_components
                     && self.linker.dev_server.is_none()
                     && self.transpiler.options.target.is_server_side();

@@ -298,12 +298,20 @@ impl<'a> LinkerContext<'a> {
         let server_component_boundaries = &pg.server_component_boundaries;
 
         self.graph.code_splitting = transpiler.options.code_splitting;
-        self.options.output_dir.clone_from(&transpiler.resolver.opts.output_dir);
-        self.options.root_dir.clone_from(&transpiler.resolver.opts.root_dir);
+        self.options
+            .output_dir
+            .clone_from(&transpiler.resolver.opts.output_dir);
+        self.options
+            .root_dir
+            .clone_from(&transpiler.resolver.opts.root_dir);
         self.options.supports_multiple_outputs = transpiler.resolver.opts.supports_multiple_outputs;
         self.options.compile = transpiler.resolver.opts.compile;
-        self.options.entry_naming.clone_from(&transpiler.options.entry_naming);
-        self.options.chunk_naming.clone_from(&transpiler.options.chunk_naming);
+        self.options
+            .entry_naming
+            .clone_from(&transpiler.options.entry_naming);
+        self.options
+            .chunk_naming
+            .clone_from(&transpiler.options.chunk_naming);
         if let Some(client) = inputs.client_transpiler {
             self.options.browser_public_path = Some(client.options.public_path.clone());
             self.options.browser_entry_naming = Some(client.options.entry_naming.clone());

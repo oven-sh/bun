@@ -2331,7 +2331,13 @@ pub mod parse_worker {
             let read = {
                 let mut reader = ctx.pool.get_io_reader();
                 let crate::thread_pool::IoReader { heap, fs_cache } = &mut *reader;
-                get_source_code(&mut this, heap, fs_cache, &ctx.pool.seed().options, &mut log)
+                get_source_code(
+                    &mut this,
+                    heap,
+                    fs_cache,
+                    &ctx.pool.seed().options,
+                    &mut log,
+                )
             };
             match read {
                 Ok(entry) if !log.has_errors() => {
@@ -2366,7 +2372,13 @@ pub mod parse_worker {
                 let read = {
                     let heap = worker.heap;
                     let t = &mut *worker.data.transpiler;
-                    get_source_code(&mut this, heap, &mut t.resolver.caches.fs, &t.options, &mut log)
+                    get_source_code(
+                        &mut this,
+                        heap,
+                        &mut t.resolver.caches.fs,
+                        &t.options,
+                        &mut log,
+                    )
                 };
                 match read {
                     Ok(entry) => this.stage = ParseTaskStage::NeedsParse(entry),

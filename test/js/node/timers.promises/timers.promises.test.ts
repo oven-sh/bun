@@ -93,6 +93,7 @@ describe("setImmediate", () => {
 describe("AbortError shape matches node", () => {
   function nodeAbortError(signal: AbortSignal) {
     return {
+      constructor: "AbortError",
       name: "AbortError",
       code: "ABORT_ERR",
       message: "The operation was aborted",
@@ -109,7 +110,13 @@ describe("AbortError shape matches node", () => {
     );
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(DOMException);
-    return { name: err.name, code: err.code, message: err.message, cause: err.cause };
+    return {
+      constructor: err.constructor.name,
+      name: err.name,
+      code: err.code,
+      message: err.message,
+      cause: err.cause,
+    };
   }
 
   it("setTimeout with an already aborted signal", async () => {

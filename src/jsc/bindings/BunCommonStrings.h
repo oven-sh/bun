@@ -38,6 +38,8 @@
     macro(OperationTimedOut, "The operation timed out.") \
     /* node's AbortError default message, which unlike the DOMException one has no trailing period: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L980 */ \
     macro(OperationWasAborted, "The operation was aborted") \
+    macro(abortErrorCode, "ABORT_ERR") \
+    macro(abortErrorName, "AbortError") \
     macro(httpPATCH, "PATCH") \
     macro(httpPOST, "POST") \
     macro(httpPROPFIND, "PROPFIND") \

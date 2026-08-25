@@ -426,7 +426,8 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   function expectNodeAbortError(err, reason) {
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(DOMException);
-    expect({ name: err.name, code: err.code, message: err.message }).toEqual({
+    expect({ constructor: err.constructor.name, name: err.name, code: err.code, message: err.message }).toEqual({
+      constructor: "AbortError",
       name: "AbortError",
       code: "ABORT_ERR",
       message: "The operation was aborted",

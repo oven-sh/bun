@@ -772,7 +772,8 @@ impl HotReloadShared {
     ///
     /// Called from watcher thread.
     pub(crate) fn watcher_acquire_event(&self) -> u8 {
-        #[cfg_attr(not(debug_assertions), allow(unused_mut))] // written only by the debug slot check
+        #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+        // written only by the debug slot check
         let mut w = self.watcher.lock();
         let mut available = [true; 3];
         if let Some(i) = w.current_event {

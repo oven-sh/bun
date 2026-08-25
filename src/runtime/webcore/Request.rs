@@ -27,7 +27,6 @@ use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
-use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
 use bun_ptr::weak_ptr::WeakPtrData;
@@ -692,7 +691,7 @@ impl Request {
 
     pub(crate) fn get_integrity(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if self.integrity.get().is_empty() {
-            return Ok(ZigString::EMPTY.to_js(global_this));
+            return Ok(JSValue::js_empty_string(global_this));
         }
         self.integrity.get().to_js(global_this)
     }
@@ -777,10 +776,10 @@ impl Request {
         // https://fetch.spec.whatwg.org/#dom-request-referrer
         let referrer = self.referrer.get();
         if referrer.is_empty() {
-            return Ok(ZigString::init(b"about:client").to_js(global_object));
+            return Ok(BunString::static_(b"about:client").to_js(global_object)?);
         }
-        if referrer.eql_comptime(NO_REFERRER_SENTINEL) {
-            return Ok(ZigString::EMPTY.to_js(global_object));
+        if referrer.eq_ascii(NO_REFERRER_SENTINEL) {
+            return Ok(JSValue::js_empty_string(global_object));
         }
         referrer.to_js(global_object)
     }

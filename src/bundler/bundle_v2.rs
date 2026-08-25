@@ -1521,7 +1521,9 @@ pub mod bv2_impl {
             pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
             /// `MacroContext.waiting_vm` for this build's parses: the `VmHandle`
             /// of the VM that called Bun.build.
-            pub waiting_vm: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> *const core::ffi::c_void,
+            pub waiting_vm: unsafe fn(
+                core::ptr::NonNull<super::JSBundleCompletionTask>,
+            ) -> *const core::ffi::c_void,
             /// Folds the event-loop field access + enqueue so the bundler
             /// needn't name the JSC event-loop type.
             pub enqueue_task_concurrent: unsafe fn(

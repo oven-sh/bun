@@ -471,32 +471,35 @@ describe("the macro host", () => {
   // bundler pool thread on its behalf). The sleep after "parking" gives the worker time to actually reach
   // the native wait; nothing observable marks that moment, and terminating earlier still passes but
   // exercises the ordinary path instead.
-  test.concurrent.each(["require", "import", "build"])("terminate() interrupts a Worker waiting on a macro (%s)", async how => {
-    const load = {
-      require: `try { require("./uses.ts") } catch {}`,
-      import: `await import("./uses.ts").catch(() => {})`,
-      build: `await Bun.build({ entrypoints: [Bun.fileURLToPath(new URL("./uses.ts", import.meta.url))] }).catch(() => {})`,
-    }[how];
-    const { lines, stderr, exitCode } = await run(
-      {
-        "never.ts": `export function never() { return new Promise(() => {}); }`,
-        "uses.ts": `import { never } from "./never.ts" with { type: "macro" };\nexport const v = never();\n`,
-        "worker.ts": `postMessage("parking");\n${load};\npostMessage("unreachable");\n`,
-        "index.ts": [
-          `const w = new Worker(new URL("./worker.ts", import.meta.url).href);`,
-          `const seen: string[] = [];`,
-          `w.onmessage = e => seen.push(e.data);`,
-          `await new Promise<void>(r => w.addEventListener("message", () => r(), { once: true }));`,
-          `await Bun.sleep(50);`,
-          `await w.terminate();`,
-          `console.log(JSON.stringify(seen));`,
-        ].join("\n"),
-      },
-      ["run", "index.ts"],
-    );
-    expect({ lines, stderr }).toEqual({ lines: [`["parking"]`], stderr: "" });
-    expect(exitCode).toBe(0);
-  });
+  test.concurrent.each(["require", "import", "build"])(
+    "terminate() interrupts a Worker waiting on a macro (%s)",
+    async how => {
+      const load = {
+        require: `try { require("./uses.ts") } catch {}`,
+        import: `await import("./uses.ts").catch(() => {})`,
+        build: `await Bun.build({ entrypoints: [Bun.fileURLToPath(new URL("./uses.ts", import.meta.url))] }).catch(() => {})`,
+      }[how];
+      const { lines, stderr, exitCode } = await run(
+        {
+          "never.ts": `export function never() { return new Promise(() => {}); }`,
+          "uses.ts": `import { never } from "./never.ts" with { type: "macro" };\nexport const v = never();\n`,
+          "worker.ts": `postMessage("parking");\n${load};\npostMessage("unreachable");\n`,
+          "index.ts": [
+            `const w = new Worker(new URL("./worker.ts", import.meta.url).href);`,
+            `const seen: string[] = [];`,
+            `w.onmessage = e => seen.push(e.data);`,
+            `await new Promise<void>(r => w.addEventListener("message", () => r(), { once: true }));`,
+            `await Bun.sleep(50);`,
+            `await w.terminate();`,
+            `console.log(JSON.stringify(seen));`,
+          ].join("\n"),
+        },
+        ["run", "index.ts"],
+      );
+      expect({ lines, stderr }).toEqual({ lines: [`["parking"]`], stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // The Response resolves on headers; its body is still streaming when the macro returns it.
   test.concurrent("a macro can return fetch()'s Response while its body is still arriving", async () => {

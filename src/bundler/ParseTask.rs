@@ -2459,7 +2459,11 @@ pub mod parse_worker {
         // `'static` erasure: the context outlives the parse.
         opts.macro_context = unsafe {
             let ctx = (*transpiler).macro_context.as_mut().unwrap();
-            ctx.waiting_vm = task.ctx().completion.as_ref().map_or(core::ptr::null(), |c| c.waiting_vm());
+            ctx.waiting_vm = task
+                .ctx()
+                .completion
+                .as_ref()
+                .map_or(core::ptr::null(), |c| c.waiting_vm());
             Some(&mut *std::ptr::from_mut(ctx))
         };
         opts.package_version = task.package_version.slice();

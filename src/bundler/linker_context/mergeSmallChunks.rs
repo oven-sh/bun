@@ -475,7 +475,10 @@ pub(crate) fn merge_small_chunks(
                 continue;
             }
             for dep_index in 0..groups.values()[group_index].deps.len() {
-                let dep = resolve(groups.values(), groups.values()[group_index].deps[dep_index]);
+                let dep = resolve(
+                    groups.values(),
+                    groups.values()[group_index].deps[dep_index],
+                );
                 if dep == group_index
                     || groups.values()[group_index]
                         .loaded

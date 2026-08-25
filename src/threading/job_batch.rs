@@ -106,7 +106,7 @@ impl<C: Sync, T: BatchJob<C>> Drop for JobBatch<'_, C, T> {
 }
 
 // SAFETY: `job` is only touched by the one worker that runs its slot (between
-// `schedule` and the group completing) and by the owner otherwise; `T: Send`
+// `as_batch` being scheduled and the group completing) and by the owner otherwise; `T: Send`
 // and `C: Sync` (the `BatchJob` bounds) vouch for the cross-thread run.
 unsafe impl<C: Sync, T: BatchJob<C>> Send for JobBatch<'_, C, T> {}
 // SAFETY: `&JobBatch` exposes nothing of the jobs.

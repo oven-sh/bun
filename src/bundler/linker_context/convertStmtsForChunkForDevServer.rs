@@ -88,7 +88,6 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     // Barrel optimization: this import was deferred (unused submodule).
                     // Don't add to dep array, but declare the namespace ref as an
                     // empty object so body code referencing it doesn't throw.
-                    // SAFETY: `st.items` is an arena-owned fat ptr; len is always sound to read.
                     let items_len = st.items.len();
                     if !st.star_name_loc.is_empty() || items_len > 0 || st.default_name.is_some() {
                         stmts

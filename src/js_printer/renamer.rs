@@ -103,7 +103,6 @@ impl<'a> NoOpRenamer<'a> {
         let resolved = self.symbols.follow(ref_);
 
         if let Some(symbol) = self.symbols.get_const(resolved) {
-            // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
             symbol.original_name.slice()
         } else {
             Output::panic(format_args!(
@@ -287,7 +286,6 @@ impl MinifyRenamer {
 
         let ns = symbol.slot_namespace();
         if ns == SlotNamespace::MustNotBeRenamed {
-            // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
             return symbol.original_name.slice();
         }
 
@@ -297,7 +295,6 @@ impl MinifyRenamer {
             .or_else(|| self.top_level_symbol_to_slot.get(&ref_).copied())
         {
             Some(i) => i,
-            // SAFETY: as above.
             None => return symbol.original_name.slice(),
         };
 
@@ -934,7 +931,6 @@ impl NumberRenamer {
             }
         }
 
-        // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
         self.symbols.symbols_for_source[source_index as usize][inner_index as usize]
             .original_name
             .slice()
@@ -1476,7 +1472,6 @@ pub fn compute_reserved_names_for_scope(
     for member in scope.members.values() {
         let symbol: &Symbol = symbols.get_const(member.ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
-            // SAFETY: `original_name` is an AST-arena slice.
             names
                 .put(symbol.original_name.slice(), 1)
                 .expect("unreachable");
@@ -1486,7 +1481,6 @@ pub fn compute_reserved_names_for_scope(
     for ref_ in scope.generated.slice() {
         let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
-            // SAFETY: `original_name` is an AST-arena slice.
             names
                 .put(symbol.original_name.slice(), 1)
                 .expect("unreachable");

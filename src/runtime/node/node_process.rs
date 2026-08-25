@@ -26,13 +26,18 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
     EncodedSlice::from_bytes(argv0).to_js(global_object)
 }
 
-/// `process.execPath` bytes: the CLI-set override (Windows bunx in-process
-/// launch) or the resolved executable path.
-pub(crate) fn exec_path_bytes() -> Option<&'static [u8]> {
+/// `process.execPath` as a NUL-terminated `ZStr`: the CLI-set override
+/// (Windows bunx in-process launch) or the resolved executable path.
+pub(crate) fn exec_path_zstr() -> Option<&'static bun_core::ZStr> {
     if let Some(path) = crate::cli::Bun__Node__ExecPathOverride.get() {
-        return Some(path);
+        return Some(path.as_zstr());
     }
-    bun_core::self_exe_path().ok().map(|z| z.as_bytes())
+    bun_core::self_exe_path().ok()
+}
+
+/// [`exec_path_zstr`] as bytes.
+pub(crate) fn exec_path_bytes() -> Option<&'static [u8]> {
+    exec_path_zstr().map(|z| z.as_bytes())
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]

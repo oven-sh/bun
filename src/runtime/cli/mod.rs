@@ -431,7 +431,7 @@ pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>
 /// Overrides `process.execPath` / `process.argv[0]`. Set once when the
 /// Windows bunx fast path boots a bin script inside `bunx.exe`, whose
 /// path children cannot be spawned from (it dispatches to bunx CLI mode).
-pub(crate) static Bun__Node__ExecPathOverride: std::sync::OnceLock<Box<[u8]>> =
+pub(crate) static Bun__Node__ExecPathOverride: std::sync::OnceLock<bun_core::ZBox> =
     std::sync::OnceLock::new();
 
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]

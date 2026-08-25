@@ -4022,14 +4022,14 @@ impl BunXFastPath {
                     sibling.extend_from_slice(dir);
                     sibling.extend_from_slice(b"\\bun.exe");
                     if sys::exists(&sibling) {
-                        let _ = cli::Bun__Node__ExecPathOverride.set(sibling.into_boxed_slice());
+                        let _ = cli::Bun__Node__ExecPathOverride.set(core::ZBox::from_vec(sibling));
                     }
                 }
             }
         }
 
         let argv0: &'static ZStr = match cli::Bun__Node__ExecPathOverride.get() {
-            Some(path) => leak_zstr(path),
+            Some(path) => path.as_zstr(),
             None => match self_exe {
                 Some(z) => z,
                 None => core::argv().get(0).unwrap_or(core::zstr!("bun")),

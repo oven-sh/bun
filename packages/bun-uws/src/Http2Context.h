@@ -225,15 +225,22 @@ struct Http2Response {
     /* inStream has been given its fin=true call. */
     bool finDelivered = false;
     bool paused = false;
-    /* Linked in conn->writable. */
+    /* Linked in the connection's writable queue. */
     bool wantsWrite = false;
     /* setTimeout(): this stream's idle budget in seconds; 0 = never time
      * out, 255 = use the context default. The connection applies the most
      * permissive value among its open streams. */
     uint8_t timeoutS = 255;
     uint8_t pausedTimeoutS = 255;
-    /* Retired: out of conn->streams, waiting in pendingFree for deletion. */
+    /* Retired: out of the connection's stream list, waiting in its free list for deletion. */
     bool dead = false;
+
+    /* Intrusive links, one set per list the connection keeps (see Http2Connection). */
+    Http2Response *prevStream = nullptr;
+    Http2Response *nextStream = nullptr;
+    Http2Response *prevWritable = nullptr;
+    Http2Response *nextWritable = nullptr;
+    Http2Response *nextFree = nullptr;
 
     Http2ResponseData data;
 
@@ -393,8 +400,18 @@ struct Http2Connection {
     bool closed = false;
     bool inSweepList = false;
 
-    std::vector<Http2Response *> streams;
-    std::vector<Http2Response *> drainedAgain;
+    /* Three intrusive lists threaded through the streams themselves, so a
+     * connection allocates nothing per stream beyond the stream:
+     *  - streams: open streams, newest first (doubly linked, O(1) retire);
+     *  - writable: FIFO of streams with bytes to send once the windows and the
+     *    socket allow (doubly linked, wantsWrite is the membership flag);
+     *  - pendingFree: retired streams the sweep deletes (a stack). */
+    Http2Response *streamsHead = nullptr;
+    unsigned streamCount = 0;
+    Http2Response *writableHead = nullptr;
+    Http2Response *writableTail = nullptr;
+    unsigned writableCount = 0;
+    Http2Response *pendingFreeHead = nullptr;
     /* Streams we sent RST_STREAM on; frames for them may still be in flight
      * and are ignored (§5.1 closed). Anything else on a closed id is an error. */
     uint32_t resetByUs[http2::LOCAL_MAX_CONCURRENT_STREAMS] = {};
@@ -406,13 +423,9 @@ struct Http2Connection {
     bool wasResetByUs(uint32_t id) const { for (uint32_t r : resetByUs) if (r == id) return true; return false; }
     void noteResetByPeer(uint32_t id) { resetByPeer[resetByPeerNext++ % http2::LOCAL_MAX_CONCURRENT_STREAMS] = id; }
     bool wasResetByPeer(uint32_t id) const { for (uint32_t r : resetByPeer) if (r == id) return true; return false; }
-    std::vector<Http2Response *> writable;
-    std::vector<Http2Response *> draining;
-    std::vector<Http2Response *> pendingFree;
     /* Seconds of silence before onTimeout; recomputed when a stream sets a
      * timeout or retires (see Http2Response::timeoutS). */
     unsigned idleTimeoutS = 0;
-    int drainDepth = 0;
 
     Http2Connection(us_socket_t *socket, Http2Context *context) : s(socket), ctx(context) {
         lshpack_enc_init(&enc);
@@ -420,15 +433,59 @@ struct Http2Connection {
         lshpack_dec_init(&dec);
     }
     ~Http2Connection() {
-        for (Http2Response *stream : pendingFree) delete stream;
-        for (Http2Response *stream : streams) delete stream;
+        for (Http2Response *stream = pendingFreeHead, *next; stream; stream = next) {
+            next = stream->nextFree;
+            delete stream;
+        }
+        for (Http2Response *stream = streamsHead, *next; stream; stream = next) {
+            next = stream->nextStream;
+            delete stream;
+        }
         lshpack_enc_cleanup(&enc);
         lshpack_dec_cleanup(&dec);
     }
 
+    void linkStream(Http2Response *stream) {
+        stream->prevStream = nullptr;
+        stream->nextStream = streamsHead;
+        if (streamsHead) streamsHead->prevStream = stream;
+        streamsHead = stream;
+        streamCount++;
+    }
+    void unlinkStream(Http2Response *stream) {
+        if (stream->prevStream) stream->prevStream->nextStream = stream->nextStream;
+        else streamsHead = stream->nextStream;
+        if (stream->nextStream) stream->nextStream->prevStream = stream->prevStream;
+        stream->prevStream = stream->nextStream = nullptr;
+        streamCount--;
+    }
+    void pushWritable(Http2Response *stream) {
+        stream->prevWritable = writableTail;
+        stream->nextWritable = nullptr;
+        if (writableTail) writableTail->nextWritable = stream;
+        else writableHead = stream;
+        writableTail = stream;
+        writableCount++;
+    }
+    void unlinkWritable(Http2Response *stream) {
+        if (stream->prevWritable) stream->prevWritable->nextWritable = stream->nextWritable;
+        else writableHead = stream->nextWritable;
+        if (stream->nextWritable) stream->nextWritable->prevWritable = stream->prevWritable;
+        else writableTail = stream->prevWritable;
+        stream->prevWritable = stream->nextWritable = nullptr;
+        stream->wantsWrite = false;
+        writableCount--;
+    }
+    void pushPendingFree(Http2Response *stream) {
+        stream->nextFree = pendingFreeHead;
+        pendingFreeHead = stream;
+    }
+
     Http2Response *findStream(uint32_t id) {
-        /* Newest streams are the busy ones. */
-        for (size_t i = streams.size(); i-- > 0;) if (streams[i]->id == id) return streams[i];
+        /* Newest streams are the busy ones, and they are at the head. */
+        for (Http2Response *stream = streamsHead; stream; stream = stream->nextStream) {
+            if (stream->id == id) return stream;
+        }
         return nullptr;
     }
 
@@ -522,7 +579,7 @@ struct Http2Connection {
     void markWantsWrite(Http2Response *stream) {
         if (stream->wantsWrite || stream->dead) return;
         stream->wantsWrite = true;
-        writable.push_back(stream);
+        pushWritable(stream);
     }
 
     void flush() {
@@ -552,7 +609,7 @@ struct Http2Connection {
     inline void returnSharedOut();
 
     bool wantsDrain() {
-        return !closed && !writable.empty() && connSendWindow > 0 &&
+        return !closed && writableHead && connSendWindow > 0 &&
                out->length() < http2::SOCKET_BACKPRESSURE_HIGH_WATER;
     }
 
@@ -576,7 +633,7 @@ struct Http2Connection {
     inline void scheduleFlush();
 
     bool drainedAfterGoaway() {
-        return !closed && streams.empty() && (goawaySent || goawayReceived) && out->length() == 0;
+        return !closed && streamCount == 0 && (goawaySent || goawayReceived) && out->length() == 0;
     }
 
     bool takeResetToken() {
@@ -787,10 +844,10 @@ struct Http2Context {
     size_t closeIdle(bool closeWhenIdle) {
         size_t closedNow = 0;
         forEachConnection([&](Http2Connection *conn) {
-            if (!conn->streams.empty() && !closeWhenIdle) return;
+            if (conn->streamCount != 0 && !closeWhenIdle) return;
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
-            if (conn->streams.empty()) {
+            if (conn->streamCount == 0) {
                 us_socket_close(conn->s, 0, nullptr);
                 closedNow++;
             }
@@ -868,9 +925,9 @@ struct Http2Context {
             return !conn->closed;
         }
         conn->busy++;
-        while (!conn->pendingFree.empty() && !conn->closed) {
-            Http2Response *stream = conn->pendingFree.back();
-            conn->pendingFree.pop_back();
+        while (conn->pendingFreeHead && !conn->closed) {
+            Http2Response *stream = conn->pendingFreeHead;
+            conn->pendingFreeHead = stream->nextFree;
             if (stream->data.onAborted) {
                 auto cb = stream->data.onAborted;
                 stream->data.onAborted = nullptr;
@@ -913,17 +970,20 @@ private:
         conn->closed = true;
         if (ctx->sharedOutHolder == conn) { ctx->sharedOut.clear(); ctx->sharedOutHolder = nullptr; conn->out = &conn->ownOut; }
         conn->busy++;
-        for (Http2Response *stream : conn->streams) {
+        for (Http2Response *stream = conn->streamsHead, *next; stream; stream = next) {
+            next = stream->nextStream;
             stream->dead = true;
-            conn->pendingFree.push_back(stream);
+            conn->pushPendingFree(stream);
         }
-        conn->streams.clear();
-        conn->writable.clear();
-        conn->draining.clear();
+        conn->streamsHead = nullptr;
+        conn->streamCount = 0;
+        conn->writableHead = conn->writableTail = nullptr;
+        conn->writableCount = 0;
         /* Every holder learns its Http2Response* is going away. The objects
          * themselves are deleted with the connection once no frame of ours
-         * is still running (~Http2Connection). */
-        for (Http2Response *stream : conn->pendingFree) {
+         * is still running (~Http2Connection). Nothing is added to the free
+         * list meanwhile: every stream is already dead, so a retire returns early. */
+        for (Http2Response *stream = conn->pendingFreeHead; stream; stream = stream->nextFree) {
             if (stream->data.onAborted) {
                 auto cb = stream->data.onAborted;
                 stream->data.onAborted = nullptr;
@@ -943,8 +1003,14 @@ private:
     static us_socket_t *onTimeout(us_socket_t *s) {
         Http2Connection *conn = connection(s);
         conn->busy++;
-        std::vector<Http2Response *> open = conn->streams;
-        for (Http2Response *stream : open) {
+        /* A handler may retire streams while we walk; snapshot the list first
+         * (it is bounded by LOCAL_MAX_CONCURRENT_STREAMS). Nothing is deleted
+         * while busy is held. */
+        Http2Response *open[http2::LOCAL_MAX_CONCURRENT_STREAMS];
+        unsigned n = 0;
+        for (Http2Response *stream = conn->streamsHead; stream && n < http2::LOCAL_MAX_CONCURRENT_STREAMS; stream = stream->nextStream) open[n++] = stream;
+        for (unsigned i = 0; i < n; i++) {
+            Http2Response *stream = open[i];
             if (!stream->dead && stream->data.onTimeout) stream->data.onTimeout(stream, stream->data.userData);
         }
         conn->busy--;
@@ -1022,9 +1088,9 @@ inline void Http2Connection::touch() {
 inline void Http2Connection::recomputeIdleTimeout() {
     /* Most permissive among open streams (0 = never); a stream that never
      * asked counts as the context default, as does a connection with none. */
-    unsigned t = streams.empty() ? ctx->idleTimeoutS : 0;
-    bool never = streams.empty() && ctx->idleTimeoutS == 0;
-    for (Http2Response *stream : streams) {
+    unsigned t = streamCount == 0 ? ctx->idleTimeoutS : 0;
+    bool never = streamCount == 0 && ctx->idleTimeoutS == 0;
+    for (Http2Response *stream = streamsHead; stream; stream = stream->nextStream) {
         unsigned s = stream->timeoutS == 255 ? ctx->idleTimeoutS : stream->timeoutS;
         if (s == 0) { never = true; break; }
         t = std::max(t, s);
@@ -1149,52 +1215,32 @@ inline void Http2Connection::replenishStreamWindow(Http2Response *stream, uint32
 }
 
 inline void Http2Connection::drainWritable() {
-    /* Streams may re-arm or retire while we call out; iterate a snapshot.
-     * Each stream gets at most one slice per pass and the ones that didn't
-     * finish re-queue at the back, so a large download can't starve small
-     * responses queued behind it. */
-    std::vector<Http2Response *> nested, nestedAgain;
-    std::vector<Http2Response *> &snapshot = drainDepth++ ? nested : draining;
-    snapshot.clear();
-    snapshot.swap(writable);
-    for (Http2Response *stream : snapshot) stream->wantsWrite = false;
-    size_t i = 0;
+    /* One pass over the streams queued when it started, popped from the head
+     * one at a time. Each gets at most one slice; one that wants more
+     * re-queues itself at the tail, behind the streams that didn't get a turn
+     * yet, so a large download can't starve small responses queued behind it.
+     * Streams may re-arm or retire from inside the callbacks: a popped stream
+     * is off the queue before its drain runs, and the count bounds the pass. */
     size_t prevSlice = drainSlice;
-    drainSlice = std::max<size_t>(peerMaxFrameSize, (http2::SOCKET_BACKPRESSURE_HIGH_WATER - std::min<size_t>(out->length(), http2::SOCKET_BACKPRESSURE_HIGH_WATER)) / std::max<size_t>(snapshot.size(), 1));
-    for (; i < snapshot.size(); i++) {
-        if (closed) { drainSlice = prevSlice; drainDepth--; return; }
+    unsigned n = writableCount;
+    drainSlice = std::max<size_t>(peerMaxFrameSize, (http2::SOCKET_BACKPRESSURE_HIGH_WATER - std::min<size_t>(out->length(), http2::SOCKET_BACKPRESSURE_HIGH_WATER)) / std::max<unsigned>(n, 1));
+    while (n-- > 0 && writableHead && !closed) {
         if (out->length() >= http2::SOCKET_BACKPRESSURE_HIGH_WATER || connSendWindow <= 0) break;
-        Http2Response *stream = snapshot[i];
-        if (stream->dead || stream->wantsWrite) continue;
+        Http2Response *stream = writableHead;
+        unlinkWritable(stream);
+        if (stream->dead) continue;
         if (stream->sendWindow <= 0) { markWantsWrite(stream); continue; }
         if (!stream->drain()) markWantsWrite(stream);
         else streamMaybeClosed(stream);
     }
-    /* Rotate: whatever re-queued itself during this pass (had its slice and
-     * wants more) goes behind the streams that didn't get a turn at all. */
-    if (i < snapshot.size()) {
-        std::vector<Http2Response *> &again = drainDepth > 1 ? nestedAgain : drainedAgain;
-        again.clear();
-        again.swap(writable);
-        for (; i < snapshot.size(); i++) markWantsWrite(snapshot[i]);
-        for (Http2Response *stream : again) { stream->wantsWrite = false; if (!stream->dead) markWantsWrite(stream); }
-        again.clear();
-    }
-    snapshot.clear();
     drainSlice = prevSlice;
-    drainDepth--;
 }
 
 inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) {
     if (stream->dead) return;
     stream->dead = true;
-    auto it = std::find(streams.begin(), streams.end(), stream);
-    if (it != streams.end()) streams.erase(it);
-    if (stream->wantsWrite) {
-        auto wit = std::find(writable.begin(), writable.end(), stream);
-        if (wit != writable.end()) writable.erase(wit);
-        stream->wantsWrite = false;
-    }
+    unlinkStream(stream);
+    if (stream->wantsWrite) unlinkWritable(stream);
     stream->data.onWritable = nullptr;
     stream->data.inStream = nullptr;
     if (abortNow && stream->data.onAborted) {
@@ -1202,7 +1248,7 @@ inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) 
         stream->data.onAborted = nullptr;
         cb(stream, stream->data.userData);
     }
-    pendingFree.push_back(stream);
+    pushPendingFree(stream);
     if (closed) return;
     /* Freed (and a drained going-away connection closed) after the current
      * socket event, or from the deferred pass if we're outside one; never
@@ -1300,7 +1346,7 @@ inline void Http2Connection::onData(const char *data, size_t length) {
     }
     /* Only frames that move a stream count as activity: a peer holding
      * streams open at a zero window can't keep the connection alive on PINGs. */
-    if (progressed || streams.empty()) touch();
+    if (progressed || streamCount == 0) touch();
     progressed = false;
     busy--;
     Http2Context::epilogue(this, s);
@@ -1337,7 +1383,7 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
             if (value > (uint32_t) http2::MAX_WINDOW_SIZE) return connectionError(http2::ERR_FLOW_CONTROL_ERROR);
             int64_t delta = (int64_t) value - peerInitialWindowSize;
             peerInitialWindowSize = (int32_t) value;
-            for (Http2Response *stream : streams) {
+            for (Http2Response *stream = streamsHead; stream; stream = stream->nextStream) {
                 int64_t w = (int64_t) stream->sendWindow + delta;
                 if (w > http2::MAX_WINDOW_SIZE) return connectionError(http2::ERR_FLOW_CONTROL_ERROR);
                 stream->sendWindow = (int32_t) w;
@@ -1634,14 +1680,14 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         noteResetByUs(streamId);
         return true;
     }
-    if (streams.size() >= http2::LOCAL_MAX_CONCURRENT_STREAMS) {
+    if (streamCount >= http2::LOCAL_MAX_CONCURRENT_STREAMS) {
         return streamError(streamId, nullptr, http2::ERR_REFUSED_STREAM);
     }
     lastProcessedStreamId = streamId;
     if (tooLarge) {
         Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
         stream->remoteClosed = endStream;
-        streams.push_back(stream);
+        linkStream(stream);
         stream->writeStatus("431")->end();
         return !closed;
     }
@@ -1700,7 +1746,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
     stream->declaredContentLength = contentLength;
     stream->remoteClosed = endStream;
-    streams.push_back(stream);
+    linkStream(stream);
     progressed = true;
     return dispatchRequest(stream, list.data(), (unsigned) list.size());
 }

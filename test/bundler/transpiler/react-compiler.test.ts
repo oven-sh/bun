@@ -277,8 +277,9 @@ describe("bundler", () => {
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('Invalid react compiler output mode: "bogus". Expected "client" or "ssr"');
+    expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
 

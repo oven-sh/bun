@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -442,7 +442,7 @@ describe("Bun.serve http2 with SNI (serverName + tls[])", () => {
   // A named handshake goes through the per-name SSL_CTX that addServerName()
   // built, so ALPN has to be enabled on that context too.
   const sniFixture = (http1: boolean) => `
-    import { tls } from "harness";
+    const tls = ${JSON.stringify(tlsCert)};
     const server = Bun.serve({
       port: 0,
       http2: true,

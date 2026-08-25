@@ -3678,7 +3678,9 @@ function callWriteHeadIfObservable(self, headerState, fromEnd) {
     // the way an explicit writeHead() does — the body is already in hand.
     if (fromEnd) self[kImplicitHeaderFromEnd] = true;
     try {
-      self.writeHead(self.statusCode, self.statusMessage);
+      // One argument, like _implicitHeader: _writeHead then applies the
+      // STATUS_CODES default to a falsy res.statusMessage instead of snapshotting "".
+      self.writeHead(self.statusCode);
     } finally {
       if (fromEnd) self[kImplicitHeaderFromEnd] = false;
     }

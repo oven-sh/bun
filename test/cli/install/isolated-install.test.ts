@@ -1937,24 +1937,15 @@ test("runs lifecycle scripts correctly", async () => {
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
 
-// When an auto-installed peer dependency has its OWN peer deps, those
-// transitive peers get re-queued during peer processing. If all manifest
-// loads are synchronous (cached with valid max-age) AND the transitive peer's
-// version constraint doesn't match what's already in the lockfile,
-// pendingTaskCount() stays at 0 and waitForPeers was skipped — leaving
-// the transitive peer's resolution unset (= invalid_package_id → filtered
-// from the install).
-test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
+// Self-contained HTTP server that serves package manifests & tarballs
+// directly from the Verdaccio fixtures, with Cache-Control: max-age=300
+// to replicate npmjs.org behavior (fully synchronous on warm cache).
+function serveFixtures() {
   const packagesDir = join(import.meta.dir, "registry", "packages");
-
-  // Self-contained HTTP server that serves package manifests & tarballs
-  // directly from the Verdaccio fixtures, with Cache-Control: max-age=300
-  // to replicate npmjs.org behavior (fully synchronous on warm cache).
-  using server = Bun.serve({
+  const server = Bun.serve({
     port: 0,
     async fetch(req) {
-      const url = new URL(req.url);
-      const pathname = url.pathname;
+      const pathname = new URL(req.url).pathname;
 
       // Tarball: /<name>/-/<name>-<version>.tgz
       if (pathname.endsWith(".tgz")) {
@@ -1979,10 +1970,9 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
 
       // Rewrite tarball URLs to point at this server
       const meta = await metaFile.json();
-      const port = server.port;
       for (const [ver, info] of Object.entries(meta.versions ?? {}) as [string, any][]) {
         if (info?.dist?.tarball) {
-          info.dist.tarball = `http://localhost:${port}/${packageName}/-/${packageName}-${ver}.tgz`;
+          info.dist.tarball = `http://localhost:${server.port}/${packageName}/-/${packageName}-${ver}.tgz`;
         }
       }
 
@@ -1994,6 +1984,18 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
       });
     },
   });
+  return server;
+}
+
+// When an auto-installed peer dependency has its OWN peer deps, those
+// transitive peers get re-queued during peer processing. If all manifest
+// loads are synchronous (cached with valid max-age) AND the transitive peer's
+// version constraint doesn't match what's already in the lockfile,
+// pendingTaskCount() stays at 0 and waitForPeers was skipped — leaving
+// the transitive peer's resolution unset (= invalid_package_id → filtered
+// from the install).
+test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
+  using server = serveFixtures();
 
   using packageDir = tempDir("transitive-peer-test-", {});
   const packageJson = join(String(packageDir), "package.json");
@@ -2061,53 +2063,6 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
 // defers its peer `no-deps@^2.0.0`. Without the fix nothing wakes the wait
 // loop again and `bun install` hangs in "Resolving dependencies" forever.
 test("transitive peer resolves when its tarball is cached from another registry", async () => {
-  const packagesDir = join(import.meta.dir, "registry", "packages");
-
-  function serveFixtures() {
-    const server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const pathname = new URL(req.url).pathname;
-
-        // Tarball: /<name>/-/<name>-<version>.tgz
-        if (pathname.endsWith(".tgz")) {
-          const match = pathname.match(/\/([^/]+)\/-\/(.+\.tgz)$/);
-          if (match) {
-            const tarball = file(join(packagesDir, match[1], match[2]));
-            if (await tarball.exists()) {
-              return new Response(tarball, {
-                headers: { "Content-Type": "application/octet-stream" },
-              });
-            }
-          }
-          return new Response("Not found", { status: 404 });
-        }
-
-        // Manifest: /<name>
-        const packageName = decodeURIComponent(pathname.slice(1));
-        const metaFile = file(join(packagesDir, packageName, "package.json"));
-        if (!(await metaFile.exists())) {
-          return new Response("Not found", { status: 404 });
-        }
-
-        const meta = await metaFile.json();
-        for (const [ver, info] of Object.entries(meta.versions ?? {}) as [string, any][]) {
-          if (info?.dist?.tarball) {
-            info.dist.tarball = `http://localhost:${server.port}/${packageName}/-/${packageName}-${ver}.tgz`;
-          }
-        }
-
-        return new Response(JSON.stringify(meta), {
-          headers: {
-            "Content-Type": "application/json",
-            "Cache-Control": "public, max-age=300",
-          },
-        });
-      },
-    });
-    return server;
-  }
-
   using serverA = serveFixtures();
   using serverB = serveFixtures();
 

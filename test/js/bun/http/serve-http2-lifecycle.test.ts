@@ -187,11 +187,7 @@ describe("Bun.serve http2 lifecycle", () => {
   }
 
   test("server.timeout(req, n) on h2 is per connection: the most permissive open request wins", async () => {
-    await using fx = await startFixture({
-      tls: false,
-      idleTimeout: 8,
-      extra: `routes: { "/t": async (req, server) => { const u = new URL(req.url); server.timeout(req, Number(u.searchParams.get("s"))); await Bun.sleep(Number(u.searchParams.get("ms"))); return new Response("t" + u.searchParams.get("s")); } },`,
-    });
+    await using fx = await startFixture({ tls: false, idleTimeout: 8 });
     const session = await connectH2(fx.port, false);
     // One stream asks for 1 s, another for 30 s; both sleep 6 s. With per-request
     // semantics the first would be cut at the next tick; per-connection, 30 wins.

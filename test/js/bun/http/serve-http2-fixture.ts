@@ -233,6 +233,13 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       await promise;
       return new Response(req.signal.aborted ? "aborted" : "kept");
     }
+    // server.timeout(req, s), then sleep ms before answering.
+    case "/t": {
+      const s = url.searchParams.get("s")!;
+      server.timeout(req, Number(s));
+      await Bun.sleep(Number(url.searchParams.get("ms")));
+      return new Response("t" + s);
+    }
   }
   return new Response("not found: " + url.pathname, { status: 404 });
 }

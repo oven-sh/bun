@@ -1,7 +1,4 @@
-//! An owned copy of an HTTP/1 request head (target and header fields), taken
-//! when the uWS request a `Bun.serve` `Request` reads `url`/`headers` from is
-//! about to leave the stack. Parsing into a `FetchHeaders` waits for the first
-//! read, so a request nobody reads costs one allocation and one memcpy.
+//! The copy of a uWS request head that outlives the server dispatch, for `Request.url`/`.headers`.
 
 use bun_core::strings;
 use bun_picohttp::Header as PicoHeader;
@@ -10,19 +7,18 @@ use bun_uws::Request as UwsRequest;
 use crate::webcore::FetchHeaders;
 use crate::webcore::response::HeadersRef;
 
-/// Filled by `uws_req_copy_head` (src/uws_sys/libuwsockets.cpp), native-endian:
-///
-/// ```text
-/// u32 count                   header fields
-/// u32 target[2]               offset, length
-/// u32 field[count][4]         name offset, name length, value offset, value length
-/// u8  block[]                 the wire bytes; offsets are relative to it
-/// ```
+/// Written by `uws_req_copy_head` (libuwsockets.cpp): the `u32` index below, then the wire bytes.
 pub(crate) struct RequestHeadSnapshot {
     bytes: Box<[u8]>,
 }
 
 const U32: usize = core::mem::size_of::<u32>();
+/// Index words. A view is an (offset into the wire bytes, length) pair of words.
+const COUNT_WORD: usize = 0;
+const TARGET_VIEW: usize = 1;
+const FIRST_FIELD_VIEW: usize = 3;
+/// Name view, then value view.
+const WORDS_PER_FIELD: usize = 4;
 
 impl RequestHeadSnapshot {
     pub(crate) fn capture(req: &UwsRequest) -> Self {
@@ -39,12 +35,15 @@ impl RequestHeadSnapshot {
 
     /// The request target from the request line (path and query).
     pub(crate) fn target(&self) -> &[u8] {
-        self.view(1)
+        self.view(TARGET_VIEW)
     }
 
     /// Header fields in wire order. Names keep their wire casing.
     pub(crate) fn headers(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
-        (0..self.u32(0)).map(move |i| (self.view(3 + 4 * i), self.view(5 + 4 * i)))
+        (0..self.word(COUNT_WORD)).map(move |i| {
+            let name = FIRST_FIELD_VIEW + WORDS_PER_FIELD * i;
+            (self.view(name), self.view(name + 2))
+        })
     }
 
     /// The first field named `lowercase_name`, ASCII case-insensitive.
@@ -70,15 +69,15 @@ impl RequestHeadSnapshot {
         self.bytes.len()
     }
 
-    fn u32(&self, i: usize) -> usize {
+    fn word(&self, i: usize) -> usize {
         let at = i * U32;
         u32::from_ne_bytes(self.bytes[at..at + U32].try_into().unwrap()) as usize
     }
 
-    /// The bytes of the (offset, length) pair stored at index words `i` and `i + 1`.
     fn view(&self, i: usize) -> &[u8] {
-        let block = &self.bytes[U32 * (3 + 4 * self.u32(0))..];
-        let (offset, len) = (self.u32(i), self.u32(i + 1));
-        &block[offset..offset + len]
+        let index_words = FIRST_FIELD_VIEW + WORDS_PER_FIELD * self.word(COUNT_WORD);
+        let wire = &self.bytes[U32 * index_words..];
+        let (offset, len) = (self.word(i), self.word(i + 1));
+        &wire[offset..offset + len]
     }
 }

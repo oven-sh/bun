@@ -249,8 +249,7 @@ impl Request {
         self.head.get().as_ref().map(RequestHead::Snapshot)
     }
 
-    /// Copies what the lazy `url`/`headers` getters still need from `req` before
-    /// the server dispatch that owns it returns. A no-op once JS read both.
+    /// Keeps what the lazy `url`/`headers` getters still need from `req`. A no-op once JS read both.
     pub(crate) fn snapshot_request_head(&self, req: &uws::Request) {
         if self.head.get().is_some() || (!self.url.get().is_empty() && self.headers.get().is_some())
         {

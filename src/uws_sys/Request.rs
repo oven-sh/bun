@@ -91,9 +91,7 @@ impl Request {
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
 
-    /// Copies the request target and header fields into `dest` (layout: see
-    /// `RequestHeadSnapshot`). Returns the size needed; writes nothing when
-    /// `dest` is smaller than that.
+    /// Returns the size the copy needs; writes it only when `dest` is at least that large.
     pub fn copy_head(&self, dest: &mut [core::mem::MaybeUninit<u8>]) -> usize {
         // SAFETY: the shim writes at most `dest.len()` bytes, into `dest`.
         unsafe { c::uws_req_copy_head(self, dest.as_mut_ptr().cast::<u8>(), dest.len()) }

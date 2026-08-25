@@ -29,14 +29,15 @@ extern "C" const char* Bun__errnoName(int);
 
 namespace Zig {
 
-// 8 bit byte
-// we tag the final two bits
-// so 56 bits are copied over
-// rest we zero out for consistentcy
+// EncodedSlice pointer tag bits; mirror `TAG_*_BIT` / `UNTAG_MASK` in src/bun_core/string/mod.rs.
+static constexpr uintptr_t encodedSliceTagUTF16 = static_cast<uintptr_t>(1) << 63;
+static constexpr uintptr_t encodedSliceTagGlobal = static_cast<uintptr_t>(1) << 62;
+static constexpr uintptr_t encodedSliceTagUTF8 = static_cast<uintptr_t>(1) << 61;
+static constexpr uintptr_t encodedSliceUntagMask = (static_cast<uintptr_t>(1) << 53) - 1;
+
 static const unsigned char* untag(const unsigned char* ptr)
 {
-    return reinterpret_cast<const unsigned char*>(
-        (((reinterpret_cast<uintptr_t>(ptr) & ~(static_cast<uint64_t>(1) << 63) & ~(static_cast<uint64_t>(1) << 62)) & ~(static_cast<uint64_t>(1) << 61)) & ~(static_cast<uint64_t>(1) << 60)));
+    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) & encodedSliceUntagMask);
 }
 
 static void* untagVoid(const unsigned char* ptr)
@@ -51,18 +52,18 @@ static void* untagVoid(const char16_t* ptr)
 
 static bool isTaggedUTF16Ptr(const unsigned char* ptr)
 {
-    return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 63)) != 0;
+    return (reinterpret_cast<uintptr_t>(ptr) & encodedSliceTagUTF16) != 0;
 }
 
 // Do we need to convert the string from UTF-8 to UTF-16?
 static bool isTaggedUTF8Ptr(const unsigned char* ptr)
 {
-    return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 61)) != 0;
+    return (reinterpret_cast<uintptr_t>(ptr) & encodedSliceTagUTF8) != 0;
 }
 
 static bool isTaggedExternalPtr(const unsigned char* ptr)
 {
-    return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 62)) != 0;
+    return (reinterpret_cast<uintptr_t>(ptr) & encodedSliceTagGlobal) != 0;
 }
 
 static void free_global_string(void* str, void* ptr, unsigned len)
@@ -189,12 +190,12 @@ static const WTF::String toStringCopy(EncodedSlice str)
 
 static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
 {
-    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
+    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | encodedSliceTagUTF16);
 }
 
 static const unsigned char* taggedUTF8Ptr(const unsigned char* ptr)
 {
-    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 61));
+    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | encodedSliceTagUTF8);
 }
 
 // Borrowed slices: the encoding lives in the pointer tag, so construct an

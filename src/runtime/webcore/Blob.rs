@@ -2162,7 +2162,7 @@ impl BlobExt for Blob {
                             global_this,
                             binding,
                             crate::node::fs::args::Stat {
-                                path: PathLike::Utf8(Utf8Bytes::Owned(path_like.slice().to_vec())),
+                                path: PathLike::owned(path_like.slice().to_vec()),
                                 big_int: false,
                                 throw_if_no_entry: true,
                             },
@@ -3542,9 +3542,7 @@ impl BlobExt for Blob {
                     // The assignment below drops the old `PathLike` (releasing
                     // the caller-owned path) as part of the `*path_or_fd = …`
                     // write.
-                    *path_or_fd = PathOrFileDescriptor::Path(PathLike::Utf8(Utf8Bytes::Borrowed(
-                        b"\\\\.\\NUL",
-                    )));
+                    *path_or_fd = PathOrFileDescriptor::Path(PathLike::borrowed(b"\\\\.\\NUL"));
                 }
 
                 // SAFETY: bun_vm() is live for the duration of a host call.
@@ -4032,8 +4030,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
                     }
-                    let mut dest =
-                        PathOrFileDescriptor::Path(PathLike::Utf8(Utf8Bytes::Owned(path)));
+                    let mut dest = PathOrFileDescriptor::Path(PathLike::owned(path));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,
                         global_this,
@@ -6583,19 +6580,8 @@ impl Internal {
     pub(crate) fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut bytes = self.to_owned_slice();
         let bom_len = bytes.len() - strings::without_utf8_bom(&bytes).len();
-        if bom_len == 0 {
-            return bun_string_jsc::owned_utf8_into_js(global_this, bytes);
-        }
-        match strings::to_utf16_alloc(&bytes[bom_len..], false, false) {
-            Ok(Some(utf16)) => {
-                BunString::create_external_globally_allocated_utf16(utf16).into_js(global_this)
-            }
-            Ok(None) => {
-                bytes.drain(..bom_len);
-                BunString::create_external_globally_allocated_latin1(bytes).into_js(global_this)
-            }
-            Err(_) => Err(global_this.throw_out_of_memory()),
-        }
+        bytes.drain(..bom_len);
+        bun_string_jsc::owned_utf8_into_js(global_this, bytes)
     }
 
     pub(crate) fn to_json(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {

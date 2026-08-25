@@ -1384,7 +1384,7 @@ impl JSTranspiler {
             let bytes = code.slice().to_vec();
             global.vm().report_extra_memory(bytes.len());
             bun_jsc::Unprotect::unprotect(&mut code);
-            code = StringOrBuffer::Utf8(bun_core::Utf8Bytes::Owned(bytes));
+            code = StringOrBuffer::owned(bytes);
         }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
         // (`Flavor::Async`) already protected; adopt into a `ThreadSafe` so any

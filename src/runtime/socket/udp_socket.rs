@@ -9,8 +9,8 @@ use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSStringView, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
-    StringJsc, SysErrorJsc, SystemError,
+    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
+    SysErrorJsc, SystemError,
 };
 use bun_ptr::BackRef;
 
@@ -1404,18 +1404,9 @@ impl UDPSocket {
         // pointers stay valid. An ArrayBuffer detached during phase 1 now
         // reports a zero-length slice rather than a dangling pointer.
         let empty: &'static [u8] = b"";
-        // The views and their UTF-8 bytes live in these Vecs until
-        // `socket.send()`. Phase 1 stored the primitive JSString; `as_string()`
-        // is a plain cast (no `toPrimitive`, no user JS).
-        let mut string_views: Vec<Option<JSStringView<'_>>> = Vec::with_capacity(len);
-        for val in payload_vals.iter() {
-            string_views.push(if val.is_string() {
-                Some(val.as_string().view(global_this)?)
-            } else {
-                None
-            });
-        }
-        let mut string_slices: Vec<Utf8Bytes<'_>> = Vec::with_capacity(len);
+        // Collect the strings' UTF-8 bytes into a Vec so they live until
+        // `socket.send()` (a ref for 8-bit ASCII strings, a transcode otherwise).
+        let mut string_slices: Vec<Utf8Bytes<'static>> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {
             // Hoisted so the returned `slice()` borrow lives past the `'brk` block
             // (the underlying buffer is GC-rooted via `payload_vals`; the
@@ -1432,7 +1423,8 @@ impl UDPSocket {
                     }
                     break 'brk array_buffer.slice();
                 }
-                string_slices.push(string_views[slice_idx].as_ref().unwrap().to_utf8());
+                // Phase 1 stored the primitive JSString, so this runs no user JS.
+                string_slices.push(val.to_utf8(global_this)?);
                 break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();

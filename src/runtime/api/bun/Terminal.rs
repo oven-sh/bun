@@ -1861,7 +1861,7 @@ impl Terminal {
         let signal_value: JSValue = if let Some(s) = signal {
             // SignalCode derives Debug → "SIGTERM" etc.
             let name = format!("{:?}", s);
-            EncodedSlice::utf8(name.as_bytes()).to_js(global_this)
+            EncodedSlice::latin1(name.as_bytes()).to_js(global_this)
         } else {
             JSValue::NULL
         };

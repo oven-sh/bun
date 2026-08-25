@@ -233,9 +233,7 @@ impl FileExt for File {
                     global_this,
                     &binding,
                     node_fs::args::Unlink {
-                        path: PathLike::Utf8(bun_core::Utf8Bytes::Owned(
-                            path_like.slice().to_vec(),
-                        )),
+                        path: PathLike::owned(path_like.slice().to_vec()),
                     },
                     global_this.bun_vm().as_mut(),
                 ))

@@ -100,6 +100,8 @@ impl<T: Unprotect + Default> Default for ThreadSafe<T> {
 /// instead borrow Rust-side bytes for a synchronous call ([`PathLike::borrowed`]).
 pub enum PathLike<'a> {
     Buffer(MarkedArrayBuffer),
+    /// Always shares its WTF string's bytes (built by `shared_or_utf8`);
+    /// transcoded paths are `Utf8(Owned)`.
     String(Utf8WithString),
     ThreadsafeString(Utf8WithString),
     Utf8(Utf8Bytes<'a>),
@@ -153,6 +155,19 @@ impl<'a> PathLike<'a> {
     }
 
     #[inline]
+    pub fn owned(bytes: Vec<u8>) -> PathLike<'static> {
+        PathLike::Utf8(Utf8Bytes::Owned(bytes))
+    }
+
+    /// The bytes as a `Vec<u8>`: moved out of [`PathLike::owned`], copied otherwise.
+    pub fn into_vec(mut self) -> Vec<u8> {
+        if let Self::Utf8(utf8) = &mut self {
+            return core::mem::replace(utf8, Utf8Bytes::EMPTY).into_vec();
+        }
+        self.slice().to_vec()
+    }
+
+    #[inline]
     pub fn slice(&self) -> &[u8] {
         match self {
             Self::Buffer(b) => b.slice(),
@@ -177,9 +192,8 @@ impl PathLike<'static> {
     /// [`Unprotect::unprotect`]); the discriminant is preserved so callers
     /// matching on `Buffer` after this call see the same shape.
     ///
-    /// Prefer [`Self::into_thread_safe`] which returns a [`ThreadSafe`] guard;
-    /// this in-place form exists for nested calls from container types'
-    /// `to_thread_safe`.
+    /// Called in place by the fs `args::*` types' `into_thread_safe`, which
+    /// wrap the result in a [`ThreadSafe`] guard.
     pub fn to_thread_safe(&mut self) {
         match self {
             Self::String(s) => {

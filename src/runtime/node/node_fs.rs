@@ -4055,11 +4055,6 @@ pub mod args {
             }
         }
     }
-    impl WriteFile<'static> {
-        pub(crate) fn to_thread_safe(&mut self) {
-            self.file.to_thread_safe();
-        }
-    }
     impl Unprotect for WriteFile<'static> {
         #[inline]
         fn unprotect(&mut self) {
@@ -4069,6 +4064,9 @@ pub mod args {
         }
     }
     impl WriteFile<'static> {
+        pub(crate) fn to_thread_safe(&mut self) {
+            self.file.to_thread_safe();
+        }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             Self::from_js_with_default_flag(ctx, arguments, FileSystemFlags::W)
         }
@@ -4178,13 +4176,6 @@ pub mod args {
     pub struct Exists<'a> {
         pub path: Option<PathLike<'a>>,
     }
-    impl Exists<'static> {
-        pub(crate) fn to_thread_safe(&mut self) {
-            if let Some(p) = &mut self.path {
-                p.to_thread_safe();
-            }
-        }
-    }
     impl Unprotect for Exists<'static> {
         #[inline]
         fn unprotect(&mut self) {
@@ -4194,6 +4185,11 @@ pub mod args {
         }
     }
     impl Exists<'static> {
+        pub(crate) fn to_thread_safe(&mut self) {
+            if let Some(p) = &mut self.path {
+                p.to_thread_safe();
+            }
+        }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             Ok(Exists {
                 path: PathLike::from_js(ctx, arguments)?,
@@ -6788,12 +6784,13 @@ impl NodeFS {
             } else {
                 E::ENOENT
             };
-            return Err(sys::Error::from_code(code, sys::Tag::scandir).with_path(path));
+            return Err(sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice()));
         };
 
         let mut entries: Vec<T> = Vec::with_capacity(list.len());
+        let input_path = args.path.slice();
         let root_path = if T::IS_DIRENT {
-            BunString::clone_utf8(path)
+            BunString::clone_utf8(input_path)
         } else {
             BunString::EMPTY
         };
@@ -6819,7 +6816,7 @@ impl NodeFS {
                 let joined_path;
                 let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
                     joined.clear();
-                    joined.extend_from_slice(path);
+                    joined.extend_from_slice(input_path);
                     if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
                         joined.push(paths::SEP);
                     }
@@ -7416,7 +7413,7 @@ impl NodeFS {
         if args.encoding == Encoding::Utf8 {
             if let PathLike::String(s) = &args.path {
                 if strings::eql_long(s.slice(), link_path, true) {
-                    return Ok(StringOrBuffer::String(s.clone_string_only()));
+                    return Ok(StringOrBuffer::String(s.clone()));
                 }
             }
         }
@@ -7506,7 +7503,7 @@ impl NodeFS {
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
-                        return Ok(StringOrBuffer::String(s.clone_string_only()));
+                        return Ok(StringOrBuffer::String(s.clone()));
                     }
                 }
             }
@@ -7559,7 +7556,7 @@ impl NodeFS {
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
-                        return Ok(StringOrBuffer::String(s.clone_string_only()));
+                        return Ok(StringOrBuffer::String(s.clone()));
                     }
                 }
             }

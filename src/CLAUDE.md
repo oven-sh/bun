@@ -121,7 +121,8 @@ re-encoding; `Utf8WithString::js_only(string)` wraps an output-only string.
 `PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadsafeString`
 (`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'a>)` (transcoded JS
 string, or Rust-side bytes: `PathLike::borrowed(bytes)` lends `&'a [u8]` to a
-synchronous call, `Owned` when the value must own them), `Buffer`. Anything
+synchronous call, `PathLike::owned(vec)` when the value must own them),
+`Buffer`. Anything
 parsed from JS, stored, or sent to another thread (`to_thread_safe`,
 `ThreadSafe<T>`, the fs `args::*<'static>` async path) is `'static`.
 
@@ -141,10 +142,13 @@ Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`
 (copies; ASCII stays 8-bit). An owned `Vec<u8>` that JS should adopt:
 `bun_string_jsc::owned_utf8_into_js(global, vec)?`; an owned `Vec<u16>`:
 `bun_string_jsc::owned_utf16_into_js(global, vec)?`. An ASCII literal or
-`&'static` ASCII: `String::static_("lit").to_js(global)?`. Bytes → `Error`:
-`EncodedSlice::utf8(bytes).to_error_instance(global)`; a formatted message
-→ `Error`: `global.create_error_instance(format_args!(..))` (and the
-`type_error`/`range_error`/`syntax_error` siblings). The infallible
+`&'static` ASCII: `String::static_("lit").to_js(global)?`. → `Error` (each
+with `type_error`/`range_error`/`syntax_error` siblings, one C++ entry):
+`global.create_error_instance(format_args!(..))` (argument-free ASCII
+literal → atomized; formatted → copied once), `string.to_error_instance(global)`
+(WTF-backed shares the impl, static atomizes, borrowed `EncodedSlice`
+copies), `EncodedSlice::utf8(bytes).to_error_instance(global)` for raw UTF-8
+bytes (copied). The infallible
 `EncodedSlice::…(bytes).to_js(global)` is only for callbacks that cannot
 return `JsResult`, or for bytes already validated as ASCII where a rescan
 is unwanted (`EncodedSlice::latin1(bytes).to_js(global)`).

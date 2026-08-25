@@ -48,6 +48,14 @@ enum class BunStringTag : uint8_t {
     Empty = 4,
 };
 
+/// Mirrors `ErrorKind` in src/jsc/bun_string_jsc.rs.
+enum class BunErrorKind : uint8_t {
+    Error = 0,
+    TypeError = 1,
+    SyntaxError = 2,
+    RangeError = 3,
+};
+
 /// Mirrors `ResponseKind` in src/uws/lib.rs.
 enum class UWSResponseKind : int32_t {
     TCP = 0,

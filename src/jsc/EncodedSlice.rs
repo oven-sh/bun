@@ -3,8 +3,9 @@
 
 use core::ffi::c_void;
 
+use crate::bun_string_jsc::{self, ErrorKind};
 use crate::{DOMExceptionCode, JSGlobalObject, JSValue, JsResult, cpp};
-use bun_core::EncodedSlice;
+use bun_core::{EncodedSlice, StringView};
 
 /// # Safety
 /// `ptr` must be a (possibly tagged) pointer to `len` bytes allocated by the
@@ -25,19 +26,6 @@ unsafe extern "C" fn EncodedSlice__freeGlobal(ptr: *const u8, _len: usize) {
 unsafe extern "C" {
     // safe: `EncodedSlice` is `#[repr(C)]` and read-only across the call; `JSGlobalObject` is an
     // opaque `UnsafeCell`-backed ZST handle. `&T` is ABI-identical to a non-null `*const T`.
-    safe fn EncodedSlice__toErrorInstance(this: &EncodedSlice, global: &JSGlobalObject) -> JSValue;
-    safe fn EncodedSlice__toTypeErrorInstance(
-        this: &EncodedSlice,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn EncodedSlice__toSyntaxErrorInstance(
-        this: &EncodedSlice,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn EncodedSlice__toRangeErrorInstance(
-        this: &EncodedSlice,
-        global: &JSGlobalObject,
-    ) -> JSValue;
     safe fn EncodedSlice__toDOMExceptionInstance(
         this: &EncodedSlice,
         global: &JSGlobalObject,
@@ -57,6 +45,11 @@ unsafe extern "C" {
         ctx: *mut core::ffi::c_void,
         callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
     ) -> JSValue;
+}
+
+/// The bytes are copied into the message.
+fn error_instance(slice: &EncodedSlice<'_>, global: &JSGlobalObject, kind: ErrorKind) -> JSValue {
+    bun_string_jsc::error_instance(&StringView::from_encoded(*slice), global, kind)
 }
 
 /// JSC conversions for `bun_core::EncodedSlice`.
@@ -90,16 +83,16 @@ pub trait EncodedSliceJsc: Sized {
 }
 impl EncodedSliceJsc for EncodedSlice<'_> {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        EncodedSlice__toErrorInstance(self, global)
+        error_instance(self, global, ErrorKind::Error)
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        EncodedSlice__toTypeErrorInstance(self, global)
+        error_instance(self, global, ErrorKind::TypeError)
     }
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        EncodedSlice__toSyntaxErrorInstance(self, global)
+        error_instance(self, global, ErrorKind::SyntaxError)
     }
     fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        EncodedSlice__toRangeErrorInstance(self, global)
+        error_instance(self, global, ErrorKind::RangeError)
     }
     fn to_dom_exception_instance(
         &self,

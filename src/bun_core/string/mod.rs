@@ -1060,7 +1060,7 @@ impl<'a> StringView<'a> {
         )
     }
     #[inline]
-    fn from_encoded(encoded: EncodedSlice<'a>) -> Self {
+    pub fn from_encoded(encoded: EncodedSlice<'a>) -> Self {
         Self(
             core::mem::ManuallyDrop::new(String::wrap(Tag::EncodedSlice, encoded)),
             core::marker::PhantomData,
@@ -1196,15 +1196,6 @@ impl<'a> EncodedSlice<'a> {
     pub fn utf16(s: &'a [u16]) -> Self {
         let mut slice = Self::from_tagged_ptr(s.as_ptr().cast(), s.len());
         slice.mark(TAG_UTF16_BIT);
-        slice
-    }
-
-    /// Wrap a globally-allocated Latin-1 buffer whose ownership is being
-    /// handed to C++: sets the global ptr-tag.
-    #[inline]
-    pub fn latin1_global(s: &'a [u8]) -> Self {
-        let mut slice = Self::latin1(s);
-        slice.mark(TAG_GLOBAL_BIT);
         slice
     }
 
@@ -1532,12 +1523,6 @@ impl Utf8WithString {
     #[inline]
     pub fn js_only(string: String) -> Self {
         Self { utf8: None, string }
-    }
-
-    /// `js_only(self.string.clone())`: one ref, no copy of the UTF-8 bytes.
-    #[inline]
-    pub fn clone_string_only(&self) -> Self {
-        Self::js_only(self.string.clone())
     }
 
     /// True iff the UTF-8 bytes are read straight out of a WTF-backed

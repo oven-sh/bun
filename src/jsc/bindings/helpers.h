@@ -304,44 +304,6 @@ static const WTF::String toStringStatic(EncodedSlice str)
     return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
-static JSC::JSValue getErrorInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject)
-{
-    WTF::String message = toStringCopy(*str);
-    if (message.isNull() && str->len > 0) [[unlikely]] {
-        // Allocation failed or the message exceeds the maximum string length.
-        return {};
-    }
-
-    JSC::JSObject* result = JSC::createError(globalObject, message);
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
-}
-
-static JSC::JSValue getTypeErrorInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject)
-{
-    JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
-}
-
-static JSC::JSValue getSyntaxErrorInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject)
-{
-    JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
-}
-
-static JSC::JSValue getRangeErrorInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject)
-{
-    JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
-}
-
 static const JSC::Identifier toIdentifier(EncodedSlice str, JSC::JSGlobalObject* global)
 {
     if (str.len == 0 || str.ptr == nullptr) {

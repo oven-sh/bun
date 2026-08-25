@@ -3745,29 +3745,9 @@ JSC::EncodedJSValue EncodedSlice__external(const EncodedSlice* arg0, JSC::JSGlob
     }
 }
 
-JSC::EncodedJSValue EncodedSlice__toErrorInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject)
-{
-    return JSC::JSValue::encode(Zig::getErrorInstance(str, globalObject));
-}
-
-JSC::EncodedJSValue EncodedSlice__toTypeErrorInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject)
-{
-    return JSC::JSValue::encode(Zig::getTypeErrorInstance(str, globalObject));
-}
-
 JSC::EncodedJSValue EncodedSlice__toDOMExceptionInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject, WebCore::ExceptionCode code)
 {
     return JSValue::encode(createDOMException(globalObject, code, toStringCopy(*str)));
-}
-
-JSC::EncodedJSValue EncodedSlice__toSyntaxErrorInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject)
-{
-    return JSC::JSValue::encode(Zig::getSyntaxErrorInstance(str, globalObject));
-}
-
-JSC::EncodedJSValue EncodedSlice__toRangeErrorInstance(const EncodedSlice* str, JSC::JSGlobalObject* globalObject)
-{
-    return JSC::JSValue::encode(Zig::getRangeErrorInstance(str, globalObject));
 }
 
 JSC::JSPromise*

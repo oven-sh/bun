@@ -22,13 +22,29 @@ unsafe extern "C" {
     safe fn BunString__toErrorInstance(
         str: &String,
         global_object: &JSGlobalObject,
-        kind: u8,
+        kind: ErrorKind,
     ) -> JSValue;
     fn BunString__createArray(
         global_object: &JSGlobalObject,
         ptr: *const String,
         len: usize,
     ) -> JSValue;
+}
+
+/// Mirrors `BunErrorKind` in headers-handwritten.h.
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum ErrorKind {
+    Error = 0,
+    TypeError = 1,
+    SyntaxError = 2,
+    RangeError = 3,
+}
+
+/// `new <kind>(string)`: a WTF-backed message is shared, a static one
+/// atomized, a borrowed `EncodedSlice` copied.
+pub(crate) fn error_instance(string: &String, global: &JSGlobalObject, kind: ErrorKind) -> JSValue {
+    BunString__toErrorInstance(string, global, kind)
 }
 
 /// JSC conversions for `bun_core::String`.
@@ -89,16 +105,16 @@ impl StringJsc for String {
         unsafe { crate::cpp::BunString__toJSON(global_object, self) }
     }
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        BunString__toErrorInstance(self, global, 0)
+        error_instance(self, global, ErrorKind::Error)
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        BunString__toErrorInstance(self, global, 1)
+        error_instance(self, global, ErrorKind::TypeError)
     }
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        BunString__toErrorInstance(self, global, 2)
+        error_instance(self, global, ErrorKind::SyntaxError)
     }
     fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        BunString__toErrorInstance(self, global, 3)
+        error_instance(self, global, ErrorKind::RangeError)
     }
 }
 
@@ -162,7 +178,7 @@ pub fn owned_utf8_into_js(global_object: &JSGlobalObject, utf8: Vec<u8>) -> JsRe
     match strings::to_utf16_alloc(&utf8, false, false) {
         Ok(None) => {
             let utf8 = core::mem::ManuallyDrop::new(utf8);
-            EncodedSlice::latin1_global(&utf8).to_external_value(global_object)
+            EncodedSlice::latin1(&utf8).to_external_value(global_object)
         }
         Ok(Some(utf16)) => owned_utf16_into_js(global_object, utf16),
         Err(_) => Err(global_object.throw_out_of_memory()),
@@ -176,7 +192,7 @@ pub fn owned_utf16_into_js(global_object: &JSGlobalObject, utf16: Vec<u16>) -> J
         return Ok(JSValue::js_empty_string(global_object));
     }
     let utf16 = core::mem::ManuallyDrop::new(utf16);
-    EncodedSlice::utf16_global(&utf16).to_external_value(global_object)
+    EncodedSlice::utf16(&utf16).to_external_value(global_object)
 }
 
 #[track_caller]

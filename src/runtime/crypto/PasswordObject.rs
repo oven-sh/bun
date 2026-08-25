@@ -534,7 +534,7 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
         "Password {verb} failed with error \"{}\"",
         err.name()
     ));
-    instance.put(g, b"code", EncodedSlice::utf8(&error_code).to_js(g));
+    instance.put(g, b"code", EncodedSlice::latin1(&error_code).to_js(g));
     instance
 }
 

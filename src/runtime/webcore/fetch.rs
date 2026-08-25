@@ -1393,9 +1393,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `crate::webcore::node_types` stub (until it's swapped to a
             // re-export of `crate::node::types`); construct that variant here.
             let mut pathlike = crate::webcore::node_types::PathOrFileDescriptor::Path(
-                crate::webcore::node_types::PathLike::Utf8(Utf8Bytes::Owned(
-                    temp_file_path.to_vec(),
-                )),
+                crate::webcore::node_types::PathLike::owned(temp_file_path.to_vec()),
             );
 
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);

@@ -141,24 +141,29 @@ static WTF::String errorMessage(const BunString* str)
     return str->toWTFString(BunString::ZeroCopy);
 }
 
-extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, JSC::JSGlobalObject* globalObject, uint8_t kind)
+extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, JSC::JSGlobalObject* globalObject, BunErrorKind kind)
 {
     WTF::String message = errorMessage(str);
-    JSC::JSObject* result;
+    if (message.isNull() && !str->isEmpty()) [[unlikely]] {
+        // Allocation failed or the message exceeds the maximum string length.
+        return {};
+    }
+    JSC::JSObject* result = nullptr;
     switch (kind) {
-    case 1:
-        result = JSC::createTypeError(globalObject, message);
-        break;
-    case 2:
-        result = JSC::createSyntaxError(globalObject, message);
-        break;
-    case 3:
-        result = JSC::createRangeError(globalObject, message);
-        break;
-    default:
+    case BunErrorKind::Error:
         result = JSC::createError(globalObject, message);
         break;
+    case BunErrorKind::TypeError:
+        result = JSC::createTypeError(globalObject, message);
+        break;
+    case BunErrorKind::SyntaxError:
+        result = JSC::createSyntaxError(globalObject, message);
+        break;
+    case BunErrorKind::RangeError:
+        result = JSC::createRangeError(globalObject, message);
+        break;
     }
+    JSC::EnsureStillAliveScope ensureAlive(result);
     return JSValue::encode(result);
 }
 

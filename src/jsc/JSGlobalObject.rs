@@ -5,6 +5,7 @@ use crate::EncodedSliceJsc as _;
 use crate::Error as JscError;
 use crate::ErrorCode as NodeErrorCode;
 use crate::StringJsc as _;
+use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
@@ -12,6 +13,7 @@ use crate::{
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
+use bun_core::StringView;
 
 use bun_core::String as BunString;
 use bun_core::{Output, fmt as bun_fmt};
@@ -122,12 +124,10 @@ impl JSGlobalObject {
 
     #[cold]
     pub fn throw_string_too_long(&self) -> JsError {
+        const _: () = assert!(bun_core::string::WTF_STRING_MAX_LENGTH == 2147483647);
         self.err(
             crate::ErrorCode::STRING_TOO_LONG,
-            format_args!(
-                "Cannot create a string longer than {} characters",
-                bun_core::string::WTF_STRING_MAX_LENGTH
-            ),
+            format_args!("Cannot create a string longer than 2147483647 characters"),
         )
         .throw()
     }
@@ -741,34 +741,33 @@ impl JSGlobalObject {
         buf
     }
 
-    /// An argument-free literal takes the `String::static_` path (atomized,
-    /// no copy); anything formatted is copied once into the JS heap.
-    pub fn create_error_instance(&self, args: Arguments<'_>) -> JSValue {
+    /// An argument-free ASCII literal is atomized (`String::static_`);
+    /// anything else is formatted/copied once.
+    fn error_instance(&self, kind: ErrorKind, args: Arguments<'_>) -> JSValue {
         match args.as_str() {
-            Some(_) => BunString::create_format(args).to_error_instance(self),
-            None => EncodedSlice::utf8(&self.error_message(args)).to_error_instance(self),
+            Some(_) => error_instance(&BunString::create_format(args), self, kind),
+            None => error_instance(
+                &StringView::borrow_utf8(&self.error_message(args)),
+                self,
+                kind,
+            ),
         }
+    }
+
+    pub fn create_error_instance(&self, args: Arguments<'_>) -> JSValue {
+        self.error_instance(ErrorKind::Error, args)
     }
 
     pub fn create_type_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        match args.as_str() {
-            Some(_) => BunString::create_format(args).to_type_error_instance(self),
-            None => EncodedSlice::utf8(&self.error_message(args)).to_type_error_instance(self),
-        }
+        self.error_instance(ErrorKind::TypeError, args)
     }
 
     pub fn create_syntax_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        match args.as_str() {
-            Some(_) => BunString::create_format(args).to_syntax_error_instance(self),
-            None => EncodedSlice::utf8(&self.error_message(args)).to_syntax_error_instance(self),
-        }
+        self.error_instance(ErrorKind::SyntaxError, args)
     }
 
     pub fn create_range_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        match args.as_str() {
-            Some(_) => BunString::create_format(args).to_range_error_instance(self),
-            None => EncodedSlice::utf8(&self.error_message(args)).to_range_error_instance(self),
-        }
+        self.error_instance(ErrorKind::RangeError, args)
     }
 
     pub(crate) fn create_dom_exception_instance(

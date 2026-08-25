@@ -151,8 +151,8 @@ impl BlobOrStringOrBuffer {
                     // rather than referencing the store which isn't thread-safe
                     let blob_data = blob.shared_view();
                     let owned_data: Vec<u8> = blob_data.to_vec();
-                    return Ok(Some(Self::StringOrBuffer(StringOrBuffer::Utf8(
-                        Utf8Bytes::Owned(owned_data),
+                    return Ok(Some(Self::StringOrBuffer(StringOrBuffer::owned(
+                        owned_data,
                     ))));
                 }
 
@@ -290,6 +290,11 @@ impl<'a> StringOrBuffer<'a> {
     #[inline]
     pub(crate) fn borrowed(bytes: &'a [u8]) -> StringOrBuffer<'a> {
         StringOrBuffer::Utf8(Utf8Bytes::Borrowed(bytes))
+    }
+
+    #[inline]
+    pub(crate) fn owned(bytes: Vec<u8>) -> StringOrBuffer<'static> {
+        StringOrBuffer::Utf8(Utf8Bytes::Owned(bytes))
     }
 
     pub(crate) fn slice(&self) -> &[u8] {
@@ -552,7 +557,7 @@ impl StringOrBuffer<'static> {
             let encoded = str.encode(encoding);
             global.vm().report_extra_memory(encoded.len());
 
-            *out = Self::Utf8(Utf8Bytes::Owned(encoded));
+            *out = Self::owned(encoded);
             return Ok(true);
         }
 
@@ -1514,12 +1519,6 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 // foreign-type impl here). Re-export the tag so downstream
 // `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
 pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
-
-// The path-owning variants have
-// `Drop`, so an explicit `dupe()` is provided for
-// callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
-// bumped where the underlying type supports it; otherwise we bitwise-copy
-// and leave proper ref-counting to a later pass.
 
 impl PathOrFdExt for PathOrFileDescriptor<'_> {
     fn from_js(

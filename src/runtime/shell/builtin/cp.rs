@@ -1,4 +1,3 @@
-use bun_core::Utf8Bytes;
 use bun_paths::resolve_path;
 
 use crate::node::PathLike;
@@ -230,11 +229,11 @@ impl Cp {
                     let ignorable = tref
                         .tgt_absolute
                         .as_ref()
-                        .map_or(false, |p| eb.absolute_targets.contains(p.slice()))
+                        .map_or(false, |p| eb.absolute_targets.contains(p))
                         || tref
                             .src_absolute
                             .as_ref()
-                            .map_or(false, |p| eb.absolute_srcs.contains(p.slice()));
+                            .map_or(false, |p| eb.absolute_srcs.contains(p));
                     Some((t, ignorable))
                 } else {
                     None
@@ -283,10 +282,10 @@ impl Cp {
                     // compatibility.
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
                         if (sys.get_errno() == bun_sys::E::EBUSY
-                                && task.tgt_absolute.as_ref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p.slice())))
-                            || task.src_absolute.as_ref()
-                                    .map_or(false, |p| sys.path.eql_utf8(p.slice())));
+                                && task.tgt_absolute.as_deref()
+                                    .map_or(false, |p| sys.path.eql_utf8(p)))
+                            || task.src_absolute.as_deref()
+                                    .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
                         exec.ebusy.tasks.push(bun_core::heap::into_raw(task));
                         return Self::next(interp, cmd).run(interp);
@@ -295,10 +294,10 @@ impl Cp {
                     // Record successful absolute paths so a deferred EBUSY
                     // sibling can be suppressed.
                     if let Some(tgt) = task.tgt_absolute.take() {
-                        bun_core::handle_oom(exec.ebusy.absolute_targets.insert(tgt.slice()));
+                        bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
                     }
                     if let Some(src) = task.src_absolute.take() {
-                        bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(src.slice()));
+                        bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
                     }
                 }
             }
@@ -401,8 +400,8 @@ pub struct ShellCpTask {
     pub(crate) tgt: Vec<u8>,
     /// The absolute paths handed to the `ShellAsyncCpTask`, moved back by
     /// [`cp_on_finish`](Self::cp_on_finish) for the EBUSY bookkeeping.
-    pub(crate) src_absolute: Option<PathLike<'static>>,
-    pub(crate) tgt_absolute: Option<PathLike<'static>>,
+    pub(crate) src_absolute: Option<Vec<u8>>,
+    pub(crate) tgt_absolute: Option<Vec<u8>>,
     pub(crate) cwd_path: Vec<u8>,
     /// `cp_on_copy` is invoked from work-pool threads (concurrently per
     /// copied file) while the directory walk is still fanning out, so the
@@ -497,8 +496,8 @@ impl ShellCpTask {
         // dropped its poster) when it handed the copy to that task, so continue
         // in place rather than bouncing through the concurrent queue again.
         unsafe {
-            (*this).src_absolute = Some(src);
-            (*this).tgt_absolute = Some(dest);
+            (*this).src_absolute = Some(src.into_vec());
+            (*this).tgt_absolute = Some(dest.into_vec());
             if let Err(e) = result {
                 (*this).err = Some(ShellErr::new_sys(&e));
             }
@@ -718,8 +717,8 @@ impl ShellCpTask {
         }
 
         let args = crate::node::fs::args::Cp {
-            src: PathLike::Utf8(Utf8Bytes::Owned(src.as_bytes().to_vec())),
-            dest: PathLike::Utf8(Utf8Bytes::Owned(tgt.as_bytes().to_vec())),
+            src: PathLike::owned(src.as_bytes().to_vec()),
+            dest: PathLike::owned(tgt.as_bytes().to_vec()),
             flags: crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
                 force: true,

@@ -424,8 +424,7 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
-    // Local callback wrapper. `uploaded` comes from the upload itself: the sink has already let
-    // go of its ref when its JS wrapper was collected while `end()` was pending.
+    // Local callback wrapper. `uploaded` is read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
         result: S3UploadResult,
         uploaded: u64,

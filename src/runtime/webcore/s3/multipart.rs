@@ -157,8 +157,8 @@ pub struct MultiPartUpload {
 
     pub(crate) state: Cell<State>,
 
-    /// Completion. Receives the upload so the callee can read `uploaded_bytes` even after it let
-    /// go of its own ref (the `writer()` sink detaches when its JS wrapper is collected).
+    /// Completion. The upload is passed so `uploaded_bytes` can be read by a callee that no
+    /// longer holds a ref to it (a `writer()` sink whose JS wrapper was collected).
     pub callback: fn(&MultiPartUpload, S3UploadResult, *mut c_void) -> bun_jsc::JsResult<()>,
     pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64)>,
     pub(crate) callback_context: Cell<*mut c_void>,

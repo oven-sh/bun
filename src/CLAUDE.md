@@ -141,7 +141,8 @@ or bytes that really are Latin-1; `utf16(units)`.
 Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`
 (copies; ASCII stays 8-bit). An owned `Vec<u8>` that JS should adopt:
 `bun_string_jsc::owned_utf8_into_js(global, vec)?`; an owned `Vec<u16>`:
-`bun_string_jsc::owned_utf16_into_js(global, vec)?`. An ASCII literal or
+`bun_string_jsc::owned_utf16_into_js(global, vec)?` (or `owned_latin1_into_js` for a
+known-Latin-1/ASCII `Vec<u8>`); all three hand the allocation to JSC in one call. An ASCII literal or
 `&'static` ASCII: `String::static_("lit").to_js(global)?`. → `Error` (each
 with `type_error`/`range_error`/`syntax_error` siblings, one C++ entry):
 `global.create_error_instance(format_args!(..))` (argument-free ASCII

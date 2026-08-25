@@ -6587,8 +6587,7 @@ impl Internal {
             Ok(Some(utf16)) => bun_string_jsc::owned_utf16_into_js(global_this, utf16),
             Ok(None) => {
                 bytes.drain(..bom_len);
-                let bytes = core::mem::ManuallyDrop::new(bytes);
-                EncodedSlice::latin1(&bytes).to_external_value(global_this)
+                bun_string_jsc::owned_latin1_into_js(global_this, bytes)
             }
             Err(_) => Err(global_this.throw_out_of_memory()),
         }

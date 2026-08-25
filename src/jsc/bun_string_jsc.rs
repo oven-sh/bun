@@ -176,13 +176,20 @@ pub fn owned_utf8_into_js(global_object: &JSGlobalObject, utf8: Vec<u8>) -> JsRe
         return Ok(JSValue::js_empty_string(global_object));
     }
     match strings::to_utf16_alloc(&utf8, false, false) {
-        Ok(None) => {
-            let utf8 = core::mem::ManuallyDrop::new(utf8);
-            EncodedSlice::latin1(&utf8).to_external_value(global_object)
-        }
+        Ok(None) => owned_latin1_into_js(global_object, utf8),
         Ok(Some(utf16)) => owned_utf16_into_js(global_object, utf16),
         Err(_) => Err(global_object.throw_out_of_memory()),
     }
+}
+
+/// Latin-1 (or known-ASCII) `Vec<u8>` → JS string; the allocation is adopted
+/// by JSC. Throws `STRING_TOO_LONG` when over [`String::max_length`].
+pub fn owned_latin1_into_js(global_object: &JSGlobalObject, latin1: Vec<u8>) -> JsResult<JSValue> {
+    if latin1.is_empty() {
+        return Ok(JSValue::js_empty_string(global_object));
+    }
+    let latin1 = core::mem::ManuallyDrop::new(latin1);
+    EncodedSlice::latin1(&latin1).to_external_value(global_object)
 }
 
 /// UTF-16 `Vec<u16>` → JS string; the allocation is adopted by JSC.

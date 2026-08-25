@@ -876,9 +876,13 @@ private:
 
     JSValue getProperty(JSObject* object, const Identifier& propertyName)
     {
+        VM& vm = m_lexicalGlobalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
         PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-        if (object->methodTable()->getOwnPropertySlot(object, m_lexicalGlobalObject, propertyName, slot))
-            return slot.getValue(m_lexicalGlobalObject, propertyName);
+        bool found = object->methodTable()->getOwnPropertySlot(object, m_lexicalGlobalObject, propertyName, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (found)
+            RELEASE_AND_RETURN(scope, slot.getValue(m_lexicalGlobalObject, propertyName));
         return JSValue();
     }
 
@@ -1156,6 +1160,7 @@ private:
                 if (!startObjectInternal(stringObject)) // handle duplicates
                     return true;
                 String str = asString(stringObject->internalValue())->value(m_lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, false);
                 dumpStringObject(str);
                 return true;
             }
@@ -1412,6 +1417,7 @@ private:
                 StructuredCloneableSerialize to_write = WTF::move(_cloneable.value());
                 write(to_write.tag);
                 to_write.write(this, m_lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, false);
                 if (to_write.tag == Bun__nodenet_BlockList)
                     m_serializedBlockListRefs.append(to_write.impl);
                 return true;
@@ -2199,7 +2205,9 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         case SetDataStartVisitEntry: {
             JSSetIterator* iterator = setIteratorStack.last();
             JSValue key;
-            if (!iterator->next(m_lexicalGlobalObject, key)) {
+            bool hasNext = iterator->next(m_lexicalGlobalObject, key);
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+            if (!hasNext) {
                 setIteratorStack.removeLast();
                 JSObject* object = inputObjectStack.last();
                 ASSERT(dynamicDowncast<JSSet>(object));
@@ -2732,6 +2740,7 @@ private:
     template<typename LengthType>
     bool readArrayBufferViewImpl(VM& vm, JSValue& arrayBufferView)
     {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         ArrayBufferViewSubtag arrayBufferViewSubtag;
         if (!readArrayBufferViewSubtag(arrayBufferViewSubtag))
             return false;
@@ -2759,6 +2768,7 @@ private:
             return false;
         }
         JSValue arrayBufferValue = readTerminal();
+        RETURN_IF_EXCEPTION(scope, false);
         if (!arrayBufferValue || !arrayBufferValue.inherits<JSArrayBuffer>())
             return false;
         JSObject* arrayBufferObj = asObject(arrayBufferValue);
@@ -2787,42 +2797,55 @@ private:
         switch (arrayBufferViewSubtag) {
         case DataViewTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, DataView::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Int8ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Int8Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Uint8ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint8Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Uint8ClampedArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint8ClampedArray::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Int16ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Int16Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Uint16ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint16Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Int32ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Int32Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Uint32ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint32Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Float16ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Float16Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Float32ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Float32Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case Float64ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Float64Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case BigInt64ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, BigInt64Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         case BigUint64ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, BigUint64Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
+            RETURN_IF_EXCEPTION(scope, false);
             return true;
         default:
             return false;
@@ -4059,6 +4082,9 @@ DeserializationResult CloneDeserializer::deserialize()
         }
         case ObjectEndVisitMember: {
             putProperty(outputObjectStack.last(), propertyNameStack.last(), outValue);
+            if (scope.exception()) [[unlikely]] {
+                goto error;
+            }
             propertyNameStack.removeLast();
             goto objectStartVisitMember;
         }

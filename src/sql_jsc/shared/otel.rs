@@ -129,7 +129,7 @@ struct ErrorDetails {
     code: Option<Vec<u8>>,
     /// `code` came from `errno` (a status the server sent) rather than `code` (`ERR_*`).
     from_server: bool,
-    message: Option<bun_core::ZigStringSlice>,
+    message: Option<bun_core::Utf8Bytes<'static>>,
 }
 
 impl ErrorDetails {
@@ -145,7 +145,7 @@ impl ErrorDetails {
         for key in ["errno", "code"] {
             if let Some(c) = err.get(global, key)? {
                 if c.is_string() {
-                    this.code = Some(c.to_slice(global)?.slice().to_vec());
+                    this.code = Some(c.to_utf8(global)?.slice().to_vec());
                 } else if c.is_number() {
                     let mut buf = bun_core::fmt::ItoaBuf::new();
                     this.code = Some(bun_core::fmt::itoa(&mut buf, c.to_int32()).to_vec());
@@ -158,7 +158,7 @@ impl ErrorDetails {
         }
         if let Some(m) = err.get(global, "message")? {
             if m.is_string() {
-                this.message = Some(m.to_slice(global)?);
+                this.message = Some(m.to_utf8(global)?);
             }
         }
         Ok(this)

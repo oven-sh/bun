@@ -29,7 +29,7 @@ use bun_collections::StringSet;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
 use bun_core::{FeatureFlags, ZBox};
-use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
@@ -265,10 +265,10 @@ where
 
         let extra_headers = Headers8Bit::init(header_names, header_values);
 
-        let proxy_host_slice: Option<Utf8Slice> = proxy_host.map(|ph| ph.to_utf8());
-        let target_authorization_slice: Option<Utf8Slice> =
+        let proxy_host_slice: Option<Utf8Bytes> = proxy_host.map(|ph| ph.to_utf8());
+        let target_authorization_slice: Option<Utf8Bytes> =
             target_authorization.map(|ta| ta.to_utf8());
-        let unix_socket_path_slice: Option<Utf8Slice> = unix_socket_path.map(|usp| usp.to_utf8());
+        let unix_socket_path_slice: Option<Utf8Bytes> = unix_socket_path.map(|usp| usp.to_utf8());
 
         let using_proxy = proxy_host.is_some();
 
@@ -304,7 +304,7 @@ where
         // request becomes the initial input_body_buf instead.
         let (proxy_state, input_body_buf): (Option<WebSocketProxy>, Vec<u8>) = if using_proxy {
             // Parse proxy authorization (temporary, freed after building CONNECT request)
-            let proxy_auth_decoded: Option<Utf8Slice> =
+            let proxy_auth_decoded: Option<Utf8Bytes> =
                 proxy_authorization.map(|auth| auth.to_utf8());
             let proxy_auth_slice: Option<&[u8]> = proxy_auth_decoded.as_ref().map(|s| s.slice());
 
@@ -1624,38 +1624,23 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// Decodes an array of BunString header name/value pairs to UTF-8 up front.
-///
-/// The BunString values may be backed by 8-bit Latin1 or 16-bit UTF-16
-/// `WTFStringImpl`s. Calling `.slice()` on a ZigString wrapper that was built
-/// from a non-ASCII WTFStringImpl returns raw Latin1 or UTF-16 code units,
-/// which then corrupts the HTTP upgrade request and can cause heap corruption.
-///
-/// Using `bun_core::String::to_utf8()` either borrows the 8-bit ASCII backing
-/// (no allocation) or allocates a UTF-8 copy. The resulting slices are stored
-/// here so build_request_body / build_connect_request can index them by &[u8].
-///
-// Storing parallel `name_slices` / `value_slices` arrays borrowing into
-// `slices` would be self-referential; instead store only the `Utf8Slice` array (len =
-// 2*count, names at even indices, values at odd) and yield pairs via `iter()`.
+/// Header name/value pairs decoded to UTF-8 up front (borrowed when 8-bit
+/// ASCII, else transcoded — never raw Latin-1/UTF-16 code units), stored flat
+/// (names at even indices, values at odd) and yielded as pairs via `iter()`.
 struct Headers8Bit<'a> {
-    slices: Vec<Utf8Slice>,
-    _marker: core::marker::PhantomData<&'a BunString>,
+    slices: Vec<Utf8Bytes<'a>>,
 }
 
 impl<'a> Headers8Bit<'a> {
     fn init(names_in: &'a [BunString], values_in: &'a [BunString]) -> Self {
         debug_assert_eq!(names_in.len(), values_in.len());
-        let mut slices: Vec<Utf8Slice> = Vec::with_capacity(names_in.len() * 2);
+        let mut slices: Vec<Utf8Bytes<'a>> = Vec::with_capacity(names_in.len() * 2);
         for (name, value) in names_in.iter().zip(values_in) {
             slices.push(name.to_utf8());
             slices.push(value.to_utf8());
         }
 
-        Self {
-            slices,
-            _marker: core::marker::PhantomData,
-        }
+        Self { slices }
     }
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {

@@ -331,7 +331,7 @@ pub mod s3 {
 pub mod streams;
 
 pub enum PathOrFileDescriptor {
-    Path(bun_core::zig_string::Slice),
+    Path(bun_core::Utf8Bytes<'static>),
     Fd(bun_sys::Fd),
 }
 

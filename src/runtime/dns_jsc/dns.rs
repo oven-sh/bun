@@ -20,6 +20,7 @@ use bun_dns::{
 #[cfg(not(windows))]
 use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
@@ -2885,7 +2886,7 @@ pub mod internal {
                 "expected (hostname: string, addresses: string[])"
             )));
         }
-        let hostname_slice = args[0].to_slice(global)?;
+        let hostname_slice = args[0].to_utf8(global)?;
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
         let len = args[1].get_length(global)? as usize;
         if len == 0 || len > 64 {
@@ -2897,7 +2898,7 @@ pub mod internal {
         let mut addrs: Vec<SockaddrStorage> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
         let mut nodes: Vec<AddrInfo> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
         for i in 0..len {
-            let addr_slice = args[1].get_index(global, i as u32)?.to_slice(global)?;
+            let addr_slice = args[1].get_index(global, i as u32)?.to_utf8(global)?;
             let addr_z = bun::ZBox::from_bytes(addr_slice.slice());
             let node = &mut nodes[i];
             node.ai_socktype = netc::SOCK_STREAM;
@@ -3101,7 +3102,7 @@ pub mod internal {
         let hostname_or_url = arguments[0];
 
         let hostname_slice = if hostname_or_url.is_string() {
-            hostname_or_url.to_slice(global_this)?
+            hostname_or_url.to_utf8(global_this)?
         } else {
             return Err(
                 global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
@@ -3888,10 +3889,8 @@ trait OrderJscExt {
 
 impl OrderJscExt for Order {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::create_utf8_for_js(
-            global_this,
-            <&'static str>::from(self).as_bytes(),
-        )
+        use jsc::StringJsc as _;
+        bun::String::static_(<&'static str>::from(self)).to_js(global_this)
     }
 }
 
@@ -5572,16 +5571,12 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            // `bun_core::ZigString` lacks `with_encoding`/`to_js` (those live
-            // on `bun_jsc::zig_string::ZigString`). The formatted bytes here are pure
-            // ASCII (IP address + optional port), so `with_encoding()` would be a no-op
-            // anyway — borrow as a `bun_core::String` and hand to JS.
             use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::String::borrow_utf8(&buf[1..size]).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[1..size])?,
                 )?;
             } else if family == netc::AF_INET6 {
                 buf[0] = b'[';
@@ -5610,7 +5605,7 @@ impl Resolver {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::String::borrow_utf8(&buf[1..size + port_len]).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[1..size + port_len])?,
                 )?;
             }
 
@@ -5696,22 +5691,13 @@ impl Resolver {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<c_int> {
-        let str_ = value.to_slice(global_this)?;
-        // ZigStringSlice has no `into_owned_slice_z`; build the
-        // NUL-terminated buffer inline.
-        let bytes = str_.slice();
-        let mut slice = bytes.to_vec();
-        slice.push(0);
+        let address = value.to_bun_string(global_this)?.to_owned_slice_z();
 
         let mut addr = [0u8; 16];
 
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
+        // SAFETY: FFI; `address` is NUL-terminated; `addr` is a 16-byte stack buffer.
         if unsafe {
-            c_ares::ares_inet_pton(
-                c_ares::AF::INET,
-                slice.as_ptr().cast::<c_char>(),
-                addr.as_mut_ptr().cast(),
-            )
+            c_ares::ares_inet_pton(c_ares::AF::INET, address.as_ptr(), addr.as_mut_ptr().cast())
         } == 1
         {
             let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
@@ -5720,11 +5706,11 @@ impl Resolver {
             return Ok(c_ares::AF::INET);
         }
 
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
+        // SAFETY: FFI; `address` is NUL-terminated; `addr` is a 16-byte stack buffer.
         if unsafe {
             c_ares::ares_inet_pton(
                 c_ares::AF::INET6,
-                slice.as_ptr().cast::<c_char>(),
+                address.as_ptr(),
                 addr.as_mut_ptr().cast(),
             )
         } == 1
@@ -5738,7 +5724,7 @@ impl Resolver {
             global_this,
             format_args!(
                 "Invalid IP address: \"{}\"",
-                bstr::BStr::new(&slice[..slice.len() - 1])
+                bstr::BStr::new(address.as_bytes())
             ),
         ))
     }

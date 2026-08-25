@@ -16,12 +16,12 @@ use crate::webcore::jsc::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
 use bun_core::Output;
-use bun_core::{String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice, strings};
+use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::StringJsc as _;
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_sys::{self, Fd};
 
-use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
+use crate::webcore::node_types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::s3 as S3;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
 
@@ -173,7 +173,7 @@ pub trait BlobExt {
         ctx: *mut C,
         global: &JSGlobalObject,
     );
-    fn get_content_type(&self) -> Option<ZigStringSlice>;
+    fn get_content_type(&self) -> Option<Utf8Bytes<'_>>;
     fn _on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W)
     -> crate::Result<()>;
     fn on_structured_clone_serialize(
@@ -377,7 +377,7 @@ pub trait BlobExt {
     fn estimated_size(&self) -> usize;
     fn to_js(&self, global_object: &JSGlobalObject) -> JSValue;
     fn find_or_create_file_from_path(
-        path_or_fd: &mut PathOrFileDescriptor,
+        path_or_fd: &mut PathOrFileDescriptor<'static>,
         global_this: &JSGlobalObject,
         check_s3: bool,
     ) -> Blob
@@ -712,10 +712,10 @@ impl BlobExt for Blob {
             );
         }
     }
-    fn get_content_type(&self) -> Option<ZigStringSlice> {
+    fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
-            return Some(ZigStringSlice::from_utf8_never_free(ct));
+            return Some(Utf8Bytes::Borrowed(ct));
         }
         None
     }
@@ -894,31 +894,31 @@ impl BlobExt for Blob {
         // item coerces to the callback-pointer type at `DOMFormData__forEach`.
         extern "C" fn for_each_thunk(
             ctx_ptr: *mut c_void,
-            name_: *mut ZigString,
+            name_: *mut EncodedSlice,
             value_ptr: *mut c_void,
-            filename: *mut ZigString,
+            filename: *mut EncodedSlice,
             is_blob: u8,
         ) {
             // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
             // erased lifetime is the caller's stack frame in `from_dom_form_data`.
             let ctx = unsafe { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
             let entry = if is_blob == 0 {
-                // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
+                // SAFETY: when `is_blob == 0`, `value_ptr` points to an `EncodedSlice`.
+                FormDataEntry::String(unsafe { *value_ptr.cast::<EncodedSlice>() })
             } else {
                 FormDataEntry::File {
                     // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
                     // valid for the synchronous callback scope.
                     blob: unsafe { &mut *value_ptr.cast::<Blob>() },
                     filename: if filename.is_null() {
-                        ZigString::EMPTY
+                        EncodedSlice::EMPTY
                     } else {
-                        // SAFETY: non-null `filename` is a valid `*ZigString` for this call.
+                        // SAFETY: non-null `filename` is a valid `*EncodedSlice` for this call.
                         unsafe { *filename }
                     },
                 }
             };
-            // SAFETY: `name_` is always a valid non-null `*ZigString` for this callback.
+            // SAFETY: `name_` is always a valid non-null `*EncodedSlice` for this callback.
             ctx.on_entry(unsafe { *name_ }, entry);
         }
         unsafe extern "C" {
@@ -934,7 +934,13 @@ impl BlobExt for Blob {
                 // body localises every raw deref individually), so the callback
                 // type carries no caller-side precondition. ABI-identical to
                 // `bun_jsc`'s `ForEachFunction` alias.
-                cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
+                cb: extern "C" fn(
+                    *mut c_void,
+                    *mut EncodedSlice,
+                    *mut c_void,
+                    *mut EncodedSlice,
+                    u8,
+                ),
             );
         }
         // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
@@ -1544,10 +1550,9 @@ impl BlobExt for Blob {
                 {
                     PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                     PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
-                        bun_core::ZigStringSlice::init_dupe(p.slice()).expect("oom"),
+                        bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
                     ),
                 };
-                // input_path drops at scope exit.
 
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     input_path,
@@ -1694,7 +1699,7 @@ impl BlobExt for Blob {
                     set_content_type_from_js(global_this, self, content_type)?;
                 }
 
-                let content_disposition_str: Option<ZigStringSlice> =
+                let content_disposition_str: Option<Utf8Bytes> =
                     match options.get_truthy(global_this, "contentDisposition")? {
                         Some(v) if !v.is_string() => {
                             return Err(global_this.throw_invalid_argument_type(
@@ -1703,10 +1708,10 @@ impl BlobExt for Blob {
                                 "string",
                             ));
                         }
-                        Some(v) => Some(v.to_slice(global_this)?),
+                        Some(v) => Some(v.to_utf8(global_this)?),
                         None => None,
                     };
-                let content_encoding_str: Option<ZigStringSlice> =
+                let content_encoding_str: Option<Utf8Bytes> =
                     match options.get_truthy(global_this, "contentEncoding")? {
                         Some(v) if !v.is_string() => {
                             return Err(global_this.throw_invalid_argument_type(
@@ -1715,7 +1720,7 @@ impl BlobExt for Blob {
                                 "string",
                             ));
                         }
-                        Some(v) => Some(v.to_slice(global_this)?),
+                        Some(v) => Some(v.to_utf8(global_this)?),
                         None => None,
                     };
 
@@ -1861,7 +1866,7 @@ impl BlobExt for Blob {
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                 PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                 PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
-                    bun_core::ZigStringSlice::init_dupe(p.slice()).expect("oom"),
+                    bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
                 ),
             };
 
@@ -2019,12 +2024,12 @@ impl BlobExt for Blob {
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
-            return JscZigString::init(ct).to_js(global_this);
+            return EncodedSlice::latin1(ct).to_js(global_this);
         }
         if let Some(store) = self.store.get() {
-            return JscZigString::init(&store.mime_type.value).to_js(global_this);
+            return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
         }
-        JscZigString::EMPTY.to_js(global_this)
+        JSValue::js_empty_string(global_this)
     }
 
     fn get_name_string(&self) -> Option<&BunString> {
@@ -2054,7 +2059,7 @@ impl BlobExt for Blob {
     ) -> JsResult<()> {
         // by default we don't have a name so lets allow it to be set undefined
         if value.is_empty_or_undefined_or_null() {
-            self.name.set(BunString::dead());
+            self.name.set(BunString::DEAD);
             bun_jsc::generated::JSBlob::name_set_cached(js_this, global_this, value);
             return Ok(());
         }
@@ -2157,13 +2162,7 @@ impl BlobExt for Blob {
                             global_this,
                             binding,
                             crate::node::fs::args::Stat {
-                                path: crate::node::types::PathLike::EncodedSlice(match path_like {
-                                    // Already UTF-8 — take an owned copy.
-                                    crate::node::types::PathLike::EncodedSlice(slice) => {
-                                        ZigStringSlice::init_owned(slice.slice().to_vec())
-                                    }
-                                    other => ZigStringSlice::init_owned(other.slice().to_vec()),
-                                }),
+                                path: PathLike::owned(path_like.slice().to_vec()),
                                 big_int: false,
                                 throw_if_no_entry: true,
                             },
@@ -2326,7 +2325,7 @@ impl BlobExt for Blob {
                         if let Some(content_type) = options.get(global_this, "type")? {
                             'inner: {
                                 if content_type.is_string() {
-                                    let content_type_str = content_type.to_slice(global_this)?;
+                                    let content_type_str = content_type.to_utf8(global_this)?;
                                     let slice = content_type_str.slice();
                                     if !is_valid_blob_type(slice) {
                                         break 'inner;
@@ -2550,7 +2549,7 @@ impl BlobExt for Blob {
                 // SAFETY: temporary lifetime means raw_bytes is a leaked default-allocator buffer.
                 unsafe { drop(bun_core::heap::take(raw_bytes)) };
             }
-            return Ok(ZigString::EMPTY.to_js(global));
+            return Ok(JSValue::js_empty_string(global));
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
@@ -2603,17 +2602,7 @@ impl BlobExt for Blob {
                     // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                 }
-                // Ownership of the UTF-16 buffer transfers to JSC's external-string
-                // finalizer (which calls back into the default allocator's `free`).
-                // `into_raw` is the explicit ownership-transfer-to-FFI API; the
-                // matching free lives on the C++ side.
-                let len = external.len();
-                let ptr = bun_core::heap::into_raw(external.into_boxed_slice())
-                    .cast::<u16>()
-                    .cast_const();
-                // SAFETY: `ptr` came from `heap::into_raw` on a global-allocator
-                // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
-                return Ok(unsafe { zig_string_to_external_u16(ptr, len, global) });
+                return bun_string_jsc::owned_utf16_into_js(global, external);
             }
 
             if LIFETIME != Lifetime::Temporary {
@@ -2629,13 +2618,13 @@ impl BlobExt for Blob {
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
-                Ok(unsafe {
-                    ZigString::init(buf).external(
+                unsafe {
+                    EncodedSlice::latin1(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
                     )
-                })
+                }
             }
             Lifetime::Transfer => {
                 // Cloning the StoreRef here would bump the
@@ -2646,25 +2635,25 @@ impl BlobExt for Blob {
                 debug_assert!(matches!(store.data, store::Data::Bytes(_)));
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
-                Ok(unsafe {
-                    ZigString::init(buf).external(
+                unsafe {
+                    EncodedSlice::latin1(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
                     )
-                })
+                }
             }
             Lifetime::Share => {
                 let store = self.store().expect("infallible: store present").clone();
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
-                Ok(unsafe {
-                    ZigString::init(buf).external(
+                unsafe {
+                    EncodedSlice::latin1(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
                     )
-                })
+                }
             }
             Lifetime::Temporary => {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
@@ -2675,7 +2664,7 @@ impl BlobExt for Blob {
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                     return out.into_js(global);
                 }
-                Ok(ZigString::init(buf).to_external_value(global))
+                EncodedSlice::latin1(buf).to_external_value(global)
             }
         }
     }
@@ -2699,7 +2688,7 @@ impl BlobExt for Blob {
         // below.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
-            return Ok(ZigString::EMPTY.to_js(global));
+            return Ok(JSValue::js_empty_string(global));
         }
         match lifetime {
             // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
@@ -2828,7 +2817,7 @@ impl BlobExt for Blob {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
                 }
-                let result = ZigString::init_utf16(&external).to_json_object(global);
+                let result = EncodedSlice::utf16(&external).to_json_object(global);
                 drop(external);
                 return result;
             }
@@ -2838,7 +2827,7 @@ impl BlobExt for Blob {
             }
         }
 
-        ZigString::init(buf).to_json_object(global)
+        EncodedSlice::latin1(buf).to_json_object(global)
     }
 
     /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
@@ -2851,7 +2840,7 @@ impl BlobExt for Blob {
         buf: *mut [u8],
     ) -> JSValue {
         let Some(encoder) = self.get_form_data_encoding() else {
-            return ZigString::init(b"Invalid encoding").to_error_instance(global);
+            return global.create_error_instance(format_args!("Invalid encoding"));
         };
 
         // `crate::webcore::form_data::Encoding` re-exports
@@ -2957,6 +2946,7 @@ impl BlobExt for Blob {
                                     // from `heap::alloc` (see `LinuxMemFdAllocator::deref`
                                     // contract).
                                     unsafe { LinuxMemFdAllocator::deref(memfd) };
+                                    let result = result?;
                                     debug!(
                                         "toArrayBuffer COW clone({}, {}) = {}",
                                         byte_offset,
@@ -3263,10 +3253,10 @@ impl BlobExt for Blob {
                             // buffers instead — regardless of `MOVE`.
                             return Ok(artifact.blob.dupe());
                         } else {
-                            let sliced = current.to_js_string_view(global)?;
-                            if !sliced.is_empty() {
+                            let view = current.to_js_string_view(global)?;
+                            if !view.is_empty() {
                                 return Ok(Blob::init_with_all_ascii(
-                                    sliced.to_owned_slice(),
+                                    view.to_owned_slice(),
                                     global,
                                     false,
                                 ));
@@ -3301,10 +3291,9 @@ impl BlobExt for Blob {
                 | jsc::JSType::String
                 | jsc::JSType::StringObject
                 | jsc::JSType::DerivedStringObject => {
-                    let sliced = current.to_slice(global)?;
-                    could_have_non_ascii = could_have_non_ascii || !sliced.is_wtf_backed();
-                    // Clone into the joiner and let `sliced` drop normally.
-                    joiner.push_cloned(sliced.slice());
+                    let utf8 = current.to_utf8(global)?;
+                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                    joiner.push_cloned(utf8.slice());
                 }
 
                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
@@ -3351,10 +3340,9 @@ impl BlobExt for Blob {
                                 | jsc::JSType::String
                                 | jsc::JSType::StringObject
                                 | jsc::JSType::DerivedStringObject => {
-                                    let sliced = item.to_slice(global)?;
-                                    could_have_non_ascii =
-                                        could_have_non_ascii || !sliced.is_wtf_backed();
-                                    joiner.push_cloned(sliced.slice());
+                                    let utf8 = item.to_utf8(global)?;
+                                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                                    joiner.push_cloned(utf8.slice());
                                     continue;
                                 }
                                 t if t.is_array_buffer_like() => {
@@ -3376,10 +3364,9 @@ impl BlobExt for Blob {
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    let sliced = item.to_slice(global)?;
-                                    could_have_non_ascii =
-                                        could_have_non_ascii || sliced.is_allocated();
-                                    joiner.push_cloned(sliced.slice());
+                                    let utf8 = item.to_utf8(global)?;
+                                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                                    joiner.push_cloned(utf8.slice());
                                     continue;
                                 }
                                 jsc::JSType::DOMWrapper => {
@@ -3401,18 +3388,17 @@ impl BlobExt for Blob {
                                         }
                                         continue;
                                     } else {
-                                        let sliced = item.to_slice(global)?;
+                                        let utf8 = item.to_utf8(global)?;
                                         could_have_non_ascii =
-                                            could_have_non_ascii || sliced.is_allocated();
-                                        joiner.push_cloned(sliced.slice());
+                                            could_have_non_ascii || utf8.is_owned();
+                                        joiner.push_cloned(utf8.slice());
                                         continue;
                                     }
                                 }
                                 _ => {
-                                    let sliced = item.to_slice(global)?;
-                                    could_have_non_ascii =
-                                        could_have_non_ascii || sliced.is_allocated();
-                                    joiner.push_cloned(sliced.slice());
+                                    let utf8 = item.to_utf8(global)?;
+                                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                                    joiner.push_cloned(utf8.slice());
                                 }
                             }
                         }
@@ -3428,9 +3414,9 @@ impl BlobExt for Blob {
                         // free this Blob's Store before `done()`, so always copy.
                         joiner.push_cloned(blob.shared_view());
                     } else {
-                        let sliced = current.to_slice(global)?;
-                        could_have_non_ascii = could_have_non_ascii || sliced.is_allocated();
-                        joiner.push_cloned(sliced.slice());
+                        let utf8 = current.to_utf8(global)?;
+                        could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                        joiner.push_cloned(utf8.slice());
                     }
                 }
 
@@ -3445,9 +3431,9 @@ impl BlobExt for Blob {
                 }
 
                 _ => {
-                    let sliced = current.to_slice(global)?;
-                    could_have_non_ascii = could_have_non_ascii || !sliced.is_wtf_backed();
-                    joiner.push_cloned(sliced.slice());
+                    let utf8 = current.to_utf8(global)?;
+                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
+                    joiner.push_cloned(utf8.slice());
                 }
             }
             current = match stack.pop() {
@@ -3519,7 +3505,7 @@ impl BlobExt for Blob {
     /// by `server_body.rs` / `fetch.rs` (collapsed from a const generic since
     /// it only guards a string prefix check).
     fn find_or_create_file_from_path(
-        path_or_fd: &mut PathOrFileDescriptor,
+        path_or_fd: &mut PathOrFileDescriptor<'static>,
         global_this: &JSGlobalObject,
         check_s3: bool,
     ) -> Blob {
@@ -3537,9 +3523,7 @@ impl BlobExt for Blob {
                     let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
                     let copy = core::mem::replace(
                         path_or_fd,
-                        PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
-                            bun_ptr::cow_slice::CowSlice::EMPTY,
-                        )),
+                        PathOrFileDescriptor::Path(PathLike::default()),
                     );
                     let PathOrFileDescriptor::Path(path) = copy else {
                         unreachable!()
@@ -3559,13 +3543,7 @@ impl BlobExt for Blob {
                     // The assignment below drops the old `PathLike` (releasing
                     // the caller-owned path) as part of the `*path_or_fd = …`
                     // write.
-                    *path_or_fd =
-                        PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
-                            // Heap-dupe: this buffer is freed by `Blob.Store.deinit`.
-                            bun_ptr::cow_slice::CowSlice::init_owned(
-                                b"\\\\.\\NUL".to_vec().into_boxed_slice(),
-                            ),
-                        ));
+                    *path_or_fd = PathOrFileDescriptor::Path(PathLike::borrowed(b"\\\\.\\NUL"));
                 }
 
                 // SAFETY: bun_vm() is live for the duration of a host call.
@@ -3583,29 +3561,12 @@ impl BlobExt for Blob {
                     // process-lifetime singleton; this runs on the JS thread.
                     if let Some(file) = unsafe { &mut *graph }.find(path_or_fd.path().slice()) {
                         use crate::api::standalone_graph_jsc::FileJsc as _;
-                        let blob = file.file_blob(global_this).dupe();
-                        // Release a SliceWithUnderlying / encoded-slice
-                        // path the graph short-circuit would otherwise leak.
-                        // The reassignment below drops the old payload via
-                        // `Drop for PathLike`; no explicit `.deinit()` needed.
-                        if !path_or_fd.path().is_string() {
-                            *path_or_fd = PathOrFileDescriptor::Path(
-                                crate::webcore::node_types::PathLike::String(
-                                    bun_ptr::cow_slice::CowSlice::EMPTY,
-                                ),
-                            );
-                        }
-                        return blob;
+                        return file.file_blob(global_this).dupe();
                     }
                 }
 
                 path_or_fd.to_thread_safe();
-                core::mem::replace(
-                    path_or_fd,
-                    PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
-                        bun_ptr::cow_slice::CowSlice::EMPTY,
-                    )),
-                )
+                core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::default()))
             }
             PathOrFileDescriptor::Fd(fd) => {
                 if let Some(tag) = fd.stdio_tag() {
@@ -3668,17 +3629,16 @@ use self::write_file as write_file_mod;
 use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_jsc::JsClass as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
 
 /// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
 /// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but
 /// `FormDataContext::on_entry` needs `&mut Blob` to call `resolve_size()`, so
 /// we drive the C++ `DOMFormData__forEach` directly with this mutable variant.
 pub(crate) enum FormDataEntry<'a> {
-    String(ZigString),
+    String(EncodedSlice<'a>),
     File {
         blob: &'a mut Blob,
-        filename: ZigString,
+        filename: EncodedSlice<'a>,
     },
 }
 
@@ -3799,28 +3759,25 @@ impl FormDataContext<'_> {
     /// percent-encoding transforms, which copy when they apply.
     fn push_string_slice(
         joiner: &mut StringJoiner<'_>,
-        slice: ZigStringSlice,
+        slice: Utf8Bytes,
         component: FormDataComponent,
     ) {
         if let Some(encoded) = encode_form_data_component(slice.slice(), component) {
             joiner.push_owned(encoded);
             return;
         }
-        if matches!(slice, ZigStringSlice::Owned(_)) {
+        match slice {
             // `into_vec` moves the buffer out of an `Owned` slice without copying.
-            joiner.push_owned(slice.into_vec().into_boxed_slice());
-        } else if matches!(slice, ZigStringSlice::Static(..)) {
-            // SAFETY: `Static` bytes are owned by the `DOMFormData` being serialized
-            // (never freed), which outlives `joiner.done()` in `from_dom_form_data`.
-            joiner.push(unsafe { bun_ptr::detach_lifetime(slice.slice()) });
-        } else {
-            // WTF-backed slices release their pin on drop — copy rather than
-            // borrow past it. (`ZigString::to_slice` never produces these.)
-            joiner.push_cloned(slice.slice());
+            Utf8Bytes::Owned(_) => joiner.push_owned(slice.into_vec().into_boxed_slice()),
+            // SAFETY: borrowed bytes are owned by the `DOMFormData` being serialized,
+            // which outlives `joiner.done()` in `from_dom_form_data`.
+            Utf8Bytes::Borrowed(b) => joiner.push(unsafe { bun_ptr::detach_lifetime(b) }),
+            // Releases its ref on drop — copy rather than borrow past it.
+            Utf8Bytes::Shared(_) => joiner.push_cloned(slice.slice()),
         }
     }
 
-    fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
+    fn on_entry(&mut self, name: EncodedSlice, entry: FormDataEntry<'_>) {
         if self.failed {
             return;
         }
@@ -3835,16 +3792,16 @@ impl FormDataContext<'_> {
         joiner.push_static(b"\r\n");
 
         joiner.push_static(b"Content-Disposition: form-data; name=\"");
-        Self::push_string_slice(joiner, name.to_slice(), FormDataComponent::Name);
+        Self::push_string_slice(joiner, name.to_utf8(), FormDataComponent::Name);
 
         match entry {
             FormDataEntry::String(value) => {
                 joiner.push_static(b"\"\r\n\r\n");
-                Self::push_string_slice(joiner, value.to_slice(), FormDataComponent::StringValue);
+                Self::push_string_slice(joiner, value.to_utf8(), FormDataComponent::StringValue);
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                Self::push_string_slice(joiner, filename.to_slice(), FormDataComponent::Filename);
+                Self::push_string_slice(joiner, filename.to_utf8(), FormDataComponent::Filename);
                 joiner.push_static(b"\"\r\n");
 
                 // Borrowed from the blob, which the `DOMFormData` keeps alive
@@ -4074,13 +4031,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
                     }
-                    // The owned `CowSlice`
-                    // adopts the `Box<[u8]>` so the store frees it in
-                    // `PathLike::drop`; borrowing here would drop `path` at scope
-                    // end and leave the store dangling.
-                    let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
-                        bun_ptr::cow_slice::CowSlice::init_owned(path.into_boxed_slice()),
-                    ));
+                    let mut dest = PathOrFileDescriptor::Path(PathLike::owned(path));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,
                         global_this,
@@ -4172,7 +4123,7 @@ struct URLSearchParamsConverter {
 }
 
 impl URLSearchParamsConverter {
-    fn convert(&mut self, str: ZigString) {
+    fn convert(&mut self, str: EncodedSlice) {
         self.buf = str.to_owned_slice();
     }
 }
@@ -4263,9 +4214,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                path: node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                    dirname, false,
-                )),
+                path: PathLike::borrowed(dirname),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -4399,11 +4348,7 @@ fn write_file_with_empty_source_to_destination(
                                 };
                                 let mkdir_result =
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: node::PathLike::String(
-                                            bun_ptr::cow_slice::CowSlice::init_unchecked(
-                                                dirpath, false,
-                                            ),
-                                        ),
+                                        path: PathLike::borrowed(dirpath),
                                         recursive: true,
                                         always_return_none: true,
                                         ..Default::default()
@@ -4500,8 +4445,6 @@ fn write_file_with_empty_source_to_destination(
                 s3.path(),
                 b"",
                 destination_blob.content_type_or_mime_type(),
-                // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
-                // on `aws_options`, which outlives this call.
                 aws_options.content_disposition.as_deref(),
                 aws_options.content_encoding.as_deref(),
                 aws_options.acl,
@@ -4718,8 +4661,6 @@ pub(crate) fn write_file_with_source_destination(
                             aws_options.acl,
                             aws_options.storage_class,
                             destination_blob.content_type_or_mime_type(),
-                            // SAFETY: `*const [u8]` borrows from sibling `_*_slice`
-                            // fields on `aws_options`, which outlives this call.
                             aws_options.content_disposition.as_deref(),
                             aws_options.content_encoding.as_deref(),
                             proxy_url,
@@ -4776,8 +4717,6 @@ pub(crate) fn write_file_with_source_destination(
                         s3.path(),
                         bytes.slice(),
                         destination_blob.content_type_or_mime_type(),
-                        // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
-                        // on `aws_options`, which outlives this call.
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
                         aws_options.acl,
@@ -4818,8 +4757,6 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.acl,
                         aws_options.storage_class,
                         destination_blob.content_type_or_mime_type(),
-                        // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
-                        // on `aws_options`, which outlives this call.
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
                         proxy_url,
@@ -5115,9 +5052,6 @@ pub(crate) fn write_file_internal(
                                 aws_options.acl,
                                 aws_options.storage_class,
                                 destination_blob.content_type_or_mime_type(),
-                                // SAFETY: `*const [u8]` borrows from sibling
-                                // `_*_slice` fields on `aws_options`, which
-                                // outlives this call.
                                 aws_options.content_disposition.as_deref(),
                                 aws_options.content_encoding.as_deref(),
                                 proxy_url,
@@ -5239,7 +5173,7 @@ fn set_content_type_from_js(
     if !content_type.is_string() {
         return Err(global_this.throw_invalid_argument_type("write", "options.type", "string"));
     }
-    let content_type_str = content_type.to_slice(global_this)?;
+    let content_type_str = content_type.to_utf8(global_this)?;
     let slice = content_type_str.slice();
     if is_valid_blob_type(slice) {
         blob.content_type_was_set.set(true);
@@ -5571,7 +5505,7 @@ pub(crate) fn jsdom_file_construct(
             if let Some(content_type) = options.get(global_this, "type")? {
                 'inner: {
                     if content_type.is_string() {
-                        let content_type_str = content_type.to_slice(global_this)?;
+                        let content_type_str = content_type.to_utf8(global_this)?;
                         let slice = content_type_str.slice();
                         if !is_valid_blob_type(slice) {
                             break 'inner;
@@ -5660,7 +5594,7 @@ pub(crate) fn construct_bun_file(
             if let Some(file_type) = opts.get_truthy(global_object, "type")? {
                 'inner: {
                     if file_type.is_string() {
-                        let str = file_type.to_slice(global_object)?;
+                        let str = file_type.to_utf8(global_object)?;
                         let slice = str.slice();
                         if !is_valid_blob_type(slice) {
                             break 'inner;
@@ -6148,33 +6082,6 @@ fn resolve_file_stat(store: &StoreRef) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `ZigString` JSC methods (`to_js`, `to_external_value`, `external`,
-// `to_json_object`, `with_encoding`) live on `bun_jsc::ZigStringJsc`;
-// `zig_string_to_external_u16` is the free-fn form re-exported from
-// `bun_jsc`. Only Blob-local extension traits remain here.
-// ──────────────────────────────────────────────────────────────────────────
-mod zigstring_blob_ext {
-    /// Local shim for allocator-identity queries on
-    /// `bun_core::ZigStringSlice`. Used by
-    /// `from_js_without_defer_gc` to decide whether a converted slice was
-    /// freshly heap-allocated (=> may contain non-ASCII UTF-8) or is a
-    /// borrowed WTF Latin-1 view (=> already known ASCII-safe).
-    pub(super) trait ZigStringSliceBlobExt {
-        /// True iff the bytes are backed by a
-        /// `WTF::StringImpl` ref (i.e. no UTF-8 transcoding happened).
-        fn is_wtf_backed(&self) -> bool;
-    }
-    impl ZigStringSliceBlobExt for bun_core::ZigStringSlice {
-        #[inline]
-        fn is_wtf_backed(&self) -> bool {
-            matches!(self, bun_core::ZigStringSlice::WTF { .. })
-        }
-    }
-}
-use bun_jsc::zig_string_to_external_u16;
-use zigstring_blob_ext::ZigStringSliceBlobExt as _;
-
-// ──────────────────────────────────────────────────────────────────────────
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -6549,7 +6456,7 @@ impl Any {
             Any::Blob(b) => b.to_string(global, lifetime),
             Any::InternalBlob(ib) => {
                 if ib.bytes.is_empty() {
-                    return Ok(ZigString::EMPTY.to_js(global));
+                    return Ok(JSValue::js_empty_string(global));
                 }
                 let owned = ib.to_string_owned(global)?;
                 *self = Any::Blob(Blob::default());
@@ -6591,25 +6498,21 @@ impl Any {
                 // Ownership transfers to JSC via the default-allocator path.
                 let bytes: &mut [u8] = ib.to_owned_slice().leak();
                 *self = Any::Blob(Blob::default());
-                Ok(jsc::ArrayBuffer::from_default_allocator(
-                    global,
-                    TYPED_ARRAY_VIEW,
-                    bytes,
-                ))
+                jsc::ArrayBuffer::from_default_allocator(global, TYPED_ARRAY_VIEW, bytes)
             }
             Any::WTFStringImpl(impl_) => {
                 let str =
                     BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
 
-                let out_bytes = str.to_utf8_without_ref();
-                if matches!(out_bytes, bun_core::ZigStringSlice::Owned(_)) {
+                let out_bytes = str.to_utf8();
+                if out_bytes.is_owned() {
                     let owned: &mut [u8] = out_bytes.into_vec().leak();
-                    return Ok(jsc::ArrayBuffer::from_default_allocator(
+                    return jsc::ArrayBuffer::from_default_allocator(
                         global,
                         TYPED_ARRAY_VIEW,
                         owned,
-                    ));
+                    );
                 }
                 jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, out_bytes.slice())
             }
@@ -6698,12 +6601,6 @@ impl Any {
 // Internal (InternalBlob)
 // ──────────────────────────────────────────────────────────────────────────
 
-// `to_js` / `to_external_value` / `with_encoding` / `to_json_object` /
-// `external` on `bun_core::ZigString` are provided by `bun_jsc::ZigStringJsc`
-// (imported above). The legacy `ZigStringBlobExt` name is re-exported for
-// sibling modules (`Request.rs`) that still import it under that name.
-pub(crate) use bun_jsc::ZigStringJsc as ZigStringBlobExt;
-
 /// A single-use Blob backed by an allocation of memory.
 #[derive(Default)]
 pub struct Internal {
@@ -6717,43 +6614,23 @@ impl Internal {
     }
 
     pub(crate) fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
-        if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false)
-            .map_err(|_| global_this.throw_out_of_memory())?
-        {
-            let out_len = out.len();
-            // Ownership transfers to JSC's external-string finalizer.
-            let out_ptr = bun_core::heap::into_raw(out.into_boxed_slice())
-                .cast::<u16>()
-                .cast_const();
-            // SAFETY: `out_ptr` came from `heap::into_raw` on a global-allocator
-            // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
-            let return_value =
-                unsafe { jsc::zig_string::to_external_u16(out_ptr, out_len, global_this) };
-            return_value.ensure_still_alive();
-            self.bytes = Vec::new();
-            return Ok(return_value);
-        } else if bytes_without_bom.len() != self.bytes.len() {
-            // If there was a UTF8 BOM, we clone it.
-            let out = BunString::clone_latin1(&self.bytes[3..]);
-            self.bytes = Vec::new();
-            return out.into_js(global_this);
-        } else {
-            // All-ASCII fast path: hand the heap buffer to JSC's external-string
-            // finalizer (mark_global → freed by mimalloc on GC). `to_owned_slice`
-            // moves `self.bytes` out, so the allocation is no longer owned by us.
-            let owned: *mut [u8] =
-                bun_core::heap::into_raw(self.to_owned_slice().into_boxed_slice());
-            // SAFETY: `owned` is a fresh heap allocation released via `into_raw`;
-            // ZigString borrows ptr+len, then `to_external_value` adopts it.
-            let mut str = ZigString::init(unsafe { &*owned });
-            str.mark_global();
-            return Ok(str.to_external_value(global_this));
+        let mut bytes = self.to_owned_slice();
+        let bom_len = bytes.len() - strings::without_utf8_bom(&bytes).len();
+        if bom_len == 0 {
+            return bun_string_jsc::owned_utf8_into_js(global_this, bytes);
+        }
+        match strings::to_utf16_alloc(&bytes[bom_len..], false, false) {
+            Ok(Some(utf16)) => bun_string_jsc::owned_utf16_into_js(global_this, utf16),
+            Ok(None) => {
+                bytes.drain(..bom_len);
+                bun_string_jsc::owned_latin1_into_js(global_this, bytes)
+            }
+            Err(_) => Err(global_this.throw_out_of_memory()),
         }
     }
 
     pub(crate) fn to_json(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
+        let str_bytes = EncodedSlice::from_bytes(strings::without_utf8_bom(&self.bytes));
         let json = str_bytes.to_json_object(global_this);
         self.bytes = Vec::new();
         json
@@ -6818,7 +6695,7 @@ pub trait FileOpener: Sized {
     fn set_errno(&mut self, e: crate::Error);
     fn set_system_error(&mut self, e: jsc::SystemError);
     /// Either `self.file_store.pathlike` or `self.file_blob.store.data.file.pathlike`.
-    fn pathlike(&self) -> &PathOrFileDescriptor;
+    fn pathlike(&self) -> &PathOrFileDescriptor<'static>;
     /// Implementors that have a `mkdirp_if_not_exists` field (`WriteFile`,
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls

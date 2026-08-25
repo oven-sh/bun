@@ -147,13 +147,11 @@ fn bun_revoke_object_url(
     // `is_string()` is `is_string_like()` and admits `StringObject`, so
     // `to_bun_string` can still observe a user `toString` that throws.
     let str = url_arg.to_bun_string(global_object)?;
-    if !str.has_prefix_comptime(b"blob:") {
+    if !str.starts_with_ascii(b"blob:") {
         return Ok(JSValue::UNDEFINED);
     }
 
-    let slice = str.to_utf8_without_ref();
-    // released by ZigStringSlice Drop
-
+    let slice = str.to_utf8();
     let sliced = slice.slice();
     if sliced.len() < b"blob:".len() + UUID::STRING_LENGTH {
         return Ok(JSValue::UNDEFINED);
@@ -177,11 +175,11 @@ fn js_function_resolve_object_url(
     }
     let str = url_arg.to_bun_string(global_object)?;
 
-    if !str.has_prefix_comptime(b"blob:") || str.length() < SPECIFIER_LEN {
+    if !str.starts_with_ascii(b"blob:") || str.length() < SPECIFIER_LEN {
         return Ok(JSValue::UNDEFINED);
     }
 
-    let slice = str.to_utf8_without_ref();
+    let slice = str.to_utf8();
     let sliced = slice.slice();
 
     let registry = ObjectURLRegistry::singleton();

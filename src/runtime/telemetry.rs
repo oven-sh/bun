@@ -556,7 +556,7 @@ fn arg_string(global: &JSGlobalObject, v: JSValue) -> JsResult<Option<String>> {
         return Ok(None);
     }
     Ok(Some(
-        bstr::ByteSlice::to_str_lossy(v.to_slice(global)?.slice()).into_owned(),
+        bstr::ByteSlice::to_str_lossy(v.to_utf8(global)?.slice()).into_owned(),
     ))
 }
 

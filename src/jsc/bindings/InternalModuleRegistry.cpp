@@ -230,6 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     auto registry = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject)->internalModuleRegistry();
     auto mod = registry->createInternalModuleById(lexicalGlobalObject, vm, static_cast<Field>(id));

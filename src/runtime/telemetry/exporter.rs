@@ -438,9 +438,7 @@ fn any_value_to_js(global: &JSGlobalObject, v: AnyValue<'_>) -> JsResult<JSValue
         AnyValue::Bool(b) => JSValue::from(b),
         AnyValue::Int(i) => JSValue::js_number(i as f64),
         AnyValue::Double(d) => JSValue::js_number(d),
-        AnyValue::Bytes(b) => bun_jsc::host_fn::from_js_host_call(global, || {
-            bun_jsc::JSUint8Array::from_bytes_copy(global, b)
-        })?,
+        AnyValue::Bytes(b) => bun_jsc::JSUint8Array::from_bytes_copy(global, b)?,
         AnyValue::Array(items) => {
             let arr = JSValue::create_empty_array(global, 0)?;
             for item in items {
@@ -616,9 +614,7 @@ impl JsFormat {
     fn payload_to_js(self, global: &JSGlobalObject, payload: &ExportPayload) -> JsResult<JSValue> {
         match self {
             JsFormat::Objects => decode_to_js(global, &payload.body),
-            JsFormat::Protobuf => bun_jsc::host_fn::from_js_host_call(global, || {
-                bun_jsc::JSUint8Array::from_bytes_copy(global, &payload.body)
-            }),
+            JsFormat::Protobuf => bun_jsc::JSUint8Array::from_bytes_copy(global, &payload.body),
             JsFormat::Json => str_js(
                 global,
                 &bun_telemetry_cold::otlp_json::to_json(&payload.body),
@@ -753,10 +749,11 @@ impl JsExporter {
             .payload_to_js(global, payload)
             .and_then(|arg| function.call(global, this, &[arg]));
         drop(suppressed);
-        // A thenable that is not a Promise (a query builder) is adopted so its
-        // `then` runs, as wrap()/span() do.
+        // An object result goes through Promise.resolve(): a thenable that is
+        // not a Promise (a query builder) is adopted so its `then` runs, as
+        // wrap()/span() do; anything else resolves on the spot.
         let result = result.map(|v| {
-            if v.as_any_promise().is_none() && v.is_object() && v.get(global, "then").ok().flatten().is_some_and(|t| t.is_callable()) {
+            if v.as_any_promise().is_none() && v.is_object() {
                 bun_jsc::JSPromise::resolved_promise_value(global, v)
             } else {
                 v

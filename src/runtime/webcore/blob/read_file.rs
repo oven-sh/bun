@@ -353,7 +353,7 @@ impl FileOpener for ReadFile {
     fn set_system_error(&mut self, e: jsc::SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &PathOrFileDescriptor {
+    fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
         &self.file_store.pathlike
     }
     #[cfg(windows)]
@@ -1007,7 +1007,7 @@ impl<'a> FileOpener for ReadFileUV<'a> {
     fn set_system_error(&mut self, e: jsc::SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &PathOrFileDescriptor {
+    fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
         &self.file_store.pathlike
     }
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {

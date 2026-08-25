@@ -97,7 +97,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
     let from_context = Bun__Telemetry__activeExtrasBaggage(global);
     let masked = from_context.tag() == bun_core::Tag::Dead;
     let from_context = if masked {
-        bun_core::ZigStringSlice::EMPTY
+        bun_core::Utf8Bytes::EMPTY
     } else {
         from_context.to_utf8()
     };
@@ -126,7 +126,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
         Bun__TelemetrySpan__traceState(cell),
         Bun__TelemetrySpan__baggage(cell),
     );
-    let (ts, bg) = (ts.to_utf8_without_ref(), bg.to_utf8_without_ref());
+    let (ts, bg) = (ts.to_utf8(), bg.to_utf8());
     f(ts.slice(), pick(masked, from_context, bg.slice()))
 }
 
@@ -212,7 +212,7 @@ pub(crate) fn for_each_attribute(
     while let Some((name, value)) = iter.next()? {
         let key = name.to_utf8();
         if value.is_string() {
-            let s = value.to_slice(global)?;
+            let s = value.to_utf8(global)?;
             f(key.slice(), &Value::Str(s.slice()));
         } else if value.is_number() {
             let n = value.as_number();
@@ -627,8 +627,8 @@ fn status_code(api: u8) -> StatusCode {
 }
 
 fn link_context(link: &LinkRef) -> Option<SpanContext> {
-    let trace_id = TraceId::from_hex(link.trace_id.to_utf8_without_ref().slice())?;
-    let span_id = SpanId::from_hex(link.span_id.to_utf8_without_ref().slice())?;
+    let trace_id = TraceId::from_hex(link.trace_id.to_utf8().slice())?;
+    let span_id = SpanId::from_hex(link.span_id.to_utf8().slice())?;
     Some(SpanContext {
         trace_id,
         span_id,
@@ -687,7 +687,7 @@ pub fn with_active_trace_state<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8])
         return f(&owned);
     }
     let ts = Bun__TelemetrySpan__traceState(active_js(global));
-    let ts = ts.to_utf8_without_ref();
+    let ts = ts.to_utf8();
     f(ts.slice())
 }
 
@@ -722,10 +722,10 @@ pub extern "C" fn Bun__Telemetry__stubFromHexIds(
     trace_flags: u8,
     remote: bool,
 ) -> bool {
-    let Some(trace_id) = TraceId::from_hex(trace_id.to_utf8_without_ref().slice()) else {
+    let Some(trace_id) = TraceId::from_hex(trace_id.to_utf8().slice()) else {
         return false;
     };
-    let Some(span_id) = SpanId::from_hex(span_id.to_utf8_without_ref().slice()) else {
+    let Some(span_id) = SpanId::from_hex(span_id.to_utf8().slice()) else {
         return false;
     };
     let flags = Flags(trace_flags);
@@ -752,7 +752,7 @@ pub extern "C" fn Bun__Telemetry__formatTraceparent(
 /// Parse a W3C `traceparent` into a remote, non-recording carrier.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__parseTraceparent(header: &JsString, out: &mut SpanStub) -> bool {
-    match bun_telemetry::propagation::parse_traceparent(header.to_utf8_without_ref().slice()) {
+    match bun_telemetry::propagation::parse_traceparent(header.to_utf8().slice()) {
         Some(ctx) => {
             *out = carrier(ctx, true);
             true
@@ -822,13 +822,13 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
         batch::record(batch, ScopeId(desc.scope), &mut |buf: &mut Vec<u8>| {
             let mut w = SpanWriter::begin(buf, stub, name, SpanKind::from_api(desc.kind), end_ns);
             if !desc.trace_state.is_empty() {
-                w.trace_state(desc.trace_state.to_utf8_without_ref().slice());
+                w.trace_state(desc.trace_state.to_utf8().slice());
             }
             each_attr(kept_attrs, &desc.pool, value_limit, sc, |k, v| {
                 w.attr_bytes_key(k, *v);
             });
             for e in kept_events {
-                let ename = e.name.to_utf8_without_ref();
+                let ename = e.name.to_utf8();
                 let ename = ename.slice();
                 let time_ns = if e.time_ns == 0 { end_ns } else { e.time_ns };
                 OwnedAttrs::collect(desc.pool.slice(e.attrs), &desc.pool)
@@ -838,7 +838,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
                 let Some(ctx) = link_context(lk) else {
                     continue;
                 };
-                let ts = lk.trace_state.to_utf8_without_ref();
+                let ts = lk.trace_state.to_utf8();
                 OwnedAttrs::collect(desc.pool.slice(lk.attrs), &desc.pool)
                     .with(value_limit, |pairs| w.link(&ctx, ts.slice(), pairs));
             }
@@ -855,7 +855,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
             if desc.status != 0 {
                 w.status(
                     status_code(desc.status),
-                    desc.status_message.to_utf8_without_ref().slice(),
+                    desc.status_message.to_utf8().slice(),
                 );
             }
             w.finish();
@@ -1014,7 +1014,7 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(
         return;
     };
     let owned = OwnedAttrs::collect(attrs.slice(link.attrs), attrs);
-    let ts = link.trace_state.to_utf8_without_ref();
+    let ts = link.trace_state.to_utf8();
     let Some(mut l) = local(global) else { return };
     owned.with(lim.attribute_value_length as usize, |pairs| {
         pool::with(&mut l.pool, NativeSpan(handle), |s| {
@@ -1030,7 +1030,7 @@ pub extern "C" fn Bun__Telemetry__nativeName(
     handle: u64,
 ) -> OwnedJsString {
     let Some(l) = local(global) else {
-        return OwnedJsString::empty();
+        return OwnedJsString::EMPTY;
     };
     pool::with_ref(&l.pool, NativeSpan(handle), |s| {
         if s.name.is_empty() && s.http.active {
@@ -1041,7 +1041,7 @@ pub extern "C" fn Bun__Telemetry__nativeName(
         }
         OwnedJsString::clone_utf8(&s.name)
     })
-    .unwrap_or(OwnedJsString::empty())
+    .unwrap_or(OwnedJsString::EMPTY)
 }
 
 /// W3C `tracestate` / `baggage` a native-owned span received (+1 refs, caller
@@ -1053,8 +1053,8 @@ pub extern "C" fn Bun__Telemetry__nativePropagation(
     trace_state: &mut OwnedJsString,
     baggage: &mut OwnedJsString,
 ) -> bool {
-    *trace_state = OwnedJsString::empty();
-    *baggage = OwnedJsString::empty();
+    *trace_state = OwnedJsString::EMPTY;
+    *baggage = OwnedJsString::EMPTY;
     let Some(l) = local(global) else {
         return false;
     };
@@ -1094,7 +1094,7 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
     }
     if stub.parent == bun_telemetry::SpanId::INVALID && !remote_parent.is_empty() {
         if let Some(parent) =
-            bun_telemetry::propagation::parse_traceparent(remote_parent.to_utf8_without_ref().slice())
+            bun_telemetry::propagation::parse_traceparent(remote_parent.to_utf8().slice())
         {
             if let Some(mut l) = local(global) {
                 stub = SpanStub::start(
@@ -1106,7 +1106,7 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
             }
         }
     }
-    let name = name.to_utf8_without_ref();
+    let name = name.to_utf8();
     let name = name.slice();
     let kind = SpanKind::from_api(api_kind);
     let native = with_active_propagation(global, |ts, bg| {
@@ -1141,9 +1141,9 @@ pub fn record_exception(
     // Describing the thrown value must not change what the application sees:
     // a throwing getter on it is ignored here (the error is still delivered
     // by the caller); only a pending termination is propagated.
-    let read = |v: bun_jsc::JsResult<Option<JSValue>>| -> bun_jsc::JsResult<Option<bun_core::ZigStringSlice>> {
+    let read = |v: bun_jsc::JsResult<Option<JSValue>>| -> bun_jsc::JsResult<Option<bun_core::Utf8Bytes<'static>>> {
         let slice = match v {
-            Ok(Some(v)) if v.is_string() => v.to_slice(global).map(Some),
+            Ok(Some(v)) if v.is_string() => v.to_utf8(global).map(Some),
             Ok(_) => Ok(None),
             Err(e) => Err(e),
         };

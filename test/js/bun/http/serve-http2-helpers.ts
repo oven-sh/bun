@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "crypto";
+import { createHash } from "crypto";
 import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
@@ -11,9 +11,9 @@ import tls from "node:tls";
 
 export const fixtureSource = (opts: { tls: boolean; http1?: boolean; http3?: boolean; extra?: string }) => `
 import { serve } from "bun";
-export const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
-export let lateRead;
-export const makeRoutes = () => ({
+const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
+let lateRead;
+const makeRoutes = () => ({
     "/api/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "api" } }),
     "/route-only": { POST: () => new Response("posted") },
     "/static": new Response("from-static-route", { headers: { "content-type": "text/plain", etag: '"v1"' } }),
@@ -25,8 +25,8 @@ export const makeRoutes = () => ({
       return new Response("ok");
     },
 });
-export const routes = makeRoutes();
-export const server = serve({
+const routes = makeRoutes();
+const server = serve({
   port: 0,
   ${opts.tls ? `tls: ${JSON.stringify(tlsCert)},` : ""}
   http2: true,
@@ -38,7 +38,7 @@ export const server = serve({
   websocket: { message() {} },
   ${opts.extra ?? ""}
 });
-export async function handler(req, server) {
+async function handler(req, server) {
     const url = new URL(req.url);
     switch (url.pathname) {
       case "/hello":
@@ -171,7 +171,10 @@ export type Fixture = {
 };
 
 export let bigFileDir: ReturnType<typeof tempDir> | undefined;
-afterAll(() => bigFileDir?.[Symbol.dispose]());
+afterAll(() => {
+  bigFileDir?.[Symbol.dispose]();
+  bigFileDir = undefined;
+});
 export function bigFilePath() {
   if (!bigFileDir) {
     bigFileDir = tempDir("serve-http2", { "big.bin": Buffer.alloc(3 * 1024 * 1024 + 17, "0123456789") });

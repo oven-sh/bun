@@ -368,6 +368,8 @@ struct Http2Connection {
     bool settingsReceived = false;
 
     size_t queuedControl = 0;
+    /* Set when response HEADERS/DATA were queued since the last flush. */
+    bool wroteStreamBytes = false;
     /* Set by frames that make progress on a stream during onData. */
     bool progressed = false;
     /* Per-stream byte budget for the current drainWritable() pass; 0 = none. */
@@ -516,6 +518,7 @@ struct Http2Connection {
         } while (sent < allowed);
         stream->sendWindow -= (int32_t) sent;
         connSendWindow -= (int64_t) sent;
+        if (sent) wroteStreamBytes = true;
         if (endStream && sent == length) stream->localClosed = true;
         return sent;
     }
@@ -547,7 +550,10 @@ struct Http2Connection {
         /* Control frames sit behind whatever was queued first; they're gone
          * for sure only once everything is. */
         if (out.length() == 0) queuedControl = 0;
-        if (wrote && !closed) touch();
+        /* Only response HEADERS/DATA leaving count as activity; a PING ACK
+         * going out must not keep a stalled connection alive. */
+        if (wrote && wroteStreamBytes && !closed) touch();
+        wroteStreamBytes = false;
     }
 
     bool wantsDrain() {
@@ -1020,6 +1026,7 @@ inline void Http2Connection::scheduleFlush() {
 }
 
 inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStream) {
+    wroteStreamBytes = true;
     Http2ResponseData *d = &stream->data;
     std::vector<unsigned char> &buf = ctx->encodeBuffer;
     size_t need = 16;

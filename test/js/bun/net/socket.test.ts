@@ -4662,3 +4662,47 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
     expect(exitCode).toBe(0);
   });
 });
+
+it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async () => {
+  // Each end() sends close_notify and defers its fd close for the peer's
+  // reply. The reply arrives without a FIN, so the ZERO_RETURN path has to
+  // complete the deferred close instead of keeping the socket half-open.
+  const serverOpen = Promise.withResolvers<Socket>();
+  const serverClosed = Promise.withResolvers<void>();
+  const clientClosed = Promise.withResolvers<void>();
+  const serverShake = Promise.withResolvers<void>();
+  const clientShake = Promise.withResolvers<void>();
+
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    tls: { key: tls.key, cert: tls.cert },
+    socket: {
+      open: s => serverOpen.resolve(s),
+      handshake: () => serverShake.resolve(),
+      data() {},
+      close: () => serverClosed.resolve(),
+    },
+  });
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    allowHalfOpen: true,
+    tls: { ca: tls.cert },
+    socket: {
+      handshake: () => clientShake.resolve(),
+      data() {},
+      close: () => clientClosed.resolve(),
+    },
+  });
+
+  const serverSock = await serverOpen.promise;
+  await Promise.all([serverShake.promise, clientShake.promise]);
+
+  // Both sides end before either reads the peer's close_notify.
+  client.end();
+  serverSock.end();
+
+  await Promise.all([serverClosed.promise, clientClosed.promise]);
+});

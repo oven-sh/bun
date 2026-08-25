@@ -331,7 +331,7 @@ pub mod s3 {
 pub mod streams;
 
 pub enum PathOrFileDescriptor {
-    Path(bun_core::zig_string::Slice),
+    Path(bun_core::Utf8Bytes<'static>),
     Fd(bun_sys::Fd),
 }
 
@@ -339,9 +339,9 @@ impl From<&node_types::PathOrFileDescriptor> for PathOrFileDescriptor {
     fn from(pathlike: &node_types::PathOrFileDescriptor) -> Self {
         match pathlike {
             node_types::PathOrFileDescriptor::Fd(fd) => Self::Fd(*fd),
-            node_types::PathOrFileDescriptor::Path(path) => Self::Path(bun_core::handle_oom(
-                bun_core::zig_string::Slice::init_dupe(path.slice()),
-            )),
+            node_types::PathOrFileDescriptor::Path(path) => {
+                Self::Path(bun_core::Utf8Bytes::Owned(path.slice().to_vec()))
+            }
         }
     }
 }

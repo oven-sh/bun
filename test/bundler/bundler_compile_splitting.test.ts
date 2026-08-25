@@ -1,8 +1,58 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   describe("compile with splitting", () => {
+    // The embedded module graph is laid out in load order: the entry point's
+    // static imports (dependencies first), then each dynamic import's closure,
+    // breadth-first. Chunk index order would be entry, lazy1, lazy2, shared,
+    // shared2.
+    itBundled("compile/splitting/ModulesLaidOutInLoadOrder", {
+      compile: true,
+      splitting: true,
+      bytecode: true,
+      format: "esm",
+      files: {
+        "/entry.ts": /* js */ `
+          import "./shared";
+          console.log("mark:entry");
+          await import("./lazy1");
+        `,
+        "/lazy1.ts": /* js */ `
+          import "./shared";
+          import "./shared2";
+          console.log("mark:lazy1");
+          await import("./lazy2");
+        `,
+        "/lazy2.ts": /* js */ `
+          import "./shared2";
+          console.log("mark:lazy2");
+        `,
+        "/shared.ts": /* js */ `
+          console.log("mark:shared");
+        `,
+        "/shared2.ts": /* js */ `
+          console.log("mark:shared2");
+        `,
+      },
+      run: {
+        stdout: "mark:shared\nmark:entry\nmark:shared2\nmark:lazy1\nmark:lazy2",
+      },
+      onAfterBundle(api) {
+        const payload = readFileSync(api.outfile).toString("latin1");
+        const order = ["entry", "lazy1", "lazy2", "shared", "shared2"]
+          .map(name => {
+            const offset = payload.lastIndexOf(`mark:${name}"`);
+            expect(offset, `marker mark:${name} not found in the payload`).toBeGreaterThanOrEqual(0);
+            return { name, offset };
+          })
+          .sort((a, b) => a.offset - b.offset)
+          .map(m => m.name);
+        expect(order).toEqual(["shared", "entry", "shared2", "lazy1", "lazy2"]);
+      },
+    });
+
     itBundled("compile/splitting/RelativePathsAcrossChunks", {
       compile: true,
       splitting: true,

@@ -779,44 +779,7 @@ impl Encoding {
             input.len(),
             max_size,
         );
-        // Stable Rust forbids const-generic arithmetic in array lengths, so
-        // we heap-allocate.
         match self {
-            Self::Base64 => {
-                let encoded_len = bun_core::base64::encode_len(input);
-                let (encoded, bytes) = bun_core::String::create_uninitialized_latin1(encoded_len);
-                if encoded.is_dead() {
-                    return encoded.into_js(global_object);
-                }
-                let n = bun_core::base64::encode(bytes, input);
-                debug_assert_eq!(n, encoded_len);
-                encoded.into_js(global_object)
-            }
-            Self::Base64url => {
-                let encoded_len = bun_base64::url_safe_encode_len(input);
-                let (encoded, bytes) = bun_core::String::create_uninitialized_latin1(encoded_len);
-                if encoded.is_dead() {
-                    return encoded.into_js(global_object);
-                }
-                let n = bun_base64::encode_url_safe(bytes, input);
-                debug_assert_eq!(n, encoded_len);
-                encoded.into_js(global_object)
-            }
-            Self::Hex => {
-                // The byte-by-byte `write!` formatting machinery is pathologically
-                // slow in debug builds, so encode via LUT directly into the
-                // destination JS string buffer.
-                let (encoded, bytes) =
-                    bun_core::String::create_uninitialized_latin1(input.len() * 2);
-                if encoded.is_dead() {
-                    // WTF OOM — match webcore::encoding pattern; transfer the
-                    // Dead string (becomes JS empty) rather than indexing a
-                    // zero-length `bytes`.
-                    return encoded.into_js(global_object);
-                }
-                bun_core::fmt::bytes_to_hex_lower(input, bytes);
-                encoded.into_js(global_object)
-            }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }

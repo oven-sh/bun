@@ -72,7 +72,7 @@ pub trait EncodedSliceJsc: Sized {
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
     /// Transfers ownership of a globally-allocated buffer to JSC's
     /// external-string finalizer.
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// `JSON.parse` over the bytes.
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// Like `to_external_value` but with a caller-supplied `ctx` + finalizer
@@ -86,7 +86,7 @@ pub trait EncodedSliceJsc: Sized {
         global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
         callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JSValue;
+    ) -> JsResult<JSValue>;
 }
 impl EncodedSliceJsc for EncodedSlice<'_> {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
@@ -109,12 +109,10 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         EncodedSlice__toDOMExceptionInstance(self, global, code as u8)
     }
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        if self.is_globally_allocated() {
-            return self.to_external_value(global);
-        }
+        debug_assert!(!self.is_globally_allocated());
         EncodedSlice__toValueGC(self, global)
     }
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
+    fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if self.len > bun_core::String::max_length() {
             // SAFETY: contract — bytes were allocated by the default (global)
             // allocator. `default_alloc::free` agrees with the
@@ -127,12 +125,11 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
                         .cast::<core::ffi::c_void>(),
                 )
             };
-            let _ = global.throw_string_too_long();
-            return JSValue::ZERO;
+            return Err(global.throw_string_too_long());
         }
         // SAFETY: `self` is a valid `&EncodedSlice`; `JSGlobalObject` is an opaque
         // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
-        unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) }
+        Ok(unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) })
     }
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
@@ -143,7 +140,7 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
         callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         if self.len > bun_core::String::max_length() {
             // SAFETY: invoking the caller-supplied finalizer on the buffer it owns.
             unsafe {
@@ -156,10 +153,9 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
                     self.len,
                 )
             };
-            let _ = global.throw_string_too_long();
-            return JSValue::ZERO;
+            return Err(global.throw_string_too_long());
         }
         // Ownership of the buffer + `ctx` transfers to JSC's finalizer.
-        EncodedSlice__external(self, global, ctx, callback)
+        Ok(EncodedSlice__external(self, global, ctx, callback))
     }
 }

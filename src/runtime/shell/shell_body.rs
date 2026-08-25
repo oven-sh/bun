@@ -6,10 +6,12 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
+use bun_core::EncodedSlice;
 use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_core::ZStr;
 use bun_core::strings;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
@@ -68,7 +70,9 @@ impl ShellErr {
                 let err = bun_jsc::SystemError::from(sys).to_error_instance(global);
                 global.throw_value(err)
             }
-            ShellErr::Custom(custom) => global.throw(format_args!("{}", bstr::BStr::new(&custom))),
+            ShellErr::Custom(custom) => {
+                global.throw_value(EncodedSlice::utf8(&custom).to_error_instance(global))
+            }
             ShellErr::Todo(todo) => global.throw_todo(&todo),
         }
     }

@@ -3268,9 +3268,6 @@ impl H2FrameParser {
 
     fn string_or_empty_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
         let global = self.handlers.get().global();
-        if payload.is_empty() {
-            return Ok(JSValue::js_empty_string(&global));
-        }
         bun_string_jsc::create_utf8_for_js(&global, payload)
     }
 

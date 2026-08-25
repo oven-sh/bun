@@ -126,7 +126,7 @@ impl JSGlobalObject {
             crate::ErrorCode::STRING_TOO_LONG,
             format_args!(
                 "Cannot create a string longer than {} characters",
-                BunString::max_length()
+                bun_core::string::WTF_STRING_MAX_LENGTH
             ),
         )
         .throw()

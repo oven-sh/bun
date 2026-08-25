@@ -2618,13 +2618,13 @@ impl BlobExt for Blob {
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
-                Ok(unsafe {
+                unsafe {
                     EncodedSlice::latin1(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
                     )
-                })
+                }
             }
             Lifetime::Transfer => {
                 // Cloning the StoreRef here would bump the
@@ -2635,25 +2635,25 @@ impl BlobExt for Blob {
                 debug_assert!(matches!(store.data, store::Data::Bytes(_)));
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
-                Ok(unsafe {
+                unsafe {
                     EncodedSlice::latin1(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
                     )
-                })
+                }
             }
             Lifetime::Share => {
                 let store = self.store().expect("infallible: store present").clone();
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
-                Ok(unsafe {
+                unsafe {
                     EncodedSlice::latin1(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
                     )
-                })
+                }
             }
             Lifetime::Temporary => {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
@@ -2664,7 +2664,7 @@ impl BlobExt for Blob {
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                     return out.into_js(global);
                 }
-                Ok(EncodedSlice::latin1(buf).to_external_value(global))
+                EncodedSlice::latin1(buf).to_external_value(global)
             }
         }
     }

@@ -24,11 +24,6 @@ unsafe extern "C" {
         ptr: *const String,
         len: usize,
     ) -> JSValue;
-    fn EncodedSlice__toExternalU16(
-        ptr: *const u16,
-        len: usize,
-        global: *const JSGlobalObject,
-    ) -> JSValue;
 }
 
 /// JSC conversions for `bun_core::String`.
@@ -144,29 +139,18 @@ pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> 
     }
 }
 
-/// UTF-8 `Vec<u8>` → JS string, handing the allocation (or its UTF-16
-/// transcode) to JSC instead of copying.
+/// UTF-8 `Vec<u8>` → JS string; the allocation (or its UTF-16 transcode) is
+/// adopted by JSC. Throws `STRING_TOO_LONG` when over [`String::max_length`].
 pub fn owned_utf8_into_js(global_object: &JSGlobalObject, utf8: Vec<u8>) -> JsResult<JSValue> {
     String::from_owned_utf8(utf8)
         .map_err(|_| global_object.throw_out_of_memory())?
         .into_js(global_object)
 }
 
-/// UTF-16 `Vec<u16>` → JS string, handing the allocation to JSC's
-/// external-string finalizer instead of copying. Throws `STRING_TOO_LONG`
-/// when over [`String::max_length`].
+/// UTF-16 `Vec<u16>` → JS string; the allocation is adopted by JSC.
+/// Throws `STRING_TOO_LONG` when over [`String::max_length`].
 pub fn owned_utf16_into_js(global_object: &JSGlobalObject, utf16: Vec<u16>) -> JsResult<JSValue> {
-    if utf16.is_empty() {
-        return Ok(JSValue::js_empty_string(global_object));
-    }
-    if utf16.len() > String::max_length() {
-        return Err(global_object.throw_string_too_long());
-    }
-    // mimalloc frees by base pointer, so spare capacity needs no shrink.
-    let mut utf16 = core::mem::ManuallyDrop::new(utf16);
-    // SAFETY: ptr/len describe a live global-allocator buffer; ownership
-    // transfers to JSC here.
-    Ok(unsafe { EncodedSlice__toExternalU16(utf16.as_mut_ptr(), utf16.len(), global_object) })
+    String::create_external_globally_allocated_utf16(utf16).into_js(global_object)
 }
 
 #[track_caller]

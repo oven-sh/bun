@@ -3707,17 +3707,6 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGl
     return JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, messageString, cause, nullptr, JSC::TypeNothing, false));
 }
 
-JSC::EncodedJSValue EncodedSlice__toExternalU16(const uint16_t* arg0, size_t len, JSC::JSGlobalObject* global)
-{
-    if (len == 0) {
-        return JSC::JSValue::encode(JSC::jsEmptyString(global->vm()));
-    }
-
-    auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(arg0), len }, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
-
-    return JSC::JSValue::encode(JSC::jsString(global->vm(), WTF::move(ref)));
-}
-
 // This must be a globally allocated string
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue EncodedSlice__toExternalValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1)
 {

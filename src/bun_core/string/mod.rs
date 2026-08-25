@@ -1350,9 +1350,10 @@ impl<'a> EncodedSlice<'a> {
     pub fn starts_with_ascii(self, ascii: &[u8]) -> bool {
         debug_assert!(ascii.is_ascii(), "starts_with_ascii expects ASCII");
         if self.is_16bit() {
-            return strings::has_prefix_comptime_utf16(self.utf16_slice(), ascii);
+            let s = self.utf16_slice();
+            return s.len() >= ascii.len() && s.iter().zip(ascii).all(|(&c, &a)| c == u16::from(a));
         }
-        strings::has_prefix_comptime(self.slice(), ascii)
+        self.slice().starts_with(ascii)
     }
 
     /// Encoding-aware equality.

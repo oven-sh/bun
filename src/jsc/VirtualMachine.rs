@@ -5685,8 +5685,6 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
-        // `(mapping, display_url, external_code)`; the `to_utf8()` borrow of
-        // `frames[top].source_url` ends with this block so it can be reassigned.
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
             let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
@@ -5717,7 +5715,6 @@ impl VirtualMachine {
             };
 
             maybe_lookup.map(|lookup| {
-                // The source-map Arc drops on scope exit.
                 let mapping = lookup.mapping;
                 let display_url = if !already_remapped {
                     lookup.display_source_url_if_needed(top_source_url.slice())

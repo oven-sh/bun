@@ -402,7 +402,6 @@ struct Http2Connection {
     /* >0 while this connection is dispatching into user code; deletion of
      * the connection and its streams waits for the outermost frame. */
     int busy = 0;
-    int corked = 0;
     bool closed = false;
     bool inSweepList = false;
 
@@ -540,10 +539,10 @@ struct Http2Connection {
             int chunk = (int) std::min<size_t>(out.length(), 1u << 30);
             int written = us_socket_write(s, out.data(), chunk);
             if (written <= 0) break;
-            /* Keep the allocation while streams are active (it refills every
-             * event); give it back once the connection goes quiet or it grew
-             * past what a drain pass needs. */
-            if (streams.empty() || out.totalLength() > http2::SOCKET_BACKPRESSURE_HIGH_WATER + 64 * 1024) out.erase((size_t) written);
+            /* Keep the allocation (it refills every event) unless it grew past
+             * what a drain pass needs; an idle connection gives it back from
+             * the timeout sweep instead (see releaseIdleBuffers). */
+            if (out.totalLength() > http2::SOCKET_BACKPRESSURE_HIGH_WATER + 64 * 1024) out.erase((size_t) written);
             else out.consume((size_t) written);
             wrote = true;
         }
@@ -574,7 +573,7 @@ struct Http2Connection {
     }
 
     /* API calls arriving outside a socket event (a JS stream pull, a settled
-     * promise) must reach the wire now; inside one, its epilogue flushes.
+     * promise) are flushed by the deferred pass; inside one, by its epilogue.
      * Streams still blocked on the high-water mark are pumped from the loop
      * hook rather than here, so a caller is never re-entered through another
      * stream's onWritable. */
@@ -834,6 +833,11 @@ struct Http2Context {
             Http2Connection *conn = batch[i];
             /* A close earlier in this batch may have deleted it. */
             if (!isLive(conn)) continue;
+            /* Inside its own socket event (the deferred queue runs after every
+             * JS callback): the event's epilogue flushes once for the whole
+             * batch and frees retired streams. Flushing here would be one
+             * write() per response. */
+            if (conn->busy > 0) continue;
             conn->busy++;
             conn->pump();
             conn->busy--;
@@ -848,8 +852,8 @@ struct Http2Context {
     static bool sweepConnection(Http2Connection *conn) {
         if (conn->busy > 0) {
             /* A frame of ours further up the stack (a nested event-loop tick
-             * got us here) may still hold one of these streams. */
-            if (!conn->closed) conn->ctx->scheduleSweep(conn);
+             * got us here) may still hold one of these streams; its epilogue
+             * sweeps when it unwinds. */
             return !conn->closed;
         }
         conn->busy++;
@@ -1020,9 +1024,12 @@ inline void Http2Connection::recomputeIdleTimeout() {
 }
 
 inline void Http2Connection::scheduleFlush() {
-    if (busy || corked) return;
-    flush();
-    if (wantsDrain()) ctx->scheduleSweep(this);
+    /* Never write from under an API call. Inside a socket event its epilogue
+     * flushes the whole batch; outside one (a JS pull, a settled promise, a
+     * timer) the deferred pass does, once per connection per event-loop turn
+     * — the same place HTTP/1 uncorks. */
+    if (busy) return;
+    ctx->scheduleSweep(this);
 }
 
 inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStream) {
@@ -1170,9 +1177,10 @@ inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) 
     }
     pendingFree.push_back(stream);
     if (closed) return;
-    /* Freed (and a drained going-away connection closed) from the loop
-     * hook, never under the API call that got us here. */
-    ctx->scheduleSweep(this);
+    /* Freed (and a drained going-away connection closed) after the current
+     * socket event, or from the deferred pass if we're outside one; never
+     * under the API call that got us here. */
+    if (busy == 0) ctx->scheduleSweep(this);
     if (stream->timeoutS != 255) recomputeIdleTimeout();
 }
 
@@ -1921,15 +1929,15 @@ inline void Http2Response::growReceiveWindow() {
 inline Http2Response *Http2Response::cork(MoveOnlyFunction<void()> &&fn) {
     Http2Connection *c = conn;
     c->busy++;
-    c->corked++;
     fn();
-    c->corked--;
     c->busy--;
     if (c->closed) {
         if (c->busy == 0) delete c;
         return this;
     }
-    c->scheduleFlush();
+    /* Outermost holder outside a socket event: whatever fn() queued (bytes
+     * in out, retired streams) goes to the deferred pass. */
+    if (c->busy == 0) c->ctx->scheduleSweep(c);
     return this;
 }
 

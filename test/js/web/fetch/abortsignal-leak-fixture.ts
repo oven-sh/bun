@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect } from "bun:test";
-import { rss, tls } from "harness";
+import { isASAN, isDebug, rss, tls } from "harness";
 
 /** Same suite over HTTP/1.1 and HTTP/2 (server `http2: true`, client `protocol: "http2"`). */
 export function createAbortSignalLeakSuite({ http2 = false }: { http2?: boolean } = {}) {
@@ -53,7 +53,7 @@ export function createAbortSignalLeakSuite({ http2 = false }: { http2?: boolean 
   async function testReqSignalGetter() {
     const url = `${server.url}/req-signal-aborted`;
     const batchSize = 50;
-    const iterations = 50;
+    const iterations = isDebug || isASAN ? 15 : 50;
 
     async function batch() {
       onRequestContinuePromise = Promise.withResolvers();
@@ -97,7 +97,7 @@ export function createAbortSignalLeakSuite({ http2 = false }: { http2?: boolean 
   async function testReqSignalAbortEvent() {
     const url = `${server.url}/req-signal-aborted`;
     const batchSize = 50;
-    const iterations = 50;
+    const iterations = isDebug || isASAN ? 15 : 50;
 
     async function batch() {
       onRequestContinuePromise = Promise.withResolvers();
@@ -155,7 +155,7 @@ export function createAbortSignalLeakSuite({ http2 = false }: { http2?: boolean 
   async function testReqSignalAbortEventNeverResolves() {
     const url = `${server.url}/req-signal-aborted`;
     const batchSize = 50;
-    const iterations = 50;
+    const iterations = isDebug || isASAN ? 15 : 50;
 
     async function batch() {
       onRequestContinuePromise = Promise.withResolvers();

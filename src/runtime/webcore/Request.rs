@@ -258,8 +258,7 @@ impl Request {
     /// already read both. (An async handler gets both built eagerly instead, in
     /// `RequestContext::to_async`.)
     pub(crate) fn snapshot_request_head(&self, req: &uws::Request) {
-        if self.head.get().is_some()
-            || (!self.url.get().is_empty() && self.headers.get().is_some())
+        if self.head.get().is_some() || (!self.url.get().is_empty() && self.headers.get().is_some())
         {
             return;
         }
@@ -428,7 +427,11 @@ impl Request {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
-            + self.head.get().as_ref().map_or(0, RequestHeadSnapshot::memory_cost)
+            + self
+                .head
+                .get()
+                .as_ref()
+                .map_or(0, RequestHeadSnapshot::memory_cost)
             + self.body_value().memory_cost()
     }
 

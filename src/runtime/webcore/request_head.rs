@@ -60,7 +60,9 @@ impl RequestHeadSnapshot {
     /// like `uws::Request::header`.
     pub(crate) fn header(&self, lowercase_name: &[u8]) -> Option<&[u8]> {
         self.headers()
-            .find(|(name, _)| strings::eql_case_insensitive_ascii_check_length(name, lowercase_name))
+            .find(|(name, _)| {
+                strings::eql_case_insensitive_ascii_check_length(name, lowercase_name)
+            })
             .map(|(_, value)| value)
     }
 

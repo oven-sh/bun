@@ -259,7 +259,7 @@ describe("basic", () => {
     await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
   });
 
-  test.concurrent("catalog and catalogs.default may split different packages between them", async () => {
+  test("catalog and catalogs.default may split different packages between them", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {
         "package.json": JSON.stringify({
@@ -670,7 +670,7 @@ describe("errors", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test.concurrent("a package missing from an existing named catalog suggests bun add --catalog=<name>", async () => {
+  test("a package missing from an existing named catalog suggests bun add --catalog=<name>", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {
         "package.json": JSON.stringify({
@@ -728,7 +728,7 @@ describe("errors", () => {
   }
 
   for (const placement of ["workspaces", "top-level"] as const) {
-    test.concurrent(`the same package in both catalog and catalogs.default is rejected (${placement})`, async () => {
+    test(`the same package in both catalog and catalogs.default is rejected (${placement})`, async () => {
       const { packageDir } = await registry.createTestDir({
         files: {
           "package.json": rootWithDuplicateDefault(
@@ -747,7 +747,7 @@ describe("errors", () => {
     });
   }
 
-  test.concurrent("every package in both catalog and catalogs.default is reported", async () => {
+  test("every package in both catalog and catalogs.default is reported", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {
         "package.json": rootWithDuplicateDefault(
@@ -770,7 +770,7 @@ describe("errors", () => {
   });
 
   // pnpm: deps-installer/test/catalogs.ts "external dependency using catalog protocol errors"
-  test.concurrent("a catalog: dependency inside a registry package fails to resolve", async () => {
+  test("a catalog: dependency inside a registry package fails to resolve", async () => {
     using dir = writeRegistryProject(
       {
         "package.json": JSON.stringify({
@@ -788,7 +788,7 @@ describe("errors", () => {
     expect(await exists(join(String(dir), "bun.lock"))).toBeFalse();
   });
 
-  test.concurrent(
+  test(
     "a catalog: dependency inside a file: folder dependency fails to resolve, the same package as a workspace works",
     async () => {
       const localLib = JSON.stringify({ name: "local-lib", dependencies: { "no-deps": "catalog:" } });
@@ -863,7 +863,7 @@ describe("optionalDependencies", () => {
   }
 
   describe.each(["hoisted", "isolated"] as const)("linker=%s", linker => {
-    test.concurrent("catalog: in the root's and a workspace's optionalDependencies resolves", async () => {
+    test("catalog: in the root's and a workspace's optionalDependencies resolves", async () => {
       const { packageDir: dir } = await registry.createTestDir({
         bunfigOpts: { linker },
         files: {
@@ -913,7 +913,7 @@ describe("optionalDependencies", () => {
     });
 
     // The registry package's optional `catalog:` edge is stripped to unresolvable instead of reading the consumer's catalog, and stays that way when bun.lock is reloaded.
-    test.concurrent("a registry package's optional catalog: dependency is skipped, fresh and on reload", async () => {
+    test("a registry package's optional catalog: dependency is skipped, fresh and on reload", async () => {
       using dir = writeRegistryProject(
         {
           "package.json": JSON.stringify({
@@ -1093,14 +1093,14 @@ describe("peer dependencies", () => {
   const isolatedNoDeps2 = isolatedNoDeps("2.0.0");
   const linkers = ["hoisted", "isolated"] as const;
 
-  test.concurrent("default catalog peer dedupes onto the satisfying ancestor", async () => {
+  test("default catalog peer dedupes onto the satisfying ancestor", async () => {
     const dir = await makeRepo({ catalog: { "no-deps": ">=1.0.0" }, peerSpec: "catalog:", linker: "hoisted" });
     await install(dir, "hoisted");
     expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
     expect(existsSync(join(dir, "packages", "lib", "node_modules", "no-deps"))).toBeFalse();
   });
 
-  test.concurrent("named catalog peer (catalog:peers) dedupes the same way", async () => {
+  test("named catalog peer (catalog:peers) dedupes the same way", async () => {
     const dir = await makeRepo({
       catalogs: { peers: { "no-deps": ">=1.0.0" } },
       peerSpec: "catalog:peers",
@@ -1111,7 +1111,7 @@ describe("peer dependencies", () => {
     expect(existsSync(join(dir, "packages", "lib", "node_modules", "no-deps"))).toBeFalse();
   });
 
-  test.concurrent("optional catalog peer dedupes too", async () => {
+  test("optional catalog peer dedupes too", async () => {
     const dir = await makeRepo({
       catalog: { "no-deps": ">=1.0.0" },
       peerSpec: "catalog:",
@@ -1123,7 +1123,7 @@ describe("peer dependencies", () => {
     expect(existsSync(join(dir, "packages", "lib", "node_modules", "no-deps"))).toBeFalse();
   });
 
-  test.concurrent("scoped package name as a catalog peer", async () => {
+  test("scoped package name as a catalog peer", async () => {
     const dir = await makeRepo({
       rootDependencies: {},
       catalog: { "@scoped/has-bin-entry": ">=1.0.0" },
@@ -1153,7 +1153,7 @@ describe("peer dependencies", () => {
     ["^2.0.0", "stays nested"],
   ] as const)("peer range %s (%s)", (range, outcome) => {
     describe.each(linkers)("linker=%s", linker => {
-      test.concurrent("catalog: peer produces the same lockfile and layout as the inline range", async () => {
+      test("catalog: peer produces the same lockfile and layout as the inline range", async () => {
         const [catalogDir, inlineDir] = await Promise.all([
           makeRepo({ catalog: { "no-deps": range }, peerSpec: "catalog:", linker }),
           makeRepo({ peerSpec: range, linker }),
@@ -1179,7 +1179,7 @@ describe("peer dependencies", () => {
   });
 
   describe.each(linkers)("linker=%s", linker => {
-    test.concurrent("catalog `*` peer behaves exactly like an inline `*` peer", async () => {
+    test("catalog `*` peer behaves exactly like an inline `*` peer", async () => {
       const [catalogDir, inlineDir] = await Promise.all([
         makeRepo({ catalog: { "no-deps": "*" }, peerSpec: "catalog:", linker }),
         makeRepo({ peerSpec: "*", linker }),
@@ -1191,7 +1191,7 @@ describe("peer dependencies", () => {
       expect(fromCatalog).toStrictEqual(fromInline);
     });
 
-    test.concurrent("aliased catalog entry peer matches the inline alias", async () => {
+    test("aliased catalog entry peer matches the inline alias", async () => {
       const [catalogDir, inlineDir] = await Promise.all([
         makeRepo({ catalog: { "no-deps": "npm:no-deps@>=1.0.0" }, peerSpec: "catalog:", linker }),
         makeRepo({ peerSpec: "npm:no-deps@>=1.0.0", linker }),
@@ -1202,7 +1202,7 @@ describe("peer dependencies", () => {
       expect(fromCatalog).toStrictEqual(fromInline);
     });
 
-    test.concurrent("optional catalog peer matches the inline optional peer on reload", async () => {
+    test("optional catalog peer matches the inline optional peer on reload", async () => {
       const [catalogDir, inlineDir] = await Promise.all([
         makeRepo({ catalog: { "no-deps": ">=1.0.0" }, peerSpec: "catalog:", optionalPeer: true, linker }),
         makeRepo({ peerSpec: ">=1.0.0", optionalPeer: true, linker }),
@@ -1215,7 +1215,7 @@ describe("peer dependencies", () => {
     });
 
     // pnpm: deps-installer/test/catalogs.ts "importer with different peers uses correct peer"
-    test.concurrent(
+    test(
       "two consumers providing different peer versions: catalog peer still equals inline peer",
       async () => {
         const twoConsumers = (peerSpec: string, catalog?: Record<string, string>) =>
@@ -1240,7 +1240,7 @@ describe("peer dependencies", () => {
     );
 
     // pnpm: deps-installer/test/catalogs.ts "catalog resolutions should be consistent with peer dependencies"
-    test.concurrent("warm install leaves bun.lock byte-identical and --frozen-lockfile passes", async () => {
+    test("warm install leaves bun.lock byte-identical and --frozen-lockfile passes", async () => {
       const dir = await makeRepo({ catalog: { "no-deps": ">=1.0.0" }, peerSpec: "catalog:", linker });
       await install(dir, linker);
       const lockfile = await Bun.file(join(dir, "bun.lock")).text();
@@ -1257,7 +1257,7 @@ describe("peer dependencies", () => {
   });
 
   // pnpm: deps-installer/test/catalogs.ts "lockfile is updated if catalog config changes"
-  test.concurrent("changing the catalog range of a peer re-hoists on the next install (both directions)", async () => {
+  test("changing the catalog range of a peer re-hoists on the next install (both directions)", async () => {
     const dir = await makeRepo({ catalog: { "no-deps": ">=1.0.0" }, peerSpec: "catalog:", linker: "hoisted" });
     await install(dir, "hoisted");
     expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
@@ -1275,7 +1275,7 @@ describe("peer dependencies", () => {
   });
 
   // pnpm: deps-installer/test/catalogs.ts "frozen lockfile error is thrown if catalog config changes"
-  test.concurrent("--frozen-lockfile fails when only a peer's catalog range changed", async () => {
+  test("--frozen-lockfile fails when only a peer's catalog range changed", async () => {
     const dir = await makeRepo({ catalog: { "no-deps": ">=1.0.0" }, peerSpec: "catalog:", linker: "hoisted" });
     await install(dir, "hoisted");
     const lockfile = await Bun.file(join(dir, "bun.lock")).text();
@@ -1287,7 +1287,7 @@ describe("peer dependencies", () => {
     expect(await Bun.file(join(dir, "bun.lock")).text()).toBe(lockfile);
   });
 
-  test.concurrent("catalog peer with bun.lockb dedupes and reloads identically", async () => {
+  test("catalog peer with bun.lockb dedupes and reloads identically", async () => {
     const dir = await makeRepo({
       catalog: { "no-deps": ">=1.0.0" },
       peerSpec: "catalog:",
@@ -1309,7 +1309,7 @@ describe("peer dependencies", () => {
     ["plain", ">=2.0.0"],
     ["aliased", "npm:a-dep@1.0.1"],
   ] as const)("override beats the %s catalog entry of a peer", (_, entry) => {
-    test.concurrent("fresh == reload", async () => {
+    test("fresh == reload", async () => {
       const dir = await makeRepo({
         overrides: { "no-deps": "1.0.0" },
         rootDependencies: { "one-fixed-dep": "2.0.0", "a-dep": "1.0.1" },
@@ -1340,7 +1340,7 @@ describe("peer dependencies", () => {
     ["catalog:default", { catalog: { "a-dep": ">=1.0.0" }, catalogs: { default: { "no-deps": "^2.0.0" } } }],
     ["catalog:", { catalog: { "no-deps": "^2.0.0" }, catalogs: { default: { "a-dep": ">=1.0.0" } } }],
   ] as const)("peer %s resolves through the entry named by its spec (%o)", (peerSpec, catalogFields) => {
-    test.concurrent("fresh and reload", async () => {
+    test("fresh and reload", async () => {
       const dir = await makeRepo({ ...catalogFields, peerSpec, linker: "hoisted" });
       expect(await record(dir, "hoisted")).toStrictEqual({
         keys: nestedKeys,
@@ -1359,7 +1359,7 @@ describe("peer dependencies", () => {
     ["catalog:default", { catalogs: { other: { "no-deps": ">=1.0.0" } } }],
     ["catalog:", { catalog: { "no-deps": "catalog:other" }, catalogs: { other: { "no-deps": ">=1.0.0" } } }],
   ] as const)("peer %s with no usable catalog entry (%o)", (peerSpec, catalogFields) => {
-    test.concurrent("installs without a nested copy and is stable on reload", async () => {
+    test("installs without a nested copy and is stable on reload", async () => {
       const dir = await makeRepo({ ...catalogFields, peerSpec, linker: "hoisted" });
       expect(await record(dir, "hoisted")).toStrictEqual({
         keys: dedupedKeys,
@@ -1375,7 +1375,7 @@ describe("peer dependencies", () => {
 
   describe.each(linkers)("linker=%s", linker => {
     // app hoists leaf@1.0.0 (a root dependency would dedupe every peer onto itself) and needs-leaf-2 locks leaf@2.0.0: the workspace's catalog: peer nests it, the registry package's identical spec is satisfied by the hoisted leaf@1.0.0 (unstripped it would add "wants-leaf-peer/leaf").
-    test.concurrent("a catalog: peer inside a registry package never reads the consumer's catalog", async () => {
+    test("a catalog: peer inside a registry package never reads the consumer's catalog", async () => {
       const dir = await makeRepo({
         catalog: { leaf: "^2.0.0" },
         peerName: "leaf",
@@ -1400,7 +1400,7 @@ describe("peer dependencies", () => {
     });
 
     // pnpm: resolving-deps-resolver walk.rs resolves_children_through_catalogs — only importers substitute catalogs.
-    test.concurrent(
+    test(
       "a registry package's catalog: peer ignores the root catalog and binds to the workspace's copy",
       async () => {
         const dir = await makeRepo({
@@ -1434,7 +1434,7 @@ describe("peer dependencies", () => {
     );
 
     // Overrides are root-owned: an override VALUE of `catalog:` still applies to a registry package's peer.
-    test.concurrent("an override valued catalog: still applies to a registry package's peer", async () => {
+    test("an override valued catalog: still applies to a registry package's peer", async () => {
       const dir = await makeRepo({
         rootDependencies: {},
         overrides: { "no-deps": "catalog:" },
@@ -1455,7 +1455,7 @@ describe("peer dependencies", () => {
     });
   });
 
-  test.concurrent("a registry package's catalog: peer with no provider anywhere installs nothing for it", async () => {
+  test("a registry package's catalog: peer with no provider anywhere installs nothing for it", async () => {
     const dir = await makeRepo({
       rootDependencies: {},
       catalog: { "no-deps": "^2.0.0" },
@@ -1474,7 +1474,7 @@ describe("peer dependencies", () => {
     expect(existsSync(join(dir, "node_modules", "no-deps"))).toBeFalse();
   });
 
-  test.concurrent("a registry package's named catalog:peers peer is scoped the same way", async () => {
+  test("a registry package's named catalog:peers peer is scoped the same way", async () => {
     const dir = await makeRepo({
       rootDependencies: {},
       catalogs: { peers: { "no-deps": "^2.0.0" } },
@@ -1491,7 +1491,7 @@ describe("peer dependencies", () => {
     expect(existsSync(join(dir, "node_modules", "catalog-peer", "node_modules"))).toBeFalse();
   });
 
-  test.concurrent("changing the root catalog does not re-resolve a registry package's catalog: peer", async () => {
+  test("changing the root catalog does not re-resolve a registry package's catalog: peer", async () => {
     const dir = await makeRepo({
       rootDependencies: {},
       catalog: { "no-deps": "^1.0.0" },
@@ -1512,7 +1512,7 @@ describe("peer dependencies", () => {
     expect(err).not.toContain("Saved lockfile");
   });
 
-  test.concurrent("a file: folder dependency does not see the catalog either", async () => {
+  test("a file: folder dependency does not see the catalog either", async () => {
     const { packageDir: dir } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -1554,7 +1554,7 @@ describe("peer dependencies", () => {
       ["catalog:", "catalog:", { catalog: { "no-deps": "1.0.0" } }],
       ["catalog:", "catalog:pins", { catalog: { "no-deps": ">=1.0.0" }, catalogs: { pins: { "no-deps": "1.0.0" } } }],
     ] as const)("peer %s overridden to %s", (peerSpec, override, catalogFields) => {
-      test.concurrent("binds to the overriding catalog entry, fresh == reload", async () => {
+      test("binds to the overriding catalog entry, fresh == reload", async () => {
         const dir = await makeRepo({ ...catalogFields, overrides: { "no-deps": override }, peerSpec, linker });
         const result = await record(dir, linker);
         const keys = ["app", "lib", "no-deps", "one-fixed-dep"];
@@ -1581,7 +1581,7 @@ describe("peer dependencies", () => {
     ["catalog:default", { catalog: { "no-deps": ">=1.0.0" } }],
     ["catalog: peers", { catalogs: { peers: { "no-deps": ">=1.0.0" } } }],
   ] as const)("bun pm pack substitutes the %s peer (%o)", (peerSpec, catalogFields) => {
-    test.concurrent("with the catalog's range", async () => {
+    test("with the catalog's range", async () => {
       const dir = await makeRepo({ ...catalogFields, peerSpec, libVersion: "1.2.3", linker: "hoisted" });
       await install(dir, "hoisted");
       const libDir = join(dir, "packages", "lib");
@@ -1603,7 +1603,7 @@ describe("peer dependencies", () => {
     ["a-dep", "catalog:"],
     ["no-deps", "catalog:missing"],
   ] as const)("bun pm pack with a %s peer of %s missing from the lockfile's catalogs", (peerName, peerSpec) => {
-    test.concurrent("fails without writing a tarball", async () => {
+    test("fails without writing a tarball", async () => {
       const dir = await makeRepo({
         catalog: { "no-deps": ">=1.0.0" },
         peerSpec: "catalog:",

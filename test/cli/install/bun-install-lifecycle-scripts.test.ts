@@ -93,7 +93,7 @@ async function setupTest(): Promise<TestCtx> {
 // The six multi-install tests below are the longest in the file (2-3 serial `bun install`s
 // each, some with cold caches). Declare them first so they start before the ~110 shorter
 // tests and overlap with them instead of forming a serial tail at the end of the run.
-test.concurrent("ignore-scripts is read from npmrc", async () => {
+test("ignore-scripts is read from npmrc", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await Promise.all([
@@ -139,7 +139,7 @@ test.concurrent("ignore-scripts is read from npmrc", async () => {
   expect(await checkScripts()).toEqual([true, true]);
 });
 
-test.concurrent("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
+test("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
 
@@ -210,7 +210,7 @@ test.concurrent("trustedDependencies matches the resolved package name, not the 
   expect(await exited).toBe(0);
 });
 
-test.concurrent(
+test(
   "trustedDependencies added on a later install still matches the resolved package name, not the dependency alias",
   async () => {
     using ctx = await setupTest();
@@ -259,7 +259,7 @@ test.concurrent(
   },
 );
 
-test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
+test("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
 
@@ -299,7 +299,7 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
   expect(distance > 21_600_000_000_000n).toBe(true);
 });
 
-test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
+test("default trusted dependencies require the canonical registry tarball URL", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
 
@@ -418,7 +418,7 @@ test.concurrent("default trusted dependencies require the canonical registry tar
   expect(await exited).toBe(0);
 });
 
-test.concurrent("binary lockfile trusted dependency entries require an exact name match", async () => {
+test("binary lockfile trusted dependency entries require an exact name match", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
 
@@ -549,7 +549,7 @@ test.concurrent("binary lockfile trusted dependency entries require an exact nam
   expect(await exited).toBe(0);
 });
 
-test.concurrent(
+test(
   "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",
   async () => {
     using ctx = await setupTest();
@@ -637,7 +637,7 @@ test.concurrent(
   },
 );
 
-test.concurrent(
+test(
   "trustedDependencies entries for non-npm dependencies only apply to dependencies declared by the root or a workspace",
   async () => {
     using ctx = await setupTest();

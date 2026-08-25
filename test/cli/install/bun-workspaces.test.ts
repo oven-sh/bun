@@ -193,7 +193,7 @@ test("dependency on workspace without version in package.json", async () => {
   }
 });
 
-test.concurrent("allowing negative workspace patterns", async () => {
+test("allowing negative workspace patterns", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -278,7 +278,7 @@ test("dependency on same name as workspace and dist-tag", async () => {
   ]);
 });
 
-test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
+test("successfully installs workspace when path already exists in node_modules", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -311,7 +311,7 @@ test.concurrent("successfully installs workspace when path already exists in nod
   });
 });
 
-test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
+test("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -368,7 +368,7 @@ test.concurrent("adding workspace in workspace edits package.json with correct v
   });
 });
 
-test.concurrent("workspaces with invalid versions should still install", async () => {
+test("workspaces with invalid versions should still install", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -444,7 +444,7 @@ test.concurrent("workspaces with invalid versions should still install", async (
 });
 
 describe("workspace aliases", async () => {
-  test.concurrent("combination", async () => {
+  test("combination", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([
@@ -512,7 +512,7 @@ describe("workspace aliases", async () => {
     "workspace:@org/b@",
   ];
   for (const version of shouldPass) {
-    test.concurrent(`version range ${version} and workspace with no version`, async () => {
+    test(`version range ${version} and workspace with no version`, async () => {
       using ctx = await setupTest();
       const { packageDir, env } = ctx;
       await Promise.all([
@@ -552,7 +552,7 @@ describe("workspace aliases", async () => {
   }
   let shouldFail: string[] = ["workspace:@org/b@1.0.0", "workspace:@org/b@1", "workspace:@org/b"];
   for (const version of shouldFail) {
-    test.concurrent(`version range ${version} and workspace with no version (should fail)`, async () => {
+    test(`version range ${version} and workspace with no version (should fail)`, async () => {
       using ctx = await setupTest();
       const { packageDir, env } = ctx;
       await Promise.all([
@@ -600,7 +600,7 @@ describe("workspace aliases", async () => {
 });
 
 for (const glob of [true, false]) {
-  test.concurrent(`does not crash when root package.json is in "workspaces"${glob ? " (glob)" : ""}`, async () => {
+  test(`does not crash when root package.json is in "workspaces"${glob ? " (glob)" : ""}`, async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([
@@ -626,7 +626,7 @@ for (const glob of [true, false]) {
   });
 }
 
-test.concurrent("cwd in workspace script is not the symlink path on windows", async () => {
+test("cwd in workspace script is not the symlink path on windows", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -654,7 +654,7 @@ test.concurrent("cwd in workspace script is not the symlink path on windows", as
 });
 
 describe("relative tarballs", async () => {
-  test.concurrent("from package.json", async () => {
+  test("from package.json", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([
@@ -684,7 +684,7 @@ describe("relative tarballs", async () => {
       version: "0.0.2",
     });
   });
-  test.concurrent("from cli", async () => {
+  test("from cli", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([
@@ -743,7 +743,7 @@ describe("relative tarballs", async () => {
     ["override", { overrides: { bar: "file:./bar.tgz" } }, "^0.0.2"],
     ["catalog entry", { catalogs: { vendored: { bar: "file:./bar.tgz" } } }, "catalog:vendored"],
   ] as const) {
-    test.concurrent(`from a root ${source} applied to a workspace dependency`, async () => {
+    test(`from a root ${source} applied to a workspace dependency`, async () => {
       using ctx = await setupTest();
       const { packageDir, env } = ctx;
       await Promise.all([
@@ -792,7 +792,7 @@ describe("relative tarballs", async () => {
   // microseconds while tarball extraction takes milliseconds, so this test
   // does not deterministically reproduce the UAF — it exercises the concurrent
   // path and verifies each workspace-relative tarball resolves correctly.
-  test.concurrent("many concurrent local tarballs in workspaces", async () => {
+  test("many concurrent local tarballs in workspaces", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     // Enough workspaces that `getWorkspacePkgIfWorkspaceDep` has a non-trivial
@@ -858,7 +858,7 @@ describe("relative tarballs", async () => {
   });
 });
 
-test.concurrent("$npm_package_config_ works in root", async () => {
+test("$npm_package_config_ works in root", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await write(
@@ -888,7 +888,7 @@ test.concurrent("$npm_package_config_ works in root", async () => {
   expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo $npm_package_config_qux\n`);
   expect(await new Response(p.stdout).text()).toBe(`bar\n`);
 });
-test.concurrent("$npm_package_config_ works in root in subpackage", async () => {
+test("$npm_package_config_ works in root in subpackage", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await write(
@@ -919,7 +919,7 @@ test.concurrent("$npm_package_config_ works in root in subpackage", async () => 
   expect(await new Response(p.stdout).text()).toBe(`tab\n`);
 });
 
-test.concurrent("adding packages in a subdirectory of a workspace", async () => {
+test("adding packages in a subdirectory of a workspace", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await write(
@@ -1040,7 +1040,7 @@ test.concurrent("adding packages in a subdirectory of a workspace", async () => 
 
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
 });
-test.concurrent("adding packages in workspaces", async () => {
+test("adding packages in workspaces", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await write(
@@ -1206,7 +1206,7 @@ test.concurrent("adding packages in workspaces", async () => {
     description: "not a workspace",
   });
 });
-test.concurrent("it should detect duplicate workspace dependencies", async () => {
+test("it should detect duplicate workspace dependencies", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await write(
@@ -1256,7 +1256,7 @@ const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0",
 
 for (const rootVersion of versions) {
   for (const packageVersion of versions) {
-    test.concurrent(`it should allow duplicates, root@${rootVersion}, package@${packageVersion}`, async () => {
+    test(`it should allow duplicates, root@${rootVersion}, package@${packageVersion}`, async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
       await write(
@@ -1388,7 +1388,7 @@ for (const rootVersion of versions) {
 }
 
 for (const version of versions) {
-  test.concurrent(
+  test(
     `it should allow listing workspace as dependency of the root package version ${version}`,
     async () => {
       using ctx = await setupTest();
@@ -1541,7 +1541,7 @@ for (const version of versions) {
 }
 
 describe("install --filter", () => {
-  test.concurrent("does not run root scripts if root is filtered out", async () => {
+  test("does not run root scripts if root is filtered out", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1597,7 +1597,7 @@ describe("install --filter", () => {
     expect(await exists(join(packageDir, "packages", "pkg1.txt"))).toBeFalse();
   });
 
-  test.concurrent("basic", async () => {
+  test("basic", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1658,7 +1658,7 @@ describe("install --filter", () => {
     ).toEqual([false, true]);
   });
 
-  test.concurrent("all but one or two", async () => {
+  test("all but one or two", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1732,7 +1732,7 @@ describe("install --filter", () => {
     ).toEqual([false, true, true, true]);
   });
 
-  test.concurrent("matched workspace depends on filtered workspace", async () => {
+  test("matched workspace depends on filtered workspace", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1786,7 +1786,7 @@ describe("install --filter", () => {
     ).toEqual([true, { name: "no-deps", version: "2.0.0" }, true, true]);
   });
 
-  test.concurrent("filter with a path", async () => {
+  test("filter with a path", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1895,7 +1895,7 @@ describe("install --filter", () => {
     await checkWorkspace();
   });
 
-  test.concurrent("relation selectors walk the workspace graph", async () => {
+  test("relation selectors walk the workspace graph", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     const pkg = (name: string, deps: Record<string, unknown>) =>
@@ -1946,7 +1946,7 @@ describe("install --filter", () => {
     expect(dependenciesExit).toBe(0);
   });
 
-  test.concurrent("-F is the short form of --filter", async () => {
+  test("-F is the short form of --filter", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1988,7 +1988,7 @@ describe("install --filter", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("{dir} selects every workspace under a directory", async () => {
+  test("{dir} selects every workspace under a directory", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -2053,7 +2053,7 @@ describe("install --filter", () => {
     expect(await installed()).toStrictEqual([true, false, false, true]);
   });
 
-  test.concurrent("isolated linker honors the same selectors", async () => {
+  test("isolated linker honors the same selectors", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     const pkg = (name: string, deps: Record<string, unknown>) =>
@@ -2155,7 +2155,7 @@ describe("install --filter", () => {
   });
 });
 
-test.concurrent("can override npm package with workspace package under a different name", async () => {
+test("can override npm package with workspace package under a different name", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await Promise.all([
@@ -2212,7 +2212,7 @@ test.concurrent("can override npm package with workspace package under a differe
   });
 });
 
-test.concurrent("overrides in workspace packages and root pnpm.overrides are ignored", async () => {
+test("overrides in workspace packages and root pnpm.overrides are ignored", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await Promise.all([
@@ -2258,7 +2258,7 @@ test.concurrent("overrides in workspace packages and root pnpm.overrides are ign
   expect(exitCode).toBe(0);
 });
 
-test.concurrent(
+test(
   "workspace: dependencies declared inside a tarball package do not create workspace packages",
   async () => {
     using ctx = await setupTest();
@@ -2348,7 +2348,7 @@ describe("LinkWorkspacePackages", () => {
     return join(packageDir, "bunfig.toml");
   }
 
-  test.concurrent("linkWorkspacePackages = false uses registry instead of linking workspace packages", async () => {
+  test("linkWorkspacePackages = false uses registry instead of linking workspace packages", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     const bunfigPath = await setupWorkspace(packageDir);
@@ -2402,7 +2402,7 @@ describe("LinkWorkspacePackages", () => {
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("npm");
   });
 
-  test.concurrent("linkWorkspacePackages = false but workspace: prefix still links workspace", async () => {
+  test("linkWorkspacePackages = false but workspace: prefix still links workspace", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     const bunfigPath = await setupWorkspace(packageDir);
@@ -2576,7 +2576,7 @@ describe("packages whose version label is longer than 512 bytes", () => {
     expect(exitCode).toBe(0);
   }
 
-  test.concurrent("local tarball", async () => {
+  test("local tarball", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     const spec = longTarballSpec("bar-0.0.2.tgz");
@@ -2594,7 +2594,7 @@ describe("packages whose version label is longer than 512 bytes", () => {
     });
   });
 
-  test.concurrent("remote tarball", async () => {
+  test("remote tarball", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     const tarball = file(join(import.meta.dir, "bar-0.0.2.tgz"));
@@ -2616,7 +2616,7 @@ describe("packages whose version label is longer than 512 bytes", () => {
   });
 
   // Workspace packages are labeled with their own version rather than a resolution.
-  test.concurrent("workspace package with a long prerelease version", async () => {
+  test("workspace package with a long prerelease version", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     const version = `1.0.0-${Buffer.alloc(600, "a").toString()}`;
@@ -2635,7 +2635,7 @@ describe("packages whose version label is longer than 512 bytes", () => {
 
   // The same label is the version half of the `name@version` patchedDependencies key,
   // so a patch keyed by a long spec has to be found and applied, not just not crash.
-  test.concurrent("patchedDependencies keyed by the long label is applied", async () => {
+  test("patchedDependencies keyed by the long label is applied", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     const spec = longTarballSpec("baz-0.0.3.tgz");

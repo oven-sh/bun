@@ -244,7 +244,7 @@ run_test() {
     # 226s），并行 5 worker 时资源竞争使耗时膨胀超过默认 TMOUT=300s。
     # 给足 2×TMOUT 让它们按单跑速度完成，而非超时误杀。
     */cli/install/bun-install.test.ts|*/cli/install/bun-run.test.ts|\
-    */cli/install/bun-update.test.ts|*/cli/install/bun-update-transitive.test.ts|\
+    */cli/install/bun-update.test.ts|\
     */cli/install/bun-update-lockfile-sync.test.ts|*/cli/install/bun-dedupe.test.ts|\
     */cli/install/bun-prune.test.ts|\
     */cli/install/bun-pm-licenses.test.ts|*/cli/install/bun-add-catalog.test.ts|\
@@ -252,8 +252,25 @@ run_test() {
     */cli/install/nested-overrides.test.ts|\
     */cli/install/bun-security-scanner-matrix-with-node-modules.test.ts|\
     */cli/install/bun-security-scanner-matrix-without-node-modules.test.ts|\
-    */cli/install/bun-pack.test.ts|*/cli/install/bun-install-registry.test.ts)
+    */cli/install/bun-pack.test.ts)
       WT=$((TMOUT * 2))       # 600s
+      BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
+      ;;
+    # ── verdaccio 大文件：并发改串行后单跑实测 ──
+    # bun-update-transitive 1134s / bun-install-registry 850s / catalogs
+    # 385s / bun-workspaces 391s / lifecycle-scripts 421s（并行 5 worker
+    # 下更慢）。给足余量，避免全量时超时误杀。
+    */cli/install/bun-update-transitive.test.ts)
+      WT=$((TMOUT * 8))       # 2400s
+      BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
+      ;;
+    */cli/install/bun-install-registry.test.ts)
+      WT=$((TMOUT * 4))       # 1200s
+      BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
+      ;;
+    */cli/install/catalogs.test.ts|*/cli/install/bun-workspaces.test.ts|\
+    */cli/install/bun-install-lifecycle-scripts.test.ts)
+      WT=$((TMOUT * 3))       # 900s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     # ── bun-audit：150 用例已改顺序执行，单跑实测 676s，需 3×TMOUT ──
@@ -295,16 +312,28 @@ run_test() {
     # VerdaccioRegistry tests share the registry storage dir
     # (.verdaccio-db.json / htpasswd under test/cli/install/registry);
     # two instances running at once race user creation ("Failed to create
-    # user") and package writes. Run them serially.
+    # user") and package writes. Run them serially. Keep this list in sync
+    # with every test file that news VerdaccioRegistry (grep
+    # "VerdaccioRegistry" test/cli/install).
     *cli/install/bun-add-catalog.test.ts|*cli/install/bun-add-filter.test.ts|\
     *cli/install/bun-audit.test.ts|*cli/install/bun-dedupe.test.ts|\
     *cli/install/bun-install-lifecycle-scripts.test.ts|\
     *cli/install/bun-install-native-binlink.test.ts|\
-    *cli/install/bun-install-registry.test.ts|*cli/install/bun-lock.test.ts|\
+    *cli/install/bun-install-patch.test.ts|*cli/install/bun-install-registry.test.ts|\
+    *cli/install/bun-install.test.ts|*cli/install/bun-lock.test.ts|\
     *cli/install/bun-lockb.test.ts|*cli/install/bun-patch.test.ts|\
     *cli/install/bun-pm-licenses.test.ts|*cli/install/bun-prune.test.ts|\
-    *cli/install/bun-publish.test.ts|*cli/install/bun-update-lockfile-sync.test.ts|\
-    *cli/install/bun-update-transitive.test.ts)
+    *cli/install/bun-publish.test.ts|*cli/install/bun-update.test.ts|\
+    *cli/install/bun-update-lockfile-sync.test.ts|\
+    *cli/install/bun-update-transitive.test.ts|*cli/install/bun-workspaces.test.ts|\
+    *cli/install/catalogs.test.ts|*cli/install/config-precedence.test.ts|\
+    *cli/install/frozen-lockfile-missing-workspace.test.ts|\
+    *cli/install/frozen-lockfile-pruned.test.ts|*cli/install/hoist.test.ts|\
+    *cli/install/isolated-install.test.ts|*cli/install/isolated-relink.test.ts|\
+    *cli/install/migration/pnpm-lock-v9.test.ts|\
+    *cli/install/migration/pnpm-migration.test.ts|\
+    *cli/install/nested-overrides.test.ts|*cli/install/npmrc.test.ts|\
+    *cli/install/public-hoist-pattern.test.ts)
       _serial=1 ;;
     # native-plugin 编译/加载 .node 与并发 bun 进程冲突（_Znwm symbol not
     # found：任何并发 bun test 进程存在时 .node 的 libc++ 符号解析竞争）。

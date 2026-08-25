@@ -283,14 +283,17 @@ impl Options {
         }
     }
 
-    /// The credentials a tarball download carries. On the registry's own origin
-    /// (same scheme, host and effective port) the registry's credentials follow it,
-    /// whatever its path: that is what serves GitLab's instance-level registry, whose
-    /// tarballs live under a project path, and it keeps bunfig, env and CLI
-    /// credentials ahead of `.npmrc` the way they are for the manifest. Off that
-    /// origin, or when the registry has no credentials, the tarball gets what
-    /// `.npmrc` configures for its own URL by key. A path the server would resolve
-    /// elsewhere (`..`, `%2e`, a backslash) gets nothing.
+    /// The credentials a tarball download carries, in npm's order: the deepest
+    /// `.npmrc` key on the tarball URL's own walk, else the registry's credentials
+    /// when the tarball is on the registry's origin (same scheme, host and effective
+    /// port), whatever its path. That fallback serves GitLab's instance-level
+    /// registry, whose tarballs live under a project path with no key of their own.
+    ///
+    /// One refinement to npm's order: a key the registry URL itself resolves to is
+    /// already reflected in `scope`, behind any bunfig, env or CLI credential, so it
+    /// does not override `scope`; only a key specific to the tarball's path does.
+    /// A path the server would resolve elsewhere (`..`, `%2e`, a backslash) gets
+    /// nothing.
     pub fn tarball_credentials<'a>(
         &'a self,
         scope: &'a Npm::registry::Scope,
@@ -299,10 +302,14 @@ impl Options {
         if !Npm::registry::path_is_canonical(tarball.pathname) {
             return None;
         }
+        let own = Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball);
         if scope.has_credentials() && same_origin(tarball, &scope.url.url()) {
-            return Some(scope);
+            return match own {
+                Some(entry) if !entry.applies_to(&scope.url.url()) => Some(entry.credentials()),
+                _ => Some(scope),
+            };
         }
-        Npm::registry::UrlAuth::find(&self.url_auth, tarball)
+        own.map(|entry| entry.credentials())
     }
 
     /// Give every scope that ended up without credentials the ones `.npmrc`

@@ -658,13 +658,27 @@ pub mod registry {
         /// The credentials `.npmrc` configures for `url`: the first key on npm's walk
         /// from `url` that has an entry, so `//host/a/b/` beats `//host/`.
         pub(crate) fn find<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a Scope> {
-            if list.is_empty() {
+            UrlAuth::find_entry(list, url).map(|entry| &entry.credentials)
+        }
+
+        pub(crate) fn find_entry<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a UrlAuth> {
+            if list.is_empty() || !path_is_canonical(url.path) {
                 return None;
             }
             bun_ini::RegistryKey::from_url(url.href)
                 .walk()
                 .find_map(|key| list.iter().find(|entry| *entry.key == *key))
-                .map(|entry| &entry.credentials)
+        }
+
+        pub(crate) fn credentials(&self) -> &Scope {
+            &self.credentials
+        }
+
+        /// Whether this key is on `url`'s own walk, so `url` itself resolves to it.
+        pub(crate) fn applies_to(&self, url: &URL) -> bool {
+            bun_ini::RegistryKey::from_url(url.href)
+                .walk()
+                .any(|key| *self.key == *key)
         }
     }
 

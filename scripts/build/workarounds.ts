@@ -43,6 +43,14 @@ function lockedCrateVersion(cfg: Config, name: string): string | undefined {
   return m?.[1];
 }
 
+// The upstream merge commit is not known yet. Treat the next libuv bump as
+// the point to remove the patch or deliberately advance this baseline.
+const LIBUV_COMMIT_WITHOUT_CLOSE_CRT_ASSERT_FIX = "8023581113b276e7c1aee3f82da57ca0893faab1";
+
+export function isLibuvCloseCrtAssertPatchObsolete(commit: string): boolean {
+  return commit !== LIBUV_COMMIT_WITHOUT_CLOSE_CRT_ASSERT_FIX;
+}
+
 export interface Workaround {
   /** Short slug — shows up in the error message. */
   id: string;
@@ -72,12 +80,7 @@ export const workarounds: Workaround[] = [
     description:
       "libuv's Windows close path does not suppress debug CRT assertion dialogs for invalid file descriptors",
     applies: cfg => cfg.windows,
-    expectedToBeFixed: _cfg => {
-      // The upstream merge commit is not known yet. Stop at the next libuv
-      // bump so the patch is either removed or this baseline is advanced.
-      const LIBUV_COMMIT_WITHOUT_FIX = "8023581113b276e7c1aee3f82da57ca0893faab1";
-      return LIBUV_COMMIT !== LIBUV_COMMIT_WITHOUT_FIX;
-    },
+    expectedToBeFixed: _cfg => isLibuvCloseCrtAssertPatchObsolete(LIBUV_COMMIT),
     cleanup:
       `Delete patches/libuv/win-close-disable-crt-assert.patch, remove it from the patches array in ` +
       `scripts/build/deps/libuv.ts, and delete this entry.`,

@@ -62,10 +62,14 @@ function opt(name: string, def?: string): string | undefined {
 }
 
 if (args.includes("--help") || args.includes("-h")) {
+  // The header comment of this file is the usage text.
+  const lines = readFileSync(import.meta.filename, "utf8")
+    .split("\n")
+    .slice(1);
+  const end = lines.findIndex(l => !l.startsWith("//"));
   console.log(
-    readFileSync(import.meta.filename, "utf8")
-      .split("\n")
-      .slice(1, 26)
+    lines
+      .slice(0, end === -1 ? undefined : end)
       .map(l => l.replace(/^\/\/ ?/, ""))
       .join("\n"),
   );
@@ -94,7 +98,7 @@ function llvmDir(): string {
 
 async function run(
   cmd: string[],
-  opts: { cwd?: string; stdout?: "pipe" | "inherit" } = {},
+  opts: { cwd?: string } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const proc = spawn({ cmd, cwd: opts.cwd ?? repo, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

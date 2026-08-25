@@ -137,26 +137,26 @@ fn link_napi_module(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         )));
     }
     let [exe_arg, addon_arg, vpath_arg, out_arg] = frame.arguments_as_array::<4>();
-    let exe_path = exe_arg.to_slice(global)?;
-    let addon_path = addon_arg.to_slice(global)?;
-    let virtual_path = vpath_arg.to_slice(global)?;
-    let out_path = out_arg.to_slice(global)?;
+    let exe_path = exe_arg.to_utf8(global)?;
+    let addon_path = addon_arg.to_utf8(global)?;
+    let virtual_path = vpath_arg.to_utf8(global)?;
+    let out_path = out_arg.to_utf8(global)?;
 
-    let exe_bytes = match bun_sys::File::openat(Fd::cwd(), exe_path.slice(), bun_sys::O::RDONLY, 0)
+    let exe_bytes = match bun_sys::File::openat(Fd::cwd(), &exe_path, bun_sys::O::RDONLY, 0)
         .and_then(|f| f.read_to_end())
     {
         Ok(b) => b,
-        Err(e) => return Err(e.with_path(exe_path.slice()).throw(global)),
+        Err(e) => return Err(e.with_path(&exe_path).throw(global)),
     };
     let addon_bytes =
-        match bun_sys::File::openat(Fd::cwd(), addon_path.slice(), bun_sys::O::RDONLY, 0)
+        match bun_sys::File::openat(Fd::cwd(), &addon_path, bun_sys::O::RDONLY, 0)
             .and_then(|f| f.read_to_end())
         {
             Ok(b) => b,
-            Err(e) => return Err(e.with_path(addon_path.slice()).throw(global)),
+            Err(e) => return Err(e.with_path(&addon_path).throw(global)),
         };
 
-    let out_bytes = match napi_link::link_into_macho(&exe_bytes, &addon_bytes, virtual_path.slice())
+    let out_bytes = match napi_link::link_into_macho(&exe_bytes, &addon_bytes, &virtual_path)
     {
         Ok(b) => b,
         Err(LinkError::UnsupportedExecutableFormat) => {
@@ -189,15 +189,15 @@ fn link_napi_module(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     let out_file = match bun_sys::File::openat(
         Fd::cwd(),
-        out_path.slice(),
+        &out_path,
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
         0o755,
     ) {
         Ok(f) => f,
-        Err(e) => return Err(e.with_path(out_path.slice()).throw(global)),
+        Err(e) => return Err(e.with_path(&out_path).throw(global)),
     };
     if let Err(e) = out_file.write_all(&out_bytes) {
-        return Err(e.with_path(out_path.slice()).throw(global));
+        return Err(e.with_path(&out_path).throw(global));
     }
 
     Ok(JSValue::UNDEFINED)

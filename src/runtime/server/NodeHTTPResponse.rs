@@ -2396,12 +2396,14 @@ impl NodeHTTPResponse {
         &self,
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let section = self.raw_request_headers.replace(Vec::new());
         if section.is_empty() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
-        Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+        bun_jsc::call_zero_is_throw(global_object, || {
+            Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+        })
     }
 
     /// `handle.takeRequestTrailers()` — this request's captured trailer section
@@ -2410,20 +2412,22 @@ impl NodeHTTPResponse {
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
         // the wire; parse them with the same leniency so they surface on req.trailers.
         let use_insecure_http_parser = callframe.argument(0).to_boolean();
-        Bun__NodeHTTP__parseRequestTrailers(
-            global_object,
-            section.as_ptr(),
-            section.len(),
-            use_insecure_http_parser,
-        )
+        bun_jsc::call_zero_is_throw(global_object, || {
+            Bun__NodeHTTP__parseRequestTrailers(
+                global_object,
+                section.as_ptr(),
+                section.len(),
+                use_insecure_http_parser,
+            )
+        })
     }
 
     pub(crate) fn get_bytes_written(

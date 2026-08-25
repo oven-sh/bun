@@ -654,12 +654,7 @@ impl FileSystemRouter {
             name_strings_slice[i] = EncodedSlice::from_bytes(name);
             paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
         }
-        Ok(JSValue::from_entries(
-            global_this,
-            name_strings_slice,
-            paths_strings,
-            true,
-        ))
+        JSValue::from_entries(global_this, name_strings_slice, paths_strings, true)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -896,9 +891,7 @@ impl MatchedRoute {
         let count = map.get_name_count();
         let mut creator = QueryObjectCreator { query: map };
 
-        let value = JSObject::create_with_initializer(&mut creator, ctx, count);
-
-        Ok(value)
+        JSObject::create_with_initializer(&mut creator, ctx, count)
     }
 
     #[bun_jsc::host_fn(getter)]

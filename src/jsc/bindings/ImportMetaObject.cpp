@@ -159,7 +159,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     } else {
         JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(thisValue);
         if (!thisObject) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync must be bound to an import.meta object"_s);
             return {};
         }

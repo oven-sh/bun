@@ -17,7 +17,7 @@ use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    EventLoopHandle, JSGlobalObject, JSValue, JsResult, StringJsc as _, ThreadSafe, Unprotect,
+    EventLoopHandle, JSGlobalObject, JSValue, JsResult, StringJsc as _, ThreadShareable, Unprotect,
 };
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
@@ -640,8 +640,8 @@ mod _async_tasks {
     #[cfg(windows)]
     pub struct UVFSRequest<R, A: Unprotect, const F: NodeFSFunctionEnum> {
         pub(crate) promise: JSPromiseStrong,
-        /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
-        pub args: ThreadSafe<A>,
+        /// Wrapped in [`ThreadShareable`] so the paired `unprotect()` runs on drop.
+        pub args: ThreadShareable<A>,
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
         pub(crate) req: uv::fs_t,
         pub(crate) result: Maybe<R>,
@@ -671,7 +671,7 @@ mod _async_tasks {
         ) -> JSValue {
             let task = Box::new(Self {
                 promise: JSPromiseStrong::init(global_object),
-                args: task_args.into_thread_safe(),
+                args: task_args.into_thread_shareable(),
                 // Sentinel — overwritten by `uv_callback` (or the early-return arms
                 // below) before any read on the JS thread. `Maybe<R>` is
                 // `Result<R, sys::Error>` and may be niche-optimised for arbitrary
@@ -704,7 +704,7 @@ mod _async_tasks {
                 ($Args:ty) => {{
                     debug_assert_eq!(core::mem::size_of::<A>(), core::mem::size_of::<$Args>());
                     // SAFETY: identity cast — `A == $Args` for this `F` (see `async_::*`).
-                    // `ThreadSafe<A>` is `repr(transparent)`; deref through it for the inner `A`.
+                    // `ThreadShareable<A>` is `repr(transparent)`; deref through it for the inner `A`.
                     unsafe { &*(&*task.args as *const A as *const $Args) }
                 }};
             }
@@ -766,7 +766,7 @@ mod _async_tasks {
                     let buf = &buf[..buf.len().min(args.length as usize)];
                     let bufs = [uv::uv_buf_t::init(buf)];
                     // SAFETY: libuv copies the iovec descriptor before return; the
-                    // backing Buffer is JS-protected via `to_thread_safe`.
+                    // backing Buffer is JS-protected via `make_thread_shareable`.
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
@@ -994,9 +994,9 @@ mod _async_tasks {
     // NewAsyncFSTask — runs a NodeFS method on the thread pool.
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// Trait abstracting over Argument types' deinit/toThreadSafe.
+    /// Trait abstracting over Argument types' deinit/make_thread_shareable.
     ///
-    /// Every Arguments struct defines `to_thread_safe` (clone
+    /// Every Arguments struct defines `make_thread_shareable` (clone
     /// any borrowed JS-backed slices so the work-pool callback may run off-thread).
     /// The trait methods are **required** so missing impls are a compile error rather
     /// than a silent UAF/leak.
@@ -1007,36 +1007,36 @@ mod _async_tasks {
         /// `from_js`; the trait forwards to it so the generic `Bindings` in
         /// `node_fs_binding.rs` can call it without per-type macro arms.
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
-        fn to_thread_safe(&mut self);
+        fn make_thread_shareable(&mut self);
         /// Consume `self`, protect any JS-backed buffers, and return a guard that
         /// unprotects on drop —
         /// string/slice ownership is handled by each field's `Drop` (PathLike,
         /// StringOrBuffer, Vec); only the JS-side `unprotect()` needs the guard.
         #[inline]
-        fn into_thread_safe(mut self) -> ThreadSafe<Self> {
-            self.to_thread_safe();
-            ThreadSafe::adopt(self)
+        fn into_thread_shareable(mut self) -> ThreadShareable<Self> {
+            self.make_thread_shareable();
+            ThreadShareable::adopt(self)
         }
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
     }
 
-    /// Forward [`FsArgument`] to the inherent `from_js` / `to_thread_safe`
+    /// Forward [`FsArgument`] to the inherent `from_js` / `make_thread_shareable`
     /// methods each `args::*` struct already defines.
     /// [`Unprotect`] is implemented per-type alongside.
     macro_rules! impl_fs_argument {
     ( $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
-            #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
+            #[inline] fn make_thread_shareable(&mut self) { <$ty>::make_thread_shareable(self) }
         } )+
     };
-    // Fd-only types — `to_thread_safe` is a no-op (these hold only `FD`/scalars).
+    // Fd-only types — `make_thread_shareable` is a no-op (these hold only `FD`/scalars).
     ( @fd $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
-            #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
+            #[inline] fn make_thread_shareable(&mut self) { <$ty>::make_thread_shareable(self) }
         }
         impl Unprotect for $ty {
             #[inline] fn unprotect(&mut self) {}
@@ -1085,8 +1085,8 @@ mod _async_tasks {
             args::ReadFile::from_js(ctx, arguments)
         }
         #[inline]
-        fn to_thread_safe(&mut self) {
-            args::ReadFile::to_thread_safe(self)
+        fn make_thread_shareable(&mut self) {
+            args::ReadFile::make_thread_shareable(self)
         }
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
@@ -1100,8 +1100,8 @@ mod _async_tasks {
             args::WriteFile::from_js(ctx, arguments)
         }
         #[inline]
-        fn to_thread_safe(&mut self) {
-            args::WriteFile::to_thread_safe(self)
+        fn make_thread_shareable(&mut self) {
+            args::WriteFile::make_thread_shareable(self)
         }
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
@@ -1116,8 +1116,8 @@ mod _async_tasks {
                 .map(args::AppendFile)
         }
         #[inline]
-        fn to_thread_safe(&mut self) {
-            self.0.to_thread_safe();
+        fn make_thread_shareable(&mut self) {
+            self.0.make_thread_shareable();
         }
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
@@ -1227,13 +1227,13 @@ mod _async_tasks {
     }
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
-    /// buffers are protected (`ThreadSafe`) and read under the job's ticket.
+    /// buffers are protected (`ThreadShareable`) and read under the job's ticket.
     pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
-        pub args: ThreadSafe<A>,
+        pub args: ThreadShareable<A>,
         pub(crate) result: Maybe<R>,
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
-    // thread for hand-off (`ret::*`); `ThreadSafe<A>` is Send by its contract.
+    // thread for hand-off (`ret::*`); `ThreadShareable<A>` is Send by its contract.
     unsafe impl<R: FsReturn, A: Unprotect, const F: NodeFSFunctionEnum> Send for AsyncFSTask<R, A, F> {}
 
     /// The JS-thread half of an async fs operation.
@@ -1331,7 +1331,7 @@ mod _async_tasks {
             bun_jsc::Job::<Self>::schedule(
                 &global_object.js_thread(),
                 Self {
-                    args: args.into_thread_safe(),
+                    args: args.into_thread_shareable(),
                     // Sentinel — overwritten by `run` before any read. `Maybe<R>`
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
@@ -1356,8 +1356,8 @@ mod _async_tasks {
 
     pub struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
-        /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
-        pub args: ThreadSafe<args::Cp<'static>>,
+        /// Wrapped in [`ThreadShareable`] so the paired `unprotect()` runs on drop.
+        pub args: ThreadShareable<args::Cp<'static>>,
         /// Owning-thread uses (global object, keep-alive context).
         pub(crate) evtloop: EventLoopHandle,
         /// How the last subtask's thread delivers the completion (moved out
@@ -1584,7 +1584,7 @@ mod _async_tasks {
         ) -> *mut Self {
             let mut task = Box::new(Self {
                 promise,
-                args: cp_args.into_thread_safe(),
+                args: cp_args.into_thread_shareable(),
                 has_result: AtomicBool::new(false),
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
@@ -1768,8 +1768,8 @@ mod _async_tasks {
                 let ctx = event_loop_handle_to_ctx(task.evtloop);
                 task.r#ref.unref(ctx);
             }
-            // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
-            // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.
+            // `Drop for ThreadShareable<args::Cp>` releases the `protect()` taken by
+            // `make_thread_shareable()` when `src`/`dest` are Buffers, so nothing leaks here.
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
@@ -2136,7 +2136,7 @@ mod _async_tasks {
     pub struct AsyncReaddirRecursiveTask {
         /// Protected arguments; their JS-backed path is not read off-thread
         /// (`root_path` is the owned copy).
-        pub args: ThreadSafe<args::Readdir<'static>>,
+        pub args: ThreadShareable<args::Readdir<'static>>,
         pub(crate) tag: ret::ReaddirTag,
         pub(crate) encoding: Encoding,
         /// The completion token, finished by whichever subtask ends the scan.
@@ -2169,7 +2169,7 @@ mod _async_tasks {
         pub(crate) pending_err_mutex: bun_threading::Mutex,
     }
     // SAFETY: shared by the pool subtasks through atomics / the lock-free
-    // queue / the mutex; `args` is Send by `ThreadSafe`'s contract; results
+    // queue / the mutex; `args` is Send by `ThreadShareable`'s contract; results
     // are owned buffers and WTF strings built off-thread for hand-off.
     unsafe impl Send for AsyncReaddirRecursiveTask {}
 
@@ -2360,7 +2360,7 @@ mod _async_tasks {
             bun_jsc::Job::<Self>::schedule(
                 &global_object.js_thread(),
                 AsyncReaddirRecursiveTask {
-                    args: FsArgument::into_thread_safe(args),
+                    args: FsArgument::into_thread_shareable(args),
                     tag,
                     encoding,
                     done: None,
@@ -2607,12 +2607,12 @@ pub use _async_tasks::{
 pub mod args {
     use super::*;
 
-    /// Derive the `Unprotect` impl + inherent `to_thread_safe` for an `args::*`
+    /// Derive the `Unprotect` impl + inherent `make_thread_shareable` for an `args::*`
     /// struct whose only JS-backed state is one-or-more path-like fields. Each
-    /// listed `$field` must expose `.unprotect()` and `.to_thread_safe()` (i.e.
+    /// listed `$field` must expose `.unprotect()` and `.make_thread_shareable()` (i.e.
     /// `PathLike` or `PathOrFileDescriptor`); the expansion is byte-identical to
     /// the hand-written boilerplate it replaces, so `impl_fs_argument!`'s
-    /// `<$ty>::to_thread_safe(self)` forwarder and `ThreadSafe<T>`'s drop-guard
+    /// `<$ty>::make_thread_shareable(self)` forwarder and `ThreadShareable<T>`'s drop-guard
     /// keep working unchanged. Structs with non-path JS state (`Read`, `Write`,
     /// `Writev`, `Readv`, `Exists`, `ReadFile`, `WriteFile`) keep bespoke impls.
     macro_rules! fs_args_path_forwarders {
@@ -2621,7 +2621,7 @@ pub mod args {
                 #[inline] fn unprotect(&mut self) { $( self.$field.unprotect(); )+ }
             }
             impl $ty<'static> {
-                pub fn to_thread_safe(&mut self) { $( self.$field.to_thread_safe(); )+ }
+                pub fn make_thread_shareable(&mut self) { $( self.$field.make_thread_shareable(); )+ }
             }
         };
     }
@@ -2699,7 +2699,7 @@ pub mod args {
         }
     }
     impl FdVectorIo {
-        pub(crate) fn to_thread_safe(&mut self) {
+        pub(crate) fn make_thread_shareable(&mut self) {
             self.buffers.value.protect();
             self.buffers.buffers = self.buffers.buffers.as_slice().to_vec();
         }
@@ -2737,7 +2737,7 @@ pub mod args {
         fn unprotect(&mut self) {}
     }
     impl FTruncate {
-        pub(crate) fn to_thread_safe(&self) {}
+        pub(crate) fn make_thread_shareable(&self) {}
         pub fn from_js(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
@@ -2811,7 +2811,7 @@ pub mod args {
         pub(crate) gid: GidT,
     }
     impl Fchown {
-        pub(crate) fn to_thread_safe(&self) {}
+        pub(crate) fn make_thread_shareable(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fchown> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let uid: UidT = 'brk: {
@@ -2927,7 +2927,7 @@ pub mod args {
         pub(crate) mode: Mode,
     }
     impl FChmod {
-        pub(crate) fn to_thread_safe(&self) {}
+        pub(crate) fn make_thread_shareable(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<FChmod> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
@@ -3015,7 +3015,7 @@ pub mod args {
         pub(crate) big_int: bool,
     }
     impl Fstat {
-        pub(crate) fn to_thread_safe(&mut self) {}
+        pub(crate) fn make_thread_shareable(&mut self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fstat> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let big_int = 'brk: {
@@ -3223,8 +3223,8 @@ pub mod args {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             Ok(Rm(RmDir::from_js_impl(ctx, arguments, true)?))
         }
-        pub(crate) fn to_thread_safe(&mut self) {
-            self.0.to_thread_safe();
+        pub(crate) fn make_thread_shareable(&mut self) {
+            self.0.make_thread_shareable();
         }
     }
 
@@ -3455,7 +3455,7 @@ pub mod args {
         pub(crate) fd: FD,
     }
     impl Close {
-        pub(crate) fn to_thread_safe(&self) {}
+        pub(crate) fn make_thread_shareable(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Close> {
             let fd = FD::from_js_required(ctx, arguments)?;
             Ok(Close { fd })
@@ -3505,7 +3505,7 @@ pub mod args {
         pub(crate) mtime: TimeLike,
     }
     impl Futimes {
-        pub(crate) fn to_thread_safe(&self) {}
+        pub(crate) fn make_thread_shareable(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Futimes> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let atime = node::time_like_from_js(
@@ -3583,8 +3583,8 @@ pub mod args {
         }
     }
     impl Write<'static> {
-        pub(crate) fn to_thread_safe(&mut self) {
-            self.buffer.to_thread_safe();
+        pub(crate) fn make_thread_shareable(&mut self) {
+            self.buffer.make_thread_shareable();
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
@@ -3736,7 +3736,7 @@ pub mod args {
         pub(crate) pinned: bool,
     }
     impl Read {
-        pub(crate) fn to_thread_safe(&self) {
+        pub(crate) fn make_thread_shareable(&self) {
             self.buffer.buffer.value.protect();
         }
     }
@@ -3983,8 +3983,8 @@ pub mod args {
         }
     }
     impl ReadFile<'static> {
-        pub(crate) fn to_thread_safe(&mut self) {
-            self.path.to_thread_safe();
+        pub(crate) fn make_thread_shareable(&mut self) {
+            self.path.make_thread_shareable();
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             // `Drop` on `path` covers every
@@ -4071,8 +4071,8 @@ pub mod args {
         }
     }
     impl WriteFile<'static> {
-        pub(crate) fn to_thread_safe(&mut self) {
-            self.file.to_thread_safe();
+        pub(crate) fn make_thread_shareable(&mut self) {
+            self.file.make_thread_shareable();
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             Self::from_js_with_default_flag(ctx, arguments, FileSystemFlags::W)
@@ -4192,9 +4192,9 @@ pub mod args {
         }
     }
     impl Exists<'static> {
-        pub(crate) fn to_thread_safe(&mut self) {
+        pub(crate) fn make_thread_shareable(&mut self) {
             if let Some(p) = &mut self.path {
-                p.to_thread_safe();
+                p.make_thread_shareable();
             }
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
@@ -4225,7 +4225,7 @@ pub mod args {
         pub(crate) fd: FD,
     }
     impl FdataSync {
-        pub(crate) fn to_thread_safe(&self) {}
+        pub(crate) fn make_thread_shareable(&self) {}
         pub fn from_js(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
@@ -4318,7 +4318,7 @@ pub mod args {
         pub(crate) fd: FD,
     }
     impl Fsync {
-        pub(crate) fn to_thread_safe(&self) {}
+        pub(crate) fn make_thread_shareable(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fsync> {
             let fd = FD::from_js_required(ctx, arguments)?;
             Ok(Fsync { fd })

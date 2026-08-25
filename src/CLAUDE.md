@@ -115,16 +115,16 @@ source is a bare `&[u8]`/`EncodedSlice` view.
 `Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared(String)`
 (`Shared` holds an 8-bit all-ASCII WTF-backed `String` and reads its buffer);
 it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
-`Utf8WithString` (`String::into_utf8_with_string[_thread_safe]()`) keeps the
+`Utf8WithString` (`String::into_utf8_with_string[_thread_shareable]()`) keeps the
 UTF-8 bytes _and_ the source `String` so the value can go back to JS without
 re-encoding; `Utf8WithString::js_only(string)` wraps an output-only string.
-`PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadsafeString`
+`PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadShareableString`
 (`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'a>)` (transcoded JS
 string, or Rust-side bytes: `PathLike::borrowed(bytes)` lends `&'a [u8]` to a
 synchronous call, `PathLike::owned(vec)` when the value must own them),
 `Buffer`. Anything
-parsed from JS, stored, or sent to another thread (`to_thread_safe`,
-`ThreadSafe<T>`, the fs `args::*<'static>` async path) is `'static`.
+parsed from JS, stored, or sent to another thread (`make_thread_shareable`,
+`ThreadShareable<T>`, the fs `args::*<'static>` async path) is `'static`.
 
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
 borrowed view handed to C++. Constructors name the encoding of the bytes:
@@ -392,11 +392,12 @@ is not there). So an atomizable impl must never be reachable from two VMs —
 not via a process-global registry handing out `String::clone()`s, not via one
 `SerializedScriptValue` deserialized by several receivers. Hand another thread
 its own bytes (`Box<[u8]>` / `clone_utf8` on arrival), or share a
-`String::share()`d / `Bun::isolatedCopyForSharing` / `toCrossThreadShareable`
-string (pre-hashed and marked never-atomize, so a receiver's atom table copies
-it instead; see `src/jsc/bindings/BunString.cpp`) or a static string — make it
-shared once, then hand it out with plain `clone()`. `String::to_thread_safe()`
-is a plain isolated copy for handing a value to _one_ other owner.
+`String::make_thread_shareable()`d / `Bun::isolatedCopyForSharing` /
+`toCrossThreadShareable` string (pre-hashed and marked never-atomize, so a
+receiver's atom table copies it instead; see `src/jsc/bindings/BunString.cpp`)
+or a static string — make it shareable once, then hand it out with plain
+`clone()`. `String::thread_isolated_copy()` is a plain isolated copy for
+handing a value to _one_ other owner.
 `ObjectURLRegistry`, `StandaloneModuleGraph::File` and the structured-clone
 object fast paths are the worked examples.
 

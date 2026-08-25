@@ -9,7 +9,7 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 
-extern "C" void BunString__toThreadSafe(BunString* str);
+extern "C" BunString BunString__threadIsolatedCopy(const BunString* str);
 
 namespace Bun {
 
@@ -60,15 +60,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
 }
 
 // Returns the net refcount change on the *original* StringImpl after a
-// BunString owning one ref to it is passed through BunString__toThreadSafe
-// and then released. A correct implementation must return 0; a positive
-// value means BunString__toThreadSafe leaked a reference to the original
-// StringImpl when it installed the isolated copy.
-JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// BunString owning one ref to it is passed through BunString__threadIsolatedCopy
+// and then both are released. A correct implementation must return 0; a
+// positive value means BunString__threadIsolatedCopy leaked a reference to the
+// original StringImpl.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_threadIsolatedCopyRefCountDelta, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     // Create a fresh, non-static, non-atom StringImpl with exactly one ref
     // held by `original`.
-    Ref<WTF::StringImpl> original = WTF::String::fromLatin1("BunString__toThreadSafe leak test").releaseImpl().releaseNonNull();
+    Ref<WTF::StringImpl> original = WTF::String::fromLatin1("BunString__threadIsolatedCopy leak test").releaseImpl().releaseNonNull();
 
     const unsigned before = original->refCount();
 
@@ -77,11 +77,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
     original->ref();
     BunString str = { BunStringTag::WTFStringImpl, { .wtf = original.ptr() } };
 
-    BunString__toThreadSafe(&str);
+    BunString copy = BunString__threadIsolatedCopy(&str);
 
-    // Drop whatever the BunString now owns (the isolated copy, or the
-    // original if the implementation ever decides no copy is needed).
-    ASSERT(str.tag == BunStringTag::WTFStringImpl);
+    ASSERT(copy.tag == BunStringTag::WTFStringImpl);
+    copy.impl.wtf->deref();
     str.impl.wtf->deref();
 
     const unsigned after = original->refCount();

@@ -658,9 +658,9 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
-export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
+export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
-  "jsFunction_BunString_toThreadSafeRefCountDelta",
+  "jsFunction_BunString_threadIsolatedCopyRefCountDelta",
   0,
 );
 

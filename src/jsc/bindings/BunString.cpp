@@ -200,22 +200,14 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     UNREACHABLE();
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toThreadSafe(BunString* str)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__threadIsolatedCopy(const BunString* str)
 {
-    if (str->tag == BunStringTag::WTFStringImpl) {
-        auto* existing = str->impl.wtf;
-        // StringImpl::isolatedCopy() always returns a freshly-allocated impl,
-        // so when we replace the pointer we must release the ref we were
-        // holding to the original; otherwise every call leaks one ref.
-        auto impl = existing->isolatedCopy();
-        if (impl.ptr() != existing) {
-            str->impl.wtf = &impl.leakRef();
-            existing->deref();
-        }
-    }
+    if (str->tag == BunStringTag::WTFStringImpl)
+        return { BunStringTag::WTFStringImpl, { .wtf = &str->impl.wtf->isolatedCopy().leakRef() } };
+    return *str;
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__share(BunString* str)
+extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__makeThreadShareable(BunString* str)
 {
     if (str->tag != BunStringTag::WTFStringImpl)
         return;
@@ -809,7 +801,7 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
 
 // True iff the impl owns its buffer (or is external) and is not an atom,
 // symbol or substring, so another thread may hold a ref.
-extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadSafe(
+extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadShareable(
     const WTF::StringImpl* wtf)
 {
     return !wtf->isAtom() && !wtf->isSymbol() && !wtf->isSubString();

@@ -62,7 +62,7 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
         let name = file.display_name();
         if !name.is_empty() {
             let mut name = bstring::String::clone_utf8(name);
-            name.share();
+            name.make_thread_shareable();
             blob.name.set(name);
         }
         // `cached_blob` is typed against the lower crate's opaque `Blob`

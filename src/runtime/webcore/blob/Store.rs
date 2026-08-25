@@ -128,7 +128,7 @@ impl StoreExt for Store {
     ) -> Result<RefPtr<Store>, crate::Error> {
         let mut path = pathlike;
         // this actually protects/refs the pathlike
-        path.to_thread_safe();
+        path.make_thread_shareable();
 
         // Compute the extension-derived fallback before moving `path` into the
         // Store so we don't need to clone the owned PathLike.

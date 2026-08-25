@@ -42,7 +42,7 @@ impl Entry {
     pub(crate) fn init(blob: &Blob) -> Box<Entry> {
         let blob = blob.dupe_with_content_type(true);
         blob.global_this.set(core::ptr::null());
-        blob.name.with_mut(|name| name.share());
+        blob.name.with_mut(|name| name.make_thread_shareable());
         Box::new(Entry { blob })
     }
 }

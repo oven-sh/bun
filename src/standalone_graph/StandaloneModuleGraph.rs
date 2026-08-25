@@ -611,7 +611,7 @@ impl File {
             .unwrap_or(self.name)
     }
 
-    /// One shared impl per process (see `BunString::share`); Latin-1/UTF-16
+    /// One shared impl per process (see `BunString::make_thread_shareable`); Latin-1/UTF-16
     /// are zero-copy externals over the immortal section.
     pub fn to_wtf_string(&self) -> BunString {
         if self.contents.is_empty() {
@@ -642,7 +642,7 @@ impl File {
                         BunString::create_static_external_utf16(units)
                     }
                 };
-                s.share();
+                s.make_thread_shareable();
                 s
             })
             .clone()

@@ -141,9 +141,9 @@ pub struct Blob {
 
 // SAFETY: a `Blob` reaches another thread only as an `ObjectURLRegistry`
 // entry or standalone-graph template (null `global_this`, `name` made
-// `String::share()`d so dupes clone it into any VM; each dupe is stamped with
-// the resolving thread's global) or via the work-pool read/write tasks that
-// hand it back to the owning JS thread. `store` (`StoreRef`) and
+// `String::make_thread_shareable()`d so dupes clone it into any VM; each dupe
+// is stamped with the resolving thread's global) or via the work-pool
+// read/write tasks that hand it back to the owning JS thread. `store` (`StoreRef`) and
 // `content_type` are atomically refcounted; a shared `Store`'s `is_all_ascii`
 // is atomic, a `Bytes` store is not otherwise written after construction, and
 // a `File` store's stat fields (`seekable`, `max_size`, `mode`,

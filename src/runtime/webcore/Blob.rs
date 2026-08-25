@@ -3573,7 +3573,7 @@ impl BlobExt for Blob {
                     }
                 }
 
-                path_or_fd.to_thread_safe();
+                path_or_fd.make_thread_shareable();
                 core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::default()))
             }
             PathOrFileDescriptor::Fd(fd) => {

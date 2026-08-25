@@ -633,7 +633,7 @@ impl Config {
 /// into the owning `JSTranspiler`'s config (its `Transpiler` is bit-copied),
 /// which the job's Js side keeps alive and the pool borrow keeps valid.
 pub(crate) struct TransformTask {
-    pub input_code: bun_jsc::ThreadSafe<StringOrBuffer<'static>>,
+    pub input_code: bun_jsc::ThreadShareable<StringOrBuffer<'static>>,
     pub output_code: BunString,
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,
@@ -673,7 +673,7 @@ impl TransformTask {
     fn schedule(
         transpiler: &JSTranspiler,
         transpiler_js: JSValue,
-        input_code: bun_jsc::ThreadSafe<StringOrBuffer<'static>>,
+        input_code: bun_jsc::ThreadShareable<StringOrBuffer<'static>>,
         global: &JSGlobalObject,
         loader: Loader,
     ) -> JSValue {
@@ -1383,9 +1383,9 @@ impl JSTranspiler {
             code = StringOrBuffer::owned(bytes);
         }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
-        // (`Flavor::Async`) already protected; adopt into a `ThreadSafe` so any
+        // (`Flavor::Async`) already protected; adopt into a `ThreadShareable` so any
         // early-return drop unprotects. `TransformTask::create` takes the guard.
-        let code = bun_jsc::ThreadSafe::adopt(code);
+        let code = bun_jsc::ThreadShareable::adopt(code);
 
         args.eat();
         let loader: Option<Loader> = 'brk: {

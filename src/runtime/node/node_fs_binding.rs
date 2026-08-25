@@ -89,7 +89,7 @@ fn parse_async_args<A: FsArgument>(
     // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
     // to the Task: dropped only on the early-return
     // error/abort branches; on the success path the Task owns `args` (whose
-    // protected JSValues are released by `Drop for ThreadSafe<A>` when the
+    // protected JSValues are released by `Drop for ThreadShareable<A>` when the
     // Task completes), and `slice` is intentionally not dropped — its
     // `Drop`-unprotect would race that.
 

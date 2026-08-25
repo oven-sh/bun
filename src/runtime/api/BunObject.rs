@@ -2775,8 +2775,8 @@ pub mod JSZstd {
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
         /// Created with `Flavor::Async` (JS-backed buffer protected); the
-        /// [`bun_jsc::ThreadSafe`] releases that with the job.
-        pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer<'static>>,
+        /// [`bun_jsc::ThreadShareable`] releases that with the job.
+        pub buffer: bun_jsc::ThreadShareable<node::StringOrBuffer<'static>>,
         pub is_compress: bool,
         pub level: i32,
         /// Filled in by `run`.
@@ -2833,7 +2833,7 @@ pub mod JSZstd {
         jsc::Job::<ZstdJob>::schedule(
             &cx,
             ZstdJob {
-                buffer: bun_jsc::ThreadSafe::adopt(buffer),
+                buffer: bun_jsc::ThreadShareable::adopt(buffer),
                 is_compress,
                 level,
                 result: Ok(Box::default()),

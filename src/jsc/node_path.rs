@@ -13,37 +13,37 @@ use bun_sys::Fd;
 use crate::array_buffer::MarkedArrayBuffer;
 
 // ──────────────────────────────────────────────────────────────────────────
-// RAII for `protect()`/`unprotect()` pairs taken by `to_thread_safe()`.
+// RAII for `protect()`/`unprotect()` pairs taken by `make_thread_shareable()`.
 //
-// The async-fs path calls `to_thread_safe()` (which `JSValue::protect()`s
+// The async-fs path calls `make_thread_shareable()` (which `JSValue::protect()`s
 // any borrowed JS-backed buffers so the work-pool thread may read them) and
 // must later release them. The "deinit" half is
 // already `Drop`; only the JS-side `unprotect()` needs an explicit hook, and
 // pairing it with the protect via a guard type removes the leak hazard on
-// every early return between `to_thread_safe` and the manual cleanup.
+// every early return between `make_thread_shareable` and the manual cleanup.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Undo the `JSValue::protect()` calls taken by [`to_thread_safe`](
-/// PathLike::to_thread_safe) (or an `args::*` type's `to_thread_safe`).
+/// Undo the `JSValue::protect()` calls taken by [`make_thread_shareable`](
+/// PathLike::make_thread_shareable) (or an `args::*` type's `make_thread_shareable`).
 ///
 /// Implementations release **only** the JS-GC protect refcount — owned Rust
 /// payloads (Vec, `Utf8WithString`, …) are freed by the type's own
 /// `Drop`, which runs immediately after when the value is held in a
-/// [`ThreadSafe<T>`].
+/// [`ThreadShareable<T>`].
 pub trait Unprotect {
     fn unprotect(&mut self);
 }
 
-/// RAII guard returned by `into_thread_safe()`: a `T` whose JS-backed buffers
+/// RAII guard returned by `into_thread_shareable()`: a `T` whose JS-backed buffers
 /// have been `protect()`ed. `Drop` calls [`Unprotect::unprotect`] then drops
 /// the inner `T` normally.
 ///
 /// `repr(transparent)` so identity-casts in the const-generic dispatch macros
 /// (see `node_fs.rs`'s `args_as!`) remain bit-exact.
 #[repr(transparent)]
-pub struct ThreadSafe<T: Unprotect>(T);
+pub struct ThreadShareable<T: Unprotect>(T);
 
-impl<T: Unprotect> ThreadSafe<T> {
+impl<T: Unprotect> ThreadShareable<T> {
     /// Wrap an **already-protected** `T`. Use when the protect was taken
     /// elsewhere (e.g. inside `from_js_maybe_async(.., Flavor::Async, ..)`).
     #[inline]
@@ -56,9 +56,9 @@ impl<T: Unprotect> ThreadSafe<T> {
 // GC-protected for as long as it is held, so a pool job may read them (under
 // its `Ticket`, which keeps the VM alive); the job comes back to the JS
 // thread, where this is dropped and the protection released.
-unsafe impl<T: Unprotect> Send for ThreadSafe<T> {}
+unsafe impl<T: Unprotect> Send for ThreadShareable<T> {}
 
-impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {
+impl<T: Unprotect> core::ops::Deref for ThreadShareable<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
@@ -66,14 +66,14 @@ impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {
     }
 }
 
-impl<T: Unprotect> core::ops::DerefMut for ThreadSafe<T> {
+impl<T: Unprotect> core::ops::DerefMut for ThreadShareable<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         &mut self.0
     }
 }
 
-impl<T: Unprotect> Drop for ThreadSafe<T> {
+impl<T: Unprotect> Drop for ThreadShareable<T> {
     #[inline]
     fn drop(&mut self) {
         // The same argument types serve mini-loop threads (the shell's `cp` via
@@ -87,14 +87,14 @@ impl<T: Unprotect> Drop for ThreadSafe<T> {
     }
 }
 
-impl<T: Unprotect + Default> Default for ThreadSafe<T> {
+impl<T: Unprotect + Default> Default for ThreadShareable<T> {
     #[inline]
     fn default() -> Self {
         Self(T::default())
     }
 }
 
-// `ThreadSafe<T>` crosses to the work-pool thread; auto-`Send` iff `T: Send`.
+// `ThreadShareable<T>` crosses to the work-pool thread; auto-`Send` iff `T: Send`.
 
 /// `node.PathLike`. Parsed from JS it is `PathLike<'static>`; `Utf8` may
 /// instead borrow Rust-side bytes for a synchronous call ([`PathLike::borrowed`]).
@@ -103,7 +103,7 @@ pub enum PathLike<'a> {
     /// Always shares its WTF string's bytes (built by `shared_or_utf8`);
     /// transcoded paths are `Utf8(Owned)`.
     String(Utf8WithString),
-    ThreadsafeString(Utf8WithString),
+    ThreadShareableString(Utf8WithString),
     Utf8(Utf8Bytes<'a>),
 }
 
@@ -128,7 +128,7 @@ impl Clone for PathLike<'_> {
                 pinned: false,
             }),
             Self::String(s) => Self::String(s.clone()),
-            Self::ThreadsafeString(s) => Self::ThreadsafeString(s.clone()),
+            Self::ThreadShareableString(s) => Self::ThreadShareableString(s.clone()),
             Self::Utf8(s) => Self::Utf8(s.clone()),
         }
     }
@@ -143,7 +143,7 @@ impl Drop for PathLike<'_> {
                     b.buffer.unpin();
                 }
             }
-            Self::String(_) | Self::ThreadsafeString(_) | Self::Utf8(_) => {}
+            Self::String(_) | Self::ThreadShareableString(_) | Self::Utf8(_) => {}
         }
     }
 }
@@ -171,7 +171,7 @@ impl<'a> PathLike<'a> {
     pub fn slice(&self) -> &[u8] {
         match self {
             Self::Buffer(b) => b.slice(),
-            Self::String(s) | Self::ThreadsafeString(s) => s.slice(),
+            Self::String(s) | Self::ThreadShareableString(s) => s.slice(),
             Self::Utf8(s) => s.slice(),
         }
     }
@@ -179,7 +179,7 @@ impl<'a> PathLike<'a> {
     pub(crate) fn estimated_size(&self) -> usize {
         match self {
             Self::Buffer(b) => b.slice().len(),
-            Self::String(_) | Self::ThreadsafeString(_) => 0,
+            Self::String(_) | Self::ThreadShareableString(_) => 0,
             Self::Utf8(s) => s.slice().len(),
         }
     }
@@ -187,31 +187,31 @@ impl<'a> PathLike<'a> {
 
 impl PathLike<'static> {
     /// Promote any borrowed-JS
-    /// payload to a thread-safe representation. For `Buffer` the variant is
+    /// payload to a thread-shareable representation. For `Buffer` the variant is
     /// kept and the backing JS value is `protect()`ed (paired with
     /// [`Unprotect::unprotect`]); the discriminant is preserved so callers
     /// matching on `Buffer` after this call see the same shape.
     ///
-    /// Called in place by the fs `args::*` types' `into_thread_safe`, which
-    /// wrap the result in a [`ThreadSafe`] guard.
-    pub fn to_thread_safe(&mut self) {
+    /// Called in place by the fs `args::*` types' `into_thread_shareable`, which
+    /// wrap the result in a [`ThreadShareable`] guard.
+    pub fn make_thread_shareable(&mut self) {
         match self {
             Self::String(s) => {
-                s.to_thread_safe();
+                s.make_thread_shareable();
                 let owned = core::mem::take(s);
-                *self = Self::ThreadsafeString(owned);
+                *self = Self::ThreadShareableString(owned);
             }
             Self::Buffer(b) => {
                 b.buffer.value.protect();
             }
-            Self::ThreadsafeString(_) | Self::Utf8(_) => {}
+            Self::ThreadShareableString(_) | Self::Utf8(_) => {}
         }
     }
 }
 
 impl Unprotect for PathLike<'static> {
     /// JS-side half of cleanup — undo
-    /// the `protect()` taken by [`Self::to_thread_safe`] /
+    /// the `protect()` taken by [`Self::make_thread_shareable`] /
     /// `ArgumentsSlice::protect_eat`. Owned payloads are released by `Drop`.
     #[inline]
     fn unprotect(&mut self) {
@@ -264,9 +264,9 @@ impl PathOrFileDescriptorSerializeTag {
 
 impl PathOrFileDescriptor<'static> {
     #[inline]
-    pub fn to_thread_safe(&mut self) {
+    pub fn make_thread_shareable(&mut self) {
         if let Self::Path(p) = self {
-            p.to_thread_safe();
+            p.make_thread_shareable();
         }
     }
 }

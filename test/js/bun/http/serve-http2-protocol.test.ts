@@ -1,10 +1,11 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import http2 from "node:http2";
 import {
   F,
   Fixture,
   PREFACE,
   RawH2,
+  SharedSession,
   T,
   baseHeaders,
   connectH2,
@@ -44,13 +45,17 @@ const barrier = async (raw: RawH2, tag: string) => {
 };
 
 let fx: Fixture;
+let shared: SharedSession;
 let session: http2.ClientHttp2Session;
 beforeAll(async () => {
   fx = await startFixture({ tls: secure });
-  session = await connectH2(fx.port, secure);
+  shared = new SharedSession(fx.port, secure);
+});
+beforeEach(async () => {
+  session = await shared.get();
 });
 afterAll(async () => {
-  session?.close();
+  shared?.close();
   await fx?.[Symbol.asyncDispose]();
   if (fx && fx.proc.exitCode !== 0) console.error(fx.stderr());
   expect(fx?.proc.signalCode ?? null).toBeNull();
@@ -899,14 +904,9 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     expect((await raw.body(1)).toString()).toBe("ok");
     raw.close();
     // nghttp2's client defaults to 128 header pairs; raise it for this response.
-    const wide = http2.connect(`${secure ? "https" : "http"}://127.0.0.1:${fx.port}`, {
-      rejectUnauthorized: false,
+    const wide = await connectH2(fx.port, secure, {
       maxHeaderListPairs: 4000,
       settings: { maxHeaderListSize: 1 << 20 },
-    });
-    await new Promise<void>((res, rej) => {
-      wide.once("connect", () => res());
-      wide.once("error", rej);
     });
     const res = await request(wide, { ":path": "/many-headers" });
     wide.close();

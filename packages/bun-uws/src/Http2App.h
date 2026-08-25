@@ -52,7 +52,6 @@ struct H2App {
     void clearRoutes() { http2Context->clearRoutes(); }
     /* GOAWAY + close every connection. */
     void close() { http2Context->closeAll(); }
-    size_t closeIdle(bool closeWhenIdle = false) { return http2Context->closeIdle(closeWhenIdle); }
     void *getNativeHandle() { return http2Context; }
 };
 

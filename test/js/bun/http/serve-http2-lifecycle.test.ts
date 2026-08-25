@@ -127,14 +127,10 @@ describe("Bun.serve http2 lifecycle", () => {
 
   test("a paused (slowly read) request body does not idle out the connection", async () => {
     // usockets ticks timeouts in 4 s steps, so this needs real seconds.
-    await using fx = await startFixture({
-      tls: false,
-      idleTimeout: 2,
-      extra: `routes: { "/slow-read": async req => { let n = 0; for await (const c of req.body) { n += c.length; await Bun.sleep(700); } return new Response(String(n)); } },`,
-    });
+    await using fx = await startFixture({ tls: false, idleTimeout: 2 });
     const session = await connectH2(fx.port, false);
     const res = await new Promise<H2Result>((resolve, reject) => {
-      const r = session.request({ ":path": "/slow-read", ":method": "POST" }, { endStream: false });
+      const r = session.request({ ":path": "/slow-read?ms=700", ":method": "POST" }, { endStream: false });
       const chunks: Buffer[] = [];
       let headers: http2.IncomingHttpHeaders = {};
       r.on("response", h => (headers = h));

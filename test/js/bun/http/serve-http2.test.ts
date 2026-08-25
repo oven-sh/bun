@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
@@ -10,6 +10,7 @@ import {
   Fixture,
   PREFACE,
   RawH2,
+  SharedSession,
   T,
   baseHeaders,
   connectH2,
@@ -24,14 +25,18 @@ import {
 for (const secure of [true, false]) {
   describe(`Bun.serve http2 (${secure ? "TLS + ALPN" : "cleartext prior-knowledge"})`, () => {
     let fx: Fixture;
+    let shared: SharedSession;
     let session: http2.ClientHttp2Session;
 
     beforeAll(async () => {
       fx = await startFixture({ tls: secure });
-      session = await connectH2(fx.port, secure);
+      shared = new SharedSession(fx.port, secure);
+    });
+    beforeEach(async () => {
+      session = await shared.get();
     });
     afterAll(async () => {
-      session.close();
+      shared.close();
       await fx[Symbol.asyncDispose]();
       if (fx.proc.exitCode !== 0) console.error(fx.stderr());
       expect(fx.proc.signalCode).toBeNull();

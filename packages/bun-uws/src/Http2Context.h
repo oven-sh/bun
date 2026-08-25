@@ -260,7 +260,7 @@ struct Http2Response {
     }
 
     Http2Response *writeHeader(std::string_view key, uint64_t value) {
-        char buf[std::numeric_limits<uint64_t>::digits10 + 1];
+        char buf[utils::U64_MAX_DIGITS];
         auto r = std::to_chars(buf, buf + sizeof(buf), value);
         return writeHeader(key, std::string_view{buf, (size_t)(r.ptr - buf)});
     }

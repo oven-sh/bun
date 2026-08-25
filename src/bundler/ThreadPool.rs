@@ -594,6 +594,7 @@ impl<'a> Worker<'a> {
             return TargetTranspilers {
                 primary: &mut data.transpiler,
                 browser: BrowserSlot::IsPrimary,
+                primary_is_client: false,
             };
         }
         let browser = BrowserSlot::Other {
@@ -608,11 +609,13 @@ impl<'a> Worker<'a> {
                     .into_transpiler()
                     .expect("BrowserSlot::Other yields a transpiler"),
                 browser: BrowserSlot::IsPrimary,
+                primary_is_client: true,
             }
         } else {
             TargetTranspilers {
                 primary: &mut data.transpiler,
                 browser,
+                primary_is_client: false,
             }
         }
     }
@@ -621,6 +624,10 @@ impl<'a> Worker<'a> {
 pub(crate) struct TargetTranspilers<'w, 'a> {
     pub primary: &'w mut Transpiler<'a>,
     pub browser: BrowserSlot<'w, 'a>,
+    /// `primary` is the worker's clone of the bundle's client transpiler
+    /// (a browser file of a server-side build): parse against the client
+    /// [`ParseConfig`].
+    pub primary_is_client: bool,
 }
 
 /// A worker's browser-target transpiler, relative to

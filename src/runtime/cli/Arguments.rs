@@ -824,7 +824,7 @@ fn cwd_prefix_in_remaining<'a>(
             continue;
         };
 
-        if i + 1 < remaining.len() {
+        if i + 1 < scan_limit {
             *slot = Some(remaining[i + 1]);
             skip.push(i);
             skip.push(i + 1);
@@ -901,11 +901,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         } else {
             (None, None, Vec::new())
         };
-    let cwd_arg = args
-        .option(b"--cwd")
-        .or(remaining_cwd)
-        .or(args.option(b"--prefix"))
-        .or(remaining_prefix);
+    // Last same-type flag wins, including after the script name. All --cwd
+    // values still beat --prefix.
+    let cwd_arg = remaining_cwd
+        .or(args.option(b"--cwd"))
+        .or(remaining_prefix)
+        .or(args.option(b"--prefix"));
     let cwd: Box<[u8]> = if let Some(cwd_arg) = cwd_arg {
         let mut outbuf = PathBuffer::uninit();
         // An absolute --cwd needs no base; a relative one still requires a

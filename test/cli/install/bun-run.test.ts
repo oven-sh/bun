@@ -503,6 +503,55 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.each(["--cwd", "--prefix"])("should error when %s is immediately followed by --", async flag => {
+    using dir = tempDir(`bun-run-${flag.replace("--", "")}-value-is-delimiter`, {
+      "test.js": `console.log("ran");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "test.js", flag, "--", "arg"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(`The argument '${flag}' requires a value but none was supplied.`);
+    expect(stdout).not.toContain("ran");
+    expect(exitCode).toBe(1);
+  });
+
+  it.each(["--cwd", "--prefix"])("should use the last %s when it appears both before and after the script name", async flag => {
+    using dir = tempDir(`bun-run-${flag.replace("--", "")}-last-across-boundary`, {
+      "first/test.js": `console.log("first");`,
+      "second/test.js": `console.log(process.cwd());`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", flag, "first", "test.js", flag, "second"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toMatch(/second/);
+    expect(stdout).not.toMatch(/first/);
+    expect(exitCode).toBe(0);
+  });
+
   describe("--cwd longer than the OS path limit", () => {
     // Longer than PATH_MAX on every platform (4096 on Linux, 1024 on macOS).
     const tooLong = Buffer.alloc(5000, "a").toString();

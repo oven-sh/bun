@@ -911,6 +911,15 @@ describe("Query Execution", () => {
     const blockComment = await sql`/* seed */ INSERT INTO gadgets2 VALUES (1), (2)`;
     expect(blockComment.command).toBe("INSERT");
     expect(blockComment.affectedRows).toBe(2);
+
+    // a CTE-wrapped write without RETURNING returns no rows, so the count is unknown
+    const cteWrite = await sql`WITH bump AS (SELECT 1) UPDATE gadgets2 SET id = id + 10`;
+    expect(cteWrite.command).toBe("UPDATE");
+    expect(cteWrite.affectedRows).toBeNull();
+
+    const cteReturning = await sql`WITH bump AS (SELECT 1) UPDATE gadgets2 SET id = id - 10 RETURNING id`;
+    expect(cteReturning).toHaveLength(2);
+    expect(cteReturning.affectedRows).toBe(2);
   });
 
   test("SELECT with various clauses", async () => {

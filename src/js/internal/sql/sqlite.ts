@@ -34,6 +34,7 @@ interface SQLParsedInfo {
   command: SQLCommand;
   lastToken?: string;
   canReturnRows: boolean;
+  hasReturning: boolean;
 }
 
 function commandToString(command: SQLCommand, lastToken?: string): string {
@@ -53,16 +54,15 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
   }
 }
 
-function affectedRowsForCommand(commandString: string, count: number | bigint): number | bigint {
+function isWriteCommand(commandString: string): boolean {
   switch (commandString) {
     case "INSERT":
     case "UPDATE":
     case "DELETE":
     case "REPLACE":
-      return count;
+      return true;
     default:
-      // sqlite3_changes() still reports the previous write after e.g. CREATE TABLE.
-      return 0;
+      return false;
   }
 }
 
@@ -119,6 +119,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
   let command = SQLCommand.none;
   let lastToken = "";
   let canReturnRows = false;
+  let hasReturning = false;
   let quoted: false | "'" | '"' = false;
   // we need to reverse search so we find the closest command to the parameter
   for (let i = text_len - 1; i >= 0; i--) {
@@ -138,7 +139,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.insert, lastToken, canReturnRows };
+              return { command: SQLCommand.insert, lastToken, canReturnRows, hasReturning };
             }
             continue;
           }
@@ -149,7 +150,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.update, lastToken, canReturnRows };
+              return { command: SQLCommand.update, lastToken, canReturnRows, hasReturning };
             }
             continue;
           }
@@ -160,7 +161,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.where, lastToken, canReturnRows };
+              return { command: SQLCommand.where, lastToken, canReturnRows, hasReturning };
             }
             continue;
           }
@@ -171,7 +172,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.updateSet, lastToken, canReturnRows };
+              return { command: SQLCommand.updateSet, lastToken, canReturnRows, hasReturning };
             }
             continue;
           }
@@ -182,15 +183,17 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.in, lastToken, canReturnRows };
+              return { command: SQLCommand.in, lastToken, canReturnRows, hasReturning };
             }
             continue;
           }
+          case "RETURNING":
+            hasReturning = true;
+          // fallthrough
           case "SELECT":
           case "PRAGMA":
           case "WITH":
-          case "EXPLAIN":
-          case "RETURNING": {
+          case "EXPLAIN": {
             lastToken = token;
             canReturnRows = true;
             token = "";
@@ -245,11 +248,13 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
           command = SQLCommand.in;
         }
         break;
+      case "RETURNING":
+        hasReturning = true;
+      // fallthrough
       case "SELECT":
       case "PRAGMA":
       case "WITH":
-      case "EXPLAIN":
-      case "RETURNING": {
+      case "EXPLAIN": {
         canReturnRows = true;
         break;
       }
@@ -258,7 +263,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         break;
     }
   }
-  return { command, lastToken, canReturnRows };
+  return { command, lastToken, canReturnRows, hasReturning };
 }
 
 class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
@@ -313,11 +318,16 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
 
         const count = $isArray(result) ? result.length : 1;
-        sqlResult.command = commandToString(command, parsedInfo.lastToken);
+        const commandString = commandToString(command, parsedInfo.lastToken);
+        sqlResult.command = commandString;
         sqlResult.count = count;
-        // RETURNING emits one row per affected row; EXPLAIN <write> (lastToken = first token) changes nothing.
-        sqlResult.affectedRows =
-          parsedInfo.lastToken === "EXPLAIN" ? 0 : affectedRowsForCommand(sqlResult.command, count);
+        if (isWriteCommand(commandString) && parsedInfo.lastToken !== "EXPLAIN") {
+          // RETURNING emits one row per affected row; a CTE-wrapped write without it returns no rows (count unknown).
+          sqlResult.affectedRows = parsedInfo.hasReturning ? count : null;
+        } else {
+          // reads and EXPLAIN <write> (lastToken = first token) change nothing
+          sqlResult.affectedRows = 0;
+        }
 
         query.resolve(sqlResult);
       } else {
@@ -329,7 +339,8 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         sqlResult.command = commandString;
         sqlResult.count = changes.changes;
         sqlResult.lastInsertRowid = changes.lastInsertRowid;
-        sqlResult.affectedRows = affectedRowsForCommand(commandString, changes.changes);
+        // non-writes keep 0: sqlite3_changes() still reports the previous write after e.g. CREATE TABLE
+        sqlResult.affectedRows = isWriteCommand(commandString) ? changes.changes : 0;
 
         query.resolve(sqlResult);
       }

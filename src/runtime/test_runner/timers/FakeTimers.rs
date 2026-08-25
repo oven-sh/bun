@@ -369,10 +369,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
                     "'now' must be a number or Date"
                 )));
             }
-            // NaN is `JSGlobalObject::overridenDateNow`'s "no override"
-            // sentinel, so a NaN clock leaves `Date.now()` real while
-            // `performance.timeOrigin` reads NaN. Reject it (and an Invalid
-            // Date, whose timestamp is NaN) before it reaches the clock.
+            // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
             if !js_now.is_finite() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "'now' must be a finite number or a valid Date"

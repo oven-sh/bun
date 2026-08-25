@@ -49,6 +49,7 @@ public:
         HTMLRewriterSuspension,
         // Task-only tag on the Rust side; never stored in a context cell.
         HTMLRewriterPipeFree,
+        S3UploadStreamWrapper,
     };
 
     // `held` is visited, so the reaction keeps it alive for as long as the

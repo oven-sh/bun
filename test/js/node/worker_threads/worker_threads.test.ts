@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -2572,45 +2572,240 @@ describe("VM teardown ordering", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  // An S3 upload aborted by its worker's teardown must not retry onto the
-  // closed VM: the retry would complete on the HTTP thread against a dead handle.
-  test("terminating a worker mid S3 upload does not retry onto the dead VM", async () => {
-    let first = true;
-    using server = Bun.serve({
-      port: 0,
-      fetch: () => {
-        if (first) {
-          first = false;
-          return new Promise(() => {}); // the upload terminate() interrupts
-        }
-        return new Response("no", { status: 503 }); // any retry fails fast
+  // A streaming S3 upload (a MultiPartUpload fed by s3file.write(stream) or by
+  // s3file.writer()) buffers bytes until it has a whole part, so most of the
+  // time it has no request out on the HTTP thread, and only the stop phase can
+  // end it. It has to drop everything the upload holds: the upload itself
+  // (buffered bytes, credentials), and for s3file.write(stream) the wrapper
+  // around the source stream, which also holds the stream and the sink. The
+  // "request out" rows cover the other order: the stop phase ends the upload
+  // first, and the request coming back must not free anything twice, nor, now
+  // that the upload is already finished, retry onto the VM that is going away.
+  // The "first part in flight" row ends an upload that has to roll back: during
+  // teardown the rollback is refused on the spot and not retried, and the upload
+  // still has to free itself. The "commit in flight" rows end an upload that has
+  // sent everything and only waits for its last answer, so the stop phase finds
+  // both the upload and a request of it. For a JS stream that is also the
+  // shape where the wrapper is still claimed by the stream's pump, which ends
+  // only when S3 answers: before the fix the wrapper and the upload both stayed
+  // allocated. The writer() variant passes before the fix too, and pins down
+  // that the two stops do not free anything twice. The Bun.file() row is the
+  // same claim-still-held shape for a file source (a file is pumped the same
+  // way as a JS stream). The "pump collected" row has the collector take the
+  // stream's pump first, which gives the claim up on its own (the debug build
+  // logs that too), so that the stop phase then finds nothing of it to free.
+  //
+  // Two oracles. On a debug build, each object's own teardown log line: exactly
+  // one MultiPartUpload deinit per row, and one S3UploadStreamWrapper deinit per
+  // s3file.write(stream). On the ASAN build (a release build, so no debug logs),
+  // LeakSanitizer at the host's exit, which reported the upload in the streamed
+  // rows before the fix, and ASAN itself for a double release. The writer() rows
+  // run without leak detection: the sink object behind s3file.writer() is not
+  // freed on any path, fixed or not (#34999), and the leaked upload stayed
+  // reachable to LeakSanitizer there anyway. On release builds the writer()
+  // path is checked by the rollback test in test/cli/test/isolation.test.ts.
+  describe.skipIf(!isDebug && !isASAN)("an S3 upload still open when its VM goes", () => {
+    const ROWS: {
+      name: string;
+      // Runs with `file` (an S3File against the stand-in server) and `upstream` (a URL whose
+      // response body delivers one chunk and then stays open until the host ends it).
+      start: string;
+      endUpstream?: boolean;
+      // The host waits for the stand-in to receive a request it leaves unanswered before it
+      // tears the VM down.
+      waitForRequest?: boolean;
+      // How far the stand-in lets a multipart upload get: it answers the initiate, so the
+      // upload sends its first part, or also every part, so the upload sends its commit.
+      multipart?: "part" | "commit";
+      wrappers: number;
+      // How many pumps the collector took before the VM went (debug builds log it). The
+      // other JS stream rows keep their pull promise's resolvers reachable, as a producer
+      // that could still deliver would, so their pumps stay for the stop phase to find.
+      collected?: number;
+      mainThread?: boolean;
+      leakCheck?: false;
+    }[] = [
+      {
+        name: "s3file.write(response) still waiting for bytes, worker terminated",
+        start: `const res = await fetch(upstream); file.write(res).catch(() => {});`,
+        wrappers: 1,
       },
-    });
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { Worker } = require("worker_threads");
-         const w = new Worker(
-           'const { workerData, parentPort } = require("worker_threads");' +
-           'const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: workerData.url, retry: 3 });' +
-           // writer(): a MultiPartUpload, whose single-send failure path retries.
-           'const wr = s3.file("key").writer({ retry: 3 }); wr.write(Buffer.alloc(1024 * 1024)); wr.end().catch(() => {});' +
-           'parentPort.postMessage("uploading");',
-           { eval: true, workerData: { url: "${server.url.href}" } });
-         w.once("message", async () => {
-           console.log("exit", await w.terminate());
-           // Outlive any retry the HTTP thread would complete.
-           setTimeout(() => process.exit(0), 500);
-         });`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("exit 1\n");
-    expect(exitCode).toBe(0);
+      {
+        name: "s3file.write(new Response(jsStream)) still waiting for bytes, worker terminated",
+        start: `globalThis.moreBytes = Promise.withResolvers();
+          file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(64)); return globalThis.moreBytes.promise; } }))).catch(() => {});`,
+        wrappers: 1,
+      },
+      // At least two collections: the first frees the Response, whose body holds a Strong on
+      // the stream, the second the stream and its pump. The turn of the loop after each runs
+      // what the collected pump's cell queued. The extra rounds change nothing once it is gone.
+      {
+        name: "s3file.write(new Response(jsStream)) whose pump was collected while waiting for bytes, worker terminated",
+        start: `file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(64)); return new Promise(() => {}); } }))).catch(() => {});
+          for (let i = 0; i < 4; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }`,
+        wrappers: 1,
+        collected: 1,
+      },
+      {
+        name: "s3file.writer() with bytes written and no end(), worker terminated",
+        start: `const w = file.writer(); w.write(new Uint8Array(64));`,
+        wrappers: 0,
+        leakCheck: false,
+      },
+      {
+        name: "s3file.write(response) whose body ended, PUT in flight, worker terminated",
+        start: `const res = await fetch(upstream); file.write(res).catch(() => {});`,
+        endUpstream: true,
+        waitForRequest: true,
+        wrappers: 1,
+      },
+      {
+        name: "s3file.write(new Response(Bun.file().stream())) whose file was read, PUT in flight, worker terminated",
+        start: `file.write(new Response(Bun.file("payload.bin").stream())).catch(() => {});`,
+        waitForRequest: true,
+        wrappers: 1,
+      },
+      {
+        name: "s3file.writer() ended, PUT in flight, worker terminated",
+        start: `const w = file.writer(); w.write(new Uint8Array(64)); w.end().catch(() => {});`,
+        waitForRequest: true,
+        wrappers: 0,
+        leakCheck: false,
+      },
+      {
+        name: "s3file.write(new Response(jsStream)) with its first part in flight, worker terminated",
+        start: `globalThis.moreBytes = Promise.withResolvers();
+          file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return globalThis.moreBytes.promise; } }))).catch(() => {});`,
+        multipart: "part",
+        waitForRequest: true,
+        wrappers: 1,
+      },
+      {
+        name: "s3file.write(new Response(jsStream)) with its commit in flight, worker terminated",
+        start: `file.write(new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); c.close(); } }))).catch(() => {});`,
+        multipart: "commit",
+        waitForRequest: true,
+        wrappers: 1,
+      },
+      {
+        name: "s3file.writer() ended, commit in flight, worker terminated",
+        start: `const w = file.writer(); w.write(new Uint8Array(5 * 1024 * 1024)); w.end().catch(() => {});`,
+        multipart: "commit",
+        waitForRequest: true,
+        wrappers: 0,
+        leakCheck: false,
+      },
+      {
+        name: "s3file.write(response) still waiting for bytes, process.exit() on the main thread",
+        start: `const res = await fetch(upstream); file.write(res).catch(() => {});`,
+        wrappers: 1,
+        mainThread: true,
+      },
+    ];
+
+    const host = (row: (typeof ROWS)[number]) => `
+      const { Worker } = require("node:worker_threads");
+      const gotRequest = Promise.withResolvers();
+      const standIn = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          // Read, so the request left unanswered holds no body buffer of its own.
+          await req.arrayBuffer();
+          if (${!!row.multipart} && new URL(req.url).searchParams.has("uploads")) {
+            return new Response("<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>");
+          }
+          if (${row.multipart === "commit"} && req.method === "PUT") {
+            return new Response("", { headers: { etag: '"part"' } });
+          }
+          gotRequest.resolve();
+          return new Promise(() => {});
+        },
+      });
+      let endUpstream;
+      const upstream = Bun.serve({
+        port: 0,
+        fetch: () => new Response(new ReadableStream({
+          start(c) { c.enqueue(new Uint8Array(64)); endUpstream = () => c.close(); },
+          pull() { return new Promise(() => {}); },
+        })),
+      });
+      const startUpload = \`async (s3Url, upstream) => {
+        const file = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: s3Url }).file("key");
+        ${row.start}
+      }\`;
+      const onStarted = async () => {
+        ${row.endUpstream ? "endUpstream();" : ""}
+        ${row.waitForRequest ? "await gotRequest.promise;" : ""}
+      };
+      if (${!!row.mainThread}) {
+        await (0, eval)(startUpload)(standIn.url.href, upstream.url.href);
+        await onStarted();
+        console.log("upload started");
+        process.exit(0);
+      }
+      const worker = new Worker(
+        'const { workerData, parentPort } = require("node:worker_threads");' +
+        '(' + startUpload + ')(workerData.s3Url, workerData.upstream).then(() => parentPort.postMessage("started"));',
+        { eval: true, workerData: { s3Url: standIn.url.href, upstream: upstream.url.href } },
+      );
+      worker.on("error", e => { console.error("worker error:", e); process.exit(1); });
+      const exited = new Promise(resolve => worker.on("exit", resolve));
+      worker.once("message", async () => { await onStarted(); worker.terminate(); });
+      console.log("worker exit code:", await exited);
+      standIn.stop(true);
+      upstream.stop(true);
+    `;
+
+    for (const row of ROWS) {
+      test.concurrent(row.name, async () => {
+        using dir = tempDir("s3-upload-teardown", { "payload.bin": Buffer.alloc(64, "x").toString() });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", host(row)],
+          cwd: String(dir),
+          env: {
+            ...bunEnv,
+            // The S3 client does not honor NO_PROXY; an inherited proxy would
+            // hijack the requests to the stand-in.
+            HTTP_PROXY: undefined,
+            HTTPS_PROXY: undefined,
+            http_proxy: undefined,
+            https_proxy: undefined,
+            BUN_DEBUG_S3MultiPartUpload: "1",
+            BUN_DEBUG_S3UploadStream: "1",
+            BUN_DESTRUCT_VM_ON_EXIT: "1",
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, `detect_leaks=${row.leakCheck === false ? 0 : 1}`]
+              .filter(Boolean)
+              .join(":"),
+            LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const output = stdout + stderr;
+        const expected = {
+          started: row.mainThread ? "upload started" : "worker exit code: 1",
+          uploads: isDebug ? 1 : "release build",
+          wrappers: isDebug ? row.wrappers : "release build",
+          collected: isDebug ? (row.collected ?? 0) : "release build",
+          sanitizer: false,
+          exitCode: 0,
+          detail: "",
+        };
+        const actual = {
+          started: output.match(/^(upload started|worker exit code: \d+)$/m)?.[1],
+          uploads: isDebug ? (output.match(/^\[s3multipartupload\] deinit$/gm)?.length ?? 0) : "release build",
+          wrappers: isDebug ? (output.match(/^\[s3uploadstream\] deinit /gm)?.length ?? 0) : "release build",
+          collected: isDebug ? (output.match(/^\[s3uploadstream\] pump collected$/gm)?.length ?? 0) : "release build",
+          sanitizer: output.includes("Sanitizer"),
+          exitCode,
+          detail: "",
+        };
+        // On a failure, everything the host printed.
+        if (!Bun.deepEquals(actual, expected)) actual.detail = output;
+        expect(actual).toEqual(expected);
+      });
+    }
   });
 });
 

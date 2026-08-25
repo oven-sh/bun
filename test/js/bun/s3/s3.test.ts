@@ -1714,6 +1714,16 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
   });
 });
 
+// The S3 client does not honor NO_PROXY; an inherited proxy would hijack the
+// requests to a stand-in server.
+const noProxyEnv = {
+  ...bunEnv,
+  HTTP_PROXY: undefined,
+  HTTPS_PROXY: undefined,
+  http_proxy: undefined,
+  https_proxy: undefined,
+};
+
 describe("s3 multipart upload id validation", () => {
   it("rejects a CreateMultipartUpload response whose upload id contains non-ASCII bytes", async () => {
     // The whole scenario runs in a subprocess so a misbehaving runtime cannot take down the test runner.
@@ -1786,7 +1796,7 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      env: noProxyEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1844,7 +1854,7 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      env: noProxyEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -2040,7 +2050,7 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      env: noProxyEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -2121,7 +2131,7 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      env: noProxyEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -2131,6 +2141,127 @@ describe("s3 upload stream body error", () => {
     expect(received).toBe(totalBytes);
     expect(exitCode).toBe(0);
   });
+
+  // Once S3 fails a JS-pumped upload, its native wrapper is freed on the next
+  // turn of the loop. The pump promise's .then shim can still run after that: a
+  // direct stream's pump promise is settled by the pull promise the user
+  // returned, whenever that happens. Here it happens after the wrapper is gone,
+  // so the shim must find nothing left to do (with the wrapper handed to it
+  // directly, ASAN reports a use after free here).
+  it.concurrent("a pump that settles after S3 failed the upload and freed its wrapper touches nothing", async () => {
+    const fixture = `
+      const standIn = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          await req.arrayBuffer();
+          return new Response("<Error><Code>AccessDenied</Code><Message>no</Message></Error>", { status: 403 });
+        },
+      });
+      const client = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: standIn.url.href });
+      const pull = Promise.withResolvers();
+      const written = client.write("key", new Response(new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write(new Uint8Array(5 * 1024 * 1024));
+          return pull.promise;
+        },
+      })));
+      console.log("write:", await written.then(() => "resolved", e => e.code));
+      // The turn on which the wrapper is freed.
+      await new Promise(resolve => setImmediate(resolve));
+      pull.resolve();
+      // The pump promise settles, and with it the shim, before the next macrotask.
+      await new Promise(resolve => setImmediate(resolve));
+      console.log("pump settled");
+      standIn.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: noProxyEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "write: AccessDenied\npump settled\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A request can fail before it leaves (here: nothing to sign with), which fails
+  // the upload while the call that tried to send it, the sink's own write() or
+  // end(), is still on the stack. Freeing the sink right there is a use after
+  // free on the way back out (ASAN); the upload must only reject the write.
+  // Both feeders: a JS stream whose bytes arrive once the pump is waiting for
+  // them, and a fetch body attached with a whole part already buffered, which the
+  // attach code writes into the sink itself. The body is bigger than a part so
+  // that, by the time the upstream has written it all, at least a part of it has
+  // usually arrived; if less has, the upload fails a turn later, a path the
+  // other tests cover.
+  const UNSIGNABLE_UPLOADS = {
+    "a JS stream": `
+      const chunk = Promise.withResolvers();
+      const written = client.write("key", new Response(new ReadableStream({
+        async start(c) { await chunk.promise; c.enqueue(new Uint8Array(64)); c.close(); },
+      })));
+      await new Promise(resolve => setImmediate(resolve));
+      chunk.resolve();
+    `,
+    "a fetch body": `
+      const upstreamDone = Promise.withResolvers();
+      const upstream = Bun.serve({
+        port: 0,
+        fetch: () => new Response(new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            for (let i = 0; i < 8; i++) { controller.write(new Uint8Array(1024 * 1024)); await controller.flush(); }
+            controller.close();
+            upstreamDone.resolve();
+          },
+        })),
+      });
+      const res = await fetch(upstream.url);
+      res.body; // the body now buffers into its stream's native source
+      await upstreamDone.promise;
+      const written = client.write("key", res);
+      written.catch(() => {}).then(() => upstream.stop(true));
+    `,
+  };
+  it.concurrent.each(Object.keys(UNSIGNABLE_UPLOADS) as (keyof typeof UNSIGNABLE_UPLOADS)[])(
+    "an upload from %s whose request fails before it is sent only rejects",
+    async feeder => {
+      const fixture = `
+        const client = new Bun.S3Client({ bucket: "b", endpoint: "http://127.0.0.1:1" });
+        ${UNSIGNABLE_UPLOADS[feeder]}
+        console.log("write:", await written.then(() => "resolved", e => e.code));
+        // The turn on which the upload's native side is freed.
+        await new Promise(resolve => setImmediate(resolve));
+        console.log("still here");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: {
+          ...noProxyEnv,
+          // No credentials from the environment either: signing must fail.
+          S3_ACCESS_KEY_ID: undefined,
+          S3_SECRET_ACCESS_KEY: undefined,
+          S3_SESSION_TOKEN: undefined,
+          AWS_ACCESS_KEY_ID: undefined,
+          AWS_SECRET_ACCESS_KEY: undefined,
+          AWS_SESSION_TOKEN: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "write: ERR_S3_MISSING_CREDENTIALS\nstill here\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 describe("presigned url signature", () => {

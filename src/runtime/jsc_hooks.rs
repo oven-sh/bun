@@ -129,6 +129,8 @@ pub(crate) enum ActiveHandle {
     /// An S3 request / streaming download out on the HTTP thread; same.
     S3Request(ptr::NonNull<crate::webcore::s3::simple_request::S3HttpSimpleTask>),
     S3Download(ptr::NonNull<crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask>),
+    /// An S3 upload; between parts nothing of it is out on the HTTP thread.
+    S3Upload(ptr::NonNull<crate::webcore::s3::MultiPartUpload>),
     /// A `Bun.build` running on the bundle thread with this VM's plugins/env.
     Bundle(ptr::NonNull<crate::api::js_bundle_completion_task::JSBundleCompletionTask>),
     /// A `dns.Resolver` (or the VM-global one) with a live c-ares channel.
@@ -229,6 +231,21 @@ impl ActiveHandle {
     pub(crate) fn unregister(&self) {
         if let Some(handles) = active_handles() {
             handles.swap_remove(self);
+        }
+    }
+
+    /// Whether a `bun test --isolate` swap leaves this running; its completion
+    /// lands on the next file's loop.
+    fn outlives_test_isolation(&self) -> bool {
+        match *self {
+            // A live VM cannot cancel a build: hop tasks it already queued would
+            // still be dispatched against the finished pass.
+            ActiveHandle::Bundle(_) => true,
+            // SAFETY: registered ⇒ live (it unregisters in `on_response`). A field
+            // read through the raw place: the HTTP thread may be writing the task's
+            // other fields, so no `&` to the whole task is formed.
+            ActiveHandle::S3Request(t) => unsafe { (*t.as_ptr()).outlives_test_isolation },
+            _ => false,
         }
     }
 }
@@ -1713,11 +1730,19 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 /// `--isolate` swap: a microtask still pending at end-of-file (queued by
 /// `tick_immediate_tasks` or `handle_rejected_promises`) can register new
 /// handles when it runs, so drain first so they land in the registry before it
-/// empties, then stop. (VM teardown must *not* drain here — its
-/// prepareForDestruction discards the pre-exit queues.)
+/// empties, then stop. A stop can queue such microtasks too (a failed upload's
+/// `.catch`), and the swap closes every socket blind right after this, so
+/// repeat while a round stopped something. Bounded: a `.catch` that restarts
+/// its upload would otherwise never let this end. (VM teardown must *not*
+/// drain here — its prepareForDestruction discards the pre-exit queues.)
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
-    let _ = vm.event_loop_mut().drain_microtasks();
-    let _ = stop_active_handles(vm, StopReason::TestIsolation);
+    const MAX_ROUNDS: usize = 8;
+    for _ in 0..MAX_ROUNDS {
+        let _ = vm.event_loop_mut().drain_microtasks();
+        if stop_active_handles(vm, StopReason::TestIsolation) == SweepResult::Idle {
+            break;
+        }
+    }
 }
 
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
@@ -1760,7 +1785,9 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             unsafe { (*all).event_loop_delay.disable() };
         }
     }
-    // Entries that stay registered across a test-isolation swap.
+    // Entries that stay registered across a test-isolation swap (including what
+    // a stop below registers: the rollback of a failed upload). Not counted as
+    // stopped, so a sweep that only meets these again reports `Idle`.
     let mut kept: Vec<ActiveHandle> = Vec::new();
     loop {
         // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
@@ -1768,6 +1795,10 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
         let Some(kv) = (unsafe { &mut (*state).active_handles }).pop() else {
             break;
         };
+        if reason == StopReason::TestIsolation && kv.key.outlives_test_isolation() {
+            kept.push(kv.key);
+            continue;
+        }
         result = SweepResult::Stopped;
         match kv.key {
             // SAFETY: live until it unregisters in `detach`.
@@ -1809,10 +1840,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             ActiveHandle::S3Download(t) => unsafe {
                 crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask::stop_for_vm_teardown(t.as_ptr())
             },
-            // A live VM cannot cancel a build: hop tasks it already queued here
-            // would still be dispatched against the finished pass. The build
-            // runs on; its completion lands on the next file's global.
-            ActiveHandle::Bundle(_) if reason == StopReason::TestIsolation => kept.push(kv.key),
+            // SAFETY: live until it unregisters in `Drop`; may free itself inside,
+            // not touched after.
+            ActiveHandle::S3Upload(u) => unsafe {
+                crate::webcore::s3::MultiPartUpload::stop_for_vm_teardown(u.as_ptr())
+            },
             // SAFETY: live until it unregisters in `on_complete_anytask`.
             ActiveHandle::Bundle(c) => unsafe {
                 crate::api::js_bundle_completion_task::JSBundleCompletionTask::stop_for_vm_teardown(

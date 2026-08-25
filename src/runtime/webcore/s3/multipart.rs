@@ -209,6 +209,29 @@ impl MultiPartUpload {
     fn as_ctx_ptr(&self) -> *mut c_void {
         self.root_ptr().cast::<c_void>()
     }
+
+    /// Registered by `writable_stream` / `upload_stream`, removed in `Drop`.
+    pub(crate) fn active_handle(&self) -> crate::jsc_hooks::ActiveHandle {
+        crate::jsc_hooks::ActiveHandle::S3Upload(
+            self.root
+                .get()
+                .expect("MultiPartUpload root set at construction"),
+        )
+    }
+
+    /// Stop phase (teardown or the `--isolate` swap): nothing feeds this upload any
+    /// more, so fail it. A request still out drops its ref when it finds the upload
+    /// finished; the rollback this may send is refused during teardown and, under
+    /// `--isolate`, completes on the next file's loop (`outlives_test_isolation`).
+    ///
+    /// # Safety
+    /// `this` is live; JS thread. May free it.
+    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
+        // SAFETY: fn contract; the guard's ref outlives `fail`, which may release
+        // every other one.
+        let guard = unsafe { RefPtr::init_ref(this) };
+        crate::dispatch::fold(guard.fail(s3_simple_request::VM_SHUTDOWN));
+    }
 }
 
 #[repr(u8)]
@@ -377,10 +400,10 @@ impl UploadPart {
 impl Drop for MultiPartUpload {
     fn drop(&mut self) {
         scoped_log!(S3MultiPartUpload, "deinit");
+        self.active_handle().unregister();
         // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
-        let _ = self.vm;
         self.poll_ref.with_mut(|poll_ref| {
             poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
                 bun_io::AllocatorType::Js,
@@ -572,19 +595,22 @@ impl MultiPartUpload {
         }
         if self.state.get() != State::Finished {
             let old_state = self.state.replace(State::Finished);
-            (self.callback)(
+            // The deref must run after the callback, whatever it returned:
+            let settled = (self.callback)(
                 self,
                 S3UploadResult::Failure(err),
                 self.callback_context.get(),
-            )?;
-
+            );
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
                 // will deref after rollback
-                self.rollback_multi_part_request()?;
+                let rollback = self.rollback_multi_part_request();
+                settled?;
+                rollback?;
             } else {
                 // single file upload no need to rollback
                 MultiPartUpload::deref_(self.root_ptr());
+                settled?;
             }
         }
         Ok(())
@@ -727,7 +753,8 @@ impl MultiPartUpload {
         match result {
             S3CommitResult::Failure(err) => {
                 let mut options = self_.options.get();
-                if options.retry > 0 {
+                // A stopping VM refuses every request: do not walk the retries through it.
+                if options.retry > 0 && self_.vm.script_allowed() {
                     options.retry -= 1;
                     self_.options.set(options);
                     // retry commit
@@ -772,7 +799,8 @@ impl MultiPartUpload {
         match result {
             S3UploadResult::Failure(_err) => {
                 let mut options = self_.options.get();
-                if options.retry > 0 {
+                // As in `on_commit_multi_part_request`.
+                if options.retry > 0 && self_.vm.script_allowed() {
                     options.retry -= 1;
                     self_.options.set(options);
                     // retry rollback
@@ -842,6 +870,7 @@ impl MultiPartUpload {
                 body: b"",
                 search_params: Some(search_params),
                 request_payer: self.request_payer,
+                outlives_test_isolation: true,
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),

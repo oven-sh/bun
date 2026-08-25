@@ -28,6 +28,7 @@ use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::api::html_rewriter;
 use crate::api::server;
+use crate::webcore::s3::client::S3UploadStreamWrapper;
 
 // Request contexts are a single generic
 // `NewRequestContext<ThisServer, SSL, DEBUG, MUX>`; alias the eight
@@ -66,10 +67,12 @@ pub enum Tag {
     /// Task-only tag (never a context cell): drops the last ref of a
     /// `RewriterPipe` on behalf of `RewriterPipe::deref_outside_caller`.
     HTMLRewriterPipeFree,
+    /// The stream pump's claim on an `S3UploadStreamWrapper` (`pump_cell`).
+    S3UploadStreamWrapper,
 }
 
 impl Tag {
-    pub const COUNT: usize = 10;
+    pub const COUNT: usize = 11;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -84,6 +87,7 @@ impl Tag {
             7 => Tag::DebugHTTPSServerMuxRequestContext,
             8 => Tag::HTMLRewriterSuspension,
             9 => Tag::HTMLRewriterPipeFree,
+            10 => Tag::S3UploadStreamWrapper,
             _ => unreachable!(),
         }
     }
@@ -117,6 +121,9 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromis
 }
 impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
+}
+impl NativePromiseContextType for S3UploadStreamWrapper {
+    const TAG: Tag = Tag::S3UploadStreamWrapper;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -202,6 +209,9 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
             Tag::DebugHTTPSServerMuxRequestContext => {
                 (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
             }
+            Tag::S3UploadStreamWrapper => {
+                (*ctx.cast::<S3UploadStreamWrapper>()).pump_cell_collected()
+            }
             Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree => {}
         }
     }
@@ -240,15 +250,16 @@ impl Taskable for DeferredDerefTask {
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b1111;
 
+    /// From a cell's destructor (and `RewriterPipe::deref_outside_caller`).
     pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
-        let vm = VirtualMachine::get();
-        if vm.event_loop_ref().is_closed_for_tasks() {
+        if VirtualMachine::get().event_loop_ref().is_closed_for_tasks() {
             // Teardown has forbidden script and released the queue; from here on only GC destructors
             // (possibly mid-sweep in `~VM`) reach this, and theirs is the last use of `ctx` in that
             // frame. A worker's HTMLRewriter pipe would outlive it, so those refs are released now,
-            // sweep-safe; a RequestContext's deref is not sweep-safe and dies with the VM instead.
+            // sweep-safe; a RequestContext's or an S3 wrapper's release is not sweep-safe and dies
+            // with the VM instead.
             match tag {
                 // SAFETY: the destroyed context held the suspension's ref on this live pipe.
                 Tag::HTMLRewriterSuspension => unsafe {
@@ -267,7 +278,17 @@ impl DeferredDerefTask {
             }
             return;
         }
+        Self::enqueue(ctx, tag);
+    }
 
+    /// For JS-thread code that owns a ref on `ctx` but must not release it in the
+    /// current frame (a frame of `ctx`'s own may be below it): the release runs on the
+    /// next tick, or at once if teardown has closed the queue, when no such frame exists.
+    pub(crate) fn schedule_outside_caller(ctx: *mut c_void, tag: Tag) {
+        Self::enqueue(ctx, tag);
+    }
+
+    fn enqueue(ctx: *mut c_void, tag: Tag) {
         let addr = ctx as usize;
         debug_assert!(addr & Self::TAG_MASK == 0);
 
@@ -277,9 +298,10 @@ impl DeferredDerefTask {
             <DeferredDerefTask as Taskable>::TAG,
             (addr | (tag as usize)) as *mut (),
         );
-        // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
-        // sole mutator on the JS thread here.
-        vm.event_loop_ref().enqueue_task(task);
+        // A closed queue releases the task on arrival (`release_unrun` above runs it).
+        // SAFETY: JS thread; event_loop() returns the VM's owned EventLoop; we are the
+        // sole mutator here.
+        VirtualMachine::get().event_loop_ref().enqueue_task(task);
     }
 
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {
@@ -289,7 +311,8 @@ impl DeferredDerefTask {
         // of the type indicated by `tag`, and this task owns one ref on it,
         // released below (for the HTMLRewriter tags: the ref taken in
         // `begin_suspension`, or the last ref handed over by
-        // `deref_outside_caller`). We are on the JS thread.
+        // `deref_outside_caller`; for the S3 tag: the pump's claim from
+        // `upload_stream`). We are on the JS thread.
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),
@@ -325,6 +348,9 @@ impl DeferredDerefTask {
                         NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
                     );
                 }
+                Tag::S3UploadStreamWrapper => {
+                    S3UploadStreamWrapper::release_pump_claim(ctx.cast::<S3UploadStreamWrapper>());
+                }
             }
         }
     }
@@ -353,3 +379,4 @@ const _: () = assert!(
 );
 const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(core::mem::align_of::<S3UploadStreamWrapper>() > DeferredDerefTask::TAG_MASK);

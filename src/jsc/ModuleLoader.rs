@@ -227,12 +227,11 @@ extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
-/// The `ns` of an `ns:path` module key when a plugin registered an onLoad
-/// callback in `ns`. `C:\...` is a Windows drive, never a namespace. This is
-/// the same rule `moduleLoaderResolve` applies to already-resolved keys.
+/// The `ns` of an `ns:path` key when `ns` has onLoad callbacks, as in `moduleLoaderResolve`.
 fn registered_on_load_namespace<'a>(global: &JSGlobalObject, key: &'a [u8]) -> Option<&'a [u8]> {
     let colon = bun_core::strings::index_of_char_usize(key, b':')?;
-    if colon == 0 || (colon == 1 && key[0].is_ascii_alphabetic()) {
+    let is_windows_drive = colon == 1 && key[0].is_ascii_alphabetic();
+    if colon == 0 || is_windows_drive {
         return None;
     }
     let namespace = &key[..colon];
@@ -256,8 +255,7 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
 
-    // A key whose prefix is a registered onLoad namespace is a virtual module.
-    // Any other absolute path is a file, whatever its extension or colons.
+    // A registered namespace wins. Any other absolute path is a file.
     let (namespace, after_namespace): (&[u8], &[u8]) =
         if let Some(namespace) = registered_on_load_namespace(global, specifier) {
             (namespace, &specifier[namespace.len() + 1..])

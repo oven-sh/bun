@@ -270,10 +270,11 @@ fn clamp255(v: i32) -> i32 {
 /// inside a run of pixels that share the key, the same colour ends up in
 /// both halves and each half's mean is a blend of it with its neighbours:
 /// 75% white / 25% black at `colors: 2` came out as white + mid-grey. So
-/// when the midpoint is not already on a run boundary, cut at the end of
-/// that run nearest to it instead. The caller only splits a box whose range
-/// on `ch` is > 0, so the run never covers the whole slice and the chosen
-/// end leaves both halves non-empty.
+/// when the midpoint is not already on a run boundary, cut at whichever
+/// boundary of that run (its start or its end) is nearer, the start on a
+/// tie. A boundary at the edge of `sorted` would leave one half empty and is
+/// never picked. The caller only splits a box whose range on `ch` is > 0, so
+/// the run never covers the whole slice and the other boundary is available.
 fn cut_point(rgba: &[u8], sorted: &[u32], ch: u8) -> usize {
     let key = |p: u32| rgba[p as usize * 4 + ch as usize];
     let mid = sorted.len() / 2;

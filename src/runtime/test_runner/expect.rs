@@ -3,6 +3,7 @@ use core::cell::Cell;
 use core::fmt;
 
 use bun_core::Output;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
@@ -608,7 +609,7 @@ impl Expect {
         // (note that matcher_name/matcher_args are not used because silent=true)
         // SAFETY: value is a valid in/out-ptr provided by C++ caller
         let v = unsafe { *value };
-        match Self::process_promise(&bun_core::String::empty(), flags, global_this, v, "", "", true) {
+        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, "", "", true) {
             Ok(new) => {
                 // SAFETY: value is a valid in/out-ptr provided by C++ caller
                 unsafe { *value = new };
@@ -694,7 +695,7 @@ impl Expect {
         let arguments = callframe.arguments();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
 
-        let mut custom_label = bun_core::String::empty();
+        let mut custom_label = bun_core::String::EMPTY;
         if arguments.len() > 1 {
             if arguments[1].is_string() || arguments[1].implements_to_string(global_this)? {
                 custom_label = arguments[1].to_bun_string(global_this)?;
@@ -778,7 +779,7 @@ impl Expect {
 
             value.to_bun_string(global_this)?
         } else {
-            bun_core::String::static_(b"passes by .pass() assertion")
+            bun_core::String::static_("passes by .pass() assertion")
         };
 
         this.increment_expect_call_counter();
@@ -819,7 +820,7 @@ impl Expect {
 
             value.to_bun_string(global_this)?
         } else {
-            bun_core::String::static_(b"fails by .fail() assertion")
+            bun_core::String::static_("fails by .fail() assertion")
         };
 
         this.increment_expect_call_counter();
@@ -1369,7 +1370,7 @@ impl Expect {
 
                 if !matcher_fn.js_type().is_function() {
                     let type_name = if matcher_fn.is_null() {
-                        bun_core::StringView::static_(b"null")
+                        bun_core::StringView::static_("null")
                     } else {
                         matcher_fn.js_type_string(global_this)
                     };
@@ -1542,7 +1543,7 @@ impl Expect {
         };
         Err(Self::throw_pretty_matcher_error(
             global_this,
-            &bun_core::String::empty(),
+            &bun_core::String::EMPTY,
             matcher_name,
             matcher_params,
             Flags::default(),
@@ -1753,14 +1754,14 @@ impl Expect {
         let [arg] = callframe.arguments_as_array::<1>();
 
         if arg.is_empty_or_undefined_or_null() {
-            let error_value = bun_core::String::init("reached unreachable code").to_error_instance(global_this);
-            error_value.put(global_this, b"name", bun_core::String::init("UnreachableError").to_js(global_this)?);
+            let error_value = global_this.create_error_instance(format_args!("reached unreachable code"));
+            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
         }
 
         if arg.is_string() {
             let error_value = arg.to_bun_string(global_this)?.to_error_instance(global_this);
-            error_value.put(global_this, b"name", bun_core::String::init("UnreachableError").to_js(global_this)?);
+            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
         }
 
@@ -2068,8 +2069,8 @@ impl Expect {
 
         let mut pass = value.is_string();
         if pass {
-            let value_string = value.to_slice(global)?;
-            let expected_string = expected.to_slice(global)?;
+            let value_string = value.to_utf8(global)?;
+            let expected_string = expected.to_utf8(global)?;
             pass = expected_string.slice().is_empty()
                 || pred(value_string.slice(), expected_string.slice());
         }
@@ -2721,7 +2722,7 @@ impl ExpectMatcherContext {
         match this.flags.promise() {
             Promise::Rejects => bun_core::String::static_("rejects").to_js(global_this),
             Promise::Resolves => bun_core::String::static_("resolves").to_js(global_this),
-            _ => bun_core::String::empty().to_js(global_this),
+            _ => Ok(JSValue::js_empty_string(global_this)),
         }
     }
 
@@ -2776,7 +2777,7 @@ impl ExpectMatcherUtils {
             }
         }
 
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
+        bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2885,7 +2886,7 @@ impl ExpectMatcherUtils {
             bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
         };
         let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+        bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
     }
 }
 

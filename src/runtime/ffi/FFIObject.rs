@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 
+use bun_jsc::bun_string_jsc;
 use bun_jsc::host_fn::DomCall;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSString, JSValue,
@@ -88,7 +89,7 @@ fn new_cstring(
         ValueOrError::Slice(ptr, len) => {
             // SAFETY: ptr/len point to FFI-owned memory whose lifetime the caller guarantees.
             let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
-            jsc::bun_string_jsc::create_utf8_for_js(global_this, bytes)
+            bun_string_jsc::create_utf8_for_js(global_this, bytes)
         }
     }
 }

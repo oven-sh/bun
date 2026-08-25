@@ -385,7 +385,7 @@ impl<'a> URL<'a> {
                 is_http: as_written.is_http(),
             });
         };
-        let is_http = url.protocol().eql_comptime(b"http");
+        let is_http = url.protocol().eq_ascii(b"http");
         // `whatwg::URL::hostname` is the host with its port.
         let mut host_with_path = url.hostname().to_owned_slice();
         let pathname = url.pathname();

@@ -487,9 +487,7 @@ fn dispatch_frame(
             // SAFETY: stream pointer valid for session lifetime.
             let stream = stream_mut(stream_ptr);
             if stream.rst_done {
-                // Only the first RST_STREAM decides the outcome; a later
-                // STREAM_CLOSED for DATA we had in flight must not clobber a
-                // response already completed by RST_STREAM(NO_ERROR).
+                // First RST_STREAM wins; a later STREAM_CLOSED for in-flight DATA is ignored.
                 return;
             }
             let had_response = stream.remote_closed();

@@ -1878,13 +1878,13 @@ impl Package<u64> {
                 // (`PackageManagerEnqueue`): a versionless workspace still
                 // satisfies a wildcard range.
                 let satisfies = match workspace_version {
-                    Some(workspace_version) => dependency_version
-                        .npm()
-                        .version
-                        .satisfies(workspace_version, buf, buf),
-                    None => {
-                        workspace_path.is_some() && dependency_version.npm().version.is_star()
+                    Some(workspace_version) => {
+                        dependency_version
+                            .npm()
+                            .version
+                            .satisfies(workspace_version, buf, buf)
                     }
+                    None => workspace_path.is_some() && dependency_version.npm().version.is_star(),
                 };
                 if pm.options.link_workspace_packages && satisfies {
                     // `String::sliced` takes `&'a self`; bind the unwrapped

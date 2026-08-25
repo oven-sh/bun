@@ -1295,16 +1295,9 @@ impl<'a> BlobReadChain<'a> {
             outer: jsc::JSPromiseStrong::init(global),
         });
         let promise = chain.outer.value();
-        // `read_bytes_to_handler` stores the handler pointer and calls
-        // `on_read_bytes` on the JS thread (sync for in-memory, async for
-        // file/S3). Ownership of the chain transfers there; the trait impl
-        // below reconstructs the Box and frees it.
-        let raw = bun_core::heap::into_raw(chain);
-        // SAFETY: `raw` is freshly leaked and not used again here; the read
-        // dispatch hands it to `on_read_bytes` below exactly once, also when it
-        // returns `Err` (an exception left pending while delivering synchronously,
-        // i.e. after the chain has already been reclaimed).
-        unsafe { blob.read_bytes_to_handler(raw, global) }?;
+        // `on_read_bytes` runs on the JS thread (sync for in-memory, async for
+        // file/S3).
+        blob.read_bytes_to_handler(chain, global)?;
         Ok(promise)
     }
 
@@ -1364,12 +1357,8 @@ impl<'a> BlobReadChain<'a> {
 }
 
 impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) -> JsResult<()> {
-        // SAFETY: `this` is the Box `start()` leaked into `read_bytes_to_handler`,
-        // handed back to us exactly once (trait contract); nothing else points
-        // at it, so reclaiming it here is the chain's one and only free.
-        let boxed = unsafe { bun_core::heap::take(this) };
-        boxed.on_read_bytes_impl(result)
+    fn on_read_bytes(self: Box<Self>, result: ReadBytesResult) -> JsResult<()> {
+        self.on_read_bytes_impl(result)
     }
 }
 

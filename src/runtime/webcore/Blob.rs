@@ -98,22 +98,12 @@ pub enum ReadBytesResult {
     Err(Box<bun_jsc::SystemError>),
 }
 
-/// Handler trait for `read_bytes_to_handler` — the body only requires
-/// `on_read_bytes`.
+/// Handler trait for `read_bytes_to_handler`.
 pub trait ReadBytesHandler {
-    /// Invoked exactly once, on the JS thread, with the `ctx` given to
-    /// `read_bytes_to_handler`; ownership of `*this` comes back to the handler
-    /// here, and a heap-allocated one reclaims itself (`heap::take(this)`).
-    /// That is why the receiver is a raw pointer, as in
-    /// `read_file::ReadFileCompletion::run`: freeing the allocation behind a
-    /// `&mut self` argument is UB under the aliasing model (the argument is
-    /// protected for the whole call), even if `self` is never touched again.
-    /// It may settle promises: an exception it leaves pending is the `Err`.
-    ///
-    /// # Safety
-    /// `this` is the `ctx` passed to `read_bytes_to_handler`, still live, and
-    /// the caller does not use it afterwards.
-    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) -> JsResult<()>;
+    /// Invoked exactly once, on the JS thread, with the handler given to
+    /// `read_bytes_to_handler`. It may settle promises: an exception it leaves
+    /// pending is the `Err`.
+    fn on_read_bytes(self: Box<Self>, result: ReadBytesResult) -> JsResult<()>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -156,24 +146,16 @@ pub trait BlobExt {
         global: &JSGlobalObject,
     ) -> JsResult<JSValue>;
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue;
-    /// # Safety
-    /// `ctx` must be a valid, exclusively-accessible `*mut H`. Ownership of
-    /// `*ctx` passes to the single `H::on_read_bytes(ctx, ..)` this makes
-    /// (synchronously or from the async completion), whatever this returns;
-    /// the caller must not use `ctx` afterwards.
-    unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
+    /// `handler.on_read_bytes` runs once — synchronously or from the async
+    /// completion — whatever this returns.
+    fn read_bytes_to_handler<H: ReadBytesHandler>(
         &self,
-        ctx: *mut H,
+        handler: Box<H>,
         global: &JSGlobalObject,
     ) -> JsResult<()>;
     fn do_image(_this: &Self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue>
     where
         Self: Sized;
-    fn do_read_file_internal<C, F: InternalReadFileFn<C>>(
-        &self,
-        ctx: *mut C,
-        global: &JSGlobalObject,
-    );
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>>;
     fn _on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W)
     -> crate::Result<()>;
@@ -517,49 +499,65 @@ impl BlobExt for Blob {
     /// exception a synchronous delivery left pending, so the handler has
     /// already been consumed in that case too.
     ///
-    /// # Safety
-    /// `ctx` must be a valid, exclusively-accessible `*mut H`. Ownership of
-    /// `*ctx` passes to the single `H::on_read_bytes(ctx, ..)` this makes,
-    /// whatever this returns; the caller must not use `ctx` afterwards.
-    unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
+    fn read_bytes_to_handler<H: ReadBytesHandler>(
         &self,
-        ctx: *mut H,
+        handler: Box<H>,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         if self.needs_to_read_file() {
-            struct Adapter<H>(core::marker::PhantomData<H>);
-            impl<H: ReadBytesHandler> InternalReadFileFn<H> for Adapter<H> {
-                fn call(c: *mut H, r: read_file::ReadFileResultType) -> JsResult<()> {
-                    let result = match r {
-                        read_file::ReadFileResultType::Result(b) => {
-                            // SAFETY: `buf` is `Box::<[u8]>::into_raw` from the
-                            // ReadFile finisher; reclaim ownership here.
-                            let buf = unsafe { bun_core::heap::take(b.buf) };
-                            ReadBytesResult::Ok(buf.into_vec())
-                        }
-                        read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(Box::new(e)),
-                    };
-                    // SAFETY: `c` is the `ctx` handed to `read_bytes_to_handler`,
-                    // and the read completion fires exactly once (`call` or
-                    // `cancel`), so this is its single delivery.
-                    unsafe { H::on_read_bytes(c, result) }
-                }
-                fn cancel(c: *mut H) {
-                    let err = jsc::SystemError {
-                        code: BunString::static_("ECANCELED"),
-                        message: BunString::static_(
-                            "The file read did not complete before its thread stopped",
-                        ),
-                        syscall: BunString::static_("read"),
-                        ..Default::default()
-                    };
-                    // The read's thread stopped; this runs at teardown (the unrun job's release,
-                    // or `JobList::release_all_js`), where what the handler leaves stays pending.
-                    // SAFETY: as for `call`.
-                    let _ = unsafe { H::on_read_bytes(c, ReadBytesResult::Err(Box::new(err))) };
-                }
+            fn run<H: ReadBytesHandler>(
+                ctx: *mut c_void,
+                r: read_file::ReadFileResultType,
+            ) -> JsResult<()> {
+                let result = match r {
+                    read_file::ReadFileResultType::Result(b) => {
+                        // SAFETY: `buf` is `Box::<[u8]>::into_raw` from the
+                        // ReadFile finisher; reclaim ownership here.
+                        let buf = unsafe { bun_core::heap::take(b.buf) };
+                        ReadBytesResult::Ok(buf.into_vec())
+                    }
+                    read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(Box::new(e)),
+                };
+                // SAFETY: `ctx` is the handler boxed below; the completion fires
+                // exactly once (`run` or `cancel`).
+                unsafe { bun_core::heap::take(ctx.cast::<H>()) }.on_read_bytes(result)
             }
-            self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
+            fn cancel<H: ReadBytesHandler>(ctx: *mut c_void) {
+                let err = jsc::SystemError {
+                    code: BunString::static_("ECANCELED"),
+                    message: BunString::static_(
+                        "The file read did not complete before its thread stopped",
+                    ),
+                    syscall: BunString::static_("read"),
+                    ..Default::default()
+                };
+                // The read's thread stopped; this runs at teardown (the unrun job's release,
+                // or `JobList::release_all_js`), where what the handler leaves stays pending.
+                // SAFETY: as for `run`.
+                let _ = unsafe { bun_core::heap::take(ctx.cast::<H>()) }
+                    .on_read_bytes(ReadBytesResult::Err(Box::new(err)));
+            }
+            let completion = read_file::ReadFileCompletionFns {
+                ctx: bun_core::heap::into_raw(handler).cast::<c_void>(),
+                run: run::<H>,
+                cancel: cancel::<H>,
+            };
+            let store = self.store().expect("infallible: store present").clone();
+            #[cfg(windows)]
+            read_file::ReadFileUV::start_with_ctx(
+                global.bun_vm().event_loop(),
+                store,
+                self.offset.get(),
+                self.size.get(),
+                completion,
+            );
+            #[cfg(not(windows))]
+            read_file::ReadFile::schedule(
+                read_file::ReadFile::create(store, self.offset.get(), self.size.get())
+                    .unwrap_or_else(|e| bun_core::handle_oom(Err(e))),
+                completion,
+                global,
+            );
             return Ok(());
         }
         if self.is_s3() {
@@ -576,9 +574,8 @@ impl BlobExt for Blob {
                     self.blob.deinit();
                     let (ctx, on_read_bytes) = (self.ctx, self.on_read_bytes);
                     drop(self);
-                    // SAFETY: `ctx` is the pointer handed to `read_bytes_to_handler`;
-                    // the download callback (and so `done`) runs exactly once, and
-                    // the `Task` that held the pointer is gone.
+                    // SAFETY: `ctx` is the handler boxed in `read_bytes_to_handler`;
+                    // the download callback (and so `done`) runs exactly once.
                     unsafe { on_read_bytes(ctx, r) }
                 }
                 fn cb(
@@ -613,9 +610,11 @@ impl BlobExt for Blob {
                 }
             }
             let mut t = Box::new(Task {
-                ctx: ctx.cast(),
+                ctx: bun_core::heap::into_raw(handler).cast(),
                 // SAFETY: only called with the `ctx` erased on the line above.
-                on_read_bytes: |ctx, r| unsafe { H::on_read_bytes(ctx.cast::<H>(), r) },
+                on_read_bytes: |ctx, r| {
+                    unsafe { bun_core::heap::take(ctx.cast::<H>()) }.on_read_bytes(r)
+                },
                 blob: self.dupe(),
                 poll: bun_io::KeepAlive::default(),
             });
@@ -669,9 +668,7 @@ impl BlobExt for Blob {
         // In-memory or detached.
         let view = self.shared_view();
         let owned = view.to_vec();
-        // SAFETY: `ctx` is this call's handler (fn contract) and this is its
-        // only delivery.
-        unsafe { H::on_read_bytes(ctx, ReadBytesResult::Ok(owned)) }
+        handler.on_read_bytes(ReadBytesResult::Ok(owned))
     }
 
     /// `Bun.file("…").image(opts?)` ≡ `new Bun.Image(this, opts?)`. Lives here so
@@ -682,37 +679,6 @@ impl BlobExt for Blob {
         Image::from_blob_js(global, cf.this(), cf.argument(0))
     }
 
-    fn do_read_file_internal<C, F: InternalReadFileFn<C>>(
-        &self,
-        ctx: *mut C,
-        global: &JSGlobalObject,
-    ) {
-        #[cfg(windows)]
-        {
-            return read_file::ReadFileUV::start_with_ctx(
-                // SAFETY: `bun_vm()` returns the live VM for this global.
-                global.bun_vm().event_loop(),
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                NewInternalReadFileHandler::<C, F>::completion(ctx),
-            );
-        }
-        #[cfg(not(windows))]
-        {
-            let file_read = read_file::ReadFile::create(
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-            )
-            .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            read_file::ReadFile::schedule(
-                file_read,
-                NewInternalReadFileHandler::<C, F>::completion(ctx),
-                global,
-            );
-        }
-    }
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
@@ -3658,40 +3624,6 @@ pub(crate) enum FormDataEntry<'a> {
         blob: &'a mut Blob,
         filename: EncodedSlice<'a>,
     },
-}
-
-/// Carries `Function(ctx, bytes)` at the type level —
-/// a trait impl so `run` can be taken as a
-/// plain `fn(*mut c_void, ReadFileResultType)` thunk, monomorphized per `(C, F)`.
-pub trait InternalReadFileFn<C> {
-    fn call(ctx: *mut C, bytes: read_file::ReadFileResultType) -> JsResult<()>;
-    /// The read will never complete (its VM stopped first): do with `ctx` what its owner needs.
-    fn cancel(ctx: *mut C);
-}
-
-pub(crate) struct NewInternalReadFileHandler<C, F>(core::marker::PhantomData<(C, F)>);
-
-impl<C, F> NewInternalReadFileHandler<C, F>
-where
-    F: InternalReadFileFn<C>,
-{
-    /// The erased `(ctx, run, cancel)` a `ReadFile`/`ReadFileUV` carries for this handler.
-    pub(crate) fn completion(ctx: *mut C) -> read_file::ReadFileCompletionFns {
-        fn run<C, F: InternalReadFileFn<C>>(
-            ctx: *mut c_void,
-            bytes: read_file::ReadFileResultType,
-        ) -> JsResult<()> {
-            F::call(ctx.cast::<C>(), bytes)
-        }
-        fn cancel<C, F: InternalReadFileFn<C>>(ctx: *mut c_void) {
-            F::cancel(ctx.cast::<C>());
-        }
-        read_file::ReadFileCompletionFns {
-            ctx: ctx.cast::<c_void>(),
-            run: run::<C, F>,
-            cancel: cancel::<C, F>,
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

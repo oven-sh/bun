@@ -76,7 +76,7 @@ function debuglogImpl(enabled, set) {
     if (enabled) {
       var pid = process.pid;
       emitWarningIfNeeded(set);
-      debugs[set] = function () {
+      debugs[set] = function debug() {
         var msg = lazyInspectModule().format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };

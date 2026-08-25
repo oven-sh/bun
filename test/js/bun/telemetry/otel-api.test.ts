@@ -14,6 +14,11 @@ async function run(script: string) {
   return { stdout, exitCode };
 }
 
+// A `using span` block that awaits runs with AsyncLocalStorage.enterWith
+// semantics: the test function's caller (the runner) would see the span while
+// the test is suspended. Tests that do that run their body in a scope.
+const scoped = (fn: () => Promise<unknown>) => Bun.otel.contextManager.with(Bun.otel.ROOT_CONTEXT, fn);
+
 // One process-wide pipeline: every test in this file shares the collector.
 const spans: any[] = [];
 function restore() {
@@ -113,6 +118,10 @@ describe("Bun.otel", () => {
     outer.end();
     expect(Bun.otel.activeSpan()).toBe(inner);
     inner.end();
+    // inner restored what it displaced (outer, now ended); outer's own exit() undoes its enter
+    expect(Bun.otel.activeSpan()).toBe(outer);
+    outer.exit();
+    expect(Bun.otel.activeSpan()).toBeUndefined();
     const got = await collect();
     expect(got.find(x => x.name === "next").parentSpanId).toBeUndefined();
     expect(next.ended).toBe(true);
@@ -178,24 +187,25 @@ describe("Bun.otel", () => {
     expect(got.find(s => s.name === "rejects").status.code).toBe(2);
   });
 
-  test("end() from another async frame (timer, Promise.all branch) does not leave the span active in the owning block", async () => {
-    let inTimer: string | undefined, afterBlock: string | undefined, afterWith: string | undefined;
-    {
-      using s = Bun.otel.span("a");
-      setTimeout(() => {
-        s.end();
-        inTimer = Bun.otel.activeSpan()?.name;
-      }, 0);
-      await Bun.sleep(10);
-    }
-    afterBlock = Bun.otel.activeSpan()?.name;
-    const s2 = Bun.otel.span("b");
-    Bun.otel.with(s2, () => s2.end());
-    s2.exit();
-    afterWith = Bun.otel.activeSpan()?.name;
-    expect([inTimer, afterBlock, afterWith]).toEqual([undefined, undefined, undefined]);
-    await collect();
-  });
+  test("end() from another async frame (timer, Promise.all branch) does not leave the span active in the owning block", () =>
+    scoped(async () => {
+      let inTimer: string | undefined, afterBlock: string | undefined, afterWith: string | undefined;
+      {
+        using s = Bun.otel.span("a");
+        setTimeout(() => {
+          s.end();
+          inTimer = Bun.otel.activeSpan()?.name;
+        }, 0);
+        await Bun.sleep(10);
+      }
+      afterBlock = Bun.otel.activeSpan()?.name;
+      const s2 = Bun.otel.span("b");
+      Bun.otel.with(s2, () => s2.end());
+      s2.exit();
+      afterWith = Bun.otel.activeSpan()?.name;
+      expect([inTimer, afterBlock, afterWith]).toEqual([undefined, undefined, undefined]);
+      await collect();
+    }));
 
   test("a span kept past its block does not pin the AsyncLocalStorage stores it was created under once it ends", async () => {
     const { AsyncLocalStorage } = require("node:async_hooks");
@@ -568,28 +578,29 @@ describe("context propagation", () => {
     expect(got.some(s => s.spanId === id)).toBe(true);
   });
 
-  test("survives await, timers, queueMicrotask, process.nextTick, promise chains", async () => {
-    using span = tracer.startActiveSpan("async");
-    await 1;
-    expect(Bun.otel.activeSpan()).toBe(span);
-    await Bun.sleep(1);
-    expect(Bun.otel.activeSpan()).toBe(span);
-    await new Promise<void>(r => setTimeout(r, 1));
-    expect(Bun.otel.activeSpan()).toBe(span);
-    await new Promise<void>(r => setImmediate(r));
-    expect(Bun.otel.activeSpan()).toBe(span);
-    await new Promise<void>(r => queueMicrotask(r));
-    expect(Bun.otel.activeSpan()).toBe(span);
-    await new Promise<void>(r => process.nextTick(r));
-    expect(Bun.otel.activeSpan()).toBe(span);
-    const seen = await Promise.resolve()
-      .then(() => Bun.otel.activeSpan())
-      .then(s => s);
-    expect(seen).toBe(span);
-    // Callback registered while active, fired later.
-    const p = new Promise(resolve => setTimeout(() => resolve(Bun.otel.activeSpan()), 2));
-    expect(await p).toBe(span);
-  });
+  test("survives await, timers, queueMicrotask, process.nextTick, promise chains", () =>
+    scoped(async () => {
+      using span = tracer.startActiveSpan("async");
+      await 1;
+      expect(Bun.otel.activeSpan()).toBe(span);
+      await Bun.sleep(1);
+      expect(Bun.otel.activeSpan()).toBe(span);
+      await new Promise<void>(r => setTimeout(r, 1));
+      expect(Bun.otel.activeSpan()).toBe(span);
+      await new Promise<void>(r => setImmediate(r));
+      expect(Bun.otel.activeSpan()).toBe(span);
+      await new Promise<void>(r => queueMicrotask(r));
+      expect(Bun.otel.activeSpan()).toBe(span);
+      await new Promise<void>(r => process.nextTick(r));
+      expect(Bun.otel.activeSpan()).toBe(span);
+      const seen = await Promise.resolve()
+        .then(() => Bun.otel.activeSpan())
+        .then(s => s);
+      expect(seen).toBe(span);
+      // Callback registered while active, fired later.
+      const p = new Promise(resolve => setTimeout(() => resolve(Bun.otel.activeSpan()), 2));
+      expect(await p).toBe(span);
+    }));
 
   test("a `using` span in an async function's synchronous prefix has AsyncLocalStorage.enterWith semantics: active inside the function across awaits, and left active in the caller's frame", async () => {
     async function* agen() {
@@ -610,9 +621,12 @@ describe("context propagation", () => {
     // the caller sees the span until its own context is next restored. The
     // callback forms (span(name, fn), wrap, startActiveSpan(name, fn)) scope
     // it lexically instead.
-    const p1 = plain();
-    expect(Bun.otel.activeSpan()?.name).toBe("plain");
-    expect(await p1).toBe(true);
+    await scoped(async () => {
+      const p1 = plain();
+      expect(Bun.otel.activeSpan()?.name).toBe("plain");
+      expect(await p1).toBe(true);
+    });
+    expect(Bun.otel.activeSpan()).toBeUndefined();
     const p2 = Bun.otel.span("scoped", async () => forAwaitAsyncGen());
     expect(Bun.otel.activeSpan()?.name).not.toBe("fa");
     expect(await p2).toBe(true);
@@ -650,54 +664,57 @@ describe("context propagation", () => {
     expect(Bun.otel.activeSpan()).toBeUndefined();
   });
 
-  test("coexists with AsyncLocalStorage in both nesting orders", async () => {
-    const als = new AsyncLocalStorage<string>();
-    // span outside, ALS inside
-    await tracer.startActiveSpan("outer", async span => {
-      await als.run("v1", async () => {
-        expect(als.getStore()).toBe("v1");
-        expect(Bun.otel.activeSpan()).toBe(span);
-        await Bun.sleep(1);
-        expect(als.getStore()).toBe("v1");
-        expect(Bun.otel.activeSpan()).toBe(span);
-        // span inside ALS inside span
-        await tracer.startActiveSpan("inner", async inner => {
+  test("coexists with AsyncLocalStorage in both nesting orders", () =>
+    scoped(async () => {
+      const als = new AsyncLocalStorage<string>();
+      // span outside, ALS inside
+      await tracer.startActiveSpan("outer", async span => {
+        await als.run("v1", async () => {
           expect(als.getStore()).toBe("v1");
-          expect(Bun.otel.activeSpan()).toBe(inner);
-          await 1;
+          expect(Bun.otel.activeSpan()).toBe(span);
+          await Bun.sleep(1);
           expect(als.getStore()).toBe("v1");
-          expect(Bun.otel.activeSpan()).toBe(inner);
-          inner.end();
+          expect(Bun.otel.activeSpan()).toBe(span);
+          // span inside ALS inside span
+          await tracer.startActiveSpan("inner", async inner => {
+            expect(als.getStore()).toBe("v1");
+            expect(Bun.otel.activeSpan()).toBe(inner);
+            await 1;
+            expect(als.getStore()).toBe("v1");
+            expect(Bun.otel.activeSpan()).toBe(inner);
+            inner.end();
+          });
+          expect(Bun.otel.activeSpan()).toBe(span);
+          expect(als.getStore()).toBe("v1");
         });
+        expect(als.getStore()).toBeUndefined();
         expect(Bun.otel.activeSpan()).toBe(span);
-        expect(als.getStore()).toBe("v1");
+        span.end();
       });
-      expect(als.getStore()).toBeUndefined();
-      expect(Bun.otel.activeSpan()).toBe(span);
-      span.end();
-    });
-    expect(Bun.otel.activeSpan()).toBeUndefined();
+      expect(Bun.otel.activeSpan()).toBeUndefined();
 
-    // ALS outside, span inside, then a second ALS
-    const als2 = new AsyncLocalStorage<number>();
-    await als.run("v2", async () => {
-      using span = tracer.startActiveSpan("in-als");
-      expect(als.getStore()).toBe("v2");
-      await als2.run(9, async () => {
-        await 1;
+      // ALS outside, span inside, then a second ALS
+      const als2 = new AsyncLocalStorage<number>();
+      await als.run("v2", async () => {
+        using span = tracer.startActiveSpan("in-als");
         expect(als.getStore()).toBe("v2");
-        expect(als2.getStore()).toBe(9);
+        await als2.run(9, async () => {
+          await 1;
+          expect(als.getStore()).toBe("v2");
+          expect(als2.getStore()).toBe(9);
+          expect(Bun.otel.activeSpan()).toBe(span);
+        });
+        expect(als2.getStore()).toBeUndefined();
+        expect(Bun.otel.activeSpan()).toBe(span);
+        als.enterWith("v3");
+        expect(als.getStore()).toBe("v3");
         expect(Bun.otel.activeSpan()).toBe(span);
       });
-      expect(als2.getStore()).toBeUndefined();
-      expect(Bun.otel.activeSpan()).toBe(span);
-      als.enterWith("v3");
-      expect(als.getStore()).toBe("v3");
-      expect(Bun.otel.activeSpan()).toBe(span);
-    });
-    expect(Bun.otel.activeSpan()).toBeUndefined();
-    await collect();
-  });
+      // `als.run` puts its own store back but, like enterWith, leaves the span
+      // the callback's `using` activated in this frame (it suspended inside it).
+      expect(Bun.otel.activeSpan()?.name).toBe("in-als");
+      await collect();
+    }));
 
   test("Bun.otel.with(span, fn)", () => {
     const span = tracer.startSpan("with");

@@ -303,7 +303,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     using c = collector(i => (n++, i === 0 ? undefined : new Response("busy", { status: 503 })));
     const { stdout, exitCode } = await run(
       `
-        Bun.otel.start({ endpoint: process.env.COLLECTOR, batch: { delayMs: 10 } });
+        Bun.otel.start({ endpoint: process.env.COLLECTOR, batch: { delayMs: 10 }, instrumentations: [] });
         Bun.otel.tracer("t").startSpan("first").end();
         await Bun.otel.forceFlush();
         Bun.otel.tracer("t").startSpan("second").end();
@@ -672,7 +672,9 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     );
     expect(stdout.trim()).toBe("25");
     expect(
-      c.received.map(r => r.body.resourceSpans[0].scopeSpans.reduce((n: number, s: any) => n + s.spans.length, 0)),
+      c.received
+        .map(r => r.body.resourceSpans[0].scopeSpans.reduce((n: number, s: any) => n + s.spans.length, 0))
+        .sort((a: number, b: number) => b - a),
     ).toEqual([10, 10, 5]);
     expect(exitCode).toBe(0);
   });

@@ -49,8 +49,8 @@ pub fn traces_endpoint(base: &str) -> String {
 /// `Bun.otel.start({ endpoint })` / bunfig `endpoint`: a bare collector base
 /// URL (no path) gets `/v1/traces`; a URL with a path is used as-is.
 pub fn normalize_traces_url(url: &str) -> String {
-    let after_scheme = url.find("://").map_or(0, |i| i + 3);
-    match url[after_scheme..].find('/') {
+    let after_scheme = bun_core::strings::index_of(url.as_bytes(), b"://").map_or(0, |i| i as usize + 3);
+    match bun_core::strings::index_of_char(&url.as_bytes()[after_scheme..], b'/').map(|i| i as usize) {
         None => traces_endpoint(url),
         Some(i) if url[after_scheme + i..].trim_end_matches('/').is_empty() => traces_endpoint(url),
         Some(_) => url.to_string(),

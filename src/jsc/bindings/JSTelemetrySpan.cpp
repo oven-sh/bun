@@ -591,18 +591,15 @@ bool telemetrySpanSetAttributes(Zig::GlobalObject* globalObject, JSTelemetrySpan
     return true;
 }
 
-// `exit()` / `[Symbol.dispose]`: undo `enter()` in this async frame (only if
-// the span is what is active here — another frame's `end()` may have already
-// restored this one, or a later span may be active) and disarm.
+// `exit()` / `[Symbol.dispose]` / the end of `span(name, fn)`: put back what
+// `enter()` displaced in this frame — like leaving `AsyncLocalStorage.run`,
+// whatever a callee entered and left behind goes too — and disarm.
 void telemetryExitSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span)
 {
     JSValue prev = span->get(JSTelemetrySpan::Field::Restore);
     if (!prev)
         return;
-    auto current = TelemetryContextSlot::current(globalObject);
-    bool isActive = current.header == JSValue(span) || (span->m_native && current.poolHandle() == span->m_native);
-    if (isActive)
-        Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
+    Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
     span->field(JSTelemetrySpan::Field::Restore).setWithoutWriteBarrier(JSValue());
 }
 static ALWAYS_INLINE void exitSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span) { telemetryExitSpan(globalObject, span); }

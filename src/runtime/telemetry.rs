@@ -1110,6 +1110,12 @@ pub(crate) fn resolve_flush_waiters() {
     if s.flush_waiters.borrow().is_empty() {
         return;
     }
+    // Payloads a flush is waiting on skip their backoff: a live collector gets
+    // the retry now, a dead one exhausts its attempts quickly instead of
+    // holding the flush (and process exit) for the whole backoff schedule.
+    if let Some(newest) = s.flush_waiters.borrow().iter().map(|(t, _)| *t).max() {
+        processor().retry_older_than(newest);
+    }
     let oldest = processor().oldest_outstanding();
     let ready: Vec<bun_jsc::JSPromiseStrong> = {
         let mut waiters = s.flush_waiters.borrow_mut();

@@ -93,7 +93,9 @@ pub fn end_message(
                     // The handler's own promise is what the caller keeps; the
                     // derived one only ends the span (its rejection is the
                     // handler's, reported through the caller's promise).
-                    derived.as_any_promise().map(|p| p.set_handled(global.vm()));
+                    if let Some(p) = derived.as_any_promise() {
+                        p.set_handled(global.vm());
+                    }
                     return Ok(true);
                 }
             }

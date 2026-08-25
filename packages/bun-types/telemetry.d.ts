@@ -232,19 +232,6 @@ declare module "bun" {
       timeoutMs?: number | undefined;
     }
 
-    /** Vendor region / site / zone. */
-      site?: string | undefined;
-      /** Second identifier where the vendor needs one (dataset, instance id, environment id). */
-      id?: string | undefined;
-      /** Override the derived endpoint (base URL; `/v1/traces` is appended). */
-      endpoint?: string | undefined;
-      /** Extra request headers merged over the preset's. */
-      headers?: Record<string, string> | undefined;
-      /** @default "gzip" */
-      compression?: "gzip" | "none" | undefined;
-      timeoutMs?: number | undefined;
-    }
-
     /**
      * A decoded span as handed to a function exporter (and returned by
      * {@link otel.decode}). Times are Unix epoch milliseconds with

@@ -300,6 +300,10 @@ impl Processor {
             due_ns,
         });
         self.finish_one();
+        // A forceFlush() waiting on this payload stops waiting once it is parked.
+        for (_, h) in self.idle_hooks.read().iter() {
+            h();
+        }
     }
 
     /// Send parked retries now instead of at their backoff deadline (`forceFlush()`).
@@ -538,7 +542,7 @@ impl Processor {
         self.next_seq.load(Ordering::Acquire)
     }
 
-    /// Oldest payload not yet settled by every exporter, if any.
+    /// Oldest payload not yet settled by every exporter (in flight or parked).
     pub fn oldest_outstanding(&self) -> Option<u64> {
         self.outstanding.lock().iter().copied().min()
     }

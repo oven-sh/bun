@@ -879,6 +879,7 @@ describe("Bun.Image", () => {
           expect(dv.getUint16(0)).not.toBe(2);
           expect(dv.getUint16(0)).not.toBe(1);
           expect(dv.getUint16(2)).not.toBe(2);
+          expect(dv.getUint16(4)).not.toBe(2); // matrix coefficients
         }
       },
     );
@@ -906,6 +907,7 @@ describe("Bun.Image", () => {
             primaries: 1,
             transfer: 13,
           });
+          expect(dv.getUint16(4)).not.toBe(2); // matrix coefficients
         } else {
           // No nclx — then an ICC `colr` must define the colour space.
           expect(colrs.some(c => c.type === "prof" || c.type === "rICC")).toBe(true);

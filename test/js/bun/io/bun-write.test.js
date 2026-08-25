@@ -1112,6 +1112,18 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
       );
       reader.releaseLock();
+      // Also when the whole body is already here.
+      const small = new Response("hello");
+      const smallReader = small.body.getReader();
+      await expect(Bun.write(join(String(dir), "s"), small)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      expect(await smallReader.read().then(r => r.value.byteLength)).toBe(5);
+      // A destination that cannot be opened leaves the body usable.
+      const retry = await fetch(server.url);
+      await expect(Bun.write(String(dir), retry)).rejects.toThrow();
+      expect(retry.bodyUsed).toBe(false);
+      expect((await retry.arrayBuffer()).byteLength).toBe(CHUNK * COUNT);
       await expect(
         Bun.write(join(String(dir), "missing", "c"), await fetch(server.url), { createPath: false }),
       ).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));

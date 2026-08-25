@@ -474,7 +474,7 @@ impl FileSink {
                 if status == WriteStatus::EndOfFile {
                     (*this).writer.with_mut(|w| w.close());
                 } else {
-                    (*this).writer.with_mut(|w| w.end());
+                    (*this).end_writer();
                 }
             }
 
@@ -555,6 +555,16 @@ impl FileSink {
             // thing we do as it may free `this`.
             FileSink::clear_keep_alive_ref(this);
         }
+    }
+
+    /// `writer.end()`; `on_close` follows and may free `self`, except (Windows) for an fd the writer
+    /// does not own, which is never closed: settle a piped stream here then.
+    fn end_writer(&self) {
+        #[cfg(windows)]
+        if !self.writer.get().owns_fd {
+            self.settle_stream_done();
+        }
+        self.writer.with_mut(|w| w.end());
     }
 
     fn settle_stream_done(&self) {
@@ -1173,6 +1183,8 @@ impl FileSink {
             self.source.with_mut(|s| s.clear());
         }
         let errored = err.is_some();
+        // A failed `write()` recorded its error before the source called back here.
+        let write_failed = self.stream_error.get().is_some();
         let sys_err = match &err {
             Some(streams::StreamError::Error(e)) => Some(e.clone()),
             _ => None,
@@ -1193,8 +1205,10 @@ impl FileSink {
         let readable_stream = self
             .readable_stream
             .replace(readable_stream::Strong::default());
-        if let (Some(stream), Some(global)) = (readable_stream.get(), self.js_global()) {
-            crate::dispatch::fold(stream.cancel(global));
+        if write_failed {
+            if let (Some(stream), Some(global)) = (readable_stream.get(), self.js_global()) {
+                crate::dispatch::fold(stream.cancel(global));
+            }
         }
         self.writer.with_mut(|w| w.close());
     }
@@ -1216,11 +1230,11 @@ impl FileSink {
         match self.writer.with_mut(|w| w.flush()) {
             WriteResult::Done(written) | WriteResult::Wrote(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
-                self.writer.with_mut(|w| w.end());
                 if has_pending {
                     // `to_result` already seeded `Owned(consumed)`; just deliver it.
                     self.run_pending_later();
                 }
+                self.end_writer();
                 sys::Result::Ok(())
             }
             WriteResult::Err(e) => {
@@ -1229,11 +1243,11 @@ impl FileSink {
                 if has_pending {
                     self.pending
                         .with_mut(|p| p.result = streams::Writable::Err(e));
-                    self.writer.with_mut(|w| w.end());
                     self.run_pending_later();
+                    self.end_writer();
                     return sys::Result::Ok(());
                 }
-                self.writer.with_mut(|w| w.end());
+                self.end_writer();
                 sys::Result::Err(e)
             }
             WriteResult::Pending(written) => {

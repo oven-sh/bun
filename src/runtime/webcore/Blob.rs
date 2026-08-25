@@ -5053,6 +5053,20 @@ pub(crate) fn write_file_internal(
             // `body_value` is `&mut Body::Value` from a live JS heap
             // Response/Request `m_ctx`, held raw so every borrow below is
             // scoped and none spans the JS-running calls in the arms.
+            // A stream someone holds a reader on, or has read from, is theirs.
+            let existing = get_stream().or_else(|| {
+                // SAFETY: scoped exclusive borrow; runs no JS.
+                match unsafe { &mut *body_value } {
+                    BodyValue::Locked(locked) => locked.readable.get(),
+                    _ => None,
+                }
+            });
+            if let Some(readable) = existing {
+                if readable.is_locked(global_this) || readable.is_disturbed(global_this) {
+                    destination_blob.detach();
+                    return Ok(ControlFlow::Break(body_used_rejection(global_this)));
+                }
+            }
             // A body that is all here (also behind an untouched `.body` stream) is written as a blob.
             // SAFETY: scoped exclusive borrow; runs no JS.
             unsafe { (*body_value).to_blob_if_possible() };
@@ -5169,18 +5183,20 @@ pub(crate) fn write_file_internal(
                         // SAFETY: scoped; `to_readable_stream` may have replaced the value.
                         let body = unsafe { &*body_value };
                         if let (Some(readable), BodyValue::Locked(_)) = (readable, body) {
-                            if readable.is_locked(global_this) || readable.is_disturbed(global_this)
-                            {
-                                destination_blob.detach();
-                                return Ok(ControlFlow::Break(body_used_rejection(global_this)));
-                            }
                             let promise = destination_blob.pipe_readable_stream_to_blob(
                                 global_this,
                                 readable,
                                 &options,
                             )?;
-                            // SAFETY: scoped exclusive write; the stream now belongs to the sink.
-                            unsafe { *body_value = BodyValue::Used };
+                            // The destination could not be opened: the stream was not touched and
+                            // is still the body's.
+                            let failed = promise.as_any_promise().is_some_and(|p| {
+                                matches!(p.status(), jsc::js_promise::Status::Rejected)
+                            });
+                            if !failed {
+                                // SAFETY: scoped exclusive write; the stream now belongs to the sink.
+                                unsafe { *body_value = BodyValue::Used };
+                            }
                             return Ok(ControlFlow::Break(promise));
                         }
                         // The producer settled the body while the stream was being made.

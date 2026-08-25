@@ -1,15 +1,7 @@
-//! An owned copy of an HTTP/1 request head: the request target and the header
-//! fields, in wire order.
-//!
-//! `Bun.serve` reads `Request.url` and `Request.headers` from the uWS request
-//! the first time JS asks for them. That request lives on the dispatch stack,
-//! so it is gone once the handler returns and the response is sent. When the
-//! dispatch ends before JS read them (a handler that returns a `Response`
-//! synchronously and logs `req.headers` from a `setTimeout`, for example), the
-//! server copies the head into a [`RequestHeadSnapshot`] and the getters read
-//! from that instead. Building a `FetchHeaders` is deferred to the first read,
-//! so the per-request cost for the common case (nobody reads them) is one
-//! allocation and one copy of the wire bytes.
+//! An owned copy of an HTTP/1 request head (target and header fields), taken
+//! when the uWS request a `Bun.serve` `Request` reads `url`/`headers` from is
+//! about to leave the stack. Parsing into a `FetchHeaders` waits for the first
+//! read, so a request nobody reads costs one allocation and one memcpy.
 
 use bun_core::strings;
 use bun_picohttp::Header as PicoHeader;
@@ -18,8 +10,7 @@ use bun_uws::Request as UwsRequest;
 use crate::webcore::FetchHeaders;
 use crate::webcore::response::HeadersRef;
 
-/// One allocation, filled by `uws_req_copy_head` (src/uws_sys/libuwsockets.cpp):
-/// a native-endian `u32` index, then the wire bytes the index points into.
+/// Filled by `uws_req_copy_head` (src/uws_sys/libuwsockets.cpp), native-endian:
 ///
 /// ```text
 /// u32 count                   header fields
@@ -56,8 +47,7 @@ impl RequestHeadSnapshot {
         (0..self.u32(0)).map(move |i| (self.view(3 + 4 * i), self.view(5 + 4 * i)))
     }
 
-    /// The value of the first field named `lowercase_name` (ASCII case-insensitive),
-    /// like `uws::Request::header`.
+    /// The first field named `lowercase_name`, ASCII case-insensitive.
     pub(crate) fn header(&self, lowercase_name: &[u8]) -> Option<&[u8]> {
         self.headers()
             .find(|(name, _)| {

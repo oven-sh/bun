@@ -91,11 +91,9 @@ impl Request {
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
 
-    /// Copies the request target and every header field (wire order, wire
-    /// casing) into `dest`, in the layout `uws_req_copy_head` documents in
-    /// libuwsockets.cpp. Returns the size the copy needs. When that is more
-    /// than `dest.len()`, nothing is written; call again with a buffer of the
-    /// returned size.
+    /// Copies the request target and header fields into `dest` (layout: see
+    /// `RequestHeadSnapshot`). Returns the size needed; writes nothing when
+    /// `dest` is smaller than that.
     pub fn copy_head(&self, dest: &mut [core::mem::MaybeUninit<u8>]) -> usize {
         // SAFETY: the shim writes at most `dest.len()` bytes, into `dest`.
         unsafe { c::uws_req_copy_head(self, dest.as_mut_ptr().cast::<u8>(), dest.len()) }

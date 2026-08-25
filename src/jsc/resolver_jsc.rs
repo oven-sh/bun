@@ -26,7 +26,7 @@ fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
 extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
     crate::mark_binding!();
 
-    node_module_paths_js_value(&BunString::static_(b"."), global, false)
+    node_module_paths_js_value(&BunString::static_("."), global, false)
 }
 
 // C++ callers pass a borrowed `const BunString*` (`Bun::toString`).
@@ -38,11 +38,11 @@ extern "C" fn node_module_paths_js_value(
 ) -> JSValue {
     let mut list: Vec<bun_core::String> = Vec::new();
 
-    let sliced = in_str.to_utf8();
+    let utf8 = in_str.to_utf8();
     let base_path: &[u8] = if use_dirname {
-        resolve_path::dirname::<bun_paths::platform::Auto>(sliced.slice())
+        resolve_path::dirname::<bun_paths::platform::Auto>(utf8.slice())
     } else {
-        sliced.slice()
+        utf8.slice()
     };
     let mut buf = bun_paths::path_buffer_pool::get();
 

@@ -5,10 +5,11 @@ use core::ptr::NonNull;
 
 use bun_ptr::ParentRef;
 
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
@@ -102,7 +103,8 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     let arguments = callframe.arguments_as_array::<2>();
 
     let data_view;
-    let data: ZigStringSlice = 'blk: {
+    let data_buffer;
+    let data: Utf8Bytes = 'blk: {
         let data: JSValue = arguments[0];
 
         if callframe.arguments_count() < 1 {
@@ -128,7 +130,8 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
                 )
                 .throw());
         };
-        break 'blk ZigStringSlice::from_utf8_never_free(buffer.byte_slice());
+        data_buffer = buffer;
+        break 'blk Utf8Bytes::Borrowed(data_buffer.byte_slice());
     };
 
     let value: u32 = 'blk: {
@@ -852,7 +855,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
-        let msg_value = match jsc::bun_string_jsc::create_utf8_for_js(global_this, msg_bytes) {
+        let msg_value = match bun_string_jsc::create_utf8_for_js(global_this, msg_bytes) {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -864,7 +867,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
-        let code_value = match jsc::bun_string_jsc::create_utf8_for_js(global_this, code_bytes) {
+        let code_value = match bun_string_jsc::create_utf8_for_js(global_this, code_bytes) {
             Ok(v) => v,
             Err(_) => return,
         };

@@ -72,6 +72,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         const entries = fs.readdirSync(root, { withFileTypes: true });
         const byName: Record<string, { isDir: boolean; isFile: boolean }> = {};
         for (const e of entries) byName[e.name] = { isDir: e.isDirectory(), isFile: e.isFile() };
+        const recursiveDirents = fs.readdirSync(root, { withFileTypes: true, recursive: true });
+        const appCss = recursiveDirents.find(e => e.name === "app.css");
         const indexHtml = path.join(root, "index.html");
         const nestedCss = path.join(root, "_app", "immutable", "app.css");
         const client = {
@@ -88,6 +90,11 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readFileDirErr: errcode(() => fs.readFileSync(root)),
           recursive: fs.readdirSync(root, { recursive: true }).map(String).sort(),
           recursiveAsync: (await fs.promises.readdir(root, { recursive: true })).map(String).sort(),
+          // parentPath is the caller's string verbatim (no platform normalization)
+          parentPaths: [...new Set(entries.map(e => e.parentPath))],
+          nestedParentPath: appCss?.parentPath,
+          emptyFile: fs.readFileSync(path.join(root, "empty.txt"), "utf8"),
+          emptyFileBuffer: fs.readFileSync(path.join(root, "empty.txt")).length,
           embeddedFileCount: Bun.embeddedFiles.length,
         };
 
@@ -95,6 +102,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         const missing = path.join(import.meta.dir, "does-not-exist");
         const enoent = {
           code: errcode(() => fs.readdirSync(missing)),
+          path: (() => { try { fs.readdirSync(missing); } catch (e: any) { return e.path; } })(),
           exists: fs.existsSync(missing),
         };
 
@@ -106,10 +114,11 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readdirCode: errcode(() => fs.readdirSync(cfg)),
         };
 
-        console.log(JSON.stringify({ fileLoader, client, enoent, singleFile }));
+        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile }));
       `,
         "data.txt": "hello",
         "client/index.html": "<!doctype html><h1>hi</h1>",
+        "client/empty.txt": "",
         "client/favicon.svg": "<svg/>",
         "client/_app/immutable/app.css": "body{margin:0}",
         "client/_app/immutable/chunks/entry.js": "export default 1;",
@@ -127,6 +136,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         join("_app", "immutable", "app.css"),
         join("_app", "immutable", "chunks"),
         join("_app", "immutable", "chunks", "entry.js"),
+        "empty.txt",
         "favicon.svg",
         "index.html",
       ].sort();
@@ -146,9 +156,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         },
         client: {
           root: expect.stringMatching(/[/\\]root[/\\]client$/),
-          entries: ["_app", "favicon.svg", "index.html"],
+          entries: ["_app", "empty.txt", "favicon.svg", "index.html"],
           byName: {
             _app: { isDir: true, isFile: false },
+            "empty.txt": { isDir: false, isFile: true },
             "favicon.svg": { isDir: false, isFile: true },
             "index.html": { isDir: false, isFile: true },
           },
@@ -162,15 +173,20 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readFileDirErr: "EISDIR",
           recursive: expectedRecursive,
           recursiveAsync: expectedRecursive,
+          parentPaths: [r.client.root],
+          nestedParentPath: join(r.client.root, "_app", "immutable"),
+          emptyFile: "",
+          emptyFileBuffer: 0,
           embeddedFileCount: expect.any(Number),
         },
-        enoent: { code: "ENOENT", exists: false },
+        enoent: { code: "ENOENT", path: r.missing, exists: false },
+        missing: expect.stringMatching(/[/\\]root[/\\]does-not-exist$/),
         singleFile: { exists: true, content: `{"ok":true}`, readdirCode: "ENOTDIR" },
       });
       // recursive uses the platform path separator (same as Node's real-fs recursive readdir)
       expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
-      // data.txt + config.json + 4 under client/
-      expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(6);
+      // data.txt + config.json + 5 under client/
+      expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(7);
       expect(code).toBe(0);
     },
     TIMEOUT,

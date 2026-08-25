@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{MutableString, String as BunString, ZigStringSlice};
+use bun_core::{MutableString, String as BunString, Utf8Bytes};
 use bun_event_loop::{
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
     Task, Taskable,
@@ -17,6 +17,7 @@ use bun_http::{
     Signals, ThreadSafeStreamBuffer,
 };
 use bun_io::KeepAlive;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
 use bun_sys::FdExt;
@@ -1205,7 +1206,7 @@ impl FetchTasklet {
                             return false;
                         }
                     };
-                    let js_hostname: JSValue = match bun_jsc::bun_string_jsc::create_utf8_for_js(
+                    let js_hostname: JSValue = match bun_string_jsc::create_utf8_for_js(
                         &global_object,
                         &certificate_info.hostname,
                     ) {
@@ -1792,7 +1793,7 @@ impl FetchTasklet {
         // RELEASE_ASSERT in AtomStringImpl::remove(). Plain WTFStringImpl
         // refcounts are atomic, so clone_utf8 is safe.
         // Fast path: when the wire reason phrase matches the canonical text for
-        // this status code, store a StaticZigString (deref is a no-op, so still
+        // this status code, store a StaticEncodedSlice (deref is a no-op, so still
         // safe to drop off-thread) and skip the WTF allocation entirely.
         let status_text = match crate::server::http_status_text::get(status_code)
             .map(|t| &t[4..])
@@ -2638,7 +2639,7 @@ pub struct FetchOptions {
     // Custom Hostname
     pub(crate) hostname: Option<Box<[u8]>>,
     pub(crate) check_server_identity: StrongOptional,
-    pub(crate) unix_socket_path: ZigStringSlice,
+    pub(crate) unix_socket_path: Utf8Bytes<'static>,
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) upgraded_connection: bool,
     pub(crate) forced_protocol: Option<http::Protocol>,

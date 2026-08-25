@@ -289,7 +289,10 @@ fn flush_at_exit(vm: Option<&mut bun_jsc::VirtualMachineRef>, reload: bool) {
             // A JS exporter callback above may have recorded spans and re-armed the timer.
             s.disarm_timer();
         }
-        None if is_main && configured() && !MAIN_FLUSHED.swap(true, core::sync::atomic::Ordering::Relaxed) => {
+        None if is_main
+            && configured()
+            && !MAIN_FLUSHED.swap(true, core::sync::atomic::Ordering::Relaxed) =>
+        {
             // Main thread never touched telemetry (a worker did): still the one
             // place the process can block for the final export.
             processor().shutdown_blocking();
@@ -307,8 +310,10 @@ impl VmState {
         let global = self.global();
         let cell = {
             let mut s = self.suppressor.borrow_mut();
-            s.get_or_insert_with(|| bun_jsc::Strong::create(span::suppressed_carrier_cell(global), global))
-                .get()
+            s.get_or_insert_with(|| {
+                bun_jsc::Strong::create(span::suppressed_carrier_cell(global), global)
+            })
+            .get()
         };
         Entered::new(global, cell)
     }
@@ -1066,7 +1071,10 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
     processor().export();
     processor().retry_now();
-    if processor().inflight() == 0 && processor().pending_retries() == 0 && processor().pending_count() == 0 {
+    if processor().inflight() == 0
+        && processor().pending_retries() == 0
+        && processor().pending_count() == 0
+    {
         return Ok(bun_jsc::JSPromise::resolved_promise_value(
             global,
             JSValue::UNDEFINED,
@@ -1128,7 +1136,12 @@ pub fn export_settled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let ticket = frame.argument(1).as_number() as u64;
     let ok = frame.argument(2).to_boolean();
     if let Some(s) = vm_state(global) {
-        let found = s.js_exporters.borrow().iter().find(|e| e.id == exporter_id).cloned();
+        let found = s
+            .js_exporters
+            .borrow()
+            .iter()
+            .find(|e| e.id == exporter_id)
+            .cloned();
         if let Some(e) = found {
             e.export_settled(ticket, ok);
         }

@@ -787,10 +787,19 @@ mod redact_tests {
 
     #[test]
     fn bare_query_is_never_reparsed_as_a_url() {
-        assert_eq!(&*redact_query(b"redirect_uri=https://app.example.com&sig=SECRET"), b"redirect_uri=https://app.example.com&sig=REDACTED");
-        assert_eq!(&*redact_query(b"sig=SECRET&next=/a?b=c"), b"sig=REDACTED&next=/a?b=c");
+        assert_eq!(
+            &*redact_query(b"redirect_uri=https://app.example.com&sig=SECRET"),
+            b"redirect_uri=https://app.example.com&sig=REDACTED"
+        );
+        assert_eq!(
+            &*redact_query(b"sig=SECRET&next=/a?b=c"),
+            b"sig=REDACTED&next=/a?b=c"
+        );
         assert_eq!(&*redact_query(b"a=1&b=2"), b"a=1&b=2");
-        assert!(matches!(redact_query(b"a=1"), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(
+            redact_query(b"a=1"),
+            std::borrow::Cow::Borrowed(_)
+        ));
     }
 
     #[test]
@@ -799,7 +808,13 @@ mod redact_tests {
             &*redact_url(b"https://s3/x?X-Amz-Date=1&X-Amz-Signature=abc&X-Amz-Credential=c&X-Amz-Security-Token=t#frag"),
             b"https://s3/x?X-Amz-Date=1&X-Amz-Signature=REDACTED&X-Amz-Credential=REDACTED&X-Amz-Security-Token=REDACTED#frag"
         );
-        assert!(matches!(redact_url(b"https://h/p?q=1"), std::borrow::Cow::Borrowed(_)));
-        assert!(matches!(redact_url(b"https://h/p"), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(
+            redact_url(b"https://h/p?q=1"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            redact_url(b"https://h/p"),
+            std::borrow::Cow::Borrowed(_)
+        ));
     }
 }

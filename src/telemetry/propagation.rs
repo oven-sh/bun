@@ -111,7 +111,11 @@ mod tests {
     #[test]
     fn tracestate_truncates_whole_entries() {
         assert_eq!(tracestate_bounded(b"a=1,b=2"), Some(&b"a=1,b=2"[..]));
-        let long: Vec<u8> = (0..40).map(|i| format!("k{i}=v")).collect::<Vec<_>>().join(",").into_bytes();
+        let long: Vec<u8> = (0..40)
+            .map(|i| format!("k{i}=v"))
+            .collect::<Vec<_>>()
+            .join(",")
+            .into_bytes();
         let kept = tracestate_bounded(&long).unwrap();
         assert_eq!(bun_core::strings::split(kept, b",").count(), 32);
         assert!(kept.starts_with(b"k0=v,") && kept.ends_with(b"k31=v"));

@@ -24,13 +24,19 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
     if active_stub.is_some_and(|s| s.ctx.flags.suppressed()) {
         return SpanStub::NONE;
     }
-    let active = active_stub.map(|s| s.ctx).filter(bun_telemetry::SpanContext::is_valid);
+    let active = active_stub
+        .map(|s| s.ctx)
+        .filter(bun_telemetry::SpanContext::is_valid);
     if active.is_none() && !bun_telemetry::allows_root(Instrument::HttpClient) {
         // "nested": only under an active span (a caller-set header is not one).
         return SpanStub::NONE;
     }
     let from_caller = active.is_none();
-    let parent_ctx = active.or_else(|| headers.get(b"traceparent").and_then(propagation::parse_traceparent));
+    let parent_ctx = active.or_else(|| {
+        headers
+            .get(b"traceparent")
+            .and_then(propagation::parse_traceparent)
+    });
     let Some(mut l) = local(global) else {
         return SpanStub::NONE;
     };

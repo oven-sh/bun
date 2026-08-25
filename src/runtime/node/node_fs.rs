@@ -1065,7 +1065,12 @@ mod _async_tasks {
         } )+
     };
 }
-    impl_fs_argument!(args::FdVectorIo, args::FTruncate, args::Write<'static>, args::Read);
+    impl_fs_argument!(
+        args::FdVectorIo,
+        args::FTruncate,
+        args::Write<'static>,
+        args::Read
+    );
     impl_fs_argument!(@path
         args::Rename<'static>,
         args::Truncate<'static>,

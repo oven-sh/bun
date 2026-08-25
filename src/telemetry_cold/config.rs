@@ -313,7 +313,9 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     } else if let Some(v) = get("OTEL_EXPORTER_OTLP_ENDPOINT") {
         Some(traces_endpoint(&s(&v)))
     } else {
-        bunfig.and_then(|b| b.endpoint.as_deref()).map(traces_endpoint)
+        bunfig
+            .and_then(|b| b.endpoint.as_deref())
+            .map(traces_endpoint)
     };
     let mut env_headers = bunfig.map(|b| b.headers.clone()).unwrap_or_default();
     for (k, val) in get("OTEL_EXPORTER_OTLP_HEADERS")
@@ -567,14 +569,28 @@ mod tests {
     #[test]
     fn preset_combined_with_otel_env() {
         // none wins over a preset
-        let e = env(&[("BUN_OTEL", "1"), ("BUN_OTEL_EXPORTER", "datadog"), ("DD_API_KEY", "k"), ("OTEL_TRACES_EXPORTER", "none")]);
+        let e = env(&[
+            ("BUN_OTEL", "1"),
+            ("BUN_OTEL_EXPORTER", "datadog"),
+            ("DD_API_KEY", "k"),
+            ("OTEL_TRACES_EXPORTER", "none"),
+        ]);
         let r = from_env(&e);
         assert!(r.config.otlp_exporters.is_empty());
         // otlp + preset: the preset is the OTLP exporter, no localhost twin
-        let e = env(&[("BUN_OTEL", "1"), ("BUN_OTEL_EXPORTER", "datadog"), ("DD_API_KEY", "k"), ("OTEL_TRACES_EXPORTER", "otlp")]);
+        let e = env(&[
+            ("BUN_OTEL", "1"),
+            ("BUN_OTEL_EXPORTER", "datadog"),
+            ("DD_API_KEY", "k"),
+            ("OTEL_TRACES_EXPORTER", "otlp"),
+        ]);
         let r = from_env(&e);
         assert_eq!(r.config.otlp_exporters.len(), 1);
-        assert!(r.config.otlp_exporters[0].url.contains("datadoghq"), "{}", r.config.otlp_exporters[0].url);
+        assert!(
+            r.config.otlp_exporters[0].url.contains("datadoghq"),
+            "{}",
+            r.config.otlp_exporters[0].url
+        );
         // preset `otlp` takes endpoint/headers/compression/timeout from OTEL_EXPORTER_OTLP_*
         let e = env(&[
             ("BUN_OTEL", "1"),
@@ -588,7 +604,11 @@ mod tests {
         assert_eq!(r.config.otlp_exporters.len(), 1);
         let x = &r.config.otlp_exporters[0];
         assert_eq!(x.url, "https://collector/v1/traces");
-        assert!(x.headers.iter().any(|(k, v)| k == "authorization" && v == "x"));
+        assert!(
+            x.headers
+                .iter()
+                .any(|(k, v)| k == "authorization" && v == "x")
+        );
         assert_eq!(x.compression, Compression::None);
         assert_eq!(x.timeout_ms, 1234);
     }

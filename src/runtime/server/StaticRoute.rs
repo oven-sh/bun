@@ -320,7 +320,8 @@ impl StaticRoute {
                 .map(|(span, entered)| {
                     // Static routes match exactly, so the path (query stripped) is the route.
                     let url = req.url();
-                    let path = bun_core::strings::index_of_char_usize(url, b'?').map_or(url, |q| &url[..q]);
+                    let path = bun_core::strings::index_of_char_usize(url, b'?')
+                        .map_or(url, |q| &url[..q]);
                     crate::telemetry::server::set_route(global, span, path);
                     (span, entered, global)
                 })

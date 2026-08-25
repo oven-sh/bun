@@ -299,15 +299,22 @@ impl Route {
                     };
                     let otel = if bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
                         let global = server.global_this();
-                        crate::telemetry::server::begin(global, Some(method), &req, resp, matches!(resp, AnyResponse::SSL(_)))
-                            .map(|(span, entered)| {
-                                drop(entered);
-                                let url = req.url();
-                                let path = bun_core::strings::index_of_char_usize(url, b'?').map_or(url, |q| &url[..q]);
-                                crate::telemetry::server::set_route(global, span, path);
-                                span
-                            })
-                            .unwrap_or(bun_telemetry::NativeSpan::NONE)
+                        crate::telemetry::server::begin(
+                            global,
+                            Some(method),
+                            &req,
+                            resp,
+                            matches!(resp, AnyResponse::SSL(_)),
+                        )
+                        .map(|(span, entered)| {
+                            drop(entered);
+                            let url = req.url();
+                            let path = bun_core::strings::index_of_char_usize(url, b'?')
+                                .map_or(url, |q| &url[..q]);
+                            crate::telemetry::server::set_route(global, span, path);
+                            span
+                        })
+                        .unwrap_or(bun_telemetry::NativeSpan::NONE)
                     } else {
                         bun_telemetry::NativeSpan::NONE
                     };

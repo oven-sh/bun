@@ -81,7 +81,13 @@ impl Request {
         let mut out: Option<Vec<u8>> = None;
         // SAFETY: self is a live FFI handle; `push` only runs during the call with `out` alive.
         unsafe {
-            c::uws_h3_req_for_each_header_value(self, name.as_ptr(), name.len(), push, (&raw mut out).cast())
+            c::uws_h3_req_for_each_header_value(
+                self,
+                name.as_ptr(),
+                name.len(),
+                push,
+                (&raw mut out).cast(),
+            )
         };
         out
     }

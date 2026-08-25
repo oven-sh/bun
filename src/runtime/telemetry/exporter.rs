@@ -188,19 +188,22 @@ impl OtlpHttpExporter {
         for (id, store) in overdue {
             // The abort tracker only knows requests whose `aborted` signal is
             // wired; set it, then have the HTTP thread act on it.
-            store.aborted.store(true, core::sync::atomic::Ordering::Relaxed);
+            store
+                .aborted
+                .store(true, core::sync::atomic::Ordering::Relaxed);
             bun_http::http_thread().schedule_shutdown_by_id(id);
         }
     }
 
     fn finished(&self, async_http_id: u32) {
-        self.inflight.lock().retain(|(id, _, _)| *id != async_http_id);
+        self.inflight
+            .lock()
+            .retain(|(id, _, _)| *id != async_http_id);
     }
 
     fn send_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> Result<(), SendError> {
         // Bound the request by whichever is sooner: the exporter timeout or the deadline.
-        let left =
-            deadline_ns.saturating_sub(bun_telemetry::clock::mono_now()) / 1_000_000_000;
+        let left = deadline_ns.saturating_sub(bun_telemetry::clock::mono_now()) / 1_000_000_000;
         let timeout = self.timeout_seconds.min((left as u32).max(1));
         let mut req = self.request(
             &payload.body,
@@ -881,7 +884,9 @@ impl JsExporter {
             out
         };
         for p in overdue {
-            bun_core::warn!("[otel] an async exporter did not settle within the export timeout; counting the batch as failed");
+            bun_core::warn!(
+                "[otel] an async exporter did not settle within the export timeout; counting the batch as failed"
+            );
             super::processor().export_done(&p, ExportResult::Failure);
         }
     }

@@ -588,7 +588,10 @@ describe("web worker", () => {
       using dir = tempDir("worker-object-url", {
         "main.mjs": `import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
           if (isMainThread) {
-            const url = URL.createObjectURL(new File(['export default "módule"'], "nämé.mjs", { type: "text/javascript" }));
+            const file = new File(['export default "módule"'], "ignored.mjs", { type: "text/javascript" });
+            // Assigning .name stores a JS string on the Blob (the constructor's name lives in the byte store).
+            file.name = "nämé.mjs";
+            const url = URL.createObjectURL(file);
             const w = new Worker(new URL(import.meta.url), { workerData: url, argv: ["ärg-one", "arg-two-longer-than-eight"] });
             w.on("message", async m => {
               console.log(JSON.stringify(m));

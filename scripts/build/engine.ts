@@ -140,7 +140,7 @@ export class Task {
   startMtime = 0;
   /** @internal */
   startTime = 0;
-  /** @internal */
+  /** @internal Scheduling priority: see Engine.computePriorities. */
   weight = 1;
 
   constructor(id: number, spec: TaskSpec) {
@@ -312,10 +312,7 @@ export class Engine {
 
     const wanted = targets === undefined ? this.tasks : this.closure(targets);
     this.planned = wanted.filter(t => !t.phony).length;
-    for (const t of wanted) {
-      const entry = this.log.lookup(t.spec.outputs[0] ?? "");
-      t.weight = entry !== undefined && entry.durationMs > 0 ? entry.durationMs : 1;
-    }
+    this.computePriorities(wanted);
 
     const onSignal = () => this.interrupt();
     const events = process as unknown as NodeJS.EventEmitter;
@@ -343,6 +340,42 @@ export class Engine {
     }
     if (this.ranCount === 0) this.print("no work to do.\n");
     return { ok: true, ran: this.ranCount, failed: 0, interrupted: false };
+  }
+
+  /**
+   * Pool priority = the longest chain of work from this task to the end of
+   * the build, in ms of last recorded duration (1 ms for a task with no
+   * history). The PCH ranks above the hundreds of dep compiles that are
+   * ready at the same time, because 150 compiles wait on it and nothing
+   * waits on them but the link. Same heuristic as ninja's critical path.
+   */
+  private computePriorities(wanted: Task[]): void {
+    const dependents = new Map<Task, Task[]>();
+    const inSet = new Set(wanted);
+    for (const t of wanted) {
+      for (const d of this.dependencies(t)) {
+        if (!inSet.has(d)) continue;
+        let list = dependents.get(d);
+        if (list === undefined) dependents.set(d, (list = []));
+        list.push(t);
+      }
+    }
+    const own = (t: Task): number => {
+      if (t.phony) return 0;
+      const entry = this.log.lookup(t.spec.outputs[0]!);
+      return entry !== undefined && entry.durationMs > 0 ? entry.durationMs : 1;
+    };
+    const memo = new Map<Task, number>();
+    const critical = (t: Task): number => {
+      const cached = memo.get(t);
+      if (cached !== undefined) return cached;
+      let rest = 0;
+      for (const d of dependents.get(t) ?? []) rest = Math.max(rest, critical(d));
+      const v = own(t) + rest;
+      memo.set(t, v);
+      return v;
+    };
+    for (const t of wanted) t.weight = critical(t);
   }
 
   /** The tasks `targets` depend on, transitively, plus themselves. */

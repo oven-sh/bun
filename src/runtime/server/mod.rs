@@ -842,7 +842,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if let Some(req_len) = request_body_length {
             ctx_ref.request_body_content_len.set(req_len);
-            let is_transfer_encoding = req.header(b"transfer-encoding").is_some();
+            let is_transfer_encoding = req.has_transfer_encoding();
             ctx_ref.flags.set_is_transfer_encoding(is_transfer_encoding);
             if req_len > 0 || is_transfer_encoding {
                 // we defer pre-allocating the body until we receive the first chunk

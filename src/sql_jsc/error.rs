@@ -1,7 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("InvalidQueryBinding")]
-    InvalidQueryBinding,
     #[error("BufferTooSmall")]
     BufferTooSmall,
     #[error("InvalidEscapeSequence")]
@@ -40,7 +38,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::InvalidQueryBinding => "InvalidQueryBinding",
             Self::BufferTooSmall => "BufferTooSmall",
             Self::InvalidEscapeSequence => "InvalidEscapeSequence",
             Self::UnknownEscapeSequence => "UnknownEscapeSequence",

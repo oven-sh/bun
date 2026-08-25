@@ -19,9 +19,7 @@ impl Signature {
 
     // No explicit `Drop` impl needed: the `Box<[T]>` fields free the four owned slices automatically.
 
-    // JSError (from QueryBindingIterator /
-    // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
-    // crate-wide `crate::Error`.
+    // JSError (from QueryBindingIterator / Tag::from_js) and OOM are collapsed to the crate-wide `crate::Error`.
     pub(crate) fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
@@ -88,9 +86,6 @@ impl Signature {
             }
         }
 
-        if iter.any_failed() {
-            return Err(crate::Error::InvalidQueryBinding);
-        }
         // max u64 length is 20, max prepared_statement_name length is 63
         let prepared_statement_name: Box<[u8]> = if unnamed {
             Box::default()

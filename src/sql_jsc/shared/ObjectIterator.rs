@@ -13,17 +13,11 @@ pub(crate) struct ObjectIterator<'a> {
     pub(crate) current_row: JSValue,
     pub(crate) columns_count: u32,
     pub(crate) array_length: u32,
-    pub(crate) any_failed: bool,
 }
 
 impl<'a> ObjectIterator<'a> {
+    /// The next cell value (row `row_i`, column `cell_i`), `Ok(None)` once every row has been visited.
     pub(crate) fn next(&mut self) -> JsResult<Option<JSValue>> {
-        if self.array.is_empty_or_undefined_or_null()
-            || self.columns.is_empty_or_undefined_or_null()
-        {
-            self.any_failed = true;
-            return Ok(None);
-        }
         if self.row_i >= self.array_length {
             return Ok(None);
         }
@@ -35,53 +29,29 @@ impl<'a> ObjectIterator<'a> {
         let global_object = self.global_object;
 
         if self.current_row.is_empty() {
-            self.current_row = match JSObject::get_index(self.array, global_object, row_i) {
-                Ok(v) => v,
-                Err(_) => {
-                    self.any_failed = true;
-                    return Ok(None);
-                }
-            };
-            if self.current_row.is_empty_or_undefined_or_null() {
-                return Err(global_object.throw(format_args!(
-                    "Expected a row to be returned at index {}",
-                    row_i
-                )));
+            self.current_row = JSObject::get_index(self.array, global_object, row_i)?;
+            if !self.current_row.is_object() {
+                return Err(
+                    global_object.throw(format_args!("Expected a row object at index {}", row_i))
+                );
             }
         }
 
-        // The labeled block computes the result first, then the bookkeeping
-        // below runs exactly once before returning.
-        let result: JsResult<Option<JSValue>> = 'out: {
-            let property = match JSObject::get_index(self.columns, global_object, cell_i) {
-                Ok(v) => v,
-                Err(_) => {
-                    self.any_failed = true;
-                    break 'out Ok(None);
-                }
-            };
-            if property.is_undefined() {
-                break 'out Err(global_object.throw(format_args!(
-                    "Expected a column at index {} in row {}",
-                    cell_i, row_i
-                )));
-            }
-
-            // `get_own_by_value` maps the C++ empty (zero) return to `None`,
-            // so the `Some(JSValue::ZERO)` comparison below is defensively dead
-            // (an unwrapped value is never zero).
-            let value: Option<JSValue> = self.current_row.get_own_by_value(global_object, property);
-            if value == Some(JSValue::ZERO) || value.is_some_and(|v| v.is_undefined()) {
-                if !global_object.has_exception() {
-                    break 'out Err(global_object.throw(format_args!(
-                        "Expected a value at index {} in row {}",
-                        cell_i, row_i
-                    )));
-                }
-                self.any_failed = true;
-                break 'out Ok(None);
-            }
-            Ok(value)
+        let property = JSObject::get_index(self.columns, global_object, cell_i)?;
+        if property.is_undefined() {
+            return Err(global_object.throw(format_args!(
+                "Expected a column at index {} in row {}",
+                cell_i, row_i
+            )));
+        }
+        let value = self.current_row.get_own_by_value(global_object, property)?;
+        let result = if value.is_undefined() {
+            Err(global_object.throw(format_args!(
+                "Expected a value at index {} in row {}",
+                cell_i, row_i
+            )))
+        } else {
+            Ok(Some(value))
         };
 
         if self.cell_i >= self.columns_count {

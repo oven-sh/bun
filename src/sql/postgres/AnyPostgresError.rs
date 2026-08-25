@@ -19,7 +19,6 @@ pub enum AnyPostgresError {
     InvalidCharacter,
     InvalidMessage,
     InvalidMessageLength,
-    InvalidQueryBinding,
     InvalidServerKey,
     InvalidServerSignature,
     JSError,

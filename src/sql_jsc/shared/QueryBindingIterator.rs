@@ -26,7 +26,6 @@ impl<'a> QueryBindingIterator<'a> {
             current_row: JSValue::ZERO,
             columns_count: columns.get_length(global)? as u32,
             array_length: array.get_length(global)? as u32,
-            any_failed: false,
         }))
     }
 
@@ -34,13 +33,6 @@ impl<'a> QueryBindingIterator<'a> {
         match self {
             Self::Array(iter) => iter.next(),
             Self::Objects(iter) => iter.next(),
-        }
-    }
-
-    pub(crate) fn any_failed(&self) -> bool {
-        match self {
-            Self::Array(_) => false,
-            Self::Objects(iter) => iter.any_failed,
         }
     }
 

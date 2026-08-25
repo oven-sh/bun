@@ -159,6 +159,39 @@ test("object argument with a sparse numeric key", async () => {
   });
 });
 
+describe("a macro that throws", () => {
+  for (const [name, macro] of [
+    ["from its body", `export function m() { throw new Error("macro boom"); }`],
+    [
+      "while its return value is being converted",
+      `export function m() { return { get x() { throw new Error("macro boom"); } }; }`,
+    ],
+  ] as const) {
+    test(name + " reports that error and fails the import", async () => {
+      using dir = tempDir("macro-throws", {
+        "m.ts": macro,
+        "user.ts": `import { m } from "./m.ts" with { type: "macro" };\nconsole.log(JSON.stringify(m()));\n`,
+        "index.ts": `try { await import("./user.ts"); console.log("imported"); } catch (e) { console.log("import failed: " + String(e.message).split("\\n")[0]); }`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "index.ts"],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim().split("\n").at(-1)).toBe("import failed: macro threw exception");
+      // One assertion so the child's stderr is in the diff if it did not exit cleanly.
+      expect({ exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+        exitCode: 0,
+        signalCode: null,
+        stderr: expect.stringContaining("error: macro boom"),
+      });
+    });
+  }
+});
+
 test("object destructuring of a macro result keeps every bound property regardless of key order or repeated keys", async () => {
   using dir = tempDir("macro-destructure-object", {
     "m.ts": `export function m() {\n  return { a: 1, c: 2 };\n}\n`,

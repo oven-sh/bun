@@ -1350,13 +1350,14 @@ impl JSValue {
         }
         Ok(Some(prop))
     }
+    /// The value of the own property `property_value` (running an own getter), or `undefined` when there is
+    /// no such own property. `self` must be an object.
     pub fn get_own_by_value(
         self,
         global: &JSGlobalObject,
         property_value: JSValue,
-    ) -> Option<JSValue> {
-        let v = JSC__JSValue__getOwnByValue(self, global, property_value);
-        if v.is_empty() { None } else { Some(v) }
+    ) -> JsResult<JSValue> {
+        crate::cpp::JSC__JSValue__getOwnByValue(self, global, property_value)
     }
     /// `Object.hasOwnProperty(key)`. `self` **must** be an object — the C++ side
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
@@ -2023,11 +2024,6 @@ unsafe extern "C" {
         buf: &mut [u8; 64],
     ) -> i32;
     safe fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
-    safe fn JSC__JSValue__getOwnByValue(
-        this: JSValue,
-        global: &JSGlobalObject,
-        key: JSValue,
-    ) -> JSValue;
     safe fn JSC__JSValue__hasOwnPropertyValue(
         this: JSValue,
         global: &JSGlobalObject,

@@ -97,7 +97,6 @@ pub(crate) fn mysql_error_to_js(
         "UnsupportedColumnType" => b"ERR_MYSQL_UNSUPPORTED_COLUMN_TYPE",
         "InvalidLocalInfileRequest" => b"ERR_MYSQL_INVALID_LOCAL_INFILE_REQUEST",
         "InvalidAuthSwitchRequest" => b"ERR_MYSQL_INVALID_AUTH_SWITCH_REQUEST",
-        "InvalidQueryBinding" => b"ERR_MYSQL_INVALID_QUERY_BINDING",
         "InvalidResultRow" => b"ERR_MYSQL_INVALID_RESULT_ROW",
         "InvalidBinaryValue" => b"ERR_MYSQL_INVALID_BINARY_VALUE",
         "InvalidEncodedInteger" => b"ERR_MYSQL_INVALID_ENCODED_INTEGER",

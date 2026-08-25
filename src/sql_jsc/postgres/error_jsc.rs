@@ -66,7 +66,6 @@ pub(crate) fn postgres_error_to_js(
         InvalidCharacter => b"ERR_POSTGRES_INVALID_CHARACTER",
         InvalidMessage => b"ERR_POSTGRES_INVALID_MESSAGE",
         InvalidMessageLength => b"ERR_POSTGRES_INVALID_MESSAGE_LENGTH",
-        InvalidQueryBinding => b"ERR_POSTGRES_INVALID_QUERY_BINDING",
         InvalidServerKey => b"ERR_POSTGRES_INVALID_SERVER_KEY",
         InvalidServerSignature => b"ERR_POSTGRES_INVALID_SERVER_SIGNATURE",
         MultidimensionalArrayNotSupportedYet => {

@@ -133,10 +133,6 @@ impl MySQLQuery {
             i += 1;
         }
 
-        if iter.any_failed() {
-            return Err(AnyMySQLError::InvalidQueryBinding);
-        }
-
         if i as usize != len {
             // Fewer values than the prepared statement expects; the remaining slots
             // would be uninitialized.

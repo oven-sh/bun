@@ -948,6 +948,20 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
     });
   });
 
+  it("an onResolve callback that returns a rejected promise fails the import with that rejection", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const err = new Error("rejected resolve");
+      Bun.plugin({ name: "rejects", setup(b) { b.onResolve({ filter: /.*/, namespace: "rej" }, async () => { throw err; }); } });
+      try {
+        await import("rej:thing");
+        console.log("resolved");
+      } catch (e) {
+        console.log("same=" + (e === err));
+      }
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "same=true", stderr: "", exitCode: 0 });
+  });
+
   it("re-registering a namespaced onResolve plugin after clearAll() drops the old callback", async () => {
     const { stdout, stderr, exitCode } = await run(`
       Bun.plugin({

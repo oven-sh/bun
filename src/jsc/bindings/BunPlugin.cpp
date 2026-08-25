@@ -863,9 +863,10 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
                 return {};
             }
             case JSPromise::Status::Rejected: {
-                promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
-                result = promise->result();
-                return JSValue::encode(result);
+                // Resolution is synchronous here; the rejection is this resolve's error.
+                promise->markAsHandled();
+                JSC::throwException(globalObject, scope, promise->result());
+                return {};
             }
             case JSPromise::Status::Fulfilled: {
                 result = promise->result();

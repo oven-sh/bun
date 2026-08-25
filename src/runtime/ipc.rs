@@ -231,22 +231,17 @@ impl From<JsError> for IPCDecodeError {
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum IPCSerializationError {
-    /// Value could not be serialized.
-    #[error("SerializationFailed")]
-    SerializationFailed,
-    // —— bun.JSError variants ——
-    #[error("JSError")]
-    JSError,
-    #[error("OutOfMemory")]
-    OutOfMemory,
+    /// The value has no serialization (e.g. JSON.stringify yields undefined); nothing was thrown.
+    #[error("NotSerializable")]
+    NotSerializable,
+    /// A JS exception is pending (or the VM is terminating).
+    #[error("{0:?}")]
+    Js(JsError),
 }
 
 impl From<JsError> for IPCSerializationError {
     fn from(e: JsError) -> Self {
-        match e {
-            JsError::Thrown | JsError::Terminated => IPCSerializationError::JSError,
-            JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-        }
+        IPCSerializationError::Js(e)
     }
 }
 
@@ -409,11 +404,9 @@ mod advanced {
 
         let payload_length: usize = size_of::<IPCMessageType>() + size_of::<u32>() + size as usize;
 
-        // Propagate OOM so serializeAndSend
-        // returns `.failure` instead of silently discarding the Result.
         writer
             .ensure_unused_capacity(payload_length)
-            .map_err(|_| IPCSerializationError::OutOfMemory)?;
+            .map_err(|_| global.throw_out_of_memory())?;
 
         writer.write_type_as_bytes_assume_capacity(message_type);
         writer.write_type_as_bytes_assume_capacity(size);
@@ -553,7 +546,7 @@ mod json {
         let out = value.json_stringify_fast(global)?;
 
         if out.tag() == bun_core::Tag::Dead {
-            return Err(IPCSerializationError::SerializationFailed);
+            return Err(IPCSerializationError::NotSerializable);
         }
 
         // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
@@ -565,11 +558,9 @@ mod json {
             result_len += 1;
         }
 
-        // Propagate OOM so serializeAndSend
-        // returns `.failure` instead of silently discarding the Result.
         writer
             .ensure_unused_capacity(result_len)
-            .map_err(|_| IPCSerializationError::OutOfMemory)?;
+            .map_err(|_| global.throw_out_of_memory())?;
 
         if is_internal == IsInternal::Internal {
             writer.write_assume_capacity(&[2]);
@@ -1608,6 +1599,7 @@ impl SendQueue {
         }
     }
 
+    /// `Failure`: the value has no serialization. A JS exception raised while serializing is `Err`.
     pub fn serialize_and_send(
         &self,
         global: &JSGlobalObject,
@@ -1615,29 +1607,27 @@ impl SendQueue {
         is_internal: IsInternal,
         callback: JSValue,
         handle: Option<Handle>,
-    ) -> SerializeAndSendResult {
+    ) -> JsResult<SerializeAndSendResult> {
         log!("SendQueue#serializeAndSend");
         let indicate_backoff = self.waiting_for_ack.get().is_some() && !self.queue.get().is_empty();
         let mode = self.mode;
         let mut payload = StreamBuffer::default();
         let payload_length = match serialize(mode, &mut payload, global, value, is_internal) {
             Ok(n) => n,
-            Err(_) => return SerializeAndSendResult::Failure,
+            Err(IPCSerializationError::NotSerializable) => {
+                return Ok(SerializeAndSendResult::Failure);
+            }
+            Err(IPCSerializationError::Js(e)) => return Err(e),
         };
         debug_assert!(payload.list.len() == payload_length);
-        if self
-            .start_message(global, callback, handle, payload)
-            .is_err()
-        {
-            return SerializeAndSendResult::Failure;
-        }
+        self.start_message(global, callback, handle, payload)?;
         log!("IPC call continueSend() from serializeAndSend");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
 
         if indicate_backoff {
-            return SerializeAndSendResult::Backoff;
+            return Ok(SerializeAndSendResult::Backoff);
         }
-        SerializeAndSendResult::Success
+        Ok(SerializeAndSendResult::Success)
     }
 
     fn debug_log_message_queue(&self) {

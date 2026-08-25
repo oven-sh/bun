@@ -1002,7 +1002,7 @@ fn start_write_task(
 enum CompressWriteResult {
     Pending,
     Ok(Vec<u8>),
-    Err(&'static str),
+    Err(CompressError),
 }
 
 pub struct CompressWriteOff {
@@ -1030,7 +1030,7 @@ impl jsc::JobContext for ArchiveCompressWriteJob {
     ) -> Option<jsc::Completion<Self>> {
         off.result = match compress_gzip(off.store.shared_view(), off.level) {
             Ok(v) => CompressWriteResult::Ok(v),
-            Err(e) => CompressWriteResult::Err(e.into()),
+            Err(e) => CompressWriteResult::Err(e),
         };
         Some(done)
     }
@@ -1046,10 +1046,7 @@ impl jsc::JobContext for ArchiveCompressWriteJob {
         let bytes = match core::mem::replace(&mut off.result, CompressWriteResult::Pending) {
             CompressWriteResult::Ok(v) => v,
             CompressWriteResult::Err(e) => {
-                return Ok(promise.reject_with_async_stack(
-                    global,
-                    Ok(global.create_error_instance(format_args!("Failed to gzip archive: {e}"))),
-                )?);
+                return Ok(promise.reject_with_async_stack(global, Ok(e.to_js(global)))?);
             }
             CompressWriteResult::Pending => unreachable!("run() always sets result"),
         };

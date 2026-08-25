@@ -6891,8 +6891,7 @@ impl NodeFS {
         }
     }
 
-    /// Nobody wants the next chunk: the caller's `signal` aborted, or the VM this read serves
-    /// stopped (`EINTR`: the read was interrupted, as by a signal).
+    /// Nobody wants the next chunk: the caller's `signal` aborted, or the VM this read serves stopped.
     fn read_interrupted(&self, args: &args::ReadFile) -> Option<sys::Error> {
         if args.aborted() {
             return Some(abort_err());
@@ -7180,8 +7179,7 @@ impl NodeFS {
             // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
             // !has_max_size` arm below.
             let upper = (buf.capacity() as u64).min(max_size) as usize;
-            // Past `size` the tail reads a pipe, a device or a file that outgrew its stat size:
-            // one chunk at a time, so the stop check above is never further away than one chunk.
+            // Past `size` (a pipe, a device, a file that outgrew its stat size): one chunk per stop check.
             let upper = if (total as u64) >= size {
                 upper.min(total + TAIL_READ_CHUNK)
             } else {

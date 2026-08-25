@@ -242,7 +242,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    BunString name = Bun::toStringView(propertyName.publicName());
+    BunString name = Bun::borrowStringView(propertyName.publicName());
     BunString value = Bun__getEnvValueBunString(globalObject, &name);
     if (value.tag == BunStringTag::Dead) {
         return JSValue::encode(jsUndefined());
@@ -266,8 +266,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     auto view = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    BunString name = Bun::toStringView(propertyName.publicName());
-    BunString val = Bun::toStringView(view);
+    BunString name = Bun::borrowStringView(propertyName.publicName());
+    BunString val = Bun::borrowStringView(view);
     Bun__setEnvValue(globalObject, &name, &val);
 
     // Proxy-var accessors are installed DontEnum when absent from the OS env

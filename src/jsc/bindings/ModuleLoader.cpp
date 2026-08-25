@@ -37,6 +37,7 @@
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
 #include "IsolatedModuleCache.h"
+#include "ErrorCode.h"
 #include "../modules/_NativeModule.h"
 
 #include "JSCommonJSExtensions.h"
@@ -848,6 +849,10 @@ JSValue fetchCommonJSModuleNonBuiltin(
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
         auto jsonSource = res->result.value.source_code.view();
+        if (jsonSource.view.isNull()) [[unlikely]] {
+            Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+            return {};
+        }
         JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource.view);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -1152,6 +1157,8 @@ static JSValue fetchESMSourceCode(
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
         auto jsonSource = res->result.value.source_code.view();
+        if (jsonSource.view.isNull()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, reject(Bun::createStringTooLongError(globalObject)));
         JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource.view);
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();

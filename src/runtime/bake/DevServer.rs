@@ -1185,11 +1185,10 @@ impl Drop for DevServer {
 
 impl DevServer {
     fn init_server_runtime(&mut self) {
-        let runtime = BunString::create_static_external(
+        let runtime = BunString::create_static_external_latin1(
             crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server)
                 .code
                 .as_bytes(),
-            true,
         );
 
         // `self.global()` returns `&'static`, decoupled from `&self` — it's

@@ -53,7 +53,7 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 //   signature means ownership crosses (C++ `Bun::toStringRef` return, or a
 //   Rust return that C++ `transferToWTFString()`s), exactly like `Box<T>`.
 // - `&String` is the borrow. `StringView<'a>` is the by-value borrow (C++
-//   `Bun::toString`/`toStringView` results, property-iterator names,
+//   `Bun::toString`/`borrowStringView` results, property-iterator names,
 //   sub-slices of a WTF string).
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -349,16 +349,15 @@ impl String {
             .min(WTF_STRING_MAX_LENGTH)
     }
 
-    /// Wraps `bytes` in a `WTF::ExternalStringImpl` (zero-copy, not atomized)
-    /// that is never freed.
-    pub fn create_static_external(bytes: &'static [u8], is_latin1: bool) -> Self {
+    /// Zero-copy: a refcounted `WTF::ExternalStringImpl` over `bytes`; the
+    /// impl never copies or frees them.
+    pub fn create_static_external_latin1(bytes: &'static [u8]) -> Self {
         debug_assert!(!bytes.is_empty());
         // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
         // without copying and never frees it.
-        unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
+        unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), true) }
     }
-    /// UTF-16 form of [`Self::create_static_external`]: `units` must be
-    /// 2-byte aligned.
+    /// UTF-16 form of [`Self::create_static_external_latin1`].
     pub fn create_static_external_utf16(units: &'static [u16]) -> Self {
         debug_assert!(!units.is_empty());
         // SAFETY: the C++ side takes the length in code units and stores

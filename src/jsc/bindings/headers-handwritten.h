@@ -93,8 +93,7 @@ typedef struct BunString {
     // it. Leaves *this Empty.
     WTF::String transferToWTFString();
 
-    // Consumes this BunString and returns a JS string value. Leaves *this Dead
-    // so a Rust-side OwnedString::Drop deref becomes a no-op.
+    // Consumes this BunString and returns a JS string value. Leaves *this Empty.
     JSC::JSValue transferToJS(JSC::JSGlobalObject* globalObject);
 
     bool isEmpty() const;
@@ -347,7 +346,7 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 
 // This creates a detached string view, which cannot be ref/unref.
 // Be very careful using this, and ensure the memory owner does not get destroyed.
-BunString toStringView(WTF::StringView view);
+BunString borrowStringView(WTF::StringView view);
 }
 
 typedef struct {

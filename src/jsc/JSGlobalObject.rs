@@ -702,9 +702,9 @@ impl JSGlobalObject {
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result =
-            crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, path, target))?;
+        let result = crate::from_js_host_call(self, || {
+            Bun__runOnLoadPlugins(self, namespace_, path, target)
+        })?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
@@ -719,9 +719,8 @@ impl JSGlobalObject {
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns = (namespace_.length() > 0).then_some(namespace_);
         let result = crate::from_js_host_call(self, || {
-            Bun__runOnResolvePlugins(self, ns, path, source, target)
+            Bun__runOnResolvePlugins(self, namespace_, path, source, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -1479,19 +1478,17 @@ unsafe extern "C" {
     ) -> BunString;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
-    // to a nullable `*const BunString` via the guaranteed null-pointer
-    // optimization (C++ reads `nullptr` as "no namespace"); `&BunString` is a
-    // non-null `*const BunString` borrow.
+    // ABI-identical to non-null `*const`); `&BunString` is a non-null
+    // `*const BunString` borrow.
     safe fn Bun__runOnLoadPlugins(
         global: &JSGlobalObject,
-        namespace_: Option<&BunString>,
+        namespace_: &BunString,
         path: &BunString,
         target: BunPluginTarget,
     ) -> JSValue;
     safe fn Bun__runOnResolvePlugins(
         global: &JSGlobalObject,
-        namespace_: Option<&BunString>,
+        namespace_: &BunString,
         path: &BunString,
         source: &BunString,
         target: BunPluginTarget,

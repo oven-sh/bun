@@ -102,19 +102,12 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
 JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-
-    if (this->tag == BunStringTag::Empty) [[unlikely]] {
-        return JSC::jsEmptyString(vm);
-    }
-
     if (this->tag == BunStringTag::Dead) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        return JSValue::decode(Bun::ERR::STRING_TOO_LONG(scope, globalObject));
+        Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+        return {};
     }
-
-    WTF::String str = this->transferToWTFString();
-    *this = { .tag = BunStringTag::Dead };
-    return jsString(vm, WTF::move(str));
+    return jsString(vm, this->transferToWTFString());
 }
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
@@ -126,10 +119,7 @@ extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, 
 {
     WTF::String message = str->toWTFString();
     if (message.isNull() && !str->isEmpty()) [[unlikely]] {
-        // Allocation failed or the message exceeds the maximum string length:
-        // hand back that error in place of the requested one.
-        return JSValue::encode(createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG,
-            makeString("Cannot create a string longer than "_s, WTF::String::MaxLength, " characters"_s)));
+        return JSValue::encode(Bun::createStringTooLongError(globalObject));
     }
     JSC::JSObject* result = nullptr;
     switch (kind) {
@@ -154,37 +144,18 @@ namespace Bun {
 
 JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
-    if (bunString.tag == BunStringTag::Empty) {
-        return JSC::jsEmptyString(globalObject->vm());
-    }
-
+    auto& vm = JSC::getVM(globalObject);
     if (bunString.tag == BunStringTag::Dead) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        auto scope = DECLARE_THROW_SCOPE(vm);
         Bun::ERR::STRING_TOO_LONG(scope, globalObject);
         return nullptr;
     }
-
-    if (bunString.tag == BunStringTag::WTFStringImpl) {
-#if ASSERT_ENABLED
-        ASSERT(bunString.impl.wtf->hasAtLeastOneRef() && !bunString.impl.wtf->isEmpty());
-#endif
-
-        return JSC::jsString(globalObject->vm(), String(bunString.impl.wtf));
-    }
-
-    if (bunString.tag == BunStringTag::StaticEncodedSlice) {
-        return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.encoded));
-    }
-
-    if (bunString.tag == BunStringTag::EncodedSlice) {
-        return Zig::toJSStringGC(bunString.impl.encoded, globalObject);
-    }
-
-    UNREACHABLE();
+    return JSC::jsString(vm, bunString.toWTFString());
 }
 
 JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)
 {
+    ASSERT(bunString.tag != BunStringTag::Dead);
     switch (bunString.tag) {
     case BunStringTag::WTFStringImpl:
         return JSC::Identifier::fromString(vm, WTF::String(bunString.impl.wtf));
@@ -274,7 +245,7 @@ BunString toStringRef(WTF::StringImpl* wtfString)
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
 
-BunString toStringView(StringView view)
+BunString borrowStringView(StringView view)
 {
     return {
         BunStringTag::EncodedSlice,
@@ -462,6 +433,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJSON(
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto json = bunString->view();
+    if (json.view.isNull()) [[unlikely]]
+        return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     JSC::JSValue result = JSC::JSONParse(globalObject, json.view);
 
     if (!result && !scope.exception()) {

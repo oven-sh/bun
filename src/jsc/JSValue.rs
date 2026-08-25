@@ -692,14 +692,14 @@ impl JSValue {
     /// bytes (caller may free `keys`/`values`).
     pub fn from_entries(
         global: &JSGlobalObject,
-        keys: &mut [bun_core::EncodedSlice],
-        values: &mut [bun_core::EncodedSlice],
+        keys: &[bun_core::EncodedSlice],
+        values: &[bun_core::EncodedSlice],
     ) -> JsResult<JSValue> {
         debug_assert_eq!(keys.len(), values.len());
         // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
         // elements; the C++ binding only reads them.
         crate::call_zero_is_throw(global, || unsafe {
-            JSC__JSValue__fromEntries(global, keys.as_mut_ptr(), values.as_mut_ptr(), keys.len())
+            JSC__JSValue__fromEntries(global, keys.as_ptr(), values.as_ptr(), keys.len())
         })
     }
 }
@@ -1975,8 +1975,8 @@ unsafe extern "C" {
     safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
     fn JSC__JSValue__fromEntries(
         global: *const JSGlobalObject,
-        keys: *mut bun_core::EncodedSlice,
-        values: *mut bun_core::EncodedSlice,
+        keys: *const bun_core::EncodedSlice,
+        values: *const bun_core::EncodedSlice,
         strings_count: usize,
     ) -> JSValue;
     safe fn JSC__JSValue__toBoolean(this: JSValue) -> bool;

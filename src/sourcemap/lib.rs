@@ -345,7 +345,7 @@ unsafe extern "C" {
 }
 
 impl SourceProviderMap {
-    /// `Bun::toStringView` — a view into the provider's source.
+    /// `Bun::borrowStringView` — a view into the provider's source.
     pub(crate) fn get_source_slice(&self) -> bun_core::StringView<'_> {
         ZigSourceProvider__getSourceSlice(self)
     }
@@ -372,7 +372,7 @@ impl SourceProvider for SourceProviderMap {
 /// default-`None` optional capabilities so each provider only overrides what
 /// it actually has.
 pub trait SourceProvider {
-    /// `Bun::toStringView`: a `StringView` into the provider's source.
+    /// `Bun::borrowStringView`: a `StringView` into the provider's source.
     fn get_source_slice(&self) -> bun_core::StringView<'_>;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
 

@@ -729,7 +729,7 @@ DEFINE_VISIT_CHILDREN(JSModuleMock);
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->view().view : emptyStringView());
+    Group* groupPtr = this->group(namespaceString->view().view);
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
@@ -749,7 +749,7 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const B
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     const auto& builtinNames = WebCore::builtinNames(vm);
-    auto* pathJS = pathString.underlyingString.isNull() ? Bun::toJS(globalObject, *path) : jsString(vm, pathString.underlyingString);
+    auto* pathJS = Bun::toJS(globalObject, *path);
     RETURN_IF_EXCEPTION(scope, {});
     paramsObject->putDirect(vm, builtinNames.pathPublicName(), pathJS);
     arguments.append(paramsObject);
@@ -799,7 +799,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
 
 EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->view().view : emptyStringView());
+    Group* groupPtr = this->group(namespaceString->view().view);
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
@@ -822,9 +822,9 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         return {};
     }
     for (size_t i = 0; i < filters.size(); i++) {
-        bool matched = !!filters[i].get()->match(globalObject, pathString.view, 0);
+        auto matchResult = filters[i].get()->match(globalObject, pathString.view, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!matched) {
+        if (!matchResult) {
             continue;
         }
         auto* function = callbacks[i].get();

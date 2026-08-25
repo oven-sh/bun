@@ -187,11 +187,6 @@ static const WTF::String toStringCopy(EncodedSlice str)
     }
 }
 
-static JSC::JSString* toJSStringGC(EncodedSlice str, JSC::JSGlobalObject* global)
-{
-    return JSC::jsString(global->vm(), toStringCopy(str));
-}
-
 static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
 {
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
@@ -209,17 +204,17 @@ static constexpr EncodedSlice latin1Slice(std::span<const Latin1Character> span)
     return { span.data(), span.size() };
 }
 
-static EncodedSlice utf8Slice(std::span<const uint8_t> span)
+static constexpr EncodedSlice utf8Slice(std::span<const uint8_t> span)
 {
     return { taggedUTF8Ptr(span.data()), span.size() };
 }
 
-static EncodedSlice utf16Slice(std::span<const char16_t> span)
+static constexpr EncodedSlice utf16Slice(std::span<const char16_t> span)
 {
     return { taggedUTF16Ptr(span.data()), span.size() };
 }
 
-static const EncodedSlice EncodedSliceEmpty = latin1Slice({ reinterpret_cast<const Latin1Character*>(""), 0 });
+static const EncodedSlice EncodedSliceEmpty = latin1Slice(""_span8);
 static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
 
 // Overload for `StringImpl*` so callers like `toEncodedSlice(string.impl())` resolve here
@@ -280,24 +275,17 @@ static const WTF::String toStringStatic(EncodedSlice str)
 static WTF::StringViewWithUnderlyingString toStringView(EncodedSlice str)
 {
     ASSERT(!isTaggedExternalPtr(str.ptr));
-    if (str.len == 0 || str.ptr == nullptr) {
-        return { WTF::emptyStringView(), WTF::String() };
-    }
-    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
-        if (!simdutf::validate_ascii(reinterpret_cast<const char*>(untag(str.ptr)), str.len)) {
-            WTF::StringViewWithUnderlyingString result;
-            result.underlyingString = toStringCopy(str);
-            result.view = result.underlyingString;
-            return result;
-        }
-    } else if (isTaggedUTF16Ptr(str.ptr)) {
-        if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]]
-            return {};
-        return { WTF::StringView(std::span { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }), WTF::String() };
+    if (str.len == 0 || str.ptr == nullptr)
+        return { WTF::emptyStringView(), {} };
+    if (isTaggedUTF8Ptr(str.ptr) && !simdutf::validate_ascii(reinterpret_cast<const char*>(untag(str.ptr)), str.len)) [[unlikely]] {
+        auto copy = toStringCopy(str);
+        return { copy, copy };
     }
     if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]]
         return {};
-    return { WTF::StringView(std::span<const Latin1Character> { untag(str.ptr), str.len }), WTF::String() };
+    if (isTaggedUTF16Ptr(str.ptr))
+        return { std::span { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, {} };
+    return { std::span<const Latin1Character> { untag(str.ptr), str.len }, {} };
 }
 
 static JSC::Identifier toIdentifier(JSC::VM& vm, WTF::StringView string)

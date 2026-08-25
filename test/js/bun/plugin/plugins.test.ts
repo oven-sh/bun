@@ -1068,7 +1068,7 @@ it("object loader: an error thrown by a getter on the exports object rejects the
 it("onLoad: non-ASCII args.path and TypedArray contents decode as UTF-8", async () => {
   const seen: string[] = [];
   plugin({
-    name: "retained path",
+    name: "non-ASCII args.path and TypedArray contents decode as UTF-8",
     setup(build) {
       build.onResolve({ filter: /.*/, namespace: "retain" }, ({ path }) => ({
         path: path + "-résolved-with-a-longer-suffix",
@@ -1076,7 +1076,7 @@ it("onLoad: non-ASCII args.path and TypedArray contents decode as UTF-8", async 
       }));
       build.onLoad({ filter: /.*/, namespace: "retain" }, async args => {
         seen.push(args.path);
-        await Bun.sleep(1);
+        await new Promise<void>(r => setImmediate(r));
         return {
           contents: new TextEncoder().encode(`export default ${JSON.stringify(args.path)} + " héllo";`),
           loader: "js",
@@ -1091,4 +1091,22 @@ it("onLoad: non-ASCII args.path and TypedArray contents decode as UTF-8", async 
     "日本-résolved-with-a-longer-suffix héllo",
     ["abc-résolved-with-a-longer-suffix", "日本-résolved-with-a-longer-suffix"],
   ]);
+});
+
+it("onLoad: ASCII args.path survives GC across an async boundary", async () => {
+  let seen: string | undefined;
+  plugin({
+    name: "ASCII args.path survives GC across an async boundary",
+    setup(build) {
+      build.onResolve({ filter: /.*/, namespace: "virt-ascii" }, ({ path }) => ({ path, namespace: "virt-ascii" }));
+      build.onLoad({ filter: /.*/, namespace: "virt-ascii" }, async args => {
+        seen = args.path;
+        await new Promise<void>(r => setImmediate(r));
+        Bun.gc(true);
+        return { contents: `export default ${JSON.stringify(args.path)};`, loader: "js" };
+      });
+    },
+  });
+  const path = "plain-module-name-that-is-long-enough";
+  expect([(await import(`virt-ascii:${path}`)).default, seen]).toEqual([path, path]);
 });

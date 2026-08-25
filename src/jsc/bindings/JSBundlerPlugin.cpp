@@ -82,7 +82,7 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
         return false;
 
     unsigned index = 0;
-    auto* group = list.group(namespaceStr ? namespaceStr->view().view : emptyStringView(), index);
+    auto* group = list.group(namespaceStr->view().view, index);
     if (group == nullptr) {
         return false;
     }

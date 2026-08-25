@@ -2635,8 +2635,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const EncodedSlice* arg1, EncodedSlice* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
-    auto name = Zig::toStringView(*arg1);
-    auto result = headers->get(name.view);
+    auto result = headers->get(Zig::toStringView(*arg1).view);
     if (result.hasException())
         WebCore::propagateException(*global, throwScope, result.releaseException());
     else
@@ -2728,11 +2727,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSO
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     auto str = Zig::toStringView(*strPtr);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    if (str.view.isNull()) {
-        scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
-        return {};
-    }
+    if (str.view.isNull()) [[unlikely]]
+        return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
 
     // JSONParseWithException does not propagate exceptions as expected. See #5859
     JSValue result = JSONParse(globalObject, str.view);
@@ -3359,7 +3355,7 @@ BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global)
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
     auto view = str->view(global);
     RETURN_IF_EXCEPTION(scope, BunStringEmpty);
-    return Bun::toStringView(view.data);
+    return Bun::borrowStringView(view.data);
 }
 
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
@@ -3421,8 +3417,8 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     }
 }
 
-JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject, EncodedSlice* keys,
-    EncodedSlice* values, size_t initialCapacity)
+JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject, const EncodedSlice* keys,
+    const EncodedSlice* values, size_t initialCapacity)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3434,7 +3430,7 @@ JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(scope, {});
 
     for (size_t i = 0; i < initialCapacity; ++i) {
-        object->putDirect(vm, Zig::toIdentifier(vm, keys[i]), Zig::toJSStringGC(values[i], globalObject), 0);
+        object->putDirect(vm, Zig::toIdentifier(vm, keys[i]), JSC::jsString(vm, Zig::toStringCopy(values[i])), 0);
     }
 
     return JSC::JSValue::encode(object);
@@ -3754,7 +3750,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, Bun::toIdentifier(vm, *arg1).string(), nullptr, nullptr);
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, arg1->toWTFString(), nullptr, nullptr);
     EXCEPTION_ASSERT(!!promise == !scope.exception());
     return promise;
 }
@@ -4559,17 +4555,16 @@ JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedVa
     }
 
     const auto identifier = JSC::Identifier::fromString(vm, std::span<const Latin1Character> { propertyName, propertyNameLength });
-    const auto property = JSC::PropertyName(identifier);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-    if (!object->getPropertySlot(globalObject, property, slot)) {
+    if (!object->getPropertySlot(globalObject, identifier, slot)) {
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue result = slot.getValue(globalObject, property);
+    JSValue result = slot.getValue(globalObject, identifier);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(result);
@@ -4583,12 +4578,11 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSC::JSValue::decode(JSValue0);
     auto identifier = Bun::toIdentifier(vm, *propertyName);
-    auto property = JSC::PropertyName(identifier);
     PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
-    bool hasSlot = value.getOwnPropertySlot(globalObject, property, slot);
+    bool hasSlot = value.getOwnPropertySlot(globalObject, identifier, slot);
     RETURN_IF_EXCEPTION(scope, {});
     if (!hasSlot) return {};
-    auto slotValue = slot.getValue(globalObject, property);
+    auto slotValue = slot.getValue(globalObject, identifier);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(slotValue);
 }
@@ -4820,7 +4814,7 @@ JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::J
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto data = str->view(global);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    *view = Bun::toStringView(data.data);
+    *view = Bun::borrowStringView(data.data);
     return str;
 }
 
@@ -6377,7 +6371,7 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     auto str = Zig::toStringView(*arg1);
-    if (str.view.isNull()) {
+    if (str.view.isNull()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     }

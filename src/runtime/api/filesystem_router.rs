@@ -648,13 +648,15 @@ impl FileSystemRouter {
         let router = this.router.get();
         let paths = router.get_entry_points();
         let names = router.get_names();
-        let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; names.len() * 2];
-        let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
-        for (i, name) in names.iter().enumerate() {
-            name_strings_slice[i] = EncodedSlice::from_bytes(name);
-            paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
-        }
-        JSValue::from_entries(global_this, name_strings_slice, paths_strings)
+        let names: Vec<EncodedSlice> = names
+            .iter()
+            .map(|name| EncodedSlice::from_bytes(name))
+            .collect();
+        let paths: Vec<EncodedSlice> = paths
+            .iter()
+            .map(|path| EncodedSlice::from_bytes(path))
+            .collect();
+        JSValue::from_entries(global_this, &names, &paths)
     }
 
     #[bun_jsc::host_fn(getter)]

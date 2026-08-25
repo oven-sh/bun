@@ -152,13 +152,12 @@ impl FileSystemRouter {
                     root_dir_path = root_dir_path_;
                 } else {
                     let parts: [&[u8]; 1] = [path_];
-                    root_dir_path = Utf8Bytes::Borrowed(path::resolve_path::join_abs_string_buf::<
-                        path::platform::Auto,
-                    >(
-                        bun_core::cwd::get(),
-                        &mut out_buf,
-                        &parts,
-                    ));
+                    root_dir_path =
+                        Utf8Bytes::Borrowed(path::resolve_path::join_abs_string_buf::<
+                            path::platform::Auto,
+                        >(
+                            bun_core::cwd::get(), &mut out_buf, &parts
+                        ));
                 }
             }
         } else {

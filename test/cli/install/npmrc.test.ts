@@ -1884,6 +1884,35 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     });
   });
 
+  // A line specific to the tarball's path beats the registry's credentials, as in
+  // npm; a line the registry itself resolves to does not (bunfig, env and CLI
+  // credentials stay ahead of `.npmrc`, as they are for the manifest).
+  test("a tarball path with its own .npmrc line uses that line, not the registry's token", async () => {
+    const registryPath = "/npm/team-a";
+    const tarballPath = "/npm/team-b/no-deps/-/no-deps-1.0.0.tgz";
+    using registry = mockRegistry("Bearer team-b-token", { registryPath, tarballPath, publicManifest: true });
+    using dir = tempDir("npmrc-url-auth-own-line", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}${registryPath}/`,
+        `//${registry.host}${registryPath}/:_authToken=team-a-token`,
+        `//${registry.host}/npm/team-b/:_authToken=team-b-token`,
+        "",
+      ].join("\n"),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+
+    expect({ requests: registry.requests, exitCode, stderr }).toEqual({
+      requests: [
+        { path: `${registryPath}/no-deps`, auth: "Bearer team-a-token" },
+        { path: tarballPath, auth: "Bearer team-b-token" },
+      ],
+      exitCode: 0,
+      stderr: expect.not.stringContaining("401"),
+    });
+  });
+
   test.each(["/npm/team-a/../team-b/x.tgz", "/npm/team-a/%2e%2e/team-b/x.tgz", "/npm/team-a/..%2fteam-b/x.tgz"])(
     "a dist.tarball of %s carries no credentials",
     async tarballPath => {

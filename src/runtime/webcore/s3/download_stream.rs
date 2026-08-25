@@ -261,7 +261,11 @@ impl S3HttpDownloadStreamingTask {
         );
 
         result.body_into(&mut self.reported_response_buffer.list);
+        // Only a body that is being delivered can be resumed: the wrapper resumes as JS takes
+        // chunks. An error body is collected whole before it is reported, with no chunk
+        // delivered in between, so pausing it would never be undone.
         if !is_done
+            && !wait_until_done
             && self.reported_response_buffer.list.len() >= bun_http::signals::BODY_HIGH_WATER_MARK
         {
             self.signal_store.pause_receive();

@@ -15,7 +15,7 @@ use bun_boringssl as boringssl;
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_core::{ZigString, strings};
+use bun_core::{EncodedSlice, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
@@ -183,9 +183,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.clear_send_buffers(true);
         self.control_frame_started.set(false);
         self.ping_len.set(0);
-        if let Some((_, reason)) = self.close_dispatch_pending.take() {
-            reason.deref();
-        }
+        self.close_dispatch_pending.take();
         self.receiving_compressed.set(false);
         self.message_is_compressed.set(false);
         self.deflate.replace(None);
@@ -294,13 +292,13 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+        if let Some((code, reason)) = self.close_dispatch_pending.take() {
             // The socket closed while our close frame was mid-flush; the peer
             // either got it or didn't, but JS should still see the
             // user-initiated code/reason (not an abrupt 1006).
             self.detach_tcp();
             self.clear_data();
-            self.dispatch_close(code, &mut reason);
+            self.dispatch_close(code, reason);
             // For the socket.
             self.release_io_ref();
             return;
@@ -399,7 +397,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return;
                     }
                 };
-                let mut outstring;
+                let outstring;
                 if let Some(utf16) = utf16_bytes {
                     // Ownership of the UTF-16 buffer transfers to C++: with
                     // `clone=false` and the global tag set, `Zig::toString`
@@ -408,12 +406,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                     // be a UAF + double-free, so `utf16` must never be freed
                     // locally.
                     let utf16 = core::mem::ManuallyDrop::new(utf16);
-                    outstring = ZigString::from16_slice(&utf16);
-                    outstring.mark_global();
+                    outstring = EncodedSlice::utf16_global(&utf16);
                     jsc::mark_binding!();
                     out.did_receive_text(false, &outstring);
                 } else {
-                    outstring = ZigString::init(data);
+                    outstring = EncodedSlice::latin1(data);
                     jsc::mark_binding!();
                     out.did_receive_text(true, &outstring);
                 }
@@ -1125,7 +1122,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the 4-byte masking key lives at frame[2..6]
         frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
 
-        let mut reason = bun_core::String::empty();
+        let mut reason = bun_core::String::EMPTY;
         if body_len > 0 {
             let body = &body[..body_len];
             // close is always utf8
@@ -1152,7 +1149,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();
                 self.clear_data();
-                self.dispatch_close(dispatch_code, &mut reason);
+                self.dispatch_close(dispatch_code, reason);
             } else {
                 // The close frame was only partially written; the remainder is
                 // in send_buffer. clear_data() would discard it (and the
@@ -1178,10 +1175,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn finish_pending_close(&self) {
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+        if let Some((code, reason)) = self.close_dispatch_pending.take() {
             self.shutdown_after_close_frame();
             self.clear_data();
-            self.dispatch_close(code, &mut reason);
+            self.dispatch_close(code, reason);
         }
     }
 
@@ -1322,7 +1319,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.send_frame(Copy::Bytes(data), data.len(), opcode);
     }
 
-    pub(crate) fn write_string(this: ThisPtr<Self>, str: &ZigString, op: u8) {
+    pub(crate) fn write_string(this: ThisPtr<Self>, str: &EncodedSlice, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         let _guard = this.ref_guard();
 
@@ -1345,7 +1342,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
             // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
         } else if (str.len * 4) < STACK_FRAME_SIZE && !this.has_backpressure() {
-            let bytes = Copy::Utf16(str.utf16_slice_aligned());
+            let bytes = Copy::Utf16(str.utf16_slice());
             let (frame_size, byte_len) = bytes.frame_and_content_len();
             this.send_inline_frame(bytes, byte_len, frame_size, opcode);
             return;
@@ -1353,7 +1350,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         let _ = this.send_data(
             if str.is_16bit() {
-                Copy::Utf16(str.utf16_slice_aligned())
+                Copy::Utf16(str.utf16_slice())
             } else {
                 Copy::Latin1(str.slice())
             },
@@ -1374,7 +1371,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// May free `self`.
-    fn dispatch_close(&self, code: u16, reason: &mut bun_core::String) {
+    fn dispatch_close(&self, code: u16, reason: bun_core::String) {
         let Some((out, cpp_ref)) = self.outgoing_websocket.replace(None) else {
             return;
         };
@@ -1384,7 +1381,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         cpp_ref.deref();
     }
 
-    pub(crate) fn close(this: ThisPtr<Self>, code: u16, reason: Option<&ZigString>) {
+    pub(crate) fn close(this: ThisPtr<Self>, code: u16, reason: Option<&EncodedSlice>) {
         // In tunnel mode, SSLWrapper.writeData() (via send_close_with_body →
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
@@ -1635,7 +1632,10 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
 }
 
 /// Transcode a close reason to UTF-8 into `buf`; `None` when it exceeds `MAX_CLOSE_REASON`.
-fn encode_close_reason(reason: &ZigString, buf: &mut [u8; MAX_CONTROL_PAYLOAD]) -> Option<usize> {
+fn encode_close_reason(
+    reason: &EncodedSlice,
+    buf: &mut [u8; MAX_CONTROL_PAYLOAD],
+) -> Option<usize> {
     use std::io::Write;
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
     if reason.is_16bit() {
@@ -1670,7 +1670,7 @@ pub fn bun__websocketclient__cancel(this: ThisPtr<crate::websocket_client::WebSo
 pub fn bun__websocketclient__close(
     this: ThisPtr<crate::websocket_client::WebSocketClient>,
     code: u16,
-    reason: Option<&bun_core::ZigString>,
+    reason: Option<&bun_core::EncodedSlice>,
 ) {
     WebSocketClient::close(this, code, reason)
 }
@@ -1735,7 +1735,7 @@ pub fn bun__websocketclient__write_blob(
 // HOST_EXPORT(Bun__WebSocketClient__writeString, c)
 pub fn bun__websocketclient__write_string(
     this: ThisPtr<crate::websocket_client::WebSocketClient>,
-    str_: &bun_core::ZigString,
+    str_: &bun_core::EncodedSlice,
     op: u8,
 ) {
     WebSocketClient::write_string(this, str_, op)
@@ -1749,7 +1749,7 @@ pub fn bun__websocketclienttls__cancel(this: ThisPtr<crate::websocket_client::We
 pub fn bun__websocketclienttls__close(
     this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
     code: u16,
-    reason: Option<&bun_core::ZigString>,
+    reason: Option<&bun_core::EncodedSlice>,
 ) {
     WebSocketClientTLS::close(this, code, reason)
 }
@@ -1824,7 +1824,7 @@ pub fn bun__websocketclienttls__write_blob(
 // HOST_EXPORT(Bun__WebSocketClientTLS__writeString, c)
 pub fn bun__websocketclienttls__write_string(
     this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
-    str_: &bun_core::ZigString,
+    str_: &bun_core::EncodedSlice,
     op: u8,
 ) {
     WebSocketClientTLS::write_string(this, str_, op)

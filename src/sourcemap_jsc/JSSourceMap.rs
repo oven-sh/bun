@@ -38,9 +38,7 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         return Ok(JSValue::UNDEFINED);
     }
 
-    // reshaped for borrowck — `source_url_slice` borrows `source_url_string`;
-    // explicit deref/deinit calls become Drop on reassignment.
-    let mut source_url_string = bun_string_jsc::from_js(source_url_value, global)?;
+    let mut source_url_string = bun_core::String::from_js(source_url_value, global)?;
     let mut source_url_slice = source_url_string.to_utf8();
 
     {
@@ -55,7 +53,7 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
     if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
         if &source_url_slice.slice()[..source_url_index] == b"file" {
-            let path = bun_jsc::URL::path_from_file_url(source_url_string.dupe_ref());
+            let path = bun_url::path_from_file_url(&source_url_string);
 
             if path.is_dead() {
                 return Err(global.throw_value(global.err_invalid_url(format_args!(
@@ -78,8 +76,8 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let Some(source_map) = vm.source_mappings().get(source_url) else {
         return Ok(JSValue::UNDEFINED);
     };
-    // Box allocation aborts on OOM (handleOom semantics).
-    let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string.dupe_ref()]);
+    drop(source_url_slice);
+    let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string]);
 
     // `SavedSourceMap::get` hands back a +1 ref as an `Arc<ParsedSourceMap>`;
     // `Drop` on the field releases it — no manual `deref_()` needed.
@@ -120,11 +118,9 @@ impl JSSourceMap {
                 global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
             );
         };
-        let mappings_value = bstring::OwnedString::new(mappings_value);
 
         let mappings_str = mappings_value.to_utf8();
 
-        // errdefer blocks deleted: Vec<bun_core::String> drops each element (deref) on `?` unwind.
         let mut names: Vec<bstring::String> = Vec::new();
         let mut sources: Vec<bstring::String> = Vec::new();
 

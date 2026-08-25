@@ -10,7 +10,7 @@
 
 use bun_boringssl::c::OwnedSslCtx;
 use bun_core::ffi::FfiSlice;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::ThisPtr;
 use bun_uws_sys::Socket;
@@ -62,15 +62,11 @@ unsafe extern "C" {
         headers: FfiSlice<'_, RawHeader<'_>>,
         body: FfiSlice<'_>,
     );
-    safe fn WebSocket__didClose(
-        websocket_context: &CppWebSocket,
-        code: u16,
-        reason: &mut BunString,
-    );
+    safe fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: BunString);
     safe fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
-        text: &ZigString,
+        text: &EncodedSlice,
     );
     safe fn WebSocket__didReceiveBytes(
         websocket_context: &CppWebSocket,
@@ -80,7 +76,7 @@ unsafe extern "C" {
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
-    safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: &mut BunString);
+    safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
 }
 
 // Receivers are `&self` (not `&mut self`) because `CppWebSocket` is
@@ -118,14 +114,14 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_close(&self, code: u16, reason: &mut BunString) {
+    pub(crate) fn did_close(&self, code: u16, reason: BunString) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         WebSocket__didClose(self, code, reason);
         event_loop.exit();
     }
 
-    pub(crate) fn did_receive_text(&self, clone: bool, text: &ZigString) {
+    pub(crate) fn did_receive_text(&self, clone: bool, text: &EncodedSlice) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         WebSocket__didReceiveText(self, clone, text);
@@ -188,7 +184,7 @@ impl CppWebSocket {
         WebSocket__releasePendingActivityForClient(self);
     }
 
-    pub(crate) fn set_protocol(&self, protocol: &mut BunString) {
+    pub(crate) fn set_protocol(&self, protocol: BunString) {
         bun_jsc::mark_binding!();
         WebSocket__setProtocol(self, protocol);
     }

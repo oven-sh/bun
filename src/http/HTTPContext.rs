@@ -157,6 +157,34 @@ impl<const SSL: bool> ActiveSocketExt<SSL> for ActiveSocket<SSL> {
     }
 }
 
+/// How the peer on a pooled connection was authenticated. Connections are
+/// only shared between requests that authenticate the same way (a
+/// `rejectUnauthorized: false` request may take any), so a verdict from a JS
+/// `checkServerIdentity` callback is never inherited by a request relying on
+/// the native check, or vice versa.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub enum PeerVerification {
+    /// Established with `rejectUnauthorized: false`; neither the chain nor
+    /// the hostname was enforced.
+    #[default]
+    None,
+    /// Chain verified against the CA store; identity approved by a JS
+    /// `checkServerIdentity` callback at handshake time (like Node's
+    /// `https.Agent`, the callback is per connection, not per request).
+    Callback,
+    /// Chain verified and hostname matched by the native check.
+    Native,
+}
+
+impl PeerVerification {
+    /// Whether a request that verifies at `self` may take a pooled connection
+    /// verified at `pooled`.
+    #[inline]
+    pub(crate) fn admits(self, pooled: PeerVerification) -> bool {
+        self == PeerVerification::None || self == pooled
+    }
+}
+
 pub struct PooledSocket<const SSL: bool> {
     pub(crate) http_socket: HTTPSocket<SSL>,
     pub(crate) hostname_buf: [u8; MAX_KEEPALIVE_HOSTNAME],
@@ -164,12 +192,10 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) port: u16,
     /// If you set `rejectUnauthorized` to `false`, the connection fails to verify,
     pub(crate) did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
-    /// True if the TLS handshake for this socket ran with
-    /// `rejectUnauthorized=true` (i.e. `checkServerIdentity` was enforced).
-    /// A socket established with `rejectUnauthorized=false` never validated the
-    /// peer hostname, so a strict caller must not reuse it even when the chain
-    /// itself was CA-valid (`did_have_handshaking_error` stays false).
-    pub(crate) established_with_reject_unauthorized: bool,
+    /// A CA-valid but wrong-hostname cert leaves `did_have_handshaking_error`
+    /// false, so this is what keeps a strict caller off a connection whose
+    /// hostname was never checked natively.
+    pub(crate) verification: PeerVerification,
     /// The interned SSLConfig this socket was created with (None = default context).
     /// Owns a strong ref while the socket is in the keepalive pool.
     pub(crate) ssl_config: Option<ssl_config::SharedPtr>,
@@ -271,6 +297,7 @@ struct ExistingSocket<const SSL: bool> {
     tunnel: Option<crate::proxy_tunnel::RefPtr>,
     /// Non-null if the socket negotiated "h2"; ownership transferred.
     h2_session: Option<NonNull<h2::ClientSession>>,
+    verification: PeerVerification,
 }
 
 impl<const SSL: bool> ExistingSocket<SSL> {
@@ -596,7 +623,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         &mut self,
         socket: HTTPSocket<SSL>,
         did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
-        established_with_reject_unauthorized: bool,
+        verification: PeerVerification,
         hostname: &[u8],
         port: u16,
         ssl_config: Option<&ssl_config::SharedPtr>,
@@ -649,7 +676,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     hostname_len: hostname.len() as u8, // @truncate
                     port,
                     did_have_handshaking_error_while_reject_unauthorized_is_false,
-                    established_with_reject_unauthorized,
+                    verification,
                     // Clone a strong ref for the keepalive pool; the caller retains
                     // its own ref via HTTPClient.tls_props.
                     ssl_config: ssl_config.cloned(),
@@ -698,7 +725,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
     #[allow(clippy::too_many_arguments)]
     fn existing_socket(
         &mut self,
-        reject_unauthorized: bool,
+        required_for_socket: PeerVerification,
+        required_for_target: PeerVerification,
         hostname: &[u8],
         port: u16,
         ssl_config: Option<*const SSLConfig>,
@@ -729,7 +757,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
 
             if socket.did_have_handshaking_error_while_reject_unauthorized_is_false
-                && reject_unauthorized
+                && required_for_target > PeerVerification::None
             {
                 continue;
             }
@@ -763,30 +791,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if !strings::eql_long(&socket.target_hostname, target_hostname, true) {
                     continue;
                 }
-                // A tunnel established with reject_unauthorized=false never
-                // ran checkServerIdentity — a CA-valid wrong-hostname cert
-                // leaves did_have_handshaking_error=false so the outer
-                // guard passes. Block a strict caller from reusing it.
-                if reject_unauthorized
-                    // proxy_tunnel.is_some() guaranteed by want_tunnel match above.
-                    && !socket
-                        .proxy_tunnel
-                        .as_ref()
-                        .unwrap()
-                        .established_with_reject_unauthorized
-                {
+                // proxy_tunnel.is_some() guaranteed by want_tunnel match above.
+                if !required_for_target.admits(socket.proxy_tunnel.as_ref().unwrap().verification) {
                     continue;
                 }
-            } else if SSL
-                // Same failure mode as the tunnel branch above, for direct
-                // HTTPS sockets: a socket established with
-                // reject_unauthorized=false never ran checkServerIdentity, so
-                // a CA-valid wrong-hostname cert leaves
-                // did_have_handshaking_error=false and the outer guard passes.
-                // Block a strict caller from reusing it.
-                && reject_unauthorized
-                && !socket.established_with_reject_unauthorized
-            {
+            }
+            if SSL && !required_for_socket.admits(socket.verification) {
                 continue;
             }
 
@@ -813,6 +823,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let tunnel: Option<crate::proxy_tunnel::RefPtr> = socket.proxy_tunnel.take();
                 socket.target_hostname = Box::default();
                 let h2_session = socket.h2_session.take();
+                let verification = socket.verification;
                 // SAFETY: `socket_ptr` is a fully-initialized hive slot; the
                 // owned-heap fields (ssl_config/tunnel/target_hostname/h2_session)
                 // were just moved out / cleared, so the in-place drop in `put`
@@ -834,6 +845,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     socket: http_socket,
                     tunnel,
                     h2_session,
+                    verification,
                 });
             }
         }
@@ -912,12 +924,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     .find(|s| {
                         s.has_headroom()
                             && s.matches(hostname, port, cfg, host_header_hash)
-                            // Same guard as the pool path: a session whose TLS
-                            // handshake ran with reject_unauthorized=false never
-                            // validated the peer hostname, so a strict caller
-                            // must not multiplex onto it.
-                            && (!client.flags.reject_unauthorized
-                                || s.established_with_reject_unauthorized)
+                            // Same guard as the pool path (`existing_socket`).
+                            && client.socket_verification().admits(s.verification)
                     });
                 if let Some(session) = reusable {
                     h2::ClientSession::adopt(session, client);
@@ -925,12 +933,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 }
                 let cfg_nn = cfg.and_then(|p| NonNull::new(p.cast_mut()));
                 for pc in &mut self.pending_h2_connects {
-                    // Same strictness guard as the active-session loop above: a
-                    // strict caller must not coalesce onto an in-flight connect
-                    // that was initiated with reject_unauthorized=false, since
-                    // the resulting session won't have validated the peer.
+                    // Same guard as the active-session loop above, applied to
+                    // an in-flight connect before its session exists.
                     if pc.matches(hostname, port, cfg_nn, host_header_hash)
-                        && (!client.flags.reject_unauthorized || pc.reject_unauthorized)
+                        && client.socket_verification().admits(pc.verification)
                     {
                         // client outlives the pending connect (resolved before
                         // its terminal callback fires).
@@ -941,6 +947,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        client.flags.reused_socket_verification = PeerVerification::None;
         if client.is_keep_alive_possible() {
             let want_tunnel = client.http_proxy.is_some() && client.url.is_https();
             // CONNECT TCP target (writeProxyConnect line 346). The SNI
@@ -966,9 +973,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
             } else {
                 0
             };
-
             if let Some(mut found) = self.existing_socket(
-                client.flags.reject_unauthorized,
+                client.socket_verification(),
+                client.target_verification(),
                 hostname,
                 port,
                 SSLConfig::raw_ptr(client.tls_props.as_ref()),
@@ -983,6 +990,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 },
             ) {
                 let sock = found.socket;
+                client.flags.reused_socket_verification = found.verification;
                 Self::set_socket_ext(
                     sock,
                     ActiveSocket::<SSL>::init(
@@ -1058,7 +1066,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     hostname: Box::<[u8]>::from(hostname),
                     port,
                     ssl_config: cfg,
-                    reject_unauthorized: client.flags.reject_unauthorized,
+                    verification: client.socket_verification(),
                     host_header_hash: client.proxy_auth_hash(),
                     ..Default::default()
                 });

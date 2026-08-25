@@ -461,14 +461,12 @@ impl JSMySQLConnection {
         // Frees `secure` / drops `tls_config` on every early return until `into_inner` below.
         let tls_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
 
-        let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
+        let path_str = arguments[8].to_bun_string(global_object)?;
 
-        // `init` takes `Box<[u8]>` per field (each separately owned), so we
-        // copy each string into its own allocation.
-        let username: Box<[u8]> = Box::from(args.username_str.to_utf8_without_ref().slice());
-        let password: Box<[u8]> = Box::from(args.password_str.to_utf8_without_ref().slice());
-        let database: Box<[u8]> = Box::from(args.database_str.to_utf8_without_ref().slice());
-        let path: Box<[u8]> = Box::from(path_str.to_utf8_without_ref().slice());
+        let username = args.username_str.to_owned_slice().into_boxed_slice();
+        let password = args.password_str.to_owned_slice().into_boxed_slice();
+        let database = args.database_str.to_owned_slice().into_boxed_slice();
+        let path = path_str.to_owned_slice().into_boxed_slice();
 
         // Reject null bytes in connection parameters to prevent protocol injection
         // (null bytes act as field terminators in the MySQL wire protocol).

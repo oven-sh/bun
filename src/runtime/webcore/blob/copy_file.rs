@@ -136,11 +136,11 @@ impl CopyFile {
         ) && system_error.path.is_empty()
         {
             system_error.path =
-                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice()).into();
+                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice());
         }
 
         if system_error.message.is_empty() {
-            system_error.message = bun_core::String::static_("Failed to copy file").into();
+            system_error.message = bun_core::String::static_("Failed to copy file");
         }
 
         let instance = jsc::SystemError::from(system_error)
@@ -1944,8 +1944,8 @@ pub enum IOWhich {
 fn unsupported_directory_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::EISDIR as i32,
-        message: bun_core::String::static_("That doesn't work on folders").into(),
-        syscall: bun_core::String::static_("fstat").into(),
+        message: bun_core::String::static_("That doesn't work on folders"),
+        syscall: bun_core::String::static_("fstat"),
         ..SystemError::default()
     }
 }
@@ -1954,8 +1954,8 @@ fn unsupported_directory_error() -> SystemError {
 fn unsupported_non_regular_file_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::ENOTSUP as i32,
-        message: bun_core::String::static_("Non-regular files aren't supported yet").into(),
-        syscall: bun_core::String::static_("fstat").into(),
+        message: bun_core::String::static_("Non-regular files aren't supported yet"),
+        syscall: bun_core::String::static_("fstat"),
         ..SystemError::default()
     }
 }

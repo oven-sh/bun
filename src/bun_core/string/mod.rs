@@ -1458,7 +1458,9 @@ impl<'a> EncodedSlice<'a> {
     /// truncates each UTF-16 unit (or decoded UTF-8 code point) to its low byte.
     pub fn to_latin1(self) -> Cow<'a, [u8]> {
         if self.is_16bit() {
-            return self.utf16_slice().iter().map(|&c| c as u8).collect();
+            let mut out = vec![0u8; self.len];
+            strings::copy_u16_into_u8(&mut out, self.utf16_slice());
+            return Cow::Owned(out);
         }
         if self.is_utf8() && !strings::is_all_ascii(self.slice()) {
             return Cow::Owned(

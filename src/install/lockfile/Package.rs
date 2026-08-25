@@ -981,28 +981,30 @@ impl Diff {
         )
     }
 
-    /// `Dependency::eql`, plus one case: the two sides can tag the same edge
-    /// `workspace` and `npm` (`map_dep_to_pkg` and the npm-lock migration
-    /// disagree with the package.json reparse). A star range matches any
-    /// workspace, so an unchanged literal is the same manifest edge.
+    /// `Dependency::eql`, plus one case: loading bun.lock stores a dependency
+    /// that resolved to a workspace package as a workspace edge
+    /// (`map_dep_to_pkg`), while the package.json reparse keeps the textual
+    /// npm range when the workspace has no version a star range satisfies.
+    /// The workspace still matches the star range, so an unchanged literal is
+    /// the same manifest edge. `reparse_links_workspace` is the precondition:
+    /// `link_workspace_packages` is on and the name is still a workspace in
+    /// the reparsed lockfile.
     fn deps_match(
         to_dep: &Dependency,
         from_dep: &Dependency,
         to_buf: &[u8],
         from_buf: &[u8],
+        reparse_links_workspace: bool,
     ) -> bool {
         if Dependency::eql(to_dep, from_dep, to_buf, from_buf) {
             return true;
         }
-        let star_workspace_pair = |ws: &dependency::Version, npm: &dependency::Version| {
-            ws.tag == dependency::version::Tag::Workspace
-                && npm.tag == dependency::version::Tag::Npm
-                && npm.npm().version.is_star()
-        };
-        from_dep.name_hash == to_dep.name_hash
+        reparse_links_workspace
+            && from_dep.version.tag == dependency::version::Tag::Workspace
+            && to_dep.version.tag == dependency::version::Tag::Npm
+            && to_dep.version.npm().version.is_star()
+            && from_dep.name_hash == to_dep.name_hash
             && from_dep.name.len() == to_dep.name.len()
-            && (star_workspace_pair(&from_dep.version, &to_dep.version)
-                || star_workspace_pair(&to_dep.version, &from_dep.version))
             && strings::eql_long(
                 from_dep.version.literal.slice(from_buf),
                 to_dep.version.literal.slice(to_buf),
@@ -1452,6 +1454,11 @@ impl Diff {
                 from_dep,
                 to_lockfile.buffers.string_bytes.as_slice(),
                 from_lockfile.buffers.string_bytes.as_slice(),
+                pm.options.link_workspace_packages
+                    && to_lockfile
+                        .workspace_paths
+                        .get(&from_dep.name_hash)
+                        .is_some(),
             ) {
                 if let Some(updates) = update_requests {
                     if updates.is_empty()

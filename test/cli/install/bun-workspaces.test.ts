@@ -311,6 +311,35 @@ test.concurrent("successfully installs workspace when path already exists in nod
   });
 });
 
+// #40396: the lockfile diff treats a locked workspace edge and a reparsed "*" range as the
+// same edge. That must not keep a registry resolution once a same-name workspace appears.
+test.concurrent("star dep re-resolves to a newly added workspace", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["app1"], dependencies: { "no-deps": "*" } }),
+    ),
+    write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1" })),
+  ]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("2.0.0");
+
+  // add a same-name versioned workspace that "*" satisfies
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["app1", "no-deps"], dependencies: { "no-deps": "*" } }),
+    ),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" })),
+  ]);
+  ({ exited } = await runBunInstall(env, packageDir));
+  expect(await exited).toBe(0);
+  expect((await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe("9.9.9");
+});
+
 test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

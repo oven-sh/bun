@@ -1,0 +1,22 @@
+{
+  "_id": "dedupe-cycle-peer",
+  "name": "dedupe-cycle-peer",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "dedupe-cycle-peer",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "no-deps": "1.0.0"
+      },
+      "_id": "dedupe-cycle-peer@1.0.0",
+      "dist": {
+        "integrity": "sha512-8MP+2u6g5cCVoKLZ7P4lFg5OiQtvUJCLsLSprevOHHiwioWnea+ssiMkiRsPigNnAzfKyB1PkIh419GFyj+lXg==",
+        "shasum": "d98dca452b09bf3a017424c487cd2a935c7e8599",
+        "tarball": "http://localhost:4873/dedupe-cycle-peer/-/dedupe-cycle-peer-1.0.0.tgz"
+      }
+    }
+  }
+}

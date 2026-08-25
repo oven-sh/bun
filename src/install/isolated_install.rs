@@ -520,12 +520,13 @@ pub(crate) fn build_store(
                                     }
                                     break 'resolved invalid_package_id;
                                 };
-                                // Auto-install fallback is declarer-specific; let the
-                                // second pass handle this position rather than risk an
-                                // unsound key.
-                                if resolved == invalid_package_id {
-                                    break 'dont_dedupe;
-                                }
+                                // `invalid_package_id` (no ancestor resolves the
+                                // name) is part of the key: every declarer inside
+                                // the subtree then auto-installs its best version,
+                                // `resolutions[peer_dep_id]`, which is declarer-
+                                // specific but position-independent, so two
+                                // positions where the name is unresolved in both
+                                // ancestor chains expand identically.
                                 hasher.update(bun_core::bytes_of(&peer_name_hash));
                                 hasher.update(bun_core::bytes_of(&resolved));
                             }

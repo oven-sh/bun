@@ -18,7 +18,7 @@ use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::{EncodedSlice, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
 use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
@@ -1291,34 +1291,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         !tcp.is_closed() && !tcp.is_shutdown()
     }
 
-    pub(crate) fn write_blob(this: ThisPtr<Self>, blob_value: JSValue, op: u8) {
-        // See write_binary_data() — tunnel.write() can re-enter fail().
-        let _guard = this.ref_guard();
-
-        if !this.has_tcp() || op > 0xF {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
-            return;
-        }
-
-        // Cast the JSValue to a Blob.
-        // `bun_jsc::webcore::Blob` is an opaque C-ABI shim (real
-        // layout lives in `bun_runtime::webcore::Blob`, a higher-tier crate).
-        // `from_js`/`shared_view` trampoline through extern fns to avoid the
-        // dep cycle — see `bun_jsc::webcore::Blob` impl block.
-        let Some(blob) = blob_value.as_class_ref::<bun_jsc::webcore::Blob>() else {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
-            return;
-        };
-        let opcode = Opcode::from_raw(op);
-        let data = blob.shared_view();
-        if data.is_empty() {
-            let _ = this.send_data(Copy::Bytes(&[]), !this.has_backpressure(), opcode);
-            return;
-        }
-
-        this.send_frame(Copy::Bytes(data), data.len(), opcode);
-    }
-
     pub(crate) fn write_string(this: ThisPtr<Self>, str: &EncodedSlice, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         let _guard = this.ref_guard();
@@ -1724,14 +1696,6 @@ pub fn bun__websocketclient__write_binary_data(
 ) {
     WebSocketClient::write_binary_data(this, bytes, op)
 }
-// HOST_EXPORT(Bun__WebSocketClient__writeBlob, c)
-pub fn bun__websocketclient__write_blob(
-    this: ThisPtr<crate::websocket_client::WebSocketClient>,
-    blob_value: JSValue,
-    op: u8,
-) {
-    WebSocketClient::write_blob(this, blob_value, op)
-}
 // HOST_EXPORT(Bun__WebSocketClient__writeString, c)
 pub fn bun__websocketclient__write_string(
     this: ThisPtr<crate::websocket_client::WebSocketClient>,
@@ -1783,22 +1747,6 @@ pub fn bun__websocketclienttls__init(
         secure,
     )
 }
-// HOST_EXPORT(Bun__WebSocketClientTLS__initWithTunnel, c)
-pub fn bun__websocketclienttls__init_with_tunnel(
-    outgoing: &crate::websocket_client::cpp_websocket::CppWebSocket,
-    tunnel: ThisPtr<crate::websocket_client::websocket_proxy_tunnel::WebSocketProxyTunnel>,
-    global_this: &JSGlobalObject,
-    buffered_data: Option<Box<crate::websocket_client::InitialData>>,
-    deflate_params: Option<&crate::websocket_client::websocket_deflate::Params>,
-) -> *mut crate::websocket_client::WebSocketClientTLS {
-    WebSocketClientTLS::init_with_tunnel(
-        outgoing,
-        tunnel,
-        global_this,
-        buffered_data,
-        deflate_params,
-    )
-}
 // HOST_EXPORT(Bun__WebSocketClientTLS__memoryCost, c)
 pub fn bun__websocketclienttls__memory_cost(
     this: &crate::websocket_client::WebSocketClientTLS,
@@ -1812,14 +1760,6 @@ pub fn bun__websocketclienttls__write_binary_data(
     op: u8,
 ) {
     WebSocketClientTLS::write_binary_data(this, bytes, op)
-}
-// HOST_EXPORT(Bun__WebSocketClientTLS__writeBlob, c)
-pub fn bun__websocketclienttls__write_blob(
-    this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
-    blob_value: JSValue,
-    op: u8,
-) {
-    WebSocketClientTLS::write_blob(this, blob_value, op)
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__writeString, c)
 pub fn bun__websocketclienttls__write_string(

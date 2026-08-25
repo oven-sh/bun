@@ -990,6 +990,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
+        transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.compile_target_is_host = config
             .compile
             .as_ref()

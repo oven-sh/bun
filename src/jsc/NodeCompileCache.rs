@@ -910,6 +910,7 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                             job.format,
                             &job.code,
                             url.as_view(),
+                            u32::MAX,
                             None,
                         );
                         let _ = job.resp.send(result);

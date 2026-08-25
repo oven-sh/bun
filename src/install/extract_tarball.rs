@@ -37,11 +37,10 @@ pub struct ExtractTarball {
     pub(crate) in_trusted_dependencies: bool,
     pub(crate) integrity: Integrity, // = Integrity::default()
     pub(crate) url: StringOrTinyString,
-    /// The lockfile's existing bun-tag (`repository.resolved`) for a Github
-    /// resolution, copied out because workers must not read lockfile buffers.
-    /// Cache lookups are keyed by it, so extraction names the cache folder and
-    /// `.bun-tag` after it. Empty on a fresh resolve (no tag yet): the
-    /// archive's root directory name is used instead.
+    /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
+    /// copied out because extract workers must not read lockfile buffers. When
+    /// set it names the cache folder and `.bun-tag` (cache lookups are keyed by
+    /// it); empty on a fresh resolve, which uses the archive's root dir name.
     pub(crate) github_resolved: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
     pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,

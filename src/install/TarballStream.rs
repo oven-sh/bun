@@ -227,8 +227,7 @@ impl TarballStream {
         );
 
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
-        // An existing lockfile bun-tag keys the cache lookup; prefer it over
-        // harvesting the archive's root directory name.
+        // An existing lockfile bun-tag keys the cache lookup; prefer it over the root dir name.
         let lockfile_github_tag = tarball.github_resolved.slice();
         let resolved_github_dirname: &'static [u8] =
             if tarball.resolution.tag == ResolutionTag::Github && !lockfile_github_tag.is_empty() {

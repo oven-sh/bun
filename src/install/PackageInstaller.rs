@@ -1586,8 +1586,7 @@ impl<'a> PackageInstaller<'a> {
             {
                 debug_assert!(resolution.can_enqueue_install_task());
 
-                // The download already completed, so re-enqueueing would
-                // dedupe against the finished task and never call back.
+                // Re-enqueueing would dedupe against the finished download and never call back.
                 if !needs_verify {
                     if log_level != Options::LogLevel::Silent {
                         bun_core::pretty_errorln!(

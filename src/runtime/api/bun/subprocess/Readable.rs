@@ -97,7 +97,10 @@ impl Readable {
             #[cfg(unix)]
             return Readable::Memfd(memfd);
             #[cfg(not(unix))]
-            return Readable::Ignore;
+            {
+                let _ = memfd;
+                return Readable::Ignore;
+            }
         }
 
         #[cfg(unix)]

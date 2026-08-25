@@ -1046,7 +1046,7 @@ impl jsc::JobContext for ArchiveCompressWriteJob {
         let bytes = match core::mem::replace(&mut off.result, CompressWriteResult::Pending) {
             CompressWriteResult::Ok(v) => v,
             CompressWriteResult::Err(e) => {
-                return Ok(promise.reject_with_async_stack(global, Ok(e.to_js(global)))?);
+                return promise.reject_with_async_stack(global, Ok(e.to_js(global)));
             }
             CompressWriteResult::Pending => unreachable!("run() always sets result"),
         };
@@ -1064,7 +1064,7 @@ impl jsc::JobContext for ArchiveCompressWriteJob {
             &write_options,
         ) {
             Ok(p) => p,
-            Err(e) => return Ok(promise.reject(global, Err(e))?),
+            Err(e) => return promise.reject(global, Err(e)),
         };
 
         // Forward the inner write promise onto the task's promise.
@@ -1077,7 +1077,7 @@ impl jsc::JobContext for ArchiveCompressWriteJob {
         } else {
             PromiseResult::Resolve(new_promise)
         };
-        Ok(result.fulfill(global, promise)?)
+        result.fulfill(global, promise)
     }
 }
 

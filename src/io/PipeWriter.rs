@@ -1203,9 +1203,7 @@ pub trait BaseWindowsPipeWriter: Sized {
                         } else {
                             (*raw).detach_borrowed_fd_after_inflight()
                         };
-                        // Idle and the fd is parent-owned: nothing pending,
-                        // nothing to close. Reclaim and drop the Box. Otherwise
-                        // on_fs_write_complete heap::take()s the detached Box.
+                        // Idle and parent-owned: nothing to close, so drop the Box here.
                         if !pending {
                             drop(bun_core::heap::take(raw));
                         }

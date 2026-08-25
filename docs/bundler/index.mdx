@@ -1793,6 +1793,17 @@ interface BuildConfig {
         identifiers?: boolean;
       };
   /**
+   * Build for production. Equivalent to the `--production` CLI flag.
+   *
+   * Inlines `process.env.NODE_ENV` as `"production"`, enables all
+   * minification options (an explicit `minify` still wins), disables the
+   * JSX development transform, and skips the `"development"` export
+   * condition.
+   *
+   * @default false
+   */
+  production?: boolean;
+  /**
    * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
    * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
    * annotations in libraries.

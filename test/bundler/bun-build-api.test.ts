@@ -2020,35 +2020,38 @@ describe("Bun.build production option", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return stdout;
+    return { stdout, exitCode };
   }
 
   test.concurrent("production: true inlines NODE_ENV and minifies", async () => {
     using dir = tempDir("build-production", files);
-    const output = await buildAndReadOutput(String(dir), `{ production: true }`, "./index.js");
-    expect(output).toContain('console.log("production")');
-    expect(output).not.toContain("longFunctionName");
+    const { stdout, exitCode } = await buildAndReadOutput(String(dir), `{ production: true }`, "./index.js");
+    expect(stdout).toContain('console.log("production")');
+    expect(stdout).not.toContain("longFunctionName");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("production: true works with an HTML entrypoint", async () => {
     using dir = tempDir("build-production-html", files);
-    const output = await buildAndReadOutput(String(dir), `{ production: true }`, "./index.html");
-    expect(output).toContain('console.log("production")');
-    expect(output).not.toContain("longFunctionName");
+    const { stdout, exitCode } = await buildAndReadOutput(String(dir), `{ production: true }`, "./index.html");
+    expect(stdout).toContain('console.log("production")');
+    expect(stdout).not.toContain("longFunctionName");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("an explicit minify overrides the production default", async () => {
     using dir = tempDir("build-production-minify", files);
-    const output = await buildAndReadOutput(String(dir), `{ production: true, minify: false }`, "./index.js");
-    expect(output).toContain('console.log("production")');
-    expect(output).toContain("longFunctionName");
+    const { stdout, exitCode } = await buildAndReadOutput(String(dir), `{ production: true, minify: false }`, "./index.js");
+    expect(stdout).toContain('console.log("production")');
+    expect(stdout).toContain("longFunctionName");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("production: false keeps the development defaults", async () => {
     using dir = tempDir("build-no-production", files);
-    const output = await buildAndReadOutput(String(dir), `{ production: false }`, "./index.js");
-    expect(output).toContain('console.log("development")');
-    expect(output).toContain("longFunctionName");
+    const { stdout, exitCode } = await buildAndReadOutput(String(dir), `{ production: false }`, "./index.js");
+    expect(stdout).toContain('console.log("development")');
+    expect(stdout).toContain("longFunctionName");
+    expect(exitCode).toBe(0);
   });
 });

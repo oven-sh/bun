@@ -2156,7 +2156,9 @@ describe("HTTP Server Security Tests - Advanced", () => {
         return;
       }
       if (req.url === "/empty-implicit") {
-        res.writeHead = function (...args) { return http.ServerResponse.prototype.writeHead.apply(this, args); };
+        res.writeHead = function (...args) {
+          return http.ServerResponse.prototype.writeHead.apply(this, args);
+        };
         res.statusMessage = "";
         res.end();
         return;

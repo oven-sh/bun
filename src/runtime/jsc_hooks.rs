@@ -17,6 +17,7 @@
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_core::WTFStringImplExt as _;
+use bun_core::strings::EncodingNonAscii;
 use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -2928,18 +2929,18 @@ fn transpile_source_code_inner(
                         None
                     };
                     let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
-                    // Node compile cache hook (transpiler-cache-hit path); must
-                    // read `output_code` before it is consumed below. UTF-16
-                    // output would hash differently than the print path — skip.
+                    // Node compile cache hook (transpiler-cache-hit path). The
+                    // entry holds the printer's buffer in its original width,
+                    // so its bytes hash exactly as they did on the print path.
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                         && source.path.is_file()
                         && loader.is_java_script_like()
-                        && !entry.output_code.is_utf16()
                     {
                         bun_jsc::node_compile_cache::fetch(
                             source.path.text,
                             is_commonjs_module,
                             entry.output_code.byte_slice(),
+                            entry.metadata.output_width(),
                         )
                     } else {
                         None
@@ -3171,11 +3172,17 @@ fn transpile_source_code_inner(
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
                     let written = printer.ctx.get_written();
+                    let encoding = printer.ctx.output_encoding();
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                         && path.is_file()
                         && loader.is_java_script_like()
                     {
-                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                        bun_jsc::node_compile_cache::fetch(
+                            path.text,
+                            is_commonjs_module,
+                            written,
+                            encoding,
+                        )
                     } else {
                         None
                     };
@@ -3184,6 +3191,7 @@ fn transpile_source_code_inner(
                     let mut resolved_source = unsafe {
                         (*jsc_vm).ref_counted_resolved_source(
                             written,
+                            encoding,
                             input_specifier,
                             path.text,
                             None,
@@ -3252,13 +3260,19 @@ fn transpile_source_code_inner(
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *(*extra).source_code_printer };
                 let written = printer.ctx.get_written();
+                let encoding = printer.ctx.output_encoding();
                 // Node compile cache hook (sync transpile path). `fetch` copies
                 // `written`; the printer may be replaced below.
                 let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                     && path.is_file()
                     && loader.is_java_script_like()
                 {
-                    bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                    bun_jsc::node_compile_cache::fetch(
+                        path.text,
+                        is_commonjs_module,
+                        written,
+                        encoding,
+                    )
                 } else {
                     None
                 };
@@ -3268,15 +3282,18 @@ fn transpile_source_code_inner(
                 // `None`.
                 debug_assert!(cache.output_code.is_none());
                 let written_len = written.len();
-                let source_code = bun_core::String::clone_latin1(written);
+                // Already in the width JSC wants; a copy, not a transcode.
+                debug_assert!(encoding != EncodingNonAscii::Utf8);
+                let source_code = printer.ctx.clone_written_as_string();
                 // `printer.ctx.buffer.deinit()`: release the
                 // large/--smol print buffer now instead of holding it until the
                 // next transpile. Replacing the printer drops the old buffer
                 // (same shape as RuntimeTranspilerStore).
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 if written_len > 1024 * 1024 * 2 || unsafe { &*jsc_vm }.smol {
-                    *printer =
-                        bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
+                    *printer = bun_js_printer::BufferPrinter::init(
+                        bun_js_printer::BufferWriter::init_latin1(),
+                    );
                     printer.ctx.append_null_byte = false;
                 }
 
@@ -4414,7 +4431,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
     let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
         let mut p = cell.get();
         if p.is_null() {
-            let writer = bun_js_printer::BufferWriter::init();
+            let writer = bun_js_printer::BufferWriter::init_latin1();
             let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             bp.ctx.append_null_byte = false;
             p = bun_core::heap::into_raw(bp);
@@ -4565,7 +4582,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
     let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
         let mut p = cell.get();
         if p.is_null() {
-            let writer = bun_js_printer::BufferWriter::init();
+            let writer = bun_js_printer::BufferWriter::init_latin1();
             let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             bp.ctx.append_null_byte = false;
             p = bun_core::heap::into_raw(bp);

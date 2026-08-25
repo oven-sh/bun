@@ -1,6 +1,7 @@
 use core::ptr::NonNull;
 
 use bun_core::String as BunString;
+use bun_core::strings::EncodingNonAscii;
 use bun_options_types::Format;
 
 bun_opaque::opaque_ffi! {
@@ -36,6 +37,31 @@ impl EncoderStringTable {
     }
 }
 
+/// How the generators read `input_code`; the C++ side of the enum is in
+/// ZigSourceProvider.cpp and the two must stay in step. JSC only accepts
+/// bytecode generated from a string equal to the one the module loader builds,
+/// so the generator has to decode the bytes the same way the load path for
+/// that kind of source does: bundler output on disk is UTF-8, while the
+/// runtime printer's buffer is already in its final width (see
+/// `bun_js_printer::BufferWriter::init_latin1`).
+#[repr(u8)]
+#[derive(Clone, Copy)]
+enum BytecodeSourceEncoding {
+    Utf8 = 0,
+    Latin1 = 1,
+    Utf16 = 2,
+}
+
+impl From<EncodingNonAscii> for BytecodeSourceEncoding {
+    fn from(encoding: EncodingNonAscii) -> Self {
+        match encoding {
+            EncodingNonAscii::Utf8 => Self::Utf8,
+            EncodingNonAscii::Latin1 => Self::Latin1,
+            EncodingNonAscii::Utf16 => Self::Utf16,
+        }
+    }
+}
+
 unsafe extern "C" {
     fn Bun__EncoderStringTable__create() -> *mut EncoderStringTable;
     fn Bun__EncoderStringTable__destroy(this: *mut EncoderStringTable);
@@ -49,6 +75,7 @@ unsafe extern "C" {
         source_provider_url: &BunString,
         input_code: *const u8,
         input_source_code_size: usize,
+        input_encoding: BytecodeSourceEncoding,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -59,6 +86,7 @@ unsafe extern "C" {
         source_provider_url: &BunString,
         input_code: *const u8,
         input_source_code_size: usize,
+        input_encoding: BytecodeSourceEncoding,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -90,6 +118,7 @@ impl CachedBytecode {
     pub(crate) fn generate(
         format: Format,
         input: &[u8],
+        input_encoding: EncodingNonAscii,
         source_provider_url: &BunString,
         external_strings: Option<NonNull<EncoderStringTable>>,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
@@ -107,6 +136,7 @@ impl CachedBytecode {
                 source_provider_url,
                 input.as_ptr(),
                 input.len(),
+                BytecodeSourceEncoding::from(input_encoding),
                 &raw mut out_ptr,
                 &raw mut out_size,
                 &raw mut this,
@@ -145,13 +175,19 @@ impl bun_alloc::Allocator for CachedBytecode {}
 pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
+    source_encoding: EncodingNonAscii,
     source_provider_url: &BunString,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
-    let (bytes, handle) =
-        CachedBytecode::generate(format, source, source_provider_url, external_strings)?;
+    let (bytes, handle) = CachedBytecode::generate(
+        format,
+        source,
+        source_encoding,
+        source_provider_url,
+        external_strings,
+    )?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;
     // `CachedBytecode` is an opaque ZST handle so `opaque_mut` is the

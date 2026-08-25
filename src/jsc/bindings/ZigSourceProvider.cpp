@@ -205,10 +205,49 @@ extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* byt
     static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(std::span<const uint8_t>(bytes, len));
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+// Mirrors `BytecodeSourceEncoding` in CachedBytecode.rs.
+enum class BytecodeSourceEncoding : uint8_t {
+    // Bytes written to disk by the bundler (`--bytecode`, `--compile`); the
+    // loader reads them back with `String::clone_utf8` -> `BunString__fromBytes`.
+    Utf8 = 0,
+    // The runtime printer's buffer, which the loader hands to JSC as-is
+    // (NODE_COMPILE_CACHE): one Latin-1 character per byte ...
+    Latin1 = 1,
+    // ... or native-endian UTF-16 code units, two bytes each.
+    Utf16 = 2,
+};
+
+// JSC accepts the bytecode only if the string it was generated from equals the
+// string the module loader later creates, so each encoding is decoded exactly the
+// way the corresponding load path decodes it.
+static WTF::String sourceCodeStringForBytecode(const uint8_t* inputSourceCode, size_t inputSourceCodeSize, BytecodeSourceEncoding encoding)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    if (inputSourceCodeSize == 0)
+        return WTF::emptyString();
+    switch (encoding) {
+    case BytecodeSourceEncoding::Utf8:
+        return Zig::convertUTF8ToString(std::span { inputSourceCode, inputSourceCodeSize });
+    case BytecodeSourceEncoding::Latin1:
+        return WTF::String(std::span { reinterpret_cast<const Latin1Character*>(inputSourceCode), inputSourceCodeSize });
+    case BytecodeSourceEncoding::Utf16: {
+        // The bytes arrive in a byte buffer, so copy rather than alias them as char16_t.
+        std::span<char16_t> units;
+        auto impl = WTF::StringImpl::tryCreateUninitialized(inputSourceCodeSize / 2, units);
+        if (!impl)
+            return WTF::String();
+        memcpy(units.data(), inputSourceCode, units.size_bytes());
+        return WTF::String(WTF::move(impl));
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const uint8_t* inputSourceCode, size_t inputSourceCodeSize, BytecodeSourceEncoding inputEncoding, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+{
+    WTF::String source = sourceCodeStringForBytecode(inputSourceCode, inputSourceCodeSize, inputEncoding);
+    if (source.isNull())
+        return false;
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::move(source), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = vmForBytecodeCache();
 
@@ -240,11 +279,12 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const uint8_t* inputSourceCode, size_t inputSourceCodeSize, BytecodeSourceEncoding inputEncoding, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    WTF::String source = sourceCodeStringForBytecode(inputSourceCode, inputSourceCodeSize, inputEncoding);
+    if (source.isNull())
+        return false;
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::move(source), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = vmForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);

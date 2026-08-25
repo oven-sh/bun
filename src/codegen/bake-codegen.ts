@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
-import { argParse, writeIfNotChanged } from "./helpers";
+import { argParse, checkAscii, writeIfNotChanged } from "./helpers";
 
 // arg parsing
 let { "codegen-root": codegenRoot, debug, ...rest } = argParse(["codegen-root", "debug"]);
@@ -144,6 +144,9 @@ async function run() {
           code = `let ${outName("unloadedModuleRegistry")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
+          // DevServer::init_server_runtime loads this as a Latin-1 string, and
+          // regex literals / tagged template raw text are no longer escaped.
+          checkAscii(code);
         } else {
           code = debug ? `(async (${names}) => {${code}})({\n` : `(async(${names})=>{${code}})({`;
         }

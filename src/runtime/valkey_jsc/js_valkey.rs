@@ -976,8 +976,12 @@ impl JSValkeyClient {
         let promise = promise_ptr.to_js();
         Js::connection_promise_set_cached(this_value, global_object, promise);
 
-        // If was manually closed, reset that flag
+        // If was manually closed, reset that flag. A close() that interrupted
+        // a dial in this same tick is taken back with it: the deferred close
+        // of that dial now settles this connect(), and reports the dial's own
+        // outcome rather than the close.
         self.client_mut().flags.is_manually_closed = false;
+        self.client_mut().flags.close_aborted_dial = false;
         // Explicit connect() should also clear the sticky failure so the
         // client can recover after prior connection attempts exhausted retries.
         // Without this, every subsequent command rejects with "Connection has

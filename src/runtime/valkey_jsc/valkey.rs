@@ -32,7 +32,8 @@ pub struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
     /// Set by `disconnect()` while a dial is in flight and taken by that
     /// dial's `on_close`: uSockets reports the aborted dial as a connect
-    /// error (`ECONNABORTED`), and the user asked for that close.
+    /// error (`ECONNABORTED`), and the user asked for that close. A
+    /// `connect()` before that `on_close` clears it with `is_manually_closed`.
     pub(crate) close_aborted_dial: bool,
     pub(crate) is_selecting_db_internal: bool,
     pub(crate) enable_offline_queue: bool,

@@ -535,6 +535,42 @@ describe("Valkey: connect() error identity", () => {
     },
   );
 
+  test.skipIf(isWindows)(
+    "a connect() that follows a close() in the tick of a failed first dial reports the dial's errno",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const { url, seen } = missingUnixSocket(String(dir));
+      const client = new RedisClient(url, { autoReconnect: false });
+      const closed = Promise.withResolvers<unknown>();
+      let closes = 0;
+      client.onclose = err => {
+        closes++;
+        closed.resolve(err);
+      };
+      try {
+        // The command's dial fails inside connect() and its close is deferred.
+        // close() marks that dial as aborted by the user; the connect() in the
+        // same tick takes the close back, so the dial's own outcome is what
+        // the deferred close reports.
+        const get = client.get("k").then(
+          () => "<resolved>",
+          e => e,
+        );
+        client.close();
+        const err = await client.connect().then(
+          () => "<connected>",
+          e => e,
+        );
+        expect(err).toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED", message: `connect ENOENT ${seen}` });
+        expect(await get).toBe(err);
+        expect(await closed.promise).toBe(err);
+        expect(closes).toBe(1);
+      } finally {
+        client.close();
+      }
+    },
+  );
+
   test("a connect() after an authentication failure gets its own outcome", async () => {
     let helloReply = `-WRONGPASS invalid username-password pair or user is disabled.${CRLF}`;
     const server = net.createServer(sock => {

@@ -1010,11 +1010,19 @@ impl Diff {
         to_npm.version.is_star()
             && from_dep.name_hash == to_dep.name_hash
             && from_dep.name.len() == to_dep.name.len()
+            // The same path, not only the same name: a relocated workspace is
+            // an update.
             && to_workspace_paths
                 .get(&semver::string::Builder::string_hash(
                     to_npm.name.slice(to_buf),
                 ))
-                .is_some()
+                .is_some_and(|to_path| {
+                    strings::eql_long(
+                        from_dep.version.workspace().slice(from_buf),
+                        to_path.slice(to_buf),
+                        true,
+                    )
+                })
             && strings::eql_long(
                 from_dep.version.literal.slice(from_buf),
                 to_dep.version.literal.slice(to_buf),

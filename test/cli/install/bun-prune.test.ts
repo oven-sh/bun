@@ -599,6 +599,27 @@ for (const [label, deps, pkg1, checked] of [
   });
 }
 
+// A relocated versionless workspace is a real change: prune refuses until bun install runs.
+test.concurrent("workspaces: star dep on a relocated versionless workspace is out of sync", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "package1"] })),
+    write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: { package1: "*" } })),
+    write(join(dir, "package1", "package.json"), JSON.stringify({ name: "package1" })),
+  ]);
+  await runBunInstall(installEnv(dir), dir);
+
+  renameSync(join(dir, "package1"), join(dir, "moved"));
+  await write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "moved"] }));
+  expectRefused(await prune(dir));
+
+  await runBunInstall(installEnv(dir), dir);
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(2, 1)}`);
+  expect(stderr).not.toContain(OUT_OF_SYNC);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("keeps dependencies bundled inside a package", async () => {
   const dir = await setup({ name: "foo", dependencies: { "bundled-transitive": "1.0.0" } });
   const bundled = join(dir, "node_modules", "bundled-transitive", "node_modules", "no-deps", "package.json");

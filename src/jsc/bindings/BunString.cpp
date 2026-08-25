@@ -799,12 +799,19 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-// True iff the impl owns its buffer (or is external) and is not an atom,
-// symbol or substring, so another thread may hold a ref.
-extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadShareable(
+// What isolatedCopy() yields: no atom-table membership and no base impl.
+extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadIsolated(
     const WTF::StringImpl* wtf)
 {
     return !wtf->isAtom() && !wtf->isSymbol() && !wtf->isSubString();
+}
+
+// What BunString__makeThreadShareable yields: isolated, and no holder can
+// mutate it (hash already computed, never atomized in place).
+extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadShareable(
+    const WTF::StringImpl* wtf)
+{
+    return WTFStringImpl__isThreadIsolated(wtf) && (wtf->isStatic() || (wtf->hasHash() && !wtf->canBecomeAtom()));
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)

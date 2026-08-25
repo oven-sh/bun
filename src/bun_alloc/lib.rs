@@ -926,6 +926,10 @@ impl WTFStringImplStruct {
         }
     }
     #[inline]
+    pub fn is_thread_isolated(&self) -> bool {
+        WTFStringImpl__isThreadIsolated(self)
+    }
+    #[inline]
     pub fn is_thread_shareable(&self) -> bool {
         WTFStringImpl__isThreadShareable(self)
     }
@@ -946,6 +950,7 @@ unsafe extern "C" {
     // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
     // allocation backing the pointer.
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
+    safe fn WTFStringImpl__isThreadIsolated(this: &WTFStringImplStruct) -> bool;
     safe fn WTFStringImpl__isThreadShareable(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
 }

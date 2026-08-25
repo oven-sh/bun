@@ -517,7 +517,7 @@ impl String {
         } else {
             self.clone()
         };
-        debug_assert!(copy.is_thread_shareable());
+        debug_assert!(copy.is_thread_isolated());
         copy
     }
     /// Make a WTF-backed impl safe to hand to any number of threads/VMs:
@@ -529,22 +529,18 @@ impl String {
         }
         debug_assert!(self.is_thread_shareable());
     }
-    /// True iff this `String` may be handed to another thread as-is: every
-    /// tag except `WTFStringImpl` is inert (raw slice / static / dead), and a
-    /// WTF-backed string qualifies iff its impl is not an atom, symbol or
-    /// substring (`isThreadShareable()`).
-    ///
-    /// Call sites that move a `String` across a thread boundary must ensure
-    /// this holds (typically via [`thread_isolated_copy`] first); see the
-    /// `Send`/`Sync` SAFETY comment for the full contract.
+    /// What [`thread_isolated_copy`] yields: no thread-affine state (not an
+    /// atom, symbol or substring), so the value may be handed to one other
+    /// thread. Non-WTF tags are inert and always qualify.
+    #[inline]
+    pub(crate) fn is_thread_isolated(&self) -> bool {
+        self.tag != Tag::WTFStringImpl || self.as_wtf().is_thread_isolated()
+    }
+    /// What [`make_thread_shareable`] yields: isolated, pre-hashed and never
+    /// atomized in place, so any number of threads may hold it.
     #[inline]
     pub(crate) fn is_thread_shareable(&self) -> bool {
-        if self.tag == Tag::WTFStringImpl {
-            // SAFETY: WTF tag guarantees `value.wtf` is a valid live impl.
-            self.as_wtf().is_thread_shareable()
-        } else {
-            true
-        }
+        self.tag != Tag::WTFStringImpl || self.as_wtf().is_thread_shareable()
     }
 
     #[inline]
@@ -933,7 +929,7 @@ impl String {
         if out.string.tag == Tag::WTFStringImpl {
             if out.utf8.is_none() {
                 // 8-bit all-ASCII: a thread-shareable `string` keeps backing the bytes.
-                if out.string.is_thread_shareable() {
+                if out.string.is_thread_isolated() {
                     return out;
                 }
                 out.utf8 = Some(out.slice().to_vec());
@@ -998,11 +994,12 @@ impl Default for String {
 // in `Send + Sync` containers), and instead enforce the invariant at the
 // boundary: code that moves a `String` to one other thread calls
 // [`String::thread_isolated_copy`], code that shares one impl between
-// threads/VMs calls [`String::make_thread_shareable`] (both assert
-// [`String::is_thread_shareable`]).
+// threads/VMs calls [`String::make_thread_shareable`] (asserting
+// [`String::is_thread_isolated`] / [`String::is_thread_shareable`]).
 unsafe impl Send for String {}
-// SAFETY: same contract as the `Send` impl above — sharing requires
-// `is_thread_shareable()`; non-WTF tags are inert and trivially `Sync`.
+// SAFETY: same contract as the `Send` impl above — a hand-off requires
+// `is_thread_isolated()`, sharing `is_thread_shareable()`; non-WTF tags are
+// inert and trivially `Sync`.
 unsafe impl Sync for String {}
 
 impl Drop for String {

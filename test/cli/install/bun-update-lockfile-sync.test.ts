@@ -120,6 +120,7 @@ function declaredLiteral(manifest: Json, name: string): string | undefined {
 
 // bun.lock repeats each workspace's dependency groups, plus the root's overrides, catalog and catalogs, and a
 // `--frozen-lockfile` install must accept it as is. With `reinstall`, a plain install must leave it byte-identical too.
+// A field is compared when either file has it, so a stale copy in bun.lock of a field package.json dropped fails too.
 async function expectInSync(
   dir: string,
   workspaces: string[] = [""],
@@ -133,15 +134,16 @@ async function expectInSync(
     declared[key] = {};
     locked[key] = {};
     for (const group of GROUPS) {
-      if (manifest[group] === undefined) continue;
+      const lockedGroup = lockfile.workspaces[key]?.[group];
+      if (manifest[group] === undefined && lockedGroup === undefined) continue;
       declared[key][group] = manifest[group];
-      locked[key][group] = lockfile.workspaces[key]?.[group];
+      locked[key][group] = lockedGroup;
     }
     if (key !== "") continue;
     const overrides = manifest.overrides ?? manifest.resolutions;
-    if (overrides !== undefined) {
+    if (overrides !== undefined || lockfile.overrides !== undefined) {
       declared[key].overrides = Object.fromEntries(
-        Object.entries(overrides).map(([name, value]) => [
+        Object.entries(overrides ?? {}).map(([name, value]) => [
           name,
           typeof value === "string" && value.startsWith("$") ? declaredLiteral(manifest, value.slice(1)) : value,
         ]),
@@ -149,12 +151,12 @@ async function expectInSync(
       locked[key].overrides = lockfile.overrides;
     }
     const catalog = manifest.workspaces?.catalog ?? manifest.catalog;
-    if (catalog !== undefined) {
+    if (catalog !== undefined || lockfile.catalog !== undefined) {
       declared[key].catalog = catalog;
       locked[key].catalog = lockfile.catalog;
     }
     const catalogs = manifest.workspaces?.catalogs ?? manifest.catalogs;
-    if (catalogs !== undefined) {
+    if (catalogs !== undefined || lockfile.catalogs !== undefined) {
       declared[key].catalogs = catalogs;
       locked[key].catalogs = lockfile.catalogs;
     }

@@ -87,6 +87,21 @@ describe("fake node cli", () => {
     expect(fakeNodeRun(temp, ["-e", "console.log('pass')"]).stdout).toBe("pass");
   });
 
+  // #40482: positionals after the eval source must all reach process.argv
+  test("node -e keeps positionals in process.argv", () => {
+    using temp = tempDir("fake-node", {});
+    expect(
+      fakeNodeRun(temp, ["-e", "console.log(JSON.stringify(process.argv.slice(1)))", "foo", "bar"]).stdout,
+    ).toBe(JSON.stringify(["foo", "bar"]));
+  });
+
+  test("node -p keeps positionals in process.argv", () => {
+    using temp = tempDir("fake-node", {});
+    expect(fakeNodeRun(temp, ["-p", "JSON.stringify(process.argv.slice(1))", "foo", "bar"]).stdout).toBe(
+      JSON.stringify(["foo", "bar"]),
+    );
+  });
+
   test("process args work", () => {
     using temp = tempDir("fake-node", {
       "index.js": "console.log(JSON.stringify(process.argv.slice(1)))",

@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { linkSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, parse, relative } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,248 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// Windows needs a privilege or developer mode for symlinks (CI has it); junctions never do.
+const canCreateSymlink = (() => {
+  using probe = tempDir("shell-cp-symlink-probe", { "target": "" });
+  try {
+    symlinkSync("target", join(String(probe), "link"));
+    return true;
+  } catch (err: any) {
+    if (err.code === "EPERM" || err.code === "EACCES") return false;
+    throw err;
+  }
+})();
+
+// The builtin is the default only on Windows; on POSIX it is enabled by an env
+// var that is read once per process, so each of these runs cp in a child bun.
+describe.concurrent("bunshell cp of a source onto itself", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  /** A temp dir holding `d/f`, the file the tests copy; `extra` adds to it. */
+  function setup(name: string, extra: (work: string) => void = () => {}) {
+    const dir = tempDir(`shell-cp-same-file-${name}`, { "d": { "f": "F\n" } });
+    extra(String(dir));
+    return dir;
+  }
+
+  /** Runs `command` through the shell in `work` and returns cp's exit code followed by its stderr. */
+  async function cp(work: string, command: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.$\`${command}\`.nothrow().quiet();
+         process.stdout.write(result.exitCode + "\\n" + result.stderr.toString());`,
+      ],
+      cwd: work,
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function refused(src: string, tgt: string) {
+    return { stdout: `1\ncp: ${src} and ${tgt} are identical (not copied)\n`, stderr: "", exitCode: 0 };
+  }
+  const copied = { stdout: "0\n", stderr: "", exitCode: 0 };
+  /** What the builtin puts between a directory operand and the basename it appends to it. */
+  const sep = isWindows ? "\\" : "/";
+
+  // Larger than the 128 KB above which the macOS copy unlinks the destination
+  // before cloning the source into its place.
+  const big = Buffer.alloc(200 * 1024, "big file contents\n");
+
+  test("into its own directory is refused", async () => {
+    using dir = setup("into-own-dir", work => writeFileSync(join(work, "d/f"), big));
+    expect(await cp(String(dir), "cp d/f d")).toEqual(refused("d/f", `d${sep}f`));
+    expect(readFileSync(join(String(dir), "d/f")).equals(big)).toBeTrue();
+  });
+
+  test("into its own directory written with a trailing slash is refused", async () => {
+    using dir = setup("trailing-slash");
+    expect(await cp(String(dir), "cp d/f d/")).toEqual(refused("d/f", `d${sep}f`));
+    expect(readFileSync(join(String(dir), "d/f"), "utf8")).toBe("F\n");
+  });
+
+  // The destination operand is reported as written, as cp(1) does, not normalized.
+  test("into its own directory written as d/. is refused", async () => {
+    using dir = setup("dot-segment");
+    expect(await cp(String(dir), "cp d/f d/.")).toEqual(refused("d/f", `d/.${sep}f`));
+  });
+
+  test("into its own directory written with a very long operand is refused", async () => {
+    using dir = setup("long-operand");
+    // Climbs to the filesystem root and back down into the temp dir: resolves
+    // to a short absolute path, but as written it is longer than PATH_MAX (4096
+    // on Linux), so reporting it must not go through a path buffer.
+    const { root } = parse(String(dir));
+    const fromRoot = relative(root, String(dir)).replaceAll("\\", "/");
+    const operand = `${Buffer.alloc(1500 * 3, "../").toString()}${fromRoot}/d`;
+    expect(operand.length).toBeGreaterThan(4096);
+    expect(await cp(String(dir), `cp d/f ${operand}`)).toEqual(refused("d/f", `${operand}${sep}f`));
+  });
+
+  test("into its own directory with -R is refused", async () => {
+    using dir = setup("recursive");
+    expect(await cp(String(dir), "cp -R d/f d")).toEqual(refused("d/f", `d${sep}f`));
+    expect(readFileSync(join(String(dir), "d/f"), "utf8")).toBe("F\n");
+  });
+
+  test("onto its own path is refused", async () => {
+    using dir = setup("own-path");
+    expect(await cp(String(dir), "cp d/f d/f")).toEqual(refused("d/f", "d/f"));
+    expect(readFileSync(join(String(dir), "d/f"), "utf8")).toBe("F\n");
+  });
+
+  test("a file target with several sources is not a directory, also for the source it is", async () => {
+    using dir = setup("target-is-a-source", work => writeFileSync(join(work, "x"), "X\n"));
+    expect(await cp(String(dir), "cp d/f x d/f")).toEqual({
+      stdout: "1\ncp: d/f is not a directory\ncp: d/f is not a directory\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(readFileSync(join(String(dir), "d/f"), "utf8")).toBe("F\n");
+  });
+
+  test("a directory onto itself with -R is refused", async () => {
+    using dir = setup("dir-onto-itself", work => writeFileSync(join(work, "d/f"), big));
+    expect(await cp(String(dir), "cp -R d .")).toEqual(refused("d", `.${sep}d`));
+    expect(readdirSync(join(String(dir), "d"))).toEqual(["f"]);
+    expect(readFileSync(join(String(dir), "d/f")).equals(big)).toBeTrue();
+  });
+
+  // A junction on Windows (which classifies it as a directory), a symlink elsewhere.
+  test("a directory link into its own directory with -R is refused", async () => {
+    using dir = setup("dir-link-into-own-dir", work => {
+      mkdirSync(join(work, "d/sub"));
+      symlinkSync(join(work, "d/sub"), join(work, "d/sublink"), "junction");
+    });
+    expect(await cp(String(dir), "cp -R d/sublink d")).toEqual(refused("d/sublink", `d${sep}sublink`));
+    expect(readdirSync(join(String(dir), "d")).sort()).toEqual(["f", "sub", "sublink"]);
+  });
+
+  test("a directory into a directory that already holds a copy is merged", async () => {
+    using dir = setup("merge", work => {
+      mkdirSync(join(work, "e/d/old"), { recursive: true });
+    });
+    expect(await cp(String(dir), "cp -R d e")).toEqual(copied);
+    expect(readdirSync(join(String(dir), "e/d")).sort()).toEqual(["f", "old"]);
+    expect(readFileSync(join(String(dir), "e/d/f"), "utf8")).toBe("F\n");
+  });
+
+  test("a directory into a directory where its name is a link back to it is refused", async () => {
+    using dir = setup("dir-link-back", work => {
+      mkdirSync(join(work, "e"));
+      symlinkSync(join(work, "d"), join(work, "e/d"), "junction");
+    });
+    expect(await cp(String(dir), "cp -R d e")).toEqual(refused("d", `e${sep}d`));
+    expect(readdirSync(join(String(dir), "d"))).toEqual(["f"]);
+  });
+
+  // Inside a tree the per-file pairs are only seen by the copy itself.
+  test.skipIf(isWindows)(
+    "a tree whose destination leads back into it through a link is not copied onto itself",
+    async () => {
+      using dir = setup("tree-link-back", work => {
+        mkdirSync(join(work, "p/d"), { recursive: true });
+        writeFileSync(join(work, "p/d/f"), big);
+        mkdirSync(join(work, "e/p"), { recursive: true });
+        symlinkSync(join(work, "p/d"), join(work, "e/p/d"));
+      });
+      expect(await cp(String(dir), "cp -R p e")).toEqual({
+        stdout: expect.stringMatching(/^1\ncp: .*[\\/]p[\\/]d[\\/]f\n$/),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(readFileSync(join(String(dir), "p/d/f")).equals(big)).toBeTrue();
+    },
+  );
+
+  test("onto a hard link to itself is refused", async () => {
+    using dir = setup("hard-link", work => {
+      writeFileSync(join(work, "d/f"), big);
+      linkSync(join(work, "d/f"), join(work, "d/g"));
+    });
+    expect(await cp(String(dir), "cp d/f d/g")).toEqual(refused("d/f", "d/g"));
+    expect(readFileSync(join(String(dir), "d/f")).equals(big)).toBeTrue();
+  });
+
+  test("a hard link from elsewhere into the directory of its file is refused", async () => {
+    using dir = setup("hard-link-elsewhere", work => {
+      writeFileSync(join(work, "d/f"), big);
+      mkdirSync(join(work, "e"));
+      linkSync(join(work, "d/f"), join(work, "e/f"));
+    });
+    expect(await cp(String(dir), "cp e/f d")).toEqual(refused("e/f", `d${sep}f`));
+    expect(readFileSync(join(String(dir), "d/f")).equals(big)).toBeTrue();
+  });
+
+  test("into a link to its own directory is refused", async () => {
+    using dir = setup("into-dir-link", work => {
+      writeFileSync(join(work, "d/f"), big);
+      symlinkSync(join(work, "d"), join(work, "dj"), "junction");
+    });
+    expect(await cp(String(dir), "cp d/f dj/")).toEqual(refused("d/f", `dj${sep}f`));
+    expect(readFileSync(join(String(dir), "d/f")).equals(big)).toBeTrue();
+  });
+
+  test.skipIf(!canCreateSymlink)("onto a symlink to itself is refused", async () => {
+    using dir = setup("onto-symlink", work => symlinkSync("f", join(work, "d/link")));
+    expect(await cp(String(dir), "cp d/f d/link")).toEqual(refused("d/f", "d/link"));
+    expect(readFileSync(join(String(dir), "d/f"), "utf8")).toBe("F\n");
+  });
+
+  test.skipIf(!canCreateSymlink)("a symlink onto the file it points to is refused", async () => {
+    using dir = setup("symlink-onto-target", work => symlinkSync("f", join(work, "d/link")));
+    expect(await cp(String(dir), "cp d/link d/f")).toEqual(refused("d/link", "d/f"));
+    expect(readFileSync(join(String(dir), "d/f"), "utf8")).toBe("F\n");
+    expect(readlinkSync(join(String(dir), "d/link"))).toBe("f");
+  });
+
+  test.skipIf(!canCreateSymlink)("a symlink into its own directory is refused", async () => {
+    using dir = setup("symlink-into-own-dir", work => symlinkSync("f", join(work, "d/link")));
+    expect(await cp(String(dir), "cp d/link d")).toEqual(refused("d/link", `d${sep}link`));
+    expect(readlinkSync(join(String(dir), "d/link"))).toBe("f");
+  });
+
+  test.skipIf(!canCreateSymlink)("a symlink onto another symlink to the same file is refused", async () => {
+    using dir = setup("two-symlinks", work => {
+      symlinkSync("f", join(work, "d/link"));
+      symlinkSync("f", join(work, "d/link2"));
+    });
+    expect(await cp(String(dir), "cp d/link d/link2")).toEqual(refused("d/link", "d/link2"));
+    expect(readFileSync(join(String(dir), "d/f"), "utf8")).toBe("F\n");
+  });
+
+  test.skipIf(!canCreateSymlink)("a dangling symlink into its own directory with -R is refused", async () => {
+    using dir = setup("dangling-symlink", work => symlinkSync("nowhere", join(work, "d/dangling")));
+    expect(await cp(String(dir), "cp -R d/dangling d")).toEqual(refused("d/dangling", `d${sep}dangling`));
+    expect(readlinkSync(join(String(dir), "d/dangling"))).toBe("nowhere");
+  });
+
+  // Not on Windows: there the copy itself fails on a dangling link (it opens the target to recreate it).
+  test.skipIf(isWindows)("a dangling symlink onto another dangling symlink is not refused", async () => {
+    using dir = setup("two-dangling-symlinks", work => {
+      symlinkSync("nowhere", join(work, "d/dangling"));
+      symlinkSync("elsewhere", join(work, "d/dangling2"));
+    });
+    expect(await cp(String(dir), "cp -R d/dangling d/dangling2")).toEqual(copied);
+  });
+
+  test("the other sources are still copied when one of them is refused", async () => {
+    using dir = setup("one-of-many", work => writeFileSync(join(work, "other"), "other\n"));
+    expect(await cp(String(dir), "cp d/f other d")).toEqual(refused("d/f", `d${sep}f`));
+    expect(readFileSync(join(String(dir), "d/other"), "utf8")).toBe("other\n");
+  });
+
+  test("into another directory is copied", async () => {
+    using dir = setup("other-dir", work => mkdirSync(join(work, "e")));
+    expect(await cp(String(dir), "cp d/f e")).toEqual(copied);
+    expect(readFileSync(join(String(dir), "e/f"), "utf8")).toBe("F\n");
   });
 });
 

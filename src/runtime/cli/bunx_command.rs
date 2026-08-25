@@ -740,7 +740,7 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
-        bun_core::cwd::init()?;
+        bun_core::cwd::require()?;
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check

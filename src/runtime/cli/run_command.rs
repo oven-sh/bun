@@ -2559,31 +2559,24 @@ impl RunCommand {
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
-            let cwd_len = unsafe {
-                sys::windows::kernel32::GetCurrentDirectoryW(
-                    (buf.len() - 4) as u32,
-                    buf.as_mut_ptr().add(root.len()),
-                )
-            } as usize;
-            'try_bunx_file: {
-                if cwd_len == 0 {
-                    break 'try_bunx_file;
-                }
-                let mut ptr = root.len() + cwd_len;
-                let prefix = bun_core::w!("\\node_modules\\.bin\\");
-                buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
-                ptr += prefix.len();
-                let encoded =
-                    strings::convert_utf8_to_utf16_in_buffer(&mut buf[ptr..], target_name);
-                ptr += encoded.len();
-                let ext = bun_core::w!(".bunx");
-                buf[ptr..ptr + ext.len()].copy_from_slice(ext);
-                ptr += ext.len();
-                buf[ptr] = 0;
+            let cwd_len = strings::convert_utf8_to_utf16_in_buffer(
+                &mut buf[root.len()..],
+                bun_core::cwd::get(),
+            )
+            .len();
+            let mut ptr = root.len() + cwd_len;
+            let prefix = bun_core::w!("\\node_modules\\.bin\\");
+            buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
+            ptr += prefix.len();
+            let encoded = strings::convert_utf8_to_utf16_in_buffer(&mut buf[ptr..], target_name);
+            ptr += encoded.len();
+            let ext = bun_core::w!(".bunx");
+            buf[ptr..ptr + ext.len()].copy_from_slice(ext);
+            ptr += ext.len();
+            buf[ptr] = 0;
 
-                let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                BunXFastPath::try_launch(ctx, ptr, env_loader, &passthrough);
-            }
+            let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+            BunXFastPath::try_launch(ctx, ptr, env_loader, &passthrough);
         }
 
         // ── node_modules/.bin / system $PATH fallback ───────────────────────

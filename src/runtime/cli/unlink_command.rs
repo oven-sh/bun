@@ -37,7 +37,6 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
         }
         Err(e) => return Err(e.into()),
     };
-    // `defer ctx.allocator.free(original_cwd)` — `_original_cwd: Box<[u8]>` drops at scope exit.
 
     if manager.options.should_print_command_name() {
         bun_core::prettyln!(

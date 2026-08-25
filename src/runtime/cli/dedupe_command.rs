@@ -40,7 +40,7 @@ impl DedupeCommand {
             Output::flush();
         }
 
-        if let Err(e) = install_with_manager(manager, &mut *ctx, &original_cwd) {
+        if let Err(e) = install_with_manager(manager, &mut *ctx, original_cwd) {
             return InstallCommand::handle_error(crate::Error::from(e));
         }
 

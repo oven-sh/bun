@@ -492,7 +492,12 @@ impl Interpreter {
         };
 
         // ── cwd / cwd_fd ───────────────────────────────────────────────────
-        let cwd_z = bun_core::cwd::get_z();
+        // A shell must not silently run in the stand-in directory when the
+        // process was started from one the OS cannot name.
+        let cwd_z = match bun_sys::require_cwd() {
+            Ok(cwd) => cwd,
+            Err(e) => return Err(ShellErr::new_sys(&e)),
+        };
 
         let cwd_fd = match bun_sys::open(cwd_z, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
             Ok(fd) => fd,

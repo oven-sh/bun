@@ -300,7 +300,7 @@ impl UpdateInteractiveCommand {
         // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)`
         // is implicit via Drop at scope exit.
 
-        Self::update_interactive(ctx, &original_cwd, manager, groups)
+        Self::update_interactive(ctx, original_cwd, manager, groups)
     }
 
     fn update_package_json_files_from_updates(

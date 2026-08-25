@@ -438,6 +438,11 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))
     }
 
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__cwdVersion() -> *const () {
+        bun_core::cwd::version()
+    }
+
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // Real syscall (not `bun_core::cwd`): Node's process.cwd() calls
         // uv_cwd(), so a deleted cwd must surface here.

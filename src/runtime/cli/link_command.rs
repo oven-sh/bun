@@ -37,7 +37,6 @@ fn link(ctx: command::Context) -> crate::Result<()> {
         }
         Err(e) => return Err(e.into()),
     };
-    // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
 
     if manager.options.should_print_command_name() {
         bun_core::prettyln!(
@@ -295,7 +294,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
         Global::exit(0);
     } else {
         // bun link lodash
-        update_package_json_and_install_with_manager(manager, &mut *ctx, &original_cwd)?;
+        update_package_json_and_install_with_manager(manager, &mut *ctx, original_cwd)?;
     }
 
     Ok(())

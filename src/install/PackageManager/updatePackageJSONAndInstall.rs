@@ -798,9 +798,6 @@ pub fn update_package_json_and_install_and_cli(
             }
         }
     };
-    // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
-    let _original_cwd_owner: Box<[u8]> = original_cwd;
-    let original_cwd: &[u8] = &_original_cwd_owner;
     // SAFETY: `super::init` returns a `*mut PackageManager` to the process-static
     // singleton. We are on the single CLI thread; no worker
     // threads deref `get()` until `install_with_manager` spawns the HTTP thread.

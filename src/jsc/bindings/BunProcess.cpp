@@ -4613,6 +4613,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #endif
 }
 
+extern "C" const void* Bun__cwdVersion();
+
 static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4620,14 +4622,15 @@ static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
     auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    if (auto* cached = processObject->cachedCwd()) {
+    const void* version = Bun__cwdVersion();
+    if (auto* cached = processObject->cachedCwd(version)) {
         return cached;
     }
 
     auto cwd = Bun__Process__getCwd(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSString* cwdStr = uncheckedDowncast<JSString>(JSValue::decode(cwd));
-    processObject->setCachedCwd(vm, cwdStr);
+    processObject->setCachedCwd(vm, cwdStr, version);
     RELEASE_AND_RETURN(scope, cwdStr);
 }
 

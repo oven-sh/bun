@@ -93,7 +93,8 @@ impl Tag {
     /// Whether this command runs code and so, like Node and native
     /// executables, starts even when the working directory cannot be read
     /// (removed, or an ancestor is not searchable): the executable's
-    /// directory stands in and `process.cwd()` reports the error.
+    /// directory stands in and `process.cwd()` reports the error. Running
+    /// workspace scripts (`--filter`, `--workspaces`) is the exception.
     pub fn starts_without_cwd(self) -> bool {
         matches!(
             self,

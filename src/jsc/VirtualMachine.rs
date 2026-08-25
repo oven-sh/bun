@@ -95,8 +95,8 @@ pub struct InitOptions {
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// Must be applied to
-    /// `transpiler.resolver.store_fd` BEFORE `configure_linker()` reads
-    /// `top_level_dir`, so it threads through `init_runtime_state`.
+    /// `transpiler.resolver.store_fd` BEFORE `configure_linker()`, so it
+    /// threads through `init_runtime_state`.
     pub store_fd: bool,
     pub smol: bool,
     pub eval_mode: bool,
@@ -2100,9 +2100,8 @@ pub struct RuntimeHooks {
     /// `bun_runtime` type. Called once with the freshly-boxed VM AFTER
     /// `vm.global` / `vm.jsc_vm` are populated;
     /// returns the opaque per-VM runtime state pointer (or null). `Err` when
-    /// `Transpiler::init` fails (e.g. a deleted cwd → `getcwd` ENOENT); the
-    /// hook unwinds its own allocations, so [`VirtualMachine::init`] only has to
-    /// propagate the error.
+    /// `Transpiler::init` fails; the hook unwinds its own allocations, so
+    /// [`VirtualMachine::init`] only has to propagate the error.
     pub init_runtime_state: unsafe fn(
         vm: *mut VirtualMachine,
         opts: &mut InitOptions,
@@ -2626,9 +2625,8 @@ impl VirtualMachine {
             // `&mut VirtualMachine` is held live across the hook call — the
             // hook body itself dereferences `vm`.
             //
-            // `?`: on `Err` (e.g. a deleted cwd → `getcwd` ENOENT out of
-            // `Transpiler::init`) the hook already unwound its own per-VM state,
-            // so abort `init` here — `vm.transpiler` was never written, and
+            // `?`: on `Err` the hook already unwound its own per-VM state, so
+            // abort `init` here — `vm.transpiler` was never written, and
             // bailing out before the CLI reads it turns the old segfault into a
             // clean error + non-zero exit.
             unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts)? };

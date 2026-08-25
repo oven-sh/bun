@@ -1305,8 +1305,7 @@ impl CreateCommand {
             let positional = positionals[0];
 
             'outer: {
-                let parts = [bun_core::cwd::get(), positional];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                let outdir_path = filesystem.abs_buf(&[positional], home_dir_buf);
                 let len = outdir_path.len();
                 home_dir_buf[len] = 0;
                 // SAFETY: home_dir_buf[len] == 0 written above
@@ -1357,8 +1356,8 @@ impl CreateCommand {
                 }
 
                 'outer: {
-                    let parts = [bun_core::cwd::get(), BUN_CREATE_DIR, positional];
-                    let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                    let outdir_path =
+                        filesystem.abs_buf(&[BUN_CREATE_DIR, positional], home_dir_buf);
                     let len = outdir_path.len();
                     home_dir_buf[len] = 0;
                     // SAFETY: home_dir_buf[len] == 0 written above
@@ -1798,8 +1797,7 @@ impl Example {
             }
 
             {
-                let parts = [bun_core::cwd::get(), BUN_CREATE_DIR];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                let outdir_path = filesystem.abs_buf(&[BUN_CREATE_DIR], home_dir_buf);
                 folders[1] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }

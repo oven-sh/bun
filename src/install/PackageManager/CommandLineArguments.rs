@@ -1608,7 +1608,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             let mut buf = PathBuffer::uninit();
             let final_path: &bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
                 Path::resolve_path::join_abs_string_buf_z::<Path::platform::Auto>(
-                    bun_core::cwd::init()?,
+                    bun_core::cwd::require()?,
                     &mut buf[..],
                     &[cwd_],
                 )

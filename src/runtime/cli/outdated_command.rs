@@ -76,10 +76,7 @@ impl OutdatedCommand {
                     Global::crash();
                 }
             };
-        // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)` is
-        // implicit via Drop at scope exit.
-
-        Self::outdated(ctx, &original_cwd, manager)
+        Self::outdated(ctx, original_cwd, manager)
     }
 
     fn outdated(

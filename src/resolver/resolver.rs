@@ -666,8 +666,8 @@ impl<'a> Resolver<'a> {
     }
 
     /// Shared-borrow of the FileSystem singleton for read-only methods
-    /// (`abs_buf*`, `normalize_buf`, `dirname_store`, `filename_store`,
-    /// `top_level_dir`). Preferred over `unsafe { &mut *self.fs() }` whenever
+    /// (`abs_buf*`, `normalize_buf`, `dirname_store`, `filename_store`).
+    /// Preferred over `unsafe { &mut *self.fs() }` whenever
     /// the callee takes `&self` — avoids materializing a `&mut FileSystem`
     /// that could (under Stacked Borrows) pop a coexisting `rfs_ptr()` /
     /// `&mut *query.entry` tag derived from the same allocation.

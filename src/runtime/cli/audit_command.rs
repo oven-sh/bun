@@ -155,7 +155,7 @@ impl AuditCommand {
                 json_output,
                 audit_level,
                 audit_ignore_list,
-                &original_cwd,
+                original_cwd,
             );
         }
 

@@ -338,12 +338,9 @@ fn ssl_ctx_cache_get_or_create(
 /// Timer state + body hive-allocator + debugger configuration — everything
 /// VM init does that names a `bun_runtime` type.
 ///
-/// Returns `Err` when `Transpiler::init` fails — most notably when the process
-/// cwd was deleted, so `getcwd` yields `ENOENT` (spec `VirtualMachine.init`
-/// bubbles the same error via `try Transpiler.init(...)`). The caller
-/// propagates it out of `VirtualMachine::init`, and the CLI turns it into a
-/// user-facing message + non-zero exit rather than reading a zeroed
-/// `vm.transpiler`.
+/// Returns `Err` when `Transpiler::init` fails. The caller propagates it out
+/// of `VirtualMachine::init`, and the CLI turns it into a user-facing message
+/// + non-zero exit rather than reading a zeroed `vm.transpiler`.
 ///
 /// # Safety
 /// `vm` is the freshly-boxed unique VM on this thread, with `vm.global` /
@@ -426,8 +423,8 @@ unsafe fn init_runtime_state(
         .map(|p| p.as_ptr())
         .unwrap_or(ptr::null_mut());
     // `bun_bundler::Transpiler::init` (transpiler.rs) returns `Ok` on the
-    // happy path; the `Err` arm below handles genuine failures (e.g. a deleted
-    // cwd → `getcwd` ENOENT). The `ptr::write` shape is load-bearing: do not
+    // happy path; the `Err` arm below handles genuine failures. The
+    // `ptr::write` shape is load-bearing: do not
     // replace with `(*vm).transpiler = ...` (drops zeroed bytes → UB).
     {
         use bun_options_types::schema::api;
@@ -522,11 +519,10 @@ unsafe fn init_runtime_state(
                 }
             }
             Err(e) => {
-                // The most common trigger is a deleted cwd → `getcwd` ENOENT
-                // (resolver/lib.rs). `vm.transpiler` was never written, so
-                // returning `Err` here leaves it as the zeroed bytes the low
-                // tier allocated — and the caller aborts `init` before anything
-                // reads the field, instead of surfacing it as a segfault.
+                // `vm.transpiler` was never written, so returning `Err` here
+                // leaves it as the zeroed bytes the low tier allocated — and
+                // the caller aborts `init` before anything reads the field,
+                // instead of surfacing it as a segfault.
                 //
                 // Unwind the per-VM state this hook set up before the
                 // `Transpiler::init` attempt: the `RuntimeState` box + its TLS
@@ -748,11 +744,6 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let global: *mut JSGlobalObject = unsafe { &*vm }.global;
-    // `vm.transpiler` (hence `transpiler.fs`) is always initialized here:
-    // `init_runtime_state` returns `Err` on `Transpiler::init`
-    // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
-    // failed to build its transpiler never reaches `load_preloads` (this hook
-    // only runs via `reload_entry_point*`, which operate on an already-`Ok` VM).
     let top_level_dir = bun_core::cwd::get();
     // SAFETY: per fn contract.
     let global_cache = if unsafe { &*vm }.standalone_module_graph.is_none() {

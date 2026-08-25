@@ -1624,7 +1624,7 @@ impl<'a> Printer<'a> {
         // Bootstrap the resolver FS singleton. `Printer::print` is an entry
         // point (`bun bun.lockb`), so
         // the singleton may not exist yet.
-        let _ = FileSystem::init();
+        FileSystem::init();
 
         let mut lockfile = Box::<Lockfile>::default();
 

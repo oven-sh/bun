@@ -864,37 +864,40 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         }
     }
 }
-/// After the OS working directory changed to `dest`: record where we are in
-/// [`bun_core::cwd`] — as the OS reports it, or, when it cannot (an ancestor
-/// is unreadable, the name is too long), as the absolute `dest` we asked for.
-/// With neither available, go back to the recorded directory and report the
-/// `getcwd` error, so an `Err` always means the working directory is unchanged.
-fn cwd_changed(dest: Option<&[u8]>) -> Maybe<()> {
+/// After the OS working directory changed: record where we are in
+/// [`bun_core::cwd`] as the OS reports it. If it cannot report a name (an
+/// ancestor is unreadable, the path is longer than `PATH_MAX`), go back to the
+/// recorded directory and return the `getcwd` error, so an `Err` always means
+/// the working directory is unchanged.
+fn cwd_changed() -> Maybe<()> {
     let mut buf = bun_paths::path_buffer_pool::get();
-    let err = match getcwd(&mut buf[..]) {
+    match getcwd(&mut buf[..]) {
         Ok(len) => {
             bun_core::cwd::set(&buf[..len]);
-            return Ok(());
+            Ok(())
         }
-        Err(err) => err,
-    };
-    if let Some(dest) = dest.filter(|d| bun_paths::Platform::AUTO.is_absolute(d)) {
-        let normalized =
-            bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Auto>(dest, &mut buf[..]);
-        bun_core::cwd::set(
-            bun_paths::string_paths::without_trailing_slash_windows_path(normalized),
-        );
-        return Ok(());
+        Err(err) => {
+            let _ = chdir_os(bun_core::cwd::get_z());
+            Err(err)
+        }
     }
-    let _ = chdir_os(bun_core::cwd::get_z());
-    Err(err)
+}
+
+/// [`bun_core::cwd::get_z`], or `ENOENT` from `getcwd` if the process was
+/// started from a directory the OS cannot name and has not moved since —
+/// for operations that would otherwise act on the stand-in directory.
+pub fn require_cwd() -> Maybe<&'static ZStr> {
+    match bun_core::cwd::require() {
+        Ok(_) => Ok(bun_core::cwd::get_z()),
+        Err(_) => Err(Error::from_code(E::ENOENT, Tag::getcwd)),
+    }
 }
 
 /// Change the process working directory; [`bun_core::cwd`] follows. On `Err`
 /// the working directory is unchanged.
 pub fn chdir(path: &ZStr) -> Maybe<()> {
     chdir_os(path)?;
-    cwd_changed(Some(path.as_bytes()))
+    cwd_changed()
 }
 
 pub mod coreutils_error_map;
@@ -3053,7 +3056,7 @@ mod posix_impl {
     /// follows. On `Err` the working directory is unchanged.
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         check!(safe_libc::fchdir(fd.native()), Tag::fchdir);
-        super::cwd_changed(None)
+        super::cwd_changed()
     }
     pub fn umask(mode: Mode) -> Mode {
         // `Mode` is normalized to u32 across platforms; libc::mode_t is u16 on

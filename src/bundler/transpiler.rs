@@ -462,11 +462,10 @@ impl<'a> Transpiler<'a> {
                 // `dirname`) or `cache_bust_buf`. Rust can't unify the two
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
+                let cwd = bun_core::cwd::get();
                 let busted: bool = 'name: {
                     // Neither buster name below would fit `cache_bust_buf`.
-                    if bun_core::cwd::get().len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
+                    if cwd.len() + entry_point.len() + 4 > bun_paths::MAX_PATH_BYTES {
                         break 'name false;
                     }
                     if bun_paths::is_absolute(entry_point) {
@@ -490,13 +489,10 @@ impl<'a> Transpiler<'a> {
 
                     // `".."` needs no platform separator rewrite.
                     let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = bun_core::cwd::get();
 
                     let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
                         bun_paths::platform::Auto,
-                    >(
-                        top_level_dir, &mut cache_bust_buf[..], &parts
-                    );
+                    >(cwd, &mut cache_bust_buf[..], &parts);
                     self.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(
                             buster_name.as_bytes(),

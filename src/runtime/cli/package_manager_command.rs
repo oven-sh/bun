@@ -307,7 +307,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         }
 
         if strings::eql_comptime(subcommand, b"scan") {
-            ScanCommand::exec_with_manager(&mut *ctx, pm, &cwd)?;
+            ScanCommand::exec_with_manager(&mut *ctx, pm, cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pack") {
             PackCommand::exec_with_manager(ctx, pm)?;
@@ -740,7 +740,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmVersionCommand::exec(ctx, pm, positionals, &cwd)?;
+            PmVersionCommand::exec(ctx, pm, positionals, cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"why") {
             let positionals: &[&[u8]] = pm.options.positionals;
@@ -748,15 +748,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"diff") {
             let positionals: Vec<&[u8]> = pm.options.positionals.to_vec();
-            PmDiffCommand::exec(pm, &positionals, &diff_args, diff_flags, &cwd)?;
+            PmDiffCommand::exec(pm, &positionals, &diff_args, diff_flags, cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmLicensesCommand::exec(pm, positionals, &cwd, licenses_flags)?;
+            PmLicensesCommand::exec(pm, positionals, cwd, licenses_flags)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pkg") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmPkgCommand::exec(&&mut *ctx, pm, positionals, &cwd)?;
+            PmPkgCommand::exec(&&mut *ctx, pm, positionals, cwd)?;
             Global::exit(0);
         }
 

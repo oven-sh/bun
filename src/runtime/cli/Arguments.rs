@@ -810,7 +810,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            bun_core::cwd::init()?
+            bun_core::cwd::require()?
         };
         let mut spill = Vec::new();
         let out =
@@ -839,7 +839,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     let cwd: &[u8] = if cmd.starts_without_cwd() && !runs_workspace_scripts {
         bun_core::cwd::get()
     } else {
-        bun_core::cwd::init()?
+        bun_core::cwd::require()?
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely

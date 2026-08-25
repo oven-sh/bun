@@ -738,7 +738,7 @@ impl PackageManager {
         ctx: Command::Context,
         cli: CommandLineArguments,
         subcommand: Subcommand,
-    ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
+    ) -> Result<(&'static mut PackageManager, &'static [u8]), Error> {
         init(ctx, cli, subcommand)
     }
 }
@@ -1453,15 +1453,15 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-/// Writes `<dir>/package.json` (NUL-terminated) into `buf`, byte-for-byte from
-/// `dir` so prefixes of it compare equal to the directories they came from.
-fn set_package_json_path(buf: &mut Vec<u8>, dir: &[u8]) {
-    buf.clear();
-    buf.extend_from_slice(dir);
+/// `<dir>/package.json`, byte-for-byte from `dir`.
+fn package_json_path(dir: &[u8]) -> Vec<u8> {
+    let mut path = Vec::with_capacity(dir.len() + b"/package.json\0".len());
+    path.extend_from_slice(dir);
     if dir.last().is_some_and(|&c| !bun_paths::is_sep_any(c)) {
-        buf.push(SEP);
+        path.push(SEP);
     }
-    buf.extend_from_slice(b"package.json\0");
+    path.extend_from_slice(b"package.json");
+    path
 }
 
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
@@ -1480,7 +1480,7 @@ pub fn init(
     ctx: Command::Context,
     cli: CommandLineArguments,
     subcommand: Subcommand,
-) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
+) -> Result<(&'static mut PackageManager, &'static [u8]), Error> {
     if cli.global {
         // Non-consuming peek: `ctx.install` is
         // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
@@ -1494,15 +1494,9 @@ pub fn init(
         bun_sys::fchdir(global_dir)?;
     }
 
-    bun_core::cwd::init()?;
+    let original_cwd: &'static [u8] = bun_core::cwd::require()?;
     bun_resolver::fs::FileSystem::init();
     let fs = FileSystem::instance();
-    let original_cwd: &'static [u8] = bun_core::cwd::get();
-
-    let mut original_package_json_path_buf: Vec<u8> =
-        Vec::with_capacity(original_cwd.len() + b"/package.json\0".len());
-    set_package_json_path(&mut original_package_json_path_buf, original_cwd);
-    let original_cwd_clone = Box::<[u8]>::from(original_cwd);
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
     let mut workspace_package_json_cache = WorkspacePackageJSONCache {
@@ -1516,7 +1510,12 @@ pub fn init(
     //
     // We will walk up from the cwd, trying to find the nearest package.json file.
     let mut no_project = false;
-    let (root_dir, root_package_json_file): (&[u8], bun_sys::File) = 'root_package_json_file: {
+    // (directory of the nearest package.json, project root, root package.json)
+    let (original_package_json_dir, root_dir, root_package_json_file): (
+        &[u8],
+        &[u8],
+        bun_sys::File,
+    ) = 'root_package_json_file: {
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
         let child_json: bun_sys::File = 'child: {
@@ -1607,7 +1606,6 @@ pub fn init(
             return Err(crate::Error::MissingPackageJSON);
         };
 
-        set_package_json_path(&mut original_package_json_path_buf, this_cwd);
         let child_cwd = this_cwd;
 
         // Check if this is a workspace; if so, use root package
@@ -1749,7 +1747,7 @@ pub fn init(
                                 }
                                 workspace_name_hash =
                                     Some(Semver::string::Builder::string_hash(&entry.name));
-                                break 'root_package_json_file (parent, json_file);
+                                break 'root_package_json_file (child_cwd, parent, json_file);
                             }
                         }
 
@@ -1761,7 +1759,7 @@ pub fn init(
             }
         }
 
-        break 'root_package_json_file (child_cwd, child_json);
+        break 'root_package_json_file (child_cwd, child_cwd, child_json);
     };
 
     if root_dir != bun_core::cwd::get() {
@@ -1775,12 +1773,7 @@ pub fn init(
         cli.config,
         ctx,
     )?;
-    let root_package_json_path: Box<[u8]> = {
-        let mut buf = Vec::new();
-        set_package_json_path(&mut buf, bun_core::cwd::get());
-        buf.pop();
-        buf.into_boxed_slice()
-    };
+    let root_package_json_path = package_json_path(bun_core::cwd::get()).into_boxed_slice();
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
@@ -1979,7 +1972,7 @@ pub fn init(
         wr!(event_loop, AnyEventLoop::init());
         wr!(
             original_package_json_path,
-            ZBox::from_vec_with_nul(original_package_json_path_buf)
+            ZBox::from_vec(package_json_path(original_package_json_dir))
         );
         wr!(workspace_package_json_cache, workspace_package_json_cache);
         wr!(workspace_name_hash, workspace_name_hash);
@@ -2208,7 +2201,7 @@ pub fn init(
                 let mut path_buf = PathBuffer::uninit();
                 abs_ca_file_name =
                     ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
-                        &original_cwd_clone,
+                        original_cwd,
                         &mut path_buf,
                         &[options.ca_file_name],
                     ));
@@ -2291,7 +2284,7 @@ pub fn init(
     // the CLI dispatch thread; the returned `&'static mut` is the sole
     // first-class reference handed out (worker threads project fields via the
     // raw [`get`] accessor, never via this reference).
-    Ok((unsafe { &mut *manager_ptr }, original_cwd_clone))
+    Ok((unsafe { &mut *manager_ptr }, original_cwd))
 }
 
 pub(crate) fn init_with_runtime(
@@ -2359,11 +2352,7 @@ fn init_with_runtime_once(
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
-    let original_package_json_path = {
-        let mut buf = Vec::new();
-        set_package_json_path(&mut buf, bun_core::cwd::get());
-        ZBox::from_vec_with_nul(buf)
-    };
+    let original_package_json_path = ZBox::from_vec(package_json_path(bun_core::cwd::get()));
 
     // SAFETY: manager_ptr points to uninitialized memory; fully initialize
     // field-by-field via `addr_of_mut!((*p).field).write(..)`. See the PERF

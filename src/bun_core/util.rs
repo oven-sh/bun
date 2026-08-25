@@ -4109,9 +4109,9 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
 /// want it (`bun_sys::getcwd`).
 pub fn getcwd_len(buf: &mut [u8]) -> crate::CrateResult<usize> {
     #[cfg(unix)]
-    // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
-    // success the returned pointer aliases `buf` and is NUL-terminated, so
-    // `strlen` reads in-bounds.
+    // SAFETY: `getcwd` writes at most `buf.len()` bytes; on success the
+    // returned pointer aliases `buf` and is NUL-terminated, so `strlen` reads
+    // in-bounds.
     unsafe {
         let p = libc::getcwd(buf.as_mut_ptr().cast(), buf.len());
         if p.is_null() {
@@ -4128,7 +4128,7 @@ pub fn getcwd_len(buf: &mut [u8]) -> crate::CrateResult<usize> {
         unsafe extern "system" {
             fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
         }
-        let mut wbuf = WPathBuffer::ZEROED;
+        let mut wbuf = WPathBuffer::uninit();
         // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
         let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
         if n == 0 {

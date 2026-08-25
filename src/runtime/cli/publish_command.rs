@@ -535,20 +535,18 @@ impl PublishCommand {
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
-        let (manager, original_cwd) =
-            match PackageManager::init(&mut *ctx, cli.clone(), Subcommand::Publish) {
-                Ok(v) => v,
-                Err(err) => {
-                    if !cli.log_level.is_silent() {
-                        if err == bun_install::Error::MissingPackageJSON {
-                            Output::err_generic("missing package.json, nothing to publish", ());
-                        }
-                        Output::err_generic("failed to initialize bun install: {}", (err.name(),));
+        let (manager, _) = match PackageManager::init(&mut *ctx, cli.clone(), Subcommand::Publish) {
+            Ok(v) => v,
+            Err(err) => {
+                if !cli.log_level.is_silent() {
+                    if err == bun_install::Error::MissingPackageJSON {
+                        Output::err_generic("missing package.json, nothing to publish", ());
                     }
-                    Global::crash();
+                    Output::err_generic("failed to initialize bun install: {}", (err.name(),));
                 }
-            };
-        drop(original_cwd);
+                Global::crash();
+            }
+        };
         let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {

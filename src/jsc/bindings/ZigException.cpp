@@ -680,14 +680,12 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                             return;
                         if (lineText) {
                             if (lineText.isString()) {
-                                if (JSC::JSString* jsStr = asString(lineText)) {
-                                    auto str = jsStr->value(global);
-                                    RETURN_IF_EXCEPTION(scope, );
-                                    except.stack.source_lines_ptr[0] = Bun::toStringRef(str);
-                                    except.stack.source_lines_numbers[0] = except.stack.frames_ptr[0].position.line();
-                                    except.stack.source_lines_len = 1;
-                                    except.remapped = true;
-                                }
+                                auto str = asString(lineText)->value(global);
+                                RETURN_IF_EXCEPTION(scope, );
+                                except.stack.source_lines_ptr[0] = Bun::toStringRef(str);
+                                except.stack.source_lines_numbers[0] = except.stack.frames_ptr[0].position.line();
+                                except.stack.source_lines_len = 1;
+                                except.remapped = true;
                             }
                         }
                     }

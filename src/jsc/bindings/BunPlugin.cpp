@@ -746,7 +746,6 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const B
     }
 
     JSC::MarkedArgumentBuffer arguments;
-    scope.assertNoExceptionExceptTermination();
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     const auto& builtinNames = WebCore::builtinNames(vm);

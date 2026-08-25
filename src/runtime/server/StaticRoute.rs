@@ -299,7 +299,10 @@ impl StaticRoute {
     /// when `f` returns, with the route's status.
     fn traced(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse, f: impl FnOnce(AnyRequest)) {
         let server = this.server.get();
-        let span = match (&server, bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer)) {
+        let span = match (
+            &server,
+            bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer),
+        ) {
             (Some(server), true) => {
                 let global = server.global_this();
                 crate::telemetry::server::begin(

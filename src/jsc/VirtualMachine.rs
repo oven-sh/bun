@@ -134,7 +134,8 @@ impl Default for InitOptions {
 
 /// Installed by `bun_runtime::telemetry` once tracing is configured; run from
 /// [`VirtualMachine::on_exit`] on every exit path (see there).
-pub static TELEMETRY_EXIT_HOOK: std::sync::OnceLock<fn(&mut VirtualMachine)> = std::sync::OnceLock::new();
+pub static TELEMETRY_EXIT_HOOK: std::sync::OnceLock<fn(&mut VirtualMachine)> =
+    std::sync::OnceLock::new();
 
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,

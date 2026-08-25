@@ -1587,8 +1587,8 @@ impl Interpreter {
         match event_loop {
             EventLoopHandle::Js { .. } => {
                 if int == 0 {
-                    if let Ok(p) = bun_core::self_exe_path() {
-                        out.extend_from_slice(p.as_bytes());
+                    if let Some(p) = crate::node::process::exec_path_bytes() {
+                        out.extend_from_slice(p);
                     }
                     return;
                 }

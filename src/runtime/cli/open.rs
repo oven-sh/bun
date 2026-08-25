@@ -434,9 +434,9 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
 pub struct EditorContext {
     pub(crate) editor: Option<Editor>,
-    // Note: `name`/`path` are never freed; `path` is backed by
-    // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.
-    pub name: &'static [u8],
+    pub name: Vec<u8>,
+    // `path` is never freed; it is backed by
+    // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena).
     pub path: &'static [u8],
 }
 
@@ -444,7 +444,7 @@ impl Default for EditorContext {
     fn default() -> Self {
         Self {
             editor: None,
-            name: b"",
+            name: Vec::new(),
             path: b"",
         }
     }
@@ -475,15 +475,18 @@ impl EditorContext {
         // first: choose from user preference
         if !self.name.is_empty() {
             // /usr/bin/vim
-            if bun_paths::is_absolute(self.name) {
+            if bun_paths::is_absolute(&self.name) {
                 self.editor =
-                    Some(Editor::by_name(bun_paths::basename(self.name)).unwrap_or(Editor::Other));
-                self.path = self.name;
+                    Some(Editor::by_name(bun_paths::basename(&self.name)).unwrap_or(Editor::Other));
+                self.path = Fs::FileSystem::instance()
+                    .dirname_store
+                    .append_slice(&self.name)
+                    .expect("unreachable");
                 return;
             }
 
             // "vscode"
-            if let Some(editor_) = Editor::by_name(bun_paths::basename(self.name)) {
+            if let Some(editor_) = Editor::by_name(bun_paths::basename(&self.name)) {
                 if Editor::by_path_for_editor(
                     env,
                     editor_,

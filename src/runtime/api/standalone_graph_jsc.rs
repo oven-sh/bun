@@ -2,8 +2,6 @@
 //! `standalone_graph/` (used by the bundler with no JS in the loop); only the
 //! `Blob` accessor that needs a `&JSGlobalObject` lives here.
 
-use core::ptr::NonNull;
-
 use bun_core::{self as bstring, strings};
 use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;

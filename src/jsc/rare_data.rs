@@ -7,7 +7,6 @@ use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_boringssl::c as boring;
-use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
@@ -47,65 +46,26 @@ use super::uuid::UUID;
 // ──────────────────────────────────────────────────────────────────────────
 // HotMap
 //
-// Low-tier storage: `(tag, ptr)` per docs/PORTING.md §Dispatch (hot path). The
-// concrete payload list (HTTPServer, HTTPSServer, TCPSocket, …) and the typed
-// `get<T>` / `insert<T>` accessors live in `bun_runtime::api::server` — naming
-// those types here would invert the crate DAG. `bun_runtime` matches on `tag`
-// and casts `ptr` itself.
+// Per-VM `--hot` registry storage. The payload type (a map of the running
+// servers) is chosen by `bun_runtime`, which names the server types; this
+// crate only owns the box so it lives and dies with the VM.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct HotMap {
-    _map: StringArrayHashMap<HotMapEntry>,
-}
-
-/// Erased `(tag, ptr)` payload — concrete variant list lives in `bun_runtime`.
-#[derive(Copy, Clone)]
-pub struct HotMapEntry {
-    pub tag: u8,
-    pub ptr: *mut (),
-}
-impl Default for HotMapEntry {
-    fn default() -> Self {
-        Self {
-            tag: 0,
-            ptr: core::ptr::null_mut(),
-        }
-    }
-}
+#[derive(Default)]
+pub struct HotMap(Option<Box<dyn core::any::Any>>);
 
 impl HotMap {
     pub(crate) fn init() -> HotMap {
-        HotMap {
-            _map: StringArrayHashMap::new(),
-        }
+        HotMap(None)
     }
 
-    pub fn get_entry(&self, key: &[u8]) -> Option<HotMapEntry> {
-        self._map.get(key).copied()
-    }
-
-    /// Untyped insert — typed `insert<T>` lives in `bun_runtime` where the
-    /// `TaggedPointerUnion` payload list is named.
-    pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) {
-        let gop = bun_core::handle_oom(self._map.get_or_put(key));
-        if gop.found_existing {
-            panic!("HotMap already contains key");
-        }
-        // `get_or_put` already boxed the key; the map owns its keys.
-        *gop.value_ptr = entry;
-    }
-
-    pub fn remove(&mut self, key: &[u8]) {
-        // The map owns the Box<[u8]> key and `swap_remove` drops it. The
-        // aliasing assert below means the caller must not pass the map's own
-        // key storage. Ordering doesn't matter for HotMap consumers.
-        let Some(i) = self._map.get_index(key) else {
-            return;
-        };
-        let stored = &self._map.keys()[i];
-        let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
-        debug_assert!(!is_same_slice);
-        self._map.swap_remove(key);
+    /// The payload, created on first use. `T` must be the same type for every
+    /// call on a given VM (panics otherwise).
+    pub fn get_or_init<T: core::any::Any + Default>(&mut self) -> &mut T {
+        self.0
+            .get_or_insert_with(|| Box::new(T::default()))
+            .downcast_mut::<T>()
+            .expect("HotMap payload type mismatch")
     }
 }
 

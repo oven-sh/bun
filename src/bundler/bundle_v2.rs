@@ -1261,6 +1261,9 @@ pub mod bv2_impl {
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
                 plugins: bun_ptr::BackRef<Plugin>,
+                /// This request's stable address (`BundleV2::resolves` /
+                /// `loads` slot): what the plugins get as their context.
+                pub(crate) this: Option<core::ptr::NonNull<Self>>,
                 /// Where the answer goes.
                 inbox: std::sync::Arc<super::super::super::Inbox<'a>>,
             }
@@ -1295,6 +1298,7 @@ pub mod bv2_impl {
                         import_record: record,
                         value: ResolveValue::Pending,
                         plugins: bv2.shared.plugins.expect("plugins"),
+                        this: None,
                         inbox: std::sync::Arc::clone(&bv2.shared.inbox),
                     }
                 }
@@ -1320,7 +1324,9 @@ pub mod bv2_impl {
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
                     let plugins = self.plugins;
-                    let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
+                    // The slot's own pointer, not one re-derived from `&mut self`:
+                    // the bundle thread keeps using the slot while the plugins hold this.
+                    let self_ptr = self.this.expect("set when queued").as_ptr().cast::<core::ffi::c_void>();
                     plugins.match_on_resolve(
                         &self.import_record.specifier,
                         &self.import_record.namespace,
@@ -1376,6 +1382,9 @@ pub mod bv2_impl {
                 /// `Graph::deferred_pending`. Bundle thread only.
                 pub(crate) deferred_in: Option<u32>,
                 plugins: bun_ptr::BackRef<Plugin>,
+                /// This request's stable address (`BundleV2::resolves` /
+                /// `loads` slot): what the plugins get as their context.
+                pub(crate) this: Option<core::ptr::NonNull<Self>>,
                 /// Where the answer goes.
                 inbox: std::sync::Arc<super::super::super::Inbox<'a>>,
             }
@@ -1397,6 +1406,7 @@ pub mod bv2_impl {
                         called_defer: false,
                         deferred_in: None,
                         plugins: bv2.shared.plugins.expect("plugins"),
+                        this: None,
                         inbox: std::sync::Arc::clone(&bv2.shared.inbox),
                     }
                 }
@@ -1431,7 +1441,9 @@ pub mod bv2_impl {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
                     let default_loader = self.default_loader;
                     let plugins = self.plugins;
-                    let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
+                    // The slot's own pointer, not one re-derived from `&mut self`:
+                    // the bundle thread keeps using the slot while the plugins hold this.
+                    let self_ptr = self.this.expect("set when queued").as_ptr().cast::<core::ffi::c_void>();
                     plugins.match_on_load(
                         &self.path,
                         &self.namespace,
@@ -1531,18 +1543,26 @@ pub mod bv2_impl {
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::hot_reloader`. Installs a
             /// `NewHotReloader<BundleV2, AnyEventLoop, true>` watcher on the given
-            /// `BundleV2`, which `bun build --watch` has leaked for the process.
-            safe fn __bun_jsc_enable_hot_module_reloading_for_bundler(
-                bv2: &mut super::BundleV2<'static>,
+            /// `BundleV2` and keeps the pointer: the bundle must have been leaked
+            /// for the process (`bun build --watch`).
+            fn __bun_jsc_enable_hot_module_reloading_for_bundler(
+                bv2: core::ptr::NonNull<super::BundleV2<'static>>,
             );
         }
 
         /// `Watcher.enableHotModuleReloading(this, null)` for `bun build
-        /// --watch`. The reloader keeps referring to `bv2` from the watcher
-        /// thread, so the bundle must have been leaked for the process.
+        /// --watch`.
+        ///
+        /// # Safety
+        /// `bv2` is a bundle leaked for the process (the reloader keeps the
+        /// pointer and refers to it from the watcher thread); later accesses
+        /// to the bundle go through this same pointer.
         #[inline]
-        pub(crate) fn enable_hot_module_reloading_for_bundler(bv2: &mut super::BundleV2<'static>) {
-            __bun_jsc_enable_hot_module_reloading_for_bundler(bv2)
+        pub(crate) unsafe fn enable_hot_module_reloading_for_bundler(
+            bv2: core::ptr::NonNull<super::BundleV2<'static>>,
+        ) {
+            // SAFETY: forwarded contract.
+            unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2) }
         }
 
         /// Bytecode generation entry point for the linker: marks the calling
@@ -1710,7 +1730,9 @@ pub mod bv2_impl {
         fn new_resolve(&mut self, record: jsc_api::JSBundler::MiniImportRecord) -> u32 {
             let id = self.resolves.len() as u32;
             let resolve = jsc_api::JSBundler::Resolve::new(id, self, record);
-            self.resolves.push(Box::new(resolve));
+            let slot = self.resolves.push(Box::new(resolve));
+            let this = self.resolves.ptr(slot);
+            self.resolves.get_mut(slot).this = Some(this);
             id
         }
 
@@ -3990,10 +4012,17 @@ pub mod bv2_impl {
         {
             let mut config = BundleConfig::new(event_loop);
             config.watch = true;
-            let this: &mut BundleV2<'a> = Box::leak(BundleV2::init(transpiler, config, heap)?);
-            dispatch::enable_hot_module_reloading_for_bundler(&mut *this);
-            // The reloader re-enters only from the watcher thread's `execve`,
-            // never through this reference.
+            // Leaked for the process: the hot reloader keeps this pointer and
+            // refers to the bundle from the watcher thread (until it
+            // `execve()`s on the next change).
+            let mut this = core::ptr::NonNull::from(Box::leak(BundleV2::init(transpiler, config, heap)?));
+            // SAFETY: leaked above and never freed; the reloader re-enters only
+            // through `execve`, so this thread's use below does not race it, and
+            // both sides use this one pointer.
+            let this: &mut BundleV2<'a> = unsafe {
+                dispatch::enable_hot_module_reloading_for_bundler(this);
+                this.as_mut()
+            };
             this.run_from_cli(
                 reachable_files_count,
                 minify_duration,
@@ -5773,7 +5802,9 @@ pub mod bv2_impl {
                     );
                     let id = self.loads.len() as u32;
                     let load = jsc_api::JSBundler::Load::new(id, self, parse);
-                    self.loads.push(Box::new(load));
+                    let slot = self.loads.push(Box::new(load));
+                    let this = self.loads.ptr(slot);
+                    self.loads.get_mut(slot).this = Some(this);
                     self.dispatch_load(id);
                     return Ok(());
                 }

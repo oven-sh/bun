@@ -103,4 +103,48 @@ mod tests {
         // SAFETY: as above.
         assert_eq!(unsafe { *foreign.as_ptr() }, 3);
     }
+
+    struct Request {
+        this: Option<NonNull<Request>>,
+        hits: u32,
+    }
+
+    /// The shape plugin requests use: the element records its own stable
+    /// pointer when pushed, and a holder that only has `&mut self` hands
+    /// *that* out (not a pointer re-derived from the `&mut`), so the owner's
+    /// later `get_mut` does not invalidate what the foreign side holds.
+    #[test]
+    fn pointer_recorded_at_push_survives_owner_get_mut() {
+        let mut v = StableVec::new();
+        let i = v.push(Box::new(Request { this: None, hits: 0 }));
+        let this = v.ptr(i);
+        v.get_mut(i).this = Some(this);
+        // What `run_on_js_thread(&mut self)` hands to C++:
+        let handed_out: *mut Request = {
+            let me: &mut Request = v.get_mut(i);
+            me.this.expect("set at push").as_ptr()
+        };
+        v.get_mut(i).hits += 1; // the owner, later (`on_notify_defer`)
+        // SAFETY: the foreign side answering through the pointer it was handed.
+        unsafe { (*handed_out).hits += 1 };
+        assert_eq!(v.get(i).hits, 2);
+    }
+
+    /// The hazard the previous test avoids: a pointer re-derived from a
+    /// `&mut` into the element is a child of that borrow, and the owner's
+    /// next `get_mut` invalidates it. (Run under Miri to see it rejected.)
+    #[test]
+    #[ignore = "demonstrates UB; `cargo miri test -- --ignored` rejects it"]
+    fn pointer_derived_from_a_borrow_does_not_survive_owner_get_mut() {
+        let mut v = StableVec::new();
+        let i = v.push(Box::new(Request { this: None, hits: 0 }));
+        let handed_out: *mut Request = {
+            let me: &mut Request = v.get_mut(i);
+            core::ptr::from_mut(me)
+        };
+        v.get_mut(i).hits += 1;
+        // SAFETY: none — this is the invalidated access.
+        unsafe { (*handed_out).hits += 1 };
+        assert_eq!(v.get(i).hits, 2);
+    }
 }

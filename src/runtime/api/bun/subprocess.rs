@@ -349,7 +349,7 @@ pub(crate) unsafe extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValu
 }
 
 bun_spawn::link_impl_ProcessExit! {
-    Subprocess for Subprocess => |this| {
+    Subprocess for Subprocess<'static> => |this| {
         // `process` forwarded raw (not reborrowed) so `on_process_exit` can
         // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
         // provenance cast.
@@ -741,10 +741,6 @@ impl Subprocess<'_> {
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
         let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal_arg, global_this)?;
-
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         match this.try_kill(sig) {
             bun_sys::Result::Ok(()) => {}
@@ -1446,8 +1442,8 @@ impl Subprocess<'_> {
             // `bun_sys::SignalCode`.
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
-                use bun_jsc::ZigStringJsc as _;
-                return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
+                use bun_jsc::EncodedSliceJsc as _;
+                return bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);
             }
@@ -1456,7 +1452,11 @@ impl Subprocess<'_> {
         JSValue::NULL
     }
 
-    pub(crate) fn handle_ipc_message(&self, message: &IPC::DecodedIPCMessage, handle: JSValue) {
+    pub(crate) fn handle_ipc_message(
+        &self,
+        message: &IPC::DecodedIPCMessage,
+        handle: JSValue,
+    ) -> JsResult<()> {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
         match message {
             // In future versions we can read this in order to detect version mismatches,
@@ -1488,13 +1488,14 @@ impl Subprocess<'_> {
             IPC::DecodedIPCMessage::Internal(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC internal message from child");
                 let global_this = self.global_this;
-                let _ = node_cluster_binding::handle_internal_message_primary(
+                node_cluster_binding::handle_internal_message_primary(
                     global_this.get(),
                     self,
                     *data,
-                );
+                )?;
             }
         }
+        Ok(())
     }
 
     pub(crate) fn handle_ipc_close(&self) {
@@ -1638,11 +1639,11 @@ pub mod testing_apis {
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
         // R-2: deref as shared (`&*const`) — fields are interior-mutable.
         let subprocess = unsafe { &*subprocess_ptr };
-        let kind_str = bun_core::OwnedString::new(kind_value.to_bun_string(global_this)?);
+        let kind_str = kind_value.to_bun_string(global_this)?;
 
-        let out: &JsCell<Readable> = if kind_str.eql_comptime(b"stdout") {
+        let out: &JsCell<Readable> = if kind_str.eq_ascii(b"stdout") {
             &subprocess.stdout
-        } else if kind_str.eql_comptime(b"stderr") {
+        } else if kind_str.eq_ascii(b"stderr") {
             &subprocess.stderr
         } else {
             return Err(

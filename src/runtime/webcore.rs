@@ -31,8 +31,6 @@ pub mod text_encoder;
 pub mod text_encoder_stream_encoder;
 
 // ─── flat re-exports ─────────────────────────────────────────────────────────
-pub use bun_jsc::js_error_code::DOMExceptionCode;
-pub use bun_jsc::web_worker;
 pub use cookie_map::{CookieMap, CookieMapRef};
 pub use s3_client::S3Client;
 pub use s3_stat::S3Stat;
@@ -333,7 +331,7 @@ pub mod s3 {
 pub mod streams;
 
 pub enum PathOrFileDescriptor {
-    Path(bun_core::zig_string::Slice),
+    Path(bun_core::Utf8Bytes<'static>),
     Fd(bun_sys::Fd),
 }
 

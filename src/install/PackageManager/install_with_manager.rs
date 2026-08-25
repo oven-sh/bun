@@ -1846,12 +1846,11 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             let tag_total = original.tag.pre.len() + original.tag.build.len();
             if tag_total > 0 {
                 let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
-                let mut ptr = &mut tag_buf[..];
-                original.tag = original_resolution
-                    .npm()
-                    .version
-                    .tag
-                    .clone_into(&lockfile.buffers.string_bytes, &mut ptr);
+                original.tag = original_resolution.npm().version.tag.clone_into(
+                    &lockfile.buffers.string_bytes,
+                    &mut tag_buf,
+                    &mut 0,
+                );
 
                 entry_ptr.original_version_string_buf = tag_buf;
             }

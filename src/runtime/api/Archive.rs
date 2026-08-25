@@ -5,13 +5,12 @@ use std::ffi::CString;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
-use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_core::{self, Output, ZBox, strings};
+use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
 };
-use bun_jsc::{StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
@@ -235,8 +234,7 @@ fn parse_compression_options(
             )));
         }
 
-        let compress_str = compress_val.to_slice(global)?;
-        // Drop handles compress_str.deinit()
+        let compress_str = compress_val.to_utf8(global)?;
 
         if compress_str.slice() != b"gzip" {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -324,7 +322,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
 
     // Iterate over object properties and write directly to archive
-    let mut iter = jsc::JSPropertyIterator::init(
+    let iter = jsc::JSPropertyIterator::init(
         global,
         js_obj,
         jsc::PropertyIteratorOptions {
@@ -333,8 +331,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         },
     )?;
 
-    while let Some(key) = iter.next()? {
-        let value = iter.value;
+    while let Some((key, value)) = iter.next()? {
         if value == JSValue::ZERO {
             continue;
         }
@@ -344,7 +341,8 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         let key_str = ZBox::from_vec_with_nul(key_slice.slice().to_vec());
 
         // Get data - use view for Blob/ArrayBuffer, convert for strings
-        let data_slice = get_entry_data(global, value)?;
+        let mut array_buffer = None;
+        let data_slice = get_entry_data(global, value, &mut array_buffer)?;
 
         // Write entry to archive
         let data = data_slice.slice();
@@ -395,21 +393,24 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     }
 }
 
-/// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
-fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
+fn get_entry_data<'a>(
+    global: &JSGlobalObject,
+    value: JSValue,
+    array_buffer: &'a mut Option<bun_jsc::ArrayBuffer>,
+) -> JsResult<Utf8Bytes<'a>> {
     // For Blob, use sharedView (no copy needed). The backing store outlives
     // the returned slice for the duration of the caller's tarball build.
     if let Some(blob) = blob_from_js(value) {
-        return Ok(ZigStringSlice::from_utf8_never_free(blob.shared_view()));
+        return Ok(Utf8Bytes::Borrowed(blob.shared_view()));
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
-    if let Some(array_buffer) = value.as_array_buffer(global) {
-        return Ok(ZigStringSlice::from_utf8_never_free(array_buffer.slice()));
+    if let Some(buffer) = value.as_array_buffer(global) {
+        return Ok(Utf8Bytes::Borrowed(array_buffer.insert(buffer).slice()));
     }
 
     // For strings, convert (allocates)
-    value.to_slice(global)
+    value.to_utf8(global)
 }
 
 /// Static method: Archive.write(path, data, options?)
@@ -433,7 +434,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         )));
     }
 
-    let path_slice = path_arg.to_slice(global)?;
+    let path_slice = path_arg.to_utf8(global)?;
 
     // Parse options for compression override
     let options_compress = parse_compression_options(global, options_arg)?;
@@ -511,7 +512,7 @@ impl Archive {
             )));
         }
 
-        let path_slice = path_arg.to_slice(global)?;
+        let path_slice = path_arg.to_utf8(global)?;
 
         // Parse options
         let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
@@ -544,7 +545,7 @@ fn parse_pattern_arg(
 ) -> JsResult<Option<Vec<Box<[u8]>>>> {
     // Single string
     if arg.is_string() {
-        let str_slice = arg.to_slice(global)?;
+        let str_slice = arg.to_utf8(global)?;
         // Empty string = no filter
         if str_slice.slice().is_empty() {
             return Ok(None);
@@ -577,7 +578,7 @@ fn parse_pattern_arg(
                     bstr::BStr::new(name),
                 )));
             }
-            let str_slice = item.to_slice(global)?;
+            let str_slice = item.to_utf8(global)?;
             // Skip empty strings in array
             if str_slice.slice().is_empty() {
                 i += 1;
@@ -1151,8 +1152,7 @@ impl TaskContext for FilesContext {
                 Ok(PromiseResult::Resolve(map))
             }
             FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                global
-                    .create_error_instance(format_args!("{}", bstr::BStr::new(err_msg.to_bytes()))),
+                EncodedSlice::utf8(err_msg.to_bytes()).to_error_instance(global),
             )),
             FilesResult::Err(e) => Ok(PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(&*e))),

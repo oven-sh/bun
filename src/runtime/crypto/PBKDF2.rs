@@ -10,8 +10,8 @@ use crate::node::{Flavor, StringObjects, StringOrBuffer};
 use crate::crypto::evp::{self, Algorithm};
 
 pub(crate) struct PBKDF2 {
-    pub password: StringOrBuffer,
-    pub salt: StringOrBuffer,
+    pub password: StringOrBuffer<'static>,
+    pub salt: StringOrBuffer<'static>,
     pub iteration_count: u32,
     pub length: usize,
     algorithm: Algorithm,
@@ -153,7 +153,7 @@ impl PBKDF2 {
             }
 
             'invalid: {
-                let slice = arg4.to_slice(global_this)?;
+                let slice = arg4.to_utf8(global_this)?;
                 match evp::lookup_ignore_case(slice.slice()) {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
@@ -164,18 +164,14 @@ impl PBKDF2 {
                 }
             }
 
-            if !global_this.has_exception() {
-                let slice = arg4.to_slice(global_this)?;
-                let name = slice.slice();
-                return Err(global_this
-                    .err(
-                        bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
-                        format_args!("Invalid digest: {}", bstr::BStr::new(name)),
-                    )
-                    .throw());
-                // `slice` drops here.
-            }
-            return Err(bun_jsc::JsError::Thrown);
+            let slice = arg4.to_utf8(global_this)?;
+            let name = slice.slice();
+            return Err(global_this
+                .err(
+                    bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
+                    format_args!("Invalid digest: {}", bstr::BStr::new(name)),
+                )
+                .throw());
         };
 
         let mut out = PBKDF2 {
@@ -185,9 +181,10 @@ impl PBKDF2 {
             length: keylen,
             algorithm,
         };
+        // Armed only on the error returns below (defused via `into_inner` on success).
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
-            if global_this.has_exception() && flavor == Flavor::Async {
+            if flavor == Flavor::Async {
                 bun_jsc::Unprotect::unprotect(out);
             }
         });

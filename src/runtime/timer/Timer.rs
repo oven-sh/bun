@@ -78,7 +78,7 @@ impl All {
     ) -> JsResult<()> {
         const SUFFIX: &str = ".\nTimeout duration was set to 1.";
 
-        let mut warning_string = match warning_type {
+        let warning_string = match warning_type {
             TimeoutWarning::TimeoutOverflowWarning => {
                 if countdown.is_finite() {
                     BunString::create_format(format_args!(
@@ -112,10 +112,10 @@ impl All {
                 BunString::ascii(const_format::concatcp!("NaN is not a number", SUFFIX).as_bytes())
             }
         };
-        let mut warning_type_string =
+        let warning_type_string =
             BunString::create_atom_if_possible(<&'static str>::from(warning_type).as_bytes());
-        let warning_js = warning_string.transfer_to_js(global_this)?;
-        let warning_type_js = warning_type_string.transfer_to_js(global_this)?;
+        let warning_js = warning_string.into_js(global_this)?;
+        let warning_type_js = warning_type_string.into_js(global_this)?;
         global_this.emit_warning(
             warning_js,
             warning_type_js,
@@ -331,9 +331,7 @@ impl All {
                 // Primitive string only (JSType::String) — boxed `new String(..)`
                 // must fall through to `from_js` below and be a no-op, matching
                 // Node.js array-index semantics.
-                // RAII deref on drop — `to_bun_string` returns a +1 ref
-                // and there are several early `return Ok(())` exits below.
-                let string = bun_core::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
+                let string = timer_id_value.to_bun_string(global_this)?;
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
                 // characters, signs, or even leading zeroes. None of the readily-available string
@@ -491,17 +489,6 @@ impl DateHeaderTimer {
 // ════════════════════════════════════════════════════════════════════════════
 // C-ABI export thunks
 // ════════════════════════════════════════════════════════════════════════════
-
-// HOST_EXPORT(Bun__internal_drainTimers, c)
-pub fn drain_timers_export(vm: *mut VirtualMachine) {
-    let all = timer_all();
-    if all.is_null() {
-        return;
-    }
-    // SAFETY: `all` is the live per-thread `All`; `vm` is the erased VM pointer
-    // (mod.rs::All::drain_timers takes `*mut ()`).
-    unsafe { (*all).drain_timers(vm.cast::<()>()) };
-}
 
 // `generate-host-exports.ts`
 // scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into

@@ -137,7 +137,6 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
-    RETURN_IF_EXCEPTION(scope, {});
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});
@@ -162,9 +161,11 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         const ScriptOptions& scriptOptions = script->options();
         String url = scriptOptions.filenameProvided ? scriptOptions.filename : "evalmachine.<anonymous>"_s;
         decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, scriptOptions.lineOffset);
+        RETURN_IF_EXCEPTION(scope, {});
         throwException(globalObject, scope, exception);
         return {};
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 
@@ -201,6 +202,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         }
     } else if (script->options().produceCachedData) {
         script->cacheBytecode();
+        RETURN_IF_EXCEPTION(scope, {});
         // TODO(@heimskr): is there ever a case where bytecode production fails?
         script->cachedDataProduced(true);
     }
@@ -261,6 +263,7 @@ void NodeVMScript::cacheBytecode()
 
 JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
 {
+    auto scope = DECLARE_THROW_SCOPE(vm());
     if (!m_options.produceCachedData) {
         return nullptr;
     }
@@ -268,12 +271,14 @@ JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
     if (!m_cachedBytecodeBuffer) {
         if (!m_cachedBytecode) {
             cacheBytecode();
+            RETURN_IF_EXCEPTION(scope, nullptr);
         }
 
         ASSERT(m_cachedBytecode);
 
         std::span<const uint8_t> bytes = m_cachedBytecode->span();
         m_cachedBytecodeBuffer.set(vm(), this, WebCore::createBuffer(globalObject(), bytes));
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (!m_cachedBytecodeBuffer) {
             return nullptr;
         }

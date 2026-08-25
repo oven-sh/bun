@@ -915,7 +915,6 @@ impl Cmd {
         // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
         // `base.shell` is borrowed (or, when parent is Pipeline, freed by
         // `Pipeline::child_done` before this runs) — never freed here.
-        interp.as_cmd_mut(this).base.end_scope();
     }
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────

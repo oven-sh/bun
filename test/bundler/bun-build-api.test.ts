@@ -1650,6 +1650,75 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(exitCode).toBe(0);
 }, 180_000);
 
+// A module shared by several entry points is printed once per chunk, and those
+// prints run in parallel on the thread pool against the same AST. The printer
+// used to flatten `"a" + "b" + "c"` ropes in place, through the `StoreRef`, so
+// one thread's write of `data` / `next = None` raced every other thread's read
+// of the same node. Observed results on the unfixed printer: the tail printed
+// twice ("abcbc"), the tail dropped ("a"), or a crash on a torn `next` pointer
+// (a `Bus error` / `Segmentation fault` at a 4 GiB aligned address).
+//
+// The race needs many chunks printing many ropes at the same time, so this
+// builds 64 entry points over one module with 400 folded ropes, twice, and
+// checks every folded string in every output. With the in-place flatten the
+// first build corrupts hundreds of strings on a 16 core machine.
+//
+// Needs an explicit timeout: two real 64-entry bundles on a debug build take
+// well over bun:test's 5s default.
+test("Bun.build does not corrupt folded string ropes shared across chunks", async () => {
+  const ENTRIES = 64;
+  const ROPES = 400;
+  const ROUNDS = 2;
+  let shared = "export function helper(...a) { return a; }\n";
+  for (let i = 0; i < ROPES; i++) {
+    // The rope is a call argument inside an arrow body, the shape the printer
+    // crashed on in the field. It folds only with `minify.syntax`.
+    shared +=
+      `export const fn${i} = helper("first${i}", () => { const q = ${i}; ` +
+      `helper(q, "alpha-${i}-" + "beta-" + "gamma-" + "delta-${i}"); return q; });\n`;
+  }
+  const files: Record<string, string> = { "shared.js": shared };
+  for (let i = 0; i < ENTRIES; i++) {
+    files[`entry${i}.js`] = `import * as s from "./shared.js";\nconsole.log(s, ${i});\n`;
+  }
+  files["run.ts"] = `
+    import { join } from "node:path";
+    const dir = process.argv[2];
+    const entrypoints = Array.from({ length: ${ENTRIES} }, (_, i) => join(dir, "entry" + i + ".js"));
+    let bad = 0;
+    for (let round = 0; round < ${ROUNDS}; round++) {
+      const res = await Bun.build({ entrypoints, minify: { syntax: true }, target: "bun" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const output of res.outputs) {
+        const text = await output.text();
+        for (let i = 0; i < ${ROPES}; i++) {
+          const expected = '"alpha-' + i + '-beta-gamma-delta-' + i + '"';
+          if (!text.includes(expected)) {
+            bad++;
+            if (bad <= 5) {
+              const actual = text.match(new RegExp('"alpha-' + i + '-[^"]*"'));
+              console.log("BAD round " + round + " " + output.path + " expected " + expected + " got " + actual?.[0]);
+            }
+          }
+        }
+      }
+    }
+    console.log("DONE " + bad);
+  `;
+  const dir = tempDirWithFiles("bun-build-rope-print-race", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), dir],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("DONE 0");
+  expect(exitCode).toBe(0);
+}, 180_000);
+
 test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
   // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
   // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used

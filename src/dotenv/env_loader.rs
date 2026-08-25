@@ -1502,6 +1502,12 @@ impl NullDelimitedEnvMap {
     pub fn as_ptr(&self) -> *const *const c_char {
         self.envp.as_ptr()
     }
+    /// The `KEY=VALUE` entries as C strings.
+    pub fn iter(&self) -> impl Iterator<Item = &core::ffi::CStr> {
+        self._storage.iter().map(|s| {
+            core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
+        })
+    }
 }
 
 pub struct StdEnvMapWrapper {

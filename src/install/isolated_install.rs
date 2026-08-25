@@ -520,13 +520,11 @@ pub(crate) fn build_store(
                                     }
                                     break 'resolved invalid_package_id;
                                 };
-                                // `invalid_package_id` (no ancestor resolves the
-                                // name) is part of the key: every declarer inside
-                                // the subtree then auto-installs its best version,
-                                // `resolutions[peer_dep_id]`, which is declarer-
-                                // specific but position-independent, so two
-                                // positions where the name is unresolved in both
-                                // ancestor chains expand identically.
+                                // `invalid_package_id` is part of the key: an
+                                // unresolved peer auto-installs the declarer's own
+                                // `resolutions[peer_dep_id]`, which is position-
+                                // independent, so two positions that both leave
+                                // the name unresolved expand identically.
                                 hasher.update(bun_core::bytes_of(&peer_name_hash));
                                 hasher.update(bun_core::bytes_of(&resolved));
                             }

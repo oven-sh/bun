@@ -981,6 +981,37 @@ impl Diff {
         )
     }
 
+    /// `Dependency::eql`, plus one normalization case: bun.lock
+    /// (`map_dep_to_pkg`) and the npm-lock migration store a dependency that
+    /// resolved to a workspace package as a workspace edge, while the
+    /// package.json reparse keeps the textual npm range (or the other way
+    /// around). A star range matches any workspace, so when the literal is
+    /// unchanged the manifest edge did not change.
+    fn deps_match(
+        to_dep: &Dependency,
+        from_dep: &Dependency,
+        to_buf: &[u8],
+        from_buf: &[u8],
+    ) -> bool {
+        if Dependency::eql(to_dep, from_dep, to_buf, from_buf) {
+            return true;
+        }
+        let star_workspace_pair = |ws: &dependency::Version, npm: &dependency::Version| {
+            ws.tag == dependency::version::Tag::Workspace
+                && npm.tag == dependency::version::Tag::Npm
+                && npm.npm().version.is_star()
+        };
+        from_dep.name_hash == to_dep.name_hash
+            && from_dep.name.len() == to_dep.name.len()
+            && (star_workspace_pair(&from_dep.version, &to_dep.version)
+                || star_workspace_pair(&to_dep.version, &from_dep.version))
+            && strings::eql_long(
+                from_dep.version.literal.slice(from_buf),
+                to_dep.version.literal.slice(to_buf),
+                true,
+            )
+    }
+
     // The root summary's `remove` is the count of distinct names removed across root + workspaces.
     fn generate_inner(
         pm: &mut PackageManager,
@@ -1418,7 +1449,7 @@ impl Diff {
             let cur_to_i = to_i;
             to_i += 1;
 
-            if Dependency::eql(
+            if Self::deps_match(
                 &to_deps!()[cur_to_i],
                 from_dep,
                 to_lockfile.buffers.string_bytes.as_slice(),
@@ -1874,46 +1905,43 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                // A versionless workspace satisfies a wildcard range, the same rule as `PackageManagerEnqueue`.
-                let satisfies = match workspace_version {
-                    Some(workspace_version) => {
+                if let Some(workspace_version) = workspace_version {
+                    let satisfies =
                         dependency_version
                             .npm()
                             .version
-                            .satisfies(workspace_version, buf, buf)
-                    }
-                    None => workspace_path.is_some() && dependency_version.npm().version.is_star(),
-                };
-                if pm.options.link_workspace_packages && satisfies {
-                    // `String::sliced` takes `&'a self`; bind the unwrapped
-                    // value so the borrow outlives the parse call.
-                    let wp = workspace_path.unwrap();
-                    let path = wp.sliced(buf);
-                    if let Some(mut dep) = dependency::parse_with_tag(
-                        external_alias.value,
-                        Some(external_alias.hash),
-                        path.slice,
-                        dependency::version::Tag::Workspace,
-                        &path,
-                        Some(&mut *log),
-                        Some(&mut *pm),
-                    ) {
-                        // Whole-struct move so `Drop` frees the old npm
-                        // chain; keep the existing `literal`.
-                        dep.literal = dependency_version.literal;
-                        dependency_version = dep;
-                    }
-                } else if workspace_version.is_some() {
-                    // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
-                    for dep in &mut package_dependencies[0..dependencies_count as usize] {
-                        if dep.name_hash == name_hash && dep.behavior.is_workspace() {
-                            *dep = Dependency {
-                                behavior: group.behavior,
-                                name: external_alias.value,
-                                name_hash: external_alias.hash,
-                                version: dependency_version,
-                            };
-                            return Ok(None);
+                            .satisfies(workspace_version, buf, buf);
+                    if pm.options.link_workspace_packages && satisfies {
+                        // `String::sliced` takes `&'a self`; bind the unwrapped
+                        // value so the borrow outlives the parse call.
+                        let wp = workspace_path.unwrap();
+                        let path = wp.sliced(buf);
+                        if let Some(mut dep) = dependency::parse_with_tag(
+                            external_alias.value,
+                            Some(external_alias.hash),
+                            path.slice,
+                            dependency::version::Tag::Workspace,
+                            &path,
+                            Some(&mut *log),
+                            Some(&mut *pm),
+                        ) {
+                            // Whole-struct move so `Drop` frees the old npm
+                            // chain; keep the existing `literal`.
+                            dep.literal = dependency_version.literal;
+                            dependency_version = dep;
+                        }
+                    } else {
+                        // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
+                        for dep in &mut package_dependencies[0..dependencies_count as usize] {
+                            if dep.name_hash == name_hash && dep.behavior.is_workspace() {
+                                *dep = Dependency {
+                                    behavior: group.behavior,
+                                    name: external_alias.value,
+                                    name_hash: external_alias.hash,
+                                    version: dependency_version,
+                                };
+                                return Ok(None);
+                            }
                         }
                     }
                 }

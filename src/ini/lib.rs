@@ -1030,8 +1030,6 @@ mod draft {
             if let Some(keyexpr) = prop.key {
                 if let Some(key) = keyexpr.as_utf8_string_literal() {
                     if bun_core::has_prefix(key, b"//") {
-                        // Order matters: `_authToken` must be
-                        // matched before `_auth`.
                         const OPTNAMES: &[(&[u8], ConfigOpt)] = &[
                             (b"keyfile", ConfigOpt::Keyfile),
                             (b"certfile", ConfigOpt::Certfile),

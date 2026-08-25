@@ -1750,15 +1750,6 @@ impl Keywords {
 
 pub(crate) struct RedactedKeywords;
 impl RedactedKeywords {
-    // 6 entries — a `matches!` chain is plenty at this size (the big keyword
-    // table in `Keywords::get` is where the length-dispatched map pays off).
-    pub(crate) fn has(s: &[u8]) -> bool {
-        matches!(
-            s,
-            b"_auth" | b"_authToken" | b"token" | b"_password" | b"password" | b"email"
-        )
-    }
-
     /// Prefix match, as loose as the ini parser's option matching (`_auth` also covers `_authToken`).
     pub(crate) fn has_prefix(s: &[u8]) -> bool {
         [
@@ -1817,8 +1808,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     )?;
                 } else {
                     should_redact_value = self.opts.redact_sensitive_information
-                        && (RedactedKeywords::has(&text[..i])
-                            || RedactedKeywords::has_prefix(&text[..i]));
+                        && RedactedKeywords::has_prefix(&text[..i]);
                     'write: {
                         if let Some(prev) = prev_keyword {
                             match prev {

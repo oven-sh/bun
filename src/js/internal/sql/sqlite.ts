@@ -278,8 +278,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         break;
     }
   }
-  // lastToken ends as the statement's first keyword. A CTE body can only
-  // contain SELECTs in SQLite, so any write verb seen belongs to the statement.
+  // lastToken = first keyword; SQLite CTE bodies are SELECT-only, so any write verb seen is the statement's
   let writeCommand: string | null = null;
   if (isWriteCommand(lastToken)) {
     writeCommand = lastToken;

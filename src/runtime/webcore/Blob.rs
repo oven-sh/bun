@@ -4022,7 +4022,8 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 if let Some(store) = (*guard).store() {
                     // SAFETY: single-threaded deserialize path; no other
                     // borrow of this freshly-built `Store` is live.
-                    if let store::Data::Bytes(bytes_store) = &mut unsafe { Store::data_mut(store) } {
+                    if let store::Data::Bytes(bytes_store) = &mut unsafe { Store::data_mut(store) }
+                    {
                         // Transfer ownership of the local `name: Vec<u8>` into
                         // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
                         bytes_store.stored_name = name.into_boxed_slice();
@@ -4856,10 +4857,8 @@ pub(crate) fn write_file_internal(
         // Shared borrow: `last_modified` is `AtomicU64`, `store(Relaxed)`
         // takes `&self` — no `&mut Data` materialized.
         if let store::Data::File(ref file) = blob_store.data {
-            file.last_modified.store(
-                jsc::INIT_TIMESTAMP,
-                core::sync::atomic::Ordering::Relaxed,
-            );
+            file.last_modified
+                .store(jsc::INIT_TIMESTAMP, core::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -6387,7 +6386,9 @@ impl Any {
                 if matches!(s.data, store::Data::Bytes(_)) && s.has_one_ref() {
                     // SAFETY: `has_one_ref` — this handle is the only owner;
                     // no other borrow can be live.
-                    let internal = unsafe { Store::data_mut(s) }.as_bytes_mut().to_internal_blob();
+                    let internal = unsafe { Store::data_mut(s) }
+                        .as_bytes_mut()
+                        .to_internal_blob();
                     *self = Any::InternalBlob(internal);
                     return;
                 }

@@ -749,12 +749,7 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
-                    if let Some(tunnel) = client.proxy_tunnel.take() {
-                        // SAFETY: tunnel was created by ProxyTunnel::start
-                        // (heap::alloc) and is refcounted; detach the socket
-                        // before the clone's strong ref drops.
-                        (*tunnel.as_ptr()).detach_socket();
-                    }
+                    client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
                     client.custom_ssl_ctx = None;
                     // `state` was `Default` at `ptr::read` time and was

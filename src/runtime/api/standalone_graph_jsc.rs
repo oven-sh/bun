@@ -13,7 +13,8 @@ use bun_jsc::JSGlobalObject;
 // `File` is re-exported at the crate root.
 use crate::webcore::Blob;
 use crate::webcore::blob::SizeType;
-use crate::webcore::blob::store::{Bytes, Data, Store, StoreRef};
+use crate::webcore::blob::store::{Bytes, Data, Store};
+use bun_ptr::RefPtr;
 use bun_standalone_graph::{File, StandaloneModuleGraph};
 
 /// Extension trait wiring JSC-dependent methods onto `standalone_graph::File`.
@@ -43,7 +44,7 @@ impl FileJsc for File {
             };
             // Cannot use `..Default::default()` — `Store: Drop`
             // forbids partial moves out of the temporary default.
-            let store = StoreRef::from(Store::new(Store {
+            let store = RefPtr::from(Store::new(Store {
                 data: Data::Bytes(bytes),
                 mime_type: MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
@@ -53,7 +54,7 @@ impl FileJsc for File {
             store.ref_();
 
             // Hold the raw pointer so we can keep mutating the store after
-            // `init_with_store` consumes the `StoreRef`. The store outlives
+            // `init_with_store` consumes the `RefPtr<Store>`. The store outlives
             // this fn (leaked above).
             let store_ptr = store.as_ptr();
 

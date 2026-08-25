@@ -34,8 +34,7 @@ use bun_jsc::js_error_to_write_error;
 // field mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
 // chaining getters) is `Cell`-wrapped so the codegen shim can hand out a shared
 // `&*m_ctx` borrow without aliasing UB. `parent` and `custom_label` are
-// read-only after `call()` constructs the wrapper; `finalize()` owns `Box<Self>`
-// so it may still tear them down by value.
+// read-only after `call()` constructs the wrapper.
 #[bun_jsc::JsClass]
 pub struct Expect {
     pub(crate) flags: Cell<Flags>,
@@ -697,10 +696,9 @@ impl Expect {
         } else {
             None
         };
-        // The ref
-        // moves into `Expect` below and `to_js()` is infallible, so there is no
-        // error path between ref creation and the wrapper taking ownership; from
-        // then on `Expect::finalize` derefs `parent` (RefDataPtr has no Drop).
+        // The ref moves into `Expect` below and `to_js()` is infallible, so
+        // there is no error path between ref creation and the wrapper taking
+        // ownership.
 
         let expect = Expect {
             flags: Cell::new(Flags::default()),

@@ -212,12 +212,9 @@ pub fn comptime_string_set_impl(input: TokenStream) -> TokenStream {
 // #[derive(CellRefCounted)] / #[derive(ThreadSafeRefCounted)]
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Replaces the former `impl_cell_ref_counted` declarative macro and
-// the ~80 hand-written `ref_count: Cell<u32>` + `unsafe impl` pairs. The
-// derive locates the intrusive refcount field and emits the trait impl, the
-// `AnyRefCounted` bridge (so `RefPtr` accepts the type), and
-// inherent `ref_()`/`deref()` forwarders so existing call sites keep working
-// without importing the trait.
+// Locates the intrusive refcount field and emits the trait impl, the
+// `AnyRefCounted` bridge (so `RefPtr` accepts the type), and inherent
+// `ref_()`/`deref()` forwarders so call sites don't need the trait in scope.
 //
 // Field selection (first match wins):
 //   1. a field annotated `#[ref_count]`
@@ -367,11 +364,6 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
                     0,
                 );
             }
-            #[cfg(debug_assertions)]
-            #[inline]
-            unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn ::bun_ptr::ref_count::DebugDataOps {
-                ::bun_ptr::ref_count::noop_debug_data()
-            }
         }
         // Inherent forwarders so callers don't need the trait in scope.
         impl #impl_g #name #ty_g #where_g {
@@ -469,12 +461,12 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
                         .assert_no_refs()
                 }
             }
-            #[cfg(debug_assertions)]
             #[inline]
-            unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn ::bun_ptr::ref_count::DebugDataOps {
+            unsafe fn rc_assert_valid(this: *const Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe {
-                    (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this)).debug_data_ptr()
+                    (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
+                        .assert_valid()
                 }
             }
         }
@@ -486,9 +478,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 // #[derive(RefCounted)]  — intrusive single-thread `RefCount<Self>` mixin
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Third sibling of CellRefCounted / ThreadSafeRefCounted — replaces the ~17
-// hand-rolls that all spell out `get_ref_count = &raw mut (*this).ref_count;
-// destructor = drop(heap::take(this))`.
+// Third sibling of CellRefCounted / ThreadSafeRefCounted.
 //
 // Struct-level attribute:
 //   #[ref_count(destroy = <path>)]      — `unsafe fn(*mut Self)`; default is

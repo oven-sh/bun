@@ -7444,11 +7444,11 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `attach_native_callback` stores a `RefPtr<H2FrameParser>` (the
-    /// `init_ref` bumps `ref_count`); the matching `deref` happens in
-    /// `NewSocket::detach_native_callback`. When the socket already has a
-    /// native callback attached we fall back to write-only mode and take a
-    /// manual `ref()` on the socket itself, balanced by `detach_native_socket`.
+    /// `attach_native_callback` stores a `RefPtr<H2FrameParser>`, dropped in
+    /// `NewSocket::detach_native_callback` (or inside `attach_native_callback`
+    /// when rejected). When the socket already has a native callback attached
+    /// we fall back to write-only mode and take a manual `ref()` on the socket
+    /// itself, balanced by `detach_native_socket`.
     fn attach_to_native_socket<const SSL: bool>(
         &self,
         socket: *mut crate::socket::NewSocket<SSL>,

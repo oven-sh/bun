@@ -362,7 +362,7 @@ impl StaticRoute {
         let n = this.pending_responses.get() - 1;
         this.pending_responses.set(n);
         if n == 0 {
-            drop(this.pending_ref.take());
+            this.pending_ref.set(None);
         }
     }
 

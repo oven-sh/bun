@@ -14,7 +14,7 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response,
+    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
 };
 use ::bstr::BStr;
 use bun_collections::HashMap;
@@ -860,8 +860,6 @@ pub struct ServePlugins {
 }
 
 // Reference count is incremented while there are other objects waiting on plugin loads.
-// Maps to bun_ptr::RefPtr<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
-
 pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
@@ -2037,7 +2035,7 @@ where
         // SAFETY: plain-field detach through the root pointer; the shared
         // borrow above is not used past this point.
         unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
-        upgrader.request_weakref.with_mut(|w| w.deref());
+        upgrader.request_weakref.set(request::WeakRef::EMPTY);
 
         data_value.ensure_still_alive();
         let ws = ServerWebSocket::init(

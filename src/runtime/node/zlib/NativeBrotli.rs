@@ -69,9 +69,7 @@ mod _impl {
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
-    // Intrusive refcount: the handle type is `bun_ptr::RefPtr<NativeBrotli>`; the
-    // `ref_count` field below is read/written by that wrapper, and `deinit` is the
-    // drop body invoked when the count reaches zero.
+    // Intrusive refcount; `deinit` runs when it reaches zero.
 
     // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
     // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.

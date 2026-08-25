@@ -89,11 +89,8 @@ pub mod js {
 /// 2. Reader (released in onReaderDone/onReaderError)
 /// 3. Writer (released in onWriterClose)
 ///
-// `bun.ptr.RefCount` is intrusive single-thread → `bun_ptr::RefPtr<Terminal>`.
-// Never `Rc`/`Arc` here: `*mut Terminal` crosses FFI as the `.classes.ts` m_ctx
-// payload and is recovered by raw pointer in finalize/host fns. (LIFETIMES.tsv
-// marks CreateResult.terminal as SHARED, but the RefCount→RefPtr rule wins;
-// the TSV row is for plain `*T` fields, not intrusive mixins.)
+// Intrusive refcount, not `Rc`/`Arc`: `*mut Terminal` crosses FFI as the
+// `.classes.ts` m_ctx payload and is recovered by raw pointer in finalize/host fns.
 //
 // `no_construct, no_finalize`: this class uses `constructNeedsThis: true` (3-arg
 // constructor) and intrusive refcounting (finalize → deref, not heap::take),
@@ -301,8 +298,6 @@ impl Options {
 
 /// Result from creating a Terminal
 pub(crate) struct CreateResult {
-    // Intrusive single-thread refcount that crosses FFI as `*mut Terminal`; see
-    // ref_count comment on `Terminal` for why this is not `Arc`.
     pub terminal: bun_ptr::RefPtr<Terminal>,
     pub js_value: JSValue,
 }

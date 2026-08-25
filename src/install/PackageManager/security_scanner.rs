@@ -1001,6 +1001,10 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
                 ThreadSafeRefCount::<Process>::deref(p);
             }
         }
+        // Dropping the writer can synchronously close it and re-enter
+        // `on_close_io` through the parent backref; move it out first so that
+        // sees `None`.
+        drop(self.json_writer.take());
     }
 }
 
@@ -1316,7 +1320,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             StaticPipeWriter::create(event_loop, parent.cast(), make_json_stdio(), json_source);
         // Keep a duped ref locally so no borrow on `(*parent).json_writer` is
         // held across `start()` — `on_close_io` may `.take()` the field.
-        let writer_local = writer.dupe_ref();
+        let writer_local = writer.clone();
         // SAFETY: see `parent` note above.
         unsafe { (*parent).json_writer = Some(writer) };
 
@@ -1337,11 +1341,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
         let start_result = unsafe { (*writer_ptr).start() };
-        // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
-        unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
-        // SAFETY: `writer_local` keeps `*writer_ptr` live.
-        unsafe { (*writer_ptr).started = false };
-        drop(writer_local);
         if let Err(e) = start_result {
             Output::err_generic(
                 "Failed to start security scanner JSON pipe writer: {}",
@@ -1349,6 +1348,15 @@ impl<'a> SecurityScanSubprocess<'a> {
             );
             return Err(crate::Error::JSONPipeWriterFailed);
         }
+        // The writer's lifetime is owned by `json_writer`, not by its own
+        // `started` ref: release the ref `start()` took and clear the flag so
+        // its close path doesn't release it again.
+        // SAFETY: `writer_local` keeps `*writer_ptr` live.
+        unsafe {
+            RefCount::<StaticPipeWriter>::deref(writer_ptr);
+            (*writer_ptr).started = false;
+        }
+        drop(writer_local);
 
         // SAFETY: `process` is live (we hold a ref); reached via the local raw
         // ptr per the single-provenance note. `watch_or_reap` may re-enter

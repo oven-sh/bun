@@ -4848,7 +4848,7 @@ fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mod
 }
 
 /// Releases both refs from [`__bun_stdio_blob_store_new`]'s `+2` (one owner ref + one
-/// dead immortality sentinel). Live retained `StoreRef`s keep their own `+1`, so safe.
+/// dead immortality sentinel). Live retained `RefPtr<Store>`s keep their own `+1`, so safe.
 #[unsafe(no_mangle)]
 fn __bun_stdio_blob_store_deinit(ptr: *mut ()) {
     use bun_jsc::webcore_types::store::Store;

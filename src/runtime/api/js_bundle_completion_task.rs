@@ -555,9 +555,9 @@ impl JSBundleCompletionTask {
 
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
         crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(ctx).expect("completion")).unregister();
-        // For the +1 taken by `complete_on_bundle_thread` enqueue.
-        // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
-        let _drop_ref = unsafe { bun_ptr::RefPtr::<Self>::from_raw(ctx) };
+        // SAFETY: `ctx` is the live heap allocation; takes over the +1 taken by
+        // the `complete_on_bundle_thread` enqueue.
+        let _guard = unsafe { RefPtr::from_raw(ctx) };
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`,
         // dispatched exactly once per task on the JS thread. Exclusive: the
         // task has no JS-visible handle, the bundle thread's access ended when

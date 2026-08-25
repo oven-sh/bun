@@ -124,56 +124,6 @@ pub type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
 pub type StdioResult = Option<Fd>;
 
-/// RAII handle owning one intrusive ref on a heap `FileSink`. `FileSink`
-/// carries its own `#[derive(CellRefCounted)]` refcount and is allocated via
-/// `Box::into_raw` in `FileSink::create*`, so it cannot live behind an `Arc`.
-/// Drop derefs (and frees on last ref) on teardown.
-pub struct FileSinkPtr(core::ptr::NonNull<FileSink>);
-
-impl FileSinkPtr {
-    /// Adopt the +1 ref returned by `FileSink::create*`.
-    ///
-    /// # Safety
-    /// `ptr` is non-null, points to a live `FileSink` from
-    /// `FileSink::create*`, and the caller transfers its single owned ref to
-    /// this handle.
-    #[cfg(windows)]
-    #[inline]
-    unsafe fn adopt(ptr: *mut FileSink) -> Self {
-        // SAFETY: caller contract — `ptr` is non-null.
-        Self(unsafe { core::ptr::NonNull::new_unchecked(ptr) })
-    }
-}
-
-impl core::ops::Deref for FileSinkPtr {
-    type Target = FileSink;
-    #[inline]
-    fn deref(&self) -> &FileSink {
-        // SAFETY: `adopt` contract — `self.0` is a live `FileSink` from
-        // `FileSink::create*`; the held intrusive ref keeps it alive for `'_`.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl core::ops::DerefMut for FileSinkPtr {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut FileSink {
-        // SAFETY: `adopt` contract — `self.0` is live; `&mut self` is exclusive
-        // on this owning handle (FileSinkPtr is non-`Copy`, single-threaded
-        // shell), so no other `&`/`&mut` to the `FileSink` overlaps.
-        unsafe { self.0.as_mut() }
-    }
-}
-
-impl Drop for FileSinkPtr {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `adopt` contract — `self.0` is live with one owned intrusive
-        // ref; `FileSink::deref` (CellRefCounted derive) frees on zero.
-        unsafe { FileSink::deref(self.0.as_ptr()) };
-    }
-}
-
 bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
 /// Used for captured writer
@@ -398,10 +348,7 @@ impl ShellSubprocess {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
-                    // DerefMut on the owning `&mut FileSinkPtr` encapsulates
-                    // the access.
                     pipe.source.with_mut(|s| s.clear());
-                    // FileSinkPtr::drop derefs.
                     self.stdin = Writable::Ignore;
                 }
                 Writable::Buffer(_) => {
@@ -892,7 +839,7 @@ impl ShellSubprocess {
                 // SAFETY: shell is single-threaded; the FileSink allocation is
                 // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
                 // the Subprocess owns both and `Writable::on_close` is the only
-                // path that drops the FileSinkPtr.
+                // path that drops it.
                 pipe.source
                     .set(webcore::streams::SourceHandle::ShellWritable(
                         // SAFETY: `stdin_ptr` is the live `&raw mut` writable (write provenance).
@@ -1014,7 +961,7 @@ pub enum WritableInitError {
 }
 
 pub enum Writable {
-    Pipe(FileSinkPtr),
+    Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
     Memfd(Fd),
@@ -1078,8 +1025,8 @@ impl Writable {
                         // subprocess.flags.has_stdin_destructor_called = false;
 
                         // SAFETY: `create_with_pipe` returns non-null with one
-                        // owned ref; `adopt` takes it over.
-                        return Ok(Writable::Pipe(unsafe { FileSinkPtr::adopt(pipe_ptr) }));
+                        // owned ref, taken over here.
+                        return Ok(Writable::Pipe(unsafe { RefPtr::from_raw(pipe_ptr) }));
                     }
                     return Ok(Writable::Inherit);
                 }

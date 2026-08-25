@@ -3,7 +3,6 @@
 use bun_collections::{ArrayHashMap, MapEntry, StringArrayHashMap};
 use bun_core::{fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;
-
 use bun_ptr::RefPtr;
 
 use super::memory_cost::{memory_cost_array_hash_map, memory_cost_array_list};

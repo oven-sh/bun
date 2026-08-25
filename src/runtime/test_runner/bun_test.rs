@@ -747,15 +747,13 @@ impl BunTest {
         // SAFETY: `raw_ref` was produced by `RefPtr::into_raw` in `run_test_callback`
         // and round-tripped via `as_promise_ptr`; we adopt the +1 it carried.
         let refdata: RefDataPtr = unsafe { bun_ptr::RefPtr::from_raw(raw_ref) };
-        // Remove the pending_then_refs entry before `refdata` drops so a freed `RefData` never lingers.
+        // Remove the pending_then_refs entry first so it never holds a freed `RefData`.
         if let Some(runner) = Jest::runner() {
             let mut pending = runner.bun_test_root.pending_then_refs.borrow_mut();
             if let Some(pos) = pending.iter().position(|p| *p == raw_ref.cast_const()) {
                 pending.swap_remove(pos);
             }
         }
-        // `refdata` drops at scope exit, so a paired done() callback observes
-        // has_one_ref()==true on its turn.
         let has_one_ref = refdata.has_one_ref();
         let Some(this_strong) = refdata.buntest_weak.upgrade() else {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
@@ -827,8 +825,6 @@ impl BunTest {
         let Some(ref_in) = ref_in else {
             return Ok(JSValue::UNDEFINED);
         };
-        // `this.ref` was already taken above; it drops at scope exit so the
-        // paired promise then/catch path sees has_one_ref()==true.
 
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.

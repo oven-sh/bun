@@ -410,8 +410,7 @@ pub(crate) fn upload(
 
 /// returns a writable stream that writes to the s3 path
 ///
-/// Takes ownership of one `credentials` ref (moved into the `MultiPartUpload`).
-/// Callers pass `creds.dupe()`.
+/// `credentials` is moved into the `MultiPartUpload`.
 pub(crate) fn writable_stream(
     credentials: bun_ptr::RefPtr<S3Credentials>,
     path: &[u8],
@@ -834,8 +833,7 @@ impl Drop for S3UploadStreamWrapper {
 
 /// consumes the readable stream and upload to s3
 ///
-/// Takes ownership of one `credentials` ref (moved into the `MultiPartUpload`).
-/// Callers pass `creds.dupe()`.
+/// `credentials` is moved into the `MultiPartUpload`.
 pub(crate) fn upload_stream(
     credentials: bun_ptr::RefPtr<S3Credentials>,
     path: &[u8],

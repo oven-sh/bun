@@ -833,9 +833,6 @@ pub struct HTTPClient<'a> {
     pub(crate) tls_props: Option<ssl_config::SharedPtr>,
     /// The custom SSL context used for this request (None = default context).
     /// Set by HTTPThread.connect() when using custom TLS configs.
-    /// Holds one owned strong ref (taken in `set_custom_ssl_ctx`, released on
-    /// drop). `HttpsContext` is intrusive-refcounted (also recovered from socket
-    /// ext), so this is a `RefPtr`, not an `Arc`.
     pub(crate) custom_ssl_ctx: Option<RefPtr<HttpsContext>>,
     pub(crate) result_callback: HTTPClientResultCallback,
 
@@ -851,11 +848,9 @@ pub struct HTTPClient<'a> {
     pub(crate) proxy_settings: Option<Box<ProxySettings>>,
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) proxy_authorization: Option<Vec<u8>>,
-    /// Set while this request is tunneling through an HTTP proxy (CONNECT).
-    /// Holds one owned strong ref on the intrusive-refcounted `ProxyTunnel`
-    /// (taken by `ProxyTunnel::start` / `adopt`, released on drop / pool
-    /// hand-off), so this is a `RefPtr`, not an `Arc`. The pointee is
-    /// also recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
+    /// Set while this request is tunneling through an HTTP proxy (CONNECT);
+    /// moved to the keep-alive pool with the socket. The pointee is also
+    /// recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
     pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
     /// Set when this request is bound to a stream on an HTTP/2 session.
     /// Owned by the session; cleared by the session when the stream completes.
@@ -923,12 +918,6 @@ impl<'a> HTTPClient<'a> {
 
 impl Drop for HTTPClient<'_> {
     fn drop(&mut self) {
-        // redirect / prev_redirect are Vec<u8> — dropped automatically.
-        // proxy_authorization: Option<Vec<u8>> — dropped automatically.
-        // proxy_headers: Option<Headers> — dropped automatically.
-        // tunnel was created by ProxyTunnel::new (heap::alloc) and refcounted;
-        // close_proxy_tunnel releases this client's strong ref (detach+deref
-        // only, no shutdown).
         self.close_proxy_tunnel(false);
         // The session detaches `h2` before any terminal callback, so this should
         // be None by the time the result callback's deinit path runs.
@@ -1618,13 +1607,13 @@ impl<'a> HTTPClient<'a> {
     /// The tunnel handle's pointer, for the entry points that may release the
     /// handle while they run (`ProxyTunnel::on_writable` / `receive`).
     #[inline]
-    fn proxy_tunnel_ptr(&self) -> Option<NonNull<ProxyTunnel>> {
+    pub(crate) fn proxy_tunnel_ptr(&self) -> Option<NonNull<ProxyTunnel>> {
         self.proxy_tunnel.as_ref().map(|p| p.as_non_null())
     }
-    /// Detach the proxy tunnel, if one is attached, and release this client's
-    /// ref on it through the handle that holds it.
+    /// Detach the proxy tunnel, if one is attached, and drop this client's ref
+    /// on it.
     #[inline]
-    fn close_proxy_tunnel(&mut self, shutdown: bool) {
+    pub(crate) fn close_proxy_tunnel(&mut self, shutdown: bool) {
         if let Some(t) = self.proxy_tunnel.take() {
             if shutdown {
                 proxy_tunnel::ProxyTunnel::shutdown(t.as_non_null());

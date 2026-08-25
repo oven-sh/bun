@@ -107,15 +107,6 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         }
     }
 
-    /// Release this handle's weak ref now (idempotent; `Drop` does the same).
-    pub fn deref(&mut self) {
-        if let Some(value) = self.raw_ptr {
-            // SAFETY: `raw_ptr` was set by `init_ref` and not yet released;
-            // the allocation outlives all `WeakPtr`s by construction.
-            unsafe { self.deref_internal(value) };
-        }
-    }
-
     /// Borrow the pointee, or `None` once the owner has finalized it (which
     /// also releases this handle's weak ref).
     ///
@@ -158,7 +149,11 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
 
 impl<T: HasWeakPtrData> Drop for WeakPtr<T> {
     fn drop(&mut self) {
-        self.deref();
+        if let Some(value) = self.raw_ptr {
+            // SAFETY: `raw_ptr` was set by `init_ref` and not yet released;
+            // the allocation outlives all `WeakPtr`s by construction.
+            unsafe { self.deref_internal(value) };
+        }
     }
 }
 
@@ -272,7 +267,7 @@ mod tests {
         assert_eq!(drops(), before + 1);
         // The handle is now empty: a second `get`/`deref` must be a no-op.
         assert!(weak.get().is_none());
-        weak.deref();
+        drop(weak);
     }
 
     /// `deref` before finalize leaves the allocation to the owner.
@@ -282,8 +277,8 @@ mod tests {
         let before = drops();
         let raw = new_owner(6);
         // SAFETY: `raw` is a freshly leaked Box; live and not finalized.
-        let mut weak = unsafe { WeakPtr::init_ref(raw) };
-        weak.deref();
+        let weak = unsafe { WeakPtr::init_ref(raw) };
+        drop(weak);
         assert_eq!(drops(), before);
         // SAFETY: no weak refs remain; the owner frees its own allocation.
         drop(unsafe { bun_core::heap::take(raw) });
@@ -309,7 +304,7 @@ mod tests {
             assert_eq!(weak.get().map(|o| o.payload), Some(i));
         }
 
-        weak.deref();
+        drop(weak);
         // SAFETY: no weak refs remain.
         drop(unsafe { bun_core::heap::take(raw) });
         assert_eq!(drops(), before + 1);
@@ -334,9 +329,9 @@ mod tests {
 
         // SAFETY: `raw` is live.
         assert!(!unsafe { (*Owner::weak_ptr_data(raw)).on_finalize() });
-        a.deref();
+        drop(a);
         assert_eq!(drops(), before);
-        b.deref();
+        drop(b);
         assert_eq!(drops(), before + 1);
     }
 }

@@ -8,6 +8,7 @@ use core::sync::atomic::Ordering;
 use crate::Error;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::strings;
+use bun_ptr::RefPtr;
 
 use super::stream::{State as StreamState, Stream};
 use super::{dispatch, encode};
@@ -235,7 +236,7 @@ impl ClientSession {
     /// own ref, both through `this`. When the body tore the session down that
     /// second release frees it, with no reference to it live anywhere.
     fn enter(this: SessionPtr, body: impl FnOnce(&mut ClientSession)) {
-        let _keep_alive = this.ref_guard();
+        let _keep_alive = RefPtr::from_this(this);
         // SAFETY: `this` is live (see `this_ptr`; the guard above holds it for
         // the rest of this call) and HTTP-thread-only, so this is the only
         // borrow of the session for the duration of `body`.
@@ -1040,9 +1041,9 @@ impl ClientSession {
         unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
         if self.can_pool() && !self.socket.is_closed_or_has_error() {
             // Pool stores the live *ClientSession so a later fetch can resume
-            // the multiplexed connection. SAFETY: `self` is heap-owned and
-            // outlives the pool entry (release_socket takes the strong ref).
-            let self_ptr = NonNull::from(&mut *self);
+            // the multiplexed connection; the socket ext's ref moves to it.
+            // SAFETY: `self` is heap-owned and that ref is outstanding.
+            let self_ref = unsafe { RefPtr::from_raw(core::ptr::from_mut(self)) };
             // ctx back-ref is valid for the session's lifetime. Unlike
             // `unregister_h2_raw` above, this branch is *not* reachable on the
             // re-entrant `connect()` → `adopt()` path: every adopt-side entry
@@ -1063,7 +1064,7 @@ impl ClientSession {
                 b"",
                 0,
                 self.host_header_hash,
-                Some(self_ptr),
+                Some(self_ref),
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);

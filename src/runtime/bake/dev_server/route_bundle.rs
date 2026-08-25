@@ -1,11 +1,11 @@
 //! `DevServer.RouteBundle` — per-navigatable-route bundling state.
 
+use bun_ptr::RefPtr;
+
 use super::incremental_graph;
 use super::jsc;
 use super::source_map_store;
 use crate::bake::framework_router;
-use bun_ptr::RefPtr;
-
 use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
 
 /// `bun.GenericIndex(u30, RouteBundle)`.

@@ -150,7 +150,6 @@ pub(crate) type HTMLBundleRoute = Route;
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundleRoute")]
 pub struct Route {
-    /// Released in `Drop`.
     pub(crate) bundle: RefPtr<HTMLBundle>,
     /// One HTMLBundle.Route can be specified multiple times
     ref_count: RefCount<Route>,
@@ -174,7 +173,6 @@ pub enum State {
     /// (`schedule_bundle`).
     Building,
     Err(Log),
-    /// Released in `State::deinit`.
     Html(RefPtr<StaticRoute>),
 }
 
@@ -219,7 +217,7 @@ impl Route {
     }
 
     fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
-        let _keep_alive = this.ref_guard();
+        let _keep_alive = RefPtr::from_this(this);
         let route: &Route = &this;
 
         let Some(server) = route.server.get() else {
@@ -250,8 +248,6 @@ impl Route {
             }
 
             // Simpler development workflow which rebundles on every request.
-            // R-2: swap the state out *before* releasing what it holds so no
-            // borrow into `route.state` is live across `StaticRoute`'s deref.
             if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
                 route.state.set(State::Pending);
             }
@@ -742,7 +738,7 @@ impl Route {
     /// uws onAborted for a response waiting in `pending_responses`.
     fn on_pending_response_aborted(this: ThisPtr<Self>, resp: AnyResponse) {
         // Technically, this could be the final ref count, but we don't want to risk it
-        let _keep_alive = this.ref_guard();
+        let _keep_alive = RefPtr::from_this(this);
 
         // R-2: scope the `&mut Vec` to the find+remove only — dropping the
         // removed entry releases a route ref and must not overlap a live

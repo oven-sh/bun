@@ -9,35 +9,7 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_core::StoredTrace;
 use bun_core::ThreadLock;
-
-// was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
-// Debug-only diagnostic storage; std HashMap drops insertion order for `frees`
-// which is acceptable for leak reports.
-#[cfg(debug_assertions)]
-use std::collections::HashMap;
-#[cfg(debug_assertions)]
-type ArrayHashMap<K, V> = HashMap<K, V>;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Debug stack dump — calls straight into bun_core (T0 owns the std::backtrace
-// fallback). Crash-report symbolication lives in bun_crash_handler and is
-// invoked from there directly when needed.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn dump_stack_hook(trace: Option<&StoredTrace>, ret_addr: usize) {
-    match trace {
-        None => bun_core::dump_current_stack_trace(
-            if ret_addr == 0 { None } else { Some(ret_addr) },
-            bun_core::DumpStackTraceOptions::default(),
-        ),
-        Some(stored) => {
-            bun_core::dump_stack_trace(&stored.trace(), bun_core::DumpStackTraceOptions::default())
-        }
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Host-type traits (field projection + destructor)
@@ -130,11 +102,12 @@ pub trait AnyRefCounted: Sized {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn rc_assert_no_refs(this: *const Self);
-
-    #[cfg(debug_assertions)]
+    /// Debug-asserts the refcount has not already been destroyed.
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps;
+    #[inline]
+    unsafe fn rc_assert_valid(_this: *const Self) {}
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -208,11 +181,9 @@ pub struct RefCount<T: RefCounted> {
     raw_count: Cell<u32>,
     thread: ThreadLock,
     #[cfg(debug_assertions)]
-    debug: DebugData<Cell<u32>>,
+    debug: DebugData,
     _phantom: PhantomData<*const T>,
 }
-
-const DEBUG_STACK_TRACE: bool = false;
 
 impl<T: RefCounted> RefCount<T> {
     pub fn init() -> Self {
@@ -239,12 +210,7 @@ impl<T: RefCounted> RefCount<T> {
     pub unsafe fn ref_(self_: *mut T) {
         // SAFETY: caller contract
         let count = unsafe { &*T::get_ref_count(self_) };
-        #[cfg(debug_assertions)]
-        {
-            count.debug.assert_valid();
-        }
-        // `bun_core::scoped_log!` requires a static scope ident, so all types
-        // share the single `ref_count` scope.
+        count.assert_valid();
         bun_core::scoped_log!(
             ref_count,
             "0x{:x}   ref {} -> {}:",
@@ -252,9 +218,6 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get(),
             count.raw_count.get() + 1,
         );
-        if DEBUG_STACK_TRACE {
-            dump_stack_hook(None, return_address());
-        }
         count.assert_single_threaded();
         count.raw_count.set(count.raw_count.get() + 1);
     }
@@ -264,10 +227,7 @@ impl<T: RefCounted> RefCount<T> {
     pub unsafe fn deref(self_: *mut T) {
         // SAFETY: caller contract
         let count = unsafe { &*T::get_ref_count(self_) };
-        #[cfg(debug_assertions)]
-        {
-            count.debug.assert_valid(); // Likely double deref.
-        }
+        count.assert_valid(); // Likely double deref.
         bun_core::scoped_log!(
             ref_count,
             "0x{:x} deref {} -> {}:",
@@ -275,16 +235,13 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get(),
             count.raw_count.get() - 1,
         );
-        if DEBUG_STACK_TRACE {
-            dump_stack_hook(None, return_address());
-        }
         count.assert_single_threaded();
         count.raw_count.set(count.raw_count.get() - 1);
         if count.raw_count.get() == 0 {
             #[cfg(debug_assertions)]
             {
-                // SAFETY: count is &*get_ref_count(self_); we need &mut for deinit
-                unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
+                // SAFETY: `count` is not used again; we need &mut for deinit
+                unsafe { (*T::get_ref_count(self_)).debug.deinit() };
             }
             // SAFETY: raw_count == 0, sole owner
             unsafe { T::destructor(self_) };
@@ -311,12 +268,11 @@ impl<T: RefCounted> RefCount<T> {
         self.thread.lock_or_assert();
     }
 
-    // `getRefCount(self: *T) *@This()` is the trait method
-    // `T::get_ref_count` above; not duplicated here.
-
-    // `is_ref_count = unique_symbol` and `ref_count_options` were
-    // reflection markers for `RefPtr`; replaced by the `AnyRefCounted`
-    // trait bound.
+    #[inline]
+    pub fn assert_valid(&self) {
+        #[cfg(debug_assertions)]
+        self.debug.assert_valid();
+    }
 }
 
 impl<T: RefCounted> AnyRefCounted for T {
@@ -336,10 +292,9 @@ impl<T: RefCounted> AnyRefCounted for T {
         // SAFETY: caller contract — `this` points to a live T
         unsafe { (*T::get_ref_count(this.cast_mut())).assert_no_refs() }
     }
-    #[cfg(debug_assertions)]
-    unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps {
+    unsafe fn rc_assert_valid(this: *const Self) {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { &raw mut (*T::get_ref_count(this)).debug }
+        unsafe { (*T::get_ref_count(this.cast_mut())).assert_valid() }
     }
 }
 
@@ -359,7 +314,7 @@ impl<T: RefCounted> AnyRefCounted for T {
 pub struct ThreadSafeRefCount<T: ThreadSafeRefCounted> {
     raw_count: AtomicU32,
     #[cfg(debug_assertions)]
-    debug: DebugData<AtomicU32>,
+    debug: DebugData,
     _phantom: PhantomData<*const T>,
 }
 
@@ -386,8 +341,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     pub unsafe fn ref_(self_: *mut T) {
         // SAFETY: caller contract
         let count = unsafe { &*T::get_ref_count(self_) };
-        #[cfg(debug_assertions)]
-        count.debug.assert_valid();
+        count.assert_valid();
         let old_count = count.raw_count.fetch_add(1, Ordering::SeqCst);
         bun_core::scoped_log!(
             ref_count,
@@ -404,8 +358,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     pub unsafe fn deref(self_: *mut T) {
         // SAFETY: caller contract
         let count = unsafe { &*T::get_ref_count(self_) };
-        #[cfg(debug_assertions)]
-        count.debug.assert_valid();
+        count.assert_valid();
         let old_count = count.raw_count.fetch_sub(1, Ordering::SeqCst);
         bun_core::scoped_log!(
             ref_count,
@@ -419,7 +372,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
             #[cfg(debug_assertions)]
             {
                 // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
+                unsafe { (*T::get_ref_count(self_)).debug.deinit() };
             }
             // SAFETY: last ref dropped
             unsafe { T::destructor(self_) };
@@ -439,8 +392,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     pub unsafe fn release(self_: *mut T) -> bool {
         // SAFETY: caller contract
         let count = unsafe { &*T::get_ref_count(self_) };
-        #[cfg(debug_assertions)]
-        count.debug.assert_valid();
+        count.assert_valid();
         let old_count = count.raw_count.fetch_sub(1, Ordering::SeqCst);
         bun_core::scoped_log!(
             ref_count,
@@ -454,7 +406,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
             #[cfg(debug_assertions)]
             {
                 // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
+                unsafe { (*T::get_ref_count(self_)).debug.deinit() };
             }
             true
         } else {
@@ -469,8 +421,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     }
 
     pub fn has_one_ref(&self) -> bool {
-        #[cfg(debug_assertions)]
-        self.debug.assert_valid();
+        self.assert_valid();
         self.get() == 1
     }
 
@@ -479,18 +430,11 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         assert!(self.raw_count.load(Ordering::SeqCst) == 0);
     }
 
-    /// Type-erased accessor for the embedded debug tracker. Exposed (rather
-    /// than the private `debug` field) so `#[derive(ThreadSafeRefCounted)]`
-    /// can emit [`AnyRefCounted::rc_debug_data`] from outside this crate.
-    #[cfg(debug_assertions)]
-    #[doc(hidden)]
     #[inline]
-    pub fn debug_data_ptr(&mut self) -> *mut dyn DebugDataOps {
-        &raw mut self.debug
+    pub fn assert_valid(&self) {
+        #[cfg(debug_assertions)]
+        self.debug.assert_valid();
     }
-
-    // `getRefCount` / `is_ref_count` / `ref_count_options` — see
-    // notes on RefCount above.
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -499,7 +443,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 
 /// Lightweight intrusive refcount trait for types that embed a bare
 /// `ref_count: Cell<u32>` field (no [`RefCount<Self>`] wrapper, no debug
-/// tracking, no thread-lock).
+/// canary, no thread-lock).
 ///
 /// This is the migration target for the ~30 types that previously hand-rolled
 /// `ref_()`/`deref()` pairs around a `Cell<u32>`. Implementors supply only
@@ -630,37 +574,6 @@ pub fn destroy_box_with<T>(this: *mut T, before: impl FnOnce(&T)) {
     }
 }
 
-/// No-op [`DebugDataOps`] for [`CellRefCounted`] types — they carry no
-/// `DebugData` field, so [`RefPtr`]'s acquire/release tracking degrades to
-/// a stub.
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-struct NoopDebugData;
-
-#[cfg(debug_assertions)]
-impl DebugDataOps for NoopDebugData {
-    fn assert_valid_dyn(&self) {}
-    fn acquire(&mut self, _return_address: usize) -> TrackedRefId {
-        TrackedRefId::new(0)
-    }
-    fn release(&mut self, _id: TrackedRefId, _return_address: usize) {}
-}
-
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub fn noop_debug_data() -> *mut dyn DebugDataOps {
-    // Per-call leaked stub — `RefPtr` only calls `acquire`/`release` on it,
-    // both of which are no-ops, so a shared static would also be sound; but
-    // `*mut dyn` from a `static mut` is unergonomic. Debug-only.
-    // SAFETY: NonNull::dangling is fine here? No — `RefPtr` derefs it.
-    // Use a thread-local static to avoid per-ref allocation.
-    thread_local! {
-        static NOOP: core::cell::UnsafeCell<NoopDebugData> =
-            const { core::cell::UnsafeCell::new(NoopDebugData) };
-    }
-    NOOP.with(|n| n.get() as *mut dyn DebugDataOps)
-}
-
 // A blanket `impl<T: ThreadSafeRefCounted> AnyRefCounted for T` would overlap
 // with the `RefCounted` blanket above (Rust forbids overlapping blanket impls).
 // Instead, thread-safe hosts opt in via `#[derive(ThreadSafeRefCounted)]`,
@@ -678,185 +591,131 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 /// consumer (C++ `m_ctx`, a uws/libuv userdata slot) use
 /// [`into_raw`](Self::into_raw) and reclaim it later with
 /// [`from_raw`](Self::from_raw).
-///
-/// In debug builds every `RefPtr` is tracked in `T`'s `DebugData`, so
-/// `T.ref_count.dump_active_refs()` lists the acquisition site of each live one.
 #[must_use = "dropping a RefPtr releases its ref"]
-pub struct RefPtr<T: AnyRefCounted> {
-    data: NonNull<T>,
-    #[cfg(debug_assertions)]
-    debug: TrackedRefId,
-}
+#[repr(transparent)]
+pub struct RefPtr<T: AnyRefCounted>(NonNull<T>);
 
 impl<T: AnyRefCounted> Drop for RefPtr<T> {
     #[inline]
     fn drop(&mut self) {
-        let ptr = self.data.as_ptr();
-        #[cfg(debug_assertions)]
-        {
-            // SAFETY: we still own a ref, so `ptr` is live.
-            unsafe { (*T::rc_debug_data(ptr)).release(self.debug, return_address()) };
-        }
-        // SAFETY: we own a ref, so `ptr` is live; this releases it.
-        unsafe { T::rc_deref(ptr) };
+        // SAFETY: we own a ref, so the pointee is live; this releases it.
+        unsafe { T::rc_deref(self.0.as_ptr()) };
+    }
+}
+
+// Like `Arc<T>`: sending or sharing a `RefPtr` sends/shares `&T` and may run
+// `T`'s destructor on another thread.
+// SAFETY: see above; hosts opt in by being `Send + Sync` themselves.
+unsafe impl<T: AnyRefCounted + Send + Sync> Send for RefPtr<T> {}
+// SAFETY: see above.
+unsafe impl<T: AnyRefCounted + Send + Sync> Sync for RefPtr<T> {}
+
+/// Adopt the initial ref of a freshly constructed `T` (its embedded count
+/// starts at 1).
+impl<T: AnyRefCounted> From<Box<T>> for RefPtr<T> {
+    #[inline]
+    fn from(value: Box<T>) -> Self {
+        let ptr = bun_core::heap::into_raw_nn(value);
+        // SAFETY: freshly boxed, so live.
+        debug_assert!(unsafe { T::rc_has_one_ref(ptr.as_ptr()) });
+        Self(ptr)
     }
 }
 
 impl<T: AnyRefCounted> RefPtr<T> {
-    /// Increment the reference count, and return a structure boxing the pointer.
+    /// Allocate `value` on the heap and own its initial ref.
+    #[inline]
+    pub fn new(value: T) -> Self {
+        Self::from(Box::new(value))
+    }
+
+    /// Take a new ref on `*raw_ptr`.
     ///
     /// # Safety
     /// `raw_ptr` must point to a live `T`.
+    #[inline]
     pub unsafe fn init_ref(raw_ptr: *mut T) -> Self {
         // SAFETY: caller contract
-        unsafe { T::rc_ref(raw_ptr) };
-        // SAFETY: caller contract
-        unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
-    }
-
-    pub fn dupe_ref(&self) -> Self {
-        // SAFETY: data is live (we hold a ref)
-        unsafe { Self::init_ref(self.as_ptr()) }
-    }
-
-    /// Allocate a new object, returning a RefPtr to it.
-    pub fn new(init_data: T) -> Self {
-        // SAFETY: freshly boxed, ref_count == 1
-        unsafe { Self::adopt_ref(bun_core::heap::into_raw(Box::new(init_data))) }
-    }
-
-    /// Initialize a newly allocated pointer, returning a RefPtr to it.
-    /// Care must be taken when using non-default allocators.
-    ///
-    /// # Safety
-    /// `raw_ptr` must point to a live `T` with exactly one ref.
-    pub unsafe fn adopt_ref(raw_ptr: *mut T) -> Self {
-        #[cfg(debug_assertions)]
-        {
-            // SAFETY: caller contract
-            debug_assert!(unsafe { T::rc_has_one_ref(raw_ptr) });
-            // SAFETY: caller contract
-            unsafe { (*T::rc_debug_data(raw_ptr)).assert_valid_dyn() };
+        unsafe {
+            T::rc_assert_valid(raw_ptr);
+            T::rc_ref(raw_ptr);
+            Self(NonNull::new_unchecked(raw_ptr))
         }
-        // SAFETY: caller contract
-        unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
     }
 
-    /// A [`ThisPtr`](crate::ThisPtr) to the pointee, for the FFI-shaped call
-    /// sites that take one.
-    ///
-    /// Safe: holding a `RefPtr` means we own a ref, so the pointee is live —
-    /// which is exactly `ThisPtr::new`'s precondition. The returned handle is
-    /// only valid while this `RefPtr` (or another ref) is alive.
-    #[inline]
-    pub fn this_ptr(&self) -> crate::ThisPtr<T> {
-        // SAFETY: we own an outstanding ref, so `self.data` is live and non-null.
-        unsafe { crate::ThisPtr::new(self.data.as_ptr()) }
-    }
-
-    /// Take a new ref on the pointee of a dispatch-time [`ThisPtr`](crate::ThisPtr).
-    /// Safe: the `ThisPtr` invariant is that its pointee is live.
+    /// Take a new ref on the pointee of a [`ThisPtr`](crate::ThisPtr). Safe:
+    /// the `ThisPtr` invariant is that its pointee is live. This is the guard
+    /// to hold across a re-entrant call that may otherwise drop the last ref.
     #[inline]
     pub fn from_this(this: crate::ThisPtr<T>) -> Self {
         // SAFETY: `ThisPtr::new` invariant — pointee is live.
         unsafe { Self::init_ref(this.as_ptr()) }
     }
 
-    /// Consume this `RefPtr` into a [`ThisPtr`](crate::ThisPtr), transferring
-    /// the ref to the callee — the counterpart of `into_raw` for the
-    /// `ThisPtr`-shaped dispatch entry points. Safe for the same reason
-    /// `into_raw` is: no ref is released, and the pointee stays live.
+    /// Take ownership of a ref the caller already holds on `*raw_ptr`, without
+    /// incrementing. Inverse of [`into_raw`](Self::into_raw) (`Arc::from_raw`
+    /// semantics).
+    ///
+    /// # Safety
+    /// `raw_ptr` must point to a live `T` and the caller must own one ref.
+    #[inline]
+    pub unsafe fn from_raw(raw_ptr: *mut T) -> Self {
+        // SAFETY: caller contract
+        unsafe {
+            T::rc_assert_valid(raw_ptr);
+            Self(NonNull::new_unchecked(raw_ptr))
+        }
+    }
+
+    /// Give up ownership of the ref without decrementing; whoever holds the
+    /// returned pointer now owns it. Inverse of [`from_raw`](Self::from_raw)
+    /// (`Arc::into_raw` semantics).
+    #[inline]
+    pub fn into_raw(self) -> *mut T {
+        core::mem::ManuallyDrop::new(self).0.as_ptr()
+    }
+
+    /// A [`ThisPtr`](crate::ThisPtr) to the pointee, valid while this (or
+    /// another) ref is alive.
+    #[inline]
+    pub fn this_ptr(&self) -> crate::ThisPtr<T> {
+        // SAFETY: we own a ref, so the pointee is live.
+        unsafe { crate::ThisPtr::new(self.0.as_ptr()) }
+    }
+
+    /// [`into_raw`](Self::into_raw) for the `ThisPtr`-shaped dispatch entry
+    /// points: the callee takes over this ref.
     #[inline]
     pub fn into_this_ptr(self) -> crate::ThisPtr<T> {
         // SAFETY: `into_raw` transfers our live ref; the pointee is non-null.
         unsafe { crate::ThisPtr::new(self.into_raw()) }
     }
 
-    /// Wrap a raw pointer whose ref is being transferred to this RefPtr
-    /// WITHOUT incrementing the refcount. The caller gives up their ref;
-    /// this RefPtr now owns it. Unlike `adopt_ref`, this does not assert
-    /// `has_one_ref()` — the pointer may have other outstanding refs.
-    /// Inverse of [`into_raw`](Self::into_raw) (`Arc::from_raw` semantics).
-    ///
-    /// # Safety
-    /// `raw_ptr` must point to a live `T` and the caller must own one ref.
-    #[inline]
-    pub unsafe fn from_raw(raw_ptr: *mut T) -> Self {
-        #[cfg(debug_assertions)]
-        {
-            // SAFETY: caller contract
-            unsafe { (*T::rc_debug_data(raw_ptr)).assert_valid_dyn() };
-        }
-        // SAFETY: caller contract
-        unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
-    }
-
-    /// Extract the raw pointer, giving up ownership WITHOUT decrementing the
-    /// refcount; whoever holds the pointer now owns the ref. Inverse of
-    /// [`from_raw`](Self::from_raw) (`Arc::into_raw` semantics).
-    #[inline]
-    pub fn into_raw(self) -> *mut T {
-        let this = core::mem::ManuallyDrop::new(self);
-        let ptr = this.data.as_ptr();
-        #[cfg(debug_assertions)]
-        {
-            // SAFETY: data is live (we hold a ref)
-            unsafe { (*T::rc_debug_data(ptr)).release(this.debug, return_address()) };
-        }
-        ptr
-    }
-
-    /// Borrow the inner `*mut T` without affecting the refcount (analogous to
-    /// `Arc::as_ptr`). The pointer carries the original `heap::alloc`
-    /// provenance, so it is sound to thread it back through APIs that may
-    /// eventually `heap::take` it (e.g. allocator-vtable `free`), provided
-    /// the caller still holds a ref for the duration.
+    /// The pointee's address without affecting the refcount (`Arc::as_ptr`).
+    /// It carries the allocation's own provenance, so it may be threaded back
+    /// through APIs that eventually free it, provided a ref is held meanwhile.
     ///
     /// This is the only sanctioned way to mutate the pointee: `RefPtr` is a
-    /// shared-ownership handle, so a `&mut T` accessor would alias with any
-    /// other live `RefPtr`/`&T` to the same allocation. Callers that need
-    /// mutation must go through this raw pointer and uphold the no-alias
-    /// invariant themselves.
+    /// shared-ownership handle, so a `&mut T` accessor would alias any other
+    /// live `RefPtr`/`&T` to the same allocation.
     #[inline]
     pub fn as_ptr(&self) -> *mut T {
-        self.data.as_ptr()
+        self.0.as_ptr()
     }
 
+    /// [`as_ptr`](Self::as_ptr) as a `NonNull`.
     #[inline]
     pub fn as_non_null(&self) -> NonNull<T> {
-        self.data
-    }
-
-    /// Borrow the pointee (same as `<RefPtr<T> as Deref>::deref`).
-    #[inline]
-    pub fn data(&self) -> &T {
-        // SAFETY: holding a `RefPtr` means we own at least one ref, so the
-        // pointee is live for the borrow. Single-threaded `RefCount` hosts are
-        // !Send/!Sync so no concurrent mutation; thread-safe hosts coordinate
-        // their own interior mutability.
-        unsafe { self.data.as_ref() }
-    }
-
-    /// # Safety
-    /// `raw_ptr` must point to a live `T` and the caller must hold/own a ref.
-    pub(crate) unsafe fn unchecked_and_unsafe_init(raw_ptr: *mut T, ret_addr: usize) -> Self {
-        let _ = ret_addr;
-        Self {
-            // SAFETY: caller contract — raw_ptr is non-null and live
-            data: unsafe { NonNull::new_unchecked(raw_ptr) },
-            #[cfg(debug_assertions)]
-            // SAFETY: caller contract
-            debug: unsafe { (*T::rc_debug_data(raw_ptr)).acquire(ret_addr) },
-        }
+        self.0
     }
 }
 
 impl<T: AnyRefCounted> Clone for RefPtr<T> {
-    /// Bumps the intrusive refcount and returns a new `RefPtr` to the same
-    /// allocation. Equivalent to [`dupe_ref`](Self::dupe_ref).
+    /// Takes another ref on the same allocation.
     #[inline]
     fn clone(&self) -> Self {
-        self.dupe_ref()
+        // SAFETY: we own a ref, so the pointee is live.
+        unsafe { Self::init_ref(self.0.as_ptr()) }
     }
 }
 
@@ -864,139 +723,50 @@ impl<T: AnyRefCounted> core::ops::Deref for RefPtr<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        self.data()
+        // SAFETY: we own a ref, so the pointee is live for the borrow.
+        // Single-threaded hosts are !Send/!Sync so no concurrent mutation;
+        // thread-safe hosts coordinate their own interior mutability.
+        unsafe { self.0.as_ref() }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// TrackedRef / TrackedDeref
-// ──────────────────────────────────────────────────────────────────────────
-
-#[cfg(debug_assertions)]
-struct TrackedRef;
-
-/// Not an index, just a unique identifier for the debug data.
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct TrackedRefId(u32);
-
-#[cfg(debug_assertions)]
-impl TrackedRefId {
-    #[inline]
-    const fn new(n: u32) -> Self {
-        Self(n)
-    }
-}
-
-#[cfg(debug_assertions)]
-struct TrackedDeref;
 
 // ──────────────────────────────────────────────────────────────────────────
 // DebugData
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Dyn-safe surface of `DebugData<Count>` so `RefPtr<T>` can interact with it
-/// without knowing whether `Count` is `Cell<u32>` or `AtomicU32`.
 #[cfg(debug_assertions)]
-pub trait DebugDataOps {
-    fn assert_valid_dyn(&self);
-    fn acquire(&mut self, return_address: usize) -> TrackedRefId;
-    fn release(&mut self, id: TrackedRefId, return_address: usize);
+const MAGIC_VALID: u32 = 0x2f84_e51d;
+
+/// Debug-only liveness canary embedded in `RefCount`/`ThreadSafeRefCount`:
+/// poisoned when the destructor runs, so a ref/deref through a dangling
+/// pointer asserts instead of silently corrupting the count.
+#[cfg(debug_assertions)]
+pub struct DebugData {
+    magic: u32,
 }
 
 #[cfg(debug_assertions)]
-const MAGIC_VALID: u128 = 0x2f84_e51d;
-
-/// Provides Ref tracking. This is not generic over the pointer T to reduce
-/// analysis complexity.
-// Parameterized on the `Count` storage type directly (`Cell<u32>` or
-// `AtomicU32`). The lock and `next_id` are made uniformly thread-safe
-// (debug-only — perf irrelevant).
-#[cfg(debug_assertions)]
-pub struct DebugData<Count> {
-    magic: u128,
-    lock: bun_core::Mutex<()>,
-    next_id: AtomicU32,
-    map: HashMap<TrackedRefId, TrackedRef>,
-    frees: ArrayHashMap<TrackedRefId, TrackedDeref>,
-    _count: core::marker::PhantomData<Count>,
-}
-
-#[cfg(debug_assertions)]
-impl<Count> DebugData<Count> {
-    // was `pub const EMPTY` — std HashMap::new() is non-const.
-    pub(crate) fn empty() -> Self {
-        Self {
-            magic: MAGIC_VALID,
-            lock: bun_core::Mutex::new(()),
-            next_id: AtomicU32::new(0),
-            map: HashMap::new(),
-            frees: ArrayHashMap::new(),
-            _count: core::marker::PhantomData,
-        }
+impl DebugData {
+    pub(crate) const fn empty() -> Self {
+        Self { magic: MAGIC_VALID }
     }
 
     fn assert_valid(&self) {
-        debug_assert!(self.magic == MAGIC_VALID);
+        debug_assert!(
+            self.magic == MAGIC_VALID,
+            "ref/deref on a destroyed refcount"
+        );
     }
 
-    fn alloc_id(&self) -> TrackedRefId {
-        // Debug-only path; always atomic here.
-        TrackedRefId::new(self.next_id.fetch_add(1, Ordering::SeqCst))
-    }
-
-    fn release_impl(&mut self, id: TrackedRefId, return_address: usize) {
-        // If this triggers ASAN, the RefCounted object is double-freed.
-        let _guard = self.lock.lock();
-        let _ = return_address;
-        if self.map.remove(&id).is_none() {
-            return;
-        }
-        self.frees.insert(id, TrackedDeref);
-    }
-
-    fn deinit(&mut self, ret_addr: usize) {
+    fn deinit(&mut self) {
         self.assert_valid();
         self.magic = 0;
-        let _guard = self.lock.lock();
-        self.map.clear();
-        self.map.shrink_to_fit();
-        // Clear and release the allocation.
-        self.frees.clear();
-        self.frees.shrink_to_fit();
-        let _ = ret_addr;
-    }
-}
-
-#[cfg(debug_assertions)]
-impl<Count> DebugDataOps for DebugData<Count> {
-    fn assert_valid_dyn(&self) {
-        self.assert_valid();
-    }
-
-    fn acquire(&mut self, return_address: usize) -> TrackedRefId {
-        let _guard = self.lock.lock();
-        let id = self.alloc_id();
-        let _ = return_address;
-        self.map.insert(id, TrackedRef);
-        id
-    }
-
-    fn release(&mut self, id: TrackedRefId, return_address: usize) {
-        self.release_impl(id, return_address);
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // helpers
 // ──────────────────────────────────────────────────────────────────────────
-
-#[inline(always)]
-fn return_address() -> usize {
-    bun_core::return_address()
-}
-
-// `const unique_symbol = opaque {};` — type-identity marker for
-// compile-time assertion in `RefPtr`. Replaced by `AnyRefCounted` trait bound.
 
 bun_core::declare_scope!(ref_count, hidden);
 
@@ -1106,9 +876,9 @@ mod tests {
             ref_count: RefCount::init(),
             payload: Box::new(42),
         });
-        assert_eq!(*p.data().payload, 42);
+        assert_eq!(*p.payload, 42);
 
-        let q = p.dupe_ref();
+        let q = p.clone();
         let r = p.clone();
         assert_eq!(p.as_ptr(), q.as_ptr());
         assert_eq!(p.as_ptr(), r.as_ptr());

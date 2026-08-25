@@ -13,9 +13,6 @@ use bun_sql::postgres::postgres_types::int4;
 
 bun_core::declare_scope!(Postgres, visible);
 
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
-// Ported as an embedded `Cell<u32>` driven by `bun_ptr::RefPtr<PostgresSQLStatement>`;
-// `ref`/`deref` are provided by `RefPtr`, not as inherent methods.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLStatement {
     pub(crate) cached_structure: PostgresCachedStructure,

@@ -410,7 +410,6 @@ where
                     this.tcp.set(socket);
                     if this.state.get() == State::Failed {
                         socket.take_ext_owner::<Self>();
-                        drop(client);
                         return None;
                     }
                     bun_analytics::features::web_socket
@@ -432,10 +431,8 @@ where
                     this.state.set(State::Reading);
                     return Some(Self::connected(client, websocket));
                 }
-                Err(_) => {
-                    // Never installed as userdata on the Err path.
-                    drop(client);
-                }
+                // Never installed as userdata on the Err path.
+                Err(_) => {}
             }
             return None;
         }
@@ -454,7 +451,6 @@ where
                 // I don't think this case gets reached.
                 if this.state.get() == State::Failed {
                     sock.take_ext_owner::<Self>();
-                    drop(client);
                     return None;
                 }
                 bun_analytics::features::web_socket
@@ -473,11 +469,8 @@ where
                 this.state.set(State::Reading);
                 Some(Self::connected(client, websocket))
             }
-            Err(_) => {
-                // Never installed as userdata on the Err path.
-                drop(client);
-                None
-            }
+            // Never installed as userdata on the Err path.
+            Err(_) => None,
         }
     }
 
@@ -486,7 +479,7 @@ where
     fn connected(client: RefPtr<Self>, websocket: &CppWebSocket) -> *mut Self {
         let this = client.this_ptr();
         this.outgoing_websocket
-            .set(Some((BackRef::new(websocket), client.dupe_ref())));
+            .set(Some((BackRef::new(websocket), client.clone())));
         this.socket_ref.set(Some(client));
         this.as_ptr()
     }
@@ -539,7 +532,7 @@ where
         // Bumps the intrusive refcount and derefs on Drop (after `tcp.close`
         // below), which may free `this` — no `&`/`&mut Self` is live at that
         // point.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
         this.release_cpp_ref();
@@ -772,7 +765,7 @@ where
         }
         // Bumps the intrusive refcount and derefs on Drop at every return path
         // below. No `&`/`&mut Self` is live when the guard drops.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         debug_assert!(this.is_same_socket(socket));
 
@@ -1037,7 +1030,7 @@ where
     /// drop may free `this`; see `fail`.
     pub(crate) fn handle_decrypted_data(this: ThisPtr<Self>, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // Process as if it came directly from the socket.
         let full = match this.buffer_and_parse_head(data) {
@@ -1334,7 +1327,7 @@ where
                 // never call cancel() to drop it. The TCP socket's ref (released
                 // in handle_close) is what keeps this struct alive to forward
                 // socket data to the tunnel after we switch to .done.
-                let (ws, cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
+                let (ws, _cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
 
                 // Switch to forwarding before entering C++. did_connect_with_tunnel
                 // dispatches `open`, and an open handler that spins the event loop
@@ -1359,8 +1352,6 @@ where
                         None
                     },
                 );
-
-                drop(cpp_ref);
             } else if tcp.is_closed() {
                 Self::terminate(this, ErrorCode::Cancel);
             } else if !has_ws {
@@ -1436,7 +1427,7 @@ where
         // `on_writable`/`write` flush the tunnel and can reach `terminate` →
         // `handle_close`, dropping the socket's ref while this frame still
         // reads `*this`.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // Forward to proxy tunnel if active
         let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());

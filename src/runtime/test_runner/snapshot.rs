@@ -301,7 +301,7 @@ impl Snapshots {
                 match &mut stmt.data {
                     bun_ast::StmtData::SExpr(expr) => {
                         if let bun_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
-                            // deref `StoreRef` once to a plain `&mut E::Binary`
+                            // deref `RefPtr<Store>` once to a plain `&mut E::Binary`
                             // so the borrow checker can see `.left`/`.right` as disjoint
                             // field projections (custom `DerefMut` blocks split-borrows
                             // otherwise).

@@ -649,7 +649,7 @@ impl ValkeyClient {
         if !is_semi_socket {
             return thrown;
         }
-        // SAFETY: adopts the keep-alive ref `connect()` forgot for this
+        // SAFETY: takes over the keep-alive ref `connect()` handed to this
         // socket, as `SocketHandler::on_close` does for one uSockets closes.
         // Every caller of `close()` holds a scoped ref of its own, so the
         // client outlives this scope.

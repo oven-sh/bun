@@ -22,7 +22,6 @@ pub type CowString = CowSlice<u8>;
 pub enum Readable {
     Fd(Fd),
     Memfd(Fd),
-    // LIFETIMES.tsv: SHARED → RefPtr<PipeReader> (PipeReader has intrusive RefCount; detach() → deref()).
     Pipe(RefPtr<PipeReader>),
     Inherit,
     Ignore,
@@ -39,16 +38,10 @@ pub enum Readable {
 impl Readable {
     /// Mutable borrow of the `Pipe` payload's `PipeReader`.
     ///
-    /// Centralises the `RefPtr → &mut T` deref so the per-match-arm
-    /// `unsafe` blocks (`ref_`/`unref`/`close` and the `Subprocess` callers in
-    /// `on_close_io`/`on_process_exit`/`testing_apis`) collapse to this one
-    /// site. `RefPtr` deliberately has no `DerefMut`; the
-    /// invariant that makes `&mut` sound here is that `Readable::Pipe` holds
-    /// the owning strong ref for the variant's lifetime (created by
-    /// `PipeReader::create`, dropped only after the variant is moved out),
-    /// the reader lives in its own heap allocation
-    /// disjoint from `Readable`/`Subprocess`, and access is
-    /// single-JS-mutator-thread.
+    /// `RefPtr` deliberately has no `DerefMut`; what makes `&mut` sound here
+    /// is that `Readable::Pipe` holds the owning ref for the variant's
+    /// lifetime, the reader lives in its own heap allocation disjoint from
+    /// `Readable`/`Subprocess`, and access is single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn pipe_reader_mut(pipe: &RefPtr<PipeReader>) -> &mut PipeReader {
@@ -61,6 +54,7 @@ impl Readable {
     #[inline]
     fn pipe_detach(pipe: RefPtr<PipeReader>) {
         Self::pipe_reader_mut(&pipe).process = None;
+        drop(pipe);
     }
 
     pub(crate) fn memory_cost(&self) -> usize {

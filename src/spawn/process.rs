@@ -181,7 +181,7 @@ impl ProcessHandle {
     }
 
     pub fn has_exited(&self) -> bool {
-        self.0.data().has_exited()
+        self.0.has_exited()
     }
 }
 
@@ -326,8 +326,8 @@ impl Process {
         rusage: &Rusage,
     ) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::RefPtr::<Process>::from_raw(this) };
-        // SAFETY: `_g` keeps `this` live; `&mut` scoped to the poller unref.
+        let _guard = unsafe { bun_ptr::RefPtr::from_raw(this) };
+        // SAFETY: `_guard` keeps `this` live; `&mut` scoped to the poller unref.
         unsafe {
             if let Poller::WaiterThread(waiter) = &mut (*this).poller {
                 let ctx = event_loop_handle_to_ctx((*this).event_loop);
@@ -335,7 +335,7 @@ impl Process {
                 (*this).poller = Poller::Detached;
             }
         }
-        // SAFETY: `_g` keeps `this` live; `&mut` scoped to this call (which
+        // SAFETY: `_guard` keeps `this` live; `&mut` scoped to this call (which
         // can fire the JS exit handler).
         unsafe { (*this).on_wait_pid(waitpid_result, rusage) };
     }
@@ -345,8 +345,8 @@ impl Process {
     #[cfg(unix)]
     pub unsafe fn on_wait_pid_from_event_loop_task(this: *mut Self) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::RefPtr::<Process>::from_raw(this) };
-        // SAFETY: `_g` keeps `this` live.
+        let _guard = unsafe { bun_ptr::RefPtr::from_raw(this) };
+        // SAFETY: `_guard` keeps `this` live.
         unsafe { (*this).wait(false) };
     }
 
@@ -600,9 +600,9 @@ impl Process {
         // `&mut Process` whose tag would have to outlive that.
         let this: *mut Process = unsafe { (*uv_handle).data.cast() };
         // SAFETY: adopts the +1 ref taken at `uv_spawn`.
-        let _g = unsafe { bun_ptr::RefPtr::<Process>::from_raw(this) };
+        let _guard = unsafe { bun_ptr::RefPtr::from_raw(this) };
         bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
-        // SAFETY: `_g` keeps `this` live for this block.
+        // SAFETY: `_guard` keeps `this` live for this block.
         unsafe {
             if matches!((*this).poller, Poller::Uv(_)) {
                 (*this).poller = Poller::Detached;

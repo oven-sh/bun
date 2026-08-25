@@ -1,5 +1,5 @@
 use crate::node::{PathLike, PathOrBlob};
-use crate::webcore::blob::store::{S3Ext as _, StoreExt as _, StoreRef};
+use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
@@ -8,6 +8,7 @@ use bun_core::strings;
 use bun_http::Method;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_ptr::RefPtr;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so
@@ -360,7 +361,7 @@ pub(crate) struct S3BlobStatTask {
     // LIFETIMES.tsv: JSC_BORROW (&JSGlobalObject). `BackRef` so the heap task
     // can outlive the constructing frame while reads stay safe.
     global: bun_ptr::BackRef<JSGlobalObject>,
-    store: StoreRef,
+    store: RefPtr<Store>,
 }
 
 impl S3BlobStatTask {

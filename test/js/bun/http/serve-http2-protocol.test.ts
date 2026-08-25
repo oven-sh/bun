@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import http2 from "node:http2";
-import tls from "node:tls";
 import {
   F,
   Fixture,
@@ -1442,37 +1441,6 @@ test("HTTP/1.1 still works on the same port", async () => {
   expect(res.headers.get("alt-svc")).toBeNull();
 });
 
-if (secure) {
-  test("fetch(protocol: 'http2') talks h2 to Bun.serve", async () => {
-    const res = await fetch(`https://127.0.0.1:${fx.port}/echo`, {
-      method: "POST",
-      body: "via-fetch",
-      protocol: "http2",
-      tls: { rejectUnauthorized: false },
-    } as RequestInit);
-    expect(res.status).toBe(201);
-    expect(await res.text()).toBe("via-fetch");
-  });
-
-  test("ALPN http/1.1-only client is served HTTP/1.1", async () => {
-    const body = await new Promise<string>((resolve, reject) => {
-      const s = tls.connect(
-        { port: fx.port, host: "127.0.0.1", ALPNProtocols: ["http/1.1"], rejectUnauthorized: false },
-        () => {
-          expect(s.alpnProtocol).toBe("http/1.1");
-          s.write("GET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-        },
-      );
-      let out = "";
-      s.on("data", d => (out += d));
-      s.on("end", () => resolve(out));
-      s.on("error", reject);
-    });
-    expect(body).toStartWith("HTTP/1.1 200 OK\r\n");
-    expect(body).toEndWith("hello");
-  });
-}
-
 test("websocket upgrade over HTTP/1.1 still works alongside h2", async () => {
   const ws = new WebSocket(`${secure ? "wss" : "ws"}://127.0.0.1:${fx.port}/ws`, {
     tls: { rejectUnauthorized: false },
@@ -1684,7 +1652,11 @@ describe("Bun.serve http2 protocol (serial)", () => {
     for (let i = 0, id = 1; i < 200; i++, id += 2)
       parts.push(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, id, hpackLiteral(baseHeaders("/big-headers?kb=12"))));
     raw.write(Buffer.concat(parts));
-    await new Promise<void>(r => setTimeout(r, 200));
+    // The read side is paused, so use another connection's PING round-trip
+    // as the signal that the server has taken the batch off the wire.
+    const probe = await RawH2.connect(fx.port, secure);
+    await barrier(probe, "queued");
+    probe.close();
     raw.socket.resume();
     for (let id = 1; id < 400; id += 2) await raw.body(id);
     expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);

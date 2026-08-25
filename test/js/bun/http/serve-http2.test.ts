@@ -405,6 +405,36 @@ for (const secure of [true, false]) {
       for (const f of raw.frames) if (f.type === T.DATA) expect(f.payload.length).toBeLessThanOrEqual(16384);
       raw.close();
     });
+    if (secure) {
+      test("fetch(protocol: 'http2') talks h2 to Bun.serve", async () => {
+        const res = await fetch(`https://127.0.0.1:${fx.port}/echo`, {
+          method: "POST",
+          body: "via-fetch",
+          protocol: "http2",
+          tls: { rejectUnauthorized: false },
+        } as RequestInit);
+        expect(res.status).toBe(201);
+        expect(await res.text()).toBe("via-fetch");
+      });
+
+      test("ALPN http/1.1-only client is served HTTP/1.1", async () => {
+        const body = await new Promise<string>((resolve, reject) => {
+          const s = tls.connect(
+            { port: fx.port, host: "127.0.0.1", ALPNProtocols: ["http/1.1"], rejectUnauthorized: false },
+            () => {
+              expect(s.alpnProtocol).toBe("http/1.1");
+              s.write("GET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+            },
+          );
+          let out = "";
+          s.on("data", d => (out += d));
+          s.on("end", () => resolve(out));
+          s.on("error", reject);
+        });
+        expect(body).toStartWith("HTTP/1.1 200 OK\r\n");
+        expect(body).toEndWith("hello");
+      });
+    }
   });
 }
 

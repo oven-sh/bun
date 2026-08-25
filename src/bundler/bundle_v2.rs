@@ -7582,7 +7582,6 @@ pub mod bv2_impl {
                 this.on_after_decrement_scan_counter();
             }
         }
-
     }
 
     pub use bun_core::cheap_prefix_normalizer;

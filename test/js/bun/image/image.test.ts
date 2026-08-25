@@ -140,6 +140,27 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
   return { w, h, data: out };
 }
 
+// Palette of an indexed PNG as RGBA tuples (tRNS supplies alpha, default 255),
+// sorted so tests can compare against a set of expected colours.
+function pngPalette(png: Uint8Array): [number, number, number, number][] {
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let plte = new Uint8Array(0);
+  let trns = new Uint8Array(0);
+  for (let off = 8; off + 8 <= png.length; ) {
+    const len = dv.getUint32(off);
+    const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
+    if (type === "PLTE") plte = png.subarray(off + 8, off + 8 + len);
+    else if (type === "tRNS") trns = png.subarray(off + 8, off + 8 + len);
+    else if (type === "IEND") break;
+    off += 12 + len;
+  }
+  const out: [number, number, number, number][] = [];
+  for (let i = 0; i < plte.length / 3; i++) {
+    out.push([plte[i * 3], plte[i * 3 + 1], plte[i * 3 + 2], i < trns.length ? trns[i] : 255]);
+  }
+  return out.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3]);
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe("Bun.Image", () => {
@@ -1124,6 +1145,58 @@ describe("Bun.Image", () => {
       expect(rgbaAt(back.data, 2, 1, 0)).toEqual([255, 0, 0, 255]);
       expect(rgbaAt(back.data, 2, 0, 1)).toEqual([0, 255, 0, 255]);
       expect(rgbaAt(back.data, 2, 1, 1)).toEqual([255, 255, 255, 255]);
+    });
+
+    // Median cut splits a box at its pixel-count midpoint. When one colour
+    // holds more than half the box, that midpoint falls inside its run, the
+    // colour lands in both halves and the smaller half's mean is a blend
+    // (75% white / 25% black used to give white + [128,128,128]). The cut
+    // has to move to the run boundary so a source with ≤ `colors` distinct
+    // colours comes out with exactly those colours.
+    describe("png({palette:true}) keeps every colour of an image with ≤ colors distinct colours", () => {
+      const white: [number, number, number, number] = [255, 255, 255, 255];
+      const black: [number, number, number, number] = [0, 0, 0, 255];
+
+      test.each([false, true])("white:black 3:1, colors:2, dither %p", async dither => {
+        const src = makePng(40, 40, (_x, y) => (y < 30 ? white : black));
+        const out = await new Bun.Image(src).png({ palette: true, colors: 2, dither }).bytes();
+        expect(out[25]).toBe(3); // indexed
+        expect(pngPalette(out)).toEqual([black, white]);
+        // Every pixel maps to its own colour, none to a blend.
+        const back = decodePngRaw(await new Bun.Image(out).png().bytes());
+        expect(rgbaAt(back.data, 40, 0, 0)).toEqual(white);
+        expect(rgbaAt(back.data, 40, 39, 29)).toEqual(white);
+        expect(rgbaAt(back.data, 40, 0, 30)).toEqual(black);
+        expect(rgbaAt(back.data, 40, 39, 39)).toEqual(black);
+      });
+
+      test("five colours with unequal counts, colors:5 and colors:8", async () => {
+        const red: [number, number, number, number] = [255, 0, 0, 255];
+        const green: [number, number, number, number] = [0, 255, 0, 255];
+        const blue: [number, number, number, number] = [0, 0, 255, 255];
+        // 50% white, 25% black, 12.5% red, 7.5% green, 5% blue: every split
+        // lands its midpoint inside a run.
+        const src = makePng(40, 40, (_x, y) =>
+          y < 20 ? white : y < 30 ? black : y < 35 ? red : y < 38 ? green : blue,
+        );
+        const expected = [black, blue, green, red, white];
+        const exact = await new Bun.Image(src).png({ palette: true, colors: 5 }).bytes();
+        expect(pngPalette(exact)).toEqual(expected);
+        // Spare slots must not be filled with duplicates of the same colour.
+        const spare = await new Bun.Image(src).png({ palette: true, colors: 8 }).bytes();
+        expect(pngPalette(spare)).toEqual(expected);
+      });
+
+      test("two alphas of one colour with unequal counts, colors:2", async () => {
+        // Same RGB, so the split runs on the alpha channel and the entries
+        // differ only in tRNS.
+        const src = makePng(40, 40, (_x, y) => (y < 30 ? [100, 100, 100, 255] : [100, 100, 100, 0]));
+        const out = await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes();
+        expect(pngPalette(out)).toEqual([
+          [100, 100, 100, 0],
+          [100, 100, 100, 255],
+        ]);
+      });
     });
 
     test("png({palette:true, colors:16}) is much smaller than truecolour for a screenshot-ish image", async () => {

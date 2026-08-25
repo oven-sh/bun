@@ -5,9 +5,10 @@
 //! is GPL, so we roll a small permissive one. Median-cut is the classic
 //! Heckbert '82 algorithm: treat the RGBA pixels as points in a 4-D box,
 //! repeatedly split the box with the largest channel range at that channel's
-//! median until you have N boxes, then each box's mean becomes a palette
-//! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
-//! Floyd–Steinberg error diffusion (`dither: true`).
+//! median (nudged to a run boundary so one colour never straddles the cut,
+//! see `cut_point`) until you have N boxes, then each box's mean becomes a
+//! palette entry. Mapping is nearest-entry by squared RGBA distance,
+//! optionally with Floyd–Steinberg error diffusion (`dither: true`).
 
 use bun_alloc::AllocError;
 
@@ -109,9 +110,9 @@ pub(crate) fn quantize(
         // u32 ×4 overflows past ~1.07B pixels (allowed when the user raises
         // `maxPixels`); the other order-index sites already widen first.
         slice.sort_unstable_by_key(|&p| rgba[p as usize * 4 + ch as usize]);
-        let mid = b.lo + (b.hi - b.lo) / 2;
-        boxes[pick] = shrink(rgba, &order, b.lo, mid);
-        boxes.push(shrink(rgba, &order, mid, b.hi));
+        let cut = b.lo + u32::try_from(cut_point(rgba, slice, ch)).expect("int cast");
+        boxes[pick] = shrink(rgba, &order, b.lo, cut);
+        boxes.push(shrink(rgba, &order, cut, b.hi));
     }
 
     let k: u16 = u16::try_from(boxes.len()).expect("int cast");
@@ -260,6 +261,33 @@ fn map_floyd_steinberg(
 #[inline]
 fn clamp255(v: i32) -> i32 {
     v.clamp(0, 255)
+}
+
+/// Index in `sorted` (a box's pixel indices, sorted by channel `ch`) at
+/// which to split the box.
+///
+/// Classic median cut splits at the count midpoint. When the midpoint lands
+/// inside a run of pixels that share the key, the same colour ends up in
+/// both halves and each half's mean is a blend of it with its neighbours:
+/// 75% white / 25% black at `colors: 2` came out as white + mid-grey. So
+/// when the midpoint is not already on a run boundary, cut at the end of
+/// that run nearest to it instead. The caller only splits a box whose range
+/// on `ch` is > 0, so the run never covers the whole slice and the chosen
+/// end leaves both halves non-empty.
+fn cut_point(rgba: &[u8], sorted: &[u32], ch: u8) -> usize {
+    let key = |p: u32| rgba[p as usize * 4 + ch as usize];
+    let mid = sorted.len() / 2;
+    let k = key(sorted[mid]);
+    let start = sorted.partition_point(|&p| key(p) < k);
+    if start == mid {
+        return mid;
+    }
+    let end = sorted.partition_point(|&p| key(p) <= k);
+    if start == 0 || (end < sorted.len() && end - mid < mid - start) {
+        end
+    } else {
+        start
+    }
 }
 
 /// Recompute a box's tight min/max over its pixel slice.

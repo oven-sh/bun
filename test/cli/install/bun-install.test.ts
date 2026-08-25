@@ -2648,7 +2648,7 @@ describe.concurrent("bun-install", () => {
         join(ctx.package_dir, "package.json"),
         JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
       );
-      const { stderr, exited } = spawn({
+      const { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install", "--save-text-lockfile"],
         cwd: ctx.package_dir,
         stdout: "pipe",
@@ -2656,7 +2656,7 @@ describe.concurrent("bun-install", () => {
         stderr: "pipe",
         env,
       });
-      const err = await stderr.text();
+      const [, err] = await Promise.all([stdout.text(), stderr.text()]);
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("error:");
       const lock = await file(join(ctx.package_dir, "bun.lock")).text();

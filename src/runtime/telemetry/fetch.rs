@@ -67,7 +67,11 @@ pub fn begin(global: &JSGlobalObject, headers: &mut impl PropagationHeaders) -> 
         return SpanStub::NONE;
     }
     let from_caller = active.is_none();
-    let parent_ctx = active.or_else(|| headers.traceparent().and_then(propagation::parse_traceparent));
+    let parent_ctx = active.or_else(|| {
+        headers
+            .traceparent()
+            .and_then(propagation::parse_traceparent)
+    });
     let Some(mut l) = local(global) else {
         return SpanStub::NONE;
     };
@@ -127,7 +131,11 @@ pub struct NodeHeaders {
 
 impl PropagationHeaders for NodeHeaders {
     fn traceparent(&self) -> Option<&[u8]> {
-        if self.caller_traceparent.is_empty() { None } else { Some(&self.caller_traceparent) }
+        if self.caller_traceparent.is_empty() {
+            None
+        } else {
+            Some(&self.caller_traceparent)
+        }
     }
     fn has_baggage(&self) -> bool {
         self.caller_has_baggage
@@ -163,7 +171,11 @@ pub fn http_client_begin(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         return Ok(JSValue::UNDEFINED);
     }
     let arr = JSValue::create_empty_array(global, 4)?;
-    arr.put_index(global, 0, bun_jsc::JSUint8Array::from_bytes_copy(global, &stub.to_bytes())?)?;
+    arr.put_index(
+        global,
+        0,
+        bun_jsc::JSUint8Array::from_bytes_copy(global, &stub.to_bytes())?,
+    )?;
     arr.put_index(
         global,
         1,
@@ -205,18 +217,38 @@ pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     let url = frame.argument(2).to_utf8(global)?;
     let status = frame.argument(3).as_number() as u16;
     let minor = frame.argument(4);
-    let minor_version = if minor.is_number() { Some(minor.as_number() as u8) } else { None };
+    let minor_version = if minor.is_number() {
+        Some(minor.as_number() as u8)
+    } else {
+        None
+    };
     let code = frame.argument(5);
     let message = frame.argument(6);
     let (code_s, msg_s);
     let error = if code.is_string() || message.is_string() {
-        code_s = if code.is_string() { code.to_utf8(global)? } else { bun_core::Utf8Bytes::EMPTY };
-        msg_s = if message.is_string() { message.to_utf8(global)? } else { bun_core::Utf8Bytes::EMPTY };
+        code_s = if code.is_string() {
+            code.to_utf8(global)?
+        } else {
+            bun_core::Utf8Bytes::EMPTY
+        };
+        msg_s = if message.is_string() {
+            message.to_utf8(global)?
+        } else {
+            bun_core::Utf8Bytes::EMPTY
+        };
         Some((code_s.slice(), msg_s.slice()))
     } else {
         None
     };
-    end(global, &stub, method, url.slice(), status, minor_version, error);
+    end(
+        global,
+        &stub,
+        method,
+        url.slice(),
+        status,
+        minor_version,
+        error,
+    );
     Ok(JSValue::UNDEFINED)
 }
 

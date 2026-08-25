@@ -327,7 +327,8 @@ impl Processor {
             match filter {
                 RetryFilter::All => q.drain(..).collect(),
                 RetryFilter::OlderThan(seq) => {
-                    let (older, rest): (Vec<_>, Vec<_>) = q.drain(..).partition(|r| r.payload.seq < seq);
+                    let (older, rest): (Vec<_>, Vec<_>) =
+                        q.drain(..).partition(|r| r.payload.seq < seq);
                     *q = rest;
                     if older.is_empty() {
                         return;

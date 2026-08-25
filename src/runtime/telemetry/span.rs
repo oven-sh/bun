@@ -1072,7 +1072,6 @@ pub extern "C" fn Bun__Telemetry__nativePropagation(
     .unwrap_or(false)
 }
 
-
 /// bit 0: W3C trace context, bit 1: baggage.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__propagationFlags() -> u32 {

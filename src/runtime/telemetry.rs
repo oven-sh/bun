@@ -610,7 +610,9 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             span::for_each_attribute(global, v, |k, val| {
                 use bun_telemetry_cold::config::ResourceValue as R;
                 let vs = match val {
-                    bun_telemetry::Value::Str(s) => R::Str(bstr::ByteSlice::to_str_lossy(*s).into_owned()),
+                    bun_telemetry::Value::Str(s) => {
+                        R::Str(bstr::ByteSlice::to_str_lossy(*s).into_owned())
+                    }
                     bun_telemetry::Value::Int(i) => R::Int(*i),
                     bun_telemetry::Value::Double(d) => R::Double(*d),
                     bun_telemetry::Value::Bool(b) => R::Bool(*b),
@@ -1260,7 +1262,6 @@ pub fn http_client_begin(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     fetch::http_client_end(global, frame)
 }
-
 
 /// `propagationFlags()` → bit 0: W3C trace context, bit 1: baggage.
 #[bun_jsc::host_fn]

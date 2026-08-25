@@ -49,8 +49,11 @@ pub fn traces_endpoint(base: &str) -> String {
 /// `Bun.otel.start({ endpoint })` / bunfig `endpoint`: a bare collector base
 /// URL (no path) gets `/v1/traces`; a URL with a path is used as-is.
 pub fn normalize_traces_url(url: &str) -> String {
-    let after_scheme = bun_core::strings::index_of(url.as_bytes(), b"://").map_or(0, |i| i as usize + 3);
-    match bun_core::strings::index_of_char(&url.as_bytes()[after_scheme..], b'/').map(|i| i as usize) {
+    let after_scheme =
+        bun_core::strings::index_of(url.as_bytes(), b"://").map_or(0, |i| i as usize + 3);
+    match bun_core::strings::index_of_char(&url.as_bytes()[after_scheme..], b'/')
+        .map(|i| i as usize)
+    {
         None => traces_endpoint(url),
         Some(i) if url[after_scheme + i..].trim_end_matches('/').is_empty() => traces_endpoint(url),
         Some(_) => url.to_string(),
@@ -210,7 +213,6 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     let bunfig = bunfig();
     let mut enabled = get("BUN_OTEL")
         .map(|v| truthy(&v))
-
         .or_else(|| bunfig.and_then(|b| b.enabled))
         .unwrap_or(false);
     let sdk_disabled = get("OTEL_SDK_DISABLED")
@@ -476,7 +478,9 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
                 continue;
             }
             // RFC 9110 token characters; anything else can never match a header.
-            if h.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)) {
+            if h.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+            {
                 c.capture_request_headers.push(h);
             } else {
                 warnings.push(format!(
@@ -491,7 +495,9 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_CLIENT_RESPONSE",
     ] {
         if get(unsupported).is_some() {
-            warnings.push(format!("{unsupported} is not supported yet; those headers are not recorded"));
+            warnings.push(format!(
+                "{unsupported} is not supported yet; those headers are not recorded"
+            ));
         }
     }
 
@@ -570,7 +576,11 @@ mod tests {
 
     #[test]
     fn traces_exporter_none_and_otlp_env() {
-        let e = env(&[("BUN_OTEL", "1"), ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector"), ("OTEL_TRACES_EXPORTER", "none")]);
+        let e = env(&[
+            ("BUN_OTEL", "1"),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector"),
+            ("OTEL_TRACES_EXPORTER", "none"),
+        ]);
         assert!(from_env(&e).config.otlp_exporters.is_empty());
         let e = env(&[
             ("BUN_OTEL", "1"),
@@ -583,7 +593,11 @@ mod tests {
         assert_eq!(r.config.otlp_exporters.len(), 1);
         let x = &r.config.otlp_exporters[0];
         assert_eq!(x.url, "https://collector/v1/traces");
-        assert!(x.headers.iter().any(|(k, v)| k == "authorization" && v == "x"));
+        assert!(
+            x.headers
+                .iter()
+                .any(|(k, v)| k == "authorization" && v == "x")
+        );
         assert_eq!(x.compression, Compression::None);
         assert_eq!(x.timeout_ms, 1234);
     }
@@ -619,7 +633,10 @@ mod tests {
         assert_eq!(r.config.service_name.as_deref(), Some("api"));
         assert_eq!(
             r.config.resource_attributes,
-            vec![("deployment.environment".into(), ResourceValue::Str("prod".into()))]
+            vec![(
+                "deployment.environment".into(),
+                ResourceValue::Str("prod".into())
+            )]
         );
         assert_eq!(r.config.instruments & Instrument::Fs.bit(), 0);
         assert_eq!(r.config.instruments & Instrument::Dns.bit(), 0);

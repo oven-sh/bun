@@ -147,7 +147,7 @@ pub struct ClientSession {
 /// `&mut self` and goes through [`ClientSession::enter`], so the releases
 /// happen through the holder's pointer after the body's `&mut` borrow has
 /// ended. Callers that need the session alive across two entry points hold a
-/// [`bun_ptr::ThisPtr::ref_guard`] of their own across both.
+/// [`RefPtr::from_this`] guard of their own across both.
 pub(crate) type SessionPtr = bun_ptr::ThisPtr<ClientSession>;
 
 /// Upgrade a `*mut Stream` from `self.streams` to `&mut Stream`.

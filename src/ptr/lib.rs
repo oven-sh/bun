@@ -584,7 +584,7 @@ impl core::fmt::Debug for Interned {
 ///
 /// See the module comment above for the full rationale. Construct once per
 /// handler entry with [`ThisPtr::new`], then use `Deref` for field reads and
-/// [`ThisPtr::ref_guard`] for the keep-alive bracket.
+/// [`RefPtr::from_this`] for the keep-alive bracket.
 #[repr(transparent)]
 pub struct ThisPtr<T>(core::ptr::NonNull<T>);
 
@@ -596,7 +596,7 @@ impl<T> ThisPtr<T> {
     /// `heap::alloc`, intrusively refcounted) that remains live for every
     /// subsequent access through this `ThisPtr` and its copies — i.e. either
     /// the caller already holds a ref, or the first thing it does is take a
-    /// [`ref_guard`](Self::ref_guard). No `&mut T` to `*p` may be live across
+    /// [`RefPtr::from_this`]. No `&mut T` to `*p` may be live across
     /// any `Deref` borrow produced from this `ThisPtr`.
     #[inline]
     pub unsafe fn new(p: *mut T) -> Self {

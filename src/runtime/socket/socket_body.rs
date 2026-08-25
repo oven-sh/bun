@@ -3273,7 +3273,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// intrusive refcount + `finalize()`.
     // SAFETY: `this` was allocated via `heap::alloc` and refcount == 0.
     unsafe fn deinit_and_destroy(this: *mut Self) {
-        // Not a `ThisPtr`: the refcount is already zero, so `ref_guard()` here
+        // Not a `ThisPtr`: the refcount is already zero, so `RefPtr::from_this` here
         // would be a resurrection bug.
         // SAFETY: per fn contract — sole owner, live until the `heap::take` below.
         let this_ref: &Self = unsafe { &*this };

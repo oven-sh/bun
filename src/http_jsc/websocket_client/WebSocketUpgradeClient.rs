@@ -817,7 +817,7 @@ where
         );
     }
 
-    /// Caller holds a `ref_guard` and owns `full` (must not borrow `self`).
+    /// Caller holds a `RefPtr` guard and owns `full` (must not borrow `self`).
     fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
         let mut scratch = [picohttp::Header::ZERO; 128];
         let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {

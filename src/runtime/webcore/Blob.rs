@@ -91,17 +91,12 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
-/// Result delivered to `ReadBytesHandler::on_read_bytes`.
+/// Result delivered to `read_bytes_to_handler`'s handler.
 pub enum ReadBytesResult {
     /// global-allocator-owned by the callback.
     Ok(Vec<u8>),
     Err(Box<bun_jsc::SystemError>),
 }
-
-/// `read_bytes_to_handler`'s completion: invoked exactly once, on the JS
-/// thread. It may settle promises: an exception it leaves pending is the `Err`.
-pub trait ReadBytesHandler: FnOnce(ReadBytesResult) -> JsResult<()> + 'static {}
-impl<F: FnOnce(ReadBytesResult) -> JsResult<()> + 'static> ReadBytesHandler for F {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Blob — single nominal definition lives in `bun_jsc::webcore_types`.
@@ -145,7 +140,7 @@ pub trait BlobExt {
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue;
     /// `handler` runs once — synchronously or from the async completion —
     /// whatever this returns.
-    fn read_bytes_to_handler<H: ReadBytesHandler>(
+    fn read_bytes_to_handler<H: FnOnce(ReadBytesResult) -> JsResult<()> + 'static>(
         &self,
         handler: H,
         global: &JSGlobalObject,
@@ -476,7 +471,7 @@ impl BlobExt for Blob {
         }
     }
     /// Read this Blob's bytes — file (`ReadFile`/`ReadFileUV`), S3 (`S3.download`),
-    /// or in-memory — and deliver them to `Handler::on_read_bytes(ctx, result)` on the
+    /// or in-memory — and deliver them to `handler` on the
     /// JS thread without ever materialising a JSValue. `.ok` bytes are
     /// global-allocator-OWNED by the callback. The point is to give callers
     /// the same store-agnostic dispatch as `.bytes()` while staying in native land,
@@ -496,13 +491,13 @@ impl BlobExt for Blob {
     /// exception a synchronous delivery left pending, so the handler has
     /// already been consumed in that case too.
     ///
-    fn read_bytes_to_handler<H: ReadBytesHandler>(
+    fn read_bytes_to_handler<H: FnOnce(ReadBytesResult) -> JsResult<()> + 'static>(
         &self,
         handler: H,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         if self.needs_to_read_file() {
-            fn run<H: ReadBytesHandler>(
+            fn run<H: FnOnce(ReadBytesResult) -> JsResult<()> + 'static>(
                 ctx: *mut c_void,
                 r: read_file::ReadFileResultType,
             ) -> JsResult<()> {
@@ -519,7 +514,7 @@ impl BlobExt for Blob {
                 // exactly once (`run` or `cancel`).
                 (unsafe { bun_core::heap::take(ctx.cast::<H>()) })(result)
             }
-            fn cancel<H: ReadBytesHandler>(ctx: *mut c_void) {
+            fn cancel<H: FnOnce(ReadBytesResult) -> JsResult<()> + 'static>(ctx: *mut c_void) {
                 let err = jsc::SystemError {
                     code: BunString::static_("ECANCELED"),
                     message: BunString::static_(
@@ -560,15 +555,22 @@ impl BlobExt for Blob {
         }
         if self.is_s3() {
             struct Task<H> {
-                handler: H,
+                /// `None` once delivered.
+                handler: Option<H>,
                 blob: Blob, // dupe for store ref + offset/size
                 poll: bun_io::KeepAlive,
             }
-            impl<H: ReadBytesHandler> Task<H> {
-                fn done(mut self, r: ReadBytesResult) -> JsResult<()> {
+            impl<H> Drop for Task<H> {
+                fn drop(&mut self) {
                     self.poll.unref(bun_io::js_vm_ctx());
                     self.blob.deinit();
-                    (self.handler)(r)
+                }
+            }
+            impl<H: FnOnce(ReadBytesResult) -> JsResult<()> + 'static> Task<H> {
+                fn done(mut self, r: ReadBytesResult) -> JsResult<()> {
+                    let handler = self.handler.take().expect("delivered once");
+                    drop(self);
+                    handler(r)
                 }
                 fn cb(self, result: crate::webcore::__s3_client::S3DownloadResult) -> JsResult<()> {
                     match result {
@@ -595,7 +597,7 @@ impl BlobExt for Blob {
                 }
             }
             let mut t = Task {
-                handler,
+                handler: Some(handler),
                 blob: self.dupe(),
                 poll: bun_io::KeepAlive::default(),
             };
@@ -603,7 +605,11 @@ impl BlobExt for Blob {
             let proxy = http_proxy_href(global);
             // `t.blob` shares `self`'s store, so borrow credentials/path from
             // `self` while `t` moves into the callback.
-            let s3 = self.store.get().as_ref().unwrap().data.as_s3();
+            let s3 = self
+                .store()
+                .expect("infallible: store present")
+                .data
+                .as_s3();
             let cred = s3.get_credentials();
             let path = s3.path();
             let payer = s3.request_payer;
@@ -4350,12 +4356,12 @@ fn write_file_with_empty_source_to_destination(
                 }
             };
 
-            let promise = jsc::JSPromiseStrong::init(ctx);
+            let mut promise = jsc::JSPromiseStrong::init(ctx);
             let promise_value = promise.value();
             let proxy_owned = http_proxy_href(ctx);
             let proxy_url = proxy_owned.as_deref();
             let store = destination_store.clone();
-            let global = bun_jsc::GlobalRef::from(ctx);
+            let global = jsc::GlobalRef::from(ctx);
             s3_client::upload(
                 &aws_options.credentials,
                 s3.path(),
@@ -4368,7 +4374,6 @@ fn write_file_with_empty_source_to_destination(
                 aws_options.storage_class,
                 aws_options.request_payer,
                 move |result| {
-                    let mut promise = promise;
                     let global: &JSGlobalObject = &global;
                     match result {
                         S3UploadResult::Success => promise.resolve(global, JSValue::js_number(0.0)),
@@ -4424,7 +4429,7 @@ pub(crate) fn write_file_with_source_destination(
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
         let write_file_promise = WriteFilePromise {
             promise: jsc::JSPromiseStrong::init(ctx),
-            global_this: bun_jsc::GlobalRef::from(ctx),
+            global_this: jsc::GlobalRef::from(ctx),
         };
         let promise_value = write_file_promise.promise.value();
         promise_value.ensure_still_alive();
@@ -4573,10 +4578,10 @@ pub(crate) fn write_file_with_source_destination(
                         ));
                     }
                 } else {
-                    let promise = jsc::JSPromiseStrong::init(ctx);
+                    let mut promise = jsc::JSPromiseStrong::init(ctx);
                     let promise_value = promise.value();
                     let store = source_store.clone();
-                    let global = bun_jsc::GlobalRef::from(ctx);
+                    let global = jsc::GlobalRef::from(ctx);
                     s3_client::upload(
                         &aws_options.credentials,
                         s3.path(),
@@ -4589,7 +4594,6 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.storage_class,
                         aws_options.request_payer,
                         move |result| {
-                            let mut promise = promise;
                             let global: &JSGlobalObject = &global;
                             match result {
                                 S3UploadResult::Success => promise.resolve(
@@ -5591,10 +5595,10 @@ impl S3BlobDownloadTask {
     }
 
     pub(crate) fn on_s3_download_resolved(
-        self,
+        mut self,
         result: crate::webcore::__s3_client::S3DownloadResult,
     ) -> JsResult<()> {
-        let mut this = self;
+        let this = &mut self;
         // Copy the `BackRef` out so the `&JSGlobalObject` borrow is detached
         // from `this` (it must coexist with `&mut this` calls below).
         let global_ref = this.global_this;

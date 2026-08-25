@@ -742,11 +742,8 @@ impl S3UploadStreamWrapper {
         }
 
         if let Some(callback) = self_.callback.take() {
-            if settled.is_ok() {
-                settled = callback(result);
-            } else {
-                let _ = callback(result);
-            }
+            let delivered = callback(result);
+            settled = settled.and(delivered);
         }
         settled
     }

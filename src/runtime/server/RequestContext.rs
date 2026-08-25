@@ -2421,8 +2421,8 @@ where
             resp.write_header_int(b"content-length", pair.size as u64);
         }
         this.end_without_body(this.should_close_connection());
-        // `end_without_body` released the base ref; the caller
-        // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
+        // `end_without_body` released the base ref; the S3 stat callback's
+        // guard releases the ref taken for the stat.
     }
 
     pub(crate) fn on_s3_size_resolved(&self, result: S3::simple_request::S3StatResult<'_>) {

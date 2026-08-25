@@ -19,7 +19,7 @@ pub struct WorkPool;
 /// `core::mem::offset_of!(Self, <task field>)`.
 pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     /// Safe accessor for the intrusive `task: Task` field
-    /// (`&mut self.task`); [`WorkPool::schedule_owned`] uses this to install
+    /// (`&mut self.task`); [`ThreadPool::schedule_owned`](crate::ThreadPool::schedule_owned) uses this to install
     /// the callback without raw byte-offset arithmetic.
     #[inline]
     fn task_mut(&mut self) -> &mut Task {
@@ -96,7 +96,7 @@ macro_rules! intrusive_work_task {
 
 /// Implements [`OwnedTask`] (and the required `Send`) for a struct that
 /// embeds an intrusive `task: Task` field and is scheduled fire-and-forget
-/// via [`WorkPool::schedule_owned`]. Expands to [`intrusive_work_task!`] +
+/// via [`ThreadPool::schedule_owned`](crate::ThreadPool::schedule_owned). Expands to [`intrusive_work_task!`] +
 /// `unsafe impl Send` + the `run` forward — the implementor supplies only an
 /// inherent `fn run_owned(self: Box<Self>)`.
 ///
@@ -150,8 +150,7 @@ impl WorkPool {
         Self::get().schedule(Batch::from(task));
     }
 
-    /// Schedule a heap-allocated task by value. The pool takes ownership of
-    /// the `Box`; [`OwnedTask::run`] receives it back on a worker thread.
+    /// [`ThreadPool::schedule_owned`] on the global pool.
     pub fn schedule_owned<T: OwnedTask>(task: Box<T>) {
         Self::get().schedule_owned(task);
     }

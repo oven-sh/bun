@@ -355,15 +355,13 @@ fn construct_s3_file_internal(
 
 pub(crate) struct S3BlobStatTask {
     promise: bun_jsc::JSPromiseStrong,
-    // LIFETIMES.tsv: JSC_BORROW (&JSGlobalObject). `BackRef` so the heap task
-    // can outlive the constructing frame while reads stay safe.
-    global: bun_ptr::BackRef<JSGlobalObject>,
+    global: bun_jsc::GlobalRef,
     store: RefPtr<Store>,
 }
 
 impl S3BlobStatTask {
     fn on_s3_exists_resolved(mut self, result: s3::S3StatResult) -> JsResult<()> {
-        let global = self.global.get();
+        let global: &JSGlobalObject = &self.global;
         match result {
             s3::S3StatResult::NotFound(_) => {
                 self.promise.resolve(global, JSValue::FALSE)?;
@@ -390,7 +388,7 @@ impl S3BlobStatTask {
     }
 
     fn on_s3_size_resolved(mut self, result: s3::S3StatResult) -> JsResult<()> {
-        let global = self.global.get();
+        let global: &JSGlobalObject = &self.global;
         match result {
             s3::S3StatResult::Success(stat_result) => {
                 self.promise
@@ -410,7 +408,7 @@ impl S3BlobStatTask {
     }
 
     fn on_s3_stat_resolved(mut self, result: s3::S3StatResult) -> JsResult<()> {
-        let global = self.global.get();
+        let global: &JSGlobalObject = &self.global;
         match result {
             s3::S3StatResult::Success(stat_result) => {
                 let s3_stat = match S3Stat::init(
@@ -449,7 +447,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.get().as_ref().unwrap().clone(),
-            global: bun_ptr::BackRef::new(global),
+            global: bun_jsc::GlobalRef::from(global),
         };
         let promise = this.promise.value();
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();

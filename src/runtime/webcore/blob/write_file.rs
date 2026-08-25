@@ -530,8 +530,6 @@ mod windows_impl {
     use core::ptr::null_mut;
 
     use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
-    // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
-    // re-exports); the structs live one level deeper.
     use bun_jsc::event_loop::{ConcurrentTaskItem, EventLoop};
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
@@ -922,7 +920,7 @@ mod windows_impl {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
-            let this: *mut WriteFileWindows = this;
+            let this = core::ptr::from_mut(this);
             ticket.post(ConcurrentTaskItem::from_callback(move || {
                 // SAFETY: `this` is the live Box-allocated `WriteFileWindows`; the
                 // JS thread is the sole accessor at this point. `*this` may be
@@ -1152,42 +1150,23 @@ mod windows_impl {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Where a finished `WriteFile` delivers its byte count or error.
-pub struct WriteFilePromise {
+pub(crate) struct WriteFilePromise {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) global_this: GlobalRef,
 }
 
 impl WriteFilePromise {
-    pub(crate) fn run(self, count: WriteFileResultType) -> jsc::JsResult<()> {
-        let Self {
-            mut promise,
-            global_this,
-        } = self;
-        let global_this: &JSGlobalObject = &global_this;
-        // `swap()` releases the Strong's handle slot and yields a GC-owned
-        // `*mut JSPromise`.
-        let promise = std::ptr::from_mut::<JSPromise>(promise.swap());
-        // SAFETY: GC-owned cell (kept alive below); scoped shared access.
-        let value = unsafe { (*promise).to_js() };
-        value.ensure_still_alive();
+    pub(crate) fn run(mut self, count: WriteFileResultType) -> jsc::JsResult<()> {
+        let global: &JSGlobalObject = &self.global_this;
         match count {
             WriteFileResultType::Err(err) => {
-                // SAFETY: GC-owned cell; the error build's shared borrow ends before the
-                // scoped exclusive `reject` borrow.
-                unsafe {
-                    let err_js = err.to_error_instance_with_async_stack(global_this, &*promise);
-                    (*promise).reject(global_this, Ok(err_js))?;
-                }
+                let err = err.to_error_instance_with_async_stack(global, self.promise.get());
+                self.promise.reject(global, Ok(err))
             }
-            WriteFileResultType::Result(wrote) => {
-                // SAFETY: GC-owned cell; exclusive borrow scoped to the call.
-                unsafe {
-                    (*promise)
-                        .resolve(global_this, JSValue::js_number_from_uint64(wrote as u64))?;
-                }
-            }
+            WriteFileResultType::Result(wrote) => self
+                .promise
+                .resolve(global, JSValue::js_number_from_uint64(wrote as u64)),
         }
-        Ok(())
     }
 }
 

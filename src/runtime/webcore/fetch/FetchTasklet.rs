@@ -34,10 +34,6 @@ use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
 
-// `bun_event_loop::JsResult` (cycle-broken erased error) — used by
-// ConcurrentTask callbacks at the tier-3 layer.
-type ElJsResult<T> = bun_event_loop::JsResult<T>;
-
 use http::signals::BODY_HIGH_WATER_MARK;
 
 use boringssl::c::{X509_free, d2i_X509};
@@ -2131,11 +2127,14 @@ impl FetchTasklet {
 
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     fn on_write_request_data_drain(this: *mut FetchTasklet) {
-        let this_ref = Self::from_raw_ref(this);
-        // ref until the main thread callback is called
-        this_ref.ref_();
-        let task = ConcurrentTask::from_callback(move || Self::resume_request_data_stream(this));
-        this_ref
+        // Held by the JS-thread callback until it has run (or is dropped unrun).
+        // SAFETY: `this` is the live heap tasklet (fn contract).
+        let guard = unsafe { bun_ptr::RefPtr::init_ref(this) };
+        let task = ConcurrentTask::from_callback(move || {
+            Self::resume_request_data_stream(guard.as_ptr());
+            Ok(())
+        });
+        Self::from_raw_ref(this)
             .http_ticket
             .as_ref()
             .expect(Self::HOLDS_TICKET)
@@ -2143,8 +2142,7 @@ impl FetchTasklet {
     }
 
     /// This is ALWAYS called from the main thread
-    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
-    fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
+    fn resume_request_data_stream(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
         if !this_ref.signal_aborted() {
@@ -2153,10 +2151,6 @@ impl FetchTasklet {
                 sink.on_drain(&global_this);
             }
         }
-        // deref when done because we ref inside onWriteRequestDataDrain
-        // SAFETY: `this` is the live heap tasklet; we hold a ref.
-        FetchTasklet::deref(this);
-        Ok(())
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.

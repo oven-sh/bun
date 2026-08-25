@@ -1318,40 +1318,12 @@ impl RewriterPipe {
             self.background_pull_queued.set(false);
             return;
         }
-        let cell = self.cell.get();
-        if cell.is_cell() {
-            cell.protect();
-        }
-        self.ref_();
-        let pipe = core::ptr::from_ref(self).cast_mut();
+        let task = BackgroundPull::new(self);
         vm.as_mut()
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(move || {
-                Self::run_background_pull(pipe)
+                task.run();
+                Ok(())
             }));
-    }
-
-    fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {
-        // SAFETY: the task's ref (taken in `schedule_background_pull`) keeps
-        // the allocation live until the `deref_nn` below.
-        let this = BackRef::from(unsafe { NonNull::new_unchecked(pipe) });
-        let cell = this.cell.get();
-        this.background_pull_queued.set(false);
-        if this.background_pull_armed.replace(false)
-            && !this.done.get()
-            && this.phase.get() != RewritePhase::Done
-            && !this.driving.get()
-            && !this.is_suspended()
-            && !this.output_backpressured()
-        {
-            this.drain_pending_input(PullPacing::AlreadyYielded);
-        }
-        // The cell cannot have been swept while protected, so this balances
-        // the `protect()` exactly.
-        if cell.is_cell() {
-            cell.unprotect();
-        }
-        Self::deref_nn(this.into());
-        Ok(())
     }
 
     /// `PendingValue::on_start_streaming` — the output Response's body is
@@ -1806,6 +1778,52 @@ impl RewriterPipe {
             let _ = body_value.to_error_instance(err, &self.global);
         }
         self.release_input_roots(src);
+    }
+}
+
+/// The queued background pull: a ref on the pipe plus a `protect()` on its
+/// Transform cell, both released when the task has run or is dropped unrun.
+struct BackgroundPull {
+    pipe: BackRef<RewriterPipe>,
+    cell: JSValue,
+}
+
+impl BackgroundPull {
+    fn new(pipe: &RewriterPipe) -> Self {
+        let cell = pipe.cell.get();
+        if cell.is_cell() {
+            cell.protect();
+        }
+        pipe.ref_();
+        Self {
+            pipe: BackRef::new(pipe),
+            cell,
+        }
+    }
+
+    fn run(&self) {
+        let this = self.pipe;
+        this.background_pull_queued.set(false);
+        if this.background_pull_armed.replace(false)
+            && !this.done.get()
+            && this.phase.get() != RewritePhase::Done
+            && !this.driving.get()
+            && !this.is_suspended()
+            && !this.output_backpressured()
+        {
+            this.drain_pending_input(PullPacing::AlreadyYielded);
+        }
+    }
+}
+
+impl Drop for BackgroundPull {
+    fn drop(&mut self) {
+        // The cell cannot have been swept while protected, so this balances
+        // the `protect()` exactly.
+        if self.cell.is_cell() {
+            self.cell.unprotect();
+        }
+        RewriterPipe::deref_nn(self.pipe.into());
     }
 }
 

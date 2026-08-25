@@ -131,39 +131,22 @@ pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise)
     jsc_vm.auto_garbage_collect();
 }
 
-struct HandledPromiseContext {
-    // VM-lifetime backref (JSC_BORROW) — `GlobalRef` encapsulates the deref.
-    global_this: crate::GlobalRef,
-    // PORTING.md forbids bare JSValue fields on heap-allocated structs;
-    // `Strong` is the prescribed root type and its `Drop` releases the
-    // handle slot.
-    promise: Strong,
-}
-
-impl HandledPromiseContext {
-    fn callback(self) -> bun_event_loop::JsResult<()> {
-        let global: &JSGlobalObject = &self.global_this;
-        // JSGlobalObject::bun_vm contract.
-        let _ = global
-            .bun_vm()
-            .as_mut()
-            .handled_promise(global, self.promise.get());
-        Ok(())
-    }
-}
-
 // HOST_EXPORT(Bun__handleHandledPromise, c)
 pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     crate::mark_binding!();
-    let promise_js = promise.to_js();
-    let context = HandledPromiseContext {
-        global_this: global.into(),
-        promise: Strong::create(promise_js, global),
-    };
+    let promise = Strong::create(promise.to_js(), global);
+    let global_ref = crate::GlobalRef::from(global);
     global
         .bun_vm()
         .event_loop_mut()
-        .enqueue_task(ManagedTask::new(move || context.callback()));
+        .enqueue_task(ManagedTask::new(move || {
+            let global: &JSGlobalObject = &global_ref;
+            let _ = global
+                .bun_vm()
+                .as_mut()
+                .handled_promise(global, promise.get());
+            Ok(())
+        }));
 }
 
 // HOST_EXPORT(Bun__onDidAppendPlugin, c)

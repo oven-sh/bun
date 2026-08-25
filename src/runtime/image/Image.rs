@@ -1309,7 +1309,6 @@ impl BlobReadChain {
         let mut outer = self.outer;
         let kind = self.kind;
         let deliver = self.deliver;
-        // `bun.destroy(self)` — Box drops at end of scope.
 
         image.pending_tasks.set(image.pending_tasks.get() - 1);
         if image.pending_tasks.get() == 0 {

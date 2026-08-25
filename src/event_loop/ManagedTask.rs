@@ -8,7 +8,7 @@ use crate::{JsResult, Task};
 #[repr(C)]
 pub struct ManagedTask {
     run: unsafe fn(*mut ManagedTask) -> JsResult<()>,
-    release: unsafe fn(*mut ManagedTask),
+    release_unrun: unsafe fn(*mut ManagedTask),
 }
 
 #[repr(C)]
@@ -25,8 +25,10 @@ impl ManagedTask {
                 // SAFETY: only reached through this header, so `p` is this
                 // `ManagedTaskOf<F>`; consumes the box.
                 run: |p| (unsafe { bun_core::heap::take(p.cast::<ManagedTaskOf<F>>()) }.f)(),
-                // SAFETY: as above.
-                release: |p| drop(unsafe { bun_core::heap::take(p.cast::<ManagedTaskOf<F>>()) }),
+                release_unrun: |p| {
+                    // SAFETY: as above.
+                    drop(unsafe { bun_core::heap::take(p.cast::<ManagedTaskOf<F>>()) })
+                },
             },
             f,
         }));
@@ -47,7 +49,7 @@ impl ManagedTask {
     /// As [`run`](Self::run).
     pub(crate) unsafe fn release_unrun(this: *mut ManagedTask) {
         // SAFETY: fn contract.
-        unsafe { ((*this).release)(this) }
+        unsafe { ((*this).release_unrun)(this) }
     }
 }
 

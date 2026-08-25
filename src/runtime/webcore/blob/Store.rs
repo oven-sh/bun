@@ -274,7 +274,7 @@ impl S3Ext for S3 {
         global_this: &JSGlobalObject,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        let promise = bun_jsc::JSPromiseStrong::init(global_this);
+        let mut promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (never null once the VM is initialised).
@@ -293,7 +293,6 @@ impl S3Ext for S3 {
             &aws_options.credentials,
             self.path(),
             move |result| {
-                let mut promise = promise;
                 let global: &JSGlobalObject = &global;
                 match result {
                     S3DeleteResult::Success => promise.resolve(global, JSValue::TRUE),
@@ -324,7 +323,7 @@ impl S3Ext for S3 {
             )));
         }
 
-        let promise = bun_jsc::JSPromiseStrong::init(global_this);
+        let mut promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (never null once the VM is initialised).
@@ -344,13 +343,12 @@ impl S3Ext for S3 {
             &aws_options.credentials,
             &options,
             move |result| {
-                let mut promise = promise;
                 let global: &JSGlobalObject = &global;
                 match result {
-                    S3ListObjectsResult::Success(list_result) => match list_result.to_js(global) {
-                        Ok(v) => promise.resolve(global, v),
-                        Err(e) => promise.reject(global, Err(e)),
-                    },
+                    S3ListObjectsResult::Success(list_result) => {
+                        let value = list_result.to_js(global);
+                        promise.settle(global, value)
+                    }
                     S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
                         let err =
                             err.to_js_with_async_stack(global, store.get_path(), promise.get());

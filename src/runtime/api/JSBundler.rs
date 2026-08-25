@@ -1530,7 +1530,13 @@ pub mod js_bundler {
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
                         let load = std::ptr::from_mut::<Load>(self);
-                        let ct = ConcurrentTask::from_callback(move || on_notify_defer_js(load));
+                        // `load` is the live request `on_defer` posted; the hop runs
+                        // on the loop that runs the bundle.
+                        let ct = ConcurrentTask::from_callback(move || {
+                            let load = &mut *load;
+                            BundleV2::on_notify_defer(load, bv2_mut(load.bv2));
+                            Ok(())
+                        });
                         let poster = (*ctx.as_mut_ptr())
                             .js_poster
                             .as_ref()
@@ -1552,14 +1558,6 @@ pub mod js_bundler {
                 Ok(bv2_plugin(self.bv2).append_defer_promise())
             }
         }
-    }
-
-    fn on_notify_defer_js(load: *mut Load) -> bun_event_loop::JsResult<()> {
-        // SAFETY: task contract — `load` is the live request `on_defer` posted; this runs on the loop
-        // that runs the bundle (bake: the plugins' own), so it is the bundle thread here.
-        let load = unsafe { &mut *load };
-        BundleV2::on_notify_defer(load, bv2_mut(load.bv2));
-        Ok(())
     }
 
     fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {

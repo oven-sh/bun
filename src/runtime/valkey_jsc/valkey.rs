@@ -296,9 +296,9 @@ struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    fn run(self) -> JsResult<()> {
+    fn run(mut self) -> JsResult<()> {
         debug!("running deferred failure");
-        let mut this = self;
+        let this = &mut self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
         ValkeyClient::reject_all_pending_commands(
             &mut this.in_flight,
@@ -308,11 +308,11 @@ impl DeferredFailure {
         )
     }
 
-    fn enqueue(self: Box<Self>) {
+    fn enqueue(self) {
         debug!("enqueueing deferred failure");
-        VirtualMachine::get().event_loop_mut().enqueue_task(
-            bun_jsc::ManagedTask::ManagedTask::new(move || (*self).run()),
-        );
+        VirtualMachine::get()
+            .event_loop_mut()
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(move || self.run()));
     }
 }
 
@@ -506,13 +506,13 @@ impl ValkeyClient {
 
         if self.flags.finalized {
             let vm = self.vm;
-            let deferred_failure = Box::new(DeferredFailure {
+            let deferred_failure = DeferredFailure {
                 message: Box::<[u8]>::from(message),
                 err,
                 global_this: GlobalRef::from(vm.global()),
                 in_flight: core::mem::take(&mut self.in_flight),
                 queue: command::entry::Queue::new(),
-            });
+            };
             deferred_failure.enqueue();
             return Ok(());
         }
@@ -548,7 +548,7 @@ impl ValkeyClient {
             // We can't run promises inside finalizers.
             if !self.queue.is_empty() || !self.in_flight.is_empty() {
                 let vm = self.vm;
-                let deferred_failure = Box::new(DeferredFailure {
+                let deferred_failure = DeferredFailure {
                     // This memory is not owned by us.
                     message: Box::<[u8]>::from(message),
 
@@ -556,7 +556,7 @@ impl ValkeyClient {
                     global_this: GlobalRef::from(vm.global()),
                     in_flight: core::mem::take(&mut self.in_flight),
                     queue: core::mem::take(&mut self.queue),
-                });
+                };
                 deferred_failure.enqueue();
             }
 

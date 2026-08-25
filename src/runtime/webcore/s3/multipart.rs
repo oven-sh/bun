@@ -330,7 +330,6 @@ impl UploadPart {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
-        let this = std::ptr::from_ref::<Self>(self).cast_mut();
         execute_simple_s3_request(
             &ctx.credentials,
             s3_simple_request::S3RequestOptions {
@@ -342,7 +341,7 @@ impl UploadPart {
                 request_payer: ctx.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::Callback::MultipartPart(this),
+            s3_simple_request::Callback::MultipartPart(std::ptr::from_ref(self).cast_mut()),
         )
     }
 
@@ -792,7 +791,6 @@ impl MultiPartUpload {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
-        let this = self.root_ptr();
         execute_simple_s3_request(
             &self.credentials,
             s3_simple_request::S3RequestOptions {
@@ -804,7 +802,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::Callback::MultipartCommit(this),
+            s3_simple_request::Callback::MultipartCommit(self.root_ptr()),
         )
     }
 
@@ -821,7 +819,6 @@ impl MultiPartUpload {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
-        let this = self.root_ptr();
         execute_simple_s3_request(
             &self.credentials,
             s3_simple_request::S3RequestOptions {
@@ -833,7 +830,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::Callback::MultipartRollback(this),
+            s3_simple_request::Callback::MultipartRollback(self.root_ptr()),
         )
     }
 
@@ -851,7 +848,6 @@ impl MultiPartUpload {
             // will auto start later
             self.state.set(State::MultipartStarted);
             self.ref_();
-            let this = self.root_ptr();
             execute_simple_s3_request(
                 &self.credentials,
                 s3_simple_request::S3RequestOptions {
@@ -868,7 +864,7 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
-                s3_simple_request::Callback::MultipartStart(this),
+                s3_simple_request::Callback::MultipartStart(self.root_ptr()),
             )?;
         } else if self.state.get() == State::MultipartCompleted {
             part.start()?;
@@ -985,7 +981,6 @@ impl MultiPartUpload {
             self.state.set(State::SinglefileStarted);
             // we can do only 1 request
             self.ref_();
-            let this = self.root_ptr();
             let _ = execute_simple_s3_request(
                 &self.credentials,
                 s3_simple_request::S3RequestOptions {
@@ -1001,7 +996,7 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
-                s3_simple_request::Callback::MultipartUpload(this),
+                s3_simple_request::Callback::MultipartUpload(self.root_ptr()),
             ); // TODO: properly propagate exception upwards
         } else {
             // we need to split

@@ -653,13 +653,13 @@ impl ErrorDeferred {
         syscall: &'static [u8],
         hostname: Option<bstr::String>,
         promise: bun_jsc::JSPromiseStrong,
-    ) -> Box<ErrorDeferred> {
-        Box::new(ErrorDeferred {
+    ) -> ErrorDeferred {
+        ErrorDeferred {
             errno,
             syscall,
             hostname,
             promise,
-        })
+        }
     }
 
     fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -700,27 +700,23 @@ impl ErrorDeferred {
         self.promise.reject(global_this, Ok(instance))
     }
 
-    pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
-        // The global outlives the queued task (VM-owned).
-        let global = bun_ptr::BackRef::new(global_this);
+    pub(crate) fn reject_later(self, global_this: &JSGlobalObject) {
+        let global = bun_jsc::GlobalRef::from(global_this);
         global_this
             .bun_vm()
             .as_mut()
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(move || {
-                (*self).reject(global.get())
+                self.reject(&global)
             }));
     }
 }
-
-// Drop: hostname (bun_core::String) and promise (JSPromiseStrong) drop their own resources;
-// the allocation itself is handled by Box drop at the call site.
 
 pub(crate) fn error_to_deferred(
     this: c_ares::Error,
     syscall: &'static [u8],
     hostname: Option<&[u8]>,
     promise: &mut bun_jsc::JSPromiseStrong,
-) -> Box<ErrorDeferred> {
+) -> ErrorDeferred {
     let host_string: Option<bstr::String> = hostname.map(bstr::String::clone_utf8);
     let taken = core::mem::take(promise);
     ErrorDeferred::init(this, syscall, host_string, taken)

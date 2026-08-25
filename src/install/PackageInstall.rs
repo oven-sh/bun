@@ -10,7 +10,7 @@ use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
-use bun_threading::work_pool::Task as WorkPoolTask;
+use bun_threading::WorkPoolTask;
 #[cfg(windows)]
 use bun_threading::{ThreadPool, WaitGroup};
 
@@ -643,9 +643,8 @@ bun_threading::owned_task!(UninstallTask, task);
 
 impl UninstallTask {
     fn run_owned(self: Box<Self>) {
-        // declared *before* the Box binding so it drops *after* the Box —
-        // Rust drops locals in reverse declaration order. The task must be freed
-        // before the main thread can observe pending_tasks==0.
+        // Declared before `this` so the task is freed before the main thread
+        // can observe `pending_tasks == 0`.
         scopeguard::defer! {
             let pm = crate::package_manager::get();
             // SAFETY: `pending_tasks` is `AtomicU32`; raw-pointer field projection

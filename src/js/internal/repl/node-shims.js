@@ -5,6 +5,7 @@ const {
   ArrayPrototypeIncludes,
   ArrayPrototypeJoin,
   ArrayPrototypeMap,
+  ArrayPrototypePush,
   ArrayPrototypeSlice,
   RegExpPrototypeExec,
   RegExpPrototypeSymbolReplace,

@@ -14,9 +14,10 @@ import net from "node:net";
 import tls from "node:tls";
 
 const listen = (server: net.Server) =>
-  new Promise<number>(resolve =>
-    server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
-  );
+  new Promise<number>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port));
+  });
 
 test("destroying a TLS socket over a tunneled net.Socket sends a bare FIN", async () => {
   // TLS echo target. It never closes its side, so every byte the tunnel sees
@@ -25,11 +26,11 @@ test("destroying a TLS socket over a tunneled net.Socket sends a bare FIN", asyn
     socket.on("error", () => {});
     socket.on("data", () => socket.write("ok"));
   });
-  const targetPort = await listen(target);
 
   // Byte-piping tunnel proxy, as a SOCKS5 proxy is after CONNECT.
   let countTeardownBytes = false;
   let teardownBytes = 0;
+  let targetPort = 0;
   const clientEnded = Promise.withResolvers<void>();
   const clientClosed = Promise.withResolvers<void>();
   const proxy = net.createServer(client => {
@@ -44,11 +45,14 @@ test("destroying a TLS socket over a tunneled net.Socket sends a bare FIN", asyn
     client.pipe(up);
     up.pipe(client);
   });
-  const proxyPort = await listen(proxy);
 
-  // The client: a raw socket through the tunnel, TLS layered on top.
-  const raw = net.connect(proxyPort, "127.0.0.1");
+  let raw: net.Socket | undefined;
   try {
+    targetPort = await listen(target);
+    const proxyPort = await listen(proxy);
+
+    // The client: a raw socket through the tunnel, TLS layered on top.
+    raw = net.connect(proxyPort, "127.0.0.1");
     await once(raw, "connect");
     const secure = tls.connect({ socket: raw, ca: tlsCert.cert, servername: "localhost" });
     secure.on("error", () => {});
@@ -67,7 +71,7 @@ test("destroying a TLS socket over a tunneled net.Socket sends a bare FIN", asyn
     expect(teardownBytes).toBe(0);
     await clientClosed.promise;
   } finally {
-    raw.destroy();
+    raw?.destroy();
     proxy.close();
     target.close();
   }

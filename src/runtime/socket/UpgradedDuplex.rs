@@ -65,10 +65,8 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
-    /// The transport delivered EOF (its 'end' event fired). Teardown-phase
-    /// bytes (close_notify, the trailing end()) are dropped after this: node
-    /// writes nothing into a transport that already ended, and a transport
-    /// that forwards to an auto-ended net.Socket throws writeAfterFIN (EPIPE).
+    /// The transport delivered EOF (its 'end' event fired). Teardown payloads
+    /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
     pub transport_eof: Cell<bool>,
 }
 
@@ -236,7 +234,13 @@ impl UpgradedDuplex {
         // probe so write-after-end still errors like node.
         let teardown = data.is_none() || self.wrapper_ref().is_some_and(|w| w.is_shutdown());
         if teardown {
-            if self.transport_eof.get() {
+            // A teardown payload (close_notify) after the transport's readable
+            // side ended has no reader behind it: node writes nothing there,
+            // and a transport that forwards into an auto-ended net.Socket
+            // throws writeAfterFIN (EPIPE). The trailing end() is not a write
+            // and still goes through the writableEnded probe below, so a
+            // half-open transport sees our FIN.
+            if data.is_some() && self.transport_eof.get() {
                 return;
             }
             match duplex.get(&global, "writableEnded") {

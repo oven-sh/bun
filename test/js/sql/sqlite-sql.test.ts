@@ -940,6 +940,13 @@ describe("Query Execution", () => {
     const replaceFn = await sql`WITH names AS (SELECT REPLACE ('aaa', 'a', 'b') AS n) SELECT * FROM names`;
     expect(replaceFn).toEqual([{ n: "bbb" }]);
     expect(replaceFn.affectedRows).toBe(0);
+
+    // a multi-statement string reports the first command and the batch's total changes
+    const multi = await sql.unsafe(
+      "INSERT INTO gadgets2 VALUES (100), (101); UPDATE gadgets2 SET id = id + 1 WHERE id >= 100",
+    );
+    expect(multi.command).toBe("INSERT");
+    expect(multi.affectedRows).toBe(4);
   });
 
   test("SELECT with various clauses", async () => {

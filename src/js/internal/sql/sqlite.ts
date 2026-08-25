@@ -68,13 +68,13 @@ function isWriteCommand(commandString: string): boolean {
   }
 }
 
-/** Removes -- and slash-star comments (outside string literals) so the token scan sees only real SQL. */
+/** Removes -- and slash-star comments (outside strings and quoted identifiers) so the token scan sees only real SQL. */
 function stripComments(text: string): string {
   if (!text.includes("--") && !text.includes("/*")) {
     return text;
   }
   let out = "";
-  let quote: false | "'" | '"' = false;
+  let quote: false | "'" | '"' | "`" | "]" = false;
   const len = text.length;
   for (let i = 0; i < len; i++) {
     const char = text[i];
@@ -85,8 +85,14 @@ function stripComments(text: string): string {
       out += char;
       continue;
     }
-    if (char === "'" || char === '"') {
+    if (char === "'" || char === '"' || char === "`") {
       quote = char;
+      out += char;
+      continue;
+    }
+    if (char === "[") {
+      // bracket-quoted identifier, closed by "]"
+      quote = "]";
       out += char;
       continue;
     }

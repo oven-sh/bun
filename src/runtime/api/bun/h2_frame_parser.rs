@@ -17,14 +17,13 @@ use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
-use bun_core::String as BunString;
 use bun_http::lshpack;
 use bun_http_types::h2::is_lower_tchar;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
-use bun_jsc::StringJsc as _;
 use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::array_buffer::BinaryType;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
@@ -3244,10 +3243,7 @@ impl H2FrameParser {
 
     fn string_or_empty_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
         let global = self.handlers.get().global();
-        if payload.is_empty() {
-            return BunString::empty().to_js(&global);
-        }
-        bun_jsc::bun_string_jsc::create_utf8_for_js(&global, payload)
+        bun_string_jsc::create_utf8_for_js(&global, payload)
     }
 
     /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
@@ -4666,7 +4662,7 @@ impl H2FrameParser {
         }
 
         if origin_arg.is_string() {
-            let origin_string = origin_arg.to_slice(global_object)?;
+            let origin_string = origin_arg.to_utf8(global_object)?;
             let slice = origin_string.slice();
             if slice.len() + 2 > 16384 {
                 let exception = global_object.to_type_error(
@@ -4704,7 +4700,7 @@ impl H2FrameParser {
                         "Expected origin to be a string or an array of strings"
                     )));
                 }
-                let origin_string = item.to_slice(global_object)?;
+                let origin_string = item.to_utf8(global_object)?;
                 let slice = origin_string.slice();
                 let fits = u16::try_from(slice.len()).is_ok_and(|len| {
                     stream.write_all(&len.to_be_bytes()).is_ok() && stream.write_all(slice).is_ok()
@@ -4738,8 +4734,8 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let mut origin_slice: Option<bun_core::zig_string::Slice> = None;
-        let mut value_slice: Option<bun_core::zig_string::Slice> = None;
+        let mut origin_slice: Option<bun_core::Utf8Bytes> = None;
+        let mut value_slice: Option<bun_core::Utf8Bytes> = None;
 
         let mut origin_str: &[u8] = b"";
         let mut value_str: &[u8] = b"";
@@ -4753,7 +4749,7 @@ impl H2FrameParser {
                     origin_string,
                 ));
             }
-            origin_slice = Some(origin_string.to_slice(global_object)?);
+            origin_slice = Some(origin_string.to_utf8(global_object)?);
             origin_str = origin_slice.as_ref().unwrap().slice();
         }
 
@@ -4766,7 +4762,7 @@ impl H2FrameParser {
                     value_string,
                 ));
             }
-            value_slice = Some(value_string.to_slice(global_object)?);
+            value_slice = Some(value_string.to_utf8(global_object)?);
             value_str = value_slice.as_ref().unwrap().slice();
         }
 

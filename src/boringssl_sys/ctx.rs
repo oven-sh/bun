@@ -370,9 +370,11 @@ unsafe extern "C" fn alpn_select_from_prefs(
         }
         &**p
     };
-    // SAFETY: `in_[..in_len]` is the client's protocol list for this call;
-    // `out`/`out_len` are BoringSSL's out-params, and the selection points
-    // into `in_`, which BoringSSL keeps alive until it has copied it.
+    // SAFETY: `in_[..in_len]` is the client's protocol list for this call and
+    // `out`/`out_len` are BoringSSL's out-params. On NEGOTIATED the selection
+    // points into `prefs`, which the SSL_CTX ex_data slot owns for the
+    // context's lifetime; on NO_OVERLAP `*out` would point into `in_`, but we
+    // return ALERT_FATAL so BoringSSL never reads it.
     unsafe {
         if SSL_select_next_proto(
             out.cast::<*mut u8>(),

@@ -1525,9 +1525,9 @@ impl QuicSession {
         // no client certificate reports X509_V_ERR_UNSPECIFIED.
         let pair = match snap_validation {
             Some(pair) => Some(pair),
-            None if self.is_server.get() && !have_peer_cert => {
-                Some(tls::validation_error_strings(tls::X509_V_ERR_UNSPECIFIED))
-            }
+            None if self.is_server.get() && !have_peer_cert => Some(tls::validation_error_strings(
+                bun_boringssl_sys::X509_V_ERR_UNSPECIFIED,
+            )),
             None => None,
         };
         let (verify_reason, verify_code) = match pair {

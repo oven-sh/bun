@@ -727,6 +727,41 @@ pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// X509 verify result codes (`vendor/boringssl/include/openssl/x509.h`)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub const X509_V_OK: c_long = 0;
+pub const X509_V_ERR_UNSPECIFIED: c_long = 1;
+pub const X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT: c_long = 2;
+pub const X509_V_ERR_UNABLE_TO_GET_CRL: c_long = 3;
+pub const X509_V_ERR_UNABLE_TO_DECRYPT_CERT_SIGNATURE: c_long = 4;
+pub const X509_V_ERR_UNABLE_TO_DECRYPT_CRL_SIGNATURE: c_long = 5;
+pub const X509_V_ERR_UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY: c_long = 6;
+pub const X509_V_ERR_CERT_SIGNATURE_FAILURE: c_long = 7;
+pub const X509_V_ERR_CRL_SIGNATURE_FAILURE: c_long = 8;
+pub const X509_V_ERR_CERT_NOT_YET_VALID: c_long = 9;
+pub const X509_V_ERR_CERT_HAS_EXPIRED: c_long = 10;
+pub const X509_V_ERR_CRL_NOT_YET_VALID: c_long = 11;
+pub const X509_V_ERR_CRL_HAS_EXPIRED: c_long = 12;
+pub const X509_V_ERR_ERROR_IN_CERT_NOT_BEFORE_FIELD: c_long = 13;
+pub const X509_V_ERR_ERROR_IN_CERT_NOT_AFTER_FIELD: c_long = 14;
+pub const X509_V_ERR_ERROR_IN_CRL_LAST_UPDATE_FIELD: c_long = 15;
+pub const X509_V_ERR_ERROR_IN_CRL_NEXT_UPDATE_FIELD: c_long = 16;
+pub const X509_V_ERR_OUT_OF_MEM: c_long = 17;
+pub const X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT: c_long = 18;
+pub const X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN: c_long = 19;
+pub const X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY: c_long = 20;
+pub const X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE: c_long = 21;
+pub const X509_V_ERR_CERT_CHAIN_TOO_LONG: c_long = 22;
+pub const X509_V_ERR_CERT_REVOKED: c_long = 23;
+pub const X509_V_ERR_INVALID_CA: c_long = 24;
+pub const X509_V_ERR_PATH_LENGTH_EXCEEDED: c_long = 25;
+pub const X509_V_ERR_INVALID_PURPOSE: c_long = 26;
+pub const X509_V_ERR_CERT_UNTRUSTED: c_long = 27;
+pub const X509_V_ERR_CERT_REJECTED: c_long = 28;
+pub const X509_V_ERR_HOSTNAME_MISMATCH: c_long = 62;
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SSL / TLS — error codes, verify modes, shutdown flags, renegotiate modes
 // (`vendor/boringssl/include/openssl/ssl.h`)
 // ═══════════════════════════════════════════════════════════════════════════

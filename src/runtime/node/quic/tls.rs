@@ -1,4 +1,4 @@
-use core::ffi::{CStr, c_int, c_ulong};
+use core::ffi::{CStr, c_int, c_long, c_ulong};
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
@@ -408,63 +408,55 @@ pub(super) fn negotiated_alpn(ssl: &ssl::SSL) -> Option<Vec<u8>> {
     ssl.alpn_selected().map(<[u8]>::to_vec)
 }
 
-/// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate
-/// at all (`verifyPeerCertificate()` nullopt -> `value_or`).
-pub(super) const X509_V_ERR_UNSPECIFIED: i32 = 1;
-
-/// `X509_V_ERR_*` -> the code name node reports for a peer-certificate
-/// validation failure (crypto::GetValidationErrorCode -> X509Pointer::ErrorCode
-/// in ncrypto; values from `openssl/x509.h`).
-fn validation_error_code(err: i32) -> &'static str {
+/// The code name node reports for a peer-certificate validation failure.
+fn validation_error_code(err: c_long) -> &'static str {
     match err {
-        2 => "UNABLE_TO_GET_ISSUER_CERT",
-        3 => "UNABLE_TO_GET_CRL",
-        4 => "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
-        5 => "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
-        6 => "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
-        7 => "CERT_SIGNATURE_FAILURE",
-        8 => "CRL_SIGNATURE_FAILURE",
-        9 => "CERT_NOT_YET_VALID",
-        10 => "CERT_HAS_EXPIRED",
-        11 => "CRL_NOT_YET_VALID",
-        12 => "CRL_HAS_EXPIRED",
-        13 => "ERROR_IN_CERT_NOT_BEFORE_FIELD",
-        14 => "ERROR_IN_CERT_NOT_AFTER_FIELD",
-        15 => "ERROR_IN_CRL_LAST_UPDATE_FIELD",
-        16 => "ERROR_IN_CRL_NEXT_UPDATE_FIELD",
-        17 => "OUT_OF_MEM",
-        18 => "DEPTH_ZERO_SELF_SIGNED_CERT",
-        19 => "SELF_SIGNED_CERT_IN_CHAIN",
-        20 => "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-        21 => "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-        22 => "CERT_CHAIN_TOO_LONG",
-        23 => "CERT_REVOKED",
-        24 => "INVALID_CA",
-        25 => "PATH_LENGTH_EXCEEDED",
-        26 => "INVALID_PURPOSE",
-        27 => "CERT_UNTRUSTED",
-        28 => "CERT_REJECTED",
-        62 => "HOSTNAME_MISMATCH",
+        ssl::X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT => "UNABLE_TO_GET_ISSUER_CERT",
+        ssl::X509_V_ERR_UNABLE_TO_GET_CRL => "UNABLE_TO_GET_CRL",
+        ssl::X509_V_ERR_UNABLE_TO_DECRYPT_CERT_SIGNATURE => "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
+        ssl::X509_V_ERR_UNABLE_TO_DECRYPT_CRL_SIGNATURE => "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
+        ssl::X509_V_ERR_UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY => "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+        ssl::X509_V_ERR_CERT_SIGNATURE_FAILURE => "CERT_SIGNATURE_FAILURE",
+        ssl::X509_V_ERR_CRL_SIGNATURE_FAILURE => "CRL_SIGNATURE_FAILURE",
+        ssl::X509_V_ERR_CERT_NOT_YET_VALID => "CERT_NOT_YET_VALID",
+        ssl::X509_V_ERR_CERT_HAS_EXPIRED => "CERT_HAS_EXPIRED",
+        ssl::X509_V_ERR_CRL_NOT_YET_VALID => "CRL_NOT_YET_VALID",
+        ssl::X509_V_ERR_CRL_HAS_EXPIRED => "CRL_HAS_EXPIRED",
+        ssl::X509_V_ERR_ERROR_IN_CERT_NOT_BEFORE_FIELD => "ERROR_IN_CERT_NOT_BEFORE_FIELD",
+        ssl::X509_V_ERR_ERROR_IN_CERT_NOT_AFTER_FIELD => "ERROR_IN_CERT_NOT_AFTER_FIELD",
+        ssl::X509_V_ERR_ERROR_IN_CRL_LAST_UPDATE_FIELD => "ERROR_IN_CRL_LAST_UPDATE_FIELD",
+        ssl::X509_V_ERR_ERROR_IN_CRL_NEXT_UPDATE_FIELD => "ERROR_IN_CRL_NEXT_UPDATE_FIELD",
+        ssl::X509_V_ERR_OUT_OF_MEM => "OUT_OF_MEM",
+        ssl::X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT => "DEPTH_ZERO_SELF_SIGNED_CERT",
+        ssl::X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN => "SELF_SIGNED_CERT_IN_CHAIN",
+        ssl::X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY => "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+        ssl::X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE => "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        ssl::X509_V_ERR_CERT_CHAIN_TOO_LONG => "CERT_CHAIN_TOO_LONG",
+        ssl::X509_V_ERR_CERT_REVOKED => "CERT_REVOKED",
+        ssl::X509_V_ERR_INVALID_CA => "INVALID_CA",
+        ssl::X509_V_ERR_PATH_LENGTH_EXCEEDED => "PATH_LENGTH_EXCEEDED",
+        ssl::X509_V_ERR_INVALID_PURPOSE => "INVALID_PURPOSE",
+        ssl::X509_V_ERR_CERT_UNTRUSTED => "CERT_UNTRUSTED",
+        ssl::X509_V_ERR_CERT_REJECTED => "CERT_REJECTED",
+        ssl::X509_V_ERR_HOSTNAME_MISMATCH => "HOSTNAME_MISMATCH",
         _ => "UNSPECIFIED",
     }
 }
 
 /// The `(code name, reason)` pair node reports as
 /// `validationErrorCode` / `validationErrorReason`.
-pub(super) fn validation_error_strings(code: i32) -> (&'static str, &'static str) {
+pub(super) fn validation_error_strings(code: c_long) -> (&'static str, &'static str) {
     let name = validation_error_code(code);
-    let reason = ssl::verify_cert_error_string(code.into())
-        .to_str()
-        .unwrap_or("");
+    let reason = ssl::verify_cert_error_string(code).to_str().unwrap_or("");
     (name, reason)
 }
 
 pub(super) fn validation_error(ssl: &ssl::SSL) -> Option<(&'static str, &'static str)> {
     let code = ssl.verify_result();
-    if code == 0 {
+    if code == ssl::X509_V_OK {
         return None;
     }
-    Some(validation_error_strings(code as i32))
+    Some(validation_error_strings(code))
 }
 
 pub(super) fn ephemeral_key_info(

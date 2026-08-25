@@ -797,6 +797,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
     mode_t newUmask;
     if (value.isString()) {
         auto str = value.getString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
         auto policy = WTF::TrailingJunkPolicy::Disallow;
         auto opt = str.is8Bit() ? WTF::parseInteger<mode_t, uint8_t>(str.span8(), 8, policy) : WTF::parseInteger<mode_t, char16_t>(str.span16(), 8, policy);
         if (!opt.has_value()) return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "mask"_s, value, "must be a 32-bit unsigned integer or an octal string"_s);
@@ -804,7 +805,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
     } else {
         Bun::V::validateUint32(throwScope, globalObject, value, "mask"_s, jsUndefined());
         RETURN_IF_EXCEPTION(throwScope, {});
-        newUmask = value.toUInt32(globalObject);
+        newUmask = JSC::toUInt32(value.asNumber());
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
@@ -821,15 +822,18 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
         return;
     }
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = globalObject->processObject();
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
     auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
+    RETURN_IF_EXCEPTION(scope, );
     if (fired) {
         if (globalObject->m_nextTickQueue) {
             auto nextTickQueue = globalObject->m_nextTickQueue.get();
             nextTickQueue->drain(vm, globalObject);
+            RETURN_IF_EXCEPTION(scope, );
         }
     }
 }
@@ -988,7 +992,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     Bun::V::validateString(scope, globalObject, value, "directory"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    EncodedSlice str = Zig::toEncodedSlice(value.toWTFString(globalObject));
+    WTF::String directory = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    EncodedSlice str = Zig::toEncodedSlice(directory);
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1318,9 +1324,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
     if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
+        auto monitorScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         wrapped.emit(uncaughtExceptionMonitor, args);
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return true;
+        RETURN_IF_EXCEPTION(monitorScope, true);
     }
 
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
@@ -1339,7 +1345,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             Bun__Process__exit(lexicalGlobalObject, 1);
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
+        auto emitScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         wrapped.emit(uncaughtExceptionIdent, args);
+        RETURN_IF_EXCEPTION(emitScope, true);
     } else {
         return false;
     }
@@ -1481,6 +1489,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
         MarkedArgumentBuffer args;
         args.append(promise);
         wrapped.emit(eventType, args);
+        RETURN_IF_EXCEPTION(scope, true);
         return true;
     }
 
@@ -1770,6 +1779,7 @@ static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject,
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
         return jsUndefined();
     }
     return result;
@@ -2096,11 +2106,15 @@ static bool isJSValueEqualToASCIILiteral(JSC::JSGlobalObject* globalObject, JSC:
         return false;
     }
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* str = value.toStringOrNull(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
     if (!str) {
         return false;
     }
     auto view = str->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
     return view == literal;
 }
 
@@ -2124,7 +2138,9 @@ JSValue Process::emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObje
 
     auto warningName = errorInstance.get(lexicalGlobalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
-    if (isJSValueEqualToASCIILiteral(globalObject, warningName, "DeprecationWarning"_s)) {
+    bool isDeprecationWarning = isJSValueEqualToASCIILiteral(globalObject, warningName, "DeprecationWarning"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isDeprecationWarning) {
         // Read the per-Process data properties (per-Worker), not the CLI seed:
         // a Worker's `process.throwDeprecation = true` must not affect other VMs.
         JSValue noDep = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "noDeprecation"_s));
@@ -2158,7 +2174,9 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue detail = jsUndefined();
 
-    if (isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
+    bool isDeprecationWarning = isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isDeprecationWarning) {
         JSValue noDep = globalObject->processObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "noDeprecation"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (noDep && noDep.toBoolean(globalObject))
@@ -2204,6 +2222,7 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
 
     if (warning.isString()) {
         auto s = warning.getString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
@@ -2246,11 +2265,15 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
 
     if (!code.isUndefinedOrNull()) {
-        if (code.isString() && !code.getString(lexicalGlobalObject).isEmpty()) {
-            auto num = code.toNumber(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
-            if (!std::isnan(num)) {
-                code = jsNumber(num);
+        if (code.isString()) {
+            auto codeString = code.getString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (!codeString.isEmpty()) {
+                auto num = code.toNumber(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (!std::isnan(num)) {
+                    code = jsNumber(num);
+                }
             }
         }
         ssize_t exitCodeInt;
@@ -2553,6 +2576,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
                 vm, globalObject, globalObject, name, message,
                 line, column,
                 sourceURL, stackFrames, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
 
             WTF::String stack;
             // first line after "Error:"
@@ -2766,6 +2790,7 @@ __attribute__((minsize)) static JSValue constructProcessConfigObject(VM& vm, JSO
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, JSC::jsUndefined());
         return JSC::jsUndefined();
     }
     putDirectNamed(vm, variables, "v8_enable_i18n_support"_s, JSC::jsNumber(1));
@@ -2904,6 +2929,7 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     if (auto* exception = scope.exception()) {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
         return jsUndefined();
     }
     return result;
@@ -2930,6 +2956,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     if (auto* exception = scope.exception()) {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
         return jsUndefined();
     }
 
@@ -2954,10 +2981,14 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     forceSync = true;
 #endif
     if (forceSync) {
-        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+        JSValue sink = resultObject->getIndex(globalObject, 1);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
+        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
     }
 
-    return resultObject->getIndex(globalObject, 0);
+    JSValue stream = resultObject->getIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    return stream;
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -2993,6 +3024,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     if (auto* exception = scope.exception()) {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
         return jsUndefined();
     }
     return result;
@@ -3234,6 +3266,7 @@ static JSValue constructEnv(VM& vm, JSObject* processObject)
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, JSC::jsUndefined());
         return JSC::jsUndefined();
     }
     return env;
@@ -3276,6 +3309,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     getgroups(ngroups, groupVector.begin());
     for (unsigned i = 0; i < ngroups; i++) {
         groups->putDirectIndex(globalObject, i, jsNumber(groupVector[i]));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     return JSValue::encode(groups);
 }
@@ -3432,12 +3466,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
         if (item.isNumber()) {
             Bun::V::validateUint32(scope, globalObject, item, jsString(vm, name), jsUndefined());
             RETURN_IF_EXCEPTION(scope, {});
-            groupsStack[i] = item.toUInt32(globalObject);
+            groupsStack[i] = JSC::toUInt32(item.asNumber());
             continue;
         } else if (item.isString()) {
             item = maybe_gid_by_name(scope, globalObject, item);
             RETURN_IF_EXCEPTION(scope, {});
             groupsStack[i] = item.toUInt32(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             continue;
         }
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number or string"_s, item);
@@ -4290,6 +4325,7 @@ static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(processObject->globalObject(), exception);
+        RETURN_IF_EXCEPTION(scope, {});
         return JSC::jsUndefined();
     }
     return array;
@@ -4428,6 +4464,7 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, {});
         return JSC::jsUndefined();
     }
     auto* requireMap = globalObject->requireMap();
@@ -4435,6 +4472,7 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, {});
         return JSC::jsUndefined();
     }
     return mainModule;
@@ -4465,6 +4503,7 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        RETURN_IF_EXCEPTION(scope, {});
         return JSC::jsUndefined();
     }
     if (nextTickFunction && nextTickFunction.isObject()) {
@@ -4770,9 +4809,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObje
         RETURN_IF_EXCEPTION(scope, {});
     } else if (signalValue.isString()) {
         loadSignalNumberMap();
-        if (auto num = signalNameToNumberMap->get(signalValue.toWTFString(globalObject))) {
+        auto signalName = signalValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (auto num = signalNameToNumberMap->get(signalName)) {
             signal = num;
-            RETURN_IF_EXCEPTION(scope, {});
         } else {
             return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signalValue);
         }

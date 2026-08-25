@@ -152,19 +152,23 @@ impl JSObject {
         unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
     }
 
+    /// The C++ side returns the object even when `creator` threw inside
+    /// `initializer_call`, so the exception state is checked explicitly.
     pub fn create_with_initializer<Ctx: ObjectInitializer>(
         creator: &mut Ctx,
         global: &JSGlobalObject,
         length: usize,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         // `ctx` is the `&mut Ctx` round-tripped through `*mut c_void`;
         // `initializer_call::<Ctx>` casts it back. C++ only forwards it.
-        JSC__JSObject__create(
-            global,
-            length,
-            std::ptr::from_mut::<Ctx>(creator).cast::<c_void>(),
-            initializer_call::<Ctx>,
-        )
+        crate::call_check_slow(global, || {
+            JSC__JSObject__create(
+                global,
+                length,
+                std::ptr::from_mut::<Ctx>(creator).cast::<c_void>(),
+                initializer_call::<Ctx>,
+            )
+        })
     }
 
     #[track_caller]

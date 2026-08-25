@@ -1304,7 +1304,9 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     }
 
     if (!encodedString.containsOnlyLatin1()) {
-        throwException(globalObject, throwScope, createDOMException(globalObject, InvalidCharacterError));
+        auto exception = createDOMException(globalObject, InvalidCharacterError);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        throwException(globalObject, throwScope, exception);
         return {};
     }
 
@@ -1350,7 +1352,9 @@ JSC_DEFINE_HOST_FUNCTION(functionATOB,
 
     auto result = Bun::Base64::atob(encodedString);
     if (result.hasException()) {
-        throwException(globalObject, throwScope, createDOMException(*globalObject, result.releaseException()));
+        auto exception = createDOMException(*globalObject, result.releaseException());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        throwException(globalObject, throwScope, exception);
         return {};
     }
 

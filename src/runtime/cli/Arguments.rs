@@ -807,9 +807,7 @@ fn cwd_prefix_in_remaining<'a>(
             && strings::has_prefix_comptime(arg, b"--cwd")
             && arg[b"--cwd".len()] == b'='
         {
-            if cwd.is_none() {
-                cwd = Some(&arg[b"--cwd".len() + 1..]);
-            }
+            cwd = Some(&arg[b"--cwd".len() + 1..]);
             skip.push(i);
             i += 1;
             continue;
@@ -817,9 +815,7 @@ fn cwd_prefix_in_remaining<'a>(
             && strings::has_prefix_comptime(arg, b"--prefix")
             && arg[b"--prefix".len()] == b'='
         {
-            if prefix.is_none() {
-                prefix = Some(&arg[b"--prefix".len() + 1..]);
-            }
+            prefix = Some(&arg[b"--prefix".len() + 1..]);
             skip.push(i);
             i += 1;
             continue;
@@ -828,10 +824,8 @@ fn cwd_prefix_in_remaining<'a>(
             continue;
         };
 
-        if i + 1 < remaining.len() && !remaining[i + 1].starts_with(b"-") {
-            if slot.is_none() {
-                *slot = Some(remaining[i + 1]);
-            }
+        if i + 1 < remaining.len() {
+            *slot = Some(remaining[i + 1]);
             skip.push(i);
             skip.push(i + 1);
             i += 2;

@@ -455,6 +455,54 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.each(["--cwd", "--prefix"])("should use the last %s after the script name", async flag => {
+    using dir = tempDir(`bun-run-${flag.replace("--", "")}-last-wins`, {
+      "first/test.js": `console.log("first");`,
+      "second/test.js": `console.log(process.cwd());`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "test.js", flag, "first", flag, "second"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toMatch(/second/);
+    expect(stdout).not.toMatch(/first/);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(["--cwd", "--prefix"])("should accept a dash-prefixed directory for %s after the script name", async flag => {
+    using dir = tempDir(`bun-run-${flag.replace("--", "")}-dash-dir`, {
+      "-workspace/test.js": `console.log(process.cwd());`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "test.js", flag, "-workspace"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toMatch(/-workspace/);
+    expect(exitCode).toBe(0);
+  });
+
   describe("--cwd longer than the OS path limit", () => {
     // Longer than PATH_MAX on every platform (4096 on Linux, 1024 on macOS).
     const tooLong = Buffer.alloc(5000, "a").toString();

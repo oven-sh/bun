@@ -6580,8 +6580,18 @@ impl Internal {
     pub(crate) fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut bytes = self.to_owned_slice();
         let bom_len = bytes.len() - strings::without_utf8_bom(&bytes).len();
-        bytes.drain(..bom_len);
-        bun_string_jsc::owned_utf8_into_js(global_this, bytes)
+        if bom_len == 0 {
+            return bun_string_jsc::owned_utf8_into_js(global_this, bytes);
+        }
+        match strings::to_utf16_alloc(&bytes[bom_len..], false, false) {
+            Ok(Some(utf16)) => bun_string_jsc::owned_utf16_into_js(global_this, utf16),
+            Ok(None) => {
+                bytes.drain(..bom_len);
+                let bytes = core::mem::ManuallyDrop::new(bytes);
+                EncodedSlice::latin1(&bytes).to_external_value(global_this)
+            }
+            Err(_) => Err(global_this.throw_out_of_memory()),
+        }
     }
 
     pub(crate) fn to_json(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {

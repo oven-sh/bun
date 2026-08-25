@@ -242,7 +242,12 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
 
-    if !PluginRunner::could_be_plugin(specifier) {
+    // The specifier is the resolved module key. An absolute path is a file on
+    // disk whether or not it has an extension, so the `file` namespace filters
+    // always see it. `could_be_plugin` keys off the extension and would skip
+    // `/dir/LICENSE`. Under `bun test` this runs before the builtin lookup, so
+    // the pre-filter still screens bare names such as `ws` or `bun`.
+    if !bun_paths::is_absolute(specifier) && !PluginRunner::could_be_plugin(specifier) {
         return JSValue::ZERO;
     }
 

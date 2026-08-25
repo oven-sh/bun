@@ -855,6 +855,107 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
   expect(exitCode).toBe(0);
 });
 
+it.concurrent("onLoad runs for a file without an extension", async () => {
+  using dir = tempDir("plugin-onload-no-extension", {
+    "LICENSE": "MIT License text",
+    "static.js": `
+      import license from "./LICENSE";
+      console.log("static:" + license);
+    `,
+    "entry.js": `
+      import { readFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      const seen = new Set();
+      Bun.plugin({
+        name: "license-loader",
+        setup(build) {
+          // Synchronous on purpose: require() rejects an onLoad result that is a promise.
+          build.onLoad({ filter: /LICENSE$/ }, args => {
+            seen.add(args.path);
+            return {
+              contents: "export default " + JSON.stringify(readFileSync(args.path, "utf8")) + ";",
+              loader: "js",
+            };
+          });
+        },
+      });
+
+      const dynamic = await import("./LICENSE");
+      console.log("dynamic:" + dynamic.default);
+      console.log("require:" + require("./LICENSE").default);
+      await import("./static.js");
+      console.log("seen:" + [...seen].map(path => path === join(import.meta.dir, "LICENSE")).join(","));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() || stderr).toBe(
+    ["dynamic:MIT License text", "require:MIT License text", "static:MIT License text", "seen:true"].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// `bun test` consults plugins before the builtin modules so that mock.module()
+// can replace a builtin. A file-namespace onLoad filter must still see a file
+// without an extension there, and must not see bare builtin names such as "ws".
+it.concurrent("onLoad runs for a file without an extension under bun test", async () => {
+  using dir = tempDir("plugin-onload-no-extension-test", {
+    "LICENSE": "MIT License text",
+    "preload.js": `
+      import { readFileSync } from "node:fs";
+
+      Bun.plugin({
+        name: "license-loader",
+        setup(build) {
+          build.onLoad({ filter: /LICENSE$/ }, args => ({
+            contents: "export default " + JSON.stringify(readFileSync(args.path, "utf8")) + ";",
+            loader: "js",
+          }));
+          build.onLoad({ filter: /^ws$/ }, () => ({
+            exports: { WebSocket: "replaced by plugin" },
+            loader: "object",
+          }));
+        },
+      });
+    `,
+    "license.test.js": `
+      import { expect, test } from "bun:test";
+      import license from "./LICENSE";
+      import { WebSocket } from "ws";
+
+      test("extension-less file goes through onLoad", () => {
+        expect(license).toBe("MIT License text");
+        expect(require("./LICENSE").default).toBe("MIT License text");
+      });
+
+      test("bare builtin names stay out of the file namespace", () => {
+        expect(typeof WebSocket).toBe("function");
+        expect(typeof require("ws").WebSocket).toBe("function");
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--preload", "./preload.js", "license.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(" 2 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
 it.concurrent("a no-op onResolve that returns args.path unchanged is transparent", async () => {
   using dir = tempDir("plugin-onresolve-no-op", {
     "preload.js": `

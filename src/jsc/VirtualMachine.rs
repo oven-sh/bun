@@ -4347,8 +4347,7 @@ impl VirtualMachine {
         result
     }
 
-    /// Whether `specifier` is the synthetic `<cwd>/[eval]` or `<cwd>/[stdin]`
-    /// entry of `bun -e` / `bun -`, whose source is in memory, not on disk.
+    /// The in-memory `<cwd>/[eval]` or `<cwd>/[stdin]` entry of `bun -e` / `bun -`.
     pub fn is_eval_or_stdin_entry(&self, specifier: &[u8]) -> bool {
         self.module_loader.eval_source.is_some()
             && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())

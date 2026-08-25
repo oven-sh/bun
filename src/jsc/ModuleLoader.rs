@@ -256,8 +256,6 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier = specifier_slice.slice();
 
     // A registered namespace wins. Any other absolute path is a file on disk.
-    // What remains (`node:fs`, `ws`, `data:`, the `[eval]` entry) has no file
-    // for the `file` namespace to load.
     let (namespace, after_namespace): (&[u8], &[u8]) =
         if let Some(namespace) = registered_on_load_namespace(global, specifier) {
             (namespace, &specifier[namespace.len() + 1..])

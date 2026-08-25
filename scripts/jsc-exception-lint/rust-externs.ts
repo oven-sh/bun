@@ -11,7 +11,7 @@
 // summary pass classified as able to throw, and the call sites that are not
 // wrapped. It is a heuristic: it looks at the text around each call.
 
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 const repo = resolve(import.meta.dirname, "../..");

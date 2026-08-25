@@ -31,17 +31,17 @@
 
 import { spawn } from "bun";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
-  copyFileSync,
-  rmSync,
 } from "node:fs";
 import { cpus } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 const repo = resolve(import.meta.dirname, "../..");
 const toolDir = import.meta.dirname;

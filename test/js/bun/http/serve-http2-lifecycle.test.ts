@@ -222,7 +222,7 @@ describe("Bun.serve http2 lifecycle", () => {
   });
 
   test("stop(true) sends GOAWAY before closing", async () => {
-    const fx = await startFixture({ tls: false });
+    await using fx = await startFixture({ tls: false });
     const raw = await RawH2.connect(fx.port, false);
     await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
     raw.headers(1, baseHeaders("/abort"));

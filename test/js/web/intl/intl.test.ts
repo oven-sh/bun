@@ -190,8 +190,10 @@ describe("Intl.Collator", () => {
   // A Latin-1 string of 2^30 or more characters cannot be upconverted to UTF-16:
   // the Vector<char16_t> behind it is past its maximum capacity. When the other
   // operand is 16-bit, none of the 8-bit fast paths apply and ICU needs the
-  // UTF-16 form. JSC used to CRASH() there instead of throwing.
-  test("comparing a huge Latin-1 string with a 16-bit string throws instead of crashing", async () => {
+  // UTF-16 form. A NUL operand does the same with two 8-bit strings: NUL has no
+  // UCA DUCET weight, so the ASCII fast path gives up and the fallback runs.
+  // JSC used to CRASH() there instead of throwing.
+  test("comparing a huge Latin-1 string through the ICU fallback throws instead of crashing", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -203,6 +205,8 @@ describe("Intl.Collator", () => {
            () => "\\u3042".localeCompare(huge),
            () => new Intl.Collator().compare(huge, "\\u3042"),
            () => new Intl.Collator("en", { sensitivity: "base" }).compare("\\u3042", huge),
+           () => new Intl.Collator("en").compare(huge, "\\0"),
+           () => new Intl.Collator("en").compare("\\0", huge),
          ]) {
            try {
              out.push(compare());
@@ -218,7 +222,7 @@ describe("Intl.Collator", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(Array(4).fill("RangeError: Out of memory"));
+    expect(JSON.parse(stdout)).toEqual(Array(6).fill("RangeError: Out of memory"));
     expect(exitCode).toBe(0);
   });
 });

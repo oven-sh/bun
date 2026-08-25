@@ -149,10 +149,9 @@ with `type_error`/`range_error`/`syntax_error` siblings, one C++ entry):
 literal → atomized; formatted → copied once), `string.to_error_instance(global)`
 (WTF-backed shares the impl, static atomizes, borrowed `EncodedSlice`
 copies), `EncodedSlice::utf8(bytes).to_error_instance(global)` for raw UTF-8
-bytes (copied). The infallible
-`EncodedSlice::…(bytes).to_js(global)` is only for callbacks that cannot
-return `JsResult`, or for bytes already validated as ASCII where a rescan
-is unwanted (`EncodedSlice::latin1(bytes).to_js(global)`).
+bytes (copied). `EncodedSlice::latin1(bytes).to_js(global)?` is for bytes already validated as
+ASCII/Latin-1 where `create_utf8_for_js`'s scan is unwanted; both throw
+`STRING_TOO_LONG` past the string length limit.
 
 JSValue → string: `value.to_bun_string(global)?` (owned `String`),
 `value.to_utf8(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or

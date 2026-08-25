@@ -2033,19 +2033,18 @@ fn spawn_maybe_sync(
 
     subprocess.update_has_pending_activity();
 
-    let signal_code = SubprocessT::get_signal_code(subprocess, global_this)?;
     let exit_code = SubprocessT::get_exit_code(subprocess, global_this);
     // Propagated after `finalize`, which must run even when building the output throws.
-    let output = subprocess
-        .stdout
-        .with_mut(|s| s.to_buffered_value(global_this))
-        .and_then(|stdout| {
-            let stderr = subprocess
-                .stderr
-                .with_mut(|s| s.to_buffered_value(global_this))?;
-            let resource_usage = subprocess.create_resource_usage_object(global_this)?;
-            Ok((stdout, stderr, resource_usage))
-        });
+    let output = SubprocessT::get_signal_code(subprocess, global_this).and_then(|signal_code| {
+        let stdout = subprocess
+            .stdout
+            .with_mut(|s| s.to_buffered_value(global_this))?;
+        let stderr = subprocess
+            .stderr
+            .with_mut(|s| s.to_buffered_value(global_this))?;
+        let resource_usage = subprocess.create_resource_usage_object(global_this)?;
+        Ok((signal_code, stdout, stderr, resource_usage))
+    });
     let exited_due_to_timeout = did_timeout;
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
@@ -2053,7 +2052,7 @@ fn spawn_maybe_sync(
     // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
     // `subprocess` (`&mut *subprocess_ptr`) is not used after this line.
     SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
-    let (stdout, stderr, resource_usage) = output?;
+    let (signal_code, stdout, stderr, resource_usage) = output?;
 
     let sync_value = JSValue::create_empty_object(global_this, 0);
     sync_value.put(global_this, b"exitCode", exit_code);

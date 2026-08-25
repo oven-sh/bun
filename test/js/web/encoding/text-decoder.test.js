@@ -964,7 +964,7 @@ it("decode() throws when the result exceeds the string length limit", () => {
     expect(decode("windows-1252", ascii)).toBe("ERR_STRING_TOO_LONG");
     // 4 MiB of UTF-16LE / 2-byte UTF-8 sequences is 2 Mi code units.
     expect(decode("utf-16le", new Uint8Array(4 * 1024 * 1024).fill(0x61))).toBe("ERR_STRING_TOO_LONG");
-    expect(decode("utf-8", Buffer.from("é".repeat(2 * 1024 * 1024)))).toBe("ERR_STRING_TOO_LONG");
+    expect(decode("utf-8", Buffer.alloc(4 * 1024 * 1024, "é"))).toBe("ERR_STRING_TOO_LONG");
     // exactly at the limit is fine
     expect(decode("utf-8", ascii.subarray(0, 1024 * 1024))).toBe(1024 * 1024);
   } finally {

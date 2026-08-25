@@ -156,8 +156,10 @@ function clone(src: string) {
 function copyManifests(from: string, to: string) {
   mkdirSync(to);
   for (const entry of readdirSync(from, { withFileTypes: true })) {
-    if (entry.isDirectory()) copyManifests(join(from, entry.name), join(to, entry.name));
-    else if (entry.name === "package.json") copyFileSync(join(from, entry.name), join(to, entry.name));
+    const path = join(from, entry.name);
+    if (entry.isSymbolicLink()) throw new Error(`clone() copies hoisted installs only, found a symlink at ${path}`);
+    if (entry.isDirectory()) copyManifests(path, join(to, entry.name));
+    else if (entry.name === "package.json") copyFileSync(path, join(to, entry.name));
   }
 }
 

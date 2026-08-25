@@ -444,12 +444,14 @@ pub(crate) fn writable_stream(
             let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
+                    let uploaded = sink.task.as_ref().map_or(0, |t| t.uploaded_bytes.get());
                     if sink.flush_promise.has_value() {
                         sink.flush_promise
                             .resolve(global, JSValue::js_number(0.0))?;
                     }
                     if sink.end_promise.has_value() {
-                        sink.end_promise.resolve(global, JSValue::js_number(0.0))?;
+                        sink.end_promise
+                            .resolve(global, JSValue::js_number(uploaded as f64))?;
                     }
                 }
                 S3UploadResult::Failure(err) => {
@@ -506,6 +508,7 @@ pub(crate) fn writable_stream(
         vm: VirtualMachine::get(),
         global_this: global_static,
         buffered: JsCell::new(StreamBuffer::default()),
+        uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),
         proxy: if !proxy_url.is_empty() {
             Box::<[u8]>::from(proxy_url)
@@ -678,18 +681,19 @@ impl S3UploadStreamWrapper {
         let mut settled: JsResult<()> = Ok(());
         match &result {
             S3UploadResult::Success => {
+                let uploaded = JSValue::js_number(self_.task_ref().uploaded_bytes.get() as f64);
                 if let Some(sink) = self_.sink_mut() {
                     sink.pending.run();
                     if settled.is_ok() && sink.flush_promise.has_value() {
                         settled = sink.flush_promise.resolve(&global, JSValue::js_number(0.0));
                     }
                     if settled.is_ok() && sink.end_promise.has_value() {
-                        settled = sink.end_promise.resolve(&global, JSValue::js_number(0.0));
+                        settled = sink.end_promise.resolve(&global, uploaded);
                     }
                 }
                 if self_.end_promise.has_value() {
                     if settled.is_ok() {
-                        settled = self_.end_promise.resolve(&global, JSValue::js_number(0.0));
+                        settled = self_.end_promise.resolve(&global, uploaded);
                     }
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
@@ -957,6 +961,7 @@ pub(crate) fn upload_stream(
         vm: VirtualMachine::get(),
         global_this: global_static,
         buffered: JsCell::new(StreamBuffer::default()),
+        uploaded_bytes: Cell::new(0),
         path: Box::<[u8]>::from(path),
         proxy: if !proxy_url.is_empty() {
             Box::<[u8]>::from(proxy_url)

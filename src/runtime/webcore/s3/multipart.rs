@@ -141,6 +141,9 @@ pub struct MultiPartUpload {
     pub global_this: GlobalRef,
 
     pub(crate) buffered: JsCell<StreamBuffer>,
+    /// Bytes accepted by `write*` (after encoding): what a streamed `Bun.write`/`writer.end()`
+    /// resolves with.
+    pub(crate) uploaded_bytes: Cell<u64>,
 
     pub path: Box<[u8]>,
     pub(crate) proxy: Box<[u8]>,
@@ -1043,6 +1046,7 @@ impl MultiPartUpload {
     }
 
     fn append_chunk(&self, encoding: WriteEncoding, chunk: &[u8]) -> Result<(), AllocError> {
+        let before = self.buffered.get().size();
         self.buffered.with_mut(|buffered| match encoding {
             WriteEncoding::Bytes => buffered.write(chunk),
             WriteEncoding::Latin1 => buffered.write_latin1::<true>(chunk),
@@ -1052,6 +1056,8 @@ impl MultiPartUpload {
                 buffered.write_utf16(utf16)
             }
         })?;
+        self.uploaded_bytes
+            .set(self.uploaded_bytes.get() + (self.buffered.get().size() - before) as u64);
         Ok(())
     }
 

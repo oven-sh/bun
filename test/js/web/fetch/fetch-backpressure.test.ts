@@ -955,6 +955,54 @@ describe("S3 receive backpressure", () => {
     const closed = bucket.untilClosed().then(() => true);
     while (!(await Promise.race([closed, Bun.sleep(10).then(() => false)]))) Bun.gc(true);
   }, 30_000);
+
+  // The other direction: a fetch body uploaded to S3. The multipart sink's queue back-pressures
+  // the fetch, and both `Bun.write(s3file, res)` and `s3file.writer()` resolve with the bytes sent.
+  test("fetch → Bun.write(s3file, res) is paced by the part uploads and resolves with the byte count", async () => {
+    let uploaded = 0;
+    let parts = 0;
+    let releaseParts!: () => void;
+    const partsGate = new Promise<void>(r => (releaseParts = r));
+    await using origin = await serve("h1");
+    await using bucket = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (req.method === "POST" && url.searchParams.has("uploads"))
+          return new Response("<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>");
+        if (req.method === "PUT") {
+          const body = await req.arrayBuffer();
+          await partsGate;
+          uploaded += body.byteLength;
+          return new Response("", { headers: { etag: `"e${++parts}"` } });
+        }
+        if (req.method === "POST" && url.searchParams.has("uploadId")) {
+          await req.text();
+          return new Response(
+            "<CompleteMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><ETag>e</ETag></CompleteMultipartUploadResult>",
+          );
+        }
+        return new Response("", { status: 400 });
+      },
+    });
+    const s3 = new S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint: bucket.url.href, bucket: "b" });
+    // partSize 5 MiB × queueSize 1: with the parts held, the sink fills and the origin has to stop.
+    const written = Bun.write(s3.file("up", { partSize: 5 * 1024 * 1024, queueSize: 1 }), await fetch(origin.url));
+    let last = -1;
+    for (let stable = 0; stable < 5; ) {
+      await Bun.sleep(20);
+      stable = origin.sent() === last ? stable + 1 : 0;
+      last = origin.sent();
+    }
+    expect(origin.sent()).toBeLessThan(TOTAL);
+    releaseParts();
+    expect({ written: await written, uploaded }).toEqual({ written: TOTAL, uploaded: TOTAL });
+
+    const writer = s3.file("up2").writer();
+    writer.write(Buffer.alloc(1000, 1));
+    writer.write("héllo");
+    expect(await writer.end()).toBe(1006);
+  }, 30_000);
 });
 
 describe.concurrent("fetch() receive backpressure — a body nothing waits for does not hold the process", () => {

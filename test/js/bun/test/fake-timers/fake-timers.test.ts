@@ -133,6 +133,13 @@ describe("advanceTimersByTime", () => {
     expect(order.takeOrderMessages()).toEqual([]);
     vi.useRealTimers();
   });
+
+  test.each([NaN, -1, Infinity, 2 ** 32])("advanceTimersByTime(%p) throws and does not move the clock", ms => {
+    vi.useFakeTimers({ now: 1000 });
+    expect(() => vi.advanceTimersByTime(ms)).toThrow("ms is out of range. It must be >= 0 and <= 4294967295");
+    expect(Date.now()).toBe(1000);
+    expect(performance.now()).toBe(0);
+  });
 });
 describe("runOnlyPendingTimers", () => {
   test("two setIntervals", () => {
